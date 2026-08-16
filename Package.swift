@@ -115,6 +115,7 @@ let targets: [Target] = [
             "FeatureKit",
             "LocalToolsSupport",
             "ZenPackageMetadata",
+            "ToolCore",
             .product(name: "Markdown", package: "swift-markdown"),
             // Local deterministic transport tests host small NIO HTTP and
             // WebSocket servers; production dependencies remain Core-only.

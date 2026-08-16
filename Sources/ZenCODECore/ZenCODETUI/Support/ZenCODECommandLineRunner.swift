@@ -21,14 +21,20 @@ public typealias ZenCODEInteractiveSetupHandler = @Sendable () async throws -> B
 
 public enum ZenCODECommandLineRunner {
     public static func main(
-        setupHandler: ZenCODEInteractiveSetupHandler? = nil
+        setupHandler: ZenCODEInteractiveSetupHandler? = nil,
+        backendFactory: AgentRuntimeBackendFactory? = nil
     ) async {
-        await main(arguments: CommandLine.arguments, setupHandler: setupHandler)
+        await main(
+            arguments: CommandLine.arguments,
+            setupHandler: setupHandler,
+            backendFactory: backendFactory
+        )
     }
 
     public static func main(
         arguments rawArguments: [String],
-        setupHandler: ZenCODEInteractiveSetupHandler? = nil
+        setupHandler: ZenCODEInteractiveSetupHandler? = nil,
+        backendFactory: AgentRuntimeBackendFactory? = nil
     ) async {
         do {
             SwiftPMResourceBundleDirectory.configure()
@@ -66,7 +72,8 @@ public enum ZenCODECommandLineRunner {
                 let sessionRunner = AgentCoreSessionRunner(
                     defaultToolAuthorizationHandler: { request in
                         await permissionAuthorizer.authorize(request)
-                    }
+                    },
+                    backendFactory: backendFactory
                 )
                 var resumeSnapshot: TerminalChatResumeSnapshot?
                 do {
@@ -110,7 +117,10 @@ public enum ZenCODECommandLineRunner {
                 break
             }
 
-            await AgentRuntimeLauncher.runACP(configuration: configuration)
+            await AgentRuntimeLauncher.runACP(
+                configuration: configuration,
+                backendFactory: backendFactory
+            )
         } catch {
             AgentOutput.standardError.writeString(
                 "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"

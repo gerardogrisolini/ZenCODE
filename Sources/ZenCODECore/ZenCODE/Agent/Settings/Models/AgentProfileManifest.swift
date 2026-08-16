@@ -660,6 +660,13 @@ public enum AgentProfileStore {
 
     public static func loadRequired(fileManager: FileManager = .default) throws -> [AgentProfile] {
         let url = agentsManifestURL(fileManager: fileManager)
+        return try loadRequiredUnlocked(from: url, fileManager: fileManager)
+    }
+
+    static func loadRequiredUnlocked(
+        from url: URL,
+        fileManager: FileManager = .default
+    ) throws -> [AgentProfile] {
         guard fileManager.fileExists(atPath: url.path) else {
             throw AgentProfileStoreError.missingFile(url)
         }

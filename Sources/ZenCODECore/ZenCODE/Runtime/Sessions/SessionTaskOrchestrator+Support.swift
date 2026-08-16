@@ -486,10 +486,13 @@ extension SessionTaskOrchestrator {
               let workingDirectory = workingDirectories[sessionID] else {
             return
         }
-        try store.save(
-            checkpoint(sessionID: sessionID, state: state),
+        let nextCheckpoint = checkpoint(sessionID: sessionID, state: state)
+        try store.compareAndSwap(
+            nextCheckpoint,
+            replacing: persistedCheckpoints[sessionID],
             workingDirectory: workingDirectory
         )
+        persistedCheckpoints[sessionID] = nextCheckpoint
     }
 
     func commit(

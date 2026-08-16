@@ -22,25 +22,34 @@ import Synchronization
 /// the end of that scope. Neither initializer creates an event-loop group per
 /// HTTP request or WebSocket connection.
 public final class RemoteTransportCore: Sendable {
+    public static let defaultMaximumCollectedResponseBodyBytes = 16 * 1_024 * 1_024
     private let eventLoopGroup: any EventLoopGroup
     private let ownsEventLoopGroup: Bool
+    private let maximumCollectedResponseBodyBytes: Int
     private let lifecycle = RemoteTransportLifecycle()
 
     /// Uses the process-wide POSIX event-loop group shared by all transport
     /// instances in the process.
-    public init() {
+    public init(
+        maximumCollectedResponseBodyBytes: Int = RemoteTransportCore.defaultMaximumCollectedResponseBodyBytes
+    ) {
         eventLoopGroup = NIOSingletons.posixEventLoopGroup
         ownsEventLoopGroup = false
+        self.maximumCollectedResponseBodyBytes = max(1, maximumCollectedResponseBodyBytes)
     }
 
     /// Creates one event-loop group owned by this long-lived transport scope.
     /// This is chiefly useful for an embedding application boundary and local
     /// tests. It must be paired with `shutdown()`.
-    public init(owningEventLoopThreads: Int) {
+    public init(
+        owningEventLoopThreads: Int,
+        maximumCollectedResponseBodyBytes: Int = RemoteTransportCore.defaultMaximumCollectedResponseBodyBytes
+    ) {
         eventLoopGroup = MultiThreadedEventLoopGroup(
             numberOfThreads: max(1, owningEventLoopThreads)
         )
         ownsEventLoopGroup = true
+        self.maximumCollectedResponseBodyBytes = max(1, maximumCollectedResponseBodyBytes)
     }
 
     /// Opens an HTTP/1.1 streaming response.
@@ -114,6 +123,11 @@ public final class RemoteTransportCore: Sendable {
             let response = try await openHTTPStreamWithoutTimeout(request)
             var body = Data()
             for try await chunk in response.body {
+                guard chunk.count <= maximumCollectedResponseBodyBytes - body.count else {
+                    throw RemoteTransportError.protocolViolation(
+                        "HTTP response body exceeds the \(maximumCollectedResponseBodyBytes)-byte limit."
+                    )
+                }
                 body.append(chunk)
             }
 
@@ -130,7 +144,7 @@ public final class RemoteTransportCore: Sendable {
             }
 
             redirectCount += 1
-            request = Self.redirectRequest(
+            request = try Self.redirectRequest(
                 request,
                 to: url,
                 status: response.status
@@ -149,12 +163,22 @@ public final class RemoteTransportCore: Sendable {
         }
     }
 
-    private static func redirectRequest(
+    static func redirectRequest(
         _ request: RemoteHTTPStreamingRequest,
         to url: URL,
         status: Int
-    ) -> RemoteHTTPStreamingRequest {
+    ) throws -> RemoteHTTPStreamingRequest {
         let changesOrigin = !sameOrigin(request.url, url)
+        if isHTTPSDowngrade(from: request.url, to: url) {
+            throw RemoteTransportError.protocolViolation(
+                "Refusing an HTTPS to HTTP redirect."
+            )
+        }
+        if changesOrigin, request.body != nil {
+            throw RemoteTransportError.protocolViolation(
+                "Refusing to resend an HTTP request body across origins."
+            )
+        }
         let rewritesToGET = status == 303 ||
             ((status == 301 || status == 302) &&
                 !["GET", "HEAD"].contains(request.method.uppercased()))
@@ -189,6 +213,10 @@ public final class RemoteTransportCore: Sendable {
         return lhsEndpoint.isSecure == rhsEndpoint.isSecure &&
             lhsEndpoint.host.caseInsensitiveCompare(rhsEndpoint.host) == .orderedSame &&
             lhsEndpoint.port == rhsEndpoint.port
+    }
+
+    private static func isHTTPSDowngrade(from source: URL, to destination: URL) -> Bool {
+        source.scheme?.lowercased() == "https" && destination.scheme?.lowercased() == "http"
     }
 
     private func openHTTPStreamWithoutTimeout(

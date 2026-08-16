@@ -401,7 +401,7 @@ public actor DirectToolExecutor {
                 + "status, error, evidence, metadata, dependencies, or result fields. Your "
                 + "final response is recorded automatically as the attempt result and lifecycle "
                 + "completion is owned by the runtime.",
-            inputSchema: descriptor.inputSchema,
+            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"graphID":{"type":"string"},"graph_id":{"type":"string"},"output":{"type":"string"},"progress":{"type":"string"},"statusReason":{"type":"string"},"status_reason":{"type":"string"},"expectedRevision":{"type":"integer"},"expected_revision":{"type":"integer"}},"required":["id"]}"#,
             title: descriptor.title,
             outputSchema: descriptor.outputSchema,
             presentation: descriptor.presentation

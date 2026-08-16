@@ -446,6 +446,8 @@ public actor AgentCoreBackend {
             }
         }
 
+        // Compatibility fallback for embedders and older call sites. The `zen`
+        // composition root always injects its production backend factory.
         let selection = AgentSettingsStore.defaultSelection(
             explicitModelID: configuration.modelID
         )

@@ -555,7 +555,41 @@ struct TelegramTUITests {
         #expect(TerminalTelegramPairingService.pairingCode(in: "/start") == nil)
     }
 
-        @Test
+    @Test
+    func telegramPairingOnlyAllowsPrivateChats() {
+        #expect(TerminalTelegramPairingService.allowsPairing(chatType: "private"))
+        #expect(TerminalTelegramPairingService.allowsPairing(chatType: "PRIVATE"))
+        #expect(!TerminalTelegramPairingService.allowsPairing(chatType: "group"))
+        #expect(!TerminalTelegramPairingService.allowsPairing(chatType: "supergroup"))
+        #expect(!TerminalTelegramPairingService.allowsPairing(chatType: "channel"))
+        #expect(TerminalTelegramControlService.incomingMessageBufferLimit == 64)
+    }
+
+    @Test
+    func telegramUpdateOffsetIsDurableMonotonicAndPerBot() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let url = directory.appendingPathComponent("telegram-updates.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try TerminalTelegramUpdateOffsetStore.save(updateID: 41, botID: 100, to: url)
+        try TerminalTelegramUpdateOffsetStore.save(updateID: 40, botID: 100, to: url)
+        try TerminalTelegramUpdateOffsetStore.save(updateID: 7, botID: 200, to: url)
+
+        #expect(TerminalTelegramUpdateOffsetStore.load(botID: 100, from: url) == 41)
+        #expect(TerminalTelegramUpdateOffsetStore.load(botID: 200, from: url) == 7)
+        #if os(macOS) || os(Linux)
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        #endif
+
+        try Data("corrupt".utf8).write(to: url)
+        #expect(throws: (any Error).self) {
+            _ = try TerminalTelegramUpdateOffsetStore.loadRequired(botID: 100, from: url)
+        }
+    }
+
+    @Test
     func telegramPermissionCommandsParseRemoteApprovalReplies() {
         #expect(
             TerminalTelegramPermissionBroker.permissionCommand(from: "/allow ABC123")

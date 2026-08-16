@@ -14,7 +14,8 @@ extension SwiftFeatureRuntime {
         toolCall: DirectAgentToolCall
     ) async throws -> String {
         let arguments = toolCall.argumentsObject
-        switch toolCall.name {
+        let canonicalName = Self.managementToolAliases[toolCall.name] ?? toolCall.name
+        switch canonicalName {
         case "feature.list":
             let includeTools = arguments.bool("includeTools", "include_tools") ?? true
             let includeDisabled = arguments.bool("includeDisabled", "include_disabled") ?? true
@@ -42,7 +43,7 @@ extension SwiftFeatureRuntime {
             let report = try await deleteFeature(arguments: arguments)
             await reloadFeatureBundles()
             return try renderJSON(report)
-        case "feature.edit", "feature.update":
+        case "feature.edit":
             let report = try editFeature(arguments: arguments)
             if report.adopt != nil {
                 await reloadFeatureBundles()
@@ -458,6 +459,11 @@ extension SwiftFeatureRuntime {
             ).write(to: manifestURL, atomically: true, encoding: .utf8)
             reportToolName = toolName
         case .mcpBridge:
+            #if !os(macOS)
+            throw DirectToolError.permissionDenied(
+                "MCP bridge features are currently supported only on macOS."
+            )
+            #endif
             let toolPrefix = Self.normalizedToolPrefix(
                 arguments.string("toolPrefix", "tool_prefix", "prefix")?
                     .nilIfBlank ?? "\(Self.defaultToolPrefix(for: id))."

@@ -58,7 +58,12 @@ struct DirectTaskToolAdapterTests {
         #expect(!rootDescriptor.description.contains("As a task-bound sub-agent"))
         #expect(childDescriptor.description.contains("As a task-bound sub-agent"))
         #expect(childDescriptor.description.contains("final response is recorded automatically"))
-        #expect(childDescriptor.inputSchema == rootDescriptor.inputSchema)
+        #expect(childDescriptor.inputSchema != rootDescriptor.inputSchema)
+        #expect(childDescriptor.inputSchema.contains("\"progress\""))
+        #expect(childDescriptor.inputSchema.contains("\"output\""))
+        #expect(!childDescriptor.inputSchema.contains("\"dependsOn\""))
+        #expect(!childDescriptor.inputSchema.contains("\"evidence\""))
+        #expect(!childDescriptor.inputSchema.contains("\"status\""))
     }
 
     @Test

@@ -14,6 +14,7 @@ public enum SessionTaskGraphStoreError: LocalizedError, Equatable {
     case unsupportedSchema(Int)
     case snapshotTooLarge(Int)
     case lockFailed(String)
+    case staleCheckpoint(String)
     case corrupted(path: String, reason: String)
 
     public var errorDescription: String? {
@@ -24,6 +25,8 @@ public enum SessionTaskGraphStoreError: LocalizedError, Equatable {
             return "Task graph checkpoint is too large (\(size) bytes)."
         case let .lockFailed(path):
             return "Could not lock task graph checkpoint at \(path)."
+        case let .staleCheckpoint(sessionID):
+            return "Task graph checkpoint for session \(sessionID) changed in another runtime instance."
         case let .corrupted(path, reason):
             return "Task graph checkpoint at \(path) is corrupted: \(reason)"
         }
@@ -70,6 +73,43 @@ public struct SessionTaskGraphStore: Sendable {
         }
     }
 
+    /// Atomically replaces `expected` with `checkpoint` under the checkpoint's
+    /// cross-process lock. A mismatch fails closed instead of allowing a stale
+    /// orchestrator instance to erase a newer graph update.
+    public func compareAndSwap(
+        _ checkpoint: SessionTaskGraphCheckpoint,
+        replacing expected: SessionTaskGraphCheckpoint?,
+        workingDirectory: URL,
+        fileManager: FileManager = .default
+    ) throws {
+        guard checkpoint.schemaVersion == SessionTaskGraphCheckpoint.currentSchemaVersion else {
+            throw SessionTaskGraphStoreError.unsupportedSchema(checkpoint.schemaVersion)
+        }
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        let data = try encoder.encode(checkpoint)
+        guard data.count <= maximumSnapshotBytes else {
+            throw SessionTaskGraphStoreError.snapshotTooLarge(data.count)
+        }
+
+        let fileURL = checkpointFileURL(
+            sessionID: checkpoint.sessionID,
+            workingDirectory: workingDirectory,
+            fileManager: fileManager
+        )
+        try withLock(for: fileURL, exclusive: true, fileManager: fileManager) {
+            let current = try loadUnlocked(
+                from: fileURL,
+                sessionID: checkpoint.sessionID,
+                fileManager: fileManager
+            )
+            guard current == expected else {
+                throw SessionTaskGraphStoreError.staleCheckpoint(checkpoint.sessionID)
+            }
+            try SensitiveFilePermissions.write(data, to: fileURL, fileManager: fileManager)
+        }
+    }
+
     public func load(
         sessionID: String,
         workingDirectory: URL,
@@ -80,49 +120,56 @@ public struct SessionTaskGraphStore: Sendable {
             workingDirectory: workingDirectory,
             fileManager: fileManager
         )
+        return try withLock(for: fileURL, exclusive: false, fileManager: fileManager) {
+            try loadUnlocked(from: fileURL, sessionID: sessionID, fileManager: fileManager)
+        }
+    }
+
+    private func loadUnlocked(
+        from fileURL: URL,
+        sessionID: String,
+        fileManager: FileManager
+    ) throws -> SessionTaskGraphCheckpoint? {
         guard fileManager.fileExists(atPath: fileURL.path) else {
             return nil
         }
         try SensitiveFilePermissions.hardenExistingFile(at: fileURL, fileManager: fileManager)
-
-        return try withLock(for: fileURL, exclusive: false, fileManager: fileManager) {
+        do {
             let attributes = try fileManager.attributesOfItem(atPath: fileURL.path)
             if let size = attributes[.size] as? NSNumber,
                size.intValue > maximumSnapshotBytes {
                 throw SessionTaskGraphStoreError.snapshotTooLarge(size.intValue)
             }
 
-            do {
-                let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
-                guard data.count <= maximumSnapshotBytes else {
-                    throw SessionTaskGraphStoreError.snapshotTooLarge(data.count)
-                }
-                let checkpoint = try PropertyListDecoder().decode(
-                    SessionTaskGraphCheckpoint.self,
-                    from: data
-                )
-                guard checkpoint.schemaVersion == SessionTaskGraphCheckpoint.currentSchemaVersion else {
-                    throw SessionTaskGraphStoreError.unsupportedSchema(checkpoint.schemaVersion)
-                }
-                guard checkpoint.sessionID == sessionID else {
-                    throw SessionTaskGraphStoreError.corrupted(
-                        path: fileURL.path,
-                        reason: "session identifier mismatch"
-                    )
-                }
-                return checkpoint
-            } catch let error as SessionTaskGraphStoreError {
-                if case .corrupted = error {
-                    copyCorruptCheckpoint(fileURL, fileManager: fileManager)
-                }
-                throw error
-            } catch {
-                copyCorruptCheckpoint(fileURL, fileManager: fileManager)
+            let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
+            guard data.count <= maximumSnapshotBytes else {
+                throw SessionTaskGraphStoreError.snapshotTooLarge(data.count)
+            }
+            let checkpoint = try PropertyListDecoder().decode(
+                SessionTaskGraphCheckpoint.self,
+                from: data
+            )
+            guard checkpoint.schemaVersion == SessionTaskGraphCheckpoint.currentSchemaVersion else {
+                throw SessionTaskGraphStoreError.unsupportedSchema(checkpoint.schemaVersion)
+            }
+            guard checkpoint.sessionID == sessionID else {
                 throw SessionTaskGraphStoreError.corrupted(
                     path: fileURL.path,
-                    reason: String(describing: error)
+                    reason: "session identifier mismatch"
                 )
             }
+            return checkpoint
+        } catch let error as SessionTaskGraphStoreError {
+            if case .corrupted = error {
+                copyCorruptCheckpoint(fileURL, fileManager: fileManager)
+            }
+            throw error
+        } catch {
+            copyCorruptCheckpoint(fileURL, fileManager: fileManager)
+            throw SessionTaskGraphStoreError.corrupted(
+                path: fileURL.path,
+                reason: String(describing: error)
+            )
         }
     }
 

@@ -259,6 +259,68 @@ struct RemoteTransportCoreTests {
         await destination.shutdown()
     }
 
+    @Test("Collected HTTP responses enforce a global body budget")
+    func httpCollectedResponseRejectsOversizedBody() async throws {
+        let server = try await LocalHTTPTestServer.start { context, _ in
+            writeHTTPResponse("seventeen-bytes!!", status: .ok, to: context)
+        }
+        let transport = RemoteTransportCore(
+            owningEventLoopThreads: 1,
+            maximumCollectedResponseBodyBytes: 16
+        )
+        defer {
+            Task {
+                try? await transport.shutdown()
+                await server.shutdown()
+            }
+        }
+
+        await #expect(throws: RemoteTransportError.self) {
+            _ = try await transport.sendRequest(
+                RemoteHTTPStreamingRequest(url: server.url(path: "/oversized"))
+            )
+        }
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
+    @Test("HTTP redirects never resend bodies across origins")
+    func httpRedirectRejectsCrossOriginBodyReplay() throws {
+        let request = RemoteHTTPStreamingRequest(
+            url: try #require(URL(string: "https://auth.example.com/token")),
+            method: "POST",
+            headers: [RemoteHTTPHeader(name: "content-type", value: "application/x-www-form-urlencoded")],
+            body: Data("code=secret&code_verifier=verifier".utf8)
+        )
+        let destination = try #require(URL(string: "https://attacker.example/collect"))
+
+        for status in [301, 302, 303, 307, 308] {
+            #expect(throws: RemoteTransportError.self) {
+                _ = try RemoteTransportCore.redirectRequest(
+                    request,
+                    to: destination,
+                    status: status
+                )
+            }
+        }
+    }
+
+    @Test("HTTP redirects reject HTTPS downgrades")
+    func httpRedirectRejectsHTTPSDowngrade() throws {
+        let request = RemoteHTTPStreamingRequest(
+            url: try #require(URL(string: "https://auth.example.com/token"))
+        )
+        let destination = try #require(URL(string: "http://auth.example.com/token"))
+
+        #expect(throws: RemoteTransportError.self) {
+            _ = try RemoteTransportCore.redirectRequest(
+                request,
+                to: destination,
+                status: 302
+            )
+        }
+    }
+
     @Test("WebSocket supports text, binary, ping/pong and close frames")
     func webSocketFramesRoundTripThroughNIO() async throws {
         let server = try await LocalWebSocketTestServer.start()

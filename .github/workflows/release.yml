@@ -35,12 +35,32 @@ jobs:
 
       - name: Enforce strict vX.Y.Z tag and version match
         id: contract
+        env:
+          RAW_REF: ${{ inputs.ref || github.ref_name }}
         run: |
           set -euo pipefail
 
-          raw_ref="${{ inputs.ref || github.ref_name }}"
+          raw_ref="$RAW_REF"
+          is_release_ref() {
+            [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          }
 
-          if ! printf '%s' "$raw_ref" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+          # Regression probes: values with shell syntax, quotes, or embedded
+          # newlines must remain inert data and fail the strict tag contract.
+          invalid_refs=(
+            'v1.2.3; echo injected'
+            'v1.2.3$(echo injected)'
+            'v1.2.3"'
+            $'v1.2.3\nv9.9.9'
+          )
+          for invalid_ref in "${invalid_refs[@]}"; do
+            if is_release_ref "$invalid_ref"; then
+              echo "::error::Unsafe release ref unexpectedly passed validation."
+              exit 1
+            fi
+          done
+
+          if ! is_release_ref "$raw_ref"; then
             echo "::error::Tag '$raw_ref' does not match the strict vX.Y.Z release contract (Docs/release.md)."
             exit 1
           fi

@@ -33,7 +33,7 @@ case "$mode" in
         ;;
     test)
         echo "▶ Testing ZenCODE on Raspberry Pi OS (arm64)…"
-        run_in_machine swift test --build-path "$BUILD_PATH"
+        run_in_machine swift test --no-parallel --build-path "$BUILD_PATH"
         ;;
     shell)
         echo "▶ Opening shell on $MACHINE…"
@@ -44,7 +44,7 @@ case "$mode" in
         run_in_machine swift build --build-path "$BUILD_PATH"
         echo ""
         echo "▶ Running tests…"
-        run_in_machine swift test --build-path "$BUILD_PATH"
+        run_in_machine swift test --no-parallel --build-path "$BUILD_PATH"
         ;;
     *)
         echo "Usage: $0 [build|test|shell|all]"

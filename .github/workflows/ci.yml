@@ -20,6 +20,74 @@ env:
   ZENCODE_RUN_LIVE_FEATURE_E2E: "0"
 
 jobs:
+  feature-matrix:
+    name: Generate standalone feature matrix
+    runs-on: macos-26
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Generate matrix from the distribution catalog
+        id: matrix
+        run: |
+          set -euo pipefail
+          swiftc \
+            Sources/ZenPackageMetadata/ZenBundledFeatureCatalog.swift \
+            Scripts/FeatureCIMatrix.swift \
+            -o "$RUNNER_TEMP/feature-ci-matrix"
+          matrix="$($RUNNER_TEMP/feature-ci-matrix)"
+          printf '%s\n' "$matrix"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  standalone-features:
+    name: ${{ matrix.feature }} (${{ matrix.platform }})
+    needs: feature-matrix
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.feature-matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container || null }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Show toolchain
+        run: swift --version
+      - name: Resolve from the standalone lockfile
+        run: |
+          swift package --package-path "${{ matrix.packagePath }}" resolve --only-use-versions-from-resolved-file
+          git diff --exit-code -- "${{ matrix.packagePath }}/Package.resolved"
+      - name: Test standalone package
+        run: swift test --package-path "${{ matrix.packagePath }}"
+      - name: Build standalone executable
+        run: swift build -c release --package-path "${{ matrix.packagePath }}" --product "${{ matrix.product }}"
+      - name: Validate --list-tools schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(swift run -c release --package-path "${{ matrix.packagePath }}" "${{ matrix.product }}" --list-tools)"
+          printf '%s\n' "$output"
+          LIST_TOOLS_OUTPUT="$output" swift - <<'SWIFT'
+          import Foundation
+          let data = Data(ProcessInfo.processInfo.environment["LIST_TOOLS_OUTPUT", default: ""].utf8)
+          guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let tools = payload["tools"] as? [[String: Any]] else {
+              fatalError("top-level tools must be an array")
+          }
+          for tool in tools {
+              guard let name = tool["name"] as? String, !name.isEmpty,
+                    tool["description"] is String else {
+                  fatalError("each tool requires name and description")
+              }
+              if let schema = tool["inputSchema"] as? String {
+                  _ = try JSONSerialization.jsonObject(with: Data(schema.utf8))
+              } else if !(tool["inputSchema"] is [String: Any]) {
+                  fatalError("tool.inputSchema must be JSON or a JSON string")
+              }
+          }
+          SWIFT
+
   macos:
     name: macOS 26 (Swift 6.3)
     runs-on: macos-26
@@ -68,14 +136,6 @@ jobs:
         # cases concurrently can park that shared manager and cascade timeouts.
         run: swift test --no-parallel
 
-      - name: Test standalone Xcode tools feature
-        run: |
-          swift test --package-path Sources/Features/XcodeTools
-          swift build -c release --package-path Sources/Features/XcodeTools --product xcode-tools-feature
-          output="$(swift run -c release --package-path Sources/Features/XcodeTools xcode-tools-feature --list-tools)"
-          printf '%s\n' "$output"
-          grep -q '"tools"' <<<"$output"
-
       - name: Build release product
         run: swift build -c release --product zen
 
@@ -87,6 +147,14 @@ jobs:
 
       - name: Verify release binary
         run: .build/release/zen --version
+
+      - name: Smoke test macOS installer
+        run: |
+          smoke_root="$RUNNER_TEMP/zencode-installer-smoke"
+          INSTALL_DIR="$smoke_root/bin" \
+          ZENCODE_SUPPORT_DIRECTORY="$smoke_root/support" \
+            Scripts/install.sh --debug --prefix "$smoke_root/bin"
+          "$smoke_root/bin/zen" --version
 
       - name: Check shell syntax
         run: bash -n Scripts/*.sh
@@ -184,6 +252,15 @@ jobs:
 
       - name: Verify release binary
         run: .build/release/zen --version
+
+      - name: Smoke test Linux/WSL installer path
+        if: matrix.arch == 'x86_64'
+        run: |
+          smoke_root="$RUNNER_TEMP/zencode-installer-smoke"
+          INSTALL_DIR="$smoke_root/bin" \
+          ZENCODE_SUPPORT_DIRECTORY="$smoke_root/support" \
+            Scripts/install-linux.sh --debug --prefix "$smoke_root/bin"
+          "$smoke_root/bin/zen" --version
 
       - name: Check shell syntax
         run: bash -n Scripts/*.sh

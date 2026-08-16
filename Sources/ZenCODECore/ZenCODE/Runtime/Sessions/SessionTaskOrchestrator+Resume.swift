@@ -187,13 +187,15 @@ extension SessionTaskOrchestrator {
         }
         try registerSession(
             id: librarySessionID,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            restoreIfAvailable: false
         )
         try restoreCheckpoint(
             checkpoint,
             interruptActiveAttempts: true,
             persist: false
         )
+        persistedCheckpoints[librarySessionID] = checkpoint
         for planID in deletableIDs {
             _ = try removeGraph(id: planID, sessionID: librarySessionID)
         }
@@ -237,7 +239,8 @@ extension SessionTaskOrchestrator {
         do {
             try registerSession(
                 id: librarySessionID,
-                workingDirectory: workingDirectory
+                workingDirectory: workingDirectory,
+                restoreIfAvailable: false
             )
             // Re-install the freshest on-disk library state before mutating so
             // a long-lived in-memory registration cannot overwrite plans saved
@@ -249,6 +252,7 @@ extension SessionTaskOrchestrator {
                 interruptActiveAttempts: true,
                 persist: false
             )
+            persistedCheckpoints[librarySessionID] = checkpoint
             guard var libraryState = sessionStates[librarySessionID],
                   var libraryGraph = libraryState.graphs[graphID],
                   !libraryGraph.state.isTerminal else {

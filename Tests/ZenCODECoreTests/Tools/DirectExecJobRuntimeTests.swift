@@ -88,6 +88,25 @@ struct DirectExecJobRuntimeTests {
     }
 
     @Test
+    func shutdownEscalatesAndWaitsForTermIgnoringJob() async throws {
+        let runtime = DirectExecJobRuntime()
+        _ = try await runtime.startBackgroundJob(
+            command: "trap '' TERM; printf ready; while :; do sleep 1; done",
+            shellPath: "/bin/sh",
+            workingDirectory: FileManager.default.temporaryDirectory
+        )
+        _ = try await pollUntil(runtime: runtime, jobID: "job-1") {
+            $0.contains("ready")
+        }
+
+        await runtime.shutdown()
+
+        let finalPoll = try await runtime.poll(jobID: "job-1", offset: 0)
+        #expect(finalPoll.contains("job job-1: killed"))
+        #expect(!finalPoll.contains("Job is still running"))
+    }
+
+    @Test
     func unknownJobIdentifierThrowsJobNotFound() async throws {
         let runtime = DirectExecJobRuntime()
         await #expect(throws: DirectExecJobError.self) {

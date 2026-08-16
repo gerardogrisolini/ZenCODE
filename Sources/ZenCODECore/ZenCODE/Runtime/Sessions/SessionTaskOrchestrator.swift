@@ -139,6 +139,7 @@ public actor SessionTaskOrchestrator {
     let store: SessionTaskGraphStore?
     var sessionStates: [String: SessionState] = [:]
     var workingDirectories: [String: URL] = [:]
+    var persistedCheckpoints: [String: SessionTaskGraphCheckpoint] = [:]
     var restoredSessionIDs = Set<String>()
     var executionScopes: [String: TaskExecutionScope] = [:]
     var tasklessDelegationReservations: [String: Set<UUID>] = [:]
@@ -182,6 +183,7 @@ public actor SessionTaskOrchestrator {
                 sessionID: sessionID,
                 workingDirectory: workingDirectory
             ) {
+                persistedCheckpoints[sessionID] = checkpoint
                 try restoreCheckpoint(
                     checkpoint,
                     interruptActiveAttempts: true,

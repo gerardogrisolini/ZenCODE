@@ -318,7 +318,10 @@ echo "  config: ${BUILD_CONFIG}"
 echo ""
 
 echo "Swift toolchain:"
-swift --version
+if ! zencode_require_supported_swift; then
+    echo "Install or select a Swift 6.3+ toolchain, then retry." >&2
+    exit 1
+fi
 echo ""
 
 echo "Building ZenCODE (${BUILD_CONFIG})..."

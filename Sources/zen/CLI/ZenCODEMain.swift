@@ -64,6 +64,12 @@ struct ZenCODEMain {
             arguments: arguments,
             setupHandler: {
                 try await runInteractiveSetup()
+            },
+            backendFactory: { configuration, mcpRuntime in
+                try AgentRemoteBackendFactory.makeRemoteBackend(
+                    configuration: configuration,
+                    mcpRuntime: mcpRuntime
+                )
             }
         )
     }

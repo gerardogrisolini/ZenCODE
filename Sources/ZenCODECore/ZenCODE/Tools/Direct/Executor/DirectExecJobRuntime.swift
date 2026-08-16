@@ -298,8 +298,9 @@ public actor DirectExecJobRuntime {
         // `setsid`: because the spawned process is already a group leader,
         // `setsid` forks and Foundation would track the short-lived parent PID
         // instead of the actual shell/session leader.
-        job.processGroupLeader = Glibc.getpgid(process.processIdentifier)
-            == process.processIdentifier
+        job.processGroupLeader = FeatureProcessTreeSupervisor.isProcessGroupLeader(process)
+        #elseif os(macOS)
+        job.processGroupLeader = FeatureProcessTreeSupervisor.isProcessGroupLeader(process)
         #endif
         jobsByID[jobID] = job
         jobOrder.append(jobID)
@@ -406,9 +407,39 @@ public actor DirectExecJobRuntime {
         """
     }
 
-    public func shutdown() {
-        for job in jobsByID.values where job.status == .running {
-            terminate(jobID: job.id, reason: "session shutdown")
+    public func shutdown() async {
+        let runningIDs = jobsByID.values
+            .filter { $0.status == .running }
+            .map(\.id)
+        guard !runningIDs.isEmpty else { return }
+
+        // Shutdown owns escalation directly rather than returning after queuing a
+        // weak fallback task. This guarantees a bounded TERM -> KILL -> exit/reap
+        // sequence while the runtime actor is still alive.
+        for jobID in runningIDs {
+            guard let job = jobsByID[jobID], job.status == .running else { continue }
+            job.killRequested = true
+            job.killReason = "session shutdown"
+            job.timeoutTask?.cancel()
+            job.timeoutTask = nil
+            job.terminationTask?.cancel()
+            job.terminationTask = nil
+            sendSignal(SIGTERM, to: job)
+        }
+        await waitForJobsToExit(runningIDs, timeout: .seconds(2))
+
+        for jobID in runningIDs {
+            guard let job = jobsByID[jobID], job.status == .running else { continue }
+            sendSignal(SIGKILL, to: job)
+        }
+        await waitForJobsToExit(runningIDs, timeout: .seconds(5))
+
+        // Exit monitoring normally performs this drain in markFinished. If the
+        // platform monitor itself failed, do not leave readability handlers
+        // retaining descriptors after bounded shutdown.
+        for jobID in runningIDs {
+            guard let job = jobsByID[jobID], job.status == .running else { continue }
+            job.outputReaders.forEach { $0.finish() }
         }
     }
 
@@ -421,12 +452,21 @@ public actor DirectExecJobRuntime {
     private func sendSignal(_ signal: Int32, to job: Job) {
         let pid = job.process.processIdentifier
         guard pid > 0 else { return }
-        let target = job.processGroupLeader ? -pid : pid
-        #if os(Linux)
-        _ = Glibc.kill(target, signal)
-        #else
-        _ = Darwin.kill(target, signal)
-        #endif
+        FeatureProcessTreeSupervisor.send(
+            signal,
+            to: job.process,
+            processGroupLeader: job.processGroupLeader
+        )
+    }
+
+    private func waitForJobsToExit(_ jobIDs: [String], timeout: Duration) async {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if jobIDs.allSatisfy({ jobsByID[$0]?.status != .running }) {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     private func markFinished(jobID: String, exitCode: Int32) {
@@ -463,13 +503,13 @@ public actor DirectExecJobRuntime {
         sendSignal(SIGTERM, to: job)
         job.terminationTask?.cancel()
         let pid = job.process.processIdentifier
-        job.terminationTask = Task(name: "local.exec background job SIGKILL fallback") { [weak self] in
+        job.terminationTask = Task(name: "local.exec background job SIGKILL fallback") { [self] in
             do {
                 try await Task.sleep(for: .seconds(2))
             } catch {
                 return
             }
-            await self?.forceKillIfStillRunning(jobID: jobID, pid: pid)
+            await forceKillIfStillRunning(jobID: jobID, pid: pid)
         }
     }
 
@@ -541,6 +581,6 @@ public actor DirectExecJobRuntime {
         throw DirectExecJobError.unsupportedPlatform
     }
 
-    public func shutdown() {}
+    public func shutdown() async {}
 #endif
 }

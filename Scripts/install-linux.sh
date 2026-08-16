@@ -380,14 +380,6 @@ if ! ensure_swift_toolchain; then
     exit 1
 fi
 
-echo "Swift toolchain:"
-if ! swift --version; then
-    echo "Error: Swift is installed but could not run successfully." >&2
-    echo "See https://www.swift.org/install/linux/ for platform requirements and manual instructions." >&2
-    exit 1
-fi
-echo ""
-
 # Resolve the package root (the directory that contains Package.swift) -------
 
 PACKAGE_DIR="$(resolve_package_dir || true)"
@@ -400,6 +392,13 @@ if [ "${ZENCODE_INSTALLER_TEMP_CHECKOUT:-0}" = "1" ]; then
 fi
 SCRIPT_DIR="${PACKAGE_DIR}/Scripts"
 source "${SCRIPT_DIR}/install-support.sh"
+
+echo "Swift toolchain:"
+if ! zencode_require_supported_swift; then
+    echo "Install or select a Swift 6.3+ toolchain; see https://www.swift.org/install/linux/." >&2
+    exit 1
+fi
+echo ""
 
 cd "$PACKAGE_DIR"
 

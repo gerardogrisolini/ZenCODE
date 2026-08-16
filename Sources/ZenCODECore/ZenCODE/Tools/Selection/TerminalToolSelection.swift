@@ -490,7 +490,9 @@ public enum TerminalToolSelectionCatalog {
         case "search-tools":
             aliases.formUnion(["search", "grep", "glob"])
         case "web-tools":
-            aliases.formUnion(["web", "browser"])
+            aliases.insert("web")
+        case "browser-tools":
+            aliases.insert("browser")
         case "git-tools":
             aliases.insert("git")
         case "swift-tools":

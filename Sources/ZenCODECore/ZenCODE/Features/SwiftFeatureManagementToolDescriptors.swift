@@ -7,7 +7,9 @@ import Foundation
 import ToolCore
 
 extension SwiftFeatureRuntime {
-    static let managementToolDescriptors: [DirectToolDescriptor] = [
+    static let managementToolAliases = ["feature.update": "feature.edit"]
+
+    private static let canonicalManagementToolDescriptors: [DirectToolDescriptor] = [
         DirectToolDescriptor(
             name: "feature.list",
             description: "Lists Swift feature bundles known to the kernel, including bundled and generated features plus enabled status.",
@@ -69,5 +71,20 @@ extension SwiftFeatureRuntime {
             presentation: .standard(title: "Feature", action: "Install", kind: .create, targetKeyPaths: ["id", "featureID", "feature_id", "name", "path"])
         )
     ]
+
+    static let managementToolDescriptors: [DirectToolDescriptor] =
+        canonicalManagementToolDescriptors + managementToolAliases.compactMap { alias, canonical in
+            guard let descriptor = canonicalManagementToolDescriptors.first(where: { $0.name == canonical }) else {
+                return nil
+            }
+            return DirectToolDescriptor(
+                name: alias,
+                description: descriptor.description,
+                inputSchema: descriptor.inputSchema,
+                title: descriptor.title,
+                outputSchema: descriptor.outputSchema,
+                presentation: descriptor.presentation
+            )
+        }
 
 }

@@ -10,6 +10,12 @@ import Testing
 @Suite
 struct TerminalTelegramAPIClientTests {
     @Test
+    func telegramAudioBudgetIsExplicit() {
+        #expect(TerminalTelegramAPIClient.maximumAudioFileBytes == 20 * 1_024 * 1_024)
+        #expect(TerminalTelegramAPIClient.audioDownloadTimeout == .seconds(30))
+    }
+
+    @Test
     func snakeCaseTelegramPayloadsDecodeAndRequestsEncode() throws {
         // Mirrors the production client: plain decoder, snake-case encoder.
         let decoder = JSONDecoder()

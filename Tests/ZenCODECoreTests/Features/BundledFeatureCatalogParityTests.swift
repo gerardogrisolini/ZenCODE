@@ -117,7 +117,7 @@ struct BundledFeatureCatalogParityTests {
         // explicit means dropping a platform gate, or adding a macOS-only
         // feature without one, both fail here instead of silently shipping an
         // uninstallable package to Linux users.
-        let macOSOnlyIDs: Set<String> = ["xcode-tools", "desktop-tools"]
+        let macOSOnlyIDs: Set<String> = ["xcode-tools", "figma-tools", "desktop-tools"]
         let linuxProducts = Set(ZenBundledFeatureCatalog.linuxInstallerProductNames)
         let linuxFeatureIDs = Set(
             ZenBundledFeatureCatalog.all

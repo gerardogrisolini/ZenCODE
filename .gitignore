@@ -62,9 +62,8 @@ fastlane/screenshots/**/*.png
 fastlane/test_output
 .swiftpm
 # The root Package.resolved is intentionally tracked: the committed lockfile pins
-# exact dependency revisions so CI and release builds are reproducible. Do not
-# ignore it. Optional feature packages are built on demand from a checkout, so
-# their lockfiles are local build artefacts instead of release inputs.
-Sources/Features/*/Package.resolved
+# exact dependency revisions so CI and release builds are reproducible. The
+# standalone feature lockfiles are tracked for the same reason and validated by
+# their dedicated CI matrix.
 AGENTS.md
 MEMORY.md

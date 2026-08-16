@@ -2,6 +2,44 @@
 
 # Shared installation helpers for the macOS and Linux/WSL installers.
 
+# Returns success when a `swift --version` line identifies Swift 6.3 or newer.
+# The comparison is numeric rather than lexicographic, so future major and
+# two-digit minor versions remain valid on the Bash 3.2 shipped by macOS.
+zencode_swift_version_is_supported() {
+    if [ "$#" -ne 1 ]; then
+        return 2
+    fi
+
+    local parsed=""
+    local major=""
+    local minor=""
+    parsed="$(
+        printf '%s\n' "$1" \
+            | sed -n 's/.*Swift version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p' \
+            | head -n 1
+    )"
+    if [ -z "$parsed" ]; then
+        return 1
+    fi
+
+    major="${parsed%% *}"
+    minor="${parsed#* }"
+    [ "$major" -gt 6 ] || { [ "$major" -eq 6 ] && [ "$minor" -ge 3 ]; }
+}
+
+zencode_require_supported_swift() {
+    local version_output=""
+    if ! version_output="$(swift --version 2>&1)"; then
+        echo "Error: Swift is installed but could not run successfully." >&2
+        return 1
+    fi
+    printf '%s\n' "$version_output"
+    if ! zencode_swift_version_is_supported "$version_output"; then
+        echo "Error: ZenCODE requires Swift 6.3 or newer." >&2
+        return 1
+    fi
+}
+
 # Runs an installation command directly or through the privilege escalator chosen
 # by the caller. Keeping the empty case out of an array expansion matters on the
 # Bash 3.2 shipped by macOS, where an empty array under `set -u` is an error.

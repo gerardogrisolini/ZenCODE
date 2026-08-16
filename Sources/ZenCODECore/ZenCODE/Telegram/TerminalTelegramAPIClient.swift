@@ -46,6 +46,8 @@ struct NIOTelegramHTTPTransport: TelegramHTTPTransport {
 }
 
 struct TerminalTelegramAPIClient: Sendable {
+    static let maximumAudioFileBytes = 20 * 1_024 * 1_024
+    static let audioDownloadTimeout: Duration = .seconds(30)
     let token: String
     let transport: any TelegramHTTPTransport
 
@@ -100,6 +102,11 @@ struct TerminalTelegramAPIClient: Sendable {
             method: "getFile",
             body: TerminalTelegramGetFileRequest(fileID: fileID)
         )
+        if let fileSize = file.fileSize, fileSize > Self.maximumAudioFileBytes {
+            throw TerminalTelegramControlError.fileTooLarge(
+                limit: Self.maximumAudioFileBytes
+            )
+        }
         guard let filePath = file.filePath?.nilIfBlank,
               let url = URL(string: "https://api.telegram.org/file/bot\(token)/\(filePath)") else {
             throw TerminalTelegramControlError.unexpectedResponse
@@ -110,10 +117,15 @@ struct TerminalTelegramAPIClient: Sendable {
             method: "GET",
             headers: [],
             body: nil,
-            timeout: nil
+            timeout: Self.audioDownloadTimeout
         )
         guard (200..<300).contains(response.status) else {
             throw TerminalTelegramControlError.unexpectedResponse
+        }
+        guard response.body.count <= Self.maximumAudioFileBytes else {
+            throw TerminalTelegramControlError.fileTooLarge(
+                limit: Self.maximumAudioFileBytes
+            )
         }
         return TerminalTelegramDownloadedFile(
             data: response.body,
@@ -163,6 +175,7 @@ public enum TerminalTelegramControlError: LocalizedError, Sendable, Equatable {
     case invalidToken
     case emptyMessage
     case unexpectedResponse
+    case fileTooLarge(limit: Int)
     case httpError(Int, String?)
 
     public var errorDescription: String? {
@@ -175,6 +188,8 @@ public enum TerminalTelegramControlError: LocalizedError, Sendable, Equatable {
             return "Cannot send an empty Telegram message."
         case .unexpectedResponse:
             return "Telegram returned an unexpected response."
+        case let .fileTooLarge(limit):
+            return "Telegram audio exceeds the \(limit)-byte download limit."
         case let .httpError(statusCode, body):
             let detail = body?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let detail, !detail.isEmpty {

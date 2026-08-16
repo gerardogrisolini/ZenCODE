@@ -393,7 +393,11 @@ public enum FeatureProcessRunner {
         exitObserver: FeatureProcessExitObserver
     ) async -> Bool {
         if !exitObserver.hasFinished {
-            process.terminate()
+            FeatureProcessTreeSupervisor.send(
+                SIGTERM,
+                to: process,
+                processGroupLeader: FeatureProcessTreeSupervisor.isProcessGroupLeader(process)
+            )
         }
 
         if await waitForExitAfterTermination(exitObserver: exitObserver) {
@@ -401,7 +405,11 @@ public enum FeatureProcessRunner {
         }
 
         if !exitObserver.hasFinished {
-            kill(process.processIdentifier, SIGKILL)
+            FeatureProcessTreeSupervisor.send(
+                SIGKILL,
+                to: process,
+                processGroupLeader: FeatureProcessTreeSupervisor.isProcessGroupLeader(process)
+            )
         }
         // The process monitor owns Linux reaping independently from
         // Foundation's shared manager run loop, so this wait remains bounded

@@ -317,6 +317,41 @@ struct SessionTaskGraphResumeTests {
     }
 
     @Test
+    func concurrentOrchestratorsRejectStaleCheckpointInsteadOfLosingUpdate() async throws {
+        let (root, support, working) = try makeTemp()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SessionTaskGraphStore(supportDirectoryURL: support)
+        let first = SessionTaskOrchestrator(store: store)
+        let stale = SessionTaskOrchestrator(store: store)
+        try await first.registerSession(id: "shared-session", workingDirectory: working)
+        try await stale.registerSession(id: "shared-session", workingDirectory: working)
+
+        _ = try await first.createGraph(
+            sessionID: "shared-session",
+            id: "first-plan",
+            source: .manual,
+            tasks: [TaskDefinition(id: "first", title: "First")]
+        )
+
+        await #expect(throws: SessionTaskGraphStoreError.self) {
+            _ = try await stale.createGraph(
+                sessionID: "shared-session",
+                id: "stale-plan",
+                source: .manual,
+                tasks: [TaskDefinition(id: "stale", title: "Stale")]
+            )
+        }
+
+        let loadedCheckpoint = try store.load(
+            sessionID: "shared-session",
+            workingDirectory: working
+        )
+        let checkpoint = try #require(loadedCheckpoint)
+        #expect(checkpoint.graphs.map(\.id) == ["first-plan"])
+    }
+
+    @Test
     func resumingASelectedGraphMakesThatExactGraphCurrent() async throws {
         let (root, support, working) = try makeTemp()
         defer { try? FileManager.default.removeItem(at: root) }

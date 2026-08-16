@@ -115,6 +115,14 @@ public actor TerminalTelegramPairingService {
                     continue
                 }
 
+                guard Self.allowsPairing(chatType: message.chat.type) else {
+                    try? await client.sendMessage(
+                        "For security, ZenCODE can only be linked from a private Telegram chat.",
+                        to: message.chat.id
+                    )
+                    continue
+                }
+
                 try? await client.sendMessage(
                     "Telegram linked to ZenCODE.",
                     to: message.chat.id
@@ -155,15 +163,22 @@ public actor TerminalTelegramPairingService {
 
         return trimmed.uppercased()
     }
+
+    public nonisolated static func allowsPairing(chatType: String) -> Bool {
+        chatType.caseInsensitiveCompare("private") == .orderedSame
+    }
 }
 
 public actor TerminalTelegramControlService {
+    public static let incomingMessageBufferLimit = 64
     public nonisolated let incomingMessages: AsyncStream<TerminalTelegramIncomingMessage>
 
     private let incomingContinuation: AsyncStream<TerminalTelegramIncomingMessage>.Continuation
     private var state: TerminalTelegramControlState
     private var pollingTask: Task<Void, Never>?
     private var lastUpdateID: Int?
+    private var linkedChatID: Int64?
+    private var botID: Int64?
     /// Monotonic token bumped by every `start()`/`stop()`. An in-flight
     /// `start()` captures the generation and, after each suspension point, may
     /// only mutate state or install the poller while it is still the current
@@ -174,7 +189,8 @@ public actor TerminalTelegramControlService {
 
     public init() {
         var continuation: AsyncStream<TerminalTelegramIncomingMessage>.Continuation!
-        incomingMessages = AsyncStream { streamContinuation in
+        incomingMessages = AsyncStream(bufferingPolicy: .bufferingNewest(Self.incomingMessageBufferLimit)) {
+            streamContinuation in
             continuation = streamContinuation
         }
         incomingContinuation = continuation
@@ -233,6 +249,13 @@ public actor TerminalTelegramControlService {
         // of resurrecting polling.
         try ensureCurrentGeneration(generation)
 
+        guard let configuredChatID = settings.linkedChatID else {
+            throw TerminalTelegramControlError.missingConfiguration
+        }
+        linkedChatID = configuredChatID
+        botID = bot.id
+        lastUpdateID = try TerminalTelegramUpdateOffsetStore.loadRequired(botID: bot.id)
+
         state = TerminalTelegramControlState(
             isConfigured: true,
             isActive: true,
@@ -260,6 +283,9 @@ public actor TerminalTelegramControlService {
         // cannot reactivate polling or mutate state.
         pollingGeneration += 1
         stopPolling()
+        linkedChatID = nil
+        botID = nil
+        lastUpdateID = nil
         let settings = AgentSettingsManifestStore.load()?.telegram
         state.isConfigured = settings?.isEnabled == true
         state.isActive = false
@@ -298,6 +324,12 @@ public actor TerminalTelegramControlService {
     public func downloadVoiceAudio(
         _ voice: TerminalTelegramVoiceAttachment
     ) async throws -> AgentVoiceAudioInput {
+        if let fileSize = voice.fileSize,
+           fileSize > TerminalTelegramAPIClient.maximumAudioFileBytes {
+            throw TerminalTelegramControlError.fileTooLarge(
+                limit: TerminalTelegramAPIClient.maximumAudioFileBytes
+            )
+        }
         let settings = try telegramSettings()
         let token = try telegramToken(from: settings)
         let downloadedFile = try await TerminalTelegramAPIClient(token: token)
@@ -305,7 +337,13 @@ public actor TerminalTelegramControlService {
         let temporaryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ZenCODE-telegram-voice-\(UUID().uuidString)")
             .appendingPathExtension(Self.fileExtension(for: downloadedFile.filename))
-        try downloadedFile.data.write(to: temporaryURL, options: .atomic)
+        guard FileManager.default.createFile(
+            atPath: temporaryURL.path,
+            contents: downloadedFile.data,
+            attributes: [.posixPermissions: NSNumber(value: 0o600)]
+        ) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
         return AgentVoiceAudioInput(
             fileURL: temporaryURL,
             filename: downloadedFile.filename,
@@ -365,6 +403,18 @@ public actor TerminalTelegramControlService {
                 return false
             }
             for update in updates {
+                guard let botID else {
+                    return false
+                }
+                do {
+                    try TerminalTelegramUpdateOffsetStore.save(
+                        updateID: update.updateID,
+                        botID: botID
+                    )
+                } catch {
+                    state.lastError = "Could not persist Telegram update offset: \(error.localizedDescription)"
+                    return false
+                }
                 lastUpdateID = update.updateID
                 handle(update)
             }
@@ -387,6 +437,8 @@ public actor TerminalTelegramControlService {
     private func handle(_ update: TerminalTelegramUpdate) {
         guard state.isActive,
               let message = update.message,
+              message.chat.id == linkedChatID,
+              TerminalTelegramPairingService.allowsPairing(chatType: message.chat.type),
               let user = message.from,
               user.isBot != true else {
             return
@@ -407,7 +459,7 @@ public actor TerminalTelegramControlService {
         }
 
         state.lastMessagePreview = text ?? "voice message"
-        incomingContinuation.yield(
+        let yieldResult = incomingContinuation.yield(
             TerminalTelegramIncomingMessage(
                 chatID: message.chat.id,
                 userID: user.id,
@@ -418,6 +470,9 @@ public actor TerminalTelegramControlService {
                 username: user.username
             )
         )
+        if case .dropped = yieldResult {
+            state.lastError = "Telegram ingress overloaded; the oldest buffered message was dropped."
+        }
     }
 
     private nonisolated static func contentType(for filename: String) -> String? {

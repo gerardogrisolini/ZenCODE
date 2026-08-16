@@ -223,9 +223,10 @@ public struct AgentConfiguration: Sendable {
             selectedAgent = nil
             agentName = requestedAgentName
         } else {
-            let manifest = try AgentSettingsManifestStore.loadRequired()
+            let snapshot = try PersistedAgentConfigurationSnapshot.loadRequired()
+            let manifest = snapshot.settings
             settingsManifest = manifest
-            let availableAgents = try AgentProfileStore.loadRequired()
+            let availableAgents = snapshot.profiles
             selectedAgent = try Self.selectedAgent(
                 named: requestedAgentName,
                 availableAgents: availableAgents

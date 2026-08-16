@@ -12,6 +12,18 @@ import ToolCore
 
 extension SwiftFeatureRuntimeTests {
     @Test
+    func featureUpdateCompatibilityAliasSharesTheCanonicalDescriptor() throws {
+        let edit = try #require(
+            SwiftFeatureRuntime.managementToolDescriptors.first { $0.name == "feature.edit" }
+        )
+        let update = try #require(
+            SwiftFeatureRuntime.managementToolDescriptors.first { $0.name == "feature.update" }
+        )
+        #expect(update.inputSchema == edit.inputSchema)
+        #expect(update.description == edit.description)
+    }
+
+    @Test
     func featureScaffoldCreatesSwift63PackageBuildsAndEnables() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-feature-scaffold-\(UUID().uuidString)", isDirectory: true)
