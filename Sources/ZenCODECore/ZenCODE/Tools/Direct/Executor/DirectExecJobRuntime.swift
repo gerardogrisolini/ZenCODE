@@ -509,7 +509,7 @@ public actor DirectExecJobRuntime {
             } catch {
                 return
             }
-            await forceKillIfStillRunning(jobID: jobID, pid: pid)
+            forceKillIfStillRunning(jobID: jobID, pid: pid)
         }
     }
 
