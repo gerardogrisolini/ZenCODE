@@ -97,10 +97,12 @@ public final class RemoteModelCatalogClient {
         RemoteHTTPStreamingRequest(
             url: try endpointURL(
                 baseURL: baseURL,
-                path: "models"
+                path: isAnthropicAPIBaseURL(baseURL)
+                    ? "models?limit=1000"
+                    : "models"
             ),
             method: "GET",
-            headers: commonHeaders(apiKey: apiKey),
+            headers: commonHeaders(baseURL: baseURL, apiKey: apiKey),
             timeout: .seconds(60 * 60)
         )
     }
@@ -239,13 +241,24 @@ extension RemoteModelCatalogClient {
         return url
     }
 
-    private func commonHeaders(apiKey: String?) -> [RemoteHTTPHeader] {
-        var headers = [
-            RemoteHTTPHeader(name: "Accept", value: "application/json"),
-            RemoteHTTPHeader(name: "X-Title", value: "ZenCODE")
-        ]
-        if let apiKey = apiKey?.nilIfBlank {
-            headers.append(RemoteHTTPHeader(name: "Authorization", value: "Bearer \(apiKey)"))
+    private func isAnthropicAPIBaseURL(_ baseURL: String) -> Bool {
+        URL(string: AgentRemoteProvider.normalizedBaseURL(baseURL))?
+            .host?
+            .lowercased() == "api.anthropic.com"
+    }
+
+    private func commonHeaders(baseURL: String, apiKey: String?) -> [RemoteHTTPHeader] {
+        var headers = [RemoteHTTPHeader(name: "Accept", value: "application/json")]
+        if isAnthropicAPIBaseURL(baseURL) {
+            if let apiKey = apiKey?.nilIfBlank {
+                headers.append(RemoteHTTPHeader(name: "x-api-key", value: apiKey))
+            }
+            headers.append(RemoteHTTPHeader(name: "anthropic-version", value: "2023-06-01"))
+        } else {
+            headers.append(RemoteHTTPHeader(name: "X-Title", value: "ZenCODE"))
+            if let apiKey = apiKey?.nilIfBlank {
+                headers.append(RemoteHTTPHeader(name: "Authorization", value: "Bearer \(apiKey)"))
+            }
         }
         return headers
     }

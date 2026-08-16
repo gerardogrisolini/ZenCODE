@@ -370,27 +370,84 @@ extension ZenCODESetupRunner {
     }
 
     static func promptProviderKind() throws -> SetupProviderKind {
-        try promptMenuChoice(
-            title: "Provider",
+        let family = try promptMenuChoice(
+            title: "Provider family",
             items: [
                 TerminalCheckboxMenuItem(
-                    value: .remoteAPI,
-                    title: "OpenAI-compatible",
-                    detail: "OpenRouter, local servers, or any /v1 compatible provider"
+                    value: SetupProviderFamily.openAI,
+                    title: "OpenAI",
+                    detail: "OpenAI API or ChatGPT Subscription"
                 ),
                 TerminalCheckboxMenuItem(
-                    value: .chatGPTSubscription,
-                    title: "ChatGPT Subscription",
-                    detail: "sign in through the browser"
+                    value: SetupProviderFamily.anthropic,
+                    title: "Anthropic",
+                    detail: "Anthropic API status or Claude Subscription"
                 ),
                 TerminalCheckboxMenuItem(
-                    value: .anthropicSubscription,
-                    title: "Claude Subscription",
-                    detail: "sign in through the browser"
+                    value: SetupProviderFamily.otherAPI,
+                    title: "Other API providers",
+                    detail: "hosted presets and advanced Custom setup"
                 )
             ],
-            selected: .remoteAPI
+            selected: .openAI
         )
+
+        switch family {
+        case .openAI:
+            return try promptMenuChoice(
+                title: "OpenAI",
+                items: [
+                    TerminalCheckboxMenuItem(
+                        value: SetupProviderKind.remoteAPI(.openAIAPI),
+                        title: SetupProviderPreset.openAIAPI.title,
+                        detail: "API key; OpenAI Responses protocol"
+                    ),
+                    TerminalCheckboxMenuItem(
+                        value: SetupProviderKind.chatGPTSubscription,
+                        title: "ChatGPT Subscription",
+                        detail: "browser sign-in; separate credentials and provider UUID"
+                    )
+                ],
+                selected: .remoteAPI(.openAIAPI)
+            )
+        case .anthropic:
+            let option = try promptMenuChoice(
+                title: "Anthropic",
+                items: [
+                    TerminalCheckboxMenuItem(
+                        value: SetupAnthropicProviderOption.api,
+                        title: "Anthropic API",
+                        detail: "API key; native Messages protocol"
+                    ),
+                    TerminalCheckboxMenuItem(
+                        value: SetupAnthropicProviderOption.subscription,
+                        title: "Claude Subscription",
+                        detail: "browser sign-in; separate credentials and provider UUID"
+                    )
+                ],
+                selected: .api
+            )
+            return option == .api ? .remoteAPI(.anthropicAPI) : .anthropicSubscription
+        case .otherAPI:
+            let presets = SetupProviderPreset.allCases.filter {
+                $0 != .openAIAPI && $0 != .anthropicAPI
+            }
+            let items = presets.map { preset in
+                TerminalCheckboxMenuItem(
+                    value: preset,
+                    title: preset.title,
+                    detail: preset.isAdvanced
+                        ? "advanced OpenAI-compatible setup; optional auth, fail-closed protocol selection"
+                        : "hosted API preset; API key required"
+                )
+            }
+            let preset = try promptMenuChoice(
+                title: "API provider preset",
+                items: items,
+                selected: .openRouter
+            )
+            return .remoteAPI(preset)
+        }
     }
 
 

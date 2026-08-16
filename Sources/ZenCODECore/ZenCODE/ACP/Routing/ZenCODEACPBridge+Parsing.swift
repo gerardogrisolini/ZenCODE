@@ -26,7 +26,7 @@ extension ZenCODEACPBridge {
         }
     }
 
-    public func runtimeHistory(from value: Any?) -> [AgentRuntimeMessage] {
+    public static func runtimeHistory(from value: Any?) -> [AgentRuntimeMessage] {
         guard let messages = value as? [[String: Any]] else {
             return []
         }
@@ -44,11 +44,22 @@ extension ZenCODEACPBridge {
                 .nilIfBlank
             let thinkingBlocksJSON = RemoteGenerationClient.stringValue(object["thinking_blocks"])?
                 .nilIfBlank
+            let anthropicContentBlocksJSON: String?
+            if let serialized = RemoteGenerationClient
+                .stringValue(object["anthropic_content_blocks"])?.nilIfBlank {
+                anthropicContentBlocksJSON = serialized
+            } else if let blocks = AnthropicMessagesWireCodec
+                .decodedBlocks(object["anthropic_content_blocks"]), !blocks.isEmpty {
+                anthropicContentBlocksJSON = AnthropicMessagesWireCodec.jsonString(blocks)
+            } else {
+                anthropicContentBlocksJSON = nil
+            }
             guard let role = AgentRuntimeMessage.Role(rawValue: rawRole),
                   !content.isEmpty
                     || reasoningContent != nil
                     || reasoningItemsJSON != nil
                     || thinkingBlocksJSON != nil
+                    || anthropicContentBlocksJSON != nil
                     || !toolCalls.isEmpty else {
                 return nil
             }
@@ -58,11 +69,13 @@ extension ZenCODEACPBridge {
                 reasoningContent: reasoningContent,
                 reasoningItemsJSON: reasoningItemsJSON,
                 thinkingBlocksJSON: thinkingBlocksJSON,
+                anthropicContentBlocksJSON: anthropicContentBlocksJSON,
                 providerResponseID: RemoteGenerationClient.stringValue(object["response_id"])?.nilIfBlank
                     ?? RemoteGenerationClient.stringValue(object["provider_response_id"])?.nilIfBlank,
                 toolCalls: toolCalls,
                 toolCallID: RemoteGenerationClient.stringValue(object["tool_call_id"])?.nilIfBlank,
-                toolName: RemoteGenerationClient.stringValue(object["name"])?.nilIfBlank
+                toolName: RemoteGenerationClient.stringValue(object["name"])?.nilIfBlank,
+                toolResultIsError: object["is_error"] as? Bool
             )
         }
     }

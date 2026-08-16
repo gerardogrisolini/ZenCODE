@@ -71,11 +71,16 @@ public enum AgentDelegationCatalogSnapshot: Sendable {
             name: provider.name,
             baseURL: provider.baseURL,
             modelID: rawModelID,
-            chatEndpoint: provider.chatEndpoint
+            chatEndpoint: provider.chatEndpoint,
+            providerProfileID: provider.providerProfileID,
+            protocolProfileID: provider.protocolProfileID,
+            authPolicy: provider.authPolicy
         )
-        let apiKey = manifest.remoteAPIKeysByProviderID[
-            provider.id.uuidString.lowercased()
-        ]?.nilIfBlank
+        let apiKey = provider.authPolicy.effectiveAPIKey(
+            manifest.remoteAPIKeysByProviderID[
+                provider.id.uuidString.lowercased()
+            ]
+        )
         let configuredContextWindowLimit = resolvedProvider.isChatGPTSubscriptionProvider
             ? CodexAgentModel.contextWindowTokenLimit(forLLMID: model.id)
             : model.configuredContextWindowLimit
@@ -111,9 +116,11 @@ public enum AgentDelegationCatalogSnapshot: Sendable {
             return nil
         }
 
-        let apiKey = manifest.remoteAPIKeysByProviderID[
-            provider.id.uuidString.lowercased()
-        ]?.nilIfBlank
+        let apiKey = provider.authPolicy.effectiveAPIKey(
+            manifest.remoteAPIKeysByProviderID[
+                provider.id.uuidString.lowercased()
+            ]
+        )
         if provider.requiresAPIKey, apiKey == nil {
             return "the configured provider has no API key"
         }

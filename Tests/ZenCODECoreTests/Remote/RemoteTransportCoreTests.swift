@@ -236,6 +236,7 @@ struct RemoteTransportCoreTests {
                         RemoteHTTPHeader(name: "Authorization", value: "Bearer secret"),
                         RemoteHTTPHeader(name: "Cookie", value: "session=secret"),
                         RemoteHTTPHeader(name: "Proxy-Authorization", value: "Basic secret"),
+                        RemoteHTTPHeader(name: "X-API-Key", value: "key-secret"),
                         RemoteHTTPHeader(name: "X-Retained", value: "yes")
                     ]
                 )
@@ -246,6 +247,7 @@ struct RemoteTransportCoreTests {
             #expect(headers["authorization"].isEmpty)
             #expect(headers["cookie"].isEmpty)
             #expect(headers["proxy-authorization"].isEmpty)
+            #expect(headers["x-api-key"].isEmpty)
             #expect(headers.first(name: "x-retained") == "yes")
         } catch {
             await transport.shutdownIgnoringError()
@@ -257,6 +259,24 @@ struct RemoteTransportCoreTests {
         try await transport.shutdown()
         await origin.shutdown()
         await destination.shutdown()
+    }
+
+    @Test("HTTP same-origin redirects retain x-api-key case-insensitively")
+    func httpRedirectRetainsAPIKeyWithinSameOrigin() throws {
+        let source = try #require(URL(string: "https://api.anthropic.com/v1/messages"))
+        let destination = try #require(URL(string: "https://API.ANTHROPIC.COM/v1/messages/next"))
+        let request = RemoteHTTPStreamingRequest(
+            url: source,
+            headers: [RemoteHTTPHeader(name: "X-API-Key", value: "same-origin-key")]
+        )
+
+        let redirect = try RemoteTransportCore.redirectRequest(
+            request,
+            to: destination,
+            status: 302
+        )
+
+        #expect(RemoteHTTPHeaders(redirect.headers).firstValue(for: "x-api-key") == "same-origin-key")
     }
 
     @Test("Collected HTTP responses enforce a global body budget")

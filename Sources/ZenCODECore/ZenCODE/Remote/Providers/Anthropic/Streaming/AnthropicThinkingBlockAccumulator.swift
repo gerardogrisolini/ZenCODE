@@ -18,6 +18,7 @@ struct AnthropicThinkingBlockAccumulator {
         var thinking: String
         var signature: String
         var data: String?
+        var raw: [String: Any]
     }
 
     private var partialsByIndex: [Int: PartialThinkingBlock] = [:]
@@ -35,14 +36,16 @@ struct AnthropicThinkingBlockAccumulator {
                 type: "thinking",
                 thinking: AnthropicSubscriptionGenerationClient.stringValue(contentBlock["thinking"]) ?? "",
                 signature: AnthropicSubscriptionGenerationClient.stringValue(contentBlock["signature"]) ?? "",
-                data: nil
+                data: nil,
+                raw: contentBlock
             )
         case "redacted_thinking":
             partialsByIndex[index] = PartialThinkingBlock(
                 type: "redacted_thinking",
                 thinking: "",
                 signature: "",
-                data: AnthropicSubscriptionGenerationClient.stringValue(contentBlock["data"])
+                data: AnthropicSubscriptionGenerationClient.stringValue(contentBlock["data"]),
+                raw: contentBlock
             )
         default:
             break
@@ -62,7 +65,8 @@ struct AnthropicThinkingBlockAccumulator {
                 type: "thinking",
                 thinking: "",
                 signature: "",
-                data: nil
+                data: nil,
+                raw: ["type": "thinking", "thinking": ""]
             )
             partial.thinking.append(text)
             partialsByIndex[index] = partial
@@ -75,7 +79,8 @@ struct AnthropicThinkingBlockAccumulator {
                 type: "thinking",
                 thinking: "",
                 signature: "",
-                data: nil
+                data: nil,
+                raw: ["type": "thinking", "thinking": ""]
             )
             partial.signature.append(signature)
             partialsByIndex[index] = partial
@@ -95,18 +100,19 @@ struct AnthropicThinkingBlockAccumulator {
                 guard let data = partial.data?.nilIfBlank else {
                     return nil
                 }
-                return ["type": "redacted_thinking", "data": data]
+                var block = partial.raw
+                block["data"] = data
+                return block
             }
-            // A signed thinking block requires both the text and the signature;
-            // without the signature Anthropic rejects the replayed block.
-            guard !partial.thinking.isEmpty, !partial.signature.isEmpty else {
+            // Empty displayed thinking is valid when the model supplies a
+            // signature (notably recent display/redaction behavior).
+            guard !partial.signature.isEmpty else {
                 return nil
             }
-            return [
-                "type": "thinking",
-                "thinking": partial.thinking,
-                "signature": partial.signature
-            ]
+            var block = partial.raw
+            block["thinking"] = partial.thinking
+            block["signature"] = partial.signature
+            return block
         }
     }
 }

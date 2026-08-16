@@ -239,7 +239,7 @@ extension AnthropicSubscriptionGenerationClient {
     static func validThinkingBlock(from block: [String: Any]) -> [String: Any]? {
         switch stringValue(block["type"])?.lowercased() {
         case "thinking":
-            guard let thinking = stringValue(block["thinking"])?.nilIfBlank,
+            guard let thinking = stringValue(block["thinking"]),
                   let signature = stringValue(block["signature"])?.nilIfBlank else {
                 return nil
             }
@@ -295,11 +295,15 @@ extension AnthropicSubscriptionGenerationClient {
         } else {
             content = userContentBlocks(from: message["content"])
         }
-        return [
+        var block: [String: Any] = [
             "type": "tool_result",
             "tool_use_id": toolUseID,
             "content": content
         ]
+        if (message["is_error"] as? Bool) == true {
+            block["is_error"] = true
+        }
+        return block
     }
 
     static func anthropicImageBlock(fromDataURL dataURL: String) -> [String: Any]? {

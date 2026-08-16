@@ -25,7 +25,10 @@ extension ZenCODESetupRunner {
                 id: input.id,
                 name: input.name,
                 baseURL: input.baseURL,
-                chatEndpoint: input.chatEndpoint
+                chatEndpoint: input.chatEndpoint,
+                providerProfileID: input.providerProfileID,
+                protocolProfileID: input.protocolProfileID,
+                authPolicy: input.authPolicy
             )
         }
         let models = providerInputs.flatMap(\.models)
@@ -253,6 +256,9 @@ extension ZenCODESetupRunner {
             name: provider.name,
             baseURL: provider.baseURL,
             chatEndpoint: provider.chatEndpoint,
+            providerProfileID: provider.providerProfileID,
+            protocolProfileID: provider.protocolProfileID,
+            authPolicy: provider.authPolicy,
             apiKey: apiKey,
             models: models,
             chatGPTSubscriptionCredentials: chatGPTSubscriptionCredentials,
@@ -265,15 +271,18 @@ extension ZenCODESetupRunner {
             id: input.id,
             name: input.name,
             baseURL: input.baseURL,
-            chatEndpoint: input.chatEndpoint
+            chatEndpoint: input.chatEndpoint,
+            providerProfileID: input.providerProfileID,
+            protocolProfileID: input.protocolProfileID,
+            authPolicy: input.authPolicy
         )
     }
 
 
     static func readProvider() async throws -> SetupProviderInput {
         switch try promptProviderKind() {
-        case .remoteAPI:
-            return try await readRemoteAPIProvider()
+        case let .remoteAPI(preset):
+            return try await readRemoteAPIProvider(preset: preset)
         case .chatGPTSubscription:
             return try await readChatGPTSubscriptionProvider()
         case .anthropicSubscription:
@@ -282,28 +291,58 @@ extension ZenCODESetupRunner {
     }
 
     static func readRemoteAPIProvider(
+        preset: SetupProviderPreset = .custom,
         existingProvider: AgentSettingsProviderManifest? = nil,
         existingModels: [AgentSettingsModelManifest] = [],
         existingAPIKey: String? = nil
     ) async throws -> SetupProviderInput {
-        AgentOutput.standardError.writeString("\nProvider OpenAI-compatible\n")
+        AgentOutput.standardError.writeString("\n\(preset.title)\(preset.isAdvanced ? " (advanced)" : "")\n")
         let id = existingProvider?.id ?? UUID()
-        let name = try promptString(
-            "Provider name",
-            defaultValue: existingProvider?.name ?? AgentRemoteProvider.defaultOpenRouterName,
-            allowEmpty: false
+        let name: String
+        let baseURL: String
+        let chatEndpoint: AgentRemoteChatEndpoint
+        let providerProfileID: AgentProviderProfileID
+        let protocolProfileID: AgentProtocolProfileID
+        let authPolicy: AgentProviderAuthPolicy
+        if preset.isAdvanced || existingProvider != nil {
+            name = try promptString(
+                "Provider name",
+                defaultValue: existingProvider?.name ?? preset.title,
+                allowEmpty: false
+            )
+            baseURL = try promptString(
+                "Base URL",
+                defaultValue: existingProvider?.baseURL ?? preset.baseURL,
+                allowEmpty: false,
+                help: "Advanced: enter an absolute OpenAI-compatible API root. Unknown servers fail closed unless their protocol and authentication policy are configured here."
+            )
+            chatEndpoint = try promptEndpoint(
+                defaultValue: existingProvider?.chatEndpoint ?? preset.protocolProfileID.chatEndpoint ?? .chatCompletions
+            )
+            providerProfileID = existingProvider?.providerProfileID ?? preset.providerProfileID
+            protocolProfileID = reconciledProtocolProfileID(
+                selectedEndpoint: chatEndpoint,
+                preferred: existingProvider?.protocolProfileID ?? preset.protocolProfileID,
+                previousEndpoint: existingProvider?.chatEndpoint
+            )
+            authPolicy = existingProvider?.authPolicy ?? preset.authPolicy
+        } else {
+            name = preset.title
+            baseURL = preset.baseURL
+            chatEndpoint = preset.protocolProfileID.chatEndpoint ?? .chatCompletions
+            providerProfileID = preset.providerProfileID
+            protocolProfileID = preset.protocolProfileID
+            authPolicy = preset.authPolicy
+        }
+        let apiKey = try promptAPIKey(
+            existingAPIKey: existingAPIKey,
+            providerName: name,
+            required: authPolicy.requiresAPIKey
         )
-        let baseURL = try promptString(
-            "Base URL",
-            defaultValue: existingProvider?.baseURL ?? AgentRemoteProvider.defaultOpenRouterBaseURL,
-            allowEmpty: false,
-            help: "The root API URL for your provider. Examples: https://openrouter.ai/api/v1 or http://127.0.0.1:8080/v1 for a local server."
-        )
-        let chatEndpoint = try promptEndpoint(
-            defaultValue: existingProvider?.chatEndpoint ?? .chatCompletions
-        )
-        let apiKey = try promptAPIKey(existingAPIKey: existingAPIKey, providerName: name)
 
+        // Suppress a residual persisted key for every setup-time catalog call,
+        // while preserving that key in the provider input below.
+        let effectiveAPIKey = authPolicy.effectiveAPIKey(apiKey)
         let models: [AgentSettingsModelManifest]
         if existingModels.isEmpty {
             models = try await readModels(
@@ -311,7 +350,7 @@ extension ZenCODESetupRunner {
                 providerName: name,
                 baseURL: baseURL,
                 chatEndpoint: chatEndpoint,
-                apiKey: apiKey.nilIfBlank
+                apiKey: effectiveAPIKey
             )
         } else {
             models = try await reconfigureModels(
@@ -319,7 +358,7 @@ extension ZenCODESetupRunner {
                 providerName: name,
                 baseURL: baseURL,
                 chatEndpoint: chatEndpoint,
-                apiKey: apiKey.nilIfBlank,
+                apiKey: effectiveAPIKey,
                 existingModels: existingModels
             )
         }
@@ -328,13 +367,28 @@ extension ZenCODESetupRunner {
             throw ZenCODESetupError.noModelsConfigured
         }
 
+        let profiledModels = models.map {
+            modelWithProvider(
+                $0,
+                providerID: id,
+                providerName: name,
+                baseURL: baseURL,
+                chatEndpoint: chatEndpoint,
+                providerProfileID: providerProfileID,
+                protocolProfileID: protocolProfileID,
+                authPolicy: authPolicy
+            )
+        }
         return SetupProviderInput(
             id: id,
             name: name,
             baseURL: baseURL,
             chatEndpoint: chatEndpoint,
+            providerProfileID: providerProfileID,
+            protocolProfileID: protocolProfileID,
+            authPolicy: authPolicy,
             apiKey: apiKey.nilIfBlank,
-            models: models
+            models: profiledModels
         )
     }
 
@@ -412,15 +466,44 @@ extension ZenCODESetupRunner {
         )
     }
 
+    /// Reconciles the persisted (or preset) protocol profile with the chat
+    /// endpoint the operator just chose. Profiles whose native endpoint
+    /// disagrees with the selection are remapped to the OpenAI-protocol
+    /// profile for that endpoint, because `AgentRemoteProvider` lets the
+    /// protocol profile override the persisted `chatEndpoint` at load time:
+    /// keeping a stale profile would silently undo the operator's choice.
+    /// Endpoint-less profiles (e.g. `anthropic.messages`) are remapped as
+    /// well, so a reconfigured provider always dispatches on the endpoint it
+    /// was actually reconfigured with.
+    static func reconciledProtocolProfileID(
+        selectedEndpoint: AgentRemoteChatEndpoint,
+        preferred: AgentProtocolProfileID,
+        previousEndpoint: AgentRemoteChatEndpoint? = nil
+    ) -> AgentProtocolProfileID {
+        // Re-entering setup without changing the endpoint is not an explicit
+        // protocol change. In particular, native endpoint-less dialects such as
+        // anthropic.messages must survive a configuration round trip.
+        if previousEndpoint == selectedEndpoint {
+            return preferred
+        }
+        guard preferred.chatEndpoint != selectedEndpoint else {
+            return preferred
+        }
+        return selectedEndpoint == .responses ? .openAIResponses : .openAIChatCompletions
+    }
+
     static func promptAPIKey(
         existingAPIKey: String?,
-        providerName: String
+        providerName: String,
+        required: Bool = false
     ) throws -> String {
         guard existingAPIKey?.nilIfBlank != nil else {
             return try promptSecret(
-                "API key (optional)",
-                allowEmpty: true,
-                help: "Leave empty only for local providers or servers that do not require authentication. Hosted providers usually require an API key."
+                required ? "API key" : "API key (optional)",
+                allowEmpty: !required,
+                help: required
+                    ? "This hosted provider requires an API key."
+                    : "Leave empty only for local providers or servers that do not require authentication."
             )
         }
 
@@ -431,10 +514,35 @@ extension ZenCODESetupRunner {
             return existingAPIKey ?? ""
         }
 
+        // A provider whose authentication policy requires an API key must
+        // never be left with a blank key: `promptSecret` re-prompts until a
+        // non-empty value is provided, so an invalid configuration cannot be
+        // persisted through this path. Optional keys may still be cleared.
+        let prompt = replacementAPIKeyPromptContract(required: required)
         return try promptSecret(
-            "New API key (empty clears it)",
-            allowEmpty: true
+            prompt.label,
+            allowEmpty: prompt.allowEmpty,
+            help: prompt.help
         )
+    }
+
+    /// The terminal contract used when replacing a stored API key, kept pure
+    /// so the "required keys cannot be cleared" rule stays regression-tested
+    /// without driving the interactive secret prompt.
+    static func replacementAPIKeyPromptContract(
+        required: Bool
+    ) -> (label: String, allowEmpty: Bool, help: String?) {
+        required
+            ? (
+                "New API key",
+                false,
+                "This hosted provider requires an API key, so the stored key cannot be cleared; enter a replacement value."
+            )
+            : (
+                "New API key (empty clears it)",
+                true,
+                "Leave empty to clear the stored key."
+            )
     }
 
 }

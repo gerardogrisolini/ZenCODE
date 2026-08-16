@@ -855,9 +855,11 @@ enum MemoryEmbedding {
               AgentRemoteProvider.isOpenRouterBaseURL(endpoint.absoluteString) else {
             return nil
         }
-        return manifest.remoteAPIKeysByProviderID[
-            providerID.uuidString.lowercased()
-        ]
+        return provider.authPolicy.effectiveAPIKey(
+            manifest.remoteAPIKeysByProviderID[
+                providerID.uuidString.lowercased()
+            ]
+        )
     }
 
     private static func providerFromEnvironment(

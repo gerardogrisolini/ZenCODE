@@ -10,6 +10,247 @@ import Testing
 @Suite("Persisted contract compatibility")
 struct PersistedContractCompatibilityTests {
     @Test
+    func legacyProviderProfilesMigrateInMemoryWithoutUsingDisplayName() throws {
+        let openRouter = try decode(
+            AgentSettingsProviderManifest.self,
+            from: #"""
+            {
+              "id": "11111111-1111-1111-1111-111111111111",
+              "name": "ChatGPT Subscription",
+              "baseURL": "https://openrouter.ai/api/v1/",
+              "chatEndpoint": "chat_completions"
+            }
+            """#
+        )
+        let customResponses = try decode(
+            AgentSettingsProviderManifest.self,
+            from: #"""
+            {
+              "id": "22222222-2222-2222-2222-222222222222",
+              "name": "OpenAI",
+              "baseURL": "https://example.test/v1",
+              "chatEndpoint": "responses"
+            }
+            """#
+        )
+
+        #expect(openRouter.providerProfileID == .openRouter)
+        #expect(openRouter.protocolProfileID == .openAIChatCompletions)
+        #expect(openRouter.authPolicy == .apiKeyRequired)
+        #expect(customResponses.providerProfileID == .custom)
+        #expect(customResponses.protocolProfileID == .openAIResponses)
+        #expect(customResponses.authPolicy == .apiKeyOptional)
+    }
+
+    @Test
+    func legacyHostedProvidersMigrateToNominalProfilesWithoutCustomFallback() throws {
+        func legacy(_ json: String) throws -> AgentSettingsProviderManifest {
+            try decode(AgentSettingsProviderManifest.self, from: json)
+        }
+
+        let zaiAPI = try legacy(#"""
+        {
+          "id": "aaaaaaaa-1111-1111-1111-111111111111",
+          "name": "My own label",
+          "baseURL": "https://api.z.ai/api/paas/v4",
+          "chatEndpoint": "chat_completions"
+        }
+        """#)
+        let zaiCodingPlan = try legacy(#"""
+        {
+          "id": "aaaaaaaa-2222-2222-2222-222222222222",
+          "name": "Renamed plan",
+          "baseURL": "https://api.z.ai/api/coding/paas/v4",
+          "chatEndpoint": "chat_completions"
+        }
+        """#)
+        let gemini = try legacy(#"""
+        {
+          "id": "aaaaaaaa-3333-3333-3333-333333333333",
+          "name": "Google",
+          "baseURL": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "chatEndpoint": "chat_completions"
+        }
+        """#)
+        let deepSeek = try legacy(#"""
+        {
+          "id": "aaaaaaaa-4444-4444-4444-444444444444",
+          "name": "reasoning",
+          "baseURL": "https://api.deepseek.com/v1",
+          "chatEndpoint": "chat_completions"
+        }
+        """#)
+        let kimiCN = try legacy(#"""
+        {
+          "id": "aaaaaaaa-5555-5555-5555-555555555555",
+          "name": "moonshot",
+          "baseURL": "https://api.moonshot.cn/v1",
+          "chatEndpoint": "chat_completions"
+        }
+        """#)
+
+        #expect(zaiAPI.providerProfileID == .zAI)
+        #expect(zaiAPI.protocolProfileID == .openAIChatCompletions)
+        #expect(zaiAPI.authPolicy == .apiKeyRequired)
+        #expect(zaiCodingPlan.providerProfileID == .zAI)
+        #expect(zaiCodingPlan.protocolProfileID == .zaiCodingPlan)
+        #expect(zaiCodingPlan.authPolicy == .apiKeyRequired)
+        #expect(gemini.providerProfileID == .googleGemini)
+        #expect(gemini.protocolProfileID == .openAIChatCompletions)
+        #expect(gemini.authPolicy == .apiKeyRequired)
+        #expect(deepSeek.providerProfileID == .deepSeek)
+        #expect(deepSeek.protocolProfileID == .openAIChatCompletions)
+        #expect(deepSeek.authPolicy == .apiKeyRequired)
+        #expect(kimiCN.providerProfileID == .moonshot)
+        #expect(kimiCN.protocolProfileID == .openAIChatCompletions)
+        #expect(kimiCN.authPolicy == .apiKeyRequired)
+
+        let displayNameTrap = try legacy(#"""
+        {
+          "id": "aaaaaaaa-6666-6666-6666-666666666666",
+          "name": "Z.ai Coding Plan Kimi DeepSeek Gemini",
+          "baseURL": "https://unrelated.example/v1",
+          "chatEndpoint": "chat_completions"
+        }
+        """#)
+        #expect(displayNameTrap.providerProfileID == .custom)
+        #expect(displayNameTrap.protocolProfileID == .openAIChatCompletions)
+        #expect(displayNameTrap.authPolicy == .apiKeyOptional)
+
+        #expect(throws: DecodingError.self) {
+            try decode(
+                AgentSettingsProviderManifest.self,
+                from: #"""
+                {
+                  "id": "aaaaaaaa-7777-7777-7777-777777777777",
+                  "name": "Invalid",
+                  "baseURL": "https://api.z.ai/api/coding/paas/v4",
+                  "chatEndpoint": "chat_completions",
+                  "providerProfileID": "moonshot",
+                  "protocolProfileID": "zai.coding-plan",
+                  "authPolicy": "api_key_required"
+                }
+                """#
+            )
+        }
+    }
+
+    // Regression: a legacy api.openai.com provider migrates with a required
+    // API key instead of the permissive optional policy.
+    @Test
+    func legacyOpenAIBaseURLMigratesToAPIKeyRequiredProfile() throws {
+        let openAIChat = try decode(
+            AgentSettingsProviderManifest.self,
+            from: #"""
+            {
+              "id": "bbbbbbbb-1111-1111-1111-111111111111",
+              "name": "Whatever label",
+              "baseURL": "https://api.openai.com/v1",
+              "chatEndpoint": "chat_completions"
+            }
+            """#
+        )
+        let openAIResponses = try decode(
+            AgentSettingsProviderManifest.self,
+            from: #"""
+            {
+              "id": "bbbbbbbb-2222-2222-2222-222222222222",
+              "name": "OpenAI-ish",
+              "baseURL": "https://api.openai.com/v1",
+              "chatEndpoint": "responses"
+            }
+            """#
+        )
+
+        #expect(openAIChat.providerProfileID == .openAI)
+        #expect(openAIChat.protocolProfileID == .openAIChatCompletions)
+        #expect(openAIChat.authPolicy == .apiKeyRequired)
+        #expect(openAIChat.authPolicy.requiresAPIKey)
+        #expect(openAIResponses.providerProfileID == .openAI)
+        #expect(openAIResponses.protocolProfileID == .openAIResponses)
+        #expect(openAIResponses.authPolicy == .apiKeyRequired)
+    }
+
+    @Test
+    func legacySubscriptionIdentityAndDispatchProfilesArePreserved() throws {
+        let chatGPT = try decode(
+            AgentSettingsProviderManifest.self,
+            from: #"""
+            {
+              "id": "00000000-0000-0000-0000-000000000003",
+              "name": "Renamed connection",
+              "baseURL": "https://irrelevant.example/v1",
+              "chatEndpoint": "chat_completions"
+            }
+            """#
+        )
+        let claude = try decode(
+            AgentSettingsProviderManifest.self,
+            from: #"""
+            {
+              "id": "44444444-4444-4444-4444-444444444444",
+              "name": "Renamed connection",
+              "baseURL": "anthropic://subscription",
+              "chatEndpoint": "responses"
+            }
+            """#
+        )
+
+        #expect(chatGPT.id == AgentRemoteProvider.chatGPTSubscriptionProviderID)
+        #expect(chatGPT.baseURL == "https://irrelevant.example/v1")
+        #expect(chatGPT.protocolProfileID == .openAIChatGPTSubscription)
+        #expect(chatGPT.authPolicy == .chatGPTSubscription)
+        #expect(chatGPT.remoteProvider(modelID: "chatgpt:test").isChatGPTSubscriptionProvider)
+        #expect(claude.id.uuidString == "44444444-4444-4444-4444-444444444444")
+        #expect(claude.baseURL == AgentRemoteProvider.anthropicSubscriptionBaseURL)
+        #expect(claude.protocolProfileID == .anthropicClaudeSubscription)
+        #expect(claude.authPolicy == .anthropicSubscription)
+        #expect(claude.remoteProvider(modelID: "claude:test").isAnthropicSubscriptionProvider)
+    }
+
+    @Test
+    func providerProfilesRoundTripInV13AndInvalidCombinationsFailClosed() throws {
+        let provider = AgentSettingsProviderManifest(
+            id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            name: "Local responses",
+            baseURL: "http://127.0.0.1:8080/v1",
+            chatEndpoint: .responses,
+            providerProfileID: .custom,
+            protocolProfileID: .openAIResponses,
+            authPolicy: .noAuthentication
+        )
+        let manifest = AgentSettingsManifest(providers: [provider], models: [])
+        let encoded = try JSONEncoder().encode(manifest)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let encodedProviders = try #require(object["providers"] as? [[String: Any]])
+        let encodedProvider = try #require(encodedProviders.first)
+        let reloaded = try JSONDecoder().decode(AgentSettingsManifest.self, from: encoded)
+
+        #expect(object["version"] as? Int == 13)
+        #expect(encodedProvider["providerProfileID"] as? String == "custom")
+        #expect(encodedProvider["protocolProfileID"] as? String == "openai.responses")
+        #expect(encodedProvider["authPolicy"] as? String == "none")
+        #expect(reloaded.providers.first == provider)
+
+        #expect(throws: DecodingError.self) {
+            try decode(
+                AgentSettingsProviderManifest.self,
+                from: #"""
+                {
+                  "id": "33333333-3333-3333-3333-333333333333",
+                  "name": "Invalid",
+                  "baseURL": "https://example.test/v1",
+                  "chatEndpoint": "responses",
+                  "providerProfileID": "custom",
+                  "protocolProfileID": "openai.chatgpt-subscription",
+                  "authPolicy": "api_key_optional"
+                }
+                """#
+            )
+        }
+    }
+
+    @Test
     func settingsProfileAndPermissionsFixturesRemainReadable() throws {
         let settings = try decode(
             AgentSettingsManifest.self,
@@ -76,8 +317,12 @@ struct PersistedContractCompatibilityTests {
         )
 
         #expect(settings.selectedModelID == "example/model")
+        #expect(settings.version == 10)
         #expect(settings.selectedThinkingSelection == .high)
         #expect(settings.providers.first?.baseURL == "https://example.test/v1")
+        #expect(settings.providers.first?.providerProfileID == .custom)
+        #expect(settings.providers.first?.protocolProfileID == .openAIResponses)
+        #expect(settings.providers.first?.authPolicy == .apiKeyOptional)
         #expect(settings.models.first?.configuredContextWindowLimit == 32_768)
         #expect(settings.models.first?.defaultThinkingSelection == .high)
         #expect(settings.remoteAPIKeysByProviderID.count == 1)

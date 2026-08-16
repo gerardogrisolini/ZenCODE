@@ -14,23 +14,41 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
         case name
         case baseURL
         case chatEndpoint
+        case providerProfileID
+        case protocolProfileID
+        case authPolicy
     }
 
     public let id: UUID
     public let name: String
     public let baseURL: String
     public let chatEndpoint: AgentRemoteChatEndpoint
+    public let providerProfileID: AgentProviderProfileID
+    public let protocolProfileID: AgentProtocolProfileID
+    public let authPolicy: AgentProviderAuthPolicy
 
     public init(
         id: UUID,
         name: String,
         baseURL: String,
-        chatEndpoint: AgentRemoteChatEndpoint
+        chatEndpoint: AgentRemoteChatEndpoint,
+        providerProfileID: AgentProviderProfileID? = nil,
+        protocolProfileID: AgentProtocolProfileID? = nil,
+        authPolicy: AgentProviderAuthPolicy? = nil
     ) {
         self.id = id
         self.name = AgentRemoteProvider.normalizedName(name)
         self.baseURL = AgentRemoteProvider.normalizedBaseURL(baseURL)
-        self.chatEndpoint = chatEndpoint
+        let legacyProfiles = AgentRemoteProvider.legacyProfiles(
+            id: id,
+            baseURL: baseURL,
+            chatEndpoint: chatEndpoint
+        )
+        self.providerProfileID = providerProfileID ?? legacyProfiles.provider
+        let resolvedProtocolProfileID = protocolProfileID ?? legacyProfiles.protocolProfile
+        self.protocolProfileID = resolvedProtocolProfileID
+        self.authPolicy = authPolicy ?? legacyProfiles.auth
+        self.chatEndpoint = resolvedProtocolProfileID.chatEndpoint ?? chatEndpoint
     }
 
     public init(provider: AgentRemoteProvider) {
@@ -38,7 +56,10 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
             id: provider.id,
             name: provider.name,
             baseURL: provider.baseURL,
-            chatEndpoint: provider.chatEndpoint
+            chatEndpoint: provider.chatEndpoint,
+            providerProfileID: provider.providerProfileID,
+            protocolProfileID: provider.protocolProfileID,
+            authPolicy: provider.authPolicy
         )
     }
 
@@ -53,8 +74,18 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
             chatEndpoint: try container.decodeIfPresent(
                 AgentRemoteChatEndpoint.self,
                 forKey: .chatEndpoint
-            ) ?? .chatCompletions
+            ) ?? .chatCompletions,
+            providerProfileID: try container.decodeIfPresent(AgentProviderProfileID.self, forKey: .providerProfileID),
+            protocolProfileID: try container.decodeIfPresent(AgentProtocolProfileID.self, forKey: .protocolProfileID),
+            authPolicy: try container.decodeIfPresent(AgentProviderAuthPolicy.self, forKey: .authPolicy)
         )
+        guard remoteProvider(modelID: "validation").hasCompatibleProfiles else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .protocolProfileID,
+                in: container,
+                debugDescription: "The provider, protocol and authentication profiles are incompatible."
+            )
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -63,6 +94,9 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
         try container.encode(name, forKey: .name)
         try container.encode(baseURL, forKey: .baseURL)
         try container.encode(chatEndpoint, forKey: .chatEndpoint)
+        try container.encode(providerProfileID, forKey: .providerProfileID)
+        try container.encode(protocolProfileID, forKey: .protocolProfileID)
+        try container.encode(authPolicy, forKey: .authPolicy)
     }
 
     public var displayTitle: String {
@@ -75,7 +109,10 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
             name: name,
             baseURL: baseURL,
             modelID: modelID,
-            chatEndpoint: chatEndpoint
+            chatEndpoint: chatEndpoint,
+            providerProfileID: providerProfileID,
+            protocolProfileID: protocolProfileID,
+            authPolicy: authPolicy
         )
     }
 }

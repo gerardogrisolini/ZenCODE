@@ -413,3 +413,54 @@ struct RemoteModelCatalogClientTests {
 private enum MetadataCatalogError: Error {
     case unavailable
 }
+
+
+extension RemoteModelCatalogClientTests {
+    @Test
+    func authPolicyGatesCatalogAuthorizationWithoutDiscardingAPIKey() throws {
+        let residualKey = "residual-secret"
+        let noAuthRequest = try RemoteModelCatalogClient().modelsRequest(
+            baseURL: "https://catalog.example.test/v1",
+            apiKey: AgentProviderAuthPolicy.noAuthentication.effectiveAPIKey(residualKey)
+        )
+        #expect(
+            RemoteHTTPHeaders(noAuthRequest.headers).firstValue(for: "Authorization") == nil
+        )
+
+        for policy in [AgentProviderAuthPolicy.apiKeyOptional, .apiKeyRequired] {
+            let request = try RemoteModelCatalogClient().modelsRequest(
+                baseURL: "https://catalog.example.test/v1",
+                apiKey: policy.effectiveAPIKey(residualKey)
+            )
+            #expect(
+                RemoteHTTPHeaders(request.headers).firstValue(for: "Authorization")
+                    == "Bearer \(residualKey)"
+            )
+        }
+        #expect(residualKey == "residual-secret")
+    }
+
+    @Test
+    func anthropicCatalogDialectRequiresTheExactOfficialHost() throws {
+        let client = RemoteModelCatalogClient()
+        let anthropic = try client.modelsRequest(
+            baseURL: "https://api.anthropic.com/v1",
+            apiKey: "anthropic-key"
+        )
+        let anthropicHeaders = RemoteHTTPHeaders(anthropic.headers)
+        #expect(anthropic.url.absoluteString == "https://api.anthropic.com/v1/models?limit=1000")
+        #expect(anthropicHeaders.firstValue(for: "x-api-key") == "anthropic-key")
+        #expect(anthropicHeaders.firstValue(for: "anthropic-version") == "2023-06-01")
+        #expect(anthropicHeaders.firstValue(for: "Authorization") == nil)
+
+        let custom = try client.modelsRequest(
+            baseURL: "https://catalog.example.test/api.anthropic.com/v1",
+            apiKey: "custom-key"
+        )
+        let customHeaders = RemoteHTTPHeaders(custom.headers)
+        #expect(custom.url.absoluteString == "https://catalog.example.test/api.anthropic.com/v1/models")
+        #expect(customHeaders.firstValue(for: "Authorization") == "Bearer custom-key")
+        #expect(customHeaders.firstValue(for: "x-api-key") == nil)
+        #expect(customHeaders.firstValue(for: "anthropic-version") == nil)
+    }
+}

@@ -103,7 +103,22 @@ public enum AgentThinkingSelection: String, Codable, CaseIterable, Hashable, Ide
 
 }
 
-public enum AgentThinkingPayloadStyle {
+public enum AgentThinkingPayloadStyle: Equatable, Sendable {
+    case none
     case openRouterReasoning
+    /// OpenAI Responses reasoning dialect. Only produced for supported model
+    /// families; `allowed` carries the model-aware effort selections the
+    /// remote model actually accepts (registry-coherent).
+    case openAIResponsesReasoning(allowed: Set<AgentThinkingSelection>)
+    case reasoningEffort(allowed: Set<AgentThinkingSelection>)
+    case thinkingObject(supportsDisable: Bool, keepAll: Bool)
+    /// vLLM chat-template dialect used explicitly by NVIDIA NIM and Modal.
     case chatTemplateKwargs
+    case alwaysOn
+}
+
+public enum AgentChatCompletionsReplayPolicy: Sendable {
+    case stripReasoning
+    case currentToolRound(requiresPlaceholder: Bool)
+    case preserveAllAssistantReasoning
 }

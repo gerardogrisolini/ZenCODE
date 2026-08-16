@@ -56,6 +56,11 @@ extension RemoteGenerationClient {
            let usage = parsedUsage(from: usageObject) {
             events.append(.usage(usage))
         }
+        if let choice = (object["choices"] as? [[String: Any]])?.first,
+           let usageObject = choice["usage"] as? [String: Any],
+           let usage = parsedUsage(from: usageObject) {
+            events.append(.usage(usage))
+        }
         return events
     }
 
@@ -110,6 +115,7 @@ extension RemoteGenerationClient {
         let cachedPromptTokens =
             integerValue(usageObject["cached_prompt_tokens"])
             ?? integerValue(usageObject["cached_input_tokens"])
+            ?? integerValue(usageObject["cached_tokens"])
             ?? anthropicCacheReadInputTokens
             ?? integerValue(usageObject["prompt_tokens_cached"])
             ?? integerValue(usageObject["input_tokens_cached"])
@@ -479,6 +485,12 @@ extension RemoteGenerationClient {
         if let reasoningItemsJSON = streamResult.reasoningItemsJSON?.nilIfBlank {
             message["reasoning_items"] = reasoningItemsJSON
         }
+        if let anthropicContentBlocksJSON = streamResult.anthropicContentBlocksJSON?.nilIfBlank {
+            message["anthropic_content_blocks"] = anthropicContentBlocksJSON
+        }
+        if let thinkingBlocksJSON = streamResult.assistantThinkingBlocksJSON?.nilIfBlank {
+            message["thinking_blocks"] = thinkingBlocksJSON
+        }
         if !streamResult.toolCalls.isEmpty {
             message["tool_calls"] = streamResult.toolCalls.map { toolCall in
                 [
@@ -497,7 +509,8 @@ extension RemoteGenerationClient {
             .isEmpty
         let hasReasoning = streamResult.reasoningText.nilIfBlank != nil
         let hasReasoningItems = streamResult.reasoningItemsJSON?.nilIfBlank != nil
-        if hasContent || hasReasoning || hasReasoningItems || !streamResult.toolCalls.isEmpty {
+        let hasAnthropicBlocks = streamResult.anthropicContentBlocksJSON?.nilIfBlank != nil
+        if hasContent || hasReasoning || hasReasoningItems || hasAnthropicBlocks || !streamResult.toolCalls.isEmpty {
             messages.append(message)
         }
     }

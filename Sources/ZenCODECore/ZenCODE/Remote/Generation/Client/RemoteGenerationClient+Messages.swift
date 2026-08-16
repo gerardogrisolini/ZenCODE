@@ -209,6 +209,10 @@ extension RemoteGenerationClient {
             payload["thinking_blocks"] = thinkingBlocksJSON
         }
         if message.role == .assistant,
+           let anthropicContentBlocksJSON = message.anthropicContentBlocksJSON?.nilIfBlank {
+            payload["anthropic_content_blocks"] = anthropicContentBlocksJSON
+        }
+        if message.role == .assistant,
            let providerResponseID = message.providerResponseID?.nilIfBlank {
             payload["response_id"] = providerResponseID
         }
@@ -218,6 +222,9 @@ extension RemoteGenerationClient {
             }
             if let toolName = message.toolName {
                 payload["name"] = toolName
+            }
+            if message.toolResultIsError == true {
+                payload["is_error"] = true
             }
         }
         guard responseMessagePayloadHasContent(payload) else {
@@ -251,7 +258,7 @@ extension RemoteGenerationClient {
         toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) -> [String: Any] {
-        [
+        var message: [String: Any] = [
             "role": "tool",
             "tool_call_id": toolCall.id,
             "name": toolCall.name,
@@ -260,6 +267,8 @@ extension RemoteGenerationClient {
                 attachments: result.attachments
             )
         ]
+        if result.isFailure { message["is_error"] = true }
+        return message
     }
 
     public static func promptContent(
@@ -277,10 +286,10 @@ extension RemoteGenerationClient {
     /// Strips internal reasoning replay metadata from chat-completions history
     /// messages so the wire payload stays within the OpenAI schema.
     ///
-    /// `reasoning_items`, `thinking_blocks`, and `response_id` are internal
-    /// replay fields for the Responses/Anthropic endpoints; on
-    /// `/chat/completions` providers such as DeepSeek tokenize (and bill) them
-    /// as prompt content. `reasoning_content` is kept only on assistant
+    /// `reasoning_items`, `thinking_blocks`, `anthropic_content_blocks`,
+    /// `is_error`, and response IDs are internal replay fields for the
+    /// Responses/Anthropic endpoints; on `/chat/completions` providers such as
+    /// DeepSeek tokenize (and bill) unsupported fields as prompt content. `reasoning_content` is kept only on assistant
     /// tool-call messages of the current round (after the last user message),
     /// matching the DeepSeek thinking-mode tool-call replay contract; the CoT
     /// of previous rounds must not be re-sent.
@@ -293,6 +302,18 @@ extension RemoteGenerationClient {
         from messages: [[String: Any]],
         requiresReasoningContentPlaceholder: Bool = false
     ) -> [[String: Any]] {
+        chatCompletionsWireHistoryMessages(
+            from: messages,
+            replayPolicy: .currentToolRound(
+                requiresPlaceholder: requiresReasoningContentPlaceholder
+            )
+        )
+    }
+
+    public static func chatCompletionsWireHistoryMessages(
+        from messages: [[String: Any]],
+        replayPolicy: AgentChatCompletionsReplayPolicy
+    ) -> [[String: Any]] {
         let lastUserIndex = messages.lastIndex { message in
             stringValue(message["role"])?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -302,23 +323,41 @@ extension RemoteGenerationClient {
             var message = message
             message.removeValue(forKey: "reasoning_items")
             message.removeValue(forKey: "thinking_blocks")
+            message.removeValue(forKey: "anthropic_content_blocks")
             message.removeValue(forKey: "response_id")
             message.removeValue(forKey: "provider_response_id")
-
-            let isCurrentRound = lastUserIndex.map { index > $0 } ?? false
-            let hasToolCalls = !((message["tool_calls"] as? [[String: Any]])?.isEmpty ?? true)
-            if !(isCurrentRound && hasToolCalls) {
-                message.removeValue(forKey: "reasoning_content")
-            }
+            // `is_error` is internal replay metadata for Anthropic's
+            // `tool_result` block. OpenAI-compatible tool messages do not admit
+            // it at the message level.
+            message.removeValue(forKey: "is_error")
 
             let role = stringValue(message["role"])?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()
+            let preservesReasoning: Bool
+            let requiresPlaceholder: Bool
+            switch replayPolicy {
+            case .stripReasoning:
+                preservesReasoning = false
+                requiresPlaceholder = false
+            case let .currentToolRound(placeholder):
+                let isCurrentRound = lastUserIndex.map { index > $0 } ?? false
+                let hasToolCalls = !((message["tool_calls"] as? [[String: Any]])?.isEmpty ?? true)
+                preservesReasoning = isCurrentRound && hasToolCalls
+                requiresPlaceholder = placeholder
+            case .preserveAllAssistantReasoning:
+                preservesReasoning = role == "assistant"
+                requiresPlaceholder = false
+            }
+            if !preservesReasoning {
+                message.removeValue(forKey: "reasoning_content")
+            }
+
             if role == "assistant", !responseMessagePayloadHasContent(message) {
                 return nil
             }
             if role == "assistant",
-               requiresReasoningContentPlaceholder,
+               requiresPlaceholder,
                message["reasoning_content"] == nil {
                 message["reasoning_content"] = ""
             }
@@ -335,6 +374,8 @@ extension RemoteGenerationClient {
 
         return !chatCompletionsImageContentItems(from: message["content"]).isEmpty
             || responseReasoningText(from: message) != nil
+            || stringValue(message["thinking_blocks"])?.nilIfBlank != nil
+            || stringValue(message["anthropic_content_blocks"])?.nilIfBlank != nil
             || !((message["tool_calls"] as? [[String: Any]])?.isEmpty ?? true)
     }
 

@@ -233,6 +233,9 @@ struct SetupProviderInput {
     let name: String
     let baseURL: String
     let chatEndpoint: AgentRemoteChatEndpoint
+    let providerProfileID: AgentProviderProfileID
+    let protocolProfileID: AgentProtocolProfileID
+    let authPolicy: AgentProviderAuthPolicy
     let apiKey: String?
     let models: [AgentSettingsModelManifest]
     let chatGPTSubscriptionCredentials: CodexAgentCredentials?
@@ -243,6 +246,9 @@ struct SetupProviderInput {
         name: String,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint,
+        providerProfileID: AgentProviderProfileID? = nil,
+        protocolProfileID: AgentProtocolProfileID? = nil,
+        authPolicy: AgentProviderAuthPolicy? = nil,
         apiKey: String?,
         models: [AgentSettingsModelManifest],
         chatGPTSubscriptionCredentials: CodexAgentCredentials? = nil,
@@ -252,6 +258,14 @@ struct SetupProviderInput {
         self.name = name
         self.baseURL = baseURL
         self.chatEndpoint = chatEndpoint
+        let legacyProfiles = AgentRemoteProvider.legacyProfiles(
+            id: id,
+            baseURL: baseURL,
+            chatEndpoint: chatEndpoint
+        )
+        self.providerProfileID = providerProfileID ?? legacyProfiles.provider
+        self.protocolProfileID = protocolProfileID ?? legacyProfiles.protocolProfile
+        self.authPolicy = authPolicy ?? legacyProfiles.auth
         self.apiKey = apiKey
         self.models = models
         self.chatGPTSubscriptionCredentials = chatGPTSubscriptionCredentials
@@ -260,9 +274,100 @@ struct SetupProviderInput {
 }
 
 enum SetupProviderKind: Hashable {
-    case remoteAPI
+    case remoteAPI(SetupProviderPreset)
     case chatGPTSubscription
     case anthropicSubscription
+}
+
+enum SetupProviderFamily: Hashable {
+    case openAI
+    case anthropic
+    case otherAPI
+}
+
+enum SetupAnthropicProviderOption: Hashable {
+    case api
+    case subscription
+}
+
+/// Hosted API defaults exposed by setup. These are intentionally configuration
+/// presets, not provider identities: every configured provider still receives a
+/// fresh UUID, its own key and its own model records.
+enum SetupProviderPreset: String, CaseIterable, Hashable {
+    case openRouter
+    case openAIAPI
+    case anthropicAPI
+    case zaiAPI
+    case zaiCodingPlan
+    case gemini
+    case deepSeek
+    case kimi
+    case nvidiaAPI
+    case modal
+    case custom
+
+    var title: String {
+        switch self {
+        case .openRouter: return "OpenRouter"
+        case .openAIAPI: return "OpenAI API"
+        case .anthropicAPI: return "Anthropic API"
+        case .zaiAPI: return "Z.ai API"
+        case .zaiCodingPlan: return "Z.ai Coding Plan"
+        case .gemini: return "Gemini"
+        case .deepSeek: return "DeepSeek"
+        case .kimi: return "Kimi API (Moonshot AI)"
+        case .nvidiaAPI: return "NVIDIA API"
+        case .modal: return "Modal"
+        case .custom: return "Custom"
+        }
+    }
+
+    var baseURL: String {
+        switch self {
+        case .openRouter: return "https://openrouter.ai/api/v1"
+        case .openAIAPI: return "https://api.openai.com/v1"
+        case .anthropicAPI: return "https://api.anthropic.com/v1"
+        case .zaiAPI: return "https://api.z.ai/api/paas/v4"
+        case .zaiCodingPlan: return "https://api.z.ai/api/coding/paas/v4"
+        case .gemini: return "https://generativelanguage.googleapis.com/v1beta/openai"
+        case .deepSeek: return "https://api.deepseek.com/v1"
+        case .kimi: return "https://api.moonshot.ai/v1"
+        case .nvidiaAPI: return "https://integrate.api.nvidia.com/v1"
+        case .modal: return "https://api.us-west-2.modal.direct/v1"
+        case .custom: return AgentRemoteProvider.defaultOpenRouterBaseURL
+        }
+    }
+
+    var providerProfileID: AgentProviderProfileID {
+        switch self {
+        case .openRouter: return .openRouter
+        case .openAIAPI: return .openAI
+        case .anthropicAPI: return .anthropic
+        case .zaiAPI, .zaiCodingPlan: return .zAI
+        case .gemini: return .googleGemini
+        case .deepSeek: return .deepSeek
+        case .kimi: return .moonshot
+        case .nvidiaAPI: return .nvidia
+        case .modal: return .modal
+        case .custom: return .custom
+        }
+    }
+
+    var protocolProfileID: AgentProtocolProfileID {
+        switch self {
+        case .openAIAPI: return .openAIResponses
+        case .anthropicAPI: return .anthropicMessages
+        case .zaiCodingPlan: return .zaiCodingPlan
+        case .openRouter, .zaiAPI, .gemini, .deepSeek, .kimi, .nvidiaAPI, .modal, .custom:
+            return .openAIChatCompletions
+        }
+    }
+
+    var authPolicy: AgentProviderAuthPolicy {
+        self == .custom ? .apiKeyOptional : .apiKeyRequired
+    }
+
+    var isAdvanced: Bool { self == .custom }
 }
 
 

@@ -187,7 +187,7 @@ public final class RemoteTransportCore: Sendable {
             if name == "host" {
                 return false
             }
-            if changesOrigin && ["authorization", "cookie", "proxy-authorization"].contains(name) {
+            if changesOrigin && ["authorization", "cookie", "proxy-authorization", "x-api-key"].contains(name) {
                 return false
             }
             if rewritesToGET && ["content-length", "content-type", "transfer-encoding"].contains(name) {

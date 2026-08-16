@@ -209,11 +209,17 @@ public struct AgentRuntimeMessage: Codable, Equatable, Sendable {
     public let reasoningContent: String?
     public let reasoningItemsJSON: String?
     public let thinkingBlocksJSON: String?
+    /// Ordered Anthropic assistant content blocks, serialized verbatim for
+    /// signed-thinking/tool replay. Optional for backward-compatible snapshots.
+    public let anthropicContentBlocksJSON: String?
     public let providerResponseID: String?
     public let attachments: [AgentRuntimeAttachment]
     public let toolCalls: [AgentRuntimeToolCall]
     public let toolCallID: String?
     public let toolName: String?
+    /// Anthropic `tool_result.is_error`. Optional so snapshots written before
+    /// this field was introduced continue to decode unchanged.
+    public let toolResultIsError: Bool?
 
     public init(
         role: Role,
@@ -221,22 +227,26 @@ public struct AgentRuntimeMessage: Codable, Equatable, Sendable {
         reasoningContent: String? = nil,
         reasoningItemsJSON: String? = nil,
         thinkingBlocksJSON: String? = nil,
+        anthropicContentBlocksJSON: String? = nil,
         providerResponseID: String? = nil,
         attachments: [AgentRuntimeAttachment] = [],
         toolCalls: [AgentRuntimeToolCall] = [],
         toolCallID: String? = nil,
-        toolName: String? = nil
+        toolName: String? = nil,
+        toolResultIsError: Bool? = nil
     ) {
         self.role = role
         self.content = content
         self.reasoningContent = reasoningContent?.nilIfBlank
         self.reasoningItemsJSON = reasoningItemsJSON?.nilIfBlank
         self.thinkingBlocksJSON = thinkingBlocksJSON?.nilIfBlank
+        self.anthropicContentBlocksJSON = anthropicContentBlocksJSON?.nilIfBlank
         self.providerResponseID = providerResponseID?.nilIfBlank
         self.attachments = attachments
         self.toolCalls = toolCalls
         self.toolCallID = toolCallID?.nilIfBlank
         self.toolName = toolName?.nilIfBlank
+        self.toolResultIsError = toolResultIsError
     }
 }
 

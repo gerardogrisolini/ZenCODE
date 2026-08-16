@@ -24,7 +24,7 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         case memoryEmbedding
     }
 
-    public static let currentVersion = 12
+    public static let currentVersion = 13
     public static let minimumSupportedVersion = 4
 
     public let version: Int

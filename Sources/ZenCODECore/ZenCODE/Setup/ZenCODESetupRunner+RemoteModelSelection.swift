@@ -346,7 +346,10 @@ extension ZenCODESetupRunner {
         providerID: UUID,
         providerName: String,
         baseURL: String,
-        chatEndpoint: AgentRemoteChatEndpoint
+        chatEndpoint: AgentRemoteChatEndpoint,
+        providerProfileID: AgentProviderProfileID? = nil,
+        protocolProfileID: AgentProtocolProfileID? = nil,
+        authPolicy: AgentProviderAuthPolicy? = nil
     ) -> AgentSettingsModelManifest {
         AgentSettingsModelManifest(
             id: model.id,
@@ -360,7 +363,10 @@ extension ZenCODESetupRunner {
                 name: providerName,
                 baseURL: baseURL,
                 modelID: model.modelID,
-                chatEndpoint: chatEndpoint
+                chatEndpoint: chatEndpoint,
+                providerProfileID: providerProfileID,
+                protocolProfileID: protocolProfileID,
+                authPolicy: authPolicy
             ),
             configuredContextWindowLimit: model.configuredContextWindowLimit,
             generationParameterOverrides: model.generationParameterOverrides,

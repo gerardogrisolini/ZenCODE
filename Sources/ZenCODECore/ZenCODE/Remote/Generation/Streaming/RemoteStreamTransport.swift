@@ -81,9 +81,25 @@ public enum RemoteStreamTransport {
             RemoteHTTPHeader(name: "Content-Type", value: "application/json"),
             RemoteHTTPHeader(name: "Accept", value: "text/event-stream")
         ]
-        if let apiKey {
+        // Anthropic Messages Direct authentication is intentionally isolated
+        // from OAuth/Subscription and from OpenAI-compatible Bearer policy.
+        if provider.protocolProfileID == .anthropicMessages {
+            guard let effectiveAPIKey = provider.authPolicy.effectiveAPIKey(apiKey) else {
+                throw RemoteGenerationClientError.missingAPIKey(provider.displayTitle)
+            }
+            headers.append(RemoteHTTPHeader(name: "x-api-key", value: effectiveAPIKey))
+            headers.append(RemoteHTTPHeader(name: "anthropic-version", value: "2023-06-01"))
+            if requiresAnthropicInterleavedThinkingBeta(body: body) {
+                headers.append(RemoteHTTPHeader(
+                    name: "anthropic-beta",
+                    value: "interleaved-thinking-2025-05-14"
+                ))
+            }
+        } else if let effectiveAPIKey = provider.authPolicy.effectiveAPIKey(apiKey) {
+            // The shared policy gate suppresses a residual persisted key without
+            // mutating settings; optional and required policies retain it.
             headers.append(
-                RemoteHTTPHeader(name: "Authorization", value: "Bearer \(apiKey)")
+                RemoteHTTPHeader(name: "Authorization", value: "Bearer \(effectiveAPIKey)")
             )
         }
         return StreamRequestComponents(
@@ -93,6 +109,26 @@ public enum RemoteStreamTransport {
                 outputFormatting: [.withoutEscapingSlashes]
             )
         )
+    }
+
+    static func requiresAnthropicInterleavedThinkingBeta(body: [String: Any]) -> Bool {
+        guard let model = RemoteGenerationClient.stringValue(body["model"])?.lowercased(),
+              supportsAnthropicInterleavedThinking(modelID: model),
+              let thinking = body["thinking"] as? [String: Any],
+              RemoteGenerationClient.stringValue(thinking["type"]) == "enabled",
+              let tools = body["tools"] as? [[String: Any]], !tools.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    /// Interleaved thinking is a capability of the manual-thinking Claude 4
+    /// families (Opus, Sonnet and Haiku), not a loose version substring. Newer
+    /// adaptive-thinking families do not need this beta header.
+    static func supportsAnthropicInterleavedThinking(modelID: String) -> Bool {
+        let model = modelID.lowercased()
+        let pattern = #"(?:^|/)(?:claude-)?(?:opus|sonnet|haiku)-4(?![-.](?:[6789])(?:[-.]|$))(?:[-.](?:0|1|5))?(?:[-.]|$)"#
+        return model.range(of: pattern, options: .regularExpression) != nil
     }
 
     static func shouldRetryStreamOpening(

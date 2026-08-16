@@ -860,7 +860,7 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatTemplateThinkingPayloadIncludesReasoningEffort() async throws {
+    func customCompatibilityEndpointDoesNotReceiveImplicitThinkingPayload() async throws {
         let response = """
         data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}
 
@@ -876,10 +876,13 @@ extension RemoteSessionSnapshotTests {
         let client = RemoteGenerationClient(
             configuration: remoteStreamingConfiguration(),
             provider: AgentRemoteProvider(
-                name: "NVIDIA",
+                name: "Custom NVIDIA-compatible endpoint",
                 baseURL: "https://integrate.api.nvidia.com/v1",
                 modelID: "deepseek-ai/deepseek-v4-flash",
-                chatEndpoint: .chatCompletions
+                chatEndpoint: .chatCompletions,
+                providerProfileID: .custom,
+                protocolProfileID: .openAIChatCompletions,
+                authPolicy: .apiKeyOptional
             ),
             apiKey: nil,
             transport: fixture.transport,
@@ -896,11 +899,10 @@ extension RemoteSessionSnapshotTests {
         )
         let request = try #require(fixture.capturedRequests().first)
         let body = try request.jsonObject()
-        let chatTemplateKwargs = try #require(body["chat_template_kwargs"] as? [String: Any])
-
-        #expect(chatTemplateKwargs["thinking"] as? Bool == true)
-        #expect(chatTemplateKwargs["enable_thinking"] as? Bool == true)
-        #expect(chatTemplateKwargs["reasoning_effort"] as? String == "high")
+        #expect(body["chat_template_kwargs"] == nil)
+        #expect(body["reasoning"] == nil)
+        #expect(body["reasoning_effort"] == nil)
+        #expect(body["thinking"] == nil)
     }
 }
 

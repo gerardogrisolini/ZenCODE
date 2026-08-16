@@ -69,6 +69,59 @@ public enum AgentRemoteChatEndpoint: String, Codable, Sendable {
     }
 }
 
+public enum AgentProviderProfileID: String, Codable, Hashable, Sendable {
+    case openAI = "openai"
+    case anthropic = "anthropic"
+    case openRouter = "openrouter"
+    case zAI = "zai"
+    case googleGemini = "google.gemini"
+    case deepSeek = "deepseek"
+    case moonshot = "moonshot"
+    case nvidia = "nvidia"
+    case modal = "modal"
+    case custom = "custom"
+}
+
+public enum AgentProtocolProfileID: String, Codable, Hashable, Sendable {
+    case openAIChatCompletions = "openai.chat-completions"
+    case openAIResponses = "openai.responses"
+    case openAIChatGPTSubscription = "openai.chatgpt-subscription"
+    case anthropicMessages = "anthropic.messages"
+    case anthropicClaudeSubscription = "anthropic.claude-subscription"
+    case zaiCodingPlan = "zai.coding-plan"
+
+    public var chatEndpoint: AgentRemoteChatEndpoint? {
+        switch self {
+        case .openAIChatCompletions:
+            return .chatCompletions
+        case .openAIResponses, .openAIChatGPTSubscription:
+            return .responses
+        case .anthropicMessages, .anthropicClaudeSubscription:
+            return nil
+        case .zaiCodingPlan:
+            return .chatCompletions
+        }
+    }
+}
+
+public enum AgentProviderAuthPolicy: String, Codable, Hashable, Sendable {
+    case noAuthentication = "none"
+    case apiKeyOptional = "api_key_optional"
+    case apiKeyRequired = "api_key_required"
+    case chatGPTSubscription = "chatgpt_subscription"
+    case anthropicSubscription = "anthropic_subscription"
+
+    public var requiresAPIKey: Bool { self == .apiKeyRequired }
+
+    /// The credential that may cross a network boundary under this policy.
+    /// This leaves the persisted secret untouched; callers use the returned
+    /// value only while constructing an outbound request.
+    public func effectiveAPIKey(_ apiKey: String?) -> String? {
+        guard self != .noAuthentication else { return nil }
+        return apiKey?.nilIfBlank
+    }
+}
+
 public struct AgentRemoteProvider: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id
@@ -76,6 +129,9 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
         case baseURL
         case modelID
         case chatEndpoint
+        case providerProfileID
+        case protocolProfileID
+        case authPolicy
     }
 
     public static let defaultOpenRouterName = "OpenRouter"
@@ -91,19 +147,63 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
     public let baseURL: String
     public let modelID: String
     public let chatEndpoint: AgentRemoteChatEndpoint
+    public let providerProfileID: AgentProviderProfileID
+    public let protocolProfileID: AgentProtocolProfileID
+    public let authPolicy: AgentProviderAuthPolicy
 
     public init(
         id: UUID = UUID(),
         name: String = Self.defaultOpenRouterName,
         baseURL: String = Self.defaultOpenRouterBaseURL,
         modelID: String = Self.defaultOpenRouterModelID,
-        chatEndpoint: AgentRemoteChatEndpoint = .chatCompletions
+        chatEndpoint: AgentRemoteChatEndpoint = .chatCompletions,
+        providerProfileID: AgentProviderProfileID? = nil,
+        protocolProfileID: AgentProtocolProfileID? = nil,
+        authPolicy: AgentProviderAuthPolicy? = nil
     ) {
         self.id = id
         self.name = Self.normalizedName(name)
         self.baseURL = Self.normalizedBaseURL(baseURL)
         self.modelID = Self.normalizedModelID(modelID)
-        self.chatEndpoint = chatEndpoint
+        let legacyProfiles = Self.legacyProfiles(id: id, baseURL: baseURL, chatEndpoint: chatEndpoint)
+        self.providerProfileID = providerProfileID ?? legacyProfiles.provider
+        let resolvedProtocolProfileID = protocolProfileID ?? legacyProfiles.protocolProfile
+        self.protocolProfileID = resolvedProtocolProfileID
+        self.authPolicy = authPolicy ?? legacyProfiles.auth
+        self.chatEndpoint = resolvedProtocolProfileID.chatEndpoint ?? chatEndpoint
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(UUID.self, forKey: .id),
+            name: try container.decode(String.self, forKey: .name),
+            baseURL: try container.decode(String.self, forKey: .baseURL),
+            modelID: try container.decode(String.self, forKey: .modelID),
+            chatEndpoint: try container.decode(AgentRemoteChatEndpoint.self, forKey: .chatEndpoint),
+            providerProfileID: try container.decodeIfPresent(AgentProviderProfileID.self, forKey: .providerProfileID),
+            protocolProfileID: try container.decodeIfPresent(AgentProtocolProfileID.self, forKey: .protocolProfileID),
+            authPolicy: try container.decodeIfPresent(AgentProviderAuthPolicy.self, forKey: .authPolicy)
+        )
+        guard hasCompatibleProfiles else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .protocolProfileID,
+                in: container,
+                debugDescription: "The provider, protocol and authentication profiles are incompatible."
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(baseURL, forKey: .baseURL)
+        try container.encode(modelID, forKey: .modelID)
+        try container.encode(chatEndpoint, forKey: .chatEndpoint)
+        try container.encode(providerProfileID, forKey: .providerProfileID)
+        try container.encode(protocolProfileID, forKey: .protocolProfileID)
+        try container.encode(authPolicy, forKey: .authPolicy)
     }
 
     public var displayTitle: String {
@@ -119,23 +219,87 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
     }
 
     public var requiresAPIKey: Bool {
-        guard !isChatGPTSubscriptionProvider,
-              !isAnthropicSubscriptionProvider else {
-            return false
-        }
-        return Self.isOpenRouterBaseURL(baseURL)
-            || Self.isNVIDIABaseURL(baseURL)
-            || Self.isModalDirectBaseURL(baseURL)
+        authPolicy.requiresAPIKey
     }
 
     public var isChatGPTSubscriptionProvider: Bool {
-        id == Self.chatGPTSubscriptionProviderID
-            || Self.isChatGPTSubscriptionBaseURL(baseURL)
+        protocolProfileID == .openAIChatGPTSubscription
     }
 
     public var isAnthropicSubscriptionProvider: Bool {
-        id == Self.anthropicSubscriptionProviderID
-            || Self.isAnthropicSubscriptionBaseURL(baseURL)
+        protocolProfileID == .anthropicClaudeSubscription
+    }
+
+    public var hasCompatibleProfiles: Bool {
+        switch protocolProfileID {
+        case .openAIChatGPTSubscription:
+            return providerProfileID == .openAI && authPolicy == .chatGPTSubscription
+        case .anthropicClaudeSubscription:
+            return providerProfileID == .anthropic && authPolicy == .anthropicSubscription
+        case .anthropicMessages:
+            return providerProfileID == .anthropic && authPolicy == .apiKeyRequired
+        case .zaiCodingPlan:
+            return providerProfileID == .zAI && authPolicy == .apiKeyRequired
+        case .openAIChatCompletions, .openAIResponses:
+            return authPolicy != .chatGPTSubscription && authPolicy != .anthropicSubscription
+        }
+    }
+
+    public static func legacyProfiles(
+        id: UUID,
+        baseURL: String,
+        chatEndpoint: AgentRemoteChatEndpoint
+    ) -> (provider: AgentProviderProfileID, protocolProfile: AgentProtocolProfileID, auth: AgentProviderAuthPolicy) {
+        if id == chatGPTSubscriptionProviderID || isChatGPTSubscriptionBaseURL(baseURL) {
+            return (.openAI, .openAIChatGPTSubscription, .chatGPTSubscription)
+        }
+        if id == anthropicSubscriptionProviderID || isAnthropicSubscriptionBaseURL(baseURL) {
+            return (.anthropic, .anthropicClaudeSubscription, .anthropicSubscription)
+        }
+
+        let hostedAPIProvider: AgentProviderProfileID?
+        let hostedProtocolProfile: AgentProtocolProfileID?
+        if isZAIBaseURL(baseURL) {
+            hostedAPIProvider = .zAI
+            hostedProtocolProfile = isZAICodingPlanBaseURL(baseURL) ? .zaiCodingPlan : nil
+        } else if isGeminiOpenAIBaseURL(baseURL) {
+            hostedAPIProvider = .googleGemini
+            hostedProtocolProfile = nil
+        } else if isDeepSeekBaseURL(baseURL) {
+            hostedAPIProvider = .deepSeek
+            hostedProtocolProfile = nil
+        } else if isMoonshotBaseURL(baseURL) {
+            hostedAPIProvider = .moonshot
+            hostedProtocolProfile = nil
+        } else if isNVIDIABaseURL(baseURL) {
+            hostedAPIProvider = .nvidia
+            hostedProtocolProfile = nil
+        } else if isModalDirectBaseURL(baseURL) {
+            hostedAPIProvider = .modal
+            hostedProtocolProfile = nil
+        } else {
+            hostedAPIProvider = nil
+            hostedProtocolProfile = nil
+        }
+
+        let provider: AgentProviderProfileID
+        if let hostedAPIProvider {
+            provider = hostedAPIProvider
+        } else if isOpenRouterBaseURL(baseURL) {
+            provider = .openRouter
+        } else if isOpenAIBaseURL(baseURL) {
+            provider = .openAI
+        } else {
+            provider = .custom
+        }
+        let protocolProfile: AgentProtocolProfileID = hostedProtocolProfile
+            ?? (chatEndpoint == .responses ? .openAIResponses : .openAIChatCompletions)
+        let requiresKey = hostedAPIProvider != nil
+            || isOpenRouterBaseURL(baseURL)
+            || isOpenAIBaseURL(baseURL)
+            || isNVIDIABaseURL(baseURL)
+            || isModalDirectBaseURL(baseURL)
+        return (provider, protocolProfile, requiresKey ? .apiKeyRequired : .apiKeyOptional)
     }
 
     public static func normalizedName(_ value: String) -> String {
@@ -201,6 +365,51 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
 
     public static func isChatGPTSubscriptionBaseURL(_ value: String) -> Bool {
         normalizedBaseURL(value).lowercased() == chatGPTSubscriptionBaseURL
+    }
+
+    public static func isZAIBaseURL(_ value: String) -> Bool {
+        let normalizedValue = normalizedBaseURL(value)
+        if let host = URL(string: normalizedValue)?.host?.lowercased() {
+            return host == "api.z.ai" || host.hasSuffix(".api.z.ai")
+        }
+        return normalizedValue.lowercased().contains("api.z.ai")
+    }
+
+    /// The Coding Plan shares the `api.z.ai` host with the standard API, so the
+    /// legacy inference needs the `/api/coding` path to tell them apart.
+    public static func isZAICodingPlanBaseURL(_ value: String) -> Bool {
+        let normalizedValue = normalizedBaseURL(value)
+        if let url = URL(string: normalizedValue) {
+            return url.path.lowercased().hasPrefix("/api/coding")
+        }
+        return normalizedValue.lowercased().contains("api.z.ai/api/coding")
+    }
+
+    public static func isGeminiOpenAIBaseURL(_ value: String) -> Bool {
+        let normalizedValue = normalizedBaseURL(value)
+        if let host = URL(string: normalizedValue)?.host?.lowercased() {
+            return host == "generativelanguage.googleapis.com"
+                || host.hasSuffix(".generativelanguage.googleapis.com")
+        }
+        return normalizedValue.lowercased().contains("generativelanguage.googleapis.com")
+    }
+
+    public static func isDeepSeekBaseURL(_ value: String) -> Bool {
+        let normalizedValue = normalizedBaseURL(value)
+        if let host = URL(string: normalizedValue)?.host?.lowercased() {
+            return host == "api.deepseek.com" || host.hasSuffix(".api.deepseek.com")
+        }
+        return normalizedValue.lowercased().contains("api.deepseek.com")
+    }
+
+    public static func isMoonshotBaseURL(_ value: String) -> Bool {
+        let normalizedValue = normalizedBaseURL(value)
+        if let host = URL(string: normalizedValue)?.host?.lowercased() {
+            return host == "api.moonshot.ai" || host.hasSuffix(".api.moonshot.ai")
+                || host == "api.moonshot.cn" || host.hasSuffix(".api.moonshot.cn")
+        }
+        return normalizedValue.lowercased().contains("api.moonshot.ai")
+            || normalizedValue.lowercased().contains("api.moonshot.cn")
     }
 
     public static func isAnthropicSubscriptionBaseURL(_ value: String) -> Bool {
@@ -514,7 +723,10 @@ public enum AgentSettingsStore {
                 name: provider.name,
                 baseURL: provider.baseURL,
                 modelID: modelID,
-                chatEndpoint: provider.chatEndpoint
+                chatEndpoint: provider.chatEndpoint,
+                providerProfileID: provider.providerProfileID,
+                protocolProfileID: provider.protocolProfileID,
+                authPolicy: provider.authPolicy
             )
             return AgentModelSelection(
                 providerKind: .remoteAPI,

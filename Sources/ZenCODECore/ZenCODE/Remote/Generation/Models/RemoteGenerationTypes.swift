@@ -17,6 +17,8 @@ public struct RemoteStreamResult: Sendable {
     /// on later requests (for example Anthropic signed `thinking` blocks),
     /// serialized as a JSON array string to stay `Sendable`.
     public let assistantThinkingBlocksJSON: String?
+    /// Complete ordered Anthropic assistant content array for lossless replay.
+    public let anthropicContentBlocksJSON: String?
     /// OpenAI Responses reasoning output items that carry encrypted content and
     /// must be replayed verbatim on later requests while `store` is disabled,
     /// serialized as a JSON array string to stay `Sendable`.
@@ -29,6 +31,7 @@ public struct RemoteStreamResult: Sendable {
         toolCalls: [DirectAgentToolCall],
         stats: RemoteGenerationStats,
         assistantThinkingBlocksJSON: String? = nil,
+        anthropicContentBlocksJSON: String? = nil,
         reasoningItemsJSON: String? = nil
     ) {
         self.text = text
@@ -37,6 +40,7 @@ public struct RemoteStreamResult: Sendable {
         self.toolCalls = toolCalls
         self.stats = stats
         self.assistantThinkingBlocksJSON = assistantThinkingBlocksJSON
+        self.anthropicContentBlocksJSON = anthropicContentBlocksJSON
         self.reasoningItemsJSON = reasoningItemsJSON
     }
 }

@@ -370,9 +370,8 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             let streamResult: RemoteStreamResult
             while true {
                 do {
-                    switch provider.chatEndpoint {
-                    case .chatCompletions:
-                        streamResult = try await streamChatCompletions(
+                    if provider.protocolProfileID == .anthropicMessages {
+                        streamResult = try await streamAnthropicMessages(
                             messages: outgoingMessages,
                             sessionID: session.id,
                             allowedToolNames: session.allowedToolNames,
@@ -380,15 +379,27 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                             thinkingSelection: session.thinkingSelection,
                             onEvent: onEvent
                         )
-                    case .responses:
-                        streamResult = try await streamResponses(
-                            messages: outgoingMessages,
-                            sessionID: session.id,
-                            allowedToolNames: session.allowedToolNames,
-                            preferredWorkspaceRootURL: session.cwd,
-                            thinkingSelection: session.thinkingSelection,
-                            onEvent: onEvent
-                        )
+                    } else {
+                        switch provider.chatEndpoint {
+                        case .chatCompletions:
+                            streamResult = try await streamChatCompletions(
+                                messages: outgoingMessages,
+                                sessionID: session.id,
+                                allowedToolNames: session.allowedToolNames,
+                                preferredWorkspaceRootURL: session.cwd,
+                                thinkingSelection: session.thinkingSelection,
+                                onEvent: onEvent
+                            )
+                        case .responses:
+                            streamResult = try await streamResponses(
+                                messages: outgoingMessages,
+                                sessionID: session.id,
+                                allowedToolNames: session.allowedToolNames,
+                                preferredWorkspaceRootURL: session.cwd,
+                                thinkingSelection: session.thinkingSelection,
+                                onEvent: onEvent
+                            )
+                        }
                     }
                     break
                 } catch {
@@ -566,12 +577,14 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
                 reasoningContent: reasoningContent(from: message),
                 reasoningItemsJSON: stringValue(message["reasoning_items"])?.nilIfBlank,
                 thinkingBlocksJSON: stringValue(message["thinking_blocks"])?.nilIfBlank,
+                anthropicContentBlocksJSON: stringValue(message["anthropic_content_blocks"])?.nilIfBlank,
                 providerResponseID: stringValue(message["response_id"])?.nilIfBlank
                     ?? stringValue(message["provider_response_id"])?.nilIfBlank,
                 attachments: imageAttachments,
                 toolCalls: runtimeToolCalls(from: message),
                 toolCallID: stringValue(message["tool_call_id"])?.nilIfBlank,
-                toolName: stringValue(message["name"])?.nilIfBlank
+                toolName: stringValue(message["name"])?.nilIfBlank,
+                toolResultIsError: message["is_error"] as? Bool
             )
         }
     }

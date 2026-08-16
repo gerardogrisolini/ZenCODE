@@ -72,7 +72,10 @@ public enum AgentRemoteBackendFactory {
                 name: fallbackProvider.name,
                 baseURL: fallbackProvider.baseURL,
                 modelID: modelID,
-                chatEndpoint: fallbackProvider.chatEndpoint
+                chatEndpoint: fallbackProvider.chatEndpoint,
+                providerProfileID: fallbackProvider.providerProfileID,
+                protocolProfileID: fallbackProvider.protocolProfileID,
+                authPolicy: fallbackProvider.authPolicy
             )
             apiKey = fallbackAPIKey
             resolvedConfiguration = configuration.withModelID(modelID)
@@ -84,7 +87,7 @@ public enum AgentRemoteBackendFactory {
             throw AgentCoreBackendError.missingRemoteAPIKey(provider.displayTitle)
         }
 
-        if provider.isChatGPTSubscriptionProvider {
+        if provider.protocolProfileID == .openAIChatGPTSubscription {
             return ChatGPTSubscriptionGenerationClient(
                 configuration: resolvedConfiguration,
                 mcpRuntime: mcpRuntime,
@@ -107,7 +110,7 @@ public enum AgentRemoteBackendFactory {
             )
         }
 
-        if provider.isAnthropicSubscriptionProvider {
+        if provider.protocolProfileID == .anthropicClaudeSubscription {
             return AnthropicSubscriptionGenerationClient(
                 configuration: resolvedConfiguration,
                 provider: provider,
@@ -123,6 +126,15 @@ public enum AgentRemoteBackendFactory {
                     swiftFeatureRuntime: swiftFeatureRuntime
                 )
             )
+        }
+
+        switch provider.protocolProfileID {
+        case .openAIChatCompletions, .openAIResponses, .zaiCodingPlan, .anthropicMessages:
+            break
+        case .openAIChatGPTSubscription, .anthropicClaudeSubscription:
+            // Native Anthropic API support is intentionally not provided by the
+            // subscription client. Unknown/unimplemented adapters fail closed.
+            throw AgentCoreBackendError.missingRemoteProvider
         }
 
         return RemoteGenerationClient(
@@ -160,7 +172,10 @@ public enum AgentRemoteBackendFactory {
                 name: fallbackProvider.name,
                 baseURL: fallbackProvider.baseURL,
                 modelID: inheritedModelID,
-                chatEndpoint: fallbackProvider.chatEndpoint
+                chatEndpoint: fallbackProvider.chatEndpoint,
+                providerProfileID: fallbackProvider.providerProfileID,
+                protocolProfileID: fallbackProvider.protocolProfileID,
+                authPolicy: fallbackProvider.authPolicy
             )
             let inheritedSelection = AgentModelSelection(
                 providerKind: .remoteAPI,

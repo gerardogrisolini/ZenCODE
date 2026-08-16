@@ -46,6 +46,41 @@ struct AgentConfigurationTests {
     }
 
     @Test
+    func anthropicDirectAPIProtocolBuildsNativeRemoteBackend() throws {
+        let configuration = AgentRuntimeConfiguration(
+            modelID: "claude-unit-test",
+            workingDirectory: URL(fileURLWithPath: "/tmp/provider-factory-tests", isDirectory: true),
+            maxToolRounds: 1,
+            verboseLogging: false,
+            toolAuthorizationHandler: nil
+        )
+        let anthropicAPISelection = AgentModelSelection(
+            providerKind: .remoteAPI,
+            modelID: "claude-unit-test",
+            remoteProvider: AgentRemoteProvider(
+                name: "Anthropic API",
+                baseURL: "https://api.anthropic.com/v1",
+                modelID: "claude-unit-test",
+                chatEndpoint: .chatCompletions,
+                providerProfileID: .anthropic,
+                protocolProfileID: .anthropicMessages,
+                authPolicy: .apiKeyRequired
+            ),
+            apiKey: "unit-test-key",
+            configuredContextWindowLimit: nil,
+            generationParameterOverrides: nil,
+            thinkingSelection: nil
+        )
+
+        let backend = try AgentRemoteBackendFactory.makeRemoteBackend(
+            configuration: configuration,
+            mcpRuntime: DirectMCPToolRuntime(),
+            resolvedModelSelection: anthropicAPISelection
+        )
+        #expect(backend is RemoteGenerationClient)
+    }
+
+    @Test
     func explicitWorkingDirectoryIsNeverReplacedByLaunchFallbacks() throws {
         let executableURL = try #require(Bundle.main.executableURL)
         let explicitDirectory = executableURL
