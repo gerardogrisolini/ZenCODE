@@ -69,6 +69,7 @@ struct AgentConfigurationTests {
             apiKey: "unit-test-key",
             configuredContextWindowLimit: nil,
             generationParameterOverrides: nil,
+            thinkingOptions: nil,
             thinkingSelection: nil
         )
 
@@ -78,6 +79,43 @@ struct AgentConfigurationTests {
             resolvedModelSelection: anthropicAPISelection
         )
         #expect(backend is RemoteGenerationClient)
+    }
+
+    @Test
+    func remoteBackendReceivesPersistedThinkingCapabilities() async throws {
+        let configuration = AgentRuntimeConfiguration(
+            modelID: "gpt-test",
+            workingDirectory: URL(fileURLWithPath: "/tmp/provider-factory-tests", isDirectory: true),
+            maxToolRounds: 1,
+            verboseLogging: false,
+            toolAuthorizationHandler: nil
+        )
+        let selection = AgentModelSelection(
+            providerKind: .remoteAPI,
+            modelID: "gpt-test",
+            remoteProvider: AgentRemoteProvider(
+                name: "OpenAI API",
+                baseURL: "https://api.openai.com/v1",
+                modelID: "gpt-test",
+                chatEndpoint: .chatCompletions,
+                providerProfileID: .openAI,
+                protocolProfileID: .openAIChatCompletions,
+                authPolicy: .apiKeyRequired
+            ),
+            apiKey: "unit-test-key",
+            configuredContextWindowLimit: nil,
+            generationParameterOverrides: nil,
+            thinkingOptions: [.off, .low, .high],
+            thinkingSelection: .high
+        )
+
+        let backend = try AgentRemoteBackendFactory.makeRemoteBackend(
+            configuration: configuration,
+            mcpRuntime: DirectMCPToolRuntime(),
+            resolvedModelSelection: selection
+        )
+        let client = try #require(backend as? RemoteGenerationClient)
+        #expect(await client.thinkingOptions == [.off, .low, .high])
     }
 
     @Test

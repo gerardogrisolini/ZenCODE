@@ -25,11 +25,12 @@ extension RemoteGenerationClient {
         endpoint: AgentRemoteChatEndpoint,
         to body: inout [String: Any]
     ) {
-        guard let thinkingSelection else {
+        guard let thinkingSelection,
+              thinkingOptions.contains(thinkingSelection) else {
             return
         }
         switch thinkingPayloadStyle {
-        case .none, .alwaysOn:
+        case .none:
             return
         case .chatTemplateKwargs:
             var kwargs: [String: Any] = [
@@ -51,45 +52,21 @@ extension RemoteGenerationClient {
                 payload["summary"] = "auto"
             }
             body["reasoning"] = payload
-        case let .openAIResponsesReasoning(allowed):
+        case .openAIResponsesReasoning:
             if thinkingSelection == .off {
-                guard allowed.contains(.off) else {
-                    return
-                }
                 body["reasoning"] = ["effort": "none"]
                 return
             }
-            let resolved: AgentThinkingSelection
-            if thinkingSelection == .enabled {
-                resolved = allowed.contains(.medium) ? .medium : (allowed.first { $0.isEnabled } ?? .medium)
-            } else {
-                resolved = thinkingSelection
-            }
-            guard allowed.contains(resolved) else {
-                return
-            }
             body["reasoning"] = [
-                "effort": resolved.rawValue,
+                "effort": thinkingSelection.rawValue,
                 "summary": "auto"
             ]
-        case let .reasoningEffort(allowed):
+        case .reasoningEffort:
             if thinkingSelection == .off {
-                if allowed.contains(.off) {
-                    body["reasoning_effort"] = "none"
-                }
+                body["reasoning_effort"] = "none"
                 return
             }
-            let resolved: AgentThinkingSelection
-            if thinkingSelection == .enabled {
-                resolved = allowed.contains(.max) ? .max
-                    : (allowed.contains(.medium) ? .medium : (allowed.first ?? .high))
-            } else {
-                resolved = thinkingSelection
-            }
-            guard allowed.contains(resolved) else {
-                return
-            }
-            body["reasoning_effort"] = resolved.rawValue
+            body["reasoning_effort"] = thinkingSelection.rawValue
         case let .thinkingObject(supportsDisable, keepAll):
             guard thinkingSelection.isEnabled || supportsDisable else {
                 return
@@ -105,52 +82,23 @@ extension RemoteGenerationClient {
     }
 
     public var thinkingPayloadStyle: AgentThinkingPayloadStyle {
-        let model = provider.modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         switch (provider.providerProfileID, provider.protocolProfileID) {
         case (.openRouter, .openAIChatCompletions), (.openRouter, .openAIResponses):
             return .openRouterReasoning
         case (.openAI, .openAIResponses):
-            guard Self.model(model, belongsTo: Self.openAIReasoningModelFamilies) else {
-                return .none
-            }
-            return .openAIResponsesReasoning(
-                allowed: Self.openAIResponsesReasoningAllowedSelections(for: model)
-            )
-        case (.openAI, .openAIChatCompletions):
-            guard Self.model(model, belongsTo: Self.openAIReasoningModelFamilies) else {
-                return .none
-            }
-            return .reasoningEffort(allowed: [.off, .minimal, .low, .medium, .high, .xhigh])
-        case (.zAI, .openAIChatCompletions), (.zAI, .zaiCodingPlan):
-            if Self.model(model, belongsTo: ["glm-5"]) {
-                return .reasoningEffort(allowed: [.low, .medium, .high])
-            }
-            if Self.model(model, belongsTo: ["glm-4.5", "glm-4.6", "glm-4.7"]) {
-                return .thinkingObject(supportsDisable: true, keepAll: false)
-            }
-            return .none
-        case (.googleGemini, .openAIChatCompletions):
-            guard Self.model(model, belongsTo: ["gemini-3"]) else {
-                return .none
-            }
-            return .reasoningEffort(allowed: [.low, .medium, .high])
+            return .openAIResponsesReasoning
+        case (.openAI, .openAIChatCompletions),
+             (.zAI, .openAIChatCompletions), (.zAI, .zaiCodingPlan),
+             (.googleGemini, .openAIChatCompletions),
+             (.moonshot, .openAIChatCompletions):
+            return .reasoningEffort
         case (.deepSeek, .openAIChatCompletions):
-            if model == "deepseek-reasoner" {
-                return .alwaysOn
-            }
-            return model == "deepseek-chat"
-                ? .thinkingObject(supportsDisable: true, keepAll: false)
-                : .none
-        case (.moonshot, .openAIChatCompletions):
-            if Self.model(model, belongsTo: ["kimi-k3"]) {
-                return .reasoningEffort(allowed: [.low, .high, .max])
-            }
-            if Self.model(model, belongsTo: ["kimi-k2.7"]) {
-                return .alwaysOn
-            }
-            return Self.model(model, belongsTo: ["kimi-k2.6"])
-                ? .thinkingObject(supportsDisable: true, keepAll: true)
-                : .none
+            // The provider dialect can express disable, but only models whose
+            // persisted capability explicitly includes `.off` may use it.
+            return .thinkingObject(
+                supportsDisable: thinkingOptions.contains(.off),
+                keepAll: false
+            )
         case (.nvidia, .openAIChatCompletions), (.modal, .openAIChatCompletions):
             return .chatTemplateKwargs
         default:
@@ -159,54 +107,15 @@ extension RemoteGenerationClient {
     }
 
     public var chatCompletionsReplayPolicy: AgentChatCompletionsReplayPolicy {
-        let model = provider.modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if provider.providerProfileID == .moonshot,
-           provider.protocolProfileID == .openAIChatCompletions,
-           Self.model(model, belongsTo: ["kimi-k3", "kimi-k2.7", "kimi-k2.6"]) {
+           provider.protocolProfileID == .openAIChatCompletions {
             return .preserveAllAssistantReasoning
         }
         if provider.providerProfileID == .deepSeek,
-           provider.protocolProfileID == .openAIChatCompletions,
-           model == "deepseek-chat" || model == "deepseek-reasoner" {
+           provider.protocolProfileID == .openAIChatCompletions {
             return .currentToolRound(requiresPlaceholder: true)
         }
         return .stripReasoning
-    }
-
-    private static func model(_ model: String, belongsTo families: [String]) -> Bool {
-        families.contains { family in
-            model == family
-                || model.hasPrefix(family + "-")
-                || model.hasPrefix(family + ".")
-                || model.hasPrefix(family + "/")
-        }
-    }
-
-    /// Model families that accept the OpenAI reasoning parameters on both the
-    /// Chat Completions and Responses dialects.
-    static let openAIReasoningModelFamilies = ["gpt-5", "o1", "o3", "o4"]
-
-    /// Model-aware effort selections for the OpenAI Responses reasoning
-    /// dialect. Registry-listed models contribute their advertised levels,
-    /// o-series models expose the low/medium/high ladder the API documents,
-    /// and every other supported reasoning model fails closed to the registry
-    /// default so an unsupported effort is never sent verbatim.
-    static func openAIResponsesReasoningAllowedSelections(
-        for model: String
-    ) -> Set<AgentThinkingSelection> {
-        if Self.model(model, belongsTo: ["gpt-5"]),
-           let registryOption = CodexAgentModel.availableModels.first(where: {
-               $0.modelID.caseInsensitiveCompare(model) == .orderedSame
-           }) {
-            return Set(
-                registryOption.thinkingSupport.availableSelections
-                    .compactMap { AgentThinkingSelection(rawValue: $0.rawValue) }
-            )
-        }
-        if Self.model(model, belongsTo: ["o1", "o3", "o4"]) {
-            return [.off, .low, .medium, .high]
-        }
-        return [.off, .low, .medium, .high, .xhigh]
     }
 
     public var isKimiChatCompletions: Bool {
@@ -214,8 +123,7 @@ extension RemoteGenerationClient {
               provider.protocolProfileID == .openAIChatCompletions else {
             return false
         }
-        let model = provider.modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return Self.model(model, belongsTo: ["kimi-k3", "kimi-k2.7", "kimi-k2.6"])
+        return true
     }
 
     /// Chat Completions models that reject the legacy `max_tokens` parameter
@@ -229,8 +137,7 @@ extension RemoteGenerationClient {
               provider.protocolProfileID == .openAIChatCompletions else {
             return "max_tokens"
         }
-        let model = provider.modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return Self.model(model, belongsTo: Self.openAIReasoningModelFamilies)
+        return !thinkingOptions.isEmpty
             ? "max_completion_tokens"
             : "max_tokens"
     }

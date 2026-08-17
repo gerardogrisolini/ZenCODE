@@ -92,6 +92,7 @@ public enum AgentDelegationCatalogSnapshot: Sendable {
             apiKey: apiKey,
             configuredContextWindowLimit: configuredContextWindowLimit,
             generationParameterOverrides: model.generationParameterOverrides,
+            thinkingOptions: model.thinkingOptions,
             thinkingSelection: model.thinkingSelection(for: binding.thinkingSelection)
         )
     }

@@ -425,6 +425,7 @@ public struct AgentModelSelection: Sendable {
     public let apiKey: String?
     public let configuredContextWindowLimit: Int?
     public let generationParameterOverrides: AgentGenerationParameterOverrides?
+    public let thinkingOptions: [AgentThinkingSelection]?
     public let thinkingSelection: AgentThinkingSelection?
 }
 
@@ -738,6 +739,7 @@ public enum AgentSettingsStore {
                     provider: resolvedProvider
                 ),
                 generationParameterOverrides: model.generationParameterOverrides,
+                thinkingOptions: model.thinkingOptions,
                 thinkingSelection: resolvedThinkingSelection
             )
         }

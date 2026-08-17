@@ -23,6 +23,8 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
     public let configuration: AgentRuntimeConfiguration
     public let provider: AgentRemoteProvider
     public let apiKey: String?
+    /// Ordered capability declaration from the persisted model manifest.
+    public let thinkingOptions: [AgentThinkingSelection]
     /// The shared HTTP/SSE engine. Its lifetime is owned by the composition
     /// root when an explicitly-owned instance is injected; the default borrows
     /// the process-wide NIO event-loop group.
@@ -45,6 +47,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         configuration: AgentRuntimeConfiguration,
         provider: AgentRemoteProvider,
         apiKey: String?,
+        thinkingOptions: [AgentThinkingSelection]? = nil,
         transport: RemoteTransportCore? = nil,
         /// A controlled endpoint base override for deterministic embeddings
         /// and loopback tests. Provider capability decisions continue to use
@@ -60,6 +63,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         self.configuration = configuration
         self.provider = provider
         self.apiKey = apiKey?.nilIfBlank
+        self.thinkingOptions = thinkingOptions ?? []
         let resolvedTransport = transport ?? RemoteTransportCore()
         self.transport = resolvedTransport
         ownsTransport = transport == nil

@@ -52,6 +52,7 @@ public enum AgentRemoteBackendFactory {
 
         let provider: AgentRemoteProvider
         let apiKey: String?
+        let thinkingOptions: [AgentThinkingSelection]?
         let resolvedConfiguration: AgentRuntimeConfiguration
         if let selection {
             guard let selectedProvider = selection.remoteProvider else {
@@ -59,6 +60,7 @@ public enum AgentRemoteBackendFactory {
             }
             provider = selectedProvider
             apiKey = selection.apiKey
+            thinkingOptions = selection.thinkingOptions
             resolvedConfiguration = configuration
                 .withModelID(selection.modelID)
                 .withModelSettings(
@@ -78,6 +80,7 @@ public enum AgentRemoteBackendFactory {
                 authPolicy: fallbackProvider.authPolicy
             )
             apiKey = fallbackAPIKey
+            thinkingOptions = nil
             resolvedConfiguration = configuration.withModelID(modelID)
         } else {
             throw AgentCoreBackendError.missingRemoteProvider
@@ -105,6 +108,7 @@ public enum AgentRemoteBackendFactory {
                         baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
                         modelID: resolvedConfiguration.modelID ?? CodexAgentModel.defaultLLMID
                     ),
+                    fallbackThinkingOptions: thinkingOptions,
                     swiftFeatureRuntime: swiftFeatureRuntime
                 )
             )
@@ -123,6 +127,7 @@ public enum AgentRemoteBackendFactory {
                     configuration: resolvedConfiguration,
                     mcpRuntime: mcpRuntime,
                     fallbackProvider: provider,
+                    fallbackThinkingOptions: thinkingOptions,
                     swiftFeatureRuntime: swiftFeatureRuntime
                 )
             )
@@ -141,6 +146,7 @@ public enum AgentRemoteBackendFactory {
             configuration: resolvedConfiguration,
             provider: provider,
             apiKey: apiKey,
+            thinkingOptions: thinkingOptions,
             mcpRuntime: mcpRuntime,
             swiftFeatureRuntime: swiftFeatureRuntime,
             sharedChat: sharedChat,
@@ -151,6 +157,7 @@ public enum AgentRemoteBackendFactory {
                 mcpRuntime: mcpRuntime,
                 fallbackProvider: provider,
                 fallbackAPIKey: apiKey,
+                fallbackThinkingOptions: thinkingOptions,
                 swiftFeatureRuntime: swiftFeatureRuntime
             )
         )
@@ -161,6 +168,7 @@ public enum AgentRemoteBackendFactory {
         mcpRuntime: DirectMCPToolRuntime,
         fallbackProvider: AgentRemoteProvider,
         fallbackAPIKey: String? = nil,
+        fallbackThinkingOptions: [AgentThinkingSelection]? = nil,
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil
     ) -> DirectSubAgentContextualBackendFactory {
         { context in
@@ -184,6 +192,7 @@ public enum AgentRemoteBackendFactory {
                 apiKey: fallbackAPIKey,
                 configuredContextWindowLimit: configuration.configuredContextWindowLimit,
                 generationParameterOverrides: configuration.generationParameterOverrides,
+                thinkingOptions: fallbackThinkingOptions,
                 thinkingSelection: context.thinkingSelection
             )
             let modelSelection = configuration.locksModelToSession

@@ -17,69 +17,40 @@ struct ProviderThinkingAdapterTests {
     }
 
     @Test
-    func dialectResolutionIsExplicitAndModelAware() async {
+    func dialectResolutionUsesProviderAndProtocolOnly() async {
         let cases: [DialectCase] = [
-            .init(provider: .openRouter, protocolProfile: .openAIChatCompletions, model: "vendor/model", expected: .openRouterReasoning),
-            .init(provider: .openAI, protocolProfile: .openAIResponses, model: "gpt-5.4", expected: .openAIResponsesReasoning(allowed: [.off, .low, .medium, .high, .xhigh])),
-            .init(provider: .openAI, protocolProfile: .openAIResponses, model: "gpt-5.6-terra", expected: .openAIResponsesReasoning(allowed: [.off, .low, .medium, .high, .xhigh, .max, .ultra])),
-            .init(provider: .openAI, protocolProfile: .openAIResponses, model: "gpt-5.6-luna", expected: .openAIResponsesReasoning(allowed: [.off, .low, .medium, .high, .xhigh, .max])),
-            .init(provider: .openAI, protocolProfile: .openAIResponses, model: "o3-mini", expected: .openAIResponsesReasoning(allowed: [.off, .low, .medium, .high])),
-            .init(provider: .openAI, protocolProfile: .openAIResponses, model: "gpt-4.1", expected: .none),
-            .init(provider: .openAI, protocolProfile: .openAIResponses, model: "o1-preview", expected: .openAIResponsesReasoning(allowed: [.off, .low, .medium, .high])),
-            .init(provider: .openAI, protocolProfile: .openAIChatCompletions, model: "gpt-5.4", expected: .reasoningEffort(allowed: [.off, .minimal, .low, .medium, .high, .xhigh])),
-            .init(provider: .openAI, protocolProfile: .openAIChatCompletions, model: "gpt-4.1", expected: .none),
-            .init(provider: .zAI, protocolProfile: .openAIChatCompletions, model: "glm-4.7", expected: .thinkingObject(supportsDisable: true, keepAll: false)),
-            .init(provider: .zAI, protocolProfile: .openAIChatCompletions, model: "glm-5", expected: .reasoningEffort(allowed: [.low, .medium, .high])),
-            .init(provider: .zAI, protocolProfile: .zaiCodingPlan, model: "glm-4.7", expected: .thinkingObject(supportsDisable: true, keepAll: false)),
-            .init(provider: .zAI, protocolProfile: .zaiCodingPlan, model: "glm-5-air", expected: .reasoningEffort(allowed: [.low, .medium, .high])),
-            .init(provider: .googleGemini, protocolProfile: .openAIChatCompletions, model: "gemini-3-pro-preview", expected: .reasoningEffort(allowed: [.low, .medium, .high])),
-            .init(provider: .deepSeek, protocolProfile: .openAIChatCompletions, model: "deepseek-reasoner", expected: .alwaysOn),
-            .init(provider: .moonshot, protocolProfile: .openAIChatCompletions, model: "kimi-k3", expected: .reasoningEffort(allowed: [.low, .high, .max])),
-            .init(provider: .moonshot, protocolProfile: .openAIChatCompletions, model: "kimi-k2.7-code", expected: .alwaysOn),
-            .init(provider: .moonshot, protocolProfile: .openAIChatCompletions, model: "kimi-k2.6", expected: .thinkingObject(supportsDisable: true, keepAll: true)),
-            .init(provider: .nvidia, protocolProfile: .openAIChatCompletions, model: "nvidia/model", expected: .chatTemplateKwargs),
-            .init(provider: .modal, protocolProfile: .openAIChatCompletions, model: "vendor/model", expected: .chatTemplateKwargs),
-            .init(provider: .custom, protocolProfile: .openAIChatCompletions, model: "kimi-k3", expected: .none),
-            .init(provider: .moonshot, protocolProfile: .openAIChatCompletions, model: "unknown", expected: .none)
+            .init(provider: .openRouter, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .openRouterReasoning),
+            .init(provider: .openAI, protocolProfile: .openAIResponses, model: "unlisted", expected: .openAIResponsesReasoning),
+            .init(provider: .zAI, protocolProfile: .zaiCodingPlan, model: "unlisted", expected: .reasoningEffort),
+            .init(provider: .googleGemini, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .reasoningEffort),
+            .init(provider: .moonshot, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .reasoningEffort),
+            .init(provider: .deepSeek, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .thinkingObject(supportsDisable: true, keepAll: false)),
+            .init(provider: .nvidia, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .chatTemplateKwargs),
+            .init(provider: .modal, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .chatTemplateKwargs),
+            .init(provider: .custom, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .none)
         ]
-
         for testCase in cases {
-            let client = client(
-                provider: testCase.provider,
-                protocolProfile: testCase.protocolProfile,
-                model: testCase.model
-            )
+            let client = client(provider: testCase.provider, protocolProfile: testCase.protocolProfile, model: testCase.model)
             #expect(await client.thinkingPayloadStyle == testCase.expected)
         }
     }
 
     @Test
     func thinkingPayloadSnapshots() async {
-        let cases: [(AgentProviderProfileID, AgentProtocolProfileID, String, AgentThinkingSelection, String)] = [
-            (.openRouter, .openAIChatCompletions, "vendor/model", .high, #"{"reasoning":{"effort":"high","exclude":false}}"#),
-            (.openAI, .openAIResponses, "gpt-5.4", .high, #"{"reasoning":{"effort":"high","summary":"auto"}}"#),
-            (.openAI, .openAIResponses, "gpt-5.4", .off, #"{"reasoning":{"effort":"none"}}"#),
-            (.openAI, .openAIResponses, "gpt-5.6-luna", .ultra, "{}"),
-            (.openAI, .openAIResponses, "gpt-5.4", .ultra, "{}"),
-            (.openAI, .openAIResponses, "o3-mini", .xhigh, "{}"),
-            (.openAI, .openAIResponses, "gpt-4.1", .high, "{}"),
-            (.openAI, .openAIChatCompletions, "gpt-5.4", .high, #"{"reasoning_effort":"high"}"#),
-            (.zAI, .openAIChatCompletions, "glm-4.7", .off, #"{"thinking":{"type":"disabled"}}"#),
-            (.zAI, .zaiCodingPlan, "glm-4.7", .off, #"{"thinking":{"type":"disabled"}}"#),
-            (.googleGemini, .openAIChatCompletions, "gemini-3-pro-preview", .medium, #"{"reasoning_effort":"medium"}"#),
-            (.deepSeek, .openAIChatCompletions, "deepseek-chat", .enabled, #"{"thinking":{"type":"enabled"}}"#),
-            (.moonshot, .openAIChatCompletions, "kimi-k3", .enabled, #"{"reasoning_effort":"max"}"#),
-            (.moonshot, .openAIChatCompletions, "kimi-k2.7-code", .high, "{}"),
-            (.moonshot, .openAIChatCompletions, "kimi-k2.6", .enabled, #"{"thinking":{"keep":"all","type":"enabled"}}"#),
-            (.nvidia, .openAIChatCompletions, "nvidia/model", .high, #"{"chat_template_kwargs":{"enable_thinking":true,"reasoning_effort":"high","thinking":true}}"#),
-            (.modal, .openAIChatCompletions, "vendor/model", .off, #"{"chat_template_kwargs":{"enable_thinking":false,"thinking":false}}"#),
-            (.custom, .openAIChatCompletions, "vendor/model", .high, "{}")
+        let cases: [(AgentProviderProfileID, AgentProtocolProfileID, AgentThinkingSelection, String)] = [
+            (.openRouter, .openAIChatCompletions, .off, #"{"reasoning":{"effort":"none","exclude":false}}"#),
+            (.openAI, .openAIResponses, .high, #"{"reasoning":{"effort":"high","summary":"auto"}}"#),
+            (.zAI, .zaiCodingPlan, .off, #"{"reasoning_effort":"none"}"#),
+            (.googleGemini, .openAIChatCompletions, .medium, #"{"reasoning_effort":"medium"}"#),
+            (.moonshot, .openAIChatCompletions, .enabled, #"{"reasoning_effort":"enabled"}"#),
+            (.deepSeek, .openAIChatCompletions, .enabled, #"{"thinking":{"type":"enabled"}}"#),
+            (.nvidia, .openAIChatCompletions, .high, #"{"chat_template_kwargs":{"enable_thinking":true,"reasoning_effort":"high","thinking":true}}"#),
+            (.modal, .openAIChatCompletions, .off, #"{"chat_template_kwargs":{"enable_thinking":false,"thinking":false}}"#),
+            (.custom, .openAIChatCompletions, .high, "{}")
         ]
-
-        for (provider, protocolProfile, model, selection, expected) in cases {
-            let client = client(provider: provider, protocolProfile: protocolProfile, model: model)
-            let body = await client.thinkingPayloadSnapshot(selection, endpoint: protocolProfile.chatEndpoint ?? .chatCompletions)
-            #expect(body == expected)
+        for (provider, protocolProfile, selection, expected) in cases {
+            let client = client(provider: provider, protocolProfile: protocolProfile, model: "unlisted")
+            #expect(await client.thinkingPayloadSnapshot(selection, endpoint: protocolProfile.chatEndpoint ?? .chatCompletions) == expected)
         }
     }
 
@@ -110,29 +81,46 @@ struct ProviderThinkingAdapterTests {
     }
 
     @Test
-    func responsesReasoningAllowedSelectionsFollowTheModelRegistry() throws {
-        let terra = RemoteGenerationClient.openAIResponsesReasoningAllowedSelections(for: "gpt-5.6-terra")
-        #expect(terra == [.off, .low, .medium, .high, .xhigh, .max, .ultra])
+    func manifestLevelsAreTheOnlyThinkingAuthorization() async {
+        let client = client(provider: .openAI, protocolProfile: .openAIResponses, model: "unlisted", thinkingOptions: [.off, .low])
+        #expect(await client.thinkingPayloadSnapshot(.low, endpoint: .responses) == #"{"reasoning":{"effort":"low","summary":"auto"}}"#)
+        #expect(await client.thinkingPayloadSnapshot(.high, endpoint: .responses) == "{}")
+    }
 
-        let luna = RemoteGenerationClient.openAIResponsesReasoningAllowedSelections(for: "gpt-5.6-luna")
-        #expect(luna == [.off, .low, .medium, .high, .xhigh, .max])
-
-        let oSeries = RemoteGenerationClient.openAIResponsesReasoningAllowedSelections(for: "o4-mini")
-        #expect(oSeries == [.off, .low, .medium, .high])
-
-        let unknownGPT5 = RemoteGenerationClient.openAIResponsesReasoningAllowedSelections(for: "gpt-5.9")
-        #expect(unknownGPT5 == [.off, .low, .medium, .high, .xhigh])
-
-        // The registry itself stays the source of truth for advertised levels.
-        let registryOption = try #require(
-            CodexAgentModel.availableModels.first { $0.modelID == "gpt-5.5" }
+    @Test
+    func deepSeekDoesNotSerializeOffUnlessManifestAllowsIt() async {
+        let alwaysOn = client(
+            provider: .deepSeek,
+            protocolProfile: .openAIChatCompletions,
+            model: "deepseek-reasoner",
+            thinkingOptions: [.enabled]
         )
-        let registryLevels = Set(
-            registryOption.thinkingSupport.availableSelections
-                .compactMap { AgentThinkingSelection(rawValue: $0.rawValue) }
+        #expect(await alwaysOn.thinkingPayloadStyle == .thinkingObject(
+            supportsDisable: false,
+            keepAll: false
+        ))
+        #expect(await alwaysOn.thinkingPayloadSnapshot(.off, endpoint: .chatCompletions) == "{}")
+
+        let configurable = client(
+            provider: .deepSeek,
+            protocolProfile: .openAIChatCompletions,
+            model: "deepseek-chat",
+            thinkingOptions: [.off, .enabled]
         )
-        let gpt55 = RemoteGenerationClient.openAIResponsesReasoningAllowedSelections(for: "gpt-5.5")
-        #expect(gpt55 == registryLevels)
+        #expect(await configurable.thinkingPayloadSnapshot(.off, endpoint: .chatCompletions)
+            == #"{"thinking":{"type":"disabled"}}"#)
+    }
+
+    @Test
+    func genericEnabledIsSerializedWithoutInferringAnEffortLevel() async {
+        let client = client(
+            provider: .moonshot,
+            protocolProfile: .openAIChatCompletions,
+            model: "kimi",
+            thinkingOptions: [.enabled, .low, .max]
+        )
+        #expect(await client.thinkingPayloadSnapshot(.enabled, endpoint: .chatCompletions)
+            == #"{"reasoning_effort":"enabled"}"#)
     }
 
     @Test
@@ -185,7 +173,8 @@ struct ProviderThinkingAdapterTests {
     private func client(
         provider: AgentProviderProfileID,
         protocolProfile: AgentProtocolProfileID,
-        model: String
+        model: String,
+        thinkingOptions: [AgentThinkingSelection] = AgentThinkingSelection.allCases
     ) -> RemoteGenerationClient {
         RemoteGenerationClient(
             configuration: AgentRuntimeConfiguration(
@@ -204,7 +193,8 @@ struct ProviderThinkingAdapterTests {
                 protocolProfileID: protocolProfile,
                 authPolicy: protocolProfile == .zaiCodingPlan ? .apiKeyRequired : .apiKeyOptional
             ),
-            apiKey: nil
+            apiKey: nil,
+            thinkingOptions: thinkingOptions
         )
     }
 }
@@ -254,6 +244,7 @@ extension RemoteSessionSnapshotTests {
                 authPolicy: .apiKeyRequired
             ),
             apiKey: "test-key",
+            thinkingOptions: [.enabled],
             transport: fixture.transport,
             streamEndpointBaseURLOverride: fixture.baseURL
         )
@@ -267,9 +258,7 @@ extension RemoteSessionSnapshotTests {
         )
         let request = try #require(fixture.capturedRequests().first)
         let body = try request.jsonObject()
-        let thinking = try #require(body["thinking"] as? [String: Any])
-        #expect(thinking["type"] as? String == "enabled")
-        #expect(thinking["keep"] as? String == "all")
+        #expect(body["reasoning_effort"] as? String == "enabled")
         #expect(body["prompt_cache_key"] as? String == "kimi-session")
         #expect(RemoteGenerationClient.integerValue(body["max_completion_tokens"]) == 2048)
         #expect(body["max_tokens"] == nil)
@@ -321,7 +310,8 @@ extension RemoteSessionSnapshotTests {
 
     private func openAIChatCompletionRequestBody(
         model: String,
-        maxOutputTokens: Int?
+        maxOutputTokens: Int?,
+        thinkingOptions: [AgentThinkingSelection]
     ) async throws -> [String: Any] {
         let response = """
         data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}
@@ -350,6 +340,7 @@ extension RemoteSessionSnapshotTests {
                 authPolicy: .apiKeyRequired
             ),
             apiKey: "test-key",
+            thinkingOptions: thinkingOptions,
             transport: fixture.transport,
             streamEndpointBaseURLOverride: fixture.baseURL
         )
@@ -369,7 +360,8 @@ extension RemoteSessionSnapshotTests {
     func openAIChatReasoningModelSendsMaxCompletionTokens() async throws {
         let body = try await openAIChatCompletionRequestBody(
             model: "gpt-5.4",
-            maxOutputTokens: 2048
+            maxOutputTokens: 2048,
+            thinkingOptions: [.high]
         )
 
         #expect(RemoteGenerationClient.integerValue(body["max_completion_tokens"]) == 2048)
@@ -380,7 +372,8 @@ extension RemoteSessionSnapshotTests {
     func openAIChatNonReasoningModelKeepsLegacyMaxTokens() async throws {
         let body = try await openAIChatCompletionRequestBody(
             model: "gpt-4.1",
-            maxOutputTokens: 1024
+            maxOutputTokens: 1024,
+            thinkingOptions: []
         )
 
         #expect(RemoteGenerationClient.integerValue(body["max_tokens"]) == 1024)
