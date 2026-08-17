@@ -54,12 +54,39 @@ jobs:
         uses: actions/checkout@v6
       - name: Show toolchain
         run: swift --version
+      - name: Mark workspace as a safe Git directory
+        if: matrix.container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Resolve from the standalone lockfile
         run: |
           swift package --package-path "${{ matrix.packagePath }}" resolve --only-use-versions-from-resolved-file
           git diff --exit-code -- "${{ matrix.packagePath }}/Package.resolved"
       - name: Test standalone package
-        run: swift test --package-path "${{ matrix.packagePath }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_path="${{ matrix.packagePath }}"
+          description="$(swift package --package-path "$package_path" describe --type json)"
+          has_test_targets="$(
+          PACKAGE_DESCRIPTION="$description" swift - <<'SWIFT'
+          import Foundation
+
+          let data = Data(ProcessInfo.processInfo.environment["PACKAGE_DESCRIPTION", default: ""].utf8)
+          guard let package = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let targets = package["targets"] as? [[String: Any]] else {
+              fatalError("package description must contain a targets array")
+          }
+          print(targets.contains { $0["type"] as? String == "test" } ? "true" : "false")
+          SWIFT
+          )"
+          if [[ "$has_test_targets" == "true" ]]; then
+            swift test --package-path "$package_path"
+          elif [[ "$has_test_targets" == "false" ]]; then
+            echo "No test target declared for $package_path; skipping swift test."
+          else
+            echo "Unexpected test-target detection result: $has_test_targets" >&2
+            exit 1
+          fi
       - name: Build standalone executable
         run: swift build -c release --package-path "${{ matrix.packagePath }}" --product "${{ matrix.product }}"
       - name: Validate --list-tools schema

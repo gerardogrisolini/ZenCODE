@@ -198,6 +198,7 @@ extension SwiftFeatureRuntimeTests {
         }
     }
 
+    #if os(macOS)
     @Test
     func featureScaffoldCreatesMCPBridgePackage() async throws {
         let rootURL = FileManager.default.temporaryDirectory
@@ -290,6 +291,43 @@ extension SwiftFeatureRuntimeTests {
         #expect(build.ok)
         #expect(FileManager.default.isExecutableFile(atPath: build.executablePath))
     }
+    #endif
+
+    #if !os(macOS)
+    @Test
+    func featureScaffoldRejectsMCPBridgeOnUnsupportedPlatforms() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-mcp-unsupported-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+
+        let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
+        do {
+            _ = try await runtime.executeManagementTool(
+                toolCall: DirectAgentToolCall(
+                    id: "feature-scaffold-mcp-unsupported",
+                    name: "feature.scaffold",
+                    argumentsObject: [
+                        "id": "unsupported-mcp",
+                        "template": "mcp-bridge",
+                        "toolPrefix": "unsupported.",
+                        "endpointURL": "https://mcp.example.com/tools"
+                    ],
+                    argumentsJSON: "{}"
+                )
+            )
+            Issue.record("Expected feature.scaffold to reject MCP bridges on this platform.")
+        } catch {
+            #expect(error.localizedDescription.contains("supported only on macOS"))
+        }
+        #expect(!FileManager.default.fileExists(
+            atPath: rootURL.appendingPathComponent("unsupported-mcp").path
+        ))
+    }
+    #endif
 
     @Test
     func featureScaffoldRejectsMCPSecretsBeforeInstallingPackage() async throws {

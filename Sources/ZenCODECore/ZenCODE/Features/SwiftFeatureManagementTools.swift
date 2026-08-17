@@ -459,11 +459,6 @@ extension SwiftFeatureRuntime {
             ).write(to: manifestURL, atomically: true, encoding: .utf8)
             reportToolName = toolName
         case .mcpBridge:
-            #if !os(macOS)
-            throw DirectToolError.permissionDenied(
-                "MCP bridge features are currently supported only on macOS."
-            )
-            #endif
             let toolPrefix = Self.normalizedToolPrefix(
                 arguments.string("toolPrefix", "tool_prefix", "prefix")?
                     .nilIfBlank ?? "\(Self.defaultToolPrefix(for: id))."
@@ -493,6 +488,11 @@ extension SwiftFeatureRuntime {
                     "MCP bridge scaffolds do not accept static environment values because scaffold configuration is written to generated source. Configure secrets in the environment used to launch ZenCODE; stdio bridges inherit it at runtime."
                 )
             }
+            #if !os(macOS)
+            throw DirectToolError.permissionDenied(
+                "MCP bridge features are currently supported only on macOS."
+            )
+            #endif
             let serviceName = arguments
                 .string("serviceName", "service_name")?
                 .nilIfBlank ?? displayName
