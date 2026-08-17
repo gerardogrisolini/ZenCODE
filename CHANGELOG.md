@@ -10,6 +10,38 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-08-17
+
+### Added
+
+- Telegram sessions can now manage tasks and sub-agents, mirroring delegated
+  activity as overviews in the terminal chat.
+- Saved plans gained a full lifecycle: completed live plans are mirrored into
+  the library, `/plan list` reviews them with short ids, and `/plan delete`
+  removes exact or unique-prefix targets.
+- Optional features are validated in CI through a generated per-feature
+  matrix, and the installers share hardened support helpers with an explicit
+  Swift 6.3+ toolchain check and pinned per-feature lockfiles.
+
+### Changed
+
+- Provider thinking configuration is resolved from explicit settings and
+  model metadata instead of streaming heuristics, and `/setup` only offers
+  thinking for models that support it.
+- Anthropic message encoding, stream accumulation, and thinking-block handling
+  moved into dedicated transport components as part of the provider rework.
+- Memory engine persistence was reworked with graph versioning, transactional
+  saves, entry deduplication, and read-only search, with project-context write
+  contracts covered by dedicated tests.
+- Behavior-preserving refactoring removed dead code and deduplicated helpers
+  across Remote, Telegram, TUI, and the session orchestrator.
+
+### Fixed
+
+- Feature processes are signalled across their whole process tree, so
+  terminating a feature job no longer leaves orphaned children.
+- Sub-agent tool calls render correctly in compact terminal output.
+
 ## [1.2.4] - 2026-08-13
 
 ### Changed
@@ -648,7 +680,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.4...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.5...HEAD
+[1.2.5]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.4...v1.2.5
 [1.2.4]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.1...v1.2.2
