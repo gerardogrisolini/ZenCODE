@@ -409,9 +409,13 @@ public actor DirectToolExecutor {
     }
 
     public func chatCompletionToolPayloads(
+        sessionID: String,
         allowedToolNames: Set<String>? = nil
     ) async -> [[String: Any]] {
-        let inputs = await toolPayloadInputs(allowedToolNames: allowedToolNames)
+        let inputs = await toolPayloadInputs(
+            sessionID: sessionID,
+            allowedToolNames: allowedToolNames
+        )
         return inputs.map { input in
             [
                 "type": "function",
@@ -425,9 +429,13 @@ public actor DirectToolExecutor {
     }
 
     public func responsesToolPayloads(
+        sessionID: String,
         allowedToolNames: Set<String>? = nil
     ) async -> [[String: Any]] {
-        let inputs = await toolPayloadInputs(allowedToolNames: allowedToolNames)
+        let inputs = await toolPayloadInputs(
+            sessionID: sessionID,
+            allowedToolNames: allowedToolNames
+        )
         return inputs.map { input in
             [
                 "type": "function",
@@ -439,9 +447,13 @@ public actor DirectToolExecutor {
     }
 
     private func toolPayloadInputs(
+        sessionID: String,
         allowedToolNames: Set<String>?
     ) async -> [DirectToolPayloadInput] {
-        let descriptors = await descriptors(allowedToolNames: allowedToolNames)
+        let descriptors = await descriptors(
+            allowedToolNames: allowedToolNames,
+            sessionID: sessionID
+        )
         return descriptors.compactMap { descriptor in
             guard let parameters = descriptor.schemaObject else {
                 return nil

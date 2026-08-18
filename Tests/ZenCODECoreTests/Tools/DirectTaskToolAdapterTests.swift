@@ -67,6 +67,65 @@ struct DirectTaskToolAdapterTests {
     }
 
     @Test
+    func taskUpdatePayloadSchemasFollowTheSessionForBothOpenAIWireFormats() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "work", title: "Work")]
+        )
+        let receipt = try #require(try await orchestrator.claimTasks(
+            sessionID: "root",
+            claims: [TaskClaim(taskID: "work", agentID: "worker")]
+        ).first)
+        try await orchestrator.registerExecutionScope(
+            executionSessionID: "child",
+            scope: TaskExecutionScope(
+                rootSessionID: "root",
+                graphID: receipt.graphID,
+                taskID: receipt.taskID,
+                attemptID: receipt.attemptID
+            )
+        )
+        let executor = DirectToolExecutor(
+            subAgentContextualBackendFactory:
+                DirectSubAgentRuntime.unavailableContextualBackendFactory
+        )
+        await executor.installTaskOrchestrator(orchestrator)
+
+        let rootProperties = try await executor.taskUpdatePayloadPropertiesForTesting(
+            sessionID: "root"
+        )
+        let childProperties = try await executor.taskUpdatePayloadPropertiesForTesting(
+            sessionID: "child"
+        )
+
+        let rootExpected = ["dependsOn", "evidence", "status"]
+        let childExpected = ["output", "progress", "statusReason", "expectedRevision"]
+        for properties in [
+            rootProperties.responses,
+            rootProperties.chatCompletions,
+        ] {
+            for name in rootExpected {
+                #expect(properties.contains(name))
+            }
+        }
+        for properties in [
+            childProperties.responses,
+            childProperties.chatCompletions,
+        ] {
+            for name in childExpected {
+                #expect(properties.contains(name))
+            }
+            for name in rootExpected {
+                #expect(!properties.contains(name))
+            }
+        }
+    }
+
+    @Test
     func tasksNamespaceIsCanonicalAndSingularNamespaceIsRejected() {
         let advertisedNames = DirectToolCatalog.todoTaskDescriptors
             .map(\.name)
@@ -538,5 +597,47 @@ struct DirectTaskToolAdapterTests {
             argumentsObject: arguments,
             argumentsJSON: data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         )
+    }
+
+}
+
+private struct ToolPayloadPropertySets: Sendable {
+    let responses: Set<String>
+    let chatCompletions: Set<String>
+}
+
+private extension DirectToolExecutor {
+    /// Keeps the non-Sendable `[String: Any]` wire payload inside the actor and
+    /// transfers only its Sendable property-name projection to the test.
+    func taskUpdatePayloadPropertiesForTesting(
+        sessionID: String
+    ) async throws -> ToolPayloadPropertySets {
+        let responses = await responsesToolPayloads(
+            sessionID: sessionID,
+            allowedToolNames: ["tasks.update"]
+        )
+        let chatCompletions = await chatCompletionToolPayloads(
+            sessionID: sessionID,
+            allowedToolNames: ["tasks.update"]
+        )
+        return try ToolPayloadPropertySets(
+            responses: payloadProperties(responses, chatCompletions: false),
+            chatCompletions: payloadProperties(chatCompletions, chatCompletions: true)
+        )
+    }
+
+    func payloadProperties(
+        _ payloads: [[String: Any]],
+        chatCompletions: Bool
+    ) throws -> Set<String> {
+        let payload = try #require(payloads.first)
+        let parameters: [String: Any]
+        if chatCompletions {
+            let function = try #require(payload["function"] as? [String: Any])
+            parameters = try #require(function["parameters"] as? [String: Any])
+        } else {
+            parameters = try #require(payload["parameters"] as? [String: Any])
+        }
+        return Set(try #require(parameters["properties"] as? [String: Any]).keys)
     }
 }

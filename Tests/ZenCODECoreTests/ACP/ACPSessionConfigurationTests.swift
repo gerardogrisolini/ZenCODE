@@ -319,4 +319,59 @@ extension ACPCompatibilityTests {
         #expect(configuration.thinkingSelection == .high)
     }
 
+    @Test
+    func promptRefreshPreservesSessionRevisionAndGenerationSettings() async throws {
+        let backend = CapturingACPBackend()
+        let bridge = try makeBridge(
+            models: [
+                AgentSettingsModelManifest(
+                    id: "test-model",
+                    kind: .remoteAPI,
+                    modelID: "local/test-model"
+                )
+            ],
+            backendFactory: { _, _ in backend }
+        )
+        let generationOverrides = AgentGenerationParameterOverrides(
+            maxTokens: 321,
+            temperature: 0.25
+        )
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: "acp-refresh-state",
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: "test system prompt",
+            cacheKey: "acp-refresh-cache",
+            sessionRevision: 7,
+            history: [],
+            allowedToolNames: [],
+            configuredContextWindowLimit: 16_384,
+            generationParameterOverrides: generationOverrides
+        )
+        await bridge.installTestSession(configuration)
+
+        try await bridge.prompt(id: nil, params: [
+            "sessionId": configuration.sessionID,
+            "prompt": "refresh this session"
+        ])
+
+        let refreshed = try #require(
+            await bridge.sessionConfigurationsForTesting().first
+        )
+        #expect(refreshed.sessionRevision == configuration.sessionRevision)
+        #expect(
+            refreshed.configuredContextWindowLimit
+                == configuration.configuredContextWindowLimit
+        )
+        #expect(
+            refreshed.generationParameterOverrides
+                == configuration.generationParameterOverrides
+        )
+        #expect(
+            refreshed.history.contains {
+                $0.role == .user && $0.content == "refresh this session"
+            }
+        )
+    }
+
 }
