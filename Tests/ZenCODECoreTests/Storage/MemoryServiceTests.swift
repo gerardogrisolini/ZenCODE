@@ -546,6 +546,113 @@ struct MemoryServiceTests {
     }
 
     @Test
+    func savedSessionsIndexCreatesPrivateFilesystemEntries() throws {
+        #if canImport(Darwin) || canImport(Glibc)
+        let fileManager = FileManager.default
+        let rootURL = fileManager.temporaryDirectory
+            .appendingPathComponent("saved-sessions-permissions-\(UUID().uuidString)", isDirectory: true)
+        let storeDirectoryURL = rootURL.appendingPathComponent("store", isDirectory: true)
+        defer { try? fileManager.removeItem(at: rootURL) }
+
+        let store = SavedSessionsStore(directoryURL: storeDirectoryURL)
+        try store.recordSavedSession(
+            projectPath: rootURL.appendingPathComponent("project", isDirectory: true).path,
+            sessionName: "private checkpoint",
+            sessionID: "private-session",
+            savedAt: Date(timeIntervalSince1970: 1)
+        )
+
+        #expect(try savedSessionsPOSIXMode(of: storeDirectoryURL, fileManager: fileManager) == 0o700)
+        #expect(try savedSessionsPOSIXMode(of: store.sessionsFileURL(), fileManager: fileManager) == 0o600)
+        let filenames = try fileManager.contentsOfDirectory(atPath: storeDirectoryURL.path)
+        #expect(!filenames.contains { $0.hasSuffix(".tmp") })
+        #else
+        return
+        #endif
+    }
+
+    @Test
+    func savedSessionsIndexTightensPermissiveExistingEntriesWithoutChangingData() throws {
+        #if canImport(Darwin) || canImport(Glibc)
+        let fileManager = FileManager.default
+        let rootURL = fileManager.temporaryDirectory
+            .appendingPathComponent("saved-sessions-permissions-\(UUID().uuidString)", isDirectory: true)
+        let storeDirectoryURL = rootURL.appendingPathComponent("store", isDirectory: true)
+        defer { try? fileManager.removeItem(at: rootURL) }
+
+        let store = SavedSessionsStore(directoryURL: storeDirectoryURL)
+        try store.recordSavedSession(
+            projectPath: rootURL.appendingPathComponent("project", isDirectory: true).path,
+            sessionName: "legacy checkpoint",
+            sessionID: "legacy-session",
+            savedAt: Date(timeIntervalSince1970: 2)
+        )
+        let fileURL = store.sessionsFileURL()
+        let originalData = try Data(contentsOf: fileURL)
+        try fileManager.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o755)],
+            ofItemAtPath: storeDirectoryURL.path
+        )
+        try fileManager.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o644)],
+            ofItemAtPath: fileURL.path
+        )
+
+        let sessions = store.sessions()
+
+        #expect(sessions.count == 1)
+        #expect(sessions.first?.sessionID == "legacy-session")
+        #expect(try Data(contentsOf: fileURL) == originalData)
+        #expect(try savedSessionsPOSIXMode(of: storeDirectoryURL, fileManager: fileManager) == 0o700)
+        #expect(try savedSessionsPOSIXMode(of: fileURL, fileManager: fileManager) == 0o600)
+        #else
+        return
+        #endif
+    }
+
+    @Test
+    func savedSessionsIndexRejectsDestinationSymlinkWithoutTouchingTarget() throws {
+        #if canImport(Darwin) || canImport(Glibc)
+        let fileManager = FileManager.default
+        let rootURL = fileManager.temporaryDirectory
+            .appendingPathComponent("saved-sessions-permissions-\(UUID().uuidString)", isDirectory: true)
+        let storeDirectoryURL = rootURL.appendingPathComponent("store", isDirectory: true)
+        let targetURL = rootURL.appendingPathComponent("unrelated.json")
+        defer { try? fileManager.removeItem(at: rootURL) }
+
+        try fileManager.createDirectory(at: storeDirectoryURL, withIntermediateDirectories: true)
+        let targetData = Data("unrelated target".utf8)
+        try targetData.write(to: targetURL)
+        try fileManager.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o644)],
+            ofItemAtPath: targetURL.path
+        )
+        try fileManager.createSymbolicLink(
+            at: storeDirectoryURL.appendingPathComponent(SavedSessionsStore.filename),
+            withDestinationURL: targetURL
+        )
+
+        let store = SavedSessionsStore(directoryURL: storeDirectoryURL)
+        do {
+            try store.recordSavedSession(
+                projectPath: rootURL.appendingPathComponent("project", isDirectory: true).path,
+                sessionName: "should fail",
+                sessionID: "symlink-session",
+                savedAt: Date(timeIntervalSince1970: 3)
+            )
+            Issue.record("Saved sessions must reject a destination symlink.")
+        } catch {
+            // Expected: SensitiveFilePermissions fails closed for symlinks.
+        }
+
+        #expect(try Data(contentsOf: targetURL) == targetData)
+        #expect(try savedSessionsPOSIXMode(of: targetURL, fileManager: fileManager) == 0o644)
+        #else
+        return
+        #endif
+    }
+
+    @Test
     func savedSessionsIndexRetainsConcurrentWritesAcrossInstances() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
@@ -636,6 +743,20 @@ struct MemoryServiceTests {
     }
 }
 
+
+#if canImport(Darwin) || canImport(Glibc)
+private func savedSessionsPOSIXMode(of url: URL, fileManager: FileManager) throws -> Int {
+    let attributes = try fileManager.attributesOfItem(atPath: url.path)
+    guard let permissions = attributes[.posixPermissions] as? NSNumber else {
+        throw SavedSessionsPOSIXTestError.missingPermissions(url)
+    }
+    return permissions.intValue & 0o777
+}
+
+private enum SavedSessionsPOSIXTestError: Error {
+    case missingPermissions(URL)
+}
+#endif
 
 private actor SavedSessionsWriteBarrier {
     private let participantCount: Int

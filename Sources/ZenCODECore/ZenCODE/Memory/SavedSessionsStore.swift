@@ -130,6 +130,10 @@ public final class SavedSessionsStore {
 
         let data: Data
         do {
+            try SensitiveFilePermissions.hardenExistingFile(
+                at: fileURL,
+                fileManager: fileManager
+            )
             data = try Data(contentsOf: fileURL)
         } catch {
             throw SavedSessionsStoreError.unreadableIndex(fileURL.path)
@@ -145,14 +149,11 @@ public final class SavedSessionsStore {
     }
 
     private func writeIndexFile(_ index: IndexFile, to fileURL: URL) throws {
-        try fileManager.createDirectory(
-            at: fileURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(index).write(to: fileURL, options: .atomic)
+        let data = try encoder.encode(index)
+        try SensitiveFilePermissions.write(data, to: fileURL, fileManager: fileManager)
     }
 }
 
