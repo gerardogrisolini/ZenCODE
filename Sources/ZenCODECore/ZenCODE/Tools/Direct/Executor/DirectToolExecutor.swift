@@ -275,8 +275,13 @@ public actor DirectToolExecutor {
     }
 
     public func shutdown() async {
+        toolProviderRegistriesBySessionID.removeAll()
         await subAgentRuntime.shutdown()
         await execJobRuntime.shutdown()
+    }
+
+    func hasToolProviderRegistry(sessionID: String) -> Bool {
+        toolProviderRegistriesBySessionID[sessionID] != nil
     }
 
     public func closeSubAgent(id: String) async -> Bool {

@@ -74,6 +74,16 @@ public struct TerminalToolSelectionItem: Hashable, Sendable {
 }
 
 public enum TerminalToolSelectionCatalog {
+    public struct AmbiguousSelectionError: LocalizedError, Equatable {
+        public let token: String
+        public let matches: [String]
+
+        public var errorDescription: String? {
+            "Tool selection '\(token)' is ambiguous. Choose one exact key: "
+                + matches.joined(separator: ", ") + "."
+        }
+    }
+
     public static let featureBuilderKey = "feature.builder"
     public static let featurePackageKeyPrefix = "feature:"
 
@@ -167,6 +177,12 @@ public enum TerminalToolSelectionCatalog {
             let matchedKeys = selectionKeys(for: token, items: items)
             guard !matchedKeys.isEmpty else {
                 throw TerminalToolSelectionError.unknownToken(token)
+            }
+            guard matchedKeys.count == 1 else {
+                throw AmbiguousSelectionError(
+                    token: token,
+                    matches: matchedKeys.sorted()
+                )
             }
             selectedKeys.formUnion(matchedKeys)
         }

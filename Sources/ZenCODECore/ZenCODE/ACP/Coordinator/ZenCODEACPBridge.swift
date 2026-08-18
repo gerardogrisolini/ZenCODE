@@ -168,6 +168,7 @@ public actor ZenCODEACPBridge {
         // writer, so latching it here is what makes "nothing is written after
         // shutdown" true regardless of where in-flight work was parked.
         await writer.close()
+        await permissionBroker.removeAllCachedDecisions()
         // Only now wait for the renderers to stop and release their observers.
         // Every write they could still attempt is already fenced by the closed
         // writer, so this await cannot widen the shutdown window.

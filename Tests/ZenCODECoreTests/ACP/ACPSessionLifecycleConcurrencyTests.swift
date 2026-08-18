@@ -11,6 +11,7 @@ import Foundation
 import Synchronization
 @testable import ZenCODECore
 import Testing
+import ToolCore
 
 /// One-shot async gate: `wait()` suspends until `open()` is called. Lets each
 /// test pin a backend at an exact point instead of relying on sleeps.
@@ -76,7 +77,8 @@ struct ACPSessionLifecycleConcurrencyTests {
     }
 
     private static func makeBridge(
-        backend: GatedRuntimeBackend
+        backend: GatedRuntimeBackend,
+        writer: ACPWriter = ACPWriter(sink: { _ in })
     ) throws -> ZenCODEACPBridge {
         let configuration = try AgentConfiguration(
             hostedModelID: "test-model",
@@ -92,9 +94,9 @@ struct ACPSessionLifecycleConcurrencyTests {
         )
         return ZenCODEACPBridge(
             configuration: configuration,
-            // These tests assert bridge and runner state, not transport bytes.
-            // Avoid interleaving JSON on the process-wide stdout across cases.
-            writer: ACPWriter(sink: { _ in }),
+            // The default avoids interleaving JSON on process-wide stdout;
+            // ordering tests inject an observable writer.
+            writer: writer,
             backendFactory: { _, _ in backend }
         )
     }
@@ -374,6 +376,87 @@ struct ACPSessionLifecycleConcurrencyTests {
         ])
         #expect(await backend.promptCount() == 2)
         #expect(await bridge.testActivePromptID(sessionID: sessionID) == nil)
+    }
+
+    @Test
+    func promptReservationRemainsHeldUntilFinalResultIsSent() async throws {
+        let resultWriteStarted = ACPLifecycleGate()
+        let resultWriteMayFinish = DispatchSemaphore(value: 0)
+        let writer = ACPWriter(sink: { data in
+            guard let value = try? JSONDecoder().decode(JSONValue.self, from: data),
+                  value.objectValue?["id"] == .number(99) else {
+                return
+            }
+            resultWriteStarted.open()
+            resultWriteMayFinish.wait()
+        })
+        let backend = GatedRuntimeBackend()
+        let bridge = try Self.makeBridge(backend: backend, writer: writer)
+        let sessionID = "acp-result-order"
+        await bridge.installTestSession(Self.makeConfiguration(sessionID: sessionID))
+
+        let first = Task {
+            try await bridge.prompt(id: .number(99), params: [
+                "sessionId": sessionID,
+                "prompt": "first",
+            ])
+        }
+        await resultWriteStarted.wait()
+
+        await #expect(throws: ACPError.self) {
+            try await bridge.prompt(id: nil, params: [
+                "sessionId": sessionID,
+                "prompt": "must not overlap result delivery",
+            ])
+        }
+
+        resultWriteMayFinish.signal()
+        try await first.value
+        #expect(await bridge.testActivePromptID(sessionID: sessionID) == nil)
+    }
+
+    @Test
+    func closingSessionEvictsItsPermissionDecisions() async throws {
+        let writerReference = Mutex<ACPWriter?>(nil)
+        let writer = ACPWriter(sink: { data in
+            guard let request = try? JSONDecoder().decode(JSONValue.self, from: data),
+                  request.objectValue?["method"] == .string("session/request_permission"),
+                  let id = request.objectValue?["id"],
+                  let writer = writerReference.withLock({ $0 }) else {
+                return
+            }
+            Task(name: "ACP.closePermissionFixture") {
+                await writer.handleResponse(.object([
+                    "id": id,
+                    "result": .object(["optionId": .string("allow_always")]),
+                ]))
+            }
+        })
+        writerReference.withLock { $0 = writer }
+        let bridge = try Self.makeBridge(
+            backend: GatedRuntimeBackend(),
+            writer: writer
+        )
+        let sessionID = "acp-permission-eviction"
+        await bridge.installTestSession(Self.makeConfiguration(sessionID: sessionID))
+        #expect(await bridge.permissionBroker.authorize(AgentToolAuthorizationRequest(
+            sessionID: sessionID,
+            toolCallID: "push",
+            toolName: "git.push",
+            title: "Push",
+            kind: "destructive",
+            command: "git push origin main",
+            workingDirectory: "/tmp"
+        )))
+        #expect(
+            await bridge.permissionBroker.cachedDecisionCount(sessionID: sessionID) == 1
+        )
+
+        try await bridge.close(id: nil, params: ["sessionId": sessionID])
+
+        #expect(
+            await bridge.permissionBroker.cachedDecisionCount(sessionID: sessionID) == 0
+        )
     }
 
     @Test

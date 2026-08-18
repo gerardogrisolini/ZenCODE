@@ -74,7 +74,13 @@ extension DirectToolExecutor {
                 output: try await execJobRuntime.execute(toolCall: toolCall)
             )
         }
-        if directlyAllowed, let deniedOutput = await deniedDestructiveToolOutputIfNeeded(
+        // Destructive names are gated independently of the dispatch owner. A
+        // feature manifest may advertise a core-looking name as an alias, and a
+        // programmatic allowlist may enable that feature without making the raw
+        // name `directlyAllowed`; neither route may bypass operator consent.
+        if (directlyAllowed || featureAllowed),
+           Self.destructiveGatedToolNames.contains(toolCall.name),
+           let deniedOutput = await deniedDestructiveToolOutputIfNeeded(
             sessionID: sessionID,
             toolCall: toolCall,
             workingDirectory: workingDirectory
@@ -173,10 +179,11 @@ extension DirectToolExecutor {
             )
             let request = DirectTodoRuntime.normalizedToolRequest(for: toolCall)
             if request.name == "tasks.cancel",
+               let rootSessionID = sessionID?.nilIfBlank,
                let taskID = DirectTodoRuntime.firstString(["id"], in: request.arguments) {
                 _ = await subAgentRuntime.closeAgentAssigned(
                     to: taskID,
-                    rootSessionID: sessionID?.nilIfBlank ?? "default"
+                    rootSessionID: rootSessionID
                 )
             }
             return DirectToolExecutionOutput(output: output)

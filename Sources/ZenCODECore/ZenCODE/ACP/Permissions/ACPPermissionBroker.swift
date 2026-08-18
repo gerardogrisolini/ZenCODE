@@ -12,6 +12,7 @@ public actor ACPPermissionBroker {
     private let writer: ACPWriter
     private var alwaysAllowedKeys = Set<String>()
     private var alwaysRejectedKeys = Set<String>()
+    private var decisionKeysBySessionID: [String: Set<String>] = [:]
 
     public init(writer: ACPWriter) {
         self.writer = writer
@@ -43,6 +44,7 @@ public actor ACPPermissionBroker {
 
         if optionID == "allow_always" {
             alwaysAllowedKeys.insert(cacheKey)
+            remember(cacheKey: cacheKey, for: request.sessionID)
             if request.toolName == "local.exec" {
                 LocalExecPermissionAuthorizer.persistAllowedCommand(request.command)
             }
@@ -50,6 +52,7 @@ public actor ACPPermissionBroker {
         }
         if optionID == "reject_always" {
             alwaysRejectedKeys.insert(cacheKey)
+            remember(cacheKey: cacheKey, for: request.sessionID)
             return false
         }
         if optionID == "allow" || optionID.hasPrefix("allow_") {
@@ -60,6 +63,29 @@ public actor ACPPermissionBroker {
 
     public func handleResponse(_ message: JSONValue) async {
         await writer.handleResponse(message)
+    }
+
+    public func removeCachedDecisions(sessionID: String) {
+        guard let keys = decisionKeysBySessionID.removeValue(forKey: sessionID) else {
+            return
+        }
+        alwaysAllowedKeys.subtract(keys)
+        alwaysRejectedKeys.subtract(keys)
+    }
+
+    public func removeAllCachedDecisions() {
+        alwaysAllowedKeys.removeAll()
+        alwaysRejectedKeys.removeAll()
+        decisionKeysBySessionID.removeAll()
+    }
+
+    func cachedDecisionCount(sessionID: String) -> Int {
+        decisionKeysBySessionID[sessionID]?.count ?? 0
+    }
+
+    private func remember(cacheKey: String, for rawSessionID: String?) {
+        guard let sessionID = rawSessionID?.nilIfBlank else { return }
+        decisionKeysBySessionID[sessionID, default: []].insert(cacheKey)
     }
 
     private func permissionParams(for request: AgentToolAuthorizationRequest) -> [String: Any] {

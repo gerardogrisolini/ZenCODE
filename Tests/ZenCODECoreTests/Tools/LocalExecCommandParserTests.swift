@@ -460,6 +460,22 @@ struct LocalExecCommandParserTests {
         )
     }
 
+    @Test
+    func clobberRedirectionIsNotParsedAsPipeline() {
+        #expect(
+            LocalExecCommandParser.executableIdentity(for: ">| out.txt echo hi")
+                == .executable("echo")
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: "echo hi >| out.txt")
+                .map(\.identity) == ["echo"]
+        )
+        #expect(
+            LocalExecCommandParser.authorizationCandidates(in: "echo hi > | cat")
+                .map(\.identity) == ["echo", "cat"]
+        )
+    }
+
     // MARK: - Identity: grouping delimiters
 
     @Test

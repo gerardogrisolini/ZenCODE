@@ -503,6 +503,102 @@ struct DirectTaskToolAdapterTests {
     }
 
     @Test
+    func executorEnforcesScopedTaskUpdateBeyondAdvertisedDescriptor() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "work", title: "Work")]
+        )
+        let receipt = try #require(try await orchestrator.claimTasks(
+            sessionID: "root",
+            claims: [TaskClaim(taskID: "work", agentID: "worker")]
+        ).first)
+        try await orchestrator.registerExecutionScope(
+            executionSessionID: "child",
+            scope: TaskExecutionScope(
+                rootSessionID: "root",
+                graphID: receipt.graphID,
+                taskID: receipt.taskID,
+                attemptID: receipt.attemptID
+            )
+        )
+        let executor = DirectToolExecutor(
+            subAgentContextualBackendFactory:
+                DirectSubAgentRuntime.unavailableContextualBackendFactory
+        )
+        await executor.installTaskOrchestrator(orchestrator)
+
+        let forbidden = await executor.execute(
+            sessionID: "child",
+            toolCall: call(
+                name: "tasks.update",
+                arguments: ["id": "work", "status": "completed"]
+            ),
+            workingDirectory: URL(fileURLWithPath: "/tmp"),
+            allowedToolNames: ["tasks.update"]
+        )
+        #expect(forbidden.status == .failed)
+        #expect(
+            forbidden.output.contains(
+                "may only append progress output to its own attempt"
+            )
+        )
+        #expect(
+            try await orchestrator.task(sessionID: "root", taskID: "work").task.status
+                == .inProgress
+        )
+
+        let progress = await executor.execute(
+            sessionID: "child",
+            toolCall: call(
+                name: "tasks.update",
+                arguments: ["id": "work", "output": "still working"]
+            ),
+            workingDirectory: URL(fileURLWithPath: "/tmp"),
+            allowedToolNames: ["tasks.update"]
+        )
+        #expect(progress.status == .completed)
+        #expect(
+            try await orchestrator.task(sessionID: "root", taskID: "work")
+                .task.activeAttempt?.output == "still working"
+        )
+    }
+
+    @Test
+    func executorRejectsTaskCancelWithoutExplicitSessionInsteadOfUsingDefault() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "default",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "work", title: "Work")]
+        )
+        let executor = DirectToolExecutor(
+            subAgentContextualBackendFactory:
+                DirectSubAgentRuntime.unavailableContextualBackendFactory
+        )
+        await executor.installTaskOrchestrator(orchestrator)
+
+        let result = await executor.execute(
+            sessionID: nil,
+            toolCall: call(name: "tasks.cancel", arguments: ["id": "work"]),
+            workingDirectory: URL(fileURLWithPath: "/tmp"),
+            allowedToolNames: ["tasks.cancel"]
+        )
+
+        #expect(result.status == .failed)
+        #expect(result.output.contains("requires an explicit sessionID"))
+        #expect(
+            try await orchestrator.task(sessionID: "default", taskID: "work").task.status
+                == .pending
+        )
+    }
+
+    @Test
     func complexityIsParsedAndRenderedFromToolCall() async throws {
         let orchestrator = SessionTaskOrchestrator()
         let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)

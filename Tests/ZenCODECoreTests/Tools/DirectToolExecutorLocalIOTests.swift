@@ -828,6 +828,33 @@ struct DirectToolExecutorAuthorizationTests {
     }
 
     @Test
+    func perSessionProviderRegistriesAreEvictedOnCloseAndShutdown() async {
+        let executor = makeExecutor()
+        let provider = AgentToolProvider(
+            tools: [
+                ToolDescriptor(
+                    name: "session.fixture",
+                    description: "Session provider fixture.",
+                    inputSchema: #"{"type":"object","properties":{}}"#
+                )
+            ],
+            executor: { _ in "ok" }
+        )
+
+        await executor.updateToolProviders([provider], sessionID: "one")
+        await executor.updateToolProviders([provider], sessionID: "two")
+        #expect(await executor.hasToolProviderRegistry(sessionID: "one"))
+        #expect(await executor.hasToolProviderRegistry(sessionID: "two"))
+
+        await executor.removeToolProviders(sessionID: "one")
+        #expect(!(await executor.hasToolProviderRegistry(sessionID: "one")))
+        #expect(await executor.hasToolProviderRegistry(sessionID: "two"))
+
+        await executor.shutdown()
+        #expect(!(await executor.hasToolProviderRegistry(sessionID: "two")))
+    }
+
+    @Test
     func registeredFeatureToolKeepsPriorityOverCompatibilityFallback() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("feature-core-alias-\(UUID().uuidString)", isDirectory: true)

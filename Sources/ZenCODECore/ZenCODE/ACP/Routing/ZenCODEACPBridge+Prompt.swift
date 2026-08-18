@@ -294,20 +294,20 @@ extension ZenCODEACPBridge {
             let completion = try await activePromptTask.value
             await flushPromptUpdates()
             await refreshSessionStateIfAvailable(sessionID: sessionID)
-            releaseReservation()
 
             await writer.sendResultIfRequest(
                 id: id,
                 result: JSONValue.acpValue(from: ["stopReason": completion.stopReason])
             )
+            releaseReservation()
         } catch is CancellationError {
             await flushPromptUpdates()
             await refreshSessionStateIfAvailable(sessionID: sessionID)
-            releaseReservation()
             await writer.sendResultIfRequest(
                 id: id,
                 result: JSONValue.acpValue(from: ["stopReason": "cancelled"])
             )
+            releaseReservation()
         } catch {
             await flushPromptUpdates()
             await refreshSessionStateIfAvailable(sessionID: sessionID)
@@ -364,6 +364,7 @@ extension ZenCODEACPBridge {
         // Drop the session before any suspension so a prompt finishing
         // concurrently cannot restore it through refreshSessionStateIfAvailable.
         let closedSession = sessions.removeValue(forKey: sessionID)
+        await permissionBroker.removeCachedDecisions(sessionID: sessionID)
         closedSession?.activePromptTask?.cancel()
         if let closedEpoch = closedSession?.epoch {
             // Invalidate the lifecycle work bound to the incarnation we are

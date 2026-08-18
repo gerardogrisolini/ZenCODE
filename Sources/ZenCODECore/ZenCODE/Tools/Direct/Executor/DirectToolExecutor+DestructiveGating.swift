@@ -37,7 +37,7 @@ extension DirectToolExecutor {
                 return nil
             }
             let recursive = arguments.bool("recursive") == true
-            let command = "delete\(recursive ? " -r" : "") \(path)"
+            let command = "delete\(recursive ? " -r" : "") \(shellQuoted(path))"
             return AgentToolAuthorizationRequest(
                 sessionID: sessionID,
                 toolCallID: toolCall.id,
@@ -57,10 +57,10 @@ extension DirectToolExecutor {
                 parts.append("--force-with-lease")
             }
             if let remote = arguments.string("remote")?.nilIfBlank {
-                parts.append(remote)
+                parts.append(shellQuoted(remote))
             }
             if let refspec = (arguments.string("refspec") ?? arguments.string("branch"))?.nilIfBlank {
-                parts.append(refspec)
+                parts.append(shellQuoted(refspec))
             }
             return AgentToolAuthorizationRequest(
                 sessionID: sessionID,
@@ -81,7 +81,7 @@ extension DirectToolExecutor {
             let paths = arguments.stringArray("paths")
                 ?? arguments.string("path").map { [$0] }
                 ?? []
-            let target = paths.isEmpty ? "." : paths.joined(separator: " ")
+            let target = paths.isEmpty ? "." : paths.map(shellQuoted).joined(separator: " ")
             return AgentToolAuthorizationRequest(
                 sessionID: sessionID,
                 toolCallID: toolCall.id,
@@ -95,6 +95,19 @@ extension DirectToolExecutor {
         default:
             return nil
         }
+    }
+
+    /// Renders one opaque argument for the consent prompt without allowing
+    /// whitespace, quotes, or shell metacharacters to blur argument boundaries.
+    static func shellQuoted(_ argument: String) -> String {
+        guard !argument.isEmpty else { return "''" }
+        let safeCharacters = CharacterSet(
+            charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-"
+        )
+        if argument.unicodeScalars.allSatisfy(safeCharacters.contains) {
+            return argument
+        }
+        return "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Returns a denial message when the destructive tool call is not approved,

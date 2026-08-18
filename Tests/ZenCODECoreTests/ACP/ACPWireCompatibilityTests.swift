@@ -6,11 +6,54 @@
 //
 
 import Foundation
+import Synchronization
 @testable import ZenCODECore
 import Testing
 import ToolCore
 
 extension ACPCompatibilityTests {
+    @Test
+    func permissionBrokerEvictsPerSessionDecisionsWithoutAffectingOthers() async throws {
+        let writerReference = Mutex<ACPWriter?>(nil)
+        let writer = ACPWriter(sink: { data in
+            guard let request = try? JSONDecoder().decode(JSONValue.self, from: data),
+                  let id = request.objectValue?["id"],
+                  let writer = writerReference.withLock({ $0 }) else {
+                return
+            }
+            Task(name: "ACPPermissionBrokerTests.allowAlways") {
+                await writer.handleResponse(.object([
+                    "id": id,
+                    "result": .object(["optionId": .string("allow_always")]),
+                ]))
+            }
+        })
+        writerReference.withLock { $0 = writer }
+        let broker = ACPPermissionBroker(writer: writer)
+
+        for sessionID in ["one", "two"] {
+            let allowed = await broker.authorize(AgentToolAuthorizationRequest(
+                sessionID: sessionID,
+                toolCallID: "call-\(sessionID)",
+                toolName: "git.push",
+                title: "Push",
+                kind: "destructive",
+                command: "git push origin main",
+                workingDirectory: "/tmp"
+            ))
+            #expect(allowed)
+        }
+        #expect(await broker.cachedDecisionCount(sessionID: "one") == 1)
+        #expect(await broker.cachedDecisionCount(sessionID: "two") == 1)
+
+        await broker.removeCachedDecisions(sessionID: "one")
+        #expect(await broker.cachedDecisionCount(sessionID: "one") == 0)
+        #expect(await broker.cachedDecisionCount(sessionID: "two") == 1)
+
+        await broker.removeAllCachedDecisions()
+        #expect(await broker.cachedDecisionCount(sessionID: "two") == 0)
+    }
+
     @Test
     func authCapableClientReceivesCompatibilityAuthenticationMethod() {
         let methods = ZenCODEACPBridge.authenticationMethods(from: [

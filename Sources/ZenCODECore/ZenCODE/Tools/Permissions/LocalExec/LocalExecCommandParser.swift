@@ -333,7 +333,12 @@ enum LocalExecCommandParser {
                         } else {
                             switch character {
                             case "|":
-                                if Self.segmentContainsCaseTerminator(current) {
+                                if current.last == ">" {
+                                    // POSIX clobber redirection (`>|`) is one
+                                    // operator, not a pipeline. Whitespace keeps
+                                    // `> |` intentionally distinct.
+                                    current.append(character)
+                                } else if Self.segmentContainsCaseTerminator(current) {
                                     appendCurrentSegment()
                                 } else {
                                     ensureCasePatternContext(for: current)
@@ -1062,10 +1067,12 @@ enum LocalExecCommandParser {
         guard arrow == ">" || arrow == "<" else { return nil }
         prefix += 1
 
-        // Optional second arrow/ampersand: `>>`, `<<`, `>&`, `<&`.
+        // Optional second arrow/ampersand: `>>`, `<<`, `>&`, `<&`, `>|`.
         if prefix < chars.count, chars[prefix] == arrow {
             prefix += 1
         } else if prefix < chars.count, chars[prefix] == "&" {
+            prefix += 1
+        } else if arrow == ">", prefix < chars.count, chars[prefix] == "|" {
             prefix += 1
         }
 

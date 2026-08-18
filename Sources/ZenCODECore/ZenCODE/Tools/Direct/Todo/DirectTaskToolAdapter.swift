@@ -30,8 +30,13 @@ public actor DirectTaskToolAdapter {
         sessionID: String?,
         toolCall: DirectAgentToolCall
     ) async throws -> String {
-        let sessionID = sessionID?.nilIfBlank ?? "default"
         let request = DirectTodoRuntime.normalizedToolRequest(for: toolCall)
+        if request.name == "tasks.cancel", sessionID?.nilIfBlank == nil {
+            throw SessionTaskOrchestratorError.permissionDenied(
+                "tasks.cancel requires an explicit sessionID; refusing to use a fallback task graph."
+            )
+        }
+        let sessionID = sessionID?.nilIfBlank ?? "default"
 
         switch request.name {
         case "tasks.create":
