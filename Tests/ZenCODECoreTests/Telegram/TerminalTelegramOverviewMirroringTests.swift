@@ -225,7 +225,7 @@ struct TerminalTelegramOverviewMirroringTests {
         await drainMirrors(terminal)
 
         #expect(recorder.messages.isEmpty)
-        #expect(terminal.mirroredOverviewSignatures[.subAgents] == nil)
+        #expect(terminal.mirroredTaskGraphOverviewSignature == nil)
     }
 
     @Test
@@ -243,7 +243,7 @@ struct TerminalTelegramOverviewMirroringTests {
         )
         await drainMirrors(terminal)
         #expect(terminal.activeTelegramProgressReporter == nil)
-        #expect(terminal.mirroredOverviewSignatures.isEmpty)
+        #expect(terminal.mirroredTaskGraphOverviewSignature == nil)
     }
 
     @Test

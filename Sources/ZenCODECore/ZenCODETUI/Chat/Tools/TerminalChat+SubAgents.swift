@@ -136,6 +136,9 @@ extension TerminalChat {
         let snapshots = await sessionRunner.subAgentSnapshots()
         await refreshStatusBarGitStatusSummaryForCompletedSubAgents(snapshots)
         guard force || !snapshots.isEmpty else {
+            await renderCoordinator.clearSubAgentOverview(
+                revision: publicationRevision
+            )
             return
         }
         let signature = Self.subAgentOverviewSignature(snapshots)
@@ -849,14 +852,38 @@ extension TerminalChat {
                 output.append("\(linePrefix)\(prefix)\(clipped)")
                 continue
             }
-            var wrapped = fitInline(line.text, width: wrapWidth)
-                .components(separatedBy: "\n")
+            // Keep the semantic tool marker (including its two-column gap)
+            // intact while still accounting for it in the first row's width.
+            // Generic word wrapping normalizes repeated ASCII spaces.
+            let semanticPrefix = line.text.hasPrefix("🛠️  ") ? "🛠️  " : ""
+            let wrappingText = semanticPrefix.isEmpty
+                ? line.text
+                : String(line.text.dropFirst(semanticPrefix.count))
+            var wordWrapped = TerminalANSIText.wrap(
+                wrappingText,
+                width: wrapWidth,
+                startingAtColumn: TerminalANSIText.visibleWidth(semanticPrefix)
+            ).components(separatedBy: "\n")
+            if !semanticPrefix.isEmpty, !wordWrapped.isEmpty {
+                wordWrapped[0] = semanticPrefix + wordWrapped[0]
+            }
+            var wrapped = wordWrapped.allSatisfy({
+                TerminalANSIText.visibleWidth($0) <= wrapWidth
+            }) ? wordWrapped : TerminalANSIText.wrapPreservingWhitespace(
+                line.text,
+                width: wrapWidth
+            )
             let maxWrappedLines = max(1, line.maxWrappedLines)
             if wrapped.count > maxWrappedLines {
                 let ellipsis = AgentOutput.standardErrorIsTerminal ? "\(reset)…" : "…"
                 wrapped = Array(wrapped.prefix(maxWrappedLines))
                 let lastIndex = maxWrappedLines - 1
-                wrapped[lastIndex] += ellipsis
+                wrapped[lastIndex] = TerminalANSIText.truncate(
+                    wrapped[lastIndex],
+                    to: wrapWidth,
+                    ellipsis: ellipsis,
+                    ellipsisWidth: 1
+                )
             }
             for wrappedLine in wrapped {
                 output.append("\(linePrefix)\(prefix)\(wrappedLine)")
@@ -869,15 +896,10 @@ extension TerminalChat {
     /// rewrite slot.
     ///
     /// One column is taken by the inset the chat renderer prepends to each
-    /// physical row, one is left free because a row reaching the final column
-    /// wraps in a terminal-dependent way, and one absorbs a single
-    /// double-width glyph: rows are wrapped by grapheme count, while the
-    /// rewrite invariant is measured in visible columns, and every row of this
-    /// section carries at most one emoji marker. A row that still exceeds the
-    /// terminal width (for example wide CJK content) is left untouched and the
-    /// coordinator falls back to appending that refresh, which is the existing
-    /// fail-safe. Truncating here instead would corrupt the full presentation,
-    /// where complete activity, tool, and response text must stay intact.
+    /// physical row and one is left free because a row reaching the final column
+    /// wraps in a terminal-dependent way. Sub-agent rows use the shared ANSI- and
+    /// display-width-aware wrapping primitive, so CJK and other double-width
+    /// graphemes remain inside the same physical-row budget as ASCII content.
     private nonisolated static let subAgentOverviewReservedColumns = 3
 
     nonisolated static func subAgentOverviewSignature(

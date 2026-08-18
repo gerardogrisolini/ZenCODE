@@ -135,7 +135,7 @@ public final class TerminalChat {
     /// during the current turn, so republished identical content does not spam
     /// the remote chat. Sub-agent overviews are terminal-only. Reset when a new
     /// turn begins.
-    var mirroredOverviewSignatures: [TerminalChatRenderCoordinator.OverviewKind: String] = [:]
+    var mirroredTaskGraphOverviewSignature: String?
     /// Mirroring epoch of the current turn. Advanced (via the coordinator) at
     /// every turn boundary and compared against the epoch each notification
     /// carried at enqueue time: a notification delivered after its turn ended

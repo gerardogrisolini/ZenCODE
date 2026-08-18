@@ -69,71 +69,9 @@ actor TerminalChatRenderCoordinator {
         let activeSubAgentOverviewRowCount: Int
     }
 
-    private enum ToolBlockStyle: Sendable, Equatable {
-        case compact
-        case detailed
-    }
-
-    private enum ToolBlockLifecycle {
-        case started
-        case completed(
-            result: DirectAgentToolResult,
-            compactStatusDetail: String?,
-            elapsed: Duration?
-        )
-
-        var isCompletion: Bool {
-            if case .completed = self {
-                return true
-            }
-            return false
-        }
-    }
-
-    /// Tracks the active tool block so it can be cleared in place on
-    /// completion. `columnWidth` records the terminal width observed when
-    /// `rows` was calculated: if the width changes before completion the saved
-    /// row count is stale and the destructive clear is suppressed (see
-    /// ``clearOwnedToolRows``).
-    private struct ActiveToolBlock: Sendable, Equatable {
-        let id: String
-        let style: ToolBlockStyle
-        let rows: Int
-        let columnWidth: Int
-        /// The active scroll-region capacity when this block was written.
-        /// `nil` means no persistent terminal overlay was active.
-        let maximumInPlaceRows: Int?
-    }
-
-    /// Tracks the sub-agent overview section while it is still the last thing
-    /// written to the terminal, so the next publication can replace it in place
-    /// instead of appending another full copy of the section.
-    ///
-    /// `writeSequence` is the emit counter observed right after the section was
-    /// drawn: any other output (tool block, message, markdown response,
-    /// streaming chunk) advances it and therefore invalidates the block without
-    /// needing invalidation hooks spread across the coordinator.
-    private struct ActiveOverviewBlock: Sendable {
-        /// Stable logical identity of the redrawable section. Physical `rows`
-        /// are cursor geometry only and must never select a different section.
-        let anchorID: String?
-        let rows: Int
-        let columnWidth: Int
-        let maximumInPlaceRows: Int?
-        let cursorStateBeforeRender: CursorState
-        let writeSequence: UInt64
-    }
-
     private struct PendingWrite: Sendable {
         let channel: OutputChannel
         var text: String
-    }
-
-    /// Mutable render state for one output channel. `hasContent` is used only
-    /// for stdout, where markdown blocks may need a separating newline.
-    private struct CursorState: Sendable {
-        var spacing = TerminalChatTextFormatting.ChatSpacingState()
-        var lineInset = TerminalChatTextFormatting.ChatLineInsetState()
     }
 
     private struct ChannelState: Sendable {
@@ -151,27 +89,6 @@ actor TerminalChatRenderCoordinator {
         init(markdownFormatter: TerminalMarkdownStreamFormatter) {
             self.markdownFormatter = markdownFormatter
         }
-    }
-
-    private enum OverviewContent: Sendable {
-        case markdown(String)
-        case subAgents(
-            text: String,
-            responses: [SubAgentMarkdownResponse],
-            overviewBatchID: String?,
-            maximumInPlaceRows: Int?
-        )
-    }
-
-    private struct PendingOverview: Sendable {
-        let kind: OverviewKind
-        let signature: String
-        let revision: Int?
-        let force: Bool
-        let rememberSignature: Bool
-        let rememberedSignature: String
-        let content: OverviewContent
-        let sequence: UInt64
     }
 
     private let standardOutput: FileHandle?
@@ -223,28 +140,9 @@ actor TerminalChatRenderCoordinator {
     /// unadorned; every later one receives exactly one visual turn separator.
     private var hasWrittenSubmittedPrompt = false
 
-    private var toolOutputDetailLevel: ToolOutputDetailLevel = .compact
-    private var activeToolBlock: ActiveToolBlock?
-    /// Start instants indexed by the stable tool-call identity. A completion
-    /// consumes its entry even when it can no longer rewrite the active row,
-    /// preventing stale lifecycle metadata from leaking into a later call.
-    private var toolStartInstants: [String: ContinuousClock.Instant] = [:]
-    /// True while the active tool block belongs to an `agent.*` tool call
-    /// (e.g. `agent.wait`). Sub-agent overviews are allowed to interleave with
-    /// such blocks so progress remains visible during long-running delegated
-    /// work. Cleared whenever `activeToolBlock` becomes `nil`.
-    private var activeToolBlockIsSubAgentTool = false
+    private var toolState = TerminalToolBlockAccounting<ActiveToolBlock>()
     private var activeSubAgentOverviewBlock: ActiveOverviewBlock?
-    private var pendingOverviews: [OverviewKind: PendingOverview] = [:]
-    private var nextOverviewSequence: UInt64 = 0
-    private var overviewSignatures: [OverviewKind: String] = [:]
-    private var overviewRevisions: [OverviewKind: Int] = [:]
-    private var overviewPublicationCounters: [OverviewKind: Int] = [:]
-    private var overviewPublishingSuspended = false
-    /// Completion tokens are retained independently from overview signatures:
-    /// a status or tool update may legitimately republish the section, while a
-    /// completed response is transient and must be emitted exactly once.
-    private var consumedSubAgentResponseTokens = Set<String>()
+    private var overviewState = TerminalOverviewArbitration<OverviewKind, PendingOverview>()
 
     init(
         stdinIsTerminal: Bool,
@@ -606,7 +504,7 @@ actor TerminalChatRenderCoordinator {
     /// rewrite slot; otherwise its completion would cursor-up through the prompt
     /// and erase the authorization card's footer and bottom border.
     func beginExternalTerminalPrompt() {
-        overviewPublishingSuspended = true
+        overviewState.isSuspended = true
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         finishActiveToolOutputBeforeInterleavedMessage()
@@ -627,13 +525,13 @@ actor TerminalChatRenderCoordinator {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         prepareForToolOutput()
-        toolStartInstants[toolCall.id] = toolNow()
-        activeToolBlockIsSubAgentTool = DirectSubAgentRuntime
+        toolState.startInstants[toolCall.id] = toolNow()
+        toolState.activeBlockIsSubAgentTool = DirectSubAgentRuntime
             .isSubAgentToolName(toolCall.name)
         renderToolBlock(
             toolCall,
             lifecycle: .started,
-            style: toolBlockStyle(for: toolOutputDetailLevel),
+            style: toolBlockStyle(for: toolState.detailLevel),
             maximumInPlaceRows: maximumInPlaceRows
         )
     }
@@ -645,7 +543,7 @@ actor TerminalChatRenderCoordinator {
     ) {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
-        let elapsed = toolStartInstants.removeValue(forKey: toolCall.id)
+        let elapsed = toolState.startInstants.removeValue(forKey: toolCall.id)
             .map { $0.duration(to: toolNow()) }
         let compactStatusDetail = TerminalChat.compactToolCompletionDetail(
             for: toolCall,
@@ -657,9 +555,9 @@ actor TerminalChatRenderCoordinator {
         // user toggled details while the tool was running. A stale completion
         // uses the current preference but never takes ownership from a newer
         // active block.
-        let style = activeToolBlock.flatMap { block in
+        let style = toolState.activeBlock.flatMap { block in
             block.id == toolCall.id ? block.style : nil
-        } ?? toolBlockStyle(for: toolOutputDetailLevel)
+        } ?? toolBlockStyle(for: toolState.detailLevel)
         renderToolBlock(
             toolCall,
             lifecycle: .completed(
@@ -674,9 +572,9 @@ actor TerminalChatRenderCoordinator {
 
     func toggleToolDetailsOutput() {
         finishActiveToolOutputBeforeInterleavedMessage()
-        toolOutputDetailLevel = toolOutputDetailLevel.next
+        toolState.detailLevel = toolState.detailLevel.next
         writeSystemMessageWithoutInterrupt(
-            "Tool details: \(toolOutputDetailLevel.label)\n\n"
+            "Tool details: \(toolState.detailLevel.label)\n\n"
         )
         renderPendingOverviewsIfIdle()
     }
@@ -729,7 +627,7 @@ actor TerminalChatRenderCoordinator {
 
         switch lifecycle {
         case .started:
-            activeToolBlock = ActiveToolBlock(
+            toolState.activeBlock = ActiveToolBlock(
                 id: toolCall.id,
                 style: style,
                 rows: TerminalChat.renderedTerminalRowCount(
@@ -741,7 +639,7 @@ actor TerminalChatRenderCoordinator {
                 maximumInPlaceRows: maximumInPlaceRows
             )
         case .completed:
-            let activeBlock = activeToolBlock
+            let activeBlock = toolState.activeBlock
             let ownsActiveBlock = activeBlock?.id == toolCall.id
             let shouldRewriteActiveBlock = activeBlock.map { block in
                 // Safety fuse: if the terminal width changed between tool start
@@ -784,11 +682,11 @@ actor TerminalChatRenderCoordinator {
             // longer physically owns the cursor region and must not later
             // cursor-up through this completion.
             if ownsActiveBlock {
-                activeToolBlock = nil
-                activeToolBlockIsSubAgentTool = false
+                toolState.activeBlock = nil
+                toolState.activeBlockIsSubAgentTool = false
             } else if activeBlock != nil {
-                activeToolBlock = nil
-                activeToolBlockIsSubAgentTool = false
+                toolState.activeBlock = nil
+                toolState.activeBlockIsSubAgentTool = false
             }
 
             if shouldRewriteActiveBlock, let activeBlock {
@@ -972,18 +870,18 @@ actor TerminalChatRenderCoordinator {
     }
 
     private func interruptActiveToolForInterleavedOutputIfNeeded() {
-        guard activeToolBlock != nil else {
+        guard toolState.activeBlock != nil else {
             return
         }
         finishActiveToolOutputBeforeInterleavedMessage()
     }
 
     private func finishActiveToolOutputBeforeInterleavedMessage() {
-        guard activeToolBlock != nil else {
+        guard toolState.activeBlock != nil else {
             return
         }
-        activeToolBlock = nil
-        activeToolBlockIsSubAgentTool = false
+        toolState.activeBlock = nil
+        toolState.activeBlockIsSubAgentTool = false
         writeChat("\n", to: .standardError)
     }
 
@@ -1008,29 +906,14 @@ actor TerminalChatRenderCoordinator {
         _ epoch: Int
     ) async -> Void)?
 
-    private struct OverviewMirrorNotification: Sendable {
-        let kind: OverviewKind
-        let signature: String
-        let text: String
-        let epoch: Int
-    }
-
-    private var pendingMirrorNotifications: [OverviewMirrorNotification] = []
-    private var isDrainingMirrorNotifications = false
-    private var mirrorDrainWaiters: [CheckedContinuation<Void, Never>] = []
-    /// Monotonic mirroring epoch, advanced by the chat at every turn boundary.
-    /// Notifications carry the epoch current at enqueue time; the consumer
-    /// compares it with the epoch current at delivery and discards stale
-    /// ones, so a section rendered for one turn can never be adopted by the
-    /// next turn's remote channel even when delivery is delayed.
-    private var mirrorEpoch = 0
+    private var mirrorQueue = TerminalOverviewMirrorQueue<OverviewMirrorNotification>()
 
     /// Advances and returns the mirroring epoch. The chat calls this at each
     /// turn boundary so undelivered notifications from the previous turn are
     /// fenced off from the new turn's reporter.
     func advanceMirrorEpoch() -> Int {
-        mirrorEpoch += 1
-        return mirrorEpoch
+        mirrorQueue.epoch += 1
+        return mirrorQueue.epoch
     }
 
     /// Installs or replaces the overview mirroring hook. Actor-isolated so the
@@ -1056,22 +939,22 @@ actor TerminalChatRenderCoordinator {
     /// reporter right after, so the turn's final message cannot be overtaken
     /// by sections the turn already rendered.
     func waitForOverviewMirrorsToDrain() async {
-        guard isDrainingMirrorNotifications
-            || !pendingMirrorNotifications.isEmpty else {
+        guard mirrorQueue.isDraining
+            || !mirrorQueue.pending.isEmpty else {
             return
         }
         await withCheckedContinuation { continuation in
-            mirrorDrainWaiters.append(continuation)
+            mirrorQueue.drainWaiters.append(continuation)
         }
     }
     private func enqueueMirrorNotification(
         _ notification: OverviewMirrorNotification
     ) {
-        pendingMirrorNotifications.append(notification)
-        guard !isDrainingMirrorNotifications else {
+        mirrorQueue.pending.append(notification)
+        guard !mirrorQueue.isDraining else {
             return
         }
-        isDrainingMirrorNotifications = true
+        mirrorQueue.isDraining = true
         Task(name: "ZenCODE.TUI.overview-mirror-drain") {
             await drainMirrorNotifications()
         }
@@ -1082,8 +965,8 @@ actor TerminalChatRenderCoordinator {
     /// awaits the handler, new appends are picked up by the same loop, so the
     /// remote order always matches the local render order.
     private func drainMirrorNotifications() async {
-        while !pendingMirrorNotifications.isEmpty {
-            let notification = pendingMirrorNotifications.removeFirst()
+        while !mirrorQueue.pending.isEmpty {
+            let notification = mirrorQueue.pending.removeFirst()
             if let overviewMirroringHandler {
                 await overviewMirroringHandler(
                     notification.kind,
@@ -1095,9 +978,9 @@ actor TerminalChatRenderCoordinator {
         }
         // No suspension between the loop exit and the flag/waiter handoff, so
         // a concurrent append cannot slip past this drain unnoticed.
-        isDrainingMirrorNotifications = false
-        let waiters = mirrorDrainWaiters
-        mirrorDrainWaiters.removeAll()
+        mirrorQueue.isDraining = false
+        let waiters = mirrorQueue.drainWaiters
+        mirrorQueue.drainWaiters.removeAll()
         for waiter in waiters {
             waiter.resume()
         }
@@ -1108,17 +991,17 @@ actor TerminalChatRenderCoordinator {
     /// even when the older snapshot completes last or the active graph changes.
     func beginOverviewPublication(_ kind: OverviewKind) -> Int {
         let next = max(
-            overviewPublicationCounters[kind] ?? 0,
-            overviewRevisions[kind] ?? 0
+            overviewState.publicationCounters[kind] ?? 0,
+            overviewState.revisions[kind] ?? 0
         ) + 1
-        overviewPublicationCounters[kind] = next
-        overviewRevisions[kind] = next
-        pendingOverviews.removeValue(forKey: kind)
+        overviewState.publicationCounters[kind] = next
+        overviewState.revisions[kind] = next
+        overviewState.pending.removeValue(forKey: kind)
         return next
     }
 
     func setOverviewPublishingSuspended(_ isSuspended: Bool) {
-        overviewPublishingSuspended = isSuspended
+        overviewState.isSuspended = isSuspended
         if !isSuspended {
             renderPendingOverviewsIfIdle()
         }
@@ -1154,7 +1037,7 @@ actor TerminalChatRenderCoordinator {
         maximumInPlaceRows: Int? = nil
     ) -> OverviewRenderResult {
         let pendingResponseTokens = responses.compactMap { response in
-            consumedSubAgentResponseTokens.contains(response.token)
+            overviewState.consumedResponseTokens.contains(response.token)
                 ? nil
                 : response.token
         }
@@ -1191,12 +1074,12 @@ actor TerminalChatRenderCoordinator {
         content: OverviewContent
     ) -> OverviewRenderResult {
         if let revision {
-            guard revision >= (overviewRevisions[kind] ?? Int.min) else {
+            guard revision >= (overviewState.revisions[kind] ?? Int.min) else {
                 return .unchanged
             }
-            overviewRevisions[kind] = revision
+            overviewState.revisions[kind] = revision
         }
-        guard force || overviewSignatures[kind] != signature else {
+        guard force || overviewState.signatures[kind] != signature else {
             return .unchanged
         }
 
@@ -1208,9 +1091,9 @@ actor TerminalChatRenderCoordinator {
             rememberSignature: rememberSignature,
             rememberedSignature: rememberedSignature ?? signature,
             content: content,
-            sequence: nextOverviewSequence
+            sequence: overviewState.nextSequence
         )
-        nextOverviewSequence &+= 1
+        overviewState.nextSequence &+= 1
 
         // A sub-agent overview may interleave with an active `agent.*` tool
         // block (e.g. agent.wait) so progress stays visible while the blocking
@@ -1220,44 +1103,44 @@ actor TerminalChatRenderCoordinator {
         // preserves the deferred path and tool-block row ownership when
         // publication is suspended or while streaming is in progress.
         if kind == .subAgents,
-           activeToolBlock != nil,
-           activeToolBlockIsSubAgentTool,
-           !overviewPublishingSuspended,
+           toolState.activeBlock != nil,
+           toolState.activeBlockIsSubAgentTool,
+           !overviewState.isSuspended,
            !assistantStreamingState.isStreaming,
            !thoughtStreamingState.isStreaming {
             finishActiveToolOutputBeforeInterleavedMessage()
         }
 
         guard canRenderOverview else {
-            pendingOverviews[kind] = overview
+            overviewState.pending[kind] = overview
             return .deferred
         }
 
-        pendingOverviews.removeValue(forKey: kind)
+        overviewState.pending.removeValue(forKey: kind)
         renderOverviewNow(overview)
         return .rendered
     }
 
     private var canRenderOverview: Bool {
-        !overviewPublishingSuspended
-            && activeToolBlock == nil
+        !overviewState.isSuspended
+            && toolState.activeBlock == nil
             && !assistantStreamingState.isStreaming
             && !thoughtStreamingState.isStreaming
     }
 
     private func renderPendingOverviewsIfIdle() {
-        guard canRenderOverview, !pendingOverviews.isEmpty else {
+        guard canRenderOverview, !overviewState.pending.isEmpty else {
             return
         }
 
-        let overviews = pendingOverviews.values.sorted { $0.sequence < $1.sequence }
-        pendingOverviews.removeAll(keepingCapacity: true)
+        let overviews = overviewState.pending.values.sorted { $0.sequence < $1.sequence }
+        overviewState.pending.removeAll(keepingCapacity: true)
         for overview in overviews {
             if let revision = overview.revision,
-               revision < (overviewRevisions[overview.kind] ?? Int.min) {
+               revision < (overviewState.revisions[overview.kind] ?? Int.min) {
                 continue
             }
-            guard overview.force || overviewSignatures[overview.kind] != overview.signature else {
+            guard overview.force || overviewState.signatures[overview.kind] != overview.signature else {
                 continue
             }
             renderOverviewNow(overview)
@@ -1266,7 +1149,7 @@ actor TerminalChatRenderCoordinator {
 
     private func renderOverviewNow(_ overview: PendingOverview) {
         if overview.rememberSignature {
-            overviewSignatures[overview.kind] = overview.rememberedSignature
+            overviewState.signatures[overview.kind] = overview.rememberedSignature
         }
         let mirroredText: String
         switch overview.content {
@@ -1282,17 +1165,19 @@ actor TerminalChatRenderCoordinator {
             )
             mirroredText = text
         }
-        // Asynchronous by design: the local render above is never blocked, the
-        // FIFO drain preserves render order, and the end-of-turn barrier
-        // (`waitForOverviewMirrorsToDrain`) lets the turn flush its mirrors.
-        enqueueMirrorNotification(
-            OverviewMirrorNotification(
-                kind: overview.kind,
-                signature: overview.signature,
-                text: mirroredText,
-                epoch: mirrorEpoch
+        // Only task-graph sections have a remote audience. Sub-agent snapshots
+        // are terminal-only, so keeping them out of the queue avoids spawning a
+        // drain task that can only call a no-op handler on every refresh tick.
+        if overview.kind == .taskGraph {
+            enqueueMirrorNotification(
+                OverviewMirrorNotification(
+                    kind: overview.kind,
+                    signature: overview.signature,
+                    text: mirroredText,
+                    epoch: mirrorQueue.epoch
+                )
             )
-        )
+        }
     }
 
     /// Draws the sub-agent section, replacing the previously drawn section in
@@ -1308,7 +1193,7 @@ actor TerminalChatRenderCoordinator {
         maximumInPlaceRows: Int?
     ) {
         let pendingResponses = responses.filter { response in
-            !consumedSubAgentResponseTokens.contains(response.token)
+            !overviewState.consumedResponseTokens.contains(response.token)
         }
         // Any buffered streaming bytes must reach the terminal before the
         // ownership check, otherwise they would be emitted between the check
@@ -1348,7 +1233,7 @@ actor TerminalChatRenderCoordinator {
                 writeChat(response.heading, to: .standardError)
                 renderMarkdownMessage(response.markdown, to: .standardError)
                 writeChat("\n\n", to: .standardError)
-                consumedSubAgentResponseTokens.insert(response.token)
+                overviewState.consumedResponseTokens.insert(response.token)
             }
             return
         }
@@ -1434,29 +1319,56 @@ actor TerminalChatRenderCoordinator {
         return block.rows
     }
 
-    func resetOverview(_ kind: OverviewKind, revision: Int? = nil) {
+    /// Tears down the live sub-agent section when the runtime transitions to an
+    /// empty snapshot. Destructive clearing is performed only while this actor
+    /// still owns the exact rows; otherwise state is forgotten append-safely.
+    func clearSubAgentOverview(revision: Int? = nil) {
         if let revision {
-            guard revision >= (overviewRevisions[kind] ?? Int.min) else {
+            guard revision >= (overviewState.revisions[.subAgents] ?? Int.min) else {
                 return
             }
-            overviewRevisions[kind] = revision
+            overviewState.revisions[.subAgents] = revision
         }
-        overviewSignatures.removeValue(forKey: kind)
-        pendingOverviews.removeValue(forKey: kind)
+        overviewState.pending.removeValue(forKey: .subAgents)
+        overviewState.signatures.removeValue(forKey: .subAgents)
+
+        flushChatOutput()
+        guard let block = activeSubAgentOverviewBlock else { return }
+        activeSubAgentOverviewBlock = nil
+        let columnWidth = freshColumnWidthProvider()
+        guard standardErrorIsTerminal,
+              block.writeSequence == emittedWriteCount,
+              block.columnWidth == columnWidth,
+              block.rows <= (block.maximumInPlaceRows ?? Int.max) else {
+            return
+        }
+        clearOwnedRows(block.rows)
+        restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
+    }
+
+    func resetOverview(_ kind: OverviewKind, revision: Int? = nil) {
+        if let revision {
+            guard revision >= (overviewState.revisions[kind] ?? Int.min) else {
+                return
+            }
+            overviewState.revisions[kind] = revision
+        }
+        overviewState.signatures.removeValue(forKey: kind)
+        overviewState.pending.removeValue(forKey: kind)
     }
 
     func clearDeferredOverview(_ kind: OverviewKind, revision: Int? = nil) {
         if let revision {
-            guard revision >= (overviewRevisions[kind] ?? Int.min) else {
+            guard revision >= (overviewState.revisions[kind] ?? Int.min) else {
                 return
             }
-            overviewRevisions[kind] = revision
+            overviewState.revisions[kind] = revision
         }
-        pendingOverviews.removeValue(forKey: kind)
+        overviewState.pending.removeValue(forKey: kind)
     }
 
     func shouldPublishDeferredOverview(_ kind: OverviewKind) -> Bool {
-        canRenderOverview && pendingOverviews[kind] != nil
+        canRenderOverview && overviewState.pending[kind] != nil
     }
 
     // MARK: - Test and diagnostics snapshots
@@ -1464,7 +1376,7 @@ actor TerminalChatRenderCoordinator {
     func snapshot() -> Snapshot {
         let compact: (String?, Int)
         let detailed: (String?, Int)
-        if let activeBlock = activeToolBlock {
+        if let activeBlock = toolState.activeBlock {
             switch activeBlock.style {
             case .compact:
                 compact = (activeBlock.id, activeBlock.rows)
@@ -1478,22 +1390,22 @@ actor TerminalChatRenderCoordinator {
             detailed = (nil, 0)
         }
         return Snapshot(
-            toolOutputDetailLevel: toolOutputDetailLevel,
+            toolOutputDetailLevel: toolState.detailLevel,
             activeCompactToolCallID: compact.0,
             activeCompactToolRenderedRowCount: compact.1,
             activeDetailedToolCallID: detailed.0,
             activeDetailedToolRenderedRowCount: detailed.1,
-            deferredTaskGraphOverviewRender: pendingOverviews[.taskGraph] != nil,
-            deferredSubAgentOverviewRender: pendingOverviews[.subAgents] != nil,
-            lastRenderedTaskGraphOverviewSignature: overviewSignatures[.taskGraph],
-            lastRenderedSubAgentOverviewSignature: overviewSignatures[.subAgents],
+            deferredTaskGraphOverviewRender: overviewState.pending[.taskGraph] != nil,
+            deferredSubAgentOverviewRender: overviewState.pending[.subAgents] != nil,
+            lastRenderedTaskGraphOverviewSignature: overviewState.signatures[.taskGraph],
+            lastRenderedSubAgentOverviewSignature: overviewState.signatures[.subAgents],
             isStreamingThoughtOutput: thoughtStreamingState.isStreaming,
             activeSubAgentOverviewRowCount: ownedSubAgentOverviewRowCount
         )
     }
 
     func setToolOutputDetailLevel(_ level: ToolOutputDetailLevel) {
-        toolOutputDetailLevel = level
+        toolState.detailLevel = level
     }
 
     func capturedWriteEvents() -> [WriteEvent] {

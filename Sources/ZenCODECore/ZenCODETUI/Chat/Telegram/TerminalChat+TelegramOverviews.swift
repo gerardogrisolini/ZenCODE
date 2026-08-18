@@ -48,10 +48,10 @@ extension TerminalChat {
               activeTelegramProgressReporter != nil else {
             return
         }
-        guard mirroredOverviewSignatures[kind] != signature else {
+        guard mirroredTaskGraphOverviewSignature != signature else {
             return
         }
-        mirroredOverviewSignatures[kind] = signature
+        mirroredTaskGraphOverviewSignature = signature
 
         let plainText = TerminalANSIText.stripANSI(text)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -67,7 +67,7 @@ extension TerminalChat {
     /// a new turn reaches Telegram even when its content is identical to the
     /// previous turn's last section.
     func resetMirroredOverviewSignatures() {
-        mirroredOverviewSignatures.removeAll()
+        mirroredTaskGraphOverviewSignature = nil
     }
 
     /// Retires the current turn's Telegram reporting: waits for every queued

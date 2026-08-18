@@ -9,6 +9,7 @@
 //  before / inside / after a grapheme cluster.
 //
 
+import Foundation
 import Testing
 @testable import ZenCODECore
 
@@ -256,6 +257,32 @@ struct TerminalANSITextWidthTests {
         #expect(rows.count == 4)
         #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) <= 8 })
         #expect(rows.joined() == source)
+    }
+
+    @Test
+    func truncateWithEmptyEllipsisUsesTheWholeWidthBudget() {
+        let result = TerminalANSIText.truncate(
+            "漢字abc",
+            to: 5,
+            ellipsis: "",
+            ellipsisWidth: 0
+        )
+
+        #expect(result == "漢字a")
+        #expect(TerminalANSIText.visibleWidth(result) == 5)
+    }
+
+    @Test
+    func widthAwareWrapPreservesANSIAndBoundsCJKRows() {
+        let styled = "\u{1B}[31m漢字漢字漢字\u{1B}[0m"
+        let rows = TerminalANSIText.wrapPreservingWhitespace(
+            styled,
+            width: 6
+        )
+
+        #expect(rows.count == 2)
+        #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) <= 6 })
+        #expect(TerminalANSIText.stripANSI(rows.joined()) == "漢字漢字漢字")
     }
 
     @Test

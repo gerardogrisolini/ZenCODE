@@ -55,6 +55,13 @@ public struct TerminalMarkdownStreamFormatter {
     /// Keep the whitespace definition used by `trimmingCharacters(in:)` while
     /// incrementally classifying a line start for safe prose streaming.
     private static let blockMarkerWhitespace = CharacterSet.whitespaces
+
+    /// One policy shared by classification and streamed renumbering. CommonMark
+    /// accepts at most nine digits in an ordered-list marker.
+    private enum OrderedListMarkerPolicy {
+        static let maximumDigitCount = 9
+        static let maximumValue = 999_999_999
+    }
     
     /// Multi-line markdown constructs that must be parsed as a whole block
     /// rather than one isolated line at a time. Buffering these lets the
@@ -849,7 +856,7 @@ public struct TerminalMarkdownStreamFormatter {
         result.reserveCapacity(lines.count)
         for line in lines {
             if line.first != " ", line.first != "\t",
-               current <= 999_999_999,
+               current <= OrderedListMarkerPolicy.maximumValue,
                let replaced = renumberLeadingOrderedMarker(in: line, to: current) {
                 result.append(replaced)
                 current += 1
@@ -877,9 +884,9 @@ public struct TerminalMarkdownStreamFormatter {
         // markers up to 999_999_999 are supported. Beyond that the number can't
         // be a real list index, and incrementing it during renumbering would risk
         // overflow. Treat out-of-range values as plain markers (verbatim render).
-        guard marker.digitCount <= 9,
+        guard marker.digitCount <= OrderedListMarkerPolicy.maximumDigitCount,
               let value = Int(marker.digits),
-              value <= 999_999_999 else {
+              value <= OrderedListMarkerPolicy.maximumValue else {
             return nil
         }
         return value
@@ -1269,7 +1276,8 @@ public struct TerminalMarkdownStreamFormatter {
         // plain text. Keep this consistent with leadingOrderedNumber so the
         // streaming classification matches the parser's list detection.
         guard let marker = orderedListMarkerScan(in: line) else { return false }
-        return marker.digitCount <= 9 && marker.hasWhitespaceBody
+        return marker.digitCount <= OrderedListMarkerPolicy.maximumDigitCount
+            && marker.hasWhitespaceBody
     }
 
     /// True when the line looks like an ordered-list marker (digits + "." +
@@ -1279,7 +1287,7 @@ public struct TerminalMarkdownStreamFormatter {
     /// decide whether it is a lazy continuation of the current item.
     private func isOutOfRangeOrderedLikeMarker(_ trimmed: String) -> Bool {
         guard let marker = orderedListMarkerScan(in: trimmed) else { return false }
-        return marker.digitCount > 9
+        return marker.digitCount > OrderedListMarkerPolicy.maximumDigitCount
     }
 
     private func orderedListMarkerScan(in line: String) -> OrderedListMarkerScan? {

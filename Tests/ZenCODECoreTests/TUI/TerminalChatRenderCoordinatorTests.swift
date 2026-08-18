@@ -1035,6 +1035,25 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func terminalOnlySubAgentOverviewDoesNotEnterMirrorQueue() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let recorder = OverviewMirrorRecorder()
+        await renderer.setOverviewMirroringHandler { kind, _, _, _ in
+            await recorder.record(kind)
+        }
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:terminal-only",
+            text: "Agents updated.\n",
+            force: false,
+            rememberSignature: true
+        )
+        await renderer.waitForOverviewMirrorsToDrain()
+
+        #expect(await recorder.recordedKinds().isEmpty)
+    }
+
+    @Test
     func completedSubAgentResponseUsesMarkdownAndRendersOnlyOnce() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let response = TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
@@ -1195,6 +1214,33 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(plainStderr.components(separatedBy: "Sub-Agents:").count - 1 == 2)
         #expect(plainStderr.contains("completed"))
         #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 4)
+    }
+
+    @Test
+    func emptySubAgentTransitionClearsOwnedRowsAndSignature() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:active",
+            text: "\n👥 Sub-Agents:\n   running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave"
+        )
+        let eventCount = await renderer.capturedWriteEvents().count
+
+        await renderer.clearSubAgentOverview()
+
+        let teardown = (await renderer.capturedWriteEvents())
+            .dropFirst(eventCount)
+            .map(\.text)
+            .joined()
+        let snapshot = await renderer.snapshot()
+        #expect(teardown.hasPrefix("\u{1B}[3A\r"))
+        #expect(snapshot.activeSubAgentOverviewRowCount == 0)
+        #expect(snapshot.lastRenderedSubAgentOverviewSignature == nil)
     }
 
     @Test
@@ -2751,5 +2797,17 @@ struct TerminalChatToolBlockResizeTests {
             streamingFlushDelay: nil,
             columnWidthProvider: columnWidthProvider
         )
+    }
+}
+
+private actor OverviewMirrorRecorder {
+    private var kinds: [TerminalChatRenderCoordinator.OverviewKind] = []
+
+    func record(_ kind: TerminalChatRenderCoordinator.OverviewKind) {
+        kinds.append(kind)
+    }
+
+    func recordedKinds() -> [TerminalChatRenderCoordinator.OverviewKind] {
+        kinds
     }
 }
