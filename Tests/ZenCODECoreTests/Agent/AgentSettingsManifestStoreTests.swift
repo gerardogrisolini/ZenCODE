@@ -34,6 +34,114 @@ struct SubscriptionAuthFlowTests {
     }
 #endif
 
+#if os(macOS)
+    @Test
+    func chatGPTCallbackServerThrowsWhenPortUnavailable() async throws {
+        try await withCallbackPortBlocker { didBlock in
+            #expect(didBlock)
+            do {
+                _ = try await ChatGPTSubscriptionCallbackServer(state: "state").start()
+                Issue.record("Expected the callback server to fail when the port is taken")
+            } catch ChatGPTSubscriptionAuthError.callbackServerUnavailable {
+                // Expected: the listener failure must propagate instead of
+                // returning a listener-less server whose waitForCode() hangs.
+            } catch {
+                Issue.record("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    @Test
+    func chatGPTSignInDegradesToManualCodeWhenCallbackPortIsTaken() async throws {
+        try await withCallbackPortBlocker { didBlock in
+            #expect(didBlock)
+            struct PromptError: Error {}
+
+            let session = try await ChatGPTSubscriptionAuthService.startSignIn { _ in
+                throw PromptError()
+            }
+
+            #expect(!session.isCallbackServerAvailable)
+
+            // Without the fix, waitForCredentials would suspend forever on
+            // waitForCode(); with the fix it reaches the manual prompt path.
+            do {
+                _ = try await session.waitForCredentials(persist: false)
+                Issue.record("Expected the manual authorization prompt to be exercised")
+            } catch is PromptError {
+                // Expected: the degraded path asked for the authorization code.
+            } catch {
+                Issue.record("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    @Test
+    func chatGPTManualCodeCompletesDegradedSession() async throws {
+        try await withCallbackPortBlocker { didBlock in
+            #expect(didBlock)
+            let session = try await ChatGPTSubscriptionAuthService.startSignIn { _ in "" }
+            #expect(!session.isCallbackServerAvailable)
+
+            let components = try #require(URLComponents(url: session.authorizationURL, resolvingAgainstBaseURL: false))
+            let state = try #require(components.queryItems?.first(where: { $0.name == "state" })?.value)
+
+            // The manual path must remain able to deliver the authorization code
+            // even when the callback listener never started.
+            try session.submitAuthorizationInput("authorization-code#\(state)")
+        }
+    }
+
+    /// Binds the callback port (1455) with a POSIX socket while `body` runs so
+    /// sign-in cannot start its own callback server, then releases the port.
+    /// The boolean reports whether the port could actually be blocked.
+    private func withCallbackPortBlocker(
+        _ body: (_ didBlock: Bool) async throws -> Void
+    ) async throws {
+        let fileDescriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard fileDescriptor >= 0 else {
+            try await body(false)
+            return
+        }
+        defer { close(fileDescriptor) }
+
+        var yes: Int32 = 1
+        setsockopt(fileDescriptor, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+
+        // A listener cancelled by a previous test may still be releasing the
+        // port; retry the bind briefly so the blocker reliably owns port 1455.
+        var bindResult: Int32 = -1
+        for _ in 0..<30 {
+            bindResult = withUnsafePointer(to: sockaddr_in(
+                sin_len: UInt8(MemoryLayout<sockaddr_in>.size),
+                sin_family: sa_family_t(AF_INET),
+                sin_port: UInt16(1455).bigEndian,
+                sin_addr: in_addr(s_addr: INADDR_ANY),
+                sin_zero: (0, 0, 0, 0, 0, 0, 0, 0)
+            )) { address in
+                address.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    bind(fileDescriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            if bindResult == 0 {
+                break
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        guard bindResult == 0 else {
+            try await body(false)
+            return
+        }
+        listen(fileDescriptor, 16)
+
+        // Give the blocking listener a moment to become visible so the
+        // production listener cannot sneak in before the port is taken.
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        try await body(true)
+    }
+#endif
+
     @Test
     func chatGPTDeviceCodeResponseAcceptsStringInterval() throws {
         let data = Data(

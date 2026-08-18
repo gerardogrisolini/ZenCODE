@@ -25,9 +25,22 @@ extension RemoteGenerationClient {
         endpoint: AgentRemoteChatEndpoint,
         to body: inout [String: Any]
     ) {
-        guard let thinkingSelection,
-              thinkingOptions.contains(thinkingSelection) else {
+        guard let thinkingSelection else {
             return
+        }
+        /* The persisted manifest is the only authorization source: when it
+         declares the model's thinking options, only those selections may be
+         serialized. The generic `.enabled` selection stays authorized when
+         any effort level is allowed, because the effort dialects map it to
+         the closest supported level below. An empty declaration means the
+         capability is unknown (e.g. fallback providers without a manifest),
+         so the payload is sent as-is instead of being silently dropped. */
+        if !thinkingOptions.isEmpty {
+            let isAuthorized = thinkingOptions.contains(thinkingSelection)
+                || (thinkingSelection == .enabled && thinkingOptions.contains { $0.isEnabled })
+            guard isAuthorized else {
+                return
+            }
         }
         switch thinkingPayloadStyle {
         case .none:
@@ -58,7 +71,7 @@ extension RemoteGenerationClient {
                 return
             }
             body["reasoning"] = [
-                "effort": thinkingSelection.rawValue,
+                "effort": resolvedEffortSelection(thinkingSelection).rawValue,
                 "summary": "auto"
             ]
         case .reasoningEffort:
@@ -66,7 +79,7 @@ extension RemoteGenerationClient {
                 body["reasoning_effort"] = "none"
                 return
             }
-            body["reasoning_effort"] = thinkingSelection.rawValue
+            body["reasoning_effort"] = resolvedEffortSelection(thinkingSelection).rawValue
         case let .thinkingObject(supportsDisable, keepAll):
             guard thinkingSelection.isEnabled || supportsDisable else {
                 return
@@ -79,6 +92,29 @@ extension RemoteGenerationClient {
             }
             body["thinking"] = thinking
         }
+    }
+
+    /* When the manifest options are known but only carry effort levels
+     (no `.enabled`), the generic "thinking on" selection is mapped to the
+     closest allowed effort. With unknown (empty) options, or when `.enabled`
+     is itself a documented option, the selection passes through untouched.
+     This mirrors the pre-52428e3 behavior where `.enabled` resolved to
+     `.max`/`.medium` before serializing. */
+    private func resolvedEffortSelection(
+        _ thinkingSelection: AgentThinkingSelection
+    ) -> AgentThinkingSelection {
+        guard thinkingSelection == .enabled,
+              thinkingOptions.contains(.enabled) == false,
+              !thinkingOptions.isEmpty else {
+            return thinkingSelection
+        }
+        if thinkingOptions.contains(.max) {
+            return .max
+        }
+        if thinkingOptions.contains(.medium) {
+            return .medium
+        }
+        return thinkingOptions.first { $0.isEnabled } ?? thinkingSelection
     }
 
     public var thinkingPayloadStyle: AgentThinkingPayloadStyle {

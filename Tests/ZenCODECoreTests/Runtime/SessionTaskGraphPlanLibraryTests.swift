@@ -567,4 +567,62 @@ struct SessionTaskGraphPlanLibraryTests {
         )
         #expect(secondRevision == firstRevision)
     }
+
+    /// Regression test: deleting the library checkpoint (discardSession) used
+    /// to leave the orchestrator's in-memory CAS precondition in place, so the
+    /// next /plan save in the same process failed with staleCheckpoint.
+    @Test
+    func saveAfterDiscardingEntireLibraryDoesNotFailWithStaleCheckpoint() async throws {
+        let (root, support, working) = try makeTemp()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SessionTaskGraphStore(supportDirectoryURL: support)
+        let orchestrator = SessionTaskOrchestrator(store: store)
+        let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
+            for: working
+        )
+
+        // save
+        try await saveDraft(
+            orchestrator,
+            savedPlan: makeSavedPlan(
+                id: "plan-77777777-1234",
+                goal: "First iteration",
+                savedAt: Date(timeIntervalSince1970: 100)
+            ),
+            working: working
+        )
+        // delete all (the last deletion discards the library session)
+        #expect(
+            try await orchestrator.deleteSavedTaskPlans(
+                planIDs: ["plan-77777777-1234"],
+                workingDirectory: working
+            ) == ["plan-77777777-1234"]
+        )
+        #expect(try store.load(
+            sessionID: librarySessionID,
+            workingDirectory: working
+        ) == nil)
+
+        // save again in the same process: must not throw staleCheckpoint.
+        let graph = try await saveDraft(
+            orchestrator,
+            savedPlan: makeSavedPlan(
+                id: "plan-88888888-5678",
+                goal: "Second iteration",
+                savedAt: Date(timeIntervalSince1970: 200)
+            ),
+            working: working
+        )
+        #expect(graph.state == .draft)
+
+        // The new checkpoint is durable and readable by a fresh orchestrator.
+        let restored = try #require(
+            try store.load(
+                sessionID: librarySessionID,
+                workingDirectory: working
+            )
+        )
+        #expect(restored.graphs.map(\.id) == ["plan-88888888-5678"])
+    }
 }

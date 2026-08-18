@@ -405,18 +405,38 @@ extension ZenCODESetupRunner {
         }
 
         #if os(macOS)
-        let session = try await ChatGPTSubscriptionAuthService.startSignIn()
-        AgentOutput.standardError.writeString(
-            """
-            Complete ChatGPT login in the browser.
-
-            If the browser does not open, open this URL:
-            \(session.authorizationURL.absoluteString)
-
-            Waiting for sign-in...
-
-            """
+        let session = try await ChatGPTSubscriptionAuthService.startSignIn(
+            promptAuthorizationInput: { label in
+                try promptSecret(label, allowEmpty: false)
+            }
         )
+        if session.isCallbackServerAvailable {
+            AgentOutput.standardError.writeString(
+                """
+                Complete ChatGPT login in the browser.
+
+                If the browser does not open, open this URL:
+                \(session.authorizationURL.absoluteString)
+
+                Waiting for sign-in...
+
+                """
+            )
+        } else {
+            AgentOutput.standardError.writeString(
+                """
+                The local ChatGPT sign-in callback server could not start (the
+                port may already be in use); the browser will not redirect back
+                automatically.
+
+                After completing the login, paste the authorization code below.
+
+                If the browser does not open, open this URL:
+                \(session.authorizationURL.absoluteString)
+
+                """
+            )
+        }
         let didOpen = await ChatGPTSubscriptionAuthService.openAuthorizationURL(
             session.authorizationURL
         )

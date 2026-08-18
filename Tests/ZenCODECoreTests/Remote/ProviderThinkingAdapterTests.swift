@@ -123,6 +123,74 @@ struct ProviderThinkingAdapterTests {
             == #"{"reasoning_effort":"enabled"}"#)
     }
 
+    // MARK: - Regression: empty or `.enabled`-less manifest options must not
+    // silently drop the thinking payload (52428e3 gate).
+
+    @Test
+    func fallbackModelsWithoutThinkingOptionsStillSendTheThinkingPayload() async {
+        let client = client(
+            provider: .moonshot,
+            protocolProfile: .openAIChatCompletions,
+            model: "fallback-kimi",
+            thinkingOptions: []
+        )
+        #expect(await client.thinkingPayloadSnapshot(.enabled, endpoint: .chatCompletions)
+            == #"{"reasoning_effort":"enabled"}"#)
+        #expect(await client.thinkingPayloadSnapshot(.high, endpoint: .chatCompletions)
+            == #"{"reasoning_effort":"high"}"#)
+    }
+
+    @Test
+    func enabledSelectionMapsToClosestAllowedEffortWhenOptionsAreKnown() async {
+        let preferred = client(
+            provider: .openAI,
+            protocolProfile: .openAIResponses,
+            model: "gpt-fallback",
+            thinkingOptions: [.off, .low, .medium, .high]
+        )
+        #expect(await preferred.thinkingPayloadSnapshot(.enabled, endpoint: .responses)
+            == #"{"reasoning":{"effort":"medium","summary":"auto"}}"#)
+
+        let declaredOrder = client(
+            provider: .zAI,
+            protocolProfile: .openAIChatCompletions,
+            model: "glm",
+            thinkingOptions: [.off, .low]
+        )
+        #expect(await declaredOrder.thinkingPayloadSnapshot(.enabled, endpoint: .chatCompletions)
+            == #"{"reasoning_effort":"low"}"#)
+    }
+
+    @Test
+    func explicitlyUnsupportedSelectionsRemainDroppedWhenOptionsAreKnown() async {
+        let restricted = client(
+            provider: .openAI,
+            protocolProfile: .openAIResponses,
+            model: "gpt-restricted",
+            thinkingOptions: [.off, .low]
+        )
+        #expect(await restricted.thinkingPayloadSnapshot(.ultra, endpoint: .responses) == "{}")
+
+        let offOnly = client(
+            provider: .deepSeek,
+            protocolProfile: .openAIChatCompletions,
+            model: "deepseek-reasoner",
+            thinkingOptions: [.off]
+        )
+        #expect(await offOnly.thinkingPayloadSnapshot(.enabled, endpoint: .chatCompletions) == "{}")
+    }
+
+    @Test
+    func providersWithoutThinkingDialectStillDropSilently() async {
+        let client = client(
+            provider: .custom,
+            protocolProfile: .openAIChatCompletions,
+            model: "legacy",
+            thinkingOptions: [.enabled]
+        )
+        #expect(await client.thinkingPayloadSnapshot(.enabled, endpoint: .chatCompletions) == "{}")
+    }
+
     @Test
     func kimiReplayPreservesEveryAssistantReasoningMessage() {
         let messages: [[String: Any]] = [

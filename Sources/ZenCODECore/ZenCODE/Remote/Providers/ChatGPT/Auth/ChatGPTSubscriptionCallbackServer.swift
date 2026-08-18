@@ -21,9 +21,15 @@ final class ChatGPTSubscriptionCallbackServer: Sendable {
         self.state = state
     }
 
-    func start() async -> ChatGPTSubscriptionCallbackServer {
-        guard let listener = try? NWListener(using: .tcp, on: 1455) else {
-            return self
+    @discardableResult
+    func start() async throws -> ChatGPTSubscriptionCallbackServer {
+        let listener: NWListener
+        do {
+            listener = try NWListener(using: .tcp, on: 1455)
+        } catch {
+            // Surface the failure instead of returning a listener-less server
+            // whose waitForCode() would suspend forever.
+            throw ChatGPTSubscriptionAuthError.callbackServerUnavailable
         }
 
         await callbackState.setListener(listener)
@@ -32,10 +38,11 @@ final class ChatGPTSubscriptionCallbackServer: Sendable {
         }
 
         do {
-            try await startListening(listener)
+            try await startListening(listener, timeout: .seconds(2))
         } catch {
             listener.cancel()
             await callbackState.clearListener(listener)
+            throw ChatGPTSubscriptionAuthError.callbackServerUnavailable
         }
 
         return self
@@ -104,22 +111,38 @@ final class ChatGPTSubscriptionCallbackServer: Sendable {
         return code
     }
 
-    func startListening(_ listener: NWListener) async throws {
+    func startListening(_ listener: NWListener, timeout: Duration) async throws {
         try await withCheckedThrowingContinuation { continuation in
             let startState = CallbackStartState(continuation: continuation)
+            // A taken port does not fail the listener: Network.framework keeps
+            // it in the waiting state while it retries the bind. Bound the wait
+            // so sign-in degrades to the manual code path instead of hanging.
+            let timeoutTask = Task(name: "ChatGPT callback start timeout") {
+                try? await Task.sleep(for: timeout)
+                // Only tear the listener down when this timeout actually won
+                // the race; a listener that became ready in the same instant
+                // must keep serving.
+                let didResume = await startState.resume(with: .failure(ChatGPTSubscriptionAuthError.callbackServerUnavailable))
+                if didResume {
+                    listener.cancel()
+                }
+            }
             listener.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
                     Task(name: "ChatGPT callback background task") {
                         await startState.resume(with: .success(()))
+                        timeoutTask.cancel()
                     }
                 case let .failed(error):
                     Task(name: "ChatGPT callback background task") {
                         await startState.resume(with: .failure(error))
+                        timeoutTask.cancel()
                     }
                 case .cancelled:
                     Task(name: "ChatGPT callback background task") {
                         await startState.resume(with: .failure(ChatGPTSubscriptionAuthError.callbackCancelled))
+                        timeoutTask.cancel()
                     }
                 case .setup, .waiting:
                     break
@@ -389,10 +412,14 @@ private actor CallbackStartState {
         self.continuation = continuation
     }
 
-    func resume(with result: Result<Void, Error>) {
+    /// Resumes the continuation exactly once. Returns true when this call
+    /// performed the resume, false when a previous resume already happened.
+    @discardableResult
+    func resume(with result: Result<Void, Error>) -> Bool {
         let continuation = continuation
         self.continuation = nil
         continuation?.resume(with: result)
+        return continuation != nil
     }
 }
 #endif

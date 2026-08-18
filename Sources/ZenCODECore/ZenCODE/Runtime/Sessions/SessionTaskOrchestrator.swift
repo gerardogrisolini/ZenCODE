@@ -189,6 +189,12 @@ public actor SessionTaskOrchestrator {
                     interruptActiveAttempts: true,
                     persist: true
                 )
+            } else {
+                // No checkpoint exists on disk (it may have been deleted after
+                // this orchestrator last persisted one, e.g. a discarded
+                // session re-registered in the same process). Keep the CAS
+                // precondition in sync with disk instead of failing closed.
+                persistedCheckpoints.removeValue(forKey: sessionID)
             }
             restoredSessionIDs.insert(sessionID)
         } catch {
@@ -1004,6 +1010,10 @@ public actor SessionTaskOrchestrator {
         }
         sessionStates.removeValue(forKey: sessionID)
         workingDirectories.removeValue(forKey: sessionID)
+        // The in-memory CAS precondition must never outlive the session: a
+        // stale entry would make the next persist() compareAndSwap fail with
+        // staleCheckpoint even though this orchestrator is the only writer.
+        persistedCheckpoints.removeValue(forKey: sessionID)
         restoredSessionIDs.remove(sessionID)
         executionScopes = executionScopes.filter { $0.value.rootSessionID != sessionID }
         tasklessDelegationReservations.removeValue(forKey: sessionID)

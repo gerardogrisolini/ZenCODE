@@ -79,17 +79,29 @@ public enum ChatGPTSubscriptionAuthError: LocalizedError {
 public final class ChatGPTSubscriptionSignInSession: Sendable {
     public let authorizationURL: URL
 
+    /// True when the local callback listener started successfully. When false
+    /// the browser cannot redirect back to ZenCODE and ``waitForCredentials(persist:)``
+    /// falls back to asking the user to paste the authorization code.
+    public let isCallbackServerAvailable: Bool
+
     private let verifier: String
     private let callbackServer: ChatGPTSubscriptionCallbackServer
+    private let promptAuthorizationInput: @Sendable (_ label: String) throws -> String
 
     fileprivate init(
         authorizationURL: URL,
         verifier: String,
-        callbackServer: ChatGPTSubscriptionCallbackServer
+        callbackServer: ChatGPTSubscriptionCallbackServer,
+        isCallbackServerAvailable: Bool,
+        promptAuthorizationInput: @escaping @Sendable (_ label: String) throws -> String = { _ in
+            readLine() ?? ""
+        }
     ) {
         self.authorizationURL = authorizationURL
         self.verifier = verifier
         self.callbackServer = callbackServer
+        self.isCallbackServerAvailable = isCallbackServerAvailable
+        self.promptAuthorizationInput = promptAuthorizationInput
     }
 
     public func waitForCredentials() async throws -> CodexAgentCredentials {
@@ -105,7 +117,16 @@ public final class ChatGPTSubscriptionSignInSession: Sendable {
             }
         }
 
-        let code = try await callbackServer.waitForCode()
+        let code: String
+        if isCallbackServerAvailable {
+            code = try await callbackServer.waitForCode()
+        } else {
+            // No local callback: the browser has nowhere to redirect back, so
+            // degrade gracefully and collect the authorization code directly
+            // from the user instead of suspending forever.
+            let input = try promptAuthorizationInput("Authorization code")
+            code = try callbackServer.authorizationCode(fromAuthorizationInput: input)
+        }
         let credentials = try await ChatGPTSubscriptionAuthService.exchangeAuthorizationCode(
             code: code,
             verifier: verifier
@@ -149,8 +170,15 @@ public enum ChatGPTSubscriptionAuthService {
         #if os(macOS)
         let session = try await startSignIn()
         print("To continue, complete ChatGPT login in your browser.")
-        print("If the browser does not open, open this URL:")
-        print(session.authorizationURL.absoluteString)
+        if session.isCallbackServerAvailable {
+            print("If the browser does not open, open this URL:")
+            print(session.authorizationURL.absoluteString)
+        } else {
+            print("The local sign-in callback server is unavailable; the browser will not redirect back automatically.")
+            print("After completing the login, paste the authorization code here.")
+            print("Open this URL to start the login:")
+            print(session.authorizationURL.absoluteString)
+        }
         guard await openAuthorizationURL(session.authorizationURL) else {
             throw ChatGPTSubscriptionAuthError.browserOpenFailed
         }
@@ -190,15 +218,28 @@ public enum ChatGPTSubscriptionAuthService {
     }
 
     #if os(macOS)
-    public static func startSignIn() async throws -> ChatGPTSubscriptionSignInSession {
+    public static func startSignIn(
+        promptAuthorizationInput: @escaping @Sendable (_ label: String) throws -> String = { _ in
+            readLine() ?? ""
+        }
+    ) async throws -> ChatGPTSubscriptionSignInSession {
         let flow = try authorizationFlow()
-        let callbackServer = await ChatGPTSubscriptionCallbackServer(
-            state: flow.state
-        ).start()
+        let callbackServer = ChatGPTSubscriptionCallbackServer(state: flow.state)
+        var isCallbackServerAvailable = true
+        do {
+            try await callbackServer.start()
+        } catch {
+            // The port (typically 1455) is taken or the listener failed to
+            // start. Do not fail the whole sign-in: the session degrades to a
+            // manually pasted authorization code.
+            isCallbackServerAvailable = false
+        }
         return ChatGPTSubscriptionSignInSession(
             authorizationURL: flow.url,
             verifier: flow.verifier,
-            callbackServer: callbackServer
+            callbackServer: callbackServer,
+            isCallbackServerAvailable: isCallbackServerAvailable,
+            promptAuthorizationInput: promptAuthorizationInput
         )
     }
     #endif

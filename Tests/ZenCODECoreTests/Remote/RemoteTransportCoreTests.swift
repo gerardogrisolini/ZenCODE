@@ -84,6 +84,114 @@ struct RemoteTransportCoreTests {
         await server.shutdown()
     }
 
+    @Test("SSE idle timeout aborts a stalled post-head body")
+    func sseIdleTimeoutAbortsStalledStream() async throws {
+        let inactive = TestSignal()
+        let server = try await LocalHTTPTestServer.start(
+            onInactive: {
+                Task { await inactive.signal() }
+            }
+        ) { context, _ in
+            var headers = HTTPHeaders()
+            headers.add(name: "content-type", value: "text/event-stream")
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(
+                    .head(
+                        HTTPResponseHead(
+                            version: .http1_1,
+                            status: .ok,
+                            headers: headers
+                        )
+                    )
+                ),
+                promise: nil
+            )
+            // Send one event, then deliberately stall: no further bytes and
+            // no close. The idle watchdog must abort the parked read.
+            var body = context.channel.allocator.buffer(capacity: 64)
+            body.writeString("data: first\n\n")
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(.body(.byteBuffer(body))),
+                promise: nil
+            )
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+
+        do {
+            let response = try await transport.openHTTPStream(
+                RemoteHTTPStreamingRequest(url: server.url(path: "/sse-stall"))
+            )
+            var events = response.body.sseEvents(
+                idleTimeoutNanoseconds: 200_000_000
+            ).makeAsyncIterator()
+            let first = try await events.next()
+            #expect(first?.data == "first")
+
+            do {
+                _ = try await events.next()
+                Issue.record("The stalled SSE body unexpectedly delivered an event.")
+            } catch let error as RemoteSSEIdleTimeoutError {
+                #expect(error.timeoutNanoseconds == 200_000_000)
+            }
+            // The watchdog must have torn the channel down: the server
+            // observes the close without relying on a server-side timeout.
+            try await wait(for: inactive)
+        } catch {
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
+    @Test("SSE idle timeout can be disabled with nil")
+    func sseIdleTimeoutNilDisablesWatchdog() async throws {
+        let server = try await LocalHTTPTestServer.start { context, _ in
+            var headers = HTTPHeaders()
+            headers.add(name: "content-type", value: "text/event-stream")
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(
+                    .head(
+                        HTTPResponseHead(
+                            version: .http1_1,
+                            status: .ok,
+                            headers: headers
+                        )
+                    )
+                ),
+                promise: nil
+            )
+            var body = context.channel.allocator.buffer(capacity: 64)
+            body.writeString("data: only\n\n")
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(.body(.byteBuffer(body))),
+                promise: nil
+            )
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+
+        do {
+            let response = try await transport.openHTTPStream(
+                RemoteHTTPStreamingRequest(url: server.url(path: "/sse-open"))
+            )
+            // nil disables the watchdog: the parked read stays cancellable
+            // (nothing throws here within the test window).
+            let events = response.body.sseEvents(idleTimeoutNanoseconds: nil)
+            var iterator = events.makeAsyncIterator()
+            let event = try await iterator.next()
+            #expect(event?.data == "only")
+        } catch {
+            await transport.shutdownIgnoringError()
+            await server.shutdown()
+            throw error
+        }
+
+        try await transport.shutdown()
+        await server.shutdown()
+    }
+
     @Test("HTTP body cancellation closes the in-flight loopback channel")
     func httpBodyCancellationClosesConnection() async throws {
         let inactive = TestSignal()

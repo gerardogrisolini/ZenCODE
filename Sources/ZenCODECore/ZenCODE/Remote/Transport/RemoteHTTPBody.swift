@@ -42,6 +42,19 @@ public struct RemoteHTTPBody: AsyncSequence, Sendable {
         RemoteSSEEventStream(body: self)
     }
 
+    /// Creates an SSE decoder whose post-head idle watchdog uses the supplied
+    /// budget instead of `RemoteSSEEventStream.defaultIdleTimeoutNanoseconds`.
+    /// `nil` or a non-positive value disables the watchdog, matching the
+    /// WebSocket path's optional timeout knob.
+    public func sseEvents(
+        idleTimeoutNanoseconds: UInt64?
+    ) -> RemoteSSEEventStream {
+        RemoteSSEEventStream(
+            body: self,
+            idleTimeoutNanoseconds: idleTimeoutNanoseconds
+        )
+    }
+
     /// Cancels this response explicitly even when other handle copies still
     /// exist. Provider session owners use this to terminate an in-flight stream
     /// when its logical session is closed.
@@ -77,6 +90,57 @@ public struct RemoteHTTPBody: AsyncSequence, Sendable {
                 isFinished = true
                 throw error
             }
+        }
+
+        /// Reads one chunk with a bounded stall budget, mirroring the
+        /// WebSocket receive path: the read races an idle watchdog and the
+        /// loser is cancelled, so a parked NIO read cannot outlive the race.
+        mutating func next(
+            idleTimeoutNanoseconds: UInt64?
+        ) async throws -> Data? {
+            guard let idleTimeoutNanoseconds, idleTimeoutNanoseconds > 0,
+                !isFinished
+            else {
+                return try await next()
+            }
+            let chunk: Data?
+            do {
+                let storage = self.storage
+                let identifier = self.identifier
+                chunk = try await withThrowingTaskGroup(of: Data?.self) { group in
+                    group.addTask(name: "Remote HTTP body read") {
+                        try await storage.nextChunk(for: identifier)
+                    }
+                    group.addTask(name: "Remote HTTP body idle timeout") {
+                        try await Task.sleep(nanoseconds: idleTimeoutNanoseconds)
+                        throw RemoteSSEIdleTimeoutError(
+                            timeoutNanoseconds: idleTimeoutNanoseconds
+                        )
+                    }
+                    guard let result = await group.nextResult() else {
+                        group.cancelAll()
+                        return nil
+                    }
+                    group.cancelAll()
+                    switch result {
+                    case let .success(chunk):
+                        return chunk
+                    case let .failure(error):
+                        throw error
+                    }
+                }
+            } catch {
+                isFinished = true
+                // Mirror the WebSocket path: the watchdog that aborts the read
+                // also tears the channel down, so the parked NIO run-task and
+                // its lease cannot outlive the caller.
+                lifetime.invalidate()
+                throw error
+            }
+            if chunk == nil {
+                isFinished = true
+            }
+            return chunk
         }
     }
 }
