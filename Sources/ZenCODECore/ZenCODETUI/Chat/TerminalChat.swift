@@ -131,9 +131,10 @@ public final class TerminalChat {
     /// turn's progress is mirrored to the linked chat. Permission dialogue is
     /// enqueued here so it cannot overtake the tool activity that raised it.
     var activeTelegramProgressReporter: TerminalTelegramTurnProgressReporter?
-    /// Change signatures of overview sections already mirrored to Telegram
-    /// during the current turn, so republished identical sections do not spam
-    /// the remote chat. Reset when a new turn begins.
+    /// Change signature of the task-graph overview already mirrored to Telegram
+    /// during the current turn, so republished identical content does not spam
+    /// the remote chat. Sub-agent overviews are terminal-only. Reset when a new
+    /// turn begins.
     var mirroredOverviewSignatures: [TerminalChatRenderCoordinator.OverviewKind: String] = [:]
     /// Mirroring epoch of the current turn. Advanced (via the coordinator) at
     /// every turn boundary and compared against the epoch each notification

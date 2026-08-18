@@ -28,13 +28,12 @@ extension TerminalChat {
         }
     }
 
-    /// Mirrors a locally rendered overview section (task graph or sub-agents)
-    /// to the linked Telegram chat while that turn's progress is mirrored.
+    /// Mirrors a locally rendered task-graph overview to the linked Telegram
+    /// chat while that turn's progress is mirrored. Sub-agent overviews remain
+    /// terminal-only: their frequently changing full snapshots would otherwise
+    /// produce excessive Telegram traffic.
     ///
-    /// Sections are mirrored only when the content actually changed: the
-    /// coordinator reports the same signature for republished-but-identical
-    /// sections (e.g. the periodic sub-agent refresh), which keeps the remote
-    /// chat free of spam while the terminal keeps its in-place refresh. Sends
+    /// Task graphs are mirrored only when the content actually changed. Sends
     /// go through the turn reporter's ordered queue, so a section cannot
     /// overtake the tool activity that produced it. Outside a mirrored turn
     /// there is no remote audience and the section stays terminal-only.
@@ -44,7 +43,8 @@ extension TerminalChat {
         text: String,
         epoch: Int
     ) async {
-        guard epoch == currentTelegramMirrorEpoch,
+        guard kind == .taskGraph,
+              epoch == currentTelegramMirrorEpoch,
               activeTelegramProgressReporter != nil else {
             return
         }
@@ -58,16 +58,9 @@ extension TerminalChat {
         guard !plainText.isEmpty else {
             return
         }
-        let header: String
-        switch kind {
-        case .taskGraph:
-            header = "📋 Task graph"
-        case .subAgents:
-            header = "🤖 Sub-agents"
-        }
         // The reporter truncates to Telegram's message limit and preserves
         // turn ordering.
-        await activeTelegramProgressReporter?.send("\(header)\n\n\(plainText)")
+        await activeTelegramProgressReporter?.send("📋 Task graph\n\n\(plainText)")
     }
 
     /// Clears the per-turn mirroring dedup so the first section publication of

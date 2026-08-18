@@ -202,7 +202,7 @@ struct TerminalTelegramOverviewMirroringTests {
     }
 
     @Test
-    func renderedSubAgentOverviewIsMirroredWithDedicatedHeader() async throws {
+    func renderedSubAgentOverviewStaysTerminalOnly() async throws {
         let (root, support, working) = try makeTemp()
         defer { try? FileManager.default.removeItem(at: root) }
         let terminal = try makeTerminal(working: working, support: support)
@@ -224,10 +224,8 @@ struct TerminalTelegramOverviewMirroringTests {
         )
         await drainMirrors(terminal)
 
-        let message = try #require(recorder.messages.first)
-        #expect(message.hasPrefix("🤖 Sub-agents"))
-        #expect(message.contains("reviewer — idle"))
-        #expect(!message.contains("\u{1B}["))
+        #expect(recorder.messages.isEmpty)
+        #expect(terminal.mirroredOverviewSignatures[.subAgents] == nil)
     }
 
     @Test
@@ -306,8 +304,8 @@ struct TerminalTelegramOverviewMirroringTests {
             return true
         }
 
-        // Two sections and a same-section revision rendered back to back must
-        // reach Telegram in the exact local render order.
+        // A sub-agent section is terminal-only; task-graph revisions still
+        // reach Telegram in their exact local render order.
         await terminal.renderCoordinator.renderSubAgentOverview(
             signature: "agents-v1",
             text: "Sub-agents\nfirst wave",
@@ -327,13 +325,11 @@ struct TerminalTelegramOverviewMirroringTests {
         await drainMirrors(terminal)
 
         let messages = recorder.messages
-        #expect(messages.count == 3)
-        #expect(messages[0].hasPrefix("🤖 Sub-agents"))
-        #expect(messages[0].contains("first wave"))
+        #expect(messages.count == 2)
+        #expect(messages[0].hasPrefix("📋 Task graph"))
+        #expect(messages[0].contains("first revision"))
         #expect(messages[1].hasPrefix("📋 Task graph"))
-        #expect(messages[1].contains("first revision"))
-        #expect(messages[2].hasPrefix("📋 Task graph"))
-        #expect(messages[2].contains("second revision"))
+        #expect(messages[1].contains("second revision"))
     }
 
     @Test

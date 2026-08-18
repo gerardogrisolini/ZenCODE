@@ -14,8 +14,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
-- Telegram sessions can now manage tasks and sub-agents, mirroring delegated
-  activity as overviews in the terminal chat.
+- Telegram sessions can now manage tasks and sub-agents, mirroring task-graph
+  activity as overviews while keeping high-frequency sub-agent snapshots in the
+  terminal only.
 - Saved plans gained a full lifecycle: completed live plans are mirrored into
   the library, `/plan list` reviews them with short ids, and `/plan delete`
   removes exact or unique-prefix targets.
