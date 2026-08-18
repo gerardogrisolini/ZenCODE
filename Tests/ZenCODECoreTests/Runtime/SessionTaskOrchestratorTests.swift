@@ -924,6 +924,68 @@ struct SessionTaskOrchestratorTests {
         )?.state == .completed)
     }
 
+    @Test
+    func discardSessionFinishesItsEventStreamAndDropsContinuation() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let stream = await orchestrator.events(sessionID: "discarded")
+        let consumer = Task { () -> Int in
+            var count = 0
+            for await _ in stream { count += 1 }
+            return count
+        }
+
+        try await orchestrator.discardSession(id: "discarded", deleteCheckpoint: false)
+
+        #expect(await consumer.value == 1)
+        #expect(await orchestrator.eventContinuations["discarded"] == nil)
+    }
+
+    @Test
+    func delegatedScopeHasSymmetricReadOnlySnapshotAndCheckpointBoundary() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "root", id: "graph", source: .manual, state: .active,
+            tasks: [TaskDefinition(id: "task", title: "Task")]
+        )
+        let attempt = try #require(try await orchestrator.claimTasks(
+            sessionID: "root",
+            claims: [TaskClaim(taskID: "task", agentID: "worker")]
+        ).first)
+        try await orchestrator.registerExecutionScope(
+            executionSessionID: "delegated",
+            scope: TaskExecutionScope(
+                rootSessionID: "root",
+                graphID: "graph",
+                taskID: "task",
+                attemptID: attempt.attemptID
+            )
+        )
+
+        #expect(try await orchestrator.graphSnapshot(sessionID: "delegated")?.id == "graph")
+        #expect(try await orchestrator.checkpoint(sessionID: "delegated")?.sessionID == "root")
+        await #expect(throws: SessionTaskOrchestratorError.self) {
+            try await orchestrator.clearTaskGraphs(sessionID: "delegated")
+        }
+    }
+
+    @Test
+    func progressWithoutMatchingActiveAttemptIsRejected() async throws {
+        let orchestrator = try await makeTwoTaskGraph()
+
+        let accepted = try await orchestrator.recordAttemptProgress(
+            sessionID: "session",
+            taskID: "a",
+            attemptID: "missing-attempt",
+            output: "must not be stored"
+        )
+
+        // Attempt mutations use a non-throwing stale-event rejection contract:
+        // false means the output was fenced out and no task state was changed.
+        #expect(!accepted)
+        let snapshot = try #require(try await orchestrator.graphSnapshot(sessionID: "session"))
+        #expect(snapshot.tasks.first(where: { $0.id == "a" })?.attempts.isEmpty == true)
+    }
+
     private func workflowSnapshot(
         taskStatus: TaskStatus,
         graphState: TaskGraphState = .active,

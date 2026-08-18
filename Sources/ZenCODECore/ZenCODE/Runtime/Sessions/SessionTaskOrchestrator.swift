@@ -1018,6 +1018,7 @@ public actor SessionTaskOrchestrator {
         executionScopes = executionScopes.filter { $0.value.rootSessionID != sessionID }
         tasklessDelegationReservations.removeValue(forKey: sessionID)
         emit(sessionID: sessionID, graphID: nil, revision: nil, kind: .cleared)
+        finishEventStreams(sessionID: sessionID)
     }
 
     public func flush(sessionID rawSessionID: String? = nil) throws {
@@ -1068,7 +1069,13 @@ public actor SessionTaskOrchestrator {
         executionScopes[sessionID]
     }
 
-    public func events(sessionID: String) -> AsyncStream<TaskGraphEvent> {
+    public func events(sessionID rawSessionID: String) -> AsyncStream<TaskGraphEvent> {
+        // Event observation is a read boundary like graphSnapshot/checkpoint:
+        // delegated execution sessions observe their root graph. Keeping the
+        // continuation under that canonical key also guarantees root discard
+        // can finish every related observer.
+        let sessionID = (try? resolvedRootSessionID(rawSessionID))
+            ?? rawSessionID.trimmingCharacters(in: .whitespacesAndNewlines)
         let observerID = UUID()
         // `makeStream` lets us register the continuation synchronously within
         // the actor (no escaping @Sendable build closure that has to touch
@@ -1104,6 +1111,15 @@ public actor SessionTaskOrchestrator {
             for continuation in continuationsBySession.values {
                 continuation.finish()
             }
+        }
+    }
+
+    /// Finishes and removes observers owned by one discarded session without
+    /// affecting subscriptions for other live sessions.
+    func finishEventStreams(sessionID: String) {
+        let continuations = eventContinuations.removeValue(forKey: sessionID) ?? [:]
+        for continuation in continuations.values {
+            continuation.finish()
         }
     }
 

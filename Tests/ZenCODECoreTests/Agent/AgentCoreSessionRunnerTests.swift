@@ -1012,6 +1012,75 @@ struct AgentCoreSessionRunnerTests {
         #expect(plainRequests[0].title == "local.exec")
     }
 
+    @Test
+    func sessionLifecycleReleasesPromptSkillProviderAndAuthorizationRoute() async throws {
+        let backend = CapturingAgentRuntimeBackend()
+        let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
+        let sessionID = "session-lifecycle-\(UUID().uuidString)"
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: "stable-cache-key",
+            history: [],
+            allowedToolNames: []
+        )
+
+        try await runner.createSession(configuration: configuration)
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "register authorization",
+            attachments: [],
+            authorizeTool: { _ in true },
+            onEvent: { _ in }
+        )
+        #expect(
+            await runner.lifecycleResourceCounts()
+                == .init(promptSkillProviders: 1, authorizationSessions: 1)
+        )
+
+        await runner.rebuildSession(id: sessionID)
+        #expect(
+            await runner.lifecycleResourceCounts()
+                == .init(promptSkillProviders: 0, authorizationSessions: 0)
+        )
+
+        try await runner.createSession(configuration: configuration)
+        await runner.closeSession(id: sessionID)
+        #expect(
+            await runner.lifecycleResourceCounts()
+                == .init(promptSkillProviders: 0, authorizationSessions: 0)
+        )
+    }
+
+    @Test
+    func globalResetReleasesEveryPromptSkillProvider() async throws {
+        let backend = CapturingAgentRuntimeBackend()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in backend },
+            taskGraphStore: nil
+        )
+        for sessionID in ["reset-a", "reset-b"] {
+            try await runner.createSession(
+                configuration: AgentCoreSessionConfiguration(
+                    sessionID: sessionID,
+                    modelID: "test-model",
+                    workingDirectory: FileManager.default.temporaryDirectory,
+                    systemPrompt: nil,
+                    cacheKey: sessionID,
+                    history: [],
+                    allowedToolNames: []
+                )
+            )
+        }
+        #expect(await runner.lifecycleResourceCounts().promptSkillProviders == 2)
+
+        await runner.resetSession()
+
+        #expect(await runner.lifecycleResourceCounts().promptSkillProviders == 0)
+    }
+
     private static func authorizationRequest(
         sessionID: String,
         toolName: String,

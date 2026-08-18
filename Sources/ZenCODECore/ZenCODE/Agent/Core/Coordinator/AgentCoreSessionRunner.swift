@@ -60,31 +60,44 @@ public actor AgentCoreSessionRunner {
     /// Thrown internally when a backend creation is fenced out by a concurrent
     /// reset or shutdown, so `ensureBackend` retries instead of installing a
     /// backend that no longer belongs to the current runtime generation.
-    private struct BackendInvalidatedError: Error {}
+    private typealias BackendInvalidatedError = AgentCoreBackendManager.InvalidatedError
 
     /// Identifies one incarnation of a session. Every `createSession` starts a
     /// new generation and every close/reset drops it, so work that started
     /// before the change cannot cache or restore state afterwards.
-    private struct SessionGeneration: Hashable {
-        let rawValue: UInt64
-    }
+    private typealias SessionGeneration = AgentCoreSessionSnapshotStore.Generation
 
-    private var backend: AgentCoreBackend?
+    private var backendManager = AgentCoreBackendManager()
+    private var backend: AgentCoreBackend? {
+        get { backendManager.backend }
+        set { backendManager.backend = newValue }
+    }
     /// Single-flight guard: concurrent `ensureBackend` callers join this task
     /// instead of each building their own `AgentCoreBackend`.
-    private var backendPreparation: Task<AgentCoreBackend, Error>?
+    private var backendPreparation: Task<AgentCoreBackend, Error>? {
+        get { backendManager.preparation }
+        set { backendManager.preparation = newValue }
+    }
     /// Bumped by every reset/shutdown so an in-flight backend creation that
     /// started earlier is discarded instead of overwriting newer state.
-    private var backendGeneration: UInt64 = 0
+    private var backendGeneration: UInt64 { backendManager.generation }
     /// Bumped only by shutdown (never by an ordinary backend reset). Work that
     /// entered before a shutdown compares against it and gives up instead of
     /// building a fresh backend for a runtime nobody is driving anymore.
-    private var shutdownGeneration: UInt64 = 0
-    private var sessionGenerations: [String: SessionGeneration] = [:]
-    private var nextSessionGenerationValue: UInt64 = 1
-    private var activeRuntimeConfiguration: AgentCoreSessionConfiguration?
-    private var sessions: [String: AgentCoreSessionConfiguration] = [:]
-    private var lastKnownSessionSnapshots: [String: AgentRuntimeSessionSnapshot] = [:]
+    private var shutdownGeneration: UInt64 { backendManager.shutdownGeneration }
+    private var activeRuntimeConfiguration: AgentCoreSessionConfiguration? {
+        get { backendManager.activeConfiguration }
+        set { backendManager.activeConfiguration = newValue }
+    }
+    private var snapshotStore = AgentCoreSessionSnapshotStore()
+    private var sessions: [String: AgentCoreSessionConfiguration] {
+        get { snapshotStore.configurations }
+        set { snapshotStore.configurations = newValue }
+    }
+    private var lastKnownSessionSnapshots: [String: AgentRuntimeSessionSnapshot] {
+        get { snapshotStore.snapshots }
+        set { snapshotStore.snapshots = newValue }
+    }
     /// Session-scoped, mutable prompt-skill providers. Owned here so changing
     /// the skill selection updates only this snapshot and never the system
     /// prompt, allowlist, cache key, or remote session identity.
@@ -102,10 +115,7 @@ public actor AgentCoreSessionRunner {
     /// reset alongside the shared-chat coordinator so aliases are never recycled
     /// within a session but start clean on a new one.
     private var sharedChatMentionCatalogStorage: SharedChatMentionCatalog?
-    private var promptAuthorizationHandlers: [UUID: AgentToolAuthorizationHandler] = [:]
-    /// Maps each prompt ID to the session it belongs to so `authorizeTool`
-    /// can route authorization requests to the correct handler.
-    private var promptAuthorizationSessionIDs: [UUID: String] = [:]
+    private var authorizationRouter = AgentCoreAuthorizationRouter()
     /// Session-scoped copy of the same handler, kept alive across turns.
     ///
     /// Delegated sub-agents keep executing tools after the turn that spawned
@@ -113,12 +123,22 @@ public actor AgentCoreSessionRunner {
     /// Keying by session (not by turn) also preserves per-origin routing: a
     /// session driven from Telegram keeps asking its own operator there. Only
     /// reset/shutdown clears this map; the per-prompt `defer` must not.
-    private var sessionAuthorizationHandlers: [String: AgentToolAuthorizationHandler] = [:]
-    private var localExecAccessModeState: AgentLocalExecAccessMode = .standard
     private let defaultToolAuthorizationHandler: AgentToolAuthorizationHandler?
     let mcpRuntime: DirectMCPToolRuntime
     public let taskOrchestrator: SessionTaskOrchestrator
     private let backendFactory: AgentRuntimeBackendFactory?
+
+    struct LifecycleResourceCounts: Equatable {
+        let promptSkillProviders: Int
+        let authorizationSessions: Int
+    }
+
+    func lifecycleResourceCounts() -> LifecycleResourceCounts {
+        LifecycleResourceCounts(
+            promptSkillProviders: promptSkillProvidersBySessionID.count,
+            authorizationSessions: authorizationRouter.retainedSessionCount
+        )
+    }
 
     public init(
         defaultToolAuthorizationHandler: AgentToolAuthorizationHandler? = nil,
@@ -154,17 +174,16 @@ public actor AgentCoreSessionRunner {
     }
 
     func localExecAccessMode() -> AgentLocalExecAccessMode {
-        localExecAccessModeState
+        authorizationRouter.localExecAccessMode
     }
 
     @discardableResult
     func toggleLocalExecAccessMode() -> AgentLocalExecAccessMode {
-        localExecAccessModeState = localExecAccessModeState.next
-        return localExecAccessModeState
+        authorizationRouter.toggleLocalExecAccessMode()
     }
 
     func resetLocalExecAccessMode() {
-        localExecAccessModeState = .standard
+        authorizationRouter.resetLocalExecAccessMode()
     }
 
     private func createBackendSession(
@@ -325,15 +344,14 @@ public actor AgentCoreSessionRunner {
     ) async throws -> DirectAgentResponse {
         let promptID = UUID()
         if let authorizationHandler = authorizeTool ?? defaultToolAuthorizationHandler {
-            promptAuthorizationHandlers[promptID] = authorizationHandler
-            promptAuthorizationSessionIDs[promptID] = configuration.sessionID
-            // Survives the turn on purpose: delegated work started here can ask
-            // for consent long after this prompt completed.
-            sessionAuthorizationHandlers[configuration.sessionID] = authorizationHandler
+            authorizationRouter.register(
+                promptID: promptID,
+                sessionID: configuration.sessionID,
+                handler: authorizationHandler
+            )
         }
         defer {
-            promptAuthorizationHandlers.removeValue(forKey: promptID)
-            promptAuthorizationSessionIDs.removeValue(forKey: promptID)
+            authorizationRouter.clear(promptID: promptID)
         }
 
         let backend = try await ensureBackend(configuration: configuration)
@@ -459,7 +477,7 @@ public actor AgentCoreSessionRunner {
         backendGeneration: UInt64,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async {
-        guard self.backendGeneration == backendGeneration else {
+        guard isCurrentBackendGeneration(backendGeneration) else {
             return
         }
         let recovery = await recoveredSessionSnapshot(
@@ -468,7 +486,7 @@ public actor AgentCoreSessionRunner {
             recorder: recorder,
             sessionGeneration: sessionGeneration
         )
-        guard self.backendGeneration == backendGeneration else {
+        guard isCurrentBackendGeneration(backendGeneration) else {
             return
         }
         await restoreSessionIfNeeded(
@@ -477,7 +495,7 @@ public actor AgentCoreSessionRunner {
             baseConfiguration: configuration,
             sessionGeneration: sessionGeneration
         )
-        guard self.backendGeneration == backendGeneration else {
+        guard isCurrentBackendGeneration(backendGeneration) else {
             return
         }
         await onEvent(.sessionSnapshot(recovery.snapshot))
@@ -733,7 +751,7 @@ public actor AgentCoreSessionRunner {
         let currentSnapshot = await backend?.snapshotSession(id: sessionID)
             ?? lastKnownSessionSnapshots[sessionID]
             ?? AgentRuntimeSessionSnapshot(configuration: baseConfiguration)
-        guard generation == backendGeneration else {
+        guard isCurrentBackendGeneration(generation) else {
             return false
         }
         let replacement = currentSnapshot.replacingHistory(history)
@@ -745,7 +763,7 @@ public actor AgentCoreSessionRunner {
         lastKnownSessionSnapshots[sessionID] = replacement
         if let backend {
             await backend.clearSession(id: sessionID)
-            guard generation == backendGeneration else {
+            guard isCurrentBackendGeneration(generation) else {
                 return false
             }
             await backend.createSession(
@@ -759,7 +777,7 @@ public actor AgentCoreSessionRunner {
                 thinkingSelection: replacement.thinkingSelection,
                 preserveThinking: replacement.preserveThinking
             )
-            guard generation == backendGeneration else {
+            guard isCurrentBackendGeneration(generation) else {
                 return false
             }
         }
@@ -906,6 +924,8 @@ public actor AgentCoreSessionRunner {
         invalidateSessionGeneration(for: sessionID)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
+        promptSkillProvidersBySessionID.removeValue(forKey: sessionID)
+        authorizationRouter.discard(sessionID: sessionID)
         // The rebuilt session keeps its identity but starts a new conversation,
         // so it must not inherit paused recall from the history being dropped.
         await MemoryTurnCoordinator.shared.discard(sessionID: sessionID)
@@ -948,10 +968,9 @@ public actor AgentCoreSessionRunner {
         }
 
         await cancelAllPromptTasksAndWait()
-        promptAuthorizationHandlers.removeAll()
-        promptAuthorizationSessionIDs.removeAll()
-        sessionAuthorizationHandlers.removeAll()
-        sessionGenerations.removeAll()
+        authorizationRouter.discardAll()
+        promptSkillProvidersBySessionID.removeAll()
+        snapshotStore.discardAll()
 
         let taskSessionIDs = await taskOrchestrator.registeredSessionIDs()
         let sessionIDs = Array(
@@ -995,6 +1014,7 @@ public actor AgentCoreSessionRunner {
         invalidateSessionGeneration(for: sessionID)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
+        authorizationRouter.discard(sessionID: sessionID)
         _ = await interruptSubAgents(rootSessionID: sessionID)
         // Wait for every cancelled prompt task to finish its finalisation before
         // checkpointing. Without this, a prompt winding down can update the task
@@ -1024,7 +1044,7 @@ public actor AgentCoreSessionRunner {
         // runtime that is being torn down. An ordinary backend reset (model or
         // agent switch) deliberately does *not* latch it, so those callers keep
         // their retry-and-rebuild behaviour.
-        shutdownGeneration &+= 1
+        backendManager.latchShutdown()
         await shutdownBackendKeepingExternalTools()
         await mcpRuntime.shutdown()
     }
@@ -1049,14 +1069,10 @@ public actor AgentCoreSessionRunner {
     /// observable to lifecycle owners.
     public func shutdownBackendKeepingExternalToolsThrowing() async throws {
         await cancelAllPromptTasksAndWait()
-        promptAuthorizationHandlers.removeAll()
-        promptAuthorizationSessionIDs.removeAll()
-        sessionAuthorizationHandlers.removeAll()
+        authorizationRouter.discardAll()
         // Fence in-flight backend creation and session work before suspending.
-        backendGeneration &+= 1
-        backendPreparation?.cancel()
-        backendPreparation = nil
-        sessionGenerations.removeAll()
+        let backendToShutdown = backendManager.invalidateBackend()
+        snapshotStore.discardAll()
         try await taskOrchestrator.flush()
         // Terminate every task-graph event observer so suspended `events(...)`
         // consumers resume instead of waiting forever after shutdown.
@@ -1068,9 +1084,6 @@ public actor AgentCoreSessionRunner {
         // finish every observer and drop the parked batches with it.
         await sharedChatCoordinatorStorage?.stopAll()
         await sharedChatMentionCatalogStorage?.reset()
-        activeRuntimeConfiguration = nil
-        let backendToShutdown = backend
-        backend = nil
         await backendToShutdown?.shutdown()
     }
 
@@ -1091,8 +1104,7 @@ public actor AgentCoreSessionRunner {
 
     private func clearActivePromptTask(id promptID: UUID) {
         promptTaskRegistry.clear(id: promptID)
-        promptAuthorizationHandlers.removeValue(forKey: promptID)
-        promptAuthorizationSessionIDs.removeValue(forKey: promptID)
+        authorizationRouter.clear(promptID: promptID)
     }
 
     private func ensureSession(
@@ -1199,7 +1211,7 @@ public actor AgentCoreSessionRunner {
             backendFactory: backendFactory
         )
         await backend.installTaskOrchestrator(taskOrchestrator)
-        guard generation == backendGeneration else {
+        guard isCurrentBackendGeneration(generation) else {
             // Reset or shutdown ran while this backend was being prepared:
             // discard the orphan instead of installing stale state.
             await backend.shutdown()
@@ -1215,38 +1227,33 @@ public actor AgentCoreSessionRunner {
     }
 
     private func resetBackend() async {
-        backendGeneration &+= 1
-        backendPreparation?.cancel()
-        backendPreparation = nil
-        sessions.removeAll()
-        lastKnownSessionSnapshots.removeAll()
-        sessionGenerations.removeAll()
-        activeRuntimeConfiguration = nil
-        let backendToShutdown = backend
-        backend = nil
+        let backendToShutdown = backendManager.invalidateBackend()
+        snapshotStore.discardAll()
         await backendToShutdown?.shutdown()
     }
 
     private func verifyBackendGeneration(_ generation: UInt64) throws {
-        guard generation == backendGeneration else {
-            throw BackendInvalidatedError()
-        }
+        try backendManager.verify(generation: generation)
+    }
+
+    private func isCurrentBackendGeneration(_ generation: UInt64) -> Bool {
+        backendManager.isCurrent(generation: generation)
     }
 
     @discardableResult
     private func beginSessionGeneration(for sessionID: String) -> SessionGeneration {
-        let generation = SessionGeneration(rawValue: nextSessionGenerationValue)
-        nextSessionGenerationValue &+= 1
-        sessionGenerations[sessionID] = generation
-        return generation
+        guard let configuration = sessions[sessionID] else {
+            preconditionFailure("A session generation requires its configuration")
+        }
+        return snapshotStore.begin(configuration)
     }
 
     private func currentSessionGeneration(for sessionID: String) -> SessionGeneration? {
-        sessionGenerations[sessionID]
+        snapshotStore.currentGeneration(for: sessionID)
     }
 
     private func invalidateSessionGeneration(for sessionID: String) {
-        sessionGenerations.removeValue(forKey: sessionID)
+        snapshotStore.discard(sessionID)
     }
 
     /// `true` while the captured incarnation is still the live one. A closed,
@@ -1255,10 +1262,7 @@ public actor AgentCoreSessionRunner {
         _ generation: SessionGeneration?,
         for sessionID: String
     ) -> Bool {
-        guard let generation else {
-            return false
-        }
-        return sessionGenerations[sessionID] == generation
+        snapshotStore.isCurrent(generation, sessionID: sessionID)
     }
 
     private func recoveredSessionSnapshot(
@@ -1323,17 +1327,10 @@ public actor AgentCoreSessionRunner {
         baseConfiguration: AgentCoreSessionConfiguration,
         sessionGeneration: SessionGeneration?
     ) {
-        // Never re-add state for a session that was closed, rebuilt, or reset
-        // while the turn was still running.
-        guard isCurrentSessionGeneration(
-            sessionGeneration,
-            for: snapshot.sessionID
-        ) else {
-            return
-        }
-        lastKnownSessionSnapshots[snapshot.sessionID] = snapshot
-        sessions[snapshot.sessionID] = baseConfiguration.replacingRuntimeState(
-            with: snapshot
+        snapshotStore.cache(
+            snapshot,
+            baseConfiguration: baseConfiguration,
+            generation: sessionGeneration
         )
     }
 
@@ -1376,17 +1373,14 @@ public actor AgentCoreSessionRunner {
     private func cacheCompactedSessionSnapshot(
         _ snapshot: AgentRuntimeSessionSnapshot
     ) {
-        lastKnownSessionSnapshots[snapshot.sessionID] = snapshot
-        if let configuration = sessions[snapshot.sessionID] {
-            sessions[snapshot.sessionID] = configuration.replacingRuntimeState(with: snapshot)
-        }
+        snapshotStore.cacheCompacted(snapshot)
     }
 
     private func authorizeTool(_ request: AgentToolAuthorizationRequest) async -> Bool {
         // Full access skips prompts for shell commands and for the destructive
         // direct tools alike; otherwise gating deletes while allowing `rm -rf`
         // through local.exec would only push callers toward the shell.
-        if localExecAccessModeState == .fullAccess,
+        if authorizationRouter.localExecAccessMode == .fullAccess,
            LocalExecPermissionAuthorizer.gatedToolNames.contains(request.toolName) {
             return true
         }
@@ -1402,7 +1396,7 @@ public actor AgentCoreSessionRunner {
         // default. With neither, the request fails closed like any other.
         if let delegation = request.delegatedIdentity {
             guard isKnownSession(delegation.rootSessionID),
-                  let handler = sessionAuthorizationHandlers[delegation.rootSessionID]
+                  let handler = authorizationRouter.handler(forSessionID: delegation.rootSessionID)
                       ?? defaultToolAuthorizationHandler else {
                 return false
             }
@@ -1417,9 +1411,11 @@ public actor AgentCoreSessionRunner {
         // arbitrary handler from a Dictionary: concurrent prompts in the same
         // session can have different authorization policies.
         guard let turnID = request.turnID,
-              let handler = promptAuthorizationHandlers[turnID],
-              let expectedSessionID = promptAuthorizationSessionIDs[turnID],
-              request.sessionID == expectedSessionID else {
+              let sessionID = request.sessionID,
+              let handler = authorizationRouter.handler(
+                forPromptID: turnID,
+                sessionID: sessionID
+              ) else {
             return false
         }
         return await handler(request)
@@ -1429,7 +1425,7 @@ public actor AgentCoreSessionRunner {
     /// because a turn of it registered an operator handler. Anything else is
     /// not ours to authorize.
     private func isKnownSession(_ sessionID: String) -> Bool {
-        sessions[sessionID] != nil || sessionAuthorizationHandlers[sessionID] != nil
+        sessions[sessionID] != nil || authorizationRouter.knows(sessionID: sessionID)
     }
 
     /// Names the delegated agent in the title so the operator can see *who* is
