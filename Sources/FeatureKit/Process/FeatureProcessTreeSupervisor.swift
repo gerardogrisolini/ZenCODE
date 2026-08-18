@@ -11,6 +11,36 @@ import Glibc
 /// snapshots descendants because Foundation does not consistently isolate a
 /// launched `Process` into its own group.
 public enum FeatureProcessTreeSupervisor {
+    /// Terminates one captured process tree with a single shared TERM→KILL
+    /// escalation. Descendants are snapshotted before TERM because an exiting
+    /// root may re-parent a TERM-ignoring child before the grace period ends.
+    public static func terminateAndEscalate(
+        _ process: Process,
+        graceNanoseconds: UInt64 = 1_000_000_000
+    ) async {
+        let pid = process.processIdentifier
+        guard pid > 0 else { return }
+        let processGroupLeader = isProcessGroupLeader(process)
+        #if os(macOS)
+        let capturedDescendants = processGroupLeader ? [] : descendantPIDs(of: pid)
+        #endif
+
+        send(SIGTERM, to: process, processGroupLeader: processGroupLeader)
+        let deadline = ContinuousClock.now + .nanoseconds(Int64(clamping: graceNanoseconds))
+        while process.isRunning, ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        #if os(macOS)
+        for descendantPID in capturedDescendants.reversed() {
+            _ = Darwin.kill(descendantPID, SIGKILL)
+        }
+        #endif
+        if process.isRunning {
+            send(SIGKILL, to: process, processGroupLeader: processGroupLeader)
+        }
+    }
+
     public static func isProcessGroupLeader(_ process: Process) -> Bool {
         let pid = process.processIdentifier
         guard pid > 0 else { return false }

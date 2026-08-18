@@ -10,6 +10,8 @@
 import Darwin
 #endif
 import Foundation
+import FeatureKit
+import Synchronization
 import ToolCore
 
 #if os(macOS)
@@ -33,67 +35,36 @@ extension MCPClient {
         client: MCPClient,
         connectionID: UUID?
     ) async {
-        let fileDescriptor = handle.fileDescriptor
-        var rawBuffer = [UInt8](repeating: 0, count: 4096)
-
-        do {
-            while !Task.isCancelled {
-                let bytesRead = Darwin.read(fileDescriptor, &rawBuffer, rawBuffer.count)
-                if bytesRead > 0 {
-                    let chunk = Data(rawBuffer.prefix(bytesRead))
-                    if let connectionID {
-                        await client.handleStdoutChunk(chunk, connectionID: connectionID)
-                        if await client.shouldStopReaderAfterProcessTermination(
-                            connectionID: connectionID
-                        ) {
-                            return
-                        }
-                    } else {
-                        await client.handleStdoutChunk(chunk)
-                    }
-                    continue
-                }
-
-                if bytesRead == 0 {
-                    break
-                }
-
-                if errno == EINTR {
-                    continue
-                }
-
-                if errno == EAGAIN || errno == EWOULDBLOCK {
-                    if let connectionID,
-                       await client.shouldStopReaderAfterProcessTermination(
-                           connectionID: connectionID
-                       ) {
-                        return
-                    }
-                    do {
-                        try await Task.sleep(nanoseconds: 10_000_000)
-                    } catch {
-                        return
-                    }
-                    continue
-                }
-
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            }
-        } catch {
-            if !Task.isCancelled {
+        let termination = await MCPStreamPump.run(
+            fileDescriptor: handle.fileDescriptor,
+            onChunk: { chunk in
                 if let connectionID {
-                    await client.handleStdoutReadFailure(error, connectionID: connectionID)
+                    await client.handleStdoutChunk(chunk, connectionID: connectionID)
                 } else {
-                    await client.handleStdoutReadFailure(error)
+                    await client.handleStdoutChunk(chunk)
                 }
+            },
+            shouldStop: {
+                guard let connectionID else { return false }
+                return await client.shouldStopReaderAfterProcessTermination(connectionID: connectionID)
             }
+        )
+        switch termination {
+        case .endOfFile:
+            if let connectionID {
+                await client.handleStdoutClosed(connectionID: connectionID)
+            } else {
+                await client.handleStdoutClosed()
+            }
+        case let .failure(code):
+            let error = POSIXError(code)
+            if let connectionID {
+                await client.handleStdoutReadFailure(error, connectionID: connectionID)
+            } else {
+                await client.handleStdoutReadFailure(error)
+            }
+        case .cancelled, .stopped:
             return
-        }
-
-        if let connectionID {
-            await client.handleStdoutClosed(connectionID: connectionID)
-        } else {
-            await client.handleStdoutClosed()
         }
     }
 
@@ -114,59 +85,26 @@ extension MCPClient {
         client: MCPClient,
         connectionID: UUID?
     ) async {
-        let fileDescriptor = handle.fileDescriptor
-        var rawBuffer = [UInt8](repeating: 0, count: 4096)
-
-        do {
-            while !Task.isCancelled {
-                let bytesRead = Darwin.read(fileDescriptor, &rawBuffer, rawBuffer.count)
-                if bytesRead > 0 {
-                    let chunk = Data(rawBuffer.prefix(bytesRead))
-                    if let connectionID {
-                        await client.handleStderrChunk(chunk, connectionID: connectionID)
-                        if await client.shouldStopReaderAfterProcessTermination(
-                            connectionID: connectionID
-                        ) {
-                            return
-                        }
-                    } else {
-                        await client.handleStderrChunk(chunk)
-                    }
-                    continue
-                }
-
-                if bytesRead == 0 {
-                    break
-                }
-
-                if errno == EINTR {
-                    continue
-                }
-
-                if errno == EAGAIN || errno == EWOULDBLOCK {
-                    if let connectionID,
-                       await client.shouldStopReaderAfterProcessTermination(
-                           connectionID: connectionID
-                       ) {
-                        return
-                    }
-                    do {
-                        try await Task.sleep(nanoseconds: 10_000_000)
-                    } catch {
-                        return
-                    }
-                    continue
-                }
-
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            }
-        } catch {
-            if !Task.isCancelled {
+        let termination = await MCPStreamPump.run(
+            fileDescriptor: handle.fileDescriptor,
+            onChunk: { chunk in
                 if let connectionID {
-                    await client.handleStderrReadFailure(error, connectionID: connectionID)
+                    await client.handleStderrChunk(chunk, connectionID: connectionID)
                 } else {
-                    await client.handleStderrReadFailure(error)
+                    await client.handleStderrChunk(chunk)
                 }
+            },
+            shouldStop: {
+                guard let connectionID else { return false }
+                return await client.shouldStopReaderAfterProcessTermination(connectionID: connectionID)
+            }
+        )
+        if case let .failure(code) = termination {
+            let error = POSIXError(code)
+            if let connectionID {
+                await client.handleStderrReadFailure(error, connectionID: connectionID)
+            } else {
+                await client.handleStderrReadFailure(error)
             }
         }
     }
@@ -176,69 +114,45 @@ extension MCPClient {
         client: MCPClient,
         connectionID: UUID
     ) async {
-        let fileDescriptor = handle.fileDescriptor
-        var rawBuffer = [UInt8](repeating: 0, count: 4096)
-        var lineBuffer = Data()
-
-        do {
-            while !Task.isCancelled {
-                let bytesRead = Darwin.read(fileDescriptor, &rawBuffer, rawBuffer.count)
-                if bytesRead > 0 {
-                    lineBuffer.append(contentsOf: rawBuffer.prefix(bytesRead))
+        let lineBuffer = Mutex(Data())
+        let termination = await MCPStreamPump.run(
+            fileDescriptor: handle.fileDescriptor,
+            onChunk: { chunk in
+                let lines: [String] = lineBuffer.withLock { lineBuffer in
+                    lineBuffer.append(chunk)
                     // Diagnostic commands are untrusted peers too. Preserve only
                     // a bounded tail when they emit a never-terminated line.
                     if lineBuffer.count > Self.maxDiagnosticBytes {
                         lineBuffer = Data(lineBuffer.suffix(Self.maxDiagnosticBytes))
                     }
+                    var lines: [String] = []
                     while let newlineIndex = lineBuffer.firstIndex(of: 0x0A) {
                         let lineData = lineBuffer.subdata(in: lineBuffer.startIndex ..< newlineIndex)
                         lineBuffer.removeSubrange(lineBuffer.startIndex ... newlineIndex)
-                        guard let line = String(data: lineData, encoding: .utf8) else {
-                            continue
-                        }
-                        await client.handleDiagnosticLine(line, connectionID: connectionID)
-                        if await client.shouldStopDiagnosticMonitor(connectionID: connectionID) {
-                            return
+                        if let line = String(data: lineData, encoding: .utf8) {
+                            lines.append(line)
                         }
                     }
+                    return lines
+                }
+                for line in lines {
+                    await client.handleDiagnosticLine(line, connectionID: connectionID)
                     if await client.shouldStopDiagnosticMonitor(connectionID: connectionID) {
                         return
                     }
-                    continue
                 }
-
-                if bytesRead == 0 {
-                    return
-                }
-
-                if errno == EINTR {
-                    continue
-                }
-
-                if errno == EAGAIN || errno == EWOULDBLOCK {
-                    if await client.shouldStopDiagnosticMonitor(connectionID: connectionID) {
-                        return
-                    }
-                    do {
-                        try await Task.sleep(nanoseconds: 10_000_000)
-                    } catch {
-                        return
-                    }
-                    continue
-                }
-
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            },
+            shouldStop: {
+                await client.shouldStopDiagnosticMonitor(connectionID: connectionID)
             }
-        } catch {
-            if !Task.isCancelled {
-                await client.handleDiagnosticReadFailure(error, connectionID: connectionID)
-            }
+        )
+        if case let .failure(code) = termination {
+            await client.handleDiagnosticReadFailure(POSIXError(code), connectionID: connectionID)
         }
     }
 
     func handleStdoutChunk(_ chunk: Data) {
         log("stdout <- \(chunk.count) bytes")
-        persistStdoutChunkTrace(chunk)
         append(chunk)
     }
 
@@ -307,11 +221,11 @@ extension MCPClient {
         terminatingConnectionID = connectionID
         if wasRunning {
             terminalBridgeError = terminalBridgeError ?? .connectionClosed
-#if canImport(Darwin)
-            kill(process.processIdentifier, SIGKILL)
-#else
-            process.terminate()
-#endif
+            FeatureProcessTreeSupervisor.send(
+                SIGKILL,
+                to: process,
+                processGroupLeader: FeatureProcessTreeSupervisor.isProcessGroupLeader(process)
+            )
         }
     }
 
@@ -489,7 +403,6 @@ extension MCPClient {
             logBufferedPrefixIfNeeded()
         }
 
-        persistReassembledBufferSnapshotIfNeeded()
     }
 
     func nextMessageBody() -> Data? {
@@ -762,11 +675,11 @@ extension MCPClient {
 
         if process.isRunning {
             importantLog("Terminating local MCP process after a classified transport error.")
-#if canImport(Darwin)
-            kill(process.processIdentifier, SIGKILL)
-#else
-            process.terminate()
-#endif
+            FeatureProcessTreeSupervisor.send(
+                SIGKILL,
+                to: process,
+                processGroupLeader: FeatureProcessTreeSupervisor.isProcessGroupLeader(process)
+            )
         }
     }
 
@@ -792,147 +705,7 @@ extension MCPClient {
     }
 
     func log(_ message: String) {
-        guard isDebugLoggingEnabled else {
-            return
-        }
-
-        appendDebugLogLine(message)
-    }
-
-    func prepareStdoutTracingFiles() {
-        guard isDebugLoggingEnabled else {
-            return
-        }
-
-        let sessionTag = Self.traceSessionTag()
-        stdoutChunkTraceURLs = traceURLs(fileName: "mcpclient-stdout-chunks-\(sessionTag).bin")
-        stdoutReassembledBufferURLs = traceURLs(fileName: "mcpclient-stdout-reassembled-\(sessionTag).bin")
-        lastReassembledBufferSize = -1
-
-        for url in stdoutChunkTraceURLs + stdoutReassembledBufferURLs {
-            overwrite(data: Data(), to: url)
-        }
-
-        if let chunkURL = stdoutChunkTraceURLs.first {
-            log("Tracing stdout chunks to \(chunkURL.path)")
-        }
-        if let reassembledURL = stdoutReassembledBufferURLs.first {
-            log("Tracing reassembled stdout buffer to \(reassembledURL.path)")
-        }
-    }
-
-    nonisolated static func traceSessionTag() -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
-        return "\(formatter.string(from: Date()))-pid\(ProcessInfo.processInfo.processIdentifier)"
-    }
-
-    func traceURLs(fileName: String) -> [URL] {
-        let homeLogsDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/FeatureMCPBridgeKit", isDirectory: true)
-        return [homeLogsDirectory.appendingPathComponent(fileName)]
-    }
-
-    func persistStdoutChunkTrace(_ chunk: Data) {
-        guard isDebugLoggingEnabled, !stdoutChunkTraceURLs.isEmpty else {
-            return
-        }
-
-        for url in stdoutChunkTraceURLs {
-            append(data: chunk, to: url)
-        }
-    }
-
-    func persistReassembledBufferSnapshotIfNeeded() {
-        guard isDebugLoggingEnabled, !stdoutReassembledBufferURLs.isEmpty else {
-            return
-        }
-
-        guard buffer.count != lastReassembledBufferSize else {
-            return
-        }
-
-        lastReassembledBufferSize = buffer.count
-        for url in stdoutReassembledBufferURLs {
-            overwrite(data: buffer, to: url)
-        }
-    }
-
-    func appendDebugLogLine(_ message: String) {
-        let formatter = ISO8601DateFormatter()
-        let timestamp = formatter.string(from: Date())
-        let line = "[\(timestamp)] [pid:\(ProcessInfo.processInfo.processIdentifier)] [MCPClient] \(message)\n"
-        let logURLs = debugLogURLs()
-
-        for logURL in logURLs {
-            append(line: line, to: logURL)
-        }
-    }
-
-    func debugLogURLs() -> [URL] {
-        let homeLogsDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/FeatureMCPBridgeKit", isDirectory: true)
-        return [homeLogsDirectory.appendingPathComponent("mcpclient.log")]
-    }
-
-    func append(line: String, to logURL: URL) {
-        let fileManager = FileManager.default
-        let directoryURL = logURL.deletingLastPathComponent()
-        try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-
-        if fileManager.fileExists(atPath: logURL.path) == false {
-            try? Data(line.utf8).write(to: logURL)
-            return
-        }
-
-        guard let handle = try? FileHandle(forWritingTo: logURL) else {
-            return
-        }
-
-        defer {
-            try? handle.close()
-        }
-
-        do {
-            try handle.seekToEnd()
-            try handle.write(contentsOf: Data(line.utf8))
-        } catch {
-            return
-        }
-    }
-
-    func append(data: Data, to logURL: URL) {
-        let fileManager = FileManager.default
-        let directoryURL = logURL.deletingLastPathComponent()
-        try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-
-        if fileManager.fileExists(atPath: logURL.path) == false {
-            try? data.write(to: logURL)
-            return
-        }
-
-        guard let handle = try? FileHandle(forWritingTo: logURL) else {
-            return
-        }
-
-        defer {
-            try? handle.close()
-        }
-
-        do {
-            try handle.seekToEnd()
-            try handle.write(contentsOf: data)
-        } catch {
-            return
-        }
-    }
-
-    func overwrite(data: Data, to logURL: URL) {
-        let fileManager = FileManager.default
-        let directoryURL = logURL.deletingLastPathComponent()
-        try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        try? data.write(to: logURL, options: .atomic)
+        _ = message
     }
 }
 #endif

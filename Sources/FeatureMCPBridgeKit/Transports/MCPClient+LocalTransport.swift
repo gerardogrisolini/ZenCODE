@@ -10,6 +10,7 @@
 import Darwin
 #endif
 import Foundation
+import FeatureKit
 import Synchronization
 import ToolCore
 
@@ -50,7 +51,7 @@ extension MCPClient {
         log(buildMarker)
         log("Launching MCP bridge: \(executableURL.path) \(configuration.arguments.joined(separator: " "))")
         if !configuration.environment.isEmpty {
-            log("Bridge environment overrides: \(Self.redactedEnvironmentDescription(configuration.environment))")
+            log("Bridge environment overrides: \(ToolSecretRedactor.redactedEnvironmentDescription(configuration.environment))")
         }
 
         let standardInput = Pipe()
@@ -103,8 +104,6 @@ extension MCPClient {
         startDiagnosticMonitor(for: process, connectionID: connectionID)
 
         signal(SIGPIPE, SIG_IGN)
-        prepareStdoutTracingFiles()
-
         let outputHandle = standardOutput.fileHandleForReading
         self.outputHandle = outputHandle
         do {
@@ -283,19 +282,7 @@ extension MCPClient {
         if let bridgeProcess {
             bridgeProcess.terminationHandler = nil
             if bridgeProcess.isRunning {
-                // Ask nicely (SIGTERM), give the bridge a short grace window,
-                // then force-kill (SIGKILL) so a wedged/orphan bridge cannot
-                // survive disconnect().
-                bridgeProcess.terminate()
-                for _ in 0..<50 {
-                    if !bridgeProcess.isRunning || Task.isCancelled {
-                        break
-                    }
-                    try? await Task.sleep(nanoseconds: 20_000_000)
-                }
-                if bridgeProcess.isRunning {
-                    Darwin.kill(bridgeProcess.processIdentifier, SIGKILL)
-                }
+                await FeatureProcessTreeSupervisor.terminateAndEscalate(bridgeProcess)
             }
         }
 
@@ -303,10 +290,6 @@ extension MCPClient {
         buffer.removeAll(keepingCapacity: false)
         stderrBuffer.removeAll(keepingCapacity: false)
         terminalBridgeError = nil
-        stdoutChunkTraceURLs.removeAll(keepingCapacity: false)
-        stdoutReassembledBufferURLs.removeAll(keepingCapacity: false)
-        lastReassembledBufferSize = -1
-
         await readTask?.value
         await errorTask?.value
         // Bounded writer teardown BEFORE closing stdin. `shutdown()` returns
@@ -353,7 +336,11 @@ extension MCPClient {
         } catch {
             outputHandle.closeFile()
             if monitorProcess.isRunning {
-                monitorProcess.terminate()
+                FeatureProcessTreeSupervisor.send(
+                    SIGTERM,
+                    to: monitorProcess,
+                    processGroupLeader: FeatureProcessTreeSupervisor.isProcessGroupLeader(monitorProcess)
+                )
             }
             log("Unable to prepare local MCP diagnostic monitor: \(error.localizedDescription)")
             return
@@ -382,7 +369,11 @@ extension MCPClient {
 
         if let monitorProcess = diagnosticMonitorProcess,
            monitorProcess.isRunning {
-            monitorProcess.terminate()
+            FeatureProcessTreeSupervisor.send(
+                SIGTERM,
+                to: monitorProcess,
+                processGroupLeader: FeatureProcessTreeSupervisor.isProcessGroupLeader(monitorProcess)
+            )
         }
         diagnosticMonitorProcess = nil
         return (task, outputHandle)
@@ -424,28 +415,6 @@ extension MCPClient {
             environment[key] = value
         }
         return DeveloperToolEnvironment.processEnvironment(base: environment)
-    }
-
-    /// Returns a log-safe description of an environment dictionary with values
-    /// whose keys look sensitive (token, secret, auth, key, password, credential)
-    /// replaced by a placeholder. FeatureMCPBridgeKit cannot depend on the
-    /// ZenCODECore ``ZenSecretRedactor``, so this is a conservative local
-    /// approximation that errs on the side of over-redacting.
-    nonisolated static func redactedEnvironmentDescription(
-        _ environment: [String: String]
-    ) -> String {
-        let sensitiveKeywords: Set<String> = [
-            "token", "secret", "auth", "key", "password", "credential", "passphrase",
-        ]
-        let redacted = environment.map { (key, value) -> String in
-            let lowercasedKey = key.lowercased()
-            let isSensitive = sensitiveKeywords.contains { keyword in
-                lowercasedKey.contains(keyword)
-            }
-            let displayValue = isSensitive ? "[REDACTED]" : value
-            return "\(key): \(displayValue)"
-        }
-        return "[\(redacted.joined(separator: ", "))]"
     }
 
     public func listTools() async throws -> MCPListToolsResult {

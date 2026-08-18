@@ -129,7 +129,12 @@ extension MCPHTTPTransportClient {
             return oauthMetadata
         }
 
-        let metadataURL = oauthConfiguration.metadataURL ?? Self.defaultOAuthMetadataURL(for: endpointURL)
+        let metadataURL: URL
+        if let configuredMetadataURL = oauthConfiguration.metadataURL {
+            metadataURL = configuredMetadataURL
+        } else {
+            metadataURL = try Self.defaultOAuthMetadataURL(for: endpointURL)
+        }
         var request = URLRequest(url: metadataURL)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -329,13 +334,25 @@ extension MCPHTTPTransportClient {
         headerName.caseInsensitiveCompare("Authorization") == .orderedSame
     }
 
-    public nonisolated static func defaultOAuthMetadataURL(for endpointURL: URL) -> URL {
+    public nonisolated static func defaultOAuthMetadataURL(for endpointURL: URL) throws -> URL {
+        guard let scheme = endpointURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              endpointURL.host != nil else {
+            throw MCPClientError.browserAuthenticationFailed(
+                "Unable to build the OAuth metadata URL for the MCP endpoint."
+            )
+        }
         var components = URLComponents()
-        components.scheme = endpointURL.scheme
+        components.scheme = scheme
         components.host = endpointURL.host
         components.port = endpointURL.port
         components.path = "/.well-known/oauth-authorization-server"
-        return components.url!
+        guard let metadataURL = components.url else {
+            throw MCPClientError.browserAuthenticationFailed(
+                "Unable to build the OAuth metadata URL for the MCP endpoint."
+            )
+        }
+        return metadataURL
     }
 
     public nonisolated static func randomURLSafeToken(byteCount: Int) -> String {

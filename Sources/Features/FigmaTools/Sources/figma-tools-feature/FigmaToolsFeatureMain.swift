@@ -8,7 +8,59 @@
 import Foundation
 import FeatureKit
 import FeatureMCPBridgeKit
+import Network
+import Synchronization
 import ToolCore
+
+private enum FigmaDesktopMCP {
+    static let configuration = MCPServerConfiguration(
+        executablePath: "",
+        arguments: [],
+        environment: [:],
+        endpointURL: URL(string: "http://127.0.0.1:3845/mcp"),
+        httpHeaders: [:],
+        httpAuthentication: .none,
+        preferredProtocolVersion: "2025-03-26"
+    )
+
+    static func isRunning(timeout: TimeInterval = 0.5) async -> Bool {
+        guard let endpointURL = configuration.endpointURL,
+              let host = endpointURL.host,
+              let portValue = endpointURL.port,
+              let port = NWEndpoint.Port(rawValue: UInt16(portValue)) else {
+            return false
+        }
+        return await withCheckedContinuation { continuation in
+            let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
+            let state = Mutex(false)
+            let finish: @Sendable (Bool) -> Void = { reachable in
+                let shouldResume = state.withLock { finished in
+                    guard !finished else { return false }
+                    finished = true
+                    return true
+                }
+                if shouldResume { continuation.resume(returning: reachable) }
+            }
+            connection.stateUpdateHandler = { connectionState in
+                switch connectionState {
+                case .ready:
+                    finish(true)
+                    connection.cancel()
+                case .failed, .cancelled:
+                    finish(false)
+                default:
+                    break
+                }
+            }
+            let queue = DispatchQueue(label: "FigmaTools.FigmaDesktopMCPReachability")
+            queue.asyncAfter(deadline: .now() + timeout) {
+                finish(false)
+                connection.cancel()
+            }
+            connection.start(queue: queue)
+        }
+    }
+}
 
 @main
 enum FigmaToolsFeature {
@@ -28,12 +80,12 @@ private struct FigmaFeatureConfiguration: MCPFeatureConfiguration {
     """
 
     func isAvailable(environment: [String: String]) async -> Bool {
-        await MCPServerConfiguration.isFigmaDesktopServerRunning()
+        await FigmaDesktopMCP.isRunning()
     }
 
     func makeExecutor(environment: [String: String]) async throws -> RemoteMCPToolExecutor {
         RemoteMCPToolExecutor(
-            configuration: .figmaDesktopLocal(),
+            configuration: FigmaDesktopMCP.configuration,
             toolNamePrefix: toolNamePrefix
         )
     }

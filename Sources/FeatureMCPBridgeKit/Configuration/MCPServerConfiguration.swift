@@ -12,11 +12,7 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
-import Synchronization
 import ToolCore
-#if canImport(Network)
-import Network
-#endif
 
 public nonisolated struct MCPBrowserOAuthConfiguration: Hashable, Sendable {
     public let clientName: String
@@ -98,101 +94,6 @@ public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
     public var usesHTTPTransport: Bool {
         endpointURL != nil
     }
-
-    public static func figmaDesktopLocal() -> MCPServerConfiguration {
-        MCPServerConfiguration(
-            executablePath: "",
-            arguments: [],
-            environment: [:],
-            endpointURL: URL(string: "http://127.0.0.1:3845/mcp"),
-            httpHeaders: [:],
-            httpAuthentication: .none,
-            preferredProtocolVersion: "2025-03-26"
-        )
-    }
-
-    public static func isFigmaDesktopServerRunning(
-        timeout: TimeInterval = 0.5
-    ) async -> Bool {
-        #if canImport(Network)
-        let configuration = figmaDesktopLocal()
-        guard
-            let endpointURL = configuration.endpointURL,
-            let host = endpointURL.host,
-            let portValue = endpointURL.port,
-            let port = NWEndpoint.Port(rawValue: UInt16(portValue))
-        else {
-            return false
-        }
-
-        return await isReachableTCPServer(
-            host: NWEndpoint.Host(host),
-            port: port,
-            timeout: timeout
-        )
-        #else
-        _ = timeout
-        return false
-        #endif
-    }
-
-    #if canImport(Network)
-    private static func isReachableTCPServer(
-        host: NWEndpoint.Host,
-        port: NWEndpoint.Port,
-        timeout: TimeInterval
-    ) async -> Bool {
-        await withCheckedContinuation { continuation in
-            final class ReachabilityContinuationState: Sendable {
-                private let didResume = Mutex(false)
-
-                func beginFinishing() -> Bool {
-                    didResume.withLock { didResume in
-                        guard !didResume else {
-                            return false
-                        }
-
-                        didResume = true
-                        return true
-                    }
-                }
-            }
-
-            let connection = NWConnection(host: host, port: port, using: .tcp)
-            let queue = DispatchQueue(label: "FeatureMCPBridgeKit.MCPReachability")
-            let state = ReachabilityContinuationState()
-
-            let finish: @Sendable (Bool) -> Void = { isReachable in
-                guard state.beginFinishing() else {
-                    return
-                }
-
-                continuation.resume(returning: isReachable)
-            }
-
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    finish(true)
-                    connection.cancel()
-                case .failed:
-                    finish(false)
-                case .cancelled:
-                    finish(false)
-                default:
-                    break
-                }
-            }
-
-            queue.asyncAfter(deadline: .now() + timeout) {
-                finish(false)
-                connection.cancel()
-            }
-
-            connection.start(queue: queue)
-        }
-    }
-    #endif
 
 }
 
