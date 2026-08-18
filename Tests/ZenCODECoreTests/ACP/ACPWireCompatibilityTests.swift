@@ -138,6 +138,32 @@ extension ACPCompatibilityTests {
     }
 
     @Test
+    func emptyToolResultsDoNotEmitEmptyContentBlocks() {
+        let toolCall = presentedToolCall(
+            id: "call_empty",
+            name: "search.grep",
+            argumentsObject: ["pattern": "missing"],
+            argumentsJSON: #"{"pattern":"missing"}"#
+        )
+
+        let completion = ZenCODEACPBridge.toolCallCompletionUpdate(
+            for: toolCall,
+            result: DirectAgentToolResult(output: " \n", summary: "No matches")
+        )
+
+        #expect(completion["status"] as? String == "completed")
+        #expect(completion["content"] == nil)
+        let rawOutput = (completion["_meta"] as? [String: Any])?["rawOutput"] as? [String: Any]
+        #expect(rawOutput?["output"] as? String == " \n")
+    }
+
+    @Test
+    func remoteRequestDiagnosticsAreSuppressedFromACPThoughts() {
+        #expect(ZenCODEACPBridge.isAppSuppressedDiagnostic("Remote request: Z.ai Coding Plan glm-5.3."))
+        #expect(!ZenCODEACPBridge.isAppSuppressedDiagnostic("Retrying remote request."))
+    }
+
+    @Test
     func toolCallUpdatesOnlyUseProtocolToolKinds() {
         let acpToolKinds: Set<String> = [
             "read", "edit", "delete", "move", "search",

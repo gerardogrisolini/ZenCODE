@@ -49,6 +49,28 @@ struct TerminalMarkdownCodeRenderingTests {
     }
 
     @Test
+    func streamingCodeBlocksCanPreserveLogicalLinesWithoutWidthBasedContinuationRows() {
+        let longLine = "let explanation = \"a deliberately long value that must remain one logical line\""
+        let fencedSource = "```swift\n\(longLine)\n```\n"
+        let indentedSource = "    \(longLine)\n"
+
+        for source in [fencedSource, indentedSource] {
+            var stream = TerminalMarkdownStreamFormatter(
+                isEnabled: true,
+                renderWidth: 20,
+                supportsHyperlinks: false,
+                usesTerminalWidthForStructuredContent: false,
+                palette: .dark
+            )
+            let rendered = stream.consume(source) + stream.finish()
+            let visible = TerminalANSIText.stripANSI(rendered)
+
+            #expect(visible.contains(longLine))
+            #expect(!visible.contains("↳"))
+        }
+    }
+
+    @Test
     func streamingBacktickFenceMatchesCompleteParserForLongRunsAndFalseClosers() {
         let source = """
         ````text

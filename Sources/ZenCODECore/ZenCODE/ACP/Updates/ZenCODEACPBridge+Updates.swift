@@ -170,21 +170,12 @@ extension ZenCODEACPBridge {
         result: DirectAgentToolResult,
         workingDirectory: URL? = nil
     ) -> [String: Any] {
-        return [
+        var update: [String: Any] = [
             "sessionUpdate": "tool_call_update",
             "toolCallId": toolCall.id,
             "title": toolTitle(for: toolCall),
             "kind": toolKind(for: toolCall, workingDirectory: workingDirectory),
             "status": result.isFailure ? "failed" : "completed",
-            "content": [
-                [
-                    "type": "content",
-                    "content": [
-                        "type": "text",
-                        "text": result.output
-                    ]
-                ]
-            ],
             "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory),
             "_meta": [
                 "rawInput": toolCall.argumentsObject,
@@ -194,6 +185,18 @@ extension ZenCODEACPBridge {
                 ]
             ]
         ]
+        if !result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            update["content"] = [
+                [
+                    "type": "content",
+                    "content": [
+                        "type": "text",
+                        "text": result.output
+                    ]
+                ]
+            ]
+        }
+        return update
     }
 
     public static func toolCallCompletionJSONUpdate(

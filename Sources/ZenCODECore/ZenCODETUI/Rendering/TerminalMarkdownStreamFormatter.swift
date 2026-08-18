@@ -113,9 +113,10 @@ public struct TerminalMarkdownStreamFormatter {
     private let removesUnbalancedStrongMarkers: Bool
     private let palette: TerminalMarkdownPalette
     
-    /// Visible terminal width used for reflow. When no fixed width was injected
-    /// (production), this is re-read on each access so output adapts to live
-    /// terminal resizes instead of being frozen at startup.
+    /// Visible terminal width used for structured Markdown reflow. When no fixed
+    /// width was injected (production), this is re-read on each access so output
+    /// adapts to live terminal resizes instead of being frozen at startup. A
+    /// fixed zero disables width-based reflow while preserving Markdown styling.
     private var renderWidth: Int {
         fixedRenderWidth ?? Self.detectTerminalWidth()
     }
@@ -152,10 +153,11 @@ public struct TerminalMarkdownStreamFormatter {
     
     public init(
         isEnabled: Bool,
-        removesUnbalancedStrongMarkers: Bool = false
+        removesUnbalancedStrongMarkers: Bool = false,
+        usesTerminalWidthForStructuredContent: Bool = true
     ) {
         self.isEnabled = isEnabled
-        self.fixedRenderWidth = nil
+        self.fixedRenderWidth = usesTerminalWidthForStructuredContent ? nil : 0
         self.supportsHyperlinks = Self.detectHyperlinkSupport()
         self.removesUnbalancedStrongMarkers = removesUnbalancedStrongMarkers
         self.palette = .detected
@@ -166,10 +168,11 @@ public struct TerminalMarkdownStreamFormatter {
         renderWidth: Int,
         supportsHyperlinks: Bool,
         removesUnbalancedStrongMarkers: Bool = false,
+        usesTerminalWidthForStructuredContent: Bool = true,
         palette: TerminalMarkdownPalette? = nil
     ) {
         self.isEnabled = isEnabled
-        self.fixedRenderWidth = renderWidth
+        self.fixedRenderWidth = usesTerminalWidthForStructuredContent ? renderWidth : 0
         self.supportsHyperlinks = supportsHyperlinks
         self.removesUnbalancedStrongMarkers = removesUnbalancedStrongMarkers
         self.palette = palette ?? .detected

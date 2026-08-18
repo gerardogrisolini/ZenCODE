@@ -200,14 +200,12 @@ extension ZenCODEACPBridge {
                         }
                     case let .diagnostic(message):
                         await self.verboseACPLog("diagnostic \(message)")
-                        if Self.isMetricsDiagnostic(message) {
+                        if Self.isAppSuppressedDiagnostic(message) {
                             break
                         }
-                        if !appMode || !Self.isAppSuppressedDiagnostic(message) {
-                            await sendPromptUpdate(
-                                Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: message)
-                            )
-                        }
+                        await sendPromptUpdate(
+                            Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: message)
+                        )
                     case let .thought(message):
                         await sendPromptUpdate(
                             Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: message)

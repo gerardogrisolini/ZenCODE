@@ -299,7 +299,8 @@ actor TerminalChatRenderCoordinator {
         self.thoughtStreamingState = StreamingContentState(
             markdownFormatter: TerminalMarkdownStreamFormatter(
                 isEnabled: standardErrorIsTerminal,
-                removesUnbalancedStrongMarkers: true
+                removesUnbalancedStrongMarkers: true,
+                usesTerminalWidthForStructuredContent: false
             )
         )
     }
@@ -437,8 +438,8 @@ actor TerminalChatRenderCoordinator {
         flushPendingStreamingWrites()
     }
 
-    /// Renders thinking after Markdown so long paragraphs rely on the
-    /// terminal's own auto-wrap rather than a hard column-based wrap. All
+    /// Renders thinking after Markdown so prose and structured blocks rely on
+    /// the terminal's own auto-wrap rather than a hard column-based wrap. All
     /// thinking content is emitted verbatim — nothing is folded or omitted.
     private func writeRenderedThought(_ renderedThought: String) {
         let markdown = TerminalChatTextFormatting.renderThoughtMarkdown(

@@ -1484,6 +1484,25 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func terminalThinkingCodeBlockDoesNotAddWidthBasedContinuationMarkers() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let longLine = "let explanation = \"a deliberately long value that must remain one logical line\""
+
+        await renderer.writeThought("```swift\n\(longLine)\n```\n")
+        await renderer.finishThoughtOutput()
+
+        let stderr = TerminalANSIText.stripANSI(
+            await renderer.capturedWriteEvents()
+                .filter { $0.channel == .standardError }
+                .map(\.text)
+                .joined()
+        )
+
+        #expect(stderr.contains(longLine))
+        #expect(!stderr.contains("↳"))
+    }
+
+    @Test
     func terminalThinkingShowsUnterminatedTail() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true
