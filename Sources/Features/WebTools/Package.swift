@@ -17,9 +17,23 @@ let package = Package(
         .package(path: "../../..")
     ],
     targets: [
+        .target(
+            name: "WebToolsFeature",
+            dependencies: [
+                .product(name: "FeatureKit", package: "ZenCODE"),
+                .product(name: "ToolCore", package: "ZenCODE")
+            ],
+            swiftSettings: memberImportVisibilitySettings
+        ),
         .executableTarget(
             name: "web-tools-feature",
+            dependencies: ["WebToolsFeature"],
+            swiftSettings: memberImportVisibilitySettings
+        ),
+        .testTarget(
+            name: "WebToolsFeatureTests",
             dependencies: [
+                "WebToolsFeature",
                 .product(name: "FeatureKit", package: "ZenCODE"),
                 .product(name: "ToolCore", package: "ZenCODE")
             ],
