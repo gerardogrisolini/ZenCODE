@@ -97,9 +97,10 @@ public final class RemoteModelCatalogClient {
         RemoteHTTPStreamingRequest(
             url: try endpointURL(
                 baseURL: baseURL,
-                path: isAnthropicAPIBaseURL(baseURL)
-                    ? "models?limit=1000"
-                    : "models"
+                path: "models",
+                queryItems: isAnthropicAPIBaseURL(baseURL)
+                    ? [URLQueryItem(name: "limit", value: "1000")]
+                    : []
             ),
             method: "GET",
             headers: commonHeaders(baseURL: baseURL, apiKey: apiKey),
@@ -232,10 +233,21 @@ extension RemoteModelCatalogClient {
 
     func endpointURL(
         baseURL: String,
-        path: String
+        path: String,
+        queryItems: [URLQueryItem] = []
     ) throws -> URL {
         let normalizedBaseURL = AgentRemoteProvider.normalizedBaseURL(baseURL)
-        guard let url = URL(string: "\(normalizedBaseURL)/\(path)") else {
+        guard let base = URL(string: normalizedBaseURL),
+              var components = URLComponents(
+                  url: base.appendingPathComponent(path),
+                  resolvingAgainstBaseURL: false
+              ) else {
+            throw RemoteModelCatalogClientError.invalidURL(baseURL)
+        }
+        if !queryItems.isEmpty {
+            components.queryItems = (components.queryItems ?? []) + queryItems
+        }
+        guard let url = components.url else {
             throw RemoteModelCatalogClientError.invalidURL(baseURL)
         }
         return url

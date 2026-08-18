@@ -50,6 +50,20 @@ public struct RemoteSSEIdleTimeoutError: Error, Sendable, Equatable, LocalizedEr
     }
 }
 
+public enum RemoteSSEParsingError: Error, Sendable, Equatable, LocalizedError {
+    case lineLimitExceeded(maximumBytes: Int)
+    case eventLimitExceeded(maximumBytes: Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .lineLimitExceeded(let maximumBytes):
+            return "SSE line exceeds the \(maximumBytes)-byte limit."
+        case .eventLimitExceeded(let maximumBytes):
+            return "SSE event exceeds the \(maximumBytes)-byte limit."
+        }
+    }
+}
+
 /// A unicast SSE sequence layered over `RemoteHTTPBody`.
 public struct RemoteSSEEventStream: AsyncSequence, Sendable {
     public typealias Element = RemoteSSEEvent
@@ -63,9 +77,13 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
     /// between legitimate events — and reuses the WS convention so both paths
     /// can be tuned through one code-level knob.
     public static let defaultIdleTimeoutNanoseconds: UInt64 = 300 * 1_000_000_000
+    public static let defaultMaximumLineBytes = 1 * 1_024 * 1_024
+    public static let defaultMaximumEventBytes = 8 * 1_024 * 1_024
 
     private let body: RemoteHTTPBody
     private let idleTimeoutNanoseconds: UInt64?
+    private let maximumLineBytes: Int
+    private let maximumEventBytes: Int
 
     /// Creates an SSE decoder over the unicast body. The idle watchdog is
     /// enabled by default with `defaultIdleTimeoutNanoseconds`; `nil` or a
@@ -73,18 +91,24 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
     /// optional timeout knob.
     public init(
         body: RemoteHTTPBody,
-        idleTimeoutNanoseconds: UInt64? = defaultIdleTimeoutNanoseconds
+        idleTimeoutNanoseconds: UInt64? = defaultIdleTimeoutNanoseconds,
+        maximumLineBytes: Int = defaultMaximumLineBytes,
+        maximumEventBytes: Int = defaultMaximumEventBytes
     ) {
         self.body = body
         self.idleTimeoutNanoseconds = (idleTimeoutNanoseconds ?? 0) > 0
             ? idleTimeoutNanoseconds
             : nil
+        self.maximumLineBytes = Swift.max(1, maximumLineBytes)
+        self.maximumEventBytes = Swift.max(1, maximumEventBytes)
     }
 
     public func makeAsyncIterator() -> AsyncIterator {
         AsyncIterator(
             body: body,
-            idleTimeoutNanoseconds: idleTimeoutNanoseconds
+            idleTimeoutNanoseconds: idleTimeoutNanoseconds,
+            maximumLineBytes: maximumLineBytes,
+            maximumEventBytes: maximumEventBytes
         )
     }
 
@@ -95,13 +119,20 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
         private var pendingEvents: [RemoteSSEEvent] = []
         private var builder = EventBuilder()
         private var reachedEnd = false
+        private var previousByteWasCR = false
+        private let maximumLineBytes: Int
+        private let maximumEventBytes: Int
 
         fileprivate init(
             body: RemoteHTTPBody,
-            idleTimeoutNanoseconds: UInt64?
+            idleTimeoutNanoseconds: UInt64?,
+            maximumLineBytes: Int,
+            maximumEventBytes: Int
         ) {
             bodyIterator = body.makeAsyncIterator()
             self.idleTimeoutNanoseconds = idleTimeoutNanoseconds
+            self.maximumLineBytes = maximumLineBytes
+            self.maximumEventBytes = maximumEventBytes
         }
 
         public mutating func next() async throws -> RemoteSSEEvent? {
@@ -115,7 +146,7 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
             while let chunk = try await bodyIterator.next(
                 idleTimeoutNanoseconds: idleTimeoutNanoseconds
             ) {
-                consume(chunk)
+                try consume(chunk)
                 if !pendingEvents.isEmpty {
                     return pendingEvents.removeFirst()
                 }
@@ -123,7 +154,7 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
 
             reachedEnd = true
             if !lineBytes.isEmpty {
-                consumeLine(lineBytes)
+                try consumeLine(lineBytes)
                 lineBytes.removeAll(keepingCapacity: false)
             }
             if let event = builder.finish() {
@@ -133,21 +164,30 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
             return nil
         }
 
-        private mutating func consume(_ chunk: Data) {
+        private mutating func consume(_ chunk: Data) throws {
             for byte in chunk {
-                if byte == 0x0A { // LF
-                    if lineBytes.last == 0x0D { // CRLF
-                        lineBytes.removeLast()
+                if previousByteWasCR {
+                    previousByteWasCR = false
+                    if byte == 0x0A { // CRLF was already consumed at CR.
+                        continue
                     }
-                    consumeLine(lineBytes)
+                }
+                if byte == 0x0A || byte == 0x0D { // LF or CR
+                    try consumeLine(lineBytes)
                     lineBytes.removeAll(keepingCapacity: true)
+                    previousByteWasCR = byte == 0x0D
                 } else {
+                    guard lineBytes.count < maximumLineBytes else {
+                        throw RemoteSSEParsingError.lineLimitExceeded(
+                            maximumBytes: maximumLineBytes
+                        )
+                    }
                     lineBytes.append(byte)
                 }
             }
         }
 
-        private mutating func consumeLine(_ bytes: [UInt8]) {
+        private mutating func consumeLine(_ bytes: [UInt8]) throws {
             guard !bytes.isEmpty else {
                 if let event = builder.finish() {
                     pendingEvents.append(event)
@@ -180,7 +220,10 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
             case "event":
                 builder.event = rawValue
             case "data":
-                builder.dataLines.append(rawValue)
+                try builder.appendDataLine(
+                    rawValue,
+                    maximumEventBytes: maximumEventBytes
+                )
             case "id":
                 // Per the SSE spec, an id containing NUL is ignored.
                 if !rawValue.utf8.contains(0) {
@@ -199,6 +242,22 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
         var dataLines: [String] = []
         var id: String?
         var retryMilliseconds: Int?
+        var dataBytes = 0
+
+        mutating func appendDataLine(
+            _ line: String,
+            maximumEventBytes: Int
+        ) throws {
+            let separatorBytes = dataLines.isEmpty ? 0 : 1
+            let addedBytes = line.utf8.count + separatorBytes
+            guard addedBytes <= maximumEventBytes - dataBytes else {
+                throw RemoteSSEParsingError.eventLimitExceeded(
+                    maximumBytes: maximumEventBytes
+                )
+            }
+            dataLines.append(line)
+            dataBytes += addedBytes
+        }
 
         mutating func finish() -> RemoteSSEEvent? {
             guard !dataLines.isEmpty else {

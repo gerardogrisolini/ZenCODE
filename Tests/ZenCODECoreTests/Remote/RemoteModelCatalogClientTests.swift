@@ -52,6 +52,43 @@ struct RemoteModelCatalogClientTests {
     }
 
     @Test
+    func catalogRequestPreservesBasePathAndQueryWhenAppendingModels() throws {
+        let request = try RemoteModelCatalogClient().modelsRequest(
+            baseURL: "https://provider.example/gateway/v1?tenant=alpha%20team",
+            apiKey: nil
+        )
+        let components = try #require(
+            URLComponents(url: request.url, resolvingAgainstBaseURL: false)
+        )
+
+        #expect(components.path == "/gateway/v1/models")
+        #expect(components.queryItems == [
+            URLQueryItem(name: "tenant", value: "alpha team")
+        ])
+    }
+
+    @Test
+    func anthropicCatalogRequestMergesLimitWithExistingBaseQuery() throws {
+        let request = try RemoteModelCatalogClient().modelsRequest(
+            baseURL: "https://api.anthropic.com/custom/v1?region=eu",
+            apiKey: "anthropic-secret"
+        )
+        let components = try #require(
+            URLComponents(url: request.url, resolvingAgainstBaseURL: false)
+        )
+
+        #expect(components.path == "/custom/v1/models")
+        #expect(components.queryItems == [
+            URLQueryItem(name: "region", value: "eu"),
+            URLQueryItem(name: "limit", value: "1000")
+        ])
+        #expect(
+            RemoteHTTPHeaders(request.headers).firstValue(for: "x-api-key")
+                == "anthropic-secret"
+        )
+    }
+
+    @Test
     func mergingOpenRouterMetadataRetainsProviderValuesWhenCatalogIsSparse() {
         let providerModel = OpenRouterModelInfo(
             id: "provider/model",

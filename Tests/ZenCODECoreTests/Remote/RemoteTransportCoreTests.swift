@@ -84,6 +84,106 @@ struct RemoteTransportCoreTests {
         await server.shutdown()
     }
 
+    @Test("SSE accepts bare CR delimiters, including across chunks")
+    func sseAcceptsBareCRDelimiters() async throws {
+        let server = try await LocalHTTPTestServer.start { context, _ in
+            context.write(
+                LocalHTTPResponseHandler.wrapOutboundOut(
+                    .head(HTTPResponseHead(version: .http1_1, status: .ok))
+                ),
+                promise: nil
+            )
+            for fragment in ["event: token\rdata: alpha\r", "\rdata: beta\r\r"] {
+                var body = context.channel.allocator.buffer(capacity: fragment.utf8.count)
+                body.writeString(fragment)
+                context.write(
+                    LocalHTTPResponseHandler.wrapOutboundOut(.body(.byteBuffer(body))),
+                    promise: nil
+                )
+            }
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(.end(nil)),
+                promise: nil
+            )
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+        defer {
+            Task {
+                try? await transport.shutdown()
+                await server.shutdown()
+            }
+        }
+        let response = try await transport.openHTTPStream(
+            RemoteHTTPStreamingRequest(url: server.url(path: "/bare-cr"))
+        )
+        var events = response.body.sseEvents().makeAsyncIterator()
+
+        #expect(try await events.next() == RemoteSSEEvent(
+            event: "token",
+            data: "alpha",
+            id: nil,
+            retryMilliseconds: nil
+        ))
+        #expect(try await events.next()?.data == "beta")
+        #expect(try await events.next() == nil)
+    }
+
+    @Test("SSE rejects oversized lines and events with bounded parser errors")
+    func sseRejectsOversizedLinesAndEvents() async throws {
+        let server = try await LocalHTTPTestServer.start { context, request in
+            context.write(
+                LocalHTTPResponseHandler.wrapOutboundOut(
+                    .head(HTTPResponseHead(version: .http1_1, status: .ok))
+                ),
+                promise: nil
+            )
+            let payload = request.uri.contains("line")
+                ? "data: 123456789\n\n"
+                : "data: 12345\ndata: 67890\n\n"
+            var body = context.channel.allocator.buffer(capacity: payload.utf8.count)
+            body.writeString(payload)
+            context.write(
+                LocalHTTPResponseHandler.wrapOutboundOut(.body(.byteBuffer(body))),
+                promise: nil
+            )
+            context.writeAndFlush(
+                LocalHTTPResponseHandler.wrapOutboundOut(.end(nil)),
+                promise: nil
+            )
+        }
+        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+        defer {
+            Task {
+                try? await transport.shutdown()
+                await server.shutdown()
+            }
+        }
+
+        let lineResponse = try await transport.openHTTPStream(
+            RemoteHTTPStreamingRequest(url: server.url(path: "/line"))
+        )
+        var lineEvents = RemoteSSEEventStream(
+            body: lineResponse.body,
+            maximumLineBytes: 8,
+            maximumEventBytes: 64
+        ).makeAsyncIterator()
+        await #expect(throws: RemoteSSEParsingError.lineLimitExceeded(maximumBytes: 8)) {
+            _ = try await lineEvents.next()
+        }
+
+        let eventResponse = try await transport.openHTTPStream(
+            RemoteHTTPStreamingRequest(url: server.url(path: "/event"))
+        )
+        var eventEvents = RemoteSSEEventStream(
+            body: eventResponse.body,
+            maximumLineBytes: 64,
+            maximumEventBytes: 10
+        ).makeAsyncIterator()
+        await #expect(throws: RemoteSSEParsingError.eventLimitExceeded(maximumBytes: 10)) {
+            _ = try await eventEvents.next()
+        }
+    }
+
     @Test("SSE idle timeout aborts a stalled post-head body")
     func sseIdleTimeoutAbortsStalledStream() async throws {
         let inactive = TestSignal()

@@ -91,74 +91,25 @@ extension RemoteGenerationClient {
         return body
     }
 
-    static let anthropicMinimumUsefulOutputTokens = 1_024
-    static let anthropicMinimumThinkingAndOutputTokens = 2_048
-
     static func applyAnthropicThinking(
         selection: AgentThinkingSelection?,
         modelID: String,
         maxTokens: Int,
         body: inout [String: Any]
     ) throws {
-        guard let selection else { return }
-        let model = modelID.lowercased()
-        let adaptive = model.contains("4-6") || model.contains("4.6")
-            || model.contains("4-7") || model.contains("4.7")
-            || model.contains("4-8") || model.contains("4.8")
-            || model.range(of: #"claude-[a-z-]*5([-.]|$)"#, options: .regularExpression) != nil
-        if selection == .off {
-            // Always-on Mythos/Fable families fail closed by omitting an invalid
-            // disable request. Other current families accept explicit disabled.
-            if !model.contains("mythos") && !model.contains("fable") {
-                body["thinking"] = ["type": "disabled"]
-            }
+        guard AnthropicSubscriptionGenerationClient.supportsThinking(modelID: modelID) else {
             return
         }
-        if adaptive {
-            body["thinking"] = ["type": "adaptive"]
-            if selection != .enabled {
-                body["output_config"] = ["effort": anthropicEffort(selection, model: model)]
-            }
-            return
-        }
-        // Claude 4.5 and older extended-thinking models use a manual budget.
-        guard maxTokens >= anthropicMinimumThinkingAndOutputTokens else {
-            throw RemoteGenerationClientError.invalidRequestPayload(
-                "Anthropic manual thinking cannot fit in max_tokens=\(maxTokens)."
-            )
-        }
-        let budget = min(
-            max(1_024, anthropicBudget(selection)),
-            maxTokens - anthropicMinimumUsefulOutputTokens
+        let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
+            for: selection,
+            modelID: modelID,
+            maxTokens: maxTokens
         )
-        body["thinking"] = ["type": "enabled", "budget_tokens": budget]
-        if model.contains("opus-4-5") || model.contains("opus-4.5") {
-            body["output_config"] = ["effort": anthropicEffort(selection, model: model)]
+        if let thinking = payload.thinking {
+            body["thinking"] = thinking
         }
-    }
-
-    private static func anthropicEffort(_ selection: AgentThinkingSelection, model: String) -> String {
-        switch selection {
-        case .minimal: return "low"
-        case .xhigh:
-            return model.contains("4-7") || model.contains("4.7")
-                || model.contains("4-8") || model.contains("4.8")
-                || model.contains("-5") ? "xhigh" : "max"
-        case .max, .ultra: return "max"
-        case .enabled, .off: return "high"
-        case .low, .medium, .high: return selection.rawValue
-        }
-    }
-
-    private static func anthropicBudget(_ selection: AgentThinkingSelection) -> Int {
-        switch selection {
-        case .minimal: return 1_024
-        case .low: return 4_096
-        case .medium: return 8_192
-        case .enabled, .high: return 16_384
-        case .xhigh: return 32_768
-        case .max, .ultra: return 64_000
-        case .off: return 1_024
+        if let outputConfig = payload.outputConfig {
+            body["output_config"] = outputConfig
         }
     }
 }

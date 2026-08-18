@@ -1,6 +1,7 @@
 import Foundation
 @testable import ZenCODECore
 import Testing
+import ToolCore
 
 struct AnthropicMessagesDirectTests {
     private let provider = AgentRemoteProvider(
@@ -120,7 +121,7 @@ struct AnthropicMessagesDirectTests {
             ["role": "tool", "tool_call_id": "toolu_1", "content": "failed", "is_error": true]
         ]
         let body = try RemoteGenerationClient.anthropicMessagesRequestBody(
-            modelID: "claude-sonnet-4-6", messages: messages,
+            modelID: "claude-sonnet-5", messages: messages,
             toolCatalog: RemoteToolWireCatalog(descriptors: []), maxTokens: 8192,
             thinkingSelection: .high
         )
@@ -133,6 +134,38 @@ struct AnthropicMessagesDirectTests {
         #expect(userBlocks.first?["type"] as? String == "image")
         #expect(userBlocks.last?["type"] as? String == "tool_result")
         #expect(userBlocks.last?["is_error"] as? Bool == true)
+    }
+
+    @Test(arguments: [
+        ("claude-sonnet-5", AgentThinkingSelection.enabled, 64_000),
+        ("claude-sonnet-5", AgentThinkingSelection.xhigh, 64_000),
+        ("claude-haiku-4-5", AgentThinkingSelection.medium, 12_000),
+        ("claude-haiku-4-5", AgentThinkingSelection.off, 12_000)
+    ])
+    func directThinkingPayloadMatchesSubscriptionPolicy(
+        modelID: String,
+        selection: AgentThinkingSelection,
+        maxTokens: Int
+    ) throws {
+        let direct = try RemoteGenerationClient.anthropicMessagesRequestBody(
+            modelID: modelID,
+            messages: [["role": "user", "content": "hello"]],
+            toolCatalog: RemoteToolWireCatalog(descriptors: []),
+            maxTokens: maxTokens,
+            thinkingSelection: selection
+        )
+        let subscription = AnthropicSubscriptionGenerationClient.thinkingPayload(
+            for: selection,
+            modelID: modelID,
+            maxTokens: maxTokens
+        )
+
+        let directThinking = direct["thinking"].map { JSONValue(jsonObject: $0) }
+        let subscriptionThinking = subscription.thinking.map { JSONValue(jsonObject: $0) }
+        let directOutputConfig = direct["output_config"].map { JSONValue(jsonObject: $0) }
+        let subscriptionOutputConfig = subscription.outputConfig.map { JSONValue(jsonObject: $0) }
+        #expect(directThinking == subscriptionThinking)
+        #expect(directOutputConfig == subscriptionOutputConfig)
     }
 
     @Test func streamAccumulatesUsageToolsAndRequiresMessageStop() async throws {
@@ -213,7 +246,7 @@ struct AnthropicMessagesDirectTests {
         #expect(serialized.first?.anthropicContentBlocksJSON == exact)
     }
 
-    @Test func manualThinkingBudgetReservesUsefulOutputAndFailsImpossiblePreflight() throws {
+    @Test func manualThinkingBudgetMatchesSubscriptionClamping() throws {
         let body = try RemoteGenerationClient.anthropicMessagesRequestBody(
             modelID: "claude-haiku-4-5", messages: [],
             toolCatalog: RemoteToolWireCatalog(descriptors: []), maxTokens: 4_096,
@@ -222,13 +255,16 @@ struct AnthropicMessagesDirectTests {
         #expect(body["max_tokens"] as? Int == 4_096)
         #expect((body["thinking"] as? [String: Any])?["budget_tokens"] as? Int == 3_072)
 
-        #expect(throws: RemoteGenerationClientError.self) {
-            _ = try RemoteGenerationClient.anthropicMessagesRequestBody(
-                modelID: "claude-haiku-4-5", messages: [],
-                toolCatalog: RemoteToolWireCatalog(descriptors: []), maxTokens: 2_047,
-                thinkingSelection: .minimal
-            )
-        }
+        let constrained = try RemoteGenerationClient.anthropicMessagesRequestBody(
+            modelID: "claude-haiku-4-5", messages: [],
+            toolCatalog: RemoteToolWireCatalog(descriptors: []), maxTokens: 2_047,
+            thinkingSelection: .minimal
+        )
+        #expect(
+            (constrained["thinking"] as? [String: Any])?["budget_tokens"] as? Int
+                == 1_024
+        )
+        #expect(constrained["max_tokens"] as? Int == 2_047)
     }
 
     @Test func interleavedThinkingCapabilityCoversManualFamiliesOnly() {
