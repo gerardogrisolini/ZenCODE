@@ -1,5 +1,8 @@
 import FeatureKit
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import WebToolsFeature
 import Testing
 

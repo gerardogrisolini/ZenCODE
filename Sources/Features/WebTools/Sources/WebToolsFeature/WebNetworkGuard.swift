@@ -560,7 +560,7 @@ final class WebRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Senda
         task: URLSessionTask,
         willPerformHTTPRedirection response: HTTPURLResponse,
         newRequest request: URLRequest,
-        completionHandler: @escaping (URLRequest?) -> Void
+        completionHandler: @Sendable @escaping (URLRequest?) -> Void
     ) {
         let rawURL = request.url?.absoluteString ?? ""
         DispatchQueue.global(qos: .userInitiated).async { [policy] in

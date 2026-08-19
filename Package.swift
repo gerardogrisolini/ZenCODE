@@ -104,6 +104,7 @@ let targets: [Target] = [
     .executableTarget(
         name: "MemoryPersistenceTestHelper",
         dependencies: ["ZenCODECore"],
+        path: "Tests/Support/MemoryPersistenceTestHelper",
         swiftSettings: memberImportVisibilitySettings
     ),
     .testTarget(

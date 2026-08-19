@@ -4,7 +4,7 @@ import Testing
 #if os(macOS)
 @testable import jira_tools_feature
 
-@Suite
+@Suite(.serialized)
 struct JiraHTTPSOnlyConfigurationTests {
     // MARK: - Site URL normalization
 

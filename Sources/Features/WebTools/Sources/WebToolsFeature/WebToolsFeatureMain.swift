@@ -450,7 +450,9 @@ enum WebToolsSupport {
     /// rebinding and redirect chains into private networks are both rejected.
     static func makeURLSession(policy: WebNetworkRequestPolicy) -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
+#if canImport(Darwin)
         configuration.waitsForConnectivity = false
+#endif
         return URLSession(configuration: configuration, delegate: WebRedirectGuard(policy: policy), delegateQueue: nil)
     }
 
