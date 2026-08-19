@@ -59,6 +59,22 @@ extension ZenCODEACPBridge {
         sessions.values.map(\.configuration)
     }
 
+    func registerLifecycleOperationForTesting() throws -> UInt64 {
+        try registerLifecycleOperation()
+    }
+
+    /// Binds a registered operation to one incarnation and invalidates it the
+    /// same way `session/close` does, so tests can fence a lifecycle handler
+    /// deterministically without tearing the whole bridge down.
+    func invalidateBoundLifecycleOperationForTesting(
+        _ token: UInt64,
+        sessionID: String,
+        epoch: UInt64
+    ) async {
+        bindLifecycleOperation(token, sessionID: sessionID, epoch: epoch)
+        invalidateLifecycleOperations(sessionID: sessionID, epoch: epoch)
+    }
+
     func installTestSession(_ configuration: AgentCoreSessionConfiguration) {
         sessions[configuration.sessionID] = sessionState(configuration: configuration)
     }

@@ -11,6 +11,10 @@ import ToolCore
 extension ZenCODEACPBridge {
     public func initialize(id: JSONValue?, params: [String: Any]) async throws {
         let protocolVersion = 1
+        let authMethods = Self.authenticationMethods(from: params)
+        advertisedAuthenticationMethodIDs = Set(
+            authMethods.compactMap { $0["id"] as? String }
+        )
         let result: [String: Any] = [
             "protocolVersion": protocolVersion,
             "agentCapabilities": [
@@ -35,12 +39,25 @@ extension ZenCODEACPBridge {
                 "title": "ZenCODE",
                 "version": agentVersion
             ],
-            "authMethods": Self.authenticationMethods(from: params),
+            "authMethods": authMethods,
             "_meta": [
                 "models": modelState(for: configuration.effectiveModelID)
             ]
         ]
         await writer.sendResultIfRequest(id: id, result: JSONValue.acpValue(from: result))
+    }
+
+    public func authenticate(id: JSONValue?, params: [String: Any]) async throws {
+        try ensureNotShutDown()
+
+        guard let methodID = params["methodId"] as? String else {
+            throw ACPError.invalidParams("Missing or invalid methodId.")
+        }
+        guard advertisedAuthenticationMethodIDs.contains(methodID) else {
+            throw ACPError.invalidParams("Authentication method was not advertised: \(methodID)")
+        }
+
+        await writer.sendResultIfRequest(id: id, result: .object([:]))
     }
 
     /// Some ACP clients require an authentication-method acknowledgement before
@@ -84,7 +101,6 @@ extension ZenCODEACPBridge {
         // re-check below aborts instead of creating a session or a backend.
         let operation = try registerLifecycleOperation()
         defer { finishLifecycleOperation(operation) }
-
         let rawCwd = Self.workingDirectory(from: params)
             ?? configuration.workingDirectory.path
         let cwd = AgentConfiguration.resolvedWorkingDirectory(
@@ -101,104 +117,128 @@ extension ZenCODEACPBridge {
 
         let selectedAgent = try resolvedACPAgentProfile(from: params)
         let sessionID = "swift-agent-\(UUID().uuidString.lowercased())"
+        // Reserve the incarnation epoch before the MCP servers are installed:
+        // the ownership stamped on those registrations must identify exactly
+        // the session incarnation this handler is about to publish, so a
+        // failed or fenced creation can release them again.
+        let sessionEpoch = makeSessionEpoch()
         let cacheKey = (params["sessionKey"] as? String)
             ?? (params["cacheKey"] as? String)
         let workingDirectoryURL = URL(fileURLWithPath: cwd)
-        let acpMCPDescriptors = await registerACPProvidedMCPServers(
-            from: params,
-            operation: operation
-        )
-        try ensureLifecycleOperationLive(operation)
-        let requestedAllowedToolNames = Self.allowedToolNames(from: params)
-            ?? selectedAgent?.allowedToolNames()
-        let resolvedRequestedAllowedToolNames = await resolvedAllowedToolNames(
-            requestedAllowedToolNames,
-            workingDirectory: workingDirectoryURL
-        )
-        try ensureLifecycleOperationLive(operation)
-        var allowedToolNames = Self.allowedToolNames(
-            resolvedRequestedAllowedToolNames,
-            adding: acpMCPDescriptors
-        )
-        if var effectiveAllowedToolNames = allowedToolNames {
-            effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
-            allowedToolNames = effectiveAllowedToolNames
-        }
-        if let selectedAgent, let effectiveAllowedToolNames = allowedToolNames {
-            allowedToolNames = selectedAgent.resolvedAllowedToolNames(
-                effectiveAllowedToolNames
-            )
-        }
-        await verboseACPLog(
-            "session/new allowedTools=\(Self.verboseToolNameSummary(allowedToolNames))"
-        )
-        try ensureLifecycleOperationLive(operation)
-        let promptSections = resolvedPromptSections(
-            providedSystemPrompt: nil,
-            cwd: cwd,
-            allowedToolNames: allowedToolNames,
-            selectedAgent: selectedAgent
-        )
-        let requestedThinkingSelection = Self.thinkingSelection(from: params["thinkingSelection"])
-        let hostedManifest = configuration.hostedModels.map { hostedModels in
-            AgentSettingsManifest(
-                models: hostedModels,
-                selectedModelID: modelID
-            )
-        }
-        let thinkingSelection = AgentSettingsStore.thinkingSelection(
-            requestedSelection: requestedThinkingSelection,
-            explicitModelID: requestedModelID ?? configuration.modelID,
-            agentModelID: selectedAgent?.modelID,
-            agentThinkingSelection: selectedAgent?.thinkingSelection,
-            manifest: hostedManifest ?? AgentSettingsManifestStore.load()
-        )
-        let preserveThinking = (params["preserveThinking"] as? Bool) ?? false
-        let configuration = AgentCoreSessionConfiguration(
-            sessionID: sessionID,
-            modelID: modelID,
-            workingDirectory: cwd,
-            systemPrompt: promptSections.systemPrompt,
-            dynamicContext: promptSections.dynamicContext,
-            cacheKey: cacheKey,
-            history: Self.runtimeHistory(from: params["history"]),
-            allowedToolNames: allowedToolNames,
-            maxToolRounds: self.configuration.maxToolRounds,
-            maxOutputTokens: self.configuration.maxOutputTokens,
-            verboseLogging: self.configuration.verboseLogging,
-            appMode: self.configuration.appMode,
-            thinkingSelection: thinkingSelection,
-            preserveThinking: preserveThinking
-        )
-        // Last fence before any observable effect. Past this point the session
-        // entry, the runner session and the JSON-RPC reply are published, so a
-        // shutdown that lands *here* must abort rather than leave a live
-        // session and a backend behind a closed transport.
-        try ensureLifecycleOperationLive(operation)
-        let sessionEntry = sessionState(
-            configuration: configuration,
-            selectedAgent: selectedAgent
-        )
-        let sessionEpoch = sessionEntry.epoch
-        sessions[sessionID] = sessionEntry
-        // From here the session exists, so a `session/close` for it must be
-        // able to invalidate this handler before it answers.
-        bindLifecycleOperation(operation, sessionID: sessionID, epoch: sessionEpoch)
-        updateSessionSleepAssertion()
+        // MCP servers installed below carry this incarnation's ownership. Every
+        // `throw` from here on means this incarnation never became (or did not
+        // stay) live, so the catch releases its registrations before
+        // propagating; a successful exit keeps them bound to the live session.
         do {
-            try await sessionRunner.createSession(configuration: configuration)
+            let acpMCPDescriptors = await registerACPProvidedMCPServers(
+                from: params,
+                ownership: DirectMCPToolRuntime.MCPSessionOwnership(
+                    sessionID: sessionID,
+                    epoch: sessionEpoch
+                ),
+                operation: operation
+            )
+            try ensureLifecycleOperationLive(operation)
+            let requestedAllowedToolNames = Self.allowedToolNames(from: params)
+                ?? selectedAgent?.allowedToolNames()
+            let resolvedRequestedAllowedToolNames = await resolvedAllowedToolNames(
+                requestedAllowedToolNames,
+                workingDirectory: workingDirectoryURL
+            )
+            try ensureLifecycleOperationLive(operation)
+            var allowedToolNames = Self.allowedToolNames(
+                resolvedRequestedAllowedToolNames,
+                adding: acpMCPDescriptors
+            )
+            if var effectiveAllowedToolNames = allowedToolNames {
+                effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
+                allowedToolNames = effectiveAllowedToolNames
+            }
+            if let selectedAgent, let effectiveAllowedToolNames = allowedToolNames {
+                allowedToolNames = selectedAgent.resolvedAllowedToolNames(
+                    effectiveAllowedToolNames
+                )
+            }
+            await verboseACPLog(
+                "session/new allowedTools=\(Self.verboseToolNameSummary(allowedToolNames))"
+            )
+            try ensureLifecycleOperationLive(operation)
+            let promptSections = resolvedPromptSections(
+                providedSystemPrompt: nil,
+                cwd: cwd,
+                allowedToolNames: allowedToolNames,
+                selectedAgent: selectedAgent
+            )
+            let requestedThinkingSelection = Self.thinkingSelection(from: params["thinkingSelection"])
+            let hostedManifest = configuration.hostedModels.map { hostedModels in
+                AgentSettingsManifest(
+                    models: hostedModels,
+                    selectedModelID: modelID
+                )
+            }
+            let thinkingSelection = AgentSettingsStore.thinkingSelection(
+                requestedSelection: requestedThinkingSelection,
+                explicitModelID: requestedModelID ?? configuration.modelID,
+                agentModelID: selectedAgent?.modelID,
+                agentThinkingSelection: selectedAgent?.thinkingSelection,
+                manifest: hostedManifest ?? AgentSettingsManifestStore.load()
+            )
+            let preserveThinking = (params["preserveThinking"] as? Bool) ?? false
+            let runnerConfiguration = AgentCoreSessionConfiguration(
+                sessionID: sessionID,
+                modelID: modelID,
+                workingDirectory: cwd,
+                systemPrompt: promptSections.systemPrompt,
+                dynamicContext: promptSections.dynamicContext,
+                cacheKey: cacheKey,
+                history: Self.runtimeHistory(from: params["history"]),
+                allowedToolNames: allowedToolNames,
+                maxToolRounds: self.configuration.maxToolRounds,
+                maxOutputTokens: self.configuration.maxOutputTokens,
+                verboseLogging: self.configuration.verboseLogging,
+                appMode: self.configuration.appMode,
+                thinkingSelection: thinkingSelection,
+                preserveThinking: preserveThinking
+            )
+            // Last fence before any observable effect. Past this point the session
+            // entry, the runner session and the JSON-RPC reply are published, so a
+            // shutdown that lands *here* must abort rather than leave a live
+            // session and a backend behind a closed transport.
+            try ensureLifecycleOperationLive(operation)
+            let sessionEntry = sessionState(
+                configuration: runnerConfiguration,
+                selectedAgent: selectedAgent,
+                epoch: sessionEpoch
+            )
+            sessions[sessionID] = sessionEntry
+            // From here the session exists, so a `session/close` for it must be
+            // able to invalidate this handler before it answers.
+            bindLifecycleOperation(operation, sessionID: sessionID, epoch: sessionEpoch)
+            updateSessionSleepAssertion()
+            do {
+                try await sessionRunner.createSession(configuration: runnerConfiguration)
+            } catch {
+                // Do not leave a session entry that has no runner session behind.
+                // Scope the removal to our own incarnation so a racing handler's
+                // newer session is never dropped.
+                discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
+                throw error
+            }
+            // `createSession` suspends: if shutdown landed during it, drop the
+            // session we just created instead of announcing it to a closing host.
+            guard isLifecycleOperationLive(operation) else {
+                discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
+                throw ACPShutdownFenceError()
+            }
         } catch {
-            // Do not leave a session entry that has no runner session behind.
-            // Scope the removal to our own incarnation so a racing handler's
-            // newer session is never dropped.
-            discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
+            // This incarnation never became live, or was discarded again: its
+            // MCP registrations are orphaned, so release them before
+            // propagating the failure.
+            await sessionRunner.releaseSessionMCPOwnership(
+                sessionID: sessionID,
+                epoch: sessionEpoch
+            )
             throw error
-        }
-        // `createSession` suspends: if shutdown landed during it, drop the
-        // session we just created instead of announcing it to a closing host.
-        guard isLifecycleOperationLive(operation) else {
-            discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
-            throw ACPShutdownFenceError()
         }
 
         await writer.sendResultIfRequest(
@@ -225,6 +265,7 @@ extension ZenCODEACPBridge {
 
     public func registerACPProvidedMCPServers(
         from params: [String: Any],
+        ownership: DirectMCPToolRuntime.MCPSessionOwnership? = nil,
         operation: UInt64? = nil
     ) async -> [DirectToolDescriptor] {
         let definitions = Self.mcpServerDefinitions(from: params)
@@ -244,6 +285,14 @@ extension ZenCODEACPBridge {
             // install suspends, so a shutdown landing inside one must stop the
             // remaining definitions from connecting new servers at all.
             if let operation, !isLifecycleOperationLive(operation) {
+                // Servers already installed for this incarnation are orphaned
+                // by the aborted creation: release them before bailing out.
+                if let ownership {
+                    await sessionRunner.releaseSessionMCPOwnership(
+                        sessionID: ownership.sessionID,
+                        epoch: ownership.epoch
+                    )
+                }
                 return []
             }
             do {
@@ -252,7 +301,8 @@ extension ZenCODEACPBridge {
                 )
                 let installedDescriptors = try await sessionRunner.installACPProvidedMCPServer(
                     name: definition.name,
-                    configuration: definition.configuration
+                    configuration: definition.configuration,
+                    ownership: ownership
                 )
                                         await verboseACPLog(
                     "installed ACP MCP server name=\(definition.name) tools=\(Self.verboseDescriptorSummary(installedDescriptors))"
@@ -576,61 +626,80 @@ extension ZenCODEACPBridge {
             "session/restore id=\(sessionID) cwd=\(workingDirectory.path) replay=\(replayHistory) mcpServers=\(Self.mcpServerInputSummary(from: params))"
         )
         try ensureLifecycleOperationLive(operation)
-        let acpMCPDescriptors = await registerACPProvidedMCPServers(
-            from: params,
-            operation: operation
-        )
-        try ensureLifecycleOperationLive(operation)
-        let selectedAgent = try resolvedACPAgentProfile(from: params)
-        let configuration = await restoredACPClientSessionConfiguration(
-            sessionID: sessionID,
-            params: params,
-            workingDirectory: workingDirectory,
-            acpMCPDescriptors: acpMCPDescriptors,
-            selectedAgent: selectedAgent
-        )
-        try ensureLifecycleOperationLive(operation)
-        await verboseACPLog(
-            "session/restore allowedTools=\(Self.verboseToolNameSummary(configuration.allowedToolNames)) history=\(configuration.history.count)"
-        )
-        // Last fence before the session entry, the runner session, the history
-        // replay and the reply become observable.
-        try ensureLifecycleOperationLive(operation)
-        let sessionEntry = sessionState(
-            configuration: configuration,
-            selectedAgent: selectedAgent
-        )
-        let sessionEpoch = sessionEntry.epoch
-        sessions[sessionID] = sessionEntry
-        bindLifecycleOperation(operation, sessionID: sessionID, epoch: sessionEpoch)
-        updateSessionSleepAssertion()
+        // Same early epoch reservation as `newSession`: the MCP registrations
+        // installed below carry the ownership of the incarnation this handler
+        // is about to publish, so a fenced or failed restore can release them.
+        let restoredSessionEpoch = makeSessionEpoch()
+        // Every `throw` after the installs began means this incarnation never
+        // became (or did not stay) live, so the catch releases its MCP
+        // registrations before propagating.
         do {
-            try await sessionRunner.restoreSession(configuration: configuration)
-        } catch {
-            discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
-            throw error
-        }
-        try await ensureLifecycleOperationLiveAfterSessionWrite(
-            operation,
-            sessionID: sessionID
-        )
-        if replayHistory {
-            await replaySessionHistory(
-                AgentRuntimeSessionSnapshot(
-                    sessionID: configuration.sessionID,
-                    modelID: configuration.modelID,
-                    workingDirectoryPath: configuration.workingDirectoryPath,
-                    systemPrompt: configuration.systemPrompt,
-                    dynamicContext: configuration.dynamicContext,
-                    cacheKey: configuration.cacheKey,
-                    history: configuration.history,
-                    allowedToolNames: configuration.allowedToolNames,
-                    thinkingSelection: configuration.thinkingSelection,
-                    preserveThinking: configuration.preserveThinking
-                )
+            let acpMCPDescriptors = await registerACPProvidedMCPServers(
+                from: params,
+                ownership: DirectMCPToolRuntime.MCPSessionOwnership(
+                    sessionID: sessionID,
+                    epoch: restoredSessionEpoch
+                ),
+                operation: operation
             )
             try ensureLifecycleOperationLive(operation)
+            let selectedAgent = try resolvedACPAgentProfile(from: params)
+            let configuration = await restoredACPClientSessionConfiguration(
+                sessionID: sessionID,
+                params: params,
+                workingDirectory: workingDirectory,
+                acpMCPDescriptors: acpMCPDescriptors,
+                selectedAgent: selectedAgent
+            )
+            try ensureLifecycleOperationLive(operation)
+            await verboseACPLog(
+                "session/restore allowedTools=\(Self.verboseToolNameSummary(configuration.allowedToolNames)) history=\(configuration.history.count)"
+            )
+            // Last fence before the session entry, the runner session, the history
+            // replay and the reply become observable.
+            try ensureLifecycleOperationLive(operation)
+            let sessionEntry = sessionState(
+                configuration: configuration,
+                selectedAgent: selectedAgent,
+                epoch: restoredSessionEpoch
+            )
+            sessions[sessionID] = sessionEntry
+            bindLifecycleOperation(operation, sessionID: sessionID, epoch: restoredSessionEpoch)
+            updateSessionSleepAssertion()
+            try await sessionRunner.restoreSession(configuration: configuration)
+            try await ensureLifecycleOperationLiveAfterSessionWrite(
+                operation,
+                sessionID: sessionID
+            )
+            if replayHistory {
+                await replaySessionHistory(
+                    AgentRuntimeSessionSnapshot(
+                        sessionID: configuration.sessionID,
+                        modelID: configuration.modelID,
+                        workingDirectoryPath: configuration.workingDirectoryPath,
+                        systemPrompt: configuration.systemPrompt,
+                        dynamicContext: configuration.dynamicContext,
+                        cacheKey: configuration.cacheKey,
+                        history: configuration.history,
+                        allowedToolNames: configuration.allowedToolNames,
+                        thinkingSelection: configuration.thinkingSelection,
+                        preserveThinking: configuration.preserveThinking
+                    )
+                )
+                try ensureLifecycleOperationLive(operation)
+            }
+        } catch {
+            // The incarnation never became live, or was discarded again: drop
+            // the entry we may have published and release its orphaned MCP
+            // registrations before propagating the failure.
+            discardSessionIfCurrent(id: sessionID, epoch: restoredSessionEpoch)
+            await sessionRunner.releaseSessionMCPOwnership(
+                sessionID: sessionID,
+                epoch: restoredSessionEpoch
+            )
+            throw error
         }
+        try await ensureLifecycleOperationLive(operation)
 
         await writer.sendResultIfRequest(
             id: id,
@@ -644,7 +713,7 @@ extension ZenCODEACPBridge {
         // Strictly after the history replay and the reply: the attach replays
         // the shared-chat transcript, which must not be interleaved with the
         // conversation history the host is currently rebuilding.
-        await startSharedChatForwarding(sessionID: sessionID, epoch: sessionEpoch)
+        await startSharedChatForwarding(sessionID: sessionID, epoch: restoredSessionEpoch)
     }
 
     public static func sessionID(from params: [String: Any]) -> String? {

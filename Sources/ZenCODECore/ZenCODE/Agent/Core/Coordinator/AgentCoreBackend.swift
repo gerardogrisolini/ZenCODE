@@ -109,6 +109,14 @@ public actor AgentCoreBackend {
         }
     }
 
+    /// Whether this backend incarnation already owns the session seed.
+    /// Runner-level configuration can outlive a backend replacement, so callers
+    /// use this to distinguish a live backend session from a snapshot that still
+    /// needs to be rehydrated into the new backend.
+    func hasSession(id: String) -> Bool {
+        sessions[id] != nil
+    }
+
     public func compactSession(
         id sessionID: String,
         force: Bool = true,

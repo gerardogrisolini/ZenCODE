@@ -11,7 +11,146 @@ import Synchronization
 import Testing
 import ToolCore
 
+private final class ACPWireRecordingTransport: Sendable {
+    private let messages = Mutex<[Data]>([])
+
+    var sink: ACPWriter.Sink {
+        { [self] data in
+            messages.withLock { $0.append(data) }
+        }
+    }
+
+    private var decodedMessages: [[String: Any]] {
+        messages.withLock { rawMessages in
+            rawMessages.compactMap { data in
+                guard let object = try? JSONSerialization.jsonObject(with: data) else {
+                    return nil
+                }
+                return object as? [String: Any]
+            }
+        }
+    }
+
+    func response(id: Int) -> [String: Any]? {
+        decodedMessages.first { message in
+            guard let rawID = message["id"] as? NSNumber else {
+                return false
+            }
+            return rawID.intValue == id
+        }
+    }
+
+    func errorCode(id: Int) -> Int? {
+        response(id: id)?["error"]
+            .flatMap { ($0 as? [String: Any])?["code"] }
+            .flatMap { ($0 as? NSNumber)?.intValue }
+    }
+}
+
+private func makeACPWireBridge(
+    transport: ACPWireRecordingTransport
+) throws -> ZenCODEACPBridge {
+    let configuration = try AgentConfiguration(
+        hostedModelID: "test-model",
+        availableModels: [
+            AgentSettingsModelManifest(
+                id: "test-model",
+                kind: .remoteAPI,
+                modelID: "local/test-model"
+            )
+        ],
+        runMode: .acp,
+        workingDirectory: FileManager.default.temporaryDirectory
+    )
+    return ZenCODEACPBridge(
+        configuration: configuration,
+        writer: ACPWriter(sink: transport.sink)
+    )
+}
+
 extension ACPCompatibilityTests {
+    @Test
+    func initializeThroughHandleLineAdvertisesTheEffectiveAuthenticationMethod() async throws {
+        let transport = ACPWireRecordingTransport()
+        let bridge = try makeACPWireBridge(transport: transport)
+
+        await bridge.handleLine(
+            #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientCapabilities":{"auth":{"terminal":true}}}}"#
+        )
+
+        let response = try #require(transport.response(id: 1))
+        #expect(response["jsonrpc"] as? String == "2.0")
+        let result = try #require(response["result"] as? [String: Any])
+        #expect((result["protocolVersion"] as? NSNumber)?.intValue == 1)
+        let authMethods = try #require(result["authMethods"] as? [[String: Any]])
+        #expect(authMethods.count == 1)
+        #expect(authMethods.first?["id"] as? String == "zencode-client-compatibility")
+    }
+
+    @Test
+    func authenticateThroughHandleMessageAcceptsAnAdvertisedMethod() async throws {
+        let transport = ACPWireRecordingTransport()
+        let bridge = try makeACPWireBridge(transport: transport)
+
+        await bridge.handleLine(
+            #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientCapabilities":{"auth":{"terminal":true}}}}"#
+        )
+        await bridge.handleMessage([
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "authenticate",
+            "params": ["methodId": "zencode-client-compatibility"] as [String: Any]
+        ])
+
+        let response = try #require(transport.response(id: 2))
+        #expect(response["error"] == nil)
+        #expect((response["result"] as? [String: Any])?.isEmpty == true)
+    }
+
+    @Test
+    func authenticateThroughWireRejectsMissingWrongTypeAndUnadvertisedMethods() async throws {
+        let transport = ACPWireRecordingTransport()
+        let bridge = try makeACPWireBridge(transport: transport)
+
+        await bridge.handleLine(
+            #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientCapabilities":{"auth":{"terminal":true}}}}"#
+        )
+        await bridge.handleMessage([
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "authenticate",
+            "params": [:] as [String: Any]
+        ])
+        await bridge.handleLine(
+            #"{"jsonrpc":"2.0","id":3,"method":"authenticate","params":{"methodId":42}}"#
+        )
+        await bridge.handleMessage([
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "authenticate",
+            "params": ["methodId": "not-advertised"] as [String: Any]
+        ])
+
+        #expect(transport.errorCode(id: 2) == -32602)
+        #expect(transport.errorCode(id: 3) == -32602)
+        #expect(transport.errorCode(id: 4) == -32602)
+    }
+
+    @Test
+    func unknownMethodThroughHandleMessageUsesMethodNotFoundError() async throws {
+        let transport = ACPWireRecordingTransport()
+        let bridge = try makeACPWireBridge(transport: transport)
+
+        await bridge.handleMessage([
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "unknown/acp-method",
+            "params": [:] as [String: Any]
+        ])
+
+        #expect(transport.errorCode(id: 1) == -32601)
+    }
+
     @Test
     func permissionBrokerEvictsPerSessionDecisionsWithoutAffectingOthers() async throws {
         let writerReference = Mutex<ACPWriter?>(nil)

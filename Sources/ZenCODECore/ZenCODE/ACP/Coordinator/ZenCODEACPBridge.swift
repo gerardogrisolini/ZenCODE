@@ -97,6 +97,11 @@ public actor ZenCODEACPBridge {
     /// Latches on `shutdown()` so late prompt completions and new requests
     /// cannot repopulate session state after the transport closed.
     private var didShutDown = false
+    /// Authentication method IDs advertised by the most recent `initialize`.
+    /// `authenticate` must only acknowledge one of these methods; keeping the
+    /// values here avoids accepting a method that was never offered to this
+    /// client (or one offered to a different initialization request).
+    var advertisedAuthenticationMethodIDs: Set<String> = []
     /// Tokens of lifecycle operations (`session/new`, `load`, `resume`,
     /// `set_model`, `set_config_option`) that are currently suspended. Cleared
     /// wholesale by `shutdown()`, which turns every later re-check into a
@@ -107,6 +112,18 @@ public actor ZenCODEACPBridge {
     /// operations bound to the incarnation it closes, and nothing else.
     private var lifecycleOperationBindings: [UInt64: SessionBinding] = [:]
     private var nextLifecycleOperationToken: UInt64 = 1
+    /// `session/prompt` handlers currently running, by session id. This tracks
+    /// the *ACP wrapper* — the task that flushes buffered updates, refreshes
+    /// session state and writes the final `stopReason` reply — which the
+    /// runner's own `promptTaskRegistry` never sees, because that registry
+    /// only covers the backend-side stream tasks. A `session/close` that
+    /// cancelled the backend turn must also wait for this handler to finish,
+    /// or its unwind can reach the wire after the close reply.
+    private var promptHandlersInFlight: [String: Set<UUID>] = [:]
+    /// Closes currently draining a specific set of prompt handlers. The set is
+    /// captured when the close starts, so a session re-created with the same
+    /// id mid-drain cannot extend the close's wait with an unrelated prompt.
+    private var promptHandlerDrainWaiters: [String: [(tokens: Set<UUID>, continuation: CheckedContinuation<Void, Never>)]] = [:]
 
     public init(
         configuration: AgentConfiguration,
@@ -141,11 +158,20 @@ public actor ZenCODEACPBridge {
         // answer on the closing transport.
         lifecycleOperations.removeAll()
         lifecycleOperationBindings.removeAll()
+        // Unblock every close currently draining a prompt handler: its prompt
+        // is cancelled below (and its late writes are already fenced by the
+        // writer), so the close must be free to proceed to its own fenced
+        // unwind instead of parking on a drain that will never resume it.
+        let drainWaiters = promptHandlerDrainWaiters
+        promptHandlerDrainWaiters.removeAll()
         let sessionIDs = Array(sessions.keys)
         for sessionID in sessionIDs {
             sessions[sessionID]?.activePromptTask?.cancel()
             sessions[sessionID]?.activePromptTask = nil
             sessions[sessionID]?.activePromptID = nil
+        }
+        for waiter in drainWaiters.flatMap(\.value) {
+            waiter.continuation.resume()
         }
         // Take the renderers and cancel them synchronously too. Awaiting their
         // quiescence here would suspend *before* the writer fence below, which
@@ -274,6 +300,69 @@ public actor ZenCODEACPBridge {
         return epoch
     }
 
+    /// Registers a running `session/prompt` handler for one session id and
+    /// returns its token.
+    ///
+    /// The registry is per session id rather than per incarnation on purpose:
+    /// the drain must not miss a handler because the incarnation was already
+    /// replaced underneath it. Tokens are removed by `defer`, so the set
+    /// empties even when the handler throws or is fenced by a shutdown.
+    func enterPromptHandler(sessionID: String) -> UUID {
+        let token = UUID()
+        promptHandlersInFlight[sessionID, default: []].insert(token)
+        return token
+    }
+
+    /// Removes a registered handler and wakes every close whose awaited set no
+    /// longer contains any live handler.
+    func leavePromptHandler(sessionID: String, token: UUID) {
+        guard var tokens = promptHandlersInFlight[sessionID] else {
+            return
+        }
+        tokens.remove(token)
+        if tokens.isEmpty {
+            promptHandlersInFlight.removeValue(forKey: sessionID)
+        } else {
+            promptHandlersInFlight[sessionID] = tokens
+        }
+        let liveTokens = promptHandlersInFlight[sessionID] ?? []
+        var remainingWaiters: [(tokens: Set<UUID>, continuation: CheckedContinuation<Void, Never>)] = []
+        for waiter in promptHandlerDrainWaiters.removeValue(forKey: sessionID) ?? [] {
+            if waiter.tokens.intersection(liveTokens).isEmpty {
+                waiter.continuation.resume()
+            } else {
+                remainingWaiters.append(waiter)
+            }
+        }
+        if !remainingWaiters.isEmpty {
+            promptHandlerDrainWaiters[sessionID] = remainingWaiters
+        }
+    }
+
+    /// Waits until the `session/prompt` handlers registered at call time have
+    /// all finished.
+    ///
+    /// The close calls this *after* cancelling the backend turn: with the
+    /// cancellation already delivered the handler is guaranteed to unwind (its
+    /// awaits either finish or throw `CancellationError`), so this await
+    /// terminates. Awaiting from the actor is safe: the handler's unwind does
+    /// enter the actor, but a reentrant call never blocks on another actor —
+    /// `sendResultIfRequest` hops to the writer, `flushPromptUpdates` awaits
+    /// the writer, and `refreshSessionStateIfAvailable` hops to the runner —
+    /// none of which waits back on the bridge while the close is suspended.
+    /// The captured token set also keeps a session re-created mid-drain from
+    /// holding the close hostage for an unrelated, later prompt.
+    func waitForPromptHandlersToDrain(sessionID: String) async {
+        guard let tokens = promptHandlersInFlight[sessionID], !tokens.isEmpty else {
+            return
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            promptHandlerDrainWaiters[sessionID, default: []].append(
+                (tokens: tokens, continuation: continuation)
+            )
+        }
+    }
+
     /// Returns the session only when it is still the same incarnation, so a
     /// caller that suspended cannot resurrect a closed or replaced session.
     func liveSession(id sessionID: String, epoch: UInt64) -> SessionState? {
@@ -382,7 +471,7 @@ public actor ZenCODEACPBridge {
             case "initialize":
                 try await initialize(id: id, params: params)
             case "authenticate":
-                await writer.sendResultIfRequest(id: id, result: .object([:]))
+                try await authenticate(id: id, params: params)
             case "_zencode/model/preload":
                 try await preloadModel(id: id, params: params)
             case "session/new":

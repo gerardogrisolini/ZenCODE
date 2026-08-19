@@ -23,7 +23,25 @@ public actor DirectMCPToolRuntime {
 
     enum ServerFamily: Hashable {
         case figma
-        case external(String)
+        /// External servers are replaced within their visibility domain. This
+        /// keeps globally installed servers (`ownership == nil`) deduplicated
+        /// by name while allowing ACP session incarnations to register
+        /// same-named servers without replacing one another.
+        case external(name: String, ownership: MCPSessionOwnership?)
+    }
+
+    /// Identifies the ACP session incarnation that owns a client-provided MCP
+    /// server. A `nil` owner marks installations that are not bound to any
+    /// session (borrowed executors, non-ACP installs): those remain visible to
+    /// every caller and are never released by session teardown.
+    public struct MCPSessionOwnership: Sendable, Hashable {
+        public let sessionID: String
+        public let epoch: UInt64
+
+        public init(sessionID: String, epoch: UInt64) {
+            self.sessionID = sessionID
+            self.epoch = epoch
+        }
     }
 
     struct Server {
@@ -33,6 +51,22 @@ public actor DirectMCPToolRuntime {
         let descriptors: [DirectToolDescriptor]
         let ownsBackend: Bool
         let mcpConfiguration: MCPServerConfiguration?
+        /// The ACP session incarnation this registration belongs to, or `nil`
+        /// for session-independent installations.
+        let ownership: MCPSessionOwnership?
+
+        /// `true` when the given caller session may see this server. A server
+        /// with no ownership is shared; a session-owned server is visible only
+        /// to its owning incarnation.
+        func isVisible(to sessionID: String?) -> Bool {
+            guard let ownership else {
+                return true
+            }
+            guard let sessionID, !sessionID.isEmpty else {
+                return false
+            }
+            return ownership.sessionID == sessionID
+        }
 
         func disconnectIfOwned() async {
             guard ownsBackend else {
@@ -121,7 +155,10 @@ public actor DirectMCPToolRuntime {
         executor: RemoteMCPToolExecutor,
         tools: [ToolDescriptor]
     ) async -> [DirectToolDescriptor] {
-        let family = ServerFamily.external(Self.externalServerID(for: name))
+        let family = ServerFamily.external(
+            name: Self.externalServerID(for: name),
+            ownership: nil
+        )
         let shutdownFence = shutdownFence()
         let installFence = installationFence(for: family)
         let toolPrefix = Self.externalToolPrefix(for: name)
@@ -153,7 +190,8 @@ public actor DirectMCPToolRuntime {
                 backend: executor,
                 descriptors: descriptors,
                 ownsBackend: false,
-                mcpConfiguration: nil
+                mcpConfiguration: nil,
+                ownership: nil
             )
         )
         return descriptors
@@ -161,15 +199,20 @@ public actor DirectMCPToolRuntime {
 
     public func installExternalMCPServer(
         name: String,
-        configuration: MCPServerConfiguration
+        configuration: MCPServerConfiguration,
+        ownership: MCPSessionOwnership? = nil
     ) async throws -> [DirectToolDescriptor] {
-        let family = ServerFamily.external(Self.externalServerID(for: name))
+        let family = ServerFamily.external(
+            name: Self.externalServerID(for: name),
+            ownership: ownership
+        )
         let shutdownFence = shutdownFence()
         let installFence = installationFence(for: family)
         if let existingServer = servers.first(where: {
             $0.family == family
                 && $0.mcpConfiguration == configuration
                 && !$0.descriptors.isEmpty
+                && $0.ownership == ownership
         }) {
             return existingServer.descriptors
         }
@@ -233,13 +276,33 @@ public actor DirectMCPToolRuntime {
                     backend: executor,
                     descriptors: descriptors,
                     ownsBackend: true,
-                    mcpConfiguration: configuration
+                    mcpConfiguration: configuration,
+                    ownership: ownership
                 )
             )
             return descriptors
         } catch {
             await executor.disconnect()
             throw error
+        }
+    }
+
+    /// Releases every MCP server registered by the given session incarnation,
+    /// disconnecting the owned executors. Registrations with no session
+    /// ownership (borrowed or non-ACP installs) and registrations belonging to
+    /// other sessions or incarnations are left untouched.
+    public func releaseSessionOwnership(sessionID: String, epoch: UInt64) async {
+        let released = servers.filter { server in
+            server.ownership == MCPSessionOwnership(sessionID: sessionID, epoch: epoch)
+        }
+        guard !released.isEmpty else {
+            return
+        }
+        servers.removeAll { server in
+            server.ownership == MCPSessionOwnership(sessionID: sessionID, epoch: epoch)
+        }
+        for server in released {
+            await server.disconnectIfOwned()
         }
     }
 
@@ -260,15 +323,18 @@ public actor DirectMCPToolRuntime {
 
     public func descriptors(
         allowedToolNames: Set<String>? = nil,
-        preferredWorkspaceRootURL: URL? = nil
+        preferredWorkspaceRootURL: URL? = nil,
+        sessionID: String? = nil
     ) async -> [DirectToolDescriptor] {
+        _ = sessionID
         await discoverIfNeeded(
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL
         )
         return knownDescriptors(
             allowedToolNames: allowedToolNames,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL
+            preferredWorkspaceRootURL: preferredWorkspaceRootURL,
+            sessionID: sessionID
         )
     }
 
@@ -289,16 +355,18 @@ public actor DirectMCPToolRuntime {
 
     public func knownDescriptors(
         allowedToolNames: Set<String>? = nil,
-        preferredWorkspaceRootURL: URL? = nil
+        preferredWorkspaceRootURL: URL? = nil,
+        sessionID: String? = nil
     ) -> [DirectToolDescriptor] {
         _ = preferredWorkspaceRootURL
+        let visibleServers = servers.visible(to: sessionID)
         guard let allowedToolNames else {
-            return servers.flatMap(\.descriptors)
+            return visibleServers.flatMap(\.descriptors)
         }
         guard !allowedToolNames.isEmpty else {
             return []
         }
-        return servers
+        return visibleServers
             .filter { serverIsRequested($0, allowedToolNames: allowedToolNames) }
             .flatMap(\.descriptors)
     }
@@ -306,9 +374,10 @@ public actor DirectMCPToolRuntime {
     public func canExecute(
         toolName: String,
         allowedToolNames: Set<String>? = nil,
-        preferredWorkspaceRootURL: URL? = nil
+        preferredWorkspaceRootURL: URL? = nil,
+        sessionID: String? = nil
     ) async -> Bool {
-        if serverAndToolName(for: toolName) != nil {
+        if serverAndToolName(for: toolName, sessionID: sessionID) != nil {
             return true
         }
         let discoveryToolNames = allowedToolNames ?? [toolName]
@@ -316,11 +385,17 @@ public actor DirectMCPToolRuntime {
             allowedToolNames: discoveryToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL
         )
-        return serverAndToolName(for: toolName) != nil
+        return serverAndToolName(for: toolName, sessionID: sessionID) != nil
     }
 
-    public func execute(toolCall: DirectAgentToolCall) async throws -> String {
-        guard let (server, rawToolName) = serverAndToolName(for: toolCall.name) else {
+    public func execute(
+        toolCall: DirectAgentToolCall,
+        sessionID: String? = nil
+    ) async throws -> String {
+        guard let (server, rawToolName) = serverAndToolName(
+            for: toolCall.name,
+            sessionID: sessionID
+        ) else {
             throw DirectMCPToolRuntimeError.unknownTool(toolCall.name)
         }
         let request = ToolRequest(
@@ -348,7 +423,7 @@ public actor DirectMCPToolRuntime {
             switch $0 {
             case .figma:
                 return "figma"
-            case let .external(name):
+            case let .external(name, _):
                 return name
             }
         })

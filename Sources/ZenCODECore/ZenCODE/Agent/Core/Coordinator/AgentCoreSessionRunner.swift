@@ -370,7 +370,11 @@ public actor AgentCoreSessionRunner {
             sessionID: configuration.sessionID
         )
         try verifyBackendGeneration(generation)
-        try await ensureSession(configuration: configuration)
+        try await ensureSession(
+            configuration: configuration,
+            backend: backend,
+            backendGeneration: generation
+        )
         try verifyBackendGeneration(generation)
         // Capture the session incarnation only after the session exists: a later
         // close/reset/rebuild drops this generation and fences the turn's
@@ -1108,13 +1112,23 @@ public actor AgentCoreSessionRunner {
     }
 
     private func ensureSession(
-        configuration: AgentCoreSessionConfiguration
+        configuration: AgentCoreSessionConfiguration,
+        backend: AgentCoreBackend,
+        backendGeneration: UInt64
     ) async throws {
         if let existing = sessions[configuration.sessionID] {
             if existing.matchesSessionIdentity(configuration) {
+                if await !backend.hasSession(id: configuration.sessionID) {
+                    await createBackendSession(backend, configuration: existing)
+                    try verifyBackendGeneration(backendGeneration)
+                }
                 return
             }
             if existing.matchesSessionIdentityIgnoringThinking(configuration) {
+                if await !backend.hasSession(id: configuration.sessionID) {
+                    await createBackendSession(backend, configuration: existing)
+                    try verifyBackendGeneration(backendGeneration)
+                }
                 try await updateSessionOptions(configuration: configuration)
                 return
             }
@@ -1228,7 +1242,13 @@ public actor AgentCoreSessionRunner {
 
     private func resetBackend() async {
         let backendToShutdown = backendManager.invalidateBackend()
-        snapshotStore.discardAll()
+        // A runtime mismatch (for example another ACP session selecting a
+        // different model or cwd) replaces the single backend, not the logical
+        // sessions owned by this runner. Their configurations and snapshots are
+        // the source used to rehydrate each session when its runtime becomes
+        // active again, so dropping the whole store here loses unrelated
+        // session history on every A -> B -> A hand-off. Full shutdown and
+        // logical reset still discard the store in their dedicated paths.
         await backendToShutdown?.shutdown()
     }
 

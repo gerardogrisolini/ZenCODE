@@ -10,6 +10,59 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- ACP and agent session lifecycle state is now isolated by session and backend
+  generation: stale work is fenced during rebuild, close, reset, and shutdown,
+  while authorization handlers, prompt-skill providers, snapshots, and
+  task-graph observers are cleaned up with their owning session. Prompt
+  reservations remain held until the final ACP result is sent.
+- ACP session refresh preserves session revisions, context-window limits, and
+  generation-parameter overrides; task-bound sub-agents receive a restricted
+  `tasks.update` schema, and OpenAI tool payload generation requires an explicit
+  session scope.
+- Terminal overview rendering now keeps actor-confined state in dedicated value
+  types, clears stale delegated rows, respects display width and CommonMark
+  ordered-list limits, and mirrors only task-graph overviews to Telegram;
+  high-frequency sub-agent snapshots remain terminal-only.
+- Direct Anthropic requests now share subscription thinking capability and
+  payload rules, while model catalog URLs preserve configured base paths and
+  query items.
+- MCP local transports share bounded stream-pump and process-tree lifecycle
+  handling, drain buffered output before teardown, and keep Figma endpoint
+  ownership in its standalone feature.
+
+### Fixed
+
+- Provider thinking authorization again honors known manifest options while
+  preserving `.enabled` for effort-level dialects and unknown capabilities.
+- Task-graph checkpoint state is reset when sessions are discarded or recreated,
+  so saving after deleting all plans no longer fails with a stale checkpoint.
+- ChatGPT browser sign-in no longer hangs when the local callback port is
+  unavailable: it falls back to manual authorization-code input.
+- SSE streams now enforce post-head idle timeouts, bound line and event
+  accumulation, handle bare CR delimiters across chunks, and report typed
+  parsing failures instead of stalling or growing without limit.
+- ACP diagnostics are filtered consistently and empty tool results omit empty
+  content blocks; terminal thought and Markdown rendering handles structured
+  content without hard wrapping.
+
+### Security
+
+- Destructive tool authorization now applies before feature-owned alias dispatch,
+  renders consent arguments with lossless shell quoting, and keeps per-session
+  permission decisions isolated and evicted on close and shutdown. Task
+  cancellation without an explicit session is rejected, and ambiguous
+  tool-selection prefixes no longer resolve silently.
+- WebTools now rejects loopback, private, link-local, metadata, multicast,
+  reserved, local, and ambiguous numeric destinations on requests, redirects,
+  and main-frame navigation. Jira credential-bearing requests require HTTPS and
+  exact same-origin redirects.
+- Saved-session indexes are created and read with private file and directory
+  permissions, harden legacy modes, and reject destination symlinks; MCP logs
+  redact sensitive environment values and invalid OAuth metadata URLs fail
+  closed.
+
 ## [1.2.5] - 2026-08-17
 
 ### Added

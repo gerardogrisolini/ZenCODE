@@ -35,6 +35,11 @@ extension ZenCODEACPBridge {
         session.operationState = .prompting(promptID)
         sessions[sessionID] = session
         var didReleaseReservation = false
+        // Track the ACP wrapper handler itself, not only the backend turn:
+        // `close`/`shutdown` must be able to wait for this handler's unwind
+        // (update flush, snapshot refresh, final reply) before answering.
+        let promptHandlerToken = enterPromptHandler(sessionID: sessionID)
+        defer { leavePromptHandler(sessionID: sessionID, token: promptHandlerToken) }
 
         /// Releases the reservation only when it is still ours and the session
         /// is still the same incarnation.
@@ -123,7 +128,8 @@ extension ZenCODEACPBridge {
         if configuration.verboseLogging {
             let mcpDescriptors = await sessionRunner.knownMCPToolDescriptors(
                 allowedToolNames: promptConfiguration.allowedToolNames,
-                preferredWorkspaceRootURL: URL(fileURLWithPath: session.cwd)
+                preferredWorkspaceRootURL: URL(fileURLWithPath: session.cwd),
+                sessionID: sessionID
             )
             await verboseACPLog(
                 "session/prompt id=\(sessionID) knownMCPTools=\(Self.verboseDescriptorSummary(mcpDescriptors)) allowedTools=\(Self.verboseToolNameSummary(promptConfiguration.allowedToolNames))"
@@ -372,8 +378,22 @@ extension ZenCODEACPBridge {
             // inside the runner must not complete, re-create the session in the
             // backend, and answer success for a session that is now gone.
             invalidateLifecycleOperations(sessionID: sessionID, epoch: closedEpoch)
+            // The MCP servers this session provided are torn down with it.
+            // Registrations owned by other sessions or with no session
+            // ownership (borrowed/non-ACP installs) survive untouched.
+            await sessionRunner.releaseSessionMCPOwnership(
+                sessionID: sessionID,
+                epoch: closedEpoch
+            )
         }
         updateSessionSleepAssertion()
+        // Quiesce the ACP prompt wrapper before anything else can answer: with
+        // the backend turn already cancelled above, its unwind — the buffered
+        // update flush, the snapshot refresh and the `cancelled` reply — is
+        // guaranteed to finish, and it belongs on the wire strictly before this
+        // close's own reply. The runner's `closeSession` below additionally
+        // waits for the backend-side prompt tasks it owns.
+        await waitForPromptHandlersToDrain(sessionID: sessionID)
         // Wait for the shared-chat renderer to go quiet before answering: after
         // this returns no further `session/update` can be emitted for a session
         // the host is closing.

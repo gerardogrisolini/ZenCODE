@@ -7,8 +7,11 @@ import Foundation
 import ToolCore
 
 extension DirectMCPToolRuntime {
-    func serverAndToolName(for toolName: String) -> (Server, String)? {
-        for server in servers {
+    func serverAndToolName(
+        for toolName: String,
+        sessionID: String? = nil
+    ) -> (Server, String)? {
+        for server in servers.visible(to: sessionID) {
             guard let rawToolName = rawToolName(toolName, for: server) else {
                 continue
             }
@@ -30,6 +33,15 @@ extension DirectMCPToolRuntime {
             return [:]
         }
         return arguments
+    }
+}
+
+extension [DirectMCPToolRuntime.Server] {
+    /// Session-scoped view of the server list: session-owned servers are
+    /// visible only to their owning session id, unowned (shared) servers are
+    /// visible to everyone. A `nil` session id keeps only shared servers.
+    func visible(to sessionID: String?) -> [DirectMCPToolRuntime.Server] {
+        filter { $0.isVisible(to: sessionID) }
     }
 }
 

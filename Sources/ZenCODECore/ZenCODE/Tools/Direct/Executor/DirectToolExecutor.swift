@@ -358,9 +358,14 @@ public actor DirectToolExecutor {
         )
         let providerToolNames = Set(providerDescriptors.map(\.name))
         let reservedSkillToolNames = PromptSkillToolProvider.toolNames
+        // MCP servers installed by an ACP session are owned by that session
+        // incarnation; sub-agents delegated from the same root session share
+        // them through the root room id.
+        let mcpScopeSessionID = sharedChatRootSessionID ?? sessionID
         let mcpDescriptors = await mcpRuntime.descriptors(
             allowedToolNames: allowedToolNames,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL
+            preferredWorkspaceRootURL: preferredWorkspaceRootURL,
+            sessionID: mcpScopeSessionID
         )
         .filter { !providerToolNames.contains($0.name) }
         .filter { !reservedSkillToolNames.contains($0.name) }

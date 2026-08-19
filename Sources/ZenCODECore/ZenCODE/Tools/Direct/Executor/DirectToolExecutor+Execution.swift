@@ -122,13 +122,18 @@ extension DirectToolExecutor {
                 attachments: result.attachments
             )
         }
-        if directlyAllowed, await mcpRuntime.canExecute(
+        if directlyAllowed,
+           await mcpRuntime.canExecute(
             toolName: toolCall.name,
             allowedToolNames: allowedToolNames,
-            preferredWorkspaceRootURL: workingDirectory
-        ) {
+            preferredWorkspaceRootURL: workingDirectory,
+            sessionID: sharedChatRootSessionID ?? sessionID
+           ) {
             return DirectToolExecutionOutput(
-                output: try await mcpRuntime.execute(toolCall: toolCall)
+                output: try await mcpRuntime.execute(
+                    toolCall: toolCall,
+                    sessionID: sharedChatRootSessionID ?? sessionID
+                )
             )
         }
         if canonicalCoreCoordinationToolName != nil,
