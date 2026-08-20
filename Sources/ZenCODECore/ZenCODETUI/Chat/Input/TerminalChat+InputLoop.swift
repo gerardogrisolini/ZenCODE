@@ -930,6 +930,12 @@ extension TerminalChat {
                     // payload row was actually shown. Only then is opening
                     // committed as a reader action, so its selection/read
                     // state is applied after a visible payload is guaranteed.
+                    // The status bar expands upward into rows that may have
+                    // belonged to the live Sub-Agents section. Its direct
+                    // terminal redraw is outside the render coordinator's
+                    // write accounting, so explicitly relinquish that section
+                    // before the overlay is painted.
+                    await renderCoordinator.relinquishSubAgentOverviewOwnership()
                     let didExpand = await statusBar.expandSharedChatReader(
                         entries: entries,
                         unreadCount: sharedChatReadingBuffer.readerOpeningUnreadCount,

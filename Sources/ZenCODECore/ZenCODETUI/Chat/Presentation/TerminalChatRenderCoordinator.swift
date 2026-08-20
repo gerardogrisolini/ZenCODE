@@ -1319,6 +1319,14 @@ actor TerminalChatRenderCoordinator {
         return block.rows
     }
 
+    /// Gives up the in-place sub-agent overview slot when another TUI component
+    /// redraws a bottom overlay. That redraw does not pass through this
+    /// coordinator's write accounting, but it may reserve rows over the section
+    /// that the coordinator would otherwise cursor-up and erase.
+    func relinquishSubAgentOverviewOwnership() {
+        activeSubAgentOverviewBlock = nil
+    }
+
     /// Tears down the live sub-agent section when the runtime transitions to an
     /// empty snapshot. Destructive clearing is performed only while this actor
     /// still owns the exact rows; otherwise state is forgotten append-safely.

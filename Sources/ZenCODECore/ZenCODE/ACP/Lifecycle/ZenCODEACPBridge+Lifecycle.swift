@@ -699,7 +699,7 @@ extension ZenCODEACPBridge {
             )
             throw error
         }
-        try await ensureLifecycleOperationLive(operation)
+        try ensureLifecycleOperationLive(operation)
 
         await writer.sendResultIfRequest(
             id: id,

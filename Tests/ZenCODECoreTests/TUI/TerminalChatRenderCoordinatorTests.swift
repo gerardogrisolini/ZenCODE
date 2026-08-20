@@ -1217,6 +1217,42 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func externalOverlayRelinquishesSubAgentOverviewOwnership() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:before-chat",
+            text: "\n👥 Sub-Agents:\n   running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave"
+        )
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
+        await renderer.relinquishSubAgentOverviewOwnership()
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:after-chat",
+            text: "\n👥 Sub-Agents:\n   completed\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave"
+        )
+        let refreshText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeRefresh)
+            .map(\.text)
+            .joined()
+
+        #expect(!containsCursorUpSequence(refreshText))
+        #expect(!refreshText.contains("\u{1B}[2K"))
+        #expect(TerminalANSIText.stripANSI(refreshText).contains("completed"))
+    }
+
+    @Test
     func emptySubAgentTransitionClearsOwnedRowsAndSignature() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
