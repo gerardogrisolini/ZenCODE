@@ -209,6 +209,47 @@ struct DynamicPromptContextTests {
     }
 
     @Test
+    func legacyProfileBasePromptIsNotRepeatedInDynamicContext() {
+        let legacyProfile = AgentProfile(
+            id: "legacy-developer",
+            name: "Developer",
+            instructions: SystemPromptBuilder.defaultAgentInstructions()
+        )
+
+        let section = legacyProfile.promptSection(memoryToolEnabled: true) ?? ""
+        #expect(section.contains("Selected agent: Developer"))
+        #expect(!section.contains("You are ZenCODE"))
+        #expect(!section.contains("Task workflow policy:"))
+    }
+
+    @Test
+    func appProvidedInstructionsIncludeStandardDynamicContext() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-app-prompt-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try "Project guidance marker.".write(
+            to: directory.appendingPathComponent("AGENTS.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let sections = AgentSessionComposition.appProvidedPromptSections(
+            "Client instructions.",
+            cwd: directory.path,
+            allowedToolNames: [
+                "tasks.create", "tasks.list", "tasks.update", "agent.create", "memory.read"
+            ],
+            selectedAgent: nil
+        )
+
+        #expect(sections.dynamicContext.contains("Project guidance marker."))
+        #expect(sections.dynamicContext.contains("Memory tools:"))
+        #expect(sections.dynamicContext.contains("Delegatable agent profiles and model bindings:"))
+        #expect(sections.dynamicContext.contains("Task workflow policy:"))
+    }
+
+    @Test
     func appProvidedInstructionsKeepCwdAndLanguageInSystemPrefix() {
         let sections = AgentSessionComposition.appProvidedPromptSections(
             "Client instructions.",

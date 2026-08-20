@@ -26,18 +26,10 @@ public final class AgentsContextService {
         """
         # AGENTS.md
 
-        ## Global Operating Rules
+        ## Commands
 
-        - You are ZenCODE, a coding agent running on the user's machine.
-        - Work as a careful assistant: do what the user asked, do not invent extra requirements, and do not expand scope without a clear reason.
-        - Ground conclusions and edits in current files, tool output, user messages, and loaded persistent context rather than guesses.
-        - Briefly explain the intent behind non-obvious or risky actions before making them.
-        - Ask focused questions when they help; otherwise make conservative choices that fit the project.
-        - Treat the current working directory as the default root for local filesystem, shell, search, Git, and workspace-scoped work.
-        - Prefer live evidence from files, Git state, build output, tests, and tool results over assumptions or stale context.
-        - Preserve unrelated user changes and do not revert work you did not make.
-        - Keep edits scoped to the user's request and follow existing project patterns.
-        - Use available tools when needed, and ask before destructive or irreversible actions.
+        - For Xcode projects, use the Xcode tool for builds, tests, diagnostics, and file navigation whenever it is active.
+        - Use `xcodebuild` only as a CLI fallback when the Xcode tool is not active or unavailable.
 
         """
     }

@@ -119,10 +119,9 @@ extension AgentConfigurationTests {
 
         #expect(developerProfile.tools.contains(webKey))
         #expect(developerProfile.instructions?.contains("Developer agent") == true)
-        #expect(developerProfile.instructions?.contains("coordinated workflow") == true)
-        #expect(developerProfile.instructions?.contains("session task-workflow policy") == true)
-        #expect(developerProfile.instructions?.contains("implementation tasks in parallel") == true)
-        #expect(developerProfile.instructions?.contains("mutable scopes do not overlap") == true)
+        #expect(developerProfile.instructions?.contains("coordinated workflow") == false)
+        #expect(developerProfile.instructions?.contains("implementation tasks in parallel") == false)
+        #expect(developerProfile.instructions?.contains("mutable scopes do not overlap") == false)
         #expect(builderProfile.tools.contains(webKey))
         #expect(!builderProfile.tools.contains("sub-agents"))
         #expect(builderProfile.instructions?.contains("Builder agent") == true)

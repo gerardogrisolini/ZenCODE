@@ -734,11 +734,10 @@ struct PlanCommandTests {
 
         #expect(prompt.contains("Active approved plan progress:"))
         #expect(prompt.contains("plan-1 [pending]: Implement"))
-        #expect(prompt.contains("tasks.list"))
-        #expect(prompt.contains("tasks.update"))
-        #expect(prompt.contains("Run independent read-only or implementation tasks in parallel"))
-        #expect(prompt.contains("mutable file or resource scopes do not overlap"))
-        #expect(prompt.contains("Otherwise serialize them"))
+        #expect(prompt.contains("The task graph is the authoritative control plane"))
+        #expect(prompt.contains("common task workflow\npolicy in the session context"))
+        #expect(!prompt.contains("tasks.list with runnableOnly=true"))
+        #expect(!prompt.contains("Run independent read-only or implementation tasks in parallel"))
         #expect(!prompt.contains("todo.write"))
     }
 

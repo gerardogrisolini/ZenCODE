@@ -127,15 +127,9 @@ extension TerminalChat {
             Goal: \(plan.originalGoal)
             \(pointList)
 
-            The task graph is the authoritative control plane for this approved plan. Call \
-            tasks.list with runnableOnly=true before choosing work. Use tasks.update to record \
-            direct progress and lifecycle transitions. When delegating, put the task ID in the \
-            canonical agent.create `agents` item's `taskID` field so attempts are claimed \
-            atomically. Run independent read-only or \
-            implementation tasks in parallel when doing so has a real benefit and their mutable \
-            file or resource scopes do not overlap. Otherwise serialize them because delegated \
-            agents share this working directory. Respect dependencies and validate implementation \
-            tasks before completing them; checklist tools are not part of plan progress reporting.
+            The task graph is the authoritative control plane for this approved plan. Use this
+            progress snapshot to choose and report the current plan work; the common task workflow
+            policy in the session context governs graph operations and delegation.
             """
         guard let baseSystemPrompt = baseSystemPrompt?.trimmingCharacters(
             in: .whitespacesAndNewlines

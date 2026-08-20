@@ -150,16 +150,29 @@ public enum AgentSessionComposition {
             responseLanguageSection
         ]
         .compactMap { $0?.nilIfBlank }
-        let dynamicSections = [
+        let dynamicContext = cwd.map {
+            AgentStandaloneSystemPrompt.promptSections(
+                cwd: $0,
+                memoryToolEnabled: memoryToolEnabled,
+                allowedToolNames: allowedToolNames,
+                selectedAgentSection: selectedAgent?.promptSection(
+                    memoryToolEnabled: memoryToolEnabled
+                ),
+                selectedSkillSection: SystemPromptBuilder.staticSkillSection
+            )
+            .dynamicContext
+        } ?? [
             selectedAgent?.promptSection(memoryToolEnabled: memoryToolEnabled),
             SystemPromptBuilder.taskOrchestrationSection(
                 allowedToolNames: allowedToolNames
-            )
+            ),
+            memoryToolEnabled ? MemoryService.toolUsagePromptSection() : nil
         ]
         .compactMap { $0?.nilIfBlank }
+        .joined(separator: "\n\n")
         return SystemPromptSections(
             systemPrompt: systemSections.joined(separator: "\n\n"),
-            dynamicContext: dynamicSections.joined(separator: "\n\n")
+            dynamicContext: dynamicContext
         )
     }
 }

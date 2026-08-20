@@ -12,15 +12,25 @@ import Testing
 @Suite
 struct AgentsContextServiceTests {
     @Test
-    func globalAgentsTemplateFramesAssistantBehavior() {
+    func globalAgentsTemplateContainsOnlyAdditionalXcodeGuidance() {
         let content = AgentsContextService.defaultGlobalAgentsContent
 
-        #expect(content.contains("do what the user asked"))
-        #expect(content.contains("on the user's machine"))
-        #expect(!content.contains("on the user's Mac"))
-        #expect(content.contains("do not invent extra requirements"))
-        #expect(content.contains("Briefly explain the intent behind non-obvious or risky actions"))
-        #expect(content.contains("Ask focused questions when they help"))
+        #expect(content.contains("# AGENTS.md"))
+        #expect(content.contains("## Commands"))
+        #expect(
+            content.contains(
+                "For Xcode projects, use the Xcode tool for builds, tests, diagnostics, and file navigation whenever it is active."
+            )
+        )
+        #expect(
+            content.contains(
+                "Use `xcodebuild` only as a CLI fallback when the Xcode tool is not active or unavailable."
+            )
+        )
+        #expect(!content.contains("## Global Operating Rules"))
+        #expect(!content.contains("You are ZenCODE"))
+        #expect(!content.contains("do what the user asked"))
+        #expect(!content.contains("on the user's machine"))
         #expect(!content.contains("response-language"))
         #expect(!content.contains("operating system language"))
         #expect(!content.contains("user's active language"))

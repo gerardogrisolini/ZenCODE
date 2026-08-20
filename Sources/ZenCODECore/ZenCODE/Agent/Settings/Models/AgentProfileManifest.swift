@@ -373,7 +373,11 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         guard instructions == defaultInstructionsWithMemory || instructions == defaultInstructionsWithoutMemory else {
             return instructions
         }
-        return SystemPromptBuilder.defaultAgentInstructions(memoryToolEnabled: memoryToolEnabled)
+        // Legacy Developer profiles persisted the complete standalone prompt as
+        // their instructions. Its common policy is already composed by the
+        // session, so retaining it here would duplicate that prompt in dynamic
+        // context.
+        return ""
     }
 
     public func allowedToolNames() -> Set<String> {
@@ -768,8 +772,6 @@ public enum AgentProfileStore {
                 name: developerAgentName,
                 instructions: """
                 Developer agent. Implement the user's request with the available tools, keep changes focused, and validate important work before reporting completion.
-
-                Before launching multiple sub-agents or beginning work with multiple phases, decide whether the request is a coordinated workflow. Follow the session task-workflow policy when coordination tools are available; use sub-agents for focused graph work when their roles and tools fit. Run independent evidence or implementation tasks in parallel when doing so is useful and their mutable scopes do not overlap; otherwise serialize them. A single self-contained delegation or short disposable lookup may proceed without a task graph.
                 """,
                 symbolName: "person.crop.circle",
                 tools: developerToolNames

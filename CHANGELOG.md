@@ -31,6 +31,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - MCP local transports share bounded stream-pump and process-tree lifecycle
   handling, drain buffered output before teardown, and keep Figma endpoint
   ownership in its standalone feature.
+- Session prompt composition now centralizes shared workflow, memory, agent, and
+  project-context guidance, avoiding duplicate legacy Developer instructions and
+  redundant active-plan policy. The generated global `AGENTS.md` template keeps
+  only the additional Xcode-specific guidance.
 
 ### Fixed
 
@@ -46,6 +50,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - ACP diagnostics are filtered consistently and empty tool results omit empty
   content blocks; terminal thought and Markdown rendering handles structured
   content without hard wrapping.
+- Application-provided system prompts now receive the same dynamic `AGENTS.md`,
+  delegatable-agent roster, memory-tool policy, and task-workflow context as
+  standard sessions, so exposed delegation and memory tools always have the
+  profile bindings and usage rules they require.
 
 ### Security
 
