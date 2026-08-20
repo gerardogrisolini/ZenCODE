@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-08-20
+
 ### Changed
 
 - ACP and agent session lifecycle state is now isolated by session and backend
@@ -50,6 +52,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - ACP diagnostics are filtered consistently and empty tool results omit empty
   content blocks; terminal thought and Markdown rendering handles structured
   content without hard wrapping.
+- The shared-chat reader overlay no longer paints over the live Sub-Agents
+  section: expanding the Chat box now relinquishes the section's owned
+  terminal rows before the status bar redraws, and ACP lifecycle checks no
+  longer await synchronous state.
 - Application-provided system prompts now receive the same dynamic `AGENTS.md`,
   delegatable-agent roster, memory-tool policy, and task-workflow context as
   standard sessions, so exposed delegation and memory tools always have the
@@ -742,7 +748,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.5...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.6...HEAD
+[1.2.6]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.5...v1.2.6
 [1.2.5]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.4...v1.2.5
 [1.2.4]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.2...v1.2.3
