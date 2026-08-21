@@ -61,8 +61,9 @@ dependency-direction contract, and it is authoritative. In short:
 Preserve public modules, executable names, wire formats, persisted formats, and
 feature identities unless the change is an explicit, documented migration.
 
-Update `AGENTS.md` and `Docs/architecture.md` in the same change whenever an
-architectural boundary, cited path, build flag, or validation gate moves.
+When a project `AGENTS.md` is present, update it and `Docs/architecture.md` in
+the same change whenever an architectural boundary, cited path, build flag, or
+validation gate moves.
 
 ## Tests
 

@@ -59,7 +59,7 @@ extension TerminalChat {
         guard let command = commandToken(from: line) else {
             return false
         }
-        if command == "/session" || command == agentsMarkdownLegacyCommand {
+        if command == "/session" {
             return true
         }
         return allCommandDescriptors.contains { $0.command == command }
@@ -213,11 +213,6 @@ extension TerminalChat {
             summary: "list/manage features",
             help: "/feature creates and manages Swift feature packages (Builder agent only). /feature list opens the enable/disable menu, /feature status prints known feature packages.",
             availability: .builderAgent
-        ),
-        TerminalChatCommandDescriptor(
-            command: "/agents-md",
-            summary: "create/update workspace guidance",
-            help: "/agents-md asks the model to inspect the current working directory and create or update its AGENTS.md without assuming a project type. Run it when first opening a new or updated workspace so project guidance stays current. It requires the Files tool group. The former name /make-agents still works."
         ),
         TerminalChatCommandDescriptor(
             command: "/skills",

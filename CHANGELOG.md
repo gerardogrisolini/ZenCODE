@@ -10,6 +10,26 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Project `AGENTS.md` guidance is now fully manual and read-only from ZenCODE's
+  perspective. When the file exists in the working directory, ZenCODE reads it
+  and inserts it into the agent context, but it no longer creates, regenerates,
+  materializes, or rewrites the file. `AGENTS.md` is no longer ignored by the
+  repository so projects may version it intentionally.
+
+### Removed
+
+- Removed the `/agents-md` command and its legacy `/make-agents` alias, including
+  the dedicated model turn, restricted tool allowlist, and write
+  post-condition tracking. **Migration:** create or edit the project
+  `AGENTS.md` manually; ZenCODE will apply it automatically when it is present
+  in the working directory. The separate global `~/.zencode/AGENTS.md` behavior
+  is unchanged.
+- Removed the public `ProjectContextFileService` APIs that created, regenerated,
+  or materialized context files; the service now exposes read-only project
+  context loading.
+
 ## [1.2.6] - 2026-08-20
 
 ### Changed

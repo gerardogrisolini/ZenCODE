@@ -65,5 +65,4 @@ fastlane/test_output
 # exact dependency revisions so CI and release builds are reproducible. The
 # standalone feature lockfiles are tracked for the same reason and validated by
 # their dedicated CI matrix.
-AGENTS.md
 MEMORY.md

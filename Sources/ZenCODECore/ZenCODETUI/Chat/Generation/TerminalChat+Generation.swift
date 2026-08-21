@@ -49,13 +49,6 @@ extension TerminalChat {
                     allowedToolNames: allowedToolNames,
                     includesActivePlanProgress: false
                 )
-            } else if case .agentsMarkdown = attempt.purpose {
-                var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
-                allowedToolNames.formIntersection(Self.agentsMarkdownAllowedToolNames)
-                sessionConfiguration = currentSessionConfiguration(
-                    allowedToolNames: allowedToolNames,
-                    includesActivePlanProgress: false
-                )
             } else if case .normal = attempt.purpose,
                       let activePlan,
                       activePlan.isApproved,
@@ -164,7 +157,7 @@ extension TerminalChat {
                                     toolCall: toolCall,
                                     result: result
                                 )
-                            case .agentsMarkdown, .review, .workflow:
+                            case .review, .workflow:
                                 break
                             }
                         }
@@ -229,15 +222,6 @@ extension TerminalChat {
                 contentsOf: await transcriptTurn.messages(finalResponseText: response.text)
             )
             let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
-            let agentsMarkdownOutcome: AgentsMarkdownWriteOutcome?
-            if case .agentsMarkdown = attempt.purpose {
-                agentsMarkdownOutcome = Self.agentsMarkdownWriteOutcome(
-                    workingDirectory: configuration.workingDirectory,
-                    fileChangeSummary: fileChangeSummary
-                )
-            } else {
-                agentsMarkdownOutcome = nil
-            }
             await stopSubAgentOverviewRefresh()
             await renderCoordinator.waitForOverviewMirrorsToDrain()
             await activeTelegramProgressReporter?.flush()
@@ -253,8 +237,7 @@ extension TerminalChat {
                 response: response,
                 origin: attempt.origin,
                 fileChangeSummary: fileChangeSummary,
-                automaticallyCompletedPlan: await planPointCollector.automaticallyCompletedPlan(),
-                agentsMarkdownOutcome: agentsMarkdownOutcome
+                automaticallyCompletedPlan: await planPointCollector.automaticallyCompletedPlan()
             )
         } catch {
             activeSessionTranscript.append(contentsOf: await transcriptTurn.messages())
@@ -356,9 +339,6 @@ extension TerminalChat {
             }
             if let plan = success.automaticallyCompletedPlan {
                 await writeMarkdownMessage(Self.planStatusTable(for: plan))
-            }
-            if let outcome = success.agentsMarkdownOutcome {
-                await writeAgentsMarkdownOutcomeIfNeeded(outcome)
             }
             // Quiesce the debounced task-graph observer and publish the
             // latest known section once while the reporter is still alive;

@@ -35,10 +35,12 @@ closed instead of selecting the first matching tool grant.
 > delegated explicitly through the legacy fallback, but it is excluded from
 > capability-based delegation routing.
 
-> **Workspace guidance:** run [`/agents-md`](zen.md#memory-and-project-context)
-> when first opening a new or updated project. It inspects the workspace and
-> conservatively creates or refreshes its project-level `AGENTS.md`. Startup
-> never does this automatically; review and commit the result.
+> **Workspace guidance:** `AGENTS.md` is optional. Create or edit it manually
+> in the working directory when the project needs workspace-specific
+> instructions. When present, ZenCODE reads it and adds it to the agent
+> context; it does not automatically create or rewrite the project file. This
+> project file is distinct from the global `~/.zencode/AGENTS.md`, whose rules
+> apply across workspaces.
 
 ## Recommended Profiles
 

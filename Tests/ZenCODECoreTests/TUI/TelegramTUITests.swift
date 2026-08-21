@@ -120,6 +120,10 @@ struct TelegramTUITests {
             telegramEnabled: true
         ).map(\.command)
 
+        #expect(!disabledCommands.contains("/agents-md"))
+        #expect(!disabledCommands.contains("/make-agents"))
+        #expect(!enabledCommands.contains("/agents-md"))
+        #expect(!enabledCommands.contains("/make-agents"))
         #expect(!disabledCommands.contains("/telegram"))
         #expect(enabledCommands.contains("/telegram"))
     }
@@ -159,6 +163,8 @@ struct TelegramTUITests {
         #expect(TerminalChat.shouldSuspendPanelInput(for: "/unknown"))
         #expect(TerminalChat.isKnownSlashCommand("/think"))
         #expect(TerminalChat.isKnownSlashCommand("/session save"))
+        #expect(!TerminalChat.isKnownSlashCommand("/agents-md"))
+        #expect(!TerminalChat.isKnownSlashCommand("/make-agents"))
         #expect(!TerminalChat.isKnownSlashCommand("/start 233B0EC4"))
     }
 

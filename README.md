@@ -112,6 +112,19 @@ zen
 Use `/setup` from the TUI whenever you want to reconfigure it without closing
 the app.
 
+### Optional workspace guidance
+
+`AGENTS.md` is optional. If a project needs workspace-specific instructions,
+create and edit `AGENTS.md` manually in the working directory, then commit it
+to version control when appropriate. When the file is present, ZenCODE reads it
+and adds its contents to the agent's context; ZenCODE does not automatically
+create or rewrite a project file.
+
+This project file is separate from the global `~/.zencode/AGENTS.md`, which
+contains operating guidance shared across workspaces. The global file applies
+to every project, while a project `AGENTS.md` applies only to its working
+directory.
+
 ## Build From Source
 
 Use a source checkout when developing ZenCODE itself:
@@ -140,7 +153,6 @@ swift build -c release --product zen
 /plan        Create, save, load, approve, inspect, or clear a delegated session plan
 /workflow    Plan and delegate all work to sub-agents
 /review      Review tracked changes and verify task/plan claims
-/agents-md   Create or refresh AGENTS.md guidance for the current workspace
 /feature     Manage Swift features with the Builder agent
 /telegram    Turn Telegram remote control on/off when paired in setup
 /exit        Close the session

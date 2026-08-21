@@ -24,12 +24,6 @@ struct MemoryServiceTests {
         #expect(!MemoryService.toolUsagePromptSection().localizedCaseInsensitiveContains("global memory"))
         #expect(MemoryService.toolUsagePromptSection().contains("At the end of a substantial project turn"))
 
-        let projectDefault = ProjectContextFileService.defaultContent(
-            kind: .memory,
-            projectName: "TestProject",
-            rootPath: "/tmp/TestProject"
-        )
-        #expect(projectDefault == MemoryService.defaultProjectMemoryContent)
     }
 
     @Test

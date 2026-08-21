@@ -53,7 +53,6 @@ public enum TerminalChatRunOutcome: Sendable {
 
 enum TerminalPromptPurpose: Sendable, Equatable {
     case normal
-    case agentsMarkdown
     case plan(originalGoal: String)
     case workflow(originalGoal: String)
     case review
@@ -106,8 +105,6 @@ struct TerminalChatGenerationSuccess: Sendable {
     let origin: TerminalPromptOrigin
     let fileChangeSummary: TurnFileChangeSummary?
     let automaticallyCompletedPlan: TerminalSessionPlan?
-    /// Post-condition of an `/agents-md` turn; `nil` for every other purpose.
-    let agentsMarkdownOutcome: AgentsMarkdownWriteOutcome?
 }
 
 struct TerminalChatGenerationRunError: Error, Sendable {

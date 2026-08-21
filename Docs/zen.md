@@ -54,7 +54,8 @@ Creates files under `~/.zencode/`:
 - `settings.json` — provider/model configuration, selected model, optional Telegram, voice, and memory-embedding settings (endpoint, optional model).
 - `permissions.json` — persistent runtime approvals.
 - `agents.json` — agent profiles, authorized model bindings, tools, and instructions.
-- `AGENTS.md` — global operating guidance.
+- `AGENTS.md` — global operating guidance shared across workspaces. This is
+  separate from an optional project `AGENTS.md` in the working directory.
 - `memory/` — per-workspace project memory graphs: one `memory.graph.json` per workspace, under a SHA-256 digest of the workspace path.
 - `sessions/` — saved session snapshots grouped by project.
 - `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans.
@@ -224,7 +225,6 @@ Commands start with `/`:
 - `/plan clear` — archive the graph and remove the active plan.
 - `/workflow <goal>` — plan and delegate all work to sub-agents. It creates an active workflow graph up front; every graph task is enforced as a sub-agent execution attempt. It refuses to start while an active `/plan` exists; finish that plan or use `/plan clear` first. The current agent stays as coordinator and final reviewer, retaining its normal tool grant for that work. No separate Planner sub-agent or approval step. Use `/tasks` to monitor progress.
 - `/review [focus]` — delegate review to sub-agents using the configured `Reviewer` profile. See [reviewer.md](reviewer.md).
-- `/agents-md` — ask the model to create or update `AGENTS.md` for the current directory. Always run it when first opening a new or updated project so its workspace guidance stays current. Requires the `Files` tool group. ZenCODE reports the turn when it does not actually write the file. The former name `/make-agents` still works.
 - `/feature` — manage Swift feature packages (Builder profile only). See [builder.md](builder.md).
 
 **`/plan` vs `/workflow`:**
@@ -427,8 +427,13 @@ Version 4 snapshots embed the checkpoint tree alongside the task graph and activ
 
 Durable context is separated by responsibility:
 
-- Project `AGENTS.md` — workspace-specific constraints and workflows. Check into version control.
-- Global `~/.zencode/AGENTS.md` — cross-workspace operating rules.
+- Optional project `AGENTS.md` — workspace-specific constraints and workflows.
+  Create and edit it manually in the working directory, and check it into
+  version control when appropriate. When present, ZenCODE reads it and adds it
+  to the agent context; it never creates or rewrites the project file
+  automatically.
+- Global `~/.zencode/AGENTS.md` — cross-workspace operating rules. This file is
+  separate from the project file and applies across working directories.
 - Project memory — a per-workspace graph of durable project facts stored outside the working tree at `~/.zencode/memory/<workspace-digest>/memory.graph.json` (honouring `ZENCODE_SUPPORT_DIRECTORY`). A legacy project `MEMORY.md` is imported into the graph in memory on first open and then left untouched — the graph file is created only by the first memory mutation or recall maintenance, so a cold search/read never writes — and `MEMORY.md` itself is no longer written. Memory is project-scoped only; there is no global memory store.
 
 The Memory tool group maintains project memory without accumulating avoidable duplicates:
@@ -443,15 +448,12 @@ Before writing, search for an active entry about the same durable project fact. 
 
 The vendored engine ships optional intelligence layers — a query analyzer (default `DirectMemoryQueryAnalyzer`, which uses the prompt as the query), a selector, an extractor (default `NoopMemoryExtractor`, which extracts nothing) and a context formatter — plus `context(for:)` (a ready-to-inject memory block) and `learn(from:)`; these remain unwired engine internals. Automatic recall is wired and on by default: before each turn ZenCODE retrieves relevant entries — BM25 plus graph expansion locally (or semantic similarity plus fusion when an endpoint is configured), never a second LLM call — and injects them as a labelled `<project-memory>` block into the outgoing copy of the last user message on every tool round, bounded by a deadline (`ZENCODE_MEMORY_RECALL_TIMEOUT_MS`, default 150 ms) so a slow, broken, or empty graph degrades to no memory instead of delaying the turn. The block itself does add input tokens to the request, so it is capped by a character budget (`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`, default 4 000 characters ≈ about 1k tokens, clamped to [200, 32 000]); recalled content is escaped so it cannot close the container, and the payload is truncated on line boundaries with a notice when it does not fit. The block is a transient per-turn channel merged into the outgoing copy of the last user message only — exactly once per round, because it is never written back into the session — and it never enters conversation history, saved-session snapshots, or the session cache key, so saved sessions and prompt caching are unaffected. Delegated sub-agent turns receive the same recall. The main model reads and writes durable memory explicitly through the five `memory.*` tools above. `ZENCODE_MEMORY_AUTO_RECALL` (default on) switches recall off.
 
-ZenCODE reads `AGENTS.md` from the working directory when present. Startup never creates or rewrites it.
-
-> **Keep project guidance current:** Always run `/agents-md` when first
-> opening a new project or a project that has been updated. The command
-> inspects the current workspace and conservatively creates or refreshes its
-> `AGENTS.md`; review the result and commit it with the project. This explicit
-> step is required because startup intentionally does not modify project files.
-> When the turn ends without creating or changing `AGENTS.md`, ZenCODE says so
-> instead of reporting silent success.
+`AGENTS.md` is optional and can be created or updated manually whenever a
+project needs durable workspace guidance. If it exists in the working
+directory, ZenCODE reads it and inserts it into the agent context. ZenCODE does
+not create or rewrite this project file automatically. This project file is
+distinct from the global `~/.zencode/AGENTS.md`, which supplies operating rules
+across workspaces.
 
 ## ACP Mode
 
@@ -465,14 +467,13 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 
 1. `cd /path/to/project && zen` — start in the target project; first-run setup opens automatically when required.
 2. `/setup` — reconfigure providers, models, agents, or features later without leaving the TUI.
-3. `/agents-md` — always create or refresh project-level guidance when first opening a new or updated project; review the resulting `AGENTS.md`.
-4. `/tools` and `/skills` — select tools and skills.
-5. `/plan <goal>` or `/workflow <goal>` — optional planning before editing. `/plan` delegates to a Planner sub-agent with an approval step; `/workflow` plans directly and delegates all implementation to sub-agents.
-6. Implement with the active profile.
-7. `/changes diff` and Git — inspect changes.
-8. `/review` — read-only review before commit.
-9. `/sessions name` — save meaningful checkpoints.
-10. Update project memory at handoff points (via `memory.write` / `memory.update`).
+3. `/tools` and `/skills` — select tools and skills.
+4. `/plan <goal>` or `/workflow <goal>` — optional planning before editing. `/plan` delegates to a Planner sub-agent with an approval step; `/workflow` plans directly and delegates all implementation to sub-agents.
+5. Implement with the active profile.
+6. `/changes diff` and Git — inspect changes.
+7. `/review` — read-only review before commit.
+8. `/sessions name` — save meaningful checkpoints.
+9. Update project memory at handoff points (via `memory.write` / `memory.update`).
 
 ## Troubleshooting
 
@@ -480,7 +481,6 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 - **Model not found**: run `/models` or check `settings.json`.
 - **A profile is never chosen for delegation**: check its role compatibility, its tool grant, and that it has a model binding with a capability — see [bindings.md](bindings.md).
 - **No tools available**: use `/tools`, switch profile, or check ACP client tool exposure.
-- **`/agents-md` needs Files**: enable `Files` with `/tools` or switch profile.
 - **`/feature` unavailable**: switch to `/agents Builder`.
 - **Optional feature tools are missing**: install the package with `zen --install-features <id>` (or choose it in setup), then enable/select it with `/tools`.
 - **`/plan`, `/workflow`, or `/review` needs sub-agents**: enable `sub-agents` with `/tools` or switch profile.

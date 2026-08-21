@@ -40,37 +40,6 @@ struct AgentsContextServiceTests {
     }
 
     @Test
-    func compatibilityAgentsDefaultDoesNotInferWorkspaceFacts() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "agents-default-tests-\(UUID().uuidString)",
-                isDirectory: true
-            )
-        defer { try? FileManager.default.removeItem(at: rootURL) }
-        try FileManager.default.createDirectory(
-            at: rootURL.appendingPathComponent(
-                "Something.xcodeproj/xcshareddata/xcschemes",
-                isDirectory: true
-            ),
-            withIntermediateDirectories: true
-        )
-        try Data().write(to: rootURL.appendingPathComponent("Package.swift"))
-
-        let content = ProjectContextFileService.defaultContent(
-            kind: .agents,
-            projectName: "AssumedProject",
-            rootPath: rootURL.path
-        )
-
-        #expect(content == "# AGENTS.md\n")
-        #expect(!content.contains("AssumedProject"))
-        #expect(!content.contains(rootURL.path))
-        #expect(!content.contains("Swift"))
-        #expect(!content.contains("Xcode"))
-        #expect(!content.contains("Build"))
-    }
-
-    @Test
     func promptSectionFiltersProjectMetaGuidance() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(
