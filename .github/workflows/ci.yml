@@ -40,6 +40,19 @@ jobs:
           printf '%s\n' "$matrix"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
+      - name: Validate declarative and promoted feature catalogs
+        run: |
+          set -euo pipefail
+          swiftc \
+            Scripts/GenerateFeatureCatalog.swift \
+            -o "$RUNNER_TEMP/generate-feature-catalog"
+          "$RUNNER_TEMP/generate-feature-catalog" --check
+          swiftc \
+            Sources/ZenPackageMetadata/ZenBundledFeatureCatalog.swift \
+            Scripts/ValidateFeatureCatalog.swift \
+            -o "$RUNNER_TEMP/validate-feature-catalog"
+          "$RUNNER_TEMP/validate-feature-catalog"
+
   standalone-features:
     name: ${{ matrix.feature }} (${{ matrix.platform }})
     needs: feature-matrix

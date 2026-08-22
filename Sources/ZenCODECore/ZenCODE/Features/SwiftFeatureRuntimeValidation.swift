@@ -121,7 +121,8 @@ extension SwiftFeatureRuntime {
         ".build",
         ".git",
         ".swiftpm",
-        ".DS_Store"
+        ".DS_Store",
+        SwiftFeatureRegistry.distributionManifestFilename
     ]
 
     static func swiftExecutableURL(

@@ -1,0 +1,17 @@
+{
+  "description": "Build, test, run, and inspect SwiftPM packages.",
+  "discoversToolsAtRuntime": true,
+  "distributionSchemaVersion": 1,
+  "id": "swift-tools",
+  "invocationTimeoutSeconds": 3660,
+  "isInstalledOnLinux": true,
+  "platforms": [
+    "macOS",
+    "linux"
+  ],
+  "productName": "swift-tools-feature",
+  "sourceRelativePath": "Sources/Features/SwiftTools",
+  "toolNamePrefixes": [
+    "swift."
+  ]
+}

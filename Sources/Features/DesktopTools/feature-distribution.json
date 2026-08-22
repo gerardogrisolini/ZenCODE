@@ -1,0 +1,16 @@
+{
+  "description": "Control the local macOS desktop: system and window state, PNG screenshots, pointer, keyboard, clipboard, and app management.",
+  "discoversToolsAtRuntime": true,
+  "distributionSchemaVersion": 1,
+  "id": "desktop-tools",
+  "invocationTimeoutSeconds": 180,
+  "isInstalledOnLinux": false,
+  "platforms": [
+    "macOS"
+  ],
+  "productName": "desktop-tools-feature",
+  "sourceRelativePath": "Sources/Features/DesktopTools",
+  "toolNamePrefixes": [
+    "desktop."
+  ]
+}

@@ -25,6 +25,7 @@ public actor SwiftFeatureRuntime {
              "feature.validate",
              "feature.build",
              "feature.scaffold",
+             "feature.promote",
              "feature.install":
             return true
         default:

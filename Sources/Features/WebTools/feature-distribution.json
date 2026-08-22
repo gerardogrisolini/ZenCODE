@@ -1,0 +1,17 @@
+{
+  "description": "Search the web and fetch URLs as text.",
+  "discoversToolsAtRuntime": true,
+  "distributionSchemaVersion": 1,
+  "id": "web-tools",
+  "invocationTimeoutSeconds": 180,
+  "isInstalledOnLinux": true,
+  "platforms": [
+    "macOS",
+    "linux"
+  ],
+  "productName": "web-tools-feature",
+  "sourceRelativePath": "Sources/Features/WebTools",
+  "toolNamePrefixes": [
+    "web."
+  ]
+}

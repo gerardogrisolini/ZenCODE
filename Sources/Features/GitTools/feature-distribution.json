@@ -1,0 +1,16 @@
+{
+  "description": "Run Git operations: status, diff, commit, branch, log, and more.",
+  "discoversToolsAtRuntime": true,
+  "distributionSchemaVersion": 1,
+  "id": "git-tools",
+  "isInstalledOnLinux": true,
+  "platforms": [
+    "macOS",
+    "linux"
+  ],
+  "productName": "git-tools-feature",
+  "sourceRelativePath": "Sources/Features/GitTools",
+  "toolNamePrefixes": [
+    "git."
+  ]
+}

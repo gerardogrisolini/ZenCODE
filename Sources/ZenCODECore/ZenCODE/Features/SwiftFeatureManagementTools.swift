@@ -70,6 +70,10 @@ extension SwiftFeatureRuntime {
         case "feature.scaffold":
             let report = try await scaffoldFeature(arguments: arguments)
             return try renderJSON(report)
+        case "feature.promote":
+            let report = try await promoteFeature(arguments: arguments)
+            await reloadFeatureBundles()
+            return try renderJSON(report)
         case "feature.install":
             let report = try await installFeature(arguments: arguments)
             if report.ok {

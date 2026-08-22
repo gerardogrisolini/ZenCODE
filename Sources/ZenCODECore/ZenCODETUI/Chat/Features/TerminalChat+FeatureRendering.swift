@@ -8,7 +8,7 @@ import ToolCore
 
 extension TerminalChat {
     public nonisolated static func renderFeatureCommandUsage() -> String {
-        "Usage: /feature [list|status|reload|enable <id|name|#>|disable <id|name|#>|edit <id|name|#> [requirements]|delete <id|name|#>|build <id|name|#>|validate <id|name|#>]\n"
+        "Usage: /feature [list|status|reload|enable <id|name|#>|disable <id|name|#>|edit <id|name|#> [requirements]|delete <id|name|#>|build <id|name|#>|validate <id|name|#>|promote <id|name|#> (--linux|--no-linux) [--repository path] [--overwrite]]\n"
     }
 
     public nonisolated static func renderFeatureCommandUnavailableForAgent() -> String {
@@ -234,6 +234,10 @@ extension TerminalChat {
             if let report = decodeFeatureOutput(SwiftFeatureInstallReport.self, from: trimmedOutput) {
                 return renderFeatureInstallReport(report)
             }
+        case "feature.promote":
+            if let report = decodeFeatureOutput(SwiftFeaturePromotionReport.self, from: trimmedOutput) {
+                return renderFeaturePromotionReport(report)
+            }
         case "feature.edit", "feature.update":
             if let report = decodeFeatureOutput(SwiftFeatureEditReport.self, from: trimmedOutput) {
                 return renderFeatureEditReport(report)
@@ -269,8 +273,8 @@ extension TerminalChat {
             return decodeFeatureOutput(SwiftFeatureInstallReport.self, from: trimmedOutput)?.ok ?? true
         case "feature.edit", "feature.update":
             return decodeFeatureOutput(SwiftFeatureEditReport.self, from: trimmedOutput)?.ok ?? true
-        case "feature.delete":
-            return decodeFeatureOutput(SwiftFeatureDeleteReport.self, from: trimmedOutput)?.ok ?? true
+        case "feature.promote":
+            return decodeFeatureOutput(SwiftFeaturePromotionReport.self, from: trimmedOutput)?.ok ?? true
         default:
             return true
         }
@@ -359,6 +363,25 @@ extension TerminalChat {
           Destination: \(report.destinationPath)
 
         """
+    }
+
+    nonisolated static func renderFeaturePromotionReport(
+        _ report: SwiftFeaturePromotionReport
+    ) -> String {
+        var lines = [
+            "Promoted Swift feature '\(report.id)'.",
+            "  Destination: \(report.destinationPath)",
+            "  Distribution manifest: \(report.manifestPath)",
+            "  Git checkout: \(report.gitRoot) [\(report.gitBranch ?? "detached")]"
+        ]
+        if report.built {
+            lines.append("  Preflight build and --list-tools succeeded (\(report.listedTools.count) tools).")
+        }
+        if !report.changedPaths.isEmpty {
+            lines.append("  Git changes: \(report.changedPaths.joined(separator: ", "))")
+        }
+        lines.append(contentsOf: report.warnings.map { "  Warning: \($0)" })
+        return lines.joined(separator: "\n") + "\n\n"
     }
 
     nonisolated static func renderFeatureAdoptReport(

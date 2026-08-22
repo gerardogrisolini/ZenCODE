@@ -12,6 +12,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- Builder now exposes `feature.promote`: generated non-adopted Swift features can be
+  copied transactionally into a branch of a ZenCODE Git checkout. Promotion
+  performs validate/build/`--list-tools` preflight, excludes Builder manifests,
+  build state, Git metadata, and symlinks, writes `feature-distribution.json`,
+  updates declarative/Swift catalogs, and never commits or pushes.
 - Setup gained a **Data management** subsection grouping backup export,
   backup import, and the existing remote-configuration reset (removed from
   the main menu). Export writes the whole support directory — hidden files

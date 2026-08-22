@@ -1,0 +1,108 @@
+{
+  "features" : [
+    {
+      "description" : "Search Google and visit pages using a real Chrome browser.",
+      "discoversToolsAtRuntime" : true,
+      "id" : "browser-tools",
+      "invocationTimeoutSeconds" : 180,
+      "isInstalledOnLinux" : true,
+      "productName" : "browser-tools-feature",
+      "sourceRelativePath" : "Sources/Features/BrowserTools",
+      "toolNamePrefixes" : [
+        "browser."
+      ]
+    },
+    {
+      "description" : "Control the local macOS desktop: system and window state, PNG screenshots, pointer, keyboard, clipboard, and app management.",
+      "discoversToolsAtRuntime" : true,
+      "id" : "desktop-tools",
+      "invocationTimeoutSeconds" : 180,
+      "isInstalledOnLinux" : false,
+      "productName" : "desktop-tools-feature",
+      "sourceRelativePath" : "Sources/Features/DesktopTools",
+      "toolNamePrefixes" : [
+        "desktop."
+      ]
+    },
+    {
+      "description" : "Inspect Figma files, frames, and design data.",
+      "discoversToolsAtRuntime" : true,
+      "id" : "figma-tools",
+      "isInstalledOnLinux" : false,
+      "productName" : "figma-tools-feature",
+      "sourceRelativePath" : "Sources/Features/FigmaTools",
+      "toolNamePrefixes" : [
+        "figma."
+      ]
+    },
+    {
+      "description" : "Run Git operations: status, diff, commit, branch, log, and more.",
+      "discoversToolsAtRuntime" : true,
+      "id" : "git-tools",
+      "isInstalledOnLinux" : true,
+      "productName" : "git-tools-feature",
+      "sourceRelativePath" : "Sources/Features/GitTools",
+      "toolNamePrefixes" : [
+        "git."
+      ]
+    },
+    {
+      "description" : "Query and manage Jira issues and projects.",
+      "discoversToolsAtRuntime" : true,
+      "id" : "jira-tools",
+      "invocationTimeoutSeconds" : 660,
+      "isInstalledOnLinux" : true,
+      "productName" : "jira-tools-feature",
+      "sourceRelativePath" : "Sources/Features/JiraTools",
+      "toolNamePrefixes" : [
+        "jira."
+      ]
+    },
+    {
+      "description" : "Find files by glob and search file contents with grep.",
+      "id" : "search-tools",
+      "isInstalledOnLinux" : true,
+      "productName" : "search-tools-feature",
+      "sourceRelativePath" : "Sources/Features/SearchTools"
+    },
+    {
+      "description" : "Build, test, run, and inspect SwiftPM packages.",
+      "discoversToolsAtRuntime" : true,
+      "id" : "swift-tools",
+      "invocationTimeoutSeconds" : 3660,
+      "isInstalledOnLinux" : true,
+      "productName" : "swift-tools-feature",
+      "sourceRelativePath" : "Sources/Features/SwiftTools",
+      "toolNamePrefixes" : [
+        "swift."
+      ]
+    },
+    {
+      "description" : "Search the web and fetch URLs as text.",
+      "discoversToolsAtRuntime" : true,
+      "id" : "web-tools",
+      "invocationTimeoutSeconds" : 180,
+      "isInstalledOnLinux" : true,
+      "productName" : "web-tools-feature",
+      "sourceRelativePath" : "Sources/Features/WebTools",
+      "toolNamePrefixes" : [
+        "web."
+      ]
+    },
+    {
+      "description" : "Build, test, preview, and inspect Xcode projects.",
+      "discoversToolsAtRuntime" : true,
+      "id" : "xcode-tools",
+      "invocationTimeoutSeconds" : 3660,
+      "isInstalledOnLinux" : false,
+      "productName" : "xcode-tools-feature",
+      "sourceRelativePath" : "Sources/Features/XcodeTools",
+      "supportsPersistentSession" : true,
+      "toolNamePrefixes" : [
+        "xcode.",
+        "Xcode"
+      ]
+    }
+  ],
+  "schemaVersion" : 1
+}

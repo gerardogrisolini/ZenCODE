@@ -86,6 +86,9 @@ public enum SwiftFeatureStateStore {
 
 public enum SwiftFeatureRegistry {
     public static let manifestFilename = "feature.json"
+    /// Source packages promoted into ZenCODE carry distribution metadata rather
+    /// than the Builder-only runtime manifest.
+    public static let distributionManifestFilename = "feature-distribution.json"
 
     public static func appFeatureRootURL(
         fileManager: FileManager = .default

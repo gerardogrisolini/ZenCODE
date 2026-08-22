@@ -1,0 +1,15 @@
+{
+  "description": "Inspect Figma files, frames, and design data.",
+  "discoversToolsAtRuntime": true,
+  "distributionSchemaVersion": 1,
+  "id": "figma-tools",
+  "isInstalledOnLinux": false,
+  "platforms": [
+    "macOS"
+  ],
+  "productName": "figma-tools-feature",
+  "sourceRelativePath": "Sources/Features/FigmaTools",
+  "toolNamePrefixes": [
+    "figma."
+  ]
+}

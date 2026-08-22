@@ -85,9 +85,76 @@ extension TerminalChat {
                 ),
                 requirements: requirements
             )
+        case "promote":
+            guard let id = await resolveFeatureIDOrReport(action: action, rawID: tokens.first) else {
+                return .none
+            }
+            var arguments: [String: Any] = ["id": id]
+            let remainder = Array(tokens.dropFirst())
+            var index = 0
+            while index < remainder.count {
+                let token = remainder[index]
+                switch token {
+                case "--repository", "--repository-path", "--checkout", "--checkout-path":
+                    guard index + 1 < remainder.count else {
+                        await writeFailureMessage("ZenCODE: /feature promote requires a path after \(token).\n")
+                        return .none
+                    }
+                    arguments["repository"] = remainder[index + 1]
+                    index += 2
+                case "--overwrite", "--replace":
+                    arguments["overwrite"] = true
+                    index += 1
+                case "--no-build":
+                    arguments["build"] = false
+                    index += 1
+                case "--linux":
+                    arguments["linux"] = true
+                    index += 1
+                case "--no-linux":
+                    arguments["linux"] = false
+                    index += 1
+                default:
+                    await writeFailureMessage("ZenCODE: unknown /feature promote option '\(token)'.\n")
+                    return .none
+                }
+            }
+            guard arguments["linux"] != nil else {
+                await writeFailureMessage(
+                    "ZenCODE: /feature promote requires an explicit --linux or --no-linux decision.\n"
+                )
+                return .none
+            }
+            if stdinIsTerminal {
+                guard await promptFeatureYesNo(
+                    "Promote '\(id)' into the ZenCODE Git checkout? This writes package and catalog files but never commits or pushes.",
+                    defaultValue: false
+                ) == true else {
+                    await writeSystemMessage("Feature promotion cancelled.\n")
+                    return .none
+                }
+            }
+            let didSucceed = await runFeatureManagementTool(
+                name: "feature.promote",
+                arguments: arguments
+            )
+            if didSucceed {
+                await updateCurrentSessionToolOptions(discoverExternalTools: false)
+                await printFeatureList()
+            }
+            return .none
         case "enable", "disable", "delete", "build", "validate":
             guard let id = await resolveFeatureIDOrReport(action: action, rawID: tokens.first) else {
                 return .none
+            }
+            if action == "delete", stdinIsTerminal {
+                guard await promptFeatureYesNo(
+                    "Delete generated feature '\(id)' permanently?",
+                    defaultValue: false
+                ) == true else {
+                    await writeSystemMessage("Feature deletion cancelled.\n")
+                    return .none
+                }
             }
             let didSucceed: Bool
             switch action {

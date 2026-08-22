@@ -46,6 +46,7 @@ let targets: [Target] = [
     .target(
         name: "ZenPackageMetadata",
         dependencies: [],
+        resources: [.copy("feature-catalog.json")],
         swiftSettings: memberImportVisibilitySettings
     ),
     .target(

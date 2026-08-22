@@ -1,0 +1,18 @@
+{
+  "description": "Build, test, preview, and inspect Xcode projects.",
+  "discoversToolsAtRuntime": true,
+  "distributionSchemaVersion": 1,
+  "id": "xcode-tools",
+  "invocationTimeoutSeconds": 3660,
+  "isInstalledOnLinux": false,
+  "platforms": [
+    "macOS"
+  ],
+  "productName": "xcode-tools-feature",
+  "sourceRelativePath": "Sources/Features/XcodeTools",
+  "supportsPersistentSession": true,
+  "toolNamePrefixes": [
+    "xcode.",
+    "Xcode"
+  ]
+}

@@ -24,6 +24,7 @@ Switching agents resets the conversation so the Builder system prompt and intrin
 /feature validate <id|name|#>
 /feature reload              # manual refresh after external changes/discovery
 /feature delete <id|name|#>  # generated packages or local bundled copies only
+/feature promote <id|name|#> (--linux|--no-linux) [--repository path] [--overwrite]
 ```
 
 ## Creating A Feature
@@ -81,9 +82,18 @@ requested and the initial build succeeds, the bridge is also selected for the
 current session. If the initial build needs a Builder repair, automatic
 selection is not claimed: after the repair, use `/tools` explicitly.
 
-After editing a feature, repeat validate → build. A successful `feature.build`
-already reloads the feature runtime. Use `/feature reload` only after external
-file changes or when runtime-discovered tools need to be refreshed.
+After editing a generated package and running validate → build, use
+`/feature promote <id> --linux --repository /path/to/ZenCODE` to prepare a source
+checkout contribution. Promotion requires a non-detached Git branch, runs a
+build and `--list-tools` preflight, copies only source/package files into
+`Sources/Features/<PascalCaseId>`, writes `feature-distribution.json`, and
+updates the catalogs transactionally. `feature.json`, build products, symlinks,
+and Git metadata are never copied; `Package.resolved` is preserved so standalone
+CI can resolve from an immutable lockfile. The command only changes the
+working tree; it never commits, pushes, or creates a pull request. Unrelated
+working-tree changes are allowed, but controlled package/catalog paths must be
+clean (or explicitly replaced with `--overwrite`).
+
 
 ## Enabling vs Exposing
 

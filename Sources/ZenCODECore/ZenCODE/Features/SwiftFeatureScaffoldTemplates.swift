@@ -245,6 +245,10 @@ extension SwiftFeatureRuntime {
 
         import PackageDescription
 
+        let memberImportVisibilitySettings: [SwiftSetting] = [
+            .enableUpcomingFeature("MemberImportVisibility")
+        ]
+
         let package = Package(
             name: "\(productName)",
             platforms: [
@@ -257,6 +261,7 @@ extension SwiftFeatureRuntime {
                 )
             ],
             dependencies: [
+                // zencode:package-path
                 .package(path: \(swiftStringLiteral(packagePath)))
             ],
             targets: [
@@ -265,7 +270,8 @@ extension SwiftFeatureRuntime {
                     dependencies: [
                         .product(name: "FeatureKit", package: "ZenCODE"),
                         .product(name: "ToolCore", package: "ZenCODE")\(mcpBridgeDependency)
-                    ]
+                    ],
+                    swiftSettings: memberImportVisibilitySettings
                 )
             ]
         )

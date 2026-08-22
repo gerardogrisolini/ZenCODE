@@ -22,7 +22,8 @@ extension SwiftFeatureRuntime {
                 "description": "Echoes the provided text. Replace this implementation with the generated feature logic.",
                 "inputSchema": ["type": "object", "properties": ["text": ["type": "string"]], "required": ["text"]],
                 "presentation": ["title": "Echo", "action": "Echo", "kind": "execute", "target": ["source": "arguments", "keyPaths": ["text"], "format": "text"], "metadata": [], "sections": []]
-            ]]
+            ]],
+            promotionReady: true
         )
     }
 
@@ -35,7 +36,8 @@ extension SwiftFeatureRuntime {
     ) throws -> String {
         try renderedManifest(
             id: id, displayName: displayName, description: description, enabled: enabled,
-            toolNamePrefixes: [toolPrefix], tools: [], discoversToolsAtRuntime: true
+            toolNamePrefixes: [toolPrefix], tools: [], discoversToolsAtRuntime: true,
+            promotionReady: true
         )
     }
 
@@ -46,7 +48,8 @@ extension SwiftFeatureRuntime {
         enabled: Bool,
         toolNamePrefixes: [String],
         tools: [[String: Any]],
-        discoversToolsAtRuntime: Bool = false
+        discoversToolsAtRuntime: Bool = false,
+        promotionReady: Bool = false
     ) throws -> String {
         var object: [String: Any] = [
             "schemaVersion": SwiftFeatureManifest.currentSchemaVersion,
@@ -54,7 +57,7 @@ extension SwiftFeatureRuntime {
             "enabled": enabled, "executable": ".build/release/\(id)",
             "toolNamePrefixes": toolNamePrefixes,
             "build": ["system": "swiftpm", "packagePath": ".", "product": id, "configuration": "release", "executablePath": ".build/release/\(id)"],
-            "generated": ["by": "ZenCODE", "createdAt": ISO8601DateFormatter().string(from: Date())],
+            "generated": ["by": "ZenCODE", "createdAt": ISO8601DateFormatter().string(from: Date()), "promotionReady": promotionReady],
             "tools": tools
         ]
         if discoversToolsAtRuntime {

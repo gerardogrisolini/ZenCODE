@@ -1,0 +1,12 @@
+{
+  "description": "Find files by glob and search file contents with grep.",
+  "distributionSchemaVersion": 1,
+  "id": "search-tools",
+  "isInstalledOnLinux": true,
+  "platforms": [
+    "macOS",
+    "linux"
+  ],
+  "productName": "search-tools-feature",
+  "sourceRelativePath": "Sources/Features/SearchTools"
+}

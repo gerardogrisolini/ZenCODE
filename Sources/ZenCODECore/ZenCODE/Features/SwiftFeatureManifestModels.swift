@@ -317,6 +317,9 @@ public struct SwiftFeatureGeneratedManifest: Codable, Sendable {
     public let prompt: String?
     public let createdAt: String?
     public let adoptedFrom: String?
+    /// True for Builder scaffolds that contain the package-path marker and can
+    /// be copied into a ZenCODE source checkout by `feature.promote`.
+    public let promotionReady: Bool
 
     private enum CodingKeys: String, CodingKey {
         case by
@@ -325,18 +328,22 @@ public struct SwiftFeatureGeneratedManifest: Codable, Sendable {
         case created_at
         case adoptedFrom
         case adopted_from
+        case promotionReady
+        case promotion_ready
     }
 
     public init(
         by: String? = nil,
         prompt: String? = nil,
         createdAt: String? = nil,
-        adoptedFrom: String? = nil
+        adoptedFrom: String? = nil,
+        promotionReady: Bool = false
     ) {
         self.by = by?.nilIfBlank
         self.prompt = prompt?.nilIfBlank
         self.createdAt = createdAt?.nilIfBlank
         self.adoptedFrom = adoptedFrom?.nilIfBlank
+        self.promotionReady = promotionReady
     }
 
     public init(from decoder: Decoder) throws {
@@ -347,7 +354,10 @@ public struct SwiftFeatureGeneratedManifest: Codable, Sendable {
             createdAt: try container.decodeIfPresent(String.self, forKey: .createdAt)
                 ?? container.decodeIfPresent(String.self, forKey: .created_at),
             adoptedFrom: try container.decodeIfPresent(String.self, forKey: .adoptedFrom)
-                ?? container.decodeIfPresent(String.self, forKey: .adopted_from)
+                ?? container.decodeIfPresent(String.self, forKey: .adopted_from),
+            promotionReady: try container.decodeIfPresent(Bool.self, forKey: .promotionReady)
+                ?? container.decodeIfPresent(Bool.self, forKey: .promotion_ready)
+                ?? false
         )
     }
 
@@ -357,8 +367,16 @@ public struct SwiftFeatureGeneratedManifest: Codable, Sendable {
         try container.encodeIfPresent(prompt, forKey: .prompt)
         try container.encodeIfPresent(createdAt, forKey: .createdAt)
         try container.encodeIfPresent(adoptedFrom, forKey: .adoptedFrom)
+        if promotionReady {
+            try container.encode(promotionReady, forKey: .promotionReady)
+        }
+    }
+
+    public var promotable: Bool {
+        promotionReady
     }
 }
+
 
 public struct SwiftFeatureToolManifest: Codable, Sendable {
     public let name: String
@@ -660,6 +678,70 @@ public struct SwiftFeatureAdoptReport: Codable, Sendable {
     public let copied: Bool
 }
 
+public struct SwiftFeaturePromotionReport: Codable, Sendable {
+    public let ok: Bool
+    public let id: String
+    public let sourcePath: String
+    public let checkoutPath: String
+    public let gitRoot: String
+    public let gitBranch: String?
+    public let destinationPath: String
+    public let manifestPath: String
+    public let packagePath: String
+    public let catalogPaths: [String]
+    public let changedPaths: [String]
+    public let overwritten: Bool
+    public let built: Bool
+    public let listedTools: [String]
+    public let rolledBack: Bool
+    public let validation: SwiftFeatureValidationReport
+    public let build: SwiftFeatureBuildReport?
+    public let warnings: [String]
+
+    public init(
+        ok: Bool = true,
+        id: String,
+        sourcePath: String,
+        checkoutPath: String,
+        gitRoot: String,
+        gitBranch: String?,
+        destinationPath: String,
+        manifestPath: String,
+        packagePath: String,
+        catalogPaths: [String],
+        changedPaths: [String],
+        overwritten: Bool,
+        built: Bool,
+        listedTools: [String] = [],
+        rolledBack: Bool = false,
+        validation: SwiftFeatureValidationReport,
+        build: SwiftFeatureBuildReport?,
+        warnings: [String] = []
+    ) {
+        self.ok = ok
+        self.id = id
+        self.sourcePath = sourcePath
+        self.checkoutPath = checkoutPath
+        self.gitRoot = gitRoot
+        self.gitBranch = gitBranch
+        self.destinationPath = destinationPath
+        self.manifestPath = manifestPath
+        self.packagePath = packagePath
+        self.catalogPaths = catalogPaths
+        self.changedPaths = changedPaths
+        self.overwritten = overwritten
+        self.built = built
+        self.listedTools = listedTools
+        self.rolledBack = rolledBack
+        self.validation = validation
+        self.build = build
+        self.warnings = warnings
+    }
+
+    /// Compatibility alias used by clients that call the destination the
+    /// promoted path.
+    public var promotedPath: String { destinationPath }
+}
 public struct SwiftFeatureEditReport: Codable, Sendable {
     public let ok: Bool
     public let id: String
