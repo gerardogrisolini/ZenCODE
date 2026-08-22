@@ -62,6 +62,49 @@ Creates files under `~/.zencode/`:
 - `features/` — generated Builder packages and installed optional feature packages.
 - `source/` — persistent ZenCODE checkout retained by the platform installer for later optional-feature builds.
 
+## Data Management (Backup Export/Import)
+
+The **Data management** entry of `/setup` (also available from first-run
+setup, with no models configured yet) moves the whole `~/.zencode/`
+directory between machines in one step:
+
+- **Export backup** writes a single compressed `.tar.gz` archive containing
+  every file under the support directory — including hidden files and
+  nested directories such as `memory/`, `sessions/`, and `features/`.
+  Temporary coordination artifacts of the export itself are excluded, and
+  the archive is never added to itself when saved inside `~/.zencode/`.
+  The export runs under the support directory's coordination lock, so the
+  archive is a coherent snapshot of one moment in time rather than a mix
+  of states captured while settings were being written. If the support
+  directory contains a symbolic link, the export fails with an explicit
+  error instead of silently skipping it — a backup that silently drops a
+  link is worse than one that refuses to lie. Overwriting an existing
+  archive keeps the old one until the new export is complete; a failure
+  during the replacement restores the previous archive.
+- **Import backup** validates the archive completely *before* touching any
+  data — structure, version, per-file size and SHA-256 checksum, path
+  traversal and symbolic-link rejection, and entry-count/size limits — and
+  only then replaces the support directory in one atomic rename. The
+  current data is moved aside and restored automatically if anything fails,
+  so a failed or rejected import never leaves a half-replaced directory.
+  The replacement also preserves the coordination lock file's inode, so
+  concurrent processes keep a single shared exclusion boundary before,
+  during, and after the swap.
+- **Reset remote configuration** is the same reset previously found in the
+  main setup menu, now grouped here with the other data operations.
+- **Back** returns to the main setup menu. Cancelling any prompt leaves
+  the data untouched.
+
+Backups are **not encrypted**: they contain provider API keys, OAuth
+tokens, and permissions in plain text, exactly as stored on disk. Keep the
+archive private, and prefer a secure channel when moving it to another
+machine. After a successful import, setup restarts so the imported
+configuration is read from scratch.
+
+The support directory actually used — including any `ZENCODE_SUPPORT_DIRECTORY`
+override — is the one exported and imported, and every prompt prints the
+exact paths involved.
+
 ## Command Line Options
 
 ```text

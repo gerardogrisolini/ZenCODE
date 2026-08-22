@@ -92,6 +92,8 @@ public enum SetupOutcome: Sendable, Equatable {
     case cancelled
     /// Remote configuration was reset to its defaults.
     case reset
+    /// The support directory was replaced by an imported backup.
+    case dataReplaced
 }
 
 /// Pure, terminal-free state machine for a setup run.
@@ -167,6 +169,7 @@ struct SetupSession {
 enum SetupSection: Equatable, Hashable {
     case providersAndModels, defaultModelSettings, defaultModel, defaultThinking
     case telegram, voice, features, agents, agentModels, responseLanguage, memoryEmbedding
+    case dataManagement
     case resetRemoteConfiguration, finish, cancel
 
     private struct Descriptor {
@@ -183,11 +186,12 @@ enum SetupSection: Equatable, Hashable {
         .defaultThinking: .init(title: "Default thinking", category: .recommended, requiresConfiguredModels: true, aliases: ["thinking", "default thinking", "reasoning", "thinking default"]),
         .telegram: .init(title: "Telegram remote control", category: .optional, requiresConfiguredModels: true, aliases: ["telegram", "remote control", "bot"]),
         .voice: .init(title: "Voice tools", category: .optional, requiresConfiguredModels: true, aliases: ["voice", "voice transcription", "voice messages", "speech"]),
-        .features: .init(title: "Features", category: .optional, requiresConfiguredModels: false, aliases: ["features", "feature", "tools", "swift features", "enable features", "disable features"]),
+        .features: .init(title: "Features", category: .recommended, requiresConfiguredModels: false, aliases: ["features", "feature", "tools", "swift features", "enable features", "disable features"]),
         .agents: .init(title: "Agents", category: .recommended, requiresConfiguredModels: false, aliases: ["agents", "agent", "profiles", "agent profiles"]),
         .agentModels: .init(title: "Agent model bindings", category: .recommended, requiresConfiguredModels: true, aliases: ["agent models", "agent model bindings", "agent bindings", "agent capability", "models", "capability", "agent models & capability"]),
         .responseLanguage: .init(title: "Response language", category: .recommended, requiresConfiguredModels: false, aliases: ["language", "response language", "locale", "response_language"]),
-        .memoryEmbedding: .init(title: "Memory embeddings", category: .optional, requiresConfiguredModels: false, aliases: ["memory embeddings", "memory embedding", "embeddings", "embedding", "bm25"]),
+        .memoryEmbedding: .init(title: "Memory embeddings", category: .recommended, requiresConfiguredModels: false, aliases: ["memory embeddings", "memory embedding", "embeddings", "embedding", "bm25"]),
+        .dataManagement: .init(title: "Data management", category: .optional, requiresConfiguredModels: false, aliases: ["data", "data management", "backup", "backups", "export", "import", "transfer", "manage data"]),
         .resetRemoteConfiguration: .init(title: "Reset remote configuration", category: .optional, requiresConfiguredModels: false, aliases: ["reset", "reset remote configuration", "reset configuration"]),
         .finish: .init(title: "Finish setup", category: .finish, requiresConfiguredModels: false, aliases: ["finish", "done", "exit", "quit", "end", "stop"]),
         .cancel: .init(title: "Cancel without saving", category: .finish, requiresConfiguredModels: false, aliases: ["cancel", "abort", "discard", "quit without saving"])

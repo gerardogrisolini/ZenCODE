@@ -97,6 +97,11 @@ struct ZenCODEMain {
                 // the same process and immediately offer setup again; if the next
                 // run is cancelled, the validity check above ends the app cleanly.
                 continue
+            case .dataReplaced:
+                // The imported backup replaced the support directory. Its
+                // configuration must be validated from scratch, so offer
+                // setup again exactly like after a reset.
+                continue
             }
         }
     }

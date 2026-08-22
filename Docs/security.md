@@ -40,6 +40,24 @@ Failures to apply required POSIX permissions cause the corresponding sensitive
 manifest operation to fail rather than silently accepting a known weak mode.
 No credential values are logged by this layer.
 
+## Backup archives
+
+The setup **Data management** export writes the entire support directory to a
+single gzip-compressed tar archive. That archive is subject to the same plaintext limitation
+described above: it contains provider API keys, tokens, and permissions
+exactly as stored on disk, and gzip compression is not encryption. Export and
+import prompts state this explicitly and print every path involved. Imported
+payload files are recreated at mode `0600`, symlink entries are rejected, and
+the import validates every entry's size and SHA-256 checksum before the
+support directory is atomically replaced, with automatic restoration of the
+previous directory on any failure. The export refuses to archive a support
+directory that contains a symbolic link rather than silently skipping it, and
+both export and import run under the shared `.manifests.lock` boundary; the
+import's directory swap hard-links that lock so its inode — and therefore
+cross-process mutual exclusion — survives the rename. Manifest size sums are
+computed with overflow-checked arithmetic, so a crafted manifest cannot wrap
+a `UInt64` total to slip under the size limit.
+
 ## Scope and limits
 
 This is filesystem hardening, not encryption and not an operating-system

@@ -10,6 +10,22 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Setup gained a **Data management** subsection grouping backup export,
+  backup import, and the existing remote-configuration reset (removed from
+  the main menu). Export writes the whole support directory — hidden files
+  and nested directories included — to a single compressed tar.gz archive;
+  Import validates it completely (per-file SHA-256, traversal and symlink
+  rejection, entry limits) before atomically replacing the support
+  directory, with automatic rollback on failure. Backups are unencrypted
+  and contain provider credentials.
+  Export fails explicitly when the support directory contains a symbolic
+  link, runs under the shared coordination lock for a coherent snapshot,
+  and replaces an existing archive rollbackably. The import swap preserves
+  the coordination lock's inode so cross-process exclusion survives the
+  rename, and manifest totals use overflow-checked arithmetic.
+
 ### Changed
 
 - Renamed the delegated task-graph command from `/workflow` to `/goal`; the old
@@ -19,6 +35,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   and inserts it into the agent context, but it no longer creates, regenerates,
   materializes, or rewrites the file. `AGENTS.md` is no longer ignored by the
   repository so projects may version it intentionally.
+- The setup menu moved **Features** and **Memory embeddings** from the Optional
+  group to the Recommended group, so the recommended configuration steps are
+  shown together before the optional integration toggles.
 
 ### Removed
 

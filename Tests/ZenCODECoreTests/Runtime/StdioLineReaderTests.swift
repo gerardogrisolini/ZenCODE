@@ -232,23 +232,29 @@ struct StdioLineReaderTests {
         producer.start()
 
         let token = TerminalBlockingReadToken()
-        async let drained = TerminalBlockingRead.run(token: token) { token in
+        let drained = await TerminalBlockingRead.run(token: token) { token in
             reader.drainBufferedLines(
                 waitMilliseconds: 80,
-                shouldCancel: token.isCancelled
+                shouldCancel: {
+                    // Cancel from the callback executed by the drain itself.
+                    // Observing `pollWaitCount` from the test task left a race:
+                    // the drain could finish between that observation and
+                    // `token.cancel()`, legitimately publishing its result.
+                    // Here the fourth completed poll and cancellation share the
+                    // blocking thread, so cancellation is guaranteed to land
+                    // while the continuous-input loop is still active.
+                    if reader.pollWaitCount > 3 {
+                        token.cancel()
+                    }
+                    return token.isCancelled()
+                }
             )
         }
 
-        // Several poll waits mean the drain is looping on a producer that keeps
-        // feeding it, so the cancellation below lands *inside* that loop rather
-        // than before it starts.
-        await terminalWaitUntil { reader.pollWaitCount > 3 }
-        token.cancel()
-
-        // Cancelled, so the bridge discards the partial paste; what matters is
-        // that the await returns at all, proving the drain observed the token
-        // while input kept arriving.
-        #expect(await drained == nil)
+        // Cancelled, so the bridge discards the partial paste; returning proves
+        // the drain observed cancellation while input kept arriving.
+        #expect(reader.pollWaitCount > 3)
+        #expect(drained == nil)
 
         shouldKeepWriting.set(false)
         // The descriptors stay open until the producer has left its write loop.

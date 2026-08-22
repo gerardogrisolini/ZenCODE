@@ -164,12 +164,12 @@ struct MemoryEmbeddingSetupTests {
     }
 
     @Test
-    func memoryEmbeddingSetupSectionIsOptionalAndAvailableWithoutModels() {
+    func memoryEmbeddingSetupSectionIsRecommendedAndAvailableWithoutModels() {
         let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
 
         #expect(options.contains { $0.section == .memoryEmbedding })
         #expect(!SetupSection.memoryEmbedding.requiresConfiguredModels)
-        #expect(SetupSection.memoryEmbedding.category == .optional)
+        #expect(SetupSection.memoryEmbedding.category == .recommended)
         #expect(SetupSection.memoryEmbedding.title == "Memory embeddings")
     }
 

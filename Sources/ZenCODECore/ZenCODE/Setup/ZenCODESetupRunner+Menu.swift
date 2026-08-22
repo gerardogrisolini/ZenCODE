@@ -108,7 +108,7 @@ extension ZenCODESetupRunner {
             return setupStatusMarker(featuresAreEnabled(), optional: true)
         case .memoryEmbedding:
             return setupStatusMarker(manifest?.memoryEmbedding != nil, optional: true)
-        case .defaultModel, .defaultThinking, .resetRemoteConfiguration, .finish, .cancel, .responseLanguage:
+        case .defaultModel, .defaultThinking, .dataManagement, .resetRemoteConfiguration, .finish, .cancel, .responseLanguage:
             return nil
         }
     }
@@ -134,6 +134,18 @@ extension ZenCODESetupRunner {
                 detail: agentModelsSetupDetail()
             ),
             SetupSectionOption(
+                section: .responseLanguage,
+                detail: responseLanguageSetupDetail(manifest)
+            ),
+            SetupSectionOption(
+                section: .features,
+                detail: featuresSetupDetail()
+            ),
+            SetupSectionOption(
+                section: .memoryEmbedding,
+                detail: memoryEmbeddingSetupDetail(manifest)
+            ),
+            SetupSectionOption(
                 section: .telegram,
                 detail: manifest?.telegram?.isEnabled == true ? "enabled" : "disabled"
             ),
@@ -142,20 +154,8 @@ extension ZenCODESetupRunner {
                 detail: manifest?.voice?.isConfigured == true ? "enabled" : "disabled"
             ),
             SetupSectionOption(
-                section: .features,
-                detail: featuresSetupDetail()
-            ),
-            SetupSectionOption(
-                section: .responseLanguage,
-                detail: responseLanguageSetupDetail(manifest)
-            ),
-            SetupSectionOption(
-                section: .memoryEmbedding,
-                detail: memoryEmbeddingSetupDetail(manifest)
-            ),
-            SetupSectionOption(
-                section: .resetRemoteConfiguration,
-                detail: "remove provider settings and ZenCODE support files"
+                section: .dataManagement,
+                detail: "export, import, and reset ZenCODE data"
             ),
             SetupSectionOption(section: .finish, detail: "save and exit"),
             SetupSectionOption(section: .cancel, detail: "discard changes")

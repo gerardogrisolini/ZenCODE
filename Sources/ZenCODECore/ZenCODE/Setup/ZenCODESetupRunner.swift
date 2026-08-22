@@ -83,6 +83,25 @@ public enum ZenCODESetupRunner {
                 printCompletion()
                 return .reset
             }
+            if section == .dataManagement {
+                switch try await runDataManagementMenu() {
+                case .dataReplaced:
+                    AgentOutput.standardError.writeString(
+                        """
+
+                        Configuration replaced by the imported backup.
+
+                        """
+                    )
+                    printCompletion()
+                    return .dataReplaced
+                case .reset:
+                    printCompletion()
+                    return .reset
+                case .exportCompleted, .back:
+                    continue
+                }
+            }
 
             let result = try await configureSetupSection(
                 section,
@@ -254,7 +273,7 @@ public enum ZenCODESetupRunner {
                 manifest: currentManifest,
                 agentProfiles: agentProfiles
             )
-        case .resetRemoteConfiguration, .finish, .cancel:
+        case .dataManagement, .resetRemoteConfiguration, .finish, .cancel:
             return SetupSectionConfigurationResult(manifest: manifest)
         }
     }

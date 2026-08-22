@@ -62,6 +62,10 @@ let targets: [Target] = [
             .product(name: "NIOPosix", package: "swift-nio"),
             .product(name: "NIOWebSocket", package: "swift-nio"),
             .product(name: "NIOSSL", package: "swift-nio-ssl"),
+            // The support-directory backup archive (setup "Data management")
+            // is a tar.gz produced through the system tar binary via Process.
+            // No third-party archive dependency is required: tar + gzip ship
+            // with macOS (bsdtar) and the Linux CI images (GNU tar).
             "FeatureKit",
             "ToolCore",
             "FeatureMCPBridgeKit",

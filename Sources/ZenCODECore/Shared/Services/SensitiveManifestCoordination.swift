@@ -31,8 +31,18 @@ enum SensitiveManifestCoordinationError: LocalizedError {
 /// writers. Per-file writes remain atomic; this lock prevents coordinated setup
 /// commits from interleaving with ordinary credential/profile updates.
 enum SensitiveManifestCoordination {
-    private static let lockFilename = ".manifests.lock"
-    private static let journalFilename = ".manifests.transaction.json"
+    static let lockFilename = ".manifests.lock"
+    static let journalFilename = ".manifests.transaction.json"
+
+    /// URL of the exclusive lock file inside a support directory.
+    static func lockFileURL(in directoryURL: URL) -> URL {
+        directoryURL.standardizedFileURL.appendingPathComponent(lockFilename)
+    }
+
+    /// URL of the transaction journal inside a support directory.
+    static func journalFileURL(in directoryURL: URL) -> URL {
+        directoryURL.standardizedFileURL.appendingPathComponent(journalFilename)
+    }
 
     struct Change: Sendable {
         let url: URL
