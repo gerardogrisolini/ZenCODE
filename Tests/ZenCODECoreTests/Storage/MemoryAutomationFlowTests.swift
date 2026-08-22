@@ -214,25 +214,33 @@ struct MemoryAutomationFlowTests {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
         try await workspace.withIsolatedSupport {
-            let service = MemoryService()
-            _ = try await service.writeEntry(
-                content: """
-                Summary: frobnicator deploy procedure.
-                State: the quantum flange is calibrated before every deploy.
-                Next: run the deploy script.
-                """,
-                workspaceRootURL: workspace.workspaceURL
-            )
+            // This is the positive path, so it must not inherit a developer or
+            // CI process setting that deliberately disables recall (or shrinks
+            // its deadline for a degradation-path test).
+            try await scopedEnv([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1",
+                MemoryAutomationSettings.environmentRecallTimeoutKey: nil
+            ]) {
+                let service = MemoryService()
+                _ = try await service.writeEntry(
+                    content: """
+                    Summary: frobnicator deploy procedure.
+                    State: the quantum flange is calibrated before every deploy.
+                    Next: run the deploy script.
+                    """,
+                    workspaceRootURL: workspace.workspaceURL
+                )
 
-            let block = await MemoryTurnCoordinator.shared.memoryBlock(
-                sessionID: "populated-\(UUID().uuidString)",
-                workspaceRootURL: workspace.workspaceURL,
-                prompt: "how do I calibrate the frobnicator for deploy"
-            )
-            let resolved = try #require(block)
-            #expect(resolved.contains("<project-memory>"))
-            #expect(resolved.contains("</project-memory>"))
-            #expect(resolved.contains("frobnicator"))
+                let block = await MemoryTurnCoordinator.shared.memoryBlock(
+                    sessionID: "populated-\(UUID().uuidString)",
+                    workspaceRootURL: workspace.workspaceURL,
+                    prompt: "how do I calibrate the frobnicator for deploy"
+                )
+                let resolved = try #require(block)
+                #expect(resolved.contains("<project-memory>"))
+                #expect(resolved.contains("</project-memory>"))
+                #expect(resolved.contains("frobnicator"))
+            }
         }
     }
 

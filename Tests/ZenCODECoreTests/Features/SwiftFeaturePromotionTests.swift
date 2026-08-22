@@ -307,7 +307,7 @@ struct SwiftFeaturePromotionTests {
         try runProcess(
             executable: URL(fileURLWithPath: "/usr/bin/env"),
             arguments: [
-                "swiftc", "-parse-as-library",
+                "swiftc",
                 repositoryRoot.appendingPathComponent("Scripts/GenerateFeatureCatalog.swift").path,
                 "-o", generator.path
             ],

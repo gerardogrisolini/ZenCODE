@@ -120,6 +120,13 @@ public actor ZenCODEACPBridge {
     /// cancelled the backend turn must also wait for this handler to finish,
     /// or its unwind can reach the wire after the close reply.
     private var promptHandlersInFlight: [String: Set<UUID>] = [:]
+
+    /// Returns the in-flight prompt tokens for the current session incarnation.
+    /// Callers that will suspend during teardown use this snapshot to avoid
+    /// draining handlers registered by a later session with the same ID.
+    func promptHandlerTokensSnapshot(sessionID: String) -> Set<UUID> {
+        promptHandlersInFlight[sessionID] ?? []
+    }
     /// Closes currently draining a specific set of prompt handlers. The set is
     /// captured when the close starts, so a session re-created with the same
     /// id mid-drain cannot extend the close's wait with an unrelated prompt.
@@ -339,8 +346,8 @@ public actor ZenCODEACPBridge {
         }
     }
 
-    /// Waits until the `session/prompt` handlers registered at call time have
-    /// all finished.
+    /// Waits until precisely `tokens`, captured by the closing incarnation,
+    /// have all finished.
     ///
     /// The close calls this *after* cancelling the backend turn: with the
     /// cancellation already delivered the handler is guaranteed to unwind (its
@@ -350,13 +357,22 @@ public actor ZenCODEACPBridge {
     /// `sendResultIfRequest` hops to the writer, `flushPromptUpdates` awaits
     /// the writer, and `refreshSessionStateIfAvailable` hops to the runner —
     /// none of which waits back on the bridge while the close is suspended.
-    /// The captured token set also keeps a session re-created mid-drain from
-    /// holding the close hostage for an unrelated, later prompt.
-    func waitForPromptHandlersToDrain(sessionID: String) async {
-        guard let tokens = promptHandlersInFlight[sessionID], !tokens.isEmpty else {
+    /// Supplying the snapshot explicitly is important: `session/close` has
+    /// suspending teardown work after it removes the session. A replacement
+    /// session with the same id may start a prompt during that work, but it is a
+    /// new incarnation and must not become part of the older close's drain.
+    func waitForPromptHandlersToDrain(sessionID: String, tokens: Set<UUID>) async {
+        guard !tokens.isEmpty else {
             return
         }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            // A captured handler may have completed while the close performed
+            // its teardown awaits. In that case it cannot wake a newly-added
+            // waiter, so complete the drain immediately rather than parking it.
+            guard !tokens.intersection(promptHandlersInFlight[sessionID] ?? []).isEmpty else {
+                continuation.resume()
+                return
+            }
             promptHandlerDrainWaiters[sessionID, default: []].append(
                 (tokens: tokens, continuation: continuation)
             )

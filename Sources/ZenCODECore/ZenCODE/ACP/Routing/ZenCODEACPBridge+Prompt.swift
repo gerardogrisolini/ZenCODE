@@ -370,6 +370,10 @@ extension ZenCODEACPBridge {
         // Drop the session before any suspension so a prompt finishing
         // concurrently cannot restore it through refreshSessionStateIfAvailable.
         let closedSession = sessions.removeValue(forKey: sessionID)
+        // Snapshot before the first suspension. Teardown below awaits several
+        // collaborators; a session recreated with this id during that window
+        // owns different prompt handlers and must not hold this close hostage.
+        let promptHandlersToDrain = promptHandlerTokensSnapshot(sessionID: sessionID)
         await permissionBroker.removeCachedDecisions(sessionID: sessionID)
         closedSession?.activePromptTask?.cancel()
         if let closedEpoch = closedSession?.epoch {
@@ -393,7 +397,10 @@ extension ZenCODEACPBridge {
         // guaranteed to finish, and it belongs on the wire strictly before this
         // close's own reply. The runner's `closeSession` below additionally
         // waits for the backend-side prompt tasks it owns.
-        await waitForPromptHandlersToDrain(sessionID: sessionID)
+        await waitForPromptHandlersToDrain(
+            sessionID: sessionID,
+            tokens: promptHandlersToDrain
+        )
         // Wait for the shared-chat renderer to go quiet before answering: after
         // this returns no further `session/update` can be emitted for a session
         // the host is closing.
