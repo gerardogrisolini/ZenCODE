@@ -17,6 +17,7 @@ public final class TerminalBlockingReadToken: Sendable {
     private struct State {
         var isCancelled = false
         var isResolved = false
+        var hasEnteredBlockingRead = false
     }
 
     private let state = Mutex(State())
@@ -35,6 +36,18 @@ public final class TerminalBlockingReadToken: Sendable {
     /// ``resolve(_:)``. Exposed for tests that pin the linearization point.
     var isResolved: Bool {
         state.withLock { $0.isResolved }
+    }
+
+    /// Records that the worker has reached the terminal read which may block.
+    /// Tests use this as the synchronization edge for cancellation latency: a
+    /// token can be published before its dispatch-queue worker has begun.
+    func markBlockingReadEntered() {
+        state.withLock { $0.hasEnteredBlockingRead = true }
+    }
+
+    /// `true` after the worker has reached a terminal read which may block.
+    var hasEnteredBlockingRead: Bool {
+        state.withLock { $0.hasEnteredBlockingRead }
     }
 
     /// Atomically decides what a finished blocking body may publish.

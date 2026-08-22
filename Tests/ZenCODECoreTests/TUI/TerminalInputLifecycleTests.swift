@@ -113,9 +113,12 @@ struct TerminalInputLifecycleTests {
                 receivedEvents.withLock { $0 += 1 }
             }
         }
-        // The loop publishes its token before entering the blocking read, so its
-        // presence is the happens-before edge this test needs.
-        await terminalWaitUntil { reader.withPanelLock { $0.panelReadToken != nil } }
+        // Token publication precedes dispatching the blocking worker. Wait for
+        // the worker's marker immediately before its raw read instead, so the
+        // latency below cannot include dispatch-queue scheduling time.
+        await terminalWaitUntil {
+            reader.withPanelLock { $0.panelReadToken?.hasEnteredBlockingRead == true }
+        }
 
         // `stopPanelInput` cancels this token before awaiting the loop task, so
         // teardown does not wait out the pending read window.
@@ -128,10 +131,9 @@ struct TerminalInputLifecycleTests {
         await loop.value
         let elapsed = start.duration(to: clock.now)
 
-        // Cancellation normally resolves on the next 50 ms poll slice. Keep a
-        // bounded UX regression check while allowing heavily oversubscribed Linux
-        // CI runners enough time to schedule the dedicated blocking-read queue.
-        #expect(elapsed < .seconds(5))
+        // Cancellation is observed by the 50 ms polling read. This generous
+        // margin covers a loaded test executor without hiding a stalled read.
+        #expect(elapsed < .seconds(1))
         // No spurious events are emitted while tearing down.
         #expect(receivedEvents.withLock { $0 } == 0)
     }

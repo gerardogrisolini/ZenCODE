@@ -834,7 +834,7 @@ extension SwiftFeatureRuntime {
         guard let targetStart = normalized.range(of: ".executableTarget(") else {
             throw DirectToolError.permissionDenied("\(packageURL.path) must declare an executableTarget.")
         }
-        let suffix = normalized[targetStart.upperBound...]
+        let suffix = String(normalized[targetStart.upperBound...])
         let targetPattern = #"\n(\s*)\](\n\s*)\)"#
         guard let expression = try? NSRegularExpression(pattern: targetPattern),
               let match = expression.firstMatch(

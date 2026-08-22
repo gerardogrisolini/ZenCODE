@@ -405,7 +405,14 @@ extension ZenCODEACPBridge {
         // this returns no further `session/update` can be emitted for a session
         // the host is closing.
         await stopSharedChatForwarding(sessionID: sessionID)
-        await sessionRunner.closeSession(id: sessionID)
+        // `AgentCoreSessionRunner` currently keys its state by session id, not
+        // ACP incarnation. If a `session/load` recreated this id while the old
+        // prompt wrapper was draining, closing the runner now would cancel the
+        // new prompt as well. The replacement owns the runner entry from this
+        // point, so only tear it down while this close still owns the id.
+        if sessions[sessionID] == nil || sessions[sessionID]?.epoch == closedSession?.epoch {
+            await sessionRunner.closeSession(id: sessionID)
+        }
         // Re-drop in case a racing handler re-created the entry while the
         // runner was closing the session.
         if let resurrected = sessions[sessionID],

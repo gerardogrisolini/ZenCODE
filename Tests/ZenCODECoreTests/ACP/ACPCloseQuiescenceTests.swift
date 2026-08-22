@@ -389,15 +389,13 @@ struct ACPCloseQuiescenceTests {
         _ = try? await promptTask.value
 
         // The close answered without waiting for the recreated prompt, whose
-        // reply may legitimately land after it.
+        // reply is independent and may arrive after it. Await the prompt task
+        // rather than polling a fixed number of executor yields: under a loaded
+        // runner, yields do not guarantee the recreated task has been scheduled.
+        _ = try await recreatedPromptTask.value
         _ = try #require(transport.responseIndex(id: 3))
         #expect(transport.responseIndex(id: 2, stopReason: "cancelled") != nil)
-        await Self.waitUntil { transport.responseIndex(id: 4) != nil }
         #expect(transport.responseIndex(id: 4) != nil)
-        _ = try? await recreatedPromptTask.value
-        #expect(transport.responseIndex(id: 2, stopReason: "cancelled") != nil)
-        #expect(transport.responseIndex(id: 4) != nil)
-        _ = try? await recreatedPromptTask.value
     }
 
     @Test

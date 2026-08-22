@@ -458,7 +458,11 @@ extension TerminalInteractiveLineReader {
     ) -> KeyReadResult? {
         while !token.isCancelled() {
             guard let result = TerminalConsentInputOwnership.withBackgroundRead({
-                reader.readKeyResult(
+                // The test synchronization point is deliberately immediately
+                // before the raw read: publishing the token alone happens
+                // before this dispatch-queue worker is scheduled.
+                token.markBlockingReadEntered()
+                return reader.readKeyResult(
                     pollTimeoutMilliseconds: TerminalInteractiveLineReader.cancellationPollTimeout
                 )
             }) else {
