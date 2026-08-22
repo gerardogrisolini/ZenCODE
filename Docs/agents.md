@@ -200,7 +200,7 @@ Write authority comes from the selected profile's configured tools:
   `tasks.cancel` remain restricted.
 - Every child receives the intrinsic `skills.list` and `skills.read` tools.
 
-`/plan`, `/review`, and `/workflow` all delegate with the selected profile's own
+`/plan`, `/review`, and `/goal` all delegate with the selected profile's own
 tools. Configure each profile with exactly the access required for its role.
 
 ### Model Selection
@@ -222,7 +222,7 @@ selects runnable work with `tasks.list`, and assigns delegated tasks by passing
 `taskID` to `agent.create` for atomic claims. A sub-agent joins a graph only at
 creation time; taskless agents are for single self-contained lookups.
 
-`/workflow <goal>` automates this pattern:
+`/goal <goal>` automates this pattern:
 
 1. It creates an active workflow graph.
 2. The current agent adds its task definitions with `tasks.create`, including a

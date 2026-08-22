@@ -41,6 +41,6 @@ Guides for using, extending, and maintaining ZenCODE. Start with the
 1. [why-zen.md](why-zen.md) — decide if ZenCODE fits your workflow.
 2. [zen.md](zen.md) — set up and drive the agent day to day.
 3. [agents.md](agents.md) and [bindings.md](bindings.md) — configure profiles and
-   delegation before using `/plan`, `/workflow`, or `/review`.
+   delegation before using `/plan`, `/goal`, or `/review`.
 4. The profile guide matching the work you delegate.
 5. [architecture.md](architecture.md) — before changing the codebase itself.

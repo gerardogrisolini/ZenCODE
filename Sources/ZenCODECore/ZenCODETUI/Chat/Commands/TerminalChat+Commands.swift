@@ -268,9 +268,9 @@ extension TerminalChat {
             requiresArgument: true
         ),
         TerminalChatCommandDescriptor(
-            command: "/workflow",
+            command: "/goal",
             summary: "plan and delegate all work to sub-agents",
-            help: "/workflow <goal> plans the work, creates a task graph, and delegates every task to the best-matching sub-agent. The current agent stays as coordinator and final reviewer.",
+            help: "/goal <goal> plans the work, creates a task graph, and delegates every task to the best-matching sub-agent. The current agent stays as coordinator and final reviewer.",
             requiresArgument: true
         ),
                 TerminalChatCommandDescriptor(

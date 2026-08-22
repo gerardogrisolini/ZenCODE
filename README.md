@@ -17,7 +17,7 @@ Windows (via WSL), all the way down to a Raspberry Pi.
 - **Native Swift, tiny footprint** — a single compiled binary with no interpreter or Node event loop; around 20 MB of RAM at startup, small enough to run on constrained ARM boards.
 - **Runs everywhere** — macOS, Linux, and Windows (via WSL); model inference stays on the remote provider, so even a single-board computer can host the agent.
 - **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, as a native coding agent.
-- **Agentic workflows** — dependency-aware task graph with `/plan`, `/workflow`, and `/review`; `/plan save` and `/plan load` hand plans between sessions of the same project, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
+- **Agentic workflows** — dependency-aware task graph with `/plan`, `/goal`, and `/review`; `/plan save` and `/plan load` hand plans between sessions of the same project, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
 - **Live agent chat** — while sub-agents run, the operator, coordinator, and agent instances share a transient chat room: message the coordinator or broadcast to all agents from the terminal with `@coordinator` / `@all`, or reach a specific agent by its handle. See [agents.md](Docs/agents.md).
 - **Task recovery at startup** — incomplete task graphs are detected per project and presented in a scrollable picker, so you can resume the exact graph you selected or remove obsolete work before starting a new session.
 - **Durable project memory** — workspace-scoped facts are recalled automatically without bloating conversation history; default retrieval stays local with BM25, and optional embeddings add semantic ranking.
@@ -151,7 +151,7 @@ swift build -c release --product zen
 /undo        Revert the latest tracked agent changes
 /tasks       Inspect, retry, cancel, or clear the session task graph
 /plan        Create, save, load, approve, inspect, or clear a delegated session plan
-/workflow    Plan and delegate all work to sub-agents
+/goal        Plan and delegate all work to sub-agents
 /review      Review tracked changes and verify task/plan claims
 /feature     Manage Swift features with the Builder agent
 /telegram    Turn Telegram remote control on/off when paired in setup

@@ -1,5 +1,5 @@
 //
-//  WorkflowCommandTests.swift
+//  GoalCommandTests.swift
 //  ZenCODE
 //
 
@@ -9,14 +9,14 @@ import Testing
 
 @TerminalChatActor
 @Suite
-struct WorkflowCommandTests {
+struct GoalCommandTests {
     @Test
-    func workflowCommandCreatesAnActiveDelegatedGraphBeforePrompting() async throws {
+    func goalCommandCreatesAnActiveDelegatedGraphBeforePrompting() async throws {
         let terminal = try makeTerminal()
 
-        let action = await terminal.handleWorkflowCommand("/workflow Ship delegated work")
+        let action = await terminal.submittedLineAction("/goal Ship delegated work")
         guard case let .runHiddenPrompt(prompt, purpose) = action else {
-            Issue.record("/workflow should start its coordinator prompt")
+            Issue.record("/goal should start its coordinator prompt")
             return
         }
 
@@ -31,10 +31,12 @@ struct WorkflowCommandTests {
         #expect(prompt.contains("Active workflow task graph: \(graph.id)"))
         #expect(prompt.contains("execution.executor set to sub_agent"))
         #expect(prompt.contains("Do not start a task attempt directly with tasks.update"))
+        #expect(prompt.contains("Continue working until the stated goal is fully achieved and validated"))
+        #expect(prompt.contains("ask the user a focused clarification question instead of guessing"))
     }
 
     @Test
-    func workflowCommandRejectsAnActivePlanWithoutCreatingOrReplacingAGraph() async throws {
+    func goalCommandRejectsAnActivePlanWithoutCreatingOrReplacingAGraph() async throws {
         let terminal = try makeTerminal()
         let plan = TerminalSessionPlan(
             id: "active-plan",
@@ -44,10 +46,10 @@ struct WorkflowCommandTests {
         )
         terminal.activePlan = plan
 
-        let action = await terminal.handleWorkflowCommand("/workflow Start another workflow")
+        let action = await terminal.submittedLineAction("/goal Start another workflow")
 
         guard case .continueChat = action else {
-            Issue.record("/workflow must stop when an active plan exists")
+            Issue.record("/goal must stop when an active plan exists")
             return
         }
         #expect(terminal.activePlan == plan)
@@ -59,7 +61,7 @@ struct WorkflowCommandTests {
     }
 
     @Test
-    func workflowPromptRequiresDelegationWithoutAReadOnlyCoordinatorPolicy() {
+    func goalPromptRequiresDelegationWithoutAReadOnlyCoordinatorPolicy() {
         let prompt = TerminalChat.workflowPrompt(
             goal: "Ship delegated work",
             graphID: "workflow_test"
@@ -74,6 +76,11 @@ struct WorkflowCommandTests {
         #expect(prompt.contains("call tasks.retry"))
         #expect(prompt.contains("new canonical agent.create item containing `taskID`"))
         #expect(prompt.contains("Do not use agent.message to request corrections"))
+        #expect(prompt.contains("Stop without achieving the goal only for a genuine blocker"))
+        #expect(prompt.contains("resume this same goal graph"))
+        #expect(prompt.contains("exhaust the clarification, evidence, suitable-agent, and retry paths"))
+        #expect(prompt.contains("acceptance criterion as a follow-up"))
+        #expect(!prompt.contains("all tasks are completed or a real blocker is reached"))
         #expect(!prompt.contains("use agent.message to request corrections or"))
     }
 

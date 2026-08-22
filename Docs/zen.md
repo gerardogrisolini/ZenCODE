@@ -223,13 +223,13 @@ Commands start with `/`:
 - `/plan status` — show plan progress from the graph state.
 - `/plan approve` — activate the plan and start implementation.
 - `/plan clear` — archive the graph and remove the active plan.
-- `/workflow <goal>` — plan and delegate all work to sub-agents. It creates an active workflow graph up front; every graph task is enforced as a sub-agent execution attempt. It refuses to start while an active `/plan` exists; finish that plan or use `/plan clear` first. The current agent stays as coordinator and final reviewer, retaining its normal tool grant for that work. No separate Planner sub-agent or approval step. Use `/tasks` to monitor progress.
+- `/goal <goal>` — plan and delegate all work to sub-agents. It creates an active workflow graph up front; every graph task is enforced as a sub-agent execution attempt. It refuses to start while an active `/plan` exists; finish that plan or use `/plan clear` first. The current agent stays as coordinator and final reviewer, retaining its normal tool grant for that work. No separate Planner sub-agent or approval step. Use `/tasks` to monitor progress.
 - `/review [focus]` — delegate review to sub-agents using the configured `Reviewer` profile. See [reviewer.md](reviewer.md).
 - `/feature` — manage Swift feature packages (Builder profile only). See [builder.md](builder.md).
 
-**`/plan` vs `/workflow`:**
+**`/plan` vs `/goal`:**
 
-| | `/plan` | `/workflow` |
+| | `/plan` | `/goal` |
 |---|---|---|
 | **Planning** | Delegated to a sub-agent using the configured Planner profile | Done by the current agent directly |
 | **Approval step** | Yes — `/plan approve` activates the graph | No — starts immediately |
@@ -348,7 +348,7 @@ Tool groups include filesystem, shell, text, search, Git, memory, sub-agents, ge
 
 When work has multiple units, dependencies, or concurrent delegation, the coordinator creates a task graph first, then selects runnable work with `tasks.list` and assigns delegated tasks through `agent.create(taskID:)`. Each task carries a `complexity` (1–10) that is matched against the capability of the chosen profile's model binding — see [bindings.md](bindings.md). Report-agent success completes a task; implementation-agent success moves it to `awaiting_validation` until independently validated. Record a successful validation as completion. For negative validation, record `failed` with `tasks.update`, call `tasks.retry` to return the task to `pending`, then use a **new** `agent.create(taskID:)` to claim the new attempt. Do not use `agent.message` to reopen the already completed agent.
 
-`/workflow` uses a distinct graph source. Its tasks must declare `execution.executor: sub_agent`, and the orchestrator rejects coordinator attempts or graph replacement while that workflow is active. This enforces delegation at the task lifecycle boundary rather than by applying a read-only tool policy to the coordinator. A coordinator without `agent.create` may work directly only in a graph that permits coordinator execution; it must never create or directly execute a workflow task.
+`/goal` uses a distinct graph source. Its tasks must declare `execution.executor: sub_agent`, and the orchestrator rejects coordinator attempts or graph replacement while that workflow is active. This enforces delegation at the task lifecycle boundary rather than by applying a read-only tool policy to the coordinator. A coordinator without `agent.create` may work directly only in a graph that permits coordinator execution; it must never create or directly execute a workflow task.
 
 Checkpoints are written atomically under `~/.zencode/task-graphs/<project>/`.
 `/plan save` reuses this checkpoint directory rather than creating a separate
@@ -468,7 +468,7 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 1. `cd /path/to/project && zen` — start in the target project; first-run setup opens automatically when required.
 2. `/setup` — reconfigure providers, models, agents, or features later without leaving the TUI.
 3. `/tools` and `/skills` — select tools and skills.
-4. `/plan <goal>` or `/workflow <goal>` — optional planning before editing. `/plan` delegates to a Planner sub-agent with an approval step; `/workflow` plans directly and delegates all implementation to sub-agents.
+4. `/plan <goal>` or `/goal <goal>` — optional planning before editing. `/plan` delegates to a Planner sub-agent with an approval step; `/goal` plans directly and delegates all implementation to sub-agents.
 5. Implement with the active profile.
 6. `/changes diff` and Git — inspect changes.
 7. `/review` — read-only review before commit.
@@ -483,6 +483,6 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, a
 - **No tools available**: use `/tools`, switch profile, or check ACP client tool exposure.
 - **`/feature` unavailable**: switch to `/agents Builder`.
 - **Optional feature tools are missing**: install the package with `zen --install-features <id>` (or choose it in setup), then enable/select it with `/tools`.
-- **`/plan`, `/workflow`, or `/review` needs sub-agents**: enable `sub-agents` with `/tools` or switch profile.
+- **`/plan`, `/goal`, or `/review` needs sub-agents**: enable `sub-agents` with `/tools` or switch profile.
 - **Xcode tools missing**: make sure Xcode is running. See [xcode.md](xcode.md).
 - **Figma tools missing**: make sure the Figma desktop MCP server is enabled.

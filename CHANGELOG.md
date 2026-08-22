@@ -12,6 +12,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Renamed the delegated task-graph command from `/workflow` to `/goal`; the old
+  command is no longer accepted.
 - Project `AGENTS.md` guidance is now fully manual and read-only from ZenCODE's
   perspective. When the file exists in the working directory, ZenCODE reads it
   and inserts it into the agent context, but it no longer creates, regenerates,

@@ -35,7 +35,7 @@ Why this project exists and where it differs from other coding agents.
 
 - Agent profiles (`Developer`, `Builder`, `Minimal`, `Planner`, `Reviewer`, `Reporter`) with dedicated tools, skills, model bindings, and instructions — see [agents.md](agents.md).
 - `/plan` authored by one read-only `Planner`, with `/plan save` and `/plan load` for reviewable handoffs between sessions of the same project; `/review` delegated to read-only `Reviewer` sub-agents.
-- `/workflow` plans and delegates every task to sub-agents on a dependency-aware task graph, with parallelism where safe, independent validation, and retry — the current agent stays as coordinator and final reviewer.
+- `/goal` plans and delegates every task to sub-agents on a dependency-aware task graph, with parallelism where safe, independent validation, and retry — the current agent stays as coordinator and final reviewer.
 - Capability-based delegation: each profile's model bindings carry a capability score (1–10) and every task a complexity (1–10), so the coordinator steers each unit of work to the lowest-capability sub-agent that still meets it — matching effort to task instead of picking by seniority. See [bindings.md](bindings.md).
 - Dynamic Swift Features: the Builder generates reusable Swift packages as durable tools.
 - Change tracking and `/undo` as a safety net.

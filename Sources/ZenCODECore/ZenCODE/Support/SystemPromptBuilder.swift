@@ -177,14 +177,14 @@ public enum SystemPromptBuilder {
             parallel execution is safe and useful; serialize work that mutates overlapping \
             files or shared state. When a task graph is already active, every delegated agent \
             must use `agents[].taskID`; do not create taskless agents outside that workflow. A \
-            `/workflow` graph requires every task to be delegated through the canonical \
+            `/goal` graph requires every task to be delegated through the canonical \
             agent.create `agents` array; the \
             coordinator cannot start a task attempt directly, although its normal tool grant \
             remains unchanged. For other task graphs, coordinator execution remains permitted \
             only under the fallback conditions above. For substantial self-contained work that \
             fits one compatible sub-agent, prefer a single delegation without manufacturing a \
             task graph. \
-            After a `/workflow` implementation task completes, validate its result. If validation \
+            After a `/goal` implementation task completes, validate its result. If validation \
             is negative, record the task as failed, call tasks.retry, then claim the new attempt \
             with a new canonical agent.create item containing `taskID`; do not use agent.message \
             to reopen a completed task.
@@ -193,7 +193,7 @@ public enum SystemPromptBuilder {
             delegationInstruction = """
             When agent.create is unavailable, execute runnable graph work directly only in a \
             task graph that permits coordinator execution, and record its lifecycle with \
-            tasks.update. Never create or directly execute work in a `/workflow` graph: it \
+            tasks.update. Never create or directly execute work in a `/goal` graph: it \
             requires a sub-agent claim through a canonical agent.create `agents` item containing \
             `taskID`.
             """

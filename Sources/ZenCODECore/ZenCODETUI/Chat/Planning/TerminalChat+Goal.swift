@@ -1,5 +1,5 @@
 //
-//  TerminalChat+Workflow.swift
+//  TerminalChat+Goal.swift
 //  ZenCODE
 //
 
@@ -9,7 +9,7 @@ extension TerminalChat {
     func handleWorkflowCommand(_ command: String) async -> TerminalSubmittedLineAction {
         let argument = Self.slashCommandArguments(
             from: command,
-            commandPrefix: "/workflow"
+            commandPrefix: "/goal"
         )
 
         guard !argument.isEmpty else {
@@ -25,7 +25,7 @@ extension TerminalChat {
         if !isSubAgentToolEnabled {
             await writeFailureMessage(
                 """
-                ZenCODE: /workflow requires the sub-agents tool group. \
+                ZenCODE: /goal requires the sub-agents tool group. \
                 Enable it with /tools (or switch to an agent that includes it) and try again.
 
                 """
@@ -56,11 +56,11 @@ extension TerminalChat {
     }
 
     nonisolated static let workflowMissingGoalMessage =
-        "ZenCODE: /workflow requires a goal. "
-        + "Use /workflow <goal> to describe what should be planned and delegated.\n"
+        "ZenCODE: /goal requires a goal. "
+        + "Use /goal <goal> to describe what should be planned and delegated.\n"
 
     nonisolated static let workflowActivePlanMessage =
-        "ZenCODE: /workflow cannot start while an active plan exists. "
+        "ZenCODE: /goal cannot start while an active plan exists. "
         + "Finish it or use /plan clear before starting a workflow.\n"
 
     nonisolated static func workflowPrompt(goal: String, graphID: String) -> String {
@@ -74,6 +74,18 @@ extension TerminalChat {
         Goal: \(goal)
 
         Active workflow task graph: \(graphID)
+
+        Completion contract:
+        - Continue working until the stated goal is fully achieved and validated. Do not stop after \
+        planning, after a partial implementation, or merely because one task or agent attempt ended.
+        - Keep inspecting, delegating, validating, retrying failed work, and processing newly \
+        unblocked tasks until the goal and every acceptance criterion are satisfied.
+        - If any requirement, constraint, expected behavior, or necessary decision is unclear and \
+        cannot be resolved reliably from the workspace or existing context, ask the user a focused \
+        clarification question instead of guessing. Once clarified, resume this same goal graph.
+        - Stop without achieving the goal only for a genuine blocker that cannot be resolved through \
+        clarification, another suitable sub-agent, retry, or available project evidence; explain the \
+        blocker precisely and state what is needed to continue.
 
         Phase 1 — Plan and define the task graph:
         - Inspect the workspace to understand scope, relevant files, constraints, and risks.
@@ -114,13 +126,15 @@ extension TerminalChat {
         using a suitable profile. Do \
         not use agent.message to request corrections from an agent after its task completed.
         - Repeat: call tasks.list again to pick up newly unblocked tasks, delegate, wait, \
-        and review until all tasks are completed or a real blocker is reached.
+        and review until all tasks are completed. If progress is blocked, exhaust the clarification, \
+        evidence, suitable-agent, and retry paths in the Completion contract before stopping.
 
         Phase 3 — Final review:
         - Verify the completed work against the goal and acceptance criteria.
         - Inspect changed files to confirm correctness and consistency.
-        - Report a concise summary: what was done, key decisions, validation results, and \
-        any remaining concerns or follow-ups.
+        - Report a concise summary: what was done, key decisions, validation results, and only \
+        non-blocking concerns or optional follow-ups. Never present an unsatisfied requirement or \
+        acceptance criterion as a follow-up.
 
         Rules:
         - Every workflow task is delegated through the canonical agent.create `agents` array \

@@ -174,7 +174,7 @@ extension TerminalChat {
             return .continueChat
         case let command where command == "/plan" || command.hasPrefix("/plan "):
             return await handlePlanCommand(command)
-        case let command where command == "/workflow" || command.hasPrefix("/workflow "):
+        case let command where command == "/goal" || command.hasPrefix("/goal "):
             return await handleWorkflowCommand(command)
         case let command where command == "/review" || command.hasPrefix("/review "):
             return await handleReviewCommand(command)

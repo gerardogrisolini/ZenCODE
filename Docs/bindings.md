@@ -2,7 +2,7 @@
 
 A **model binding** is the explicit authorization that connects one agent profile
 to one model. It is the single mechanism that turns "which agent" and "which
-model" into one routing decision, and it is what `/workflow` uses to assign every
+model" into one routing decision, and it is what `/goal` uses to assign every
 task to the right sub-agent.
 
 Read this page before configuring delegation. Profile concepts and the
@@ -14,7 +14,7 @@ delegation lifecycle are in [agents.md](agents.md).
 | --- | --- | --- |
 | **Agent profile** | *Who* does the work: role, instructions, tools, skills | `~/.zencode/agents.json`, edited in `/setup` |
 | **Model binding** | *With which model*, at *which capability* and *thinking* level | Per profile, inside the same profile record |
-| **Workflow task** | *What* has to be done, with a complexity of 1–10 | Session task graph, created by `/plan`, `/workflow`, or `tasks.create` |
+| **Workflow task** | *What* has to be done, with a complexity of 1–10 | Session task graph, created by `/plan`, `/goal`, or `tasks.create` |
 
 Delegation is the act of matching the three: a task of a given complexity is
 assigned to a role-compatible profile, through one of that profile's authorized
@@ -145,9 +145,9 @@ safely expose the same raw model slug. Historical root fields and aliases remain
 accepted for wire compatibility, but blank aliases cannot mask valid values and
 conflicting or malformed aliases are rejected.
 
-## Bindings In `/workflow`
+## Bindings In `/goal`
 
-`/workflow <goal>` is where bindings pay off, because every task must be executed
+`/goal <goal>` is where bindings pay off, because every task must be executed
 by a sub-agent:
 
 1. The current agent creates the task graph, assigning each task a `complexity`.
@@ -163,7 +163,7 @@ Mapping the screenshot onto a typical workflow graph: analysis tasks go to
 `Reporter`, routine implementation to `Developer` on `glm-5.2` (6/10), delicate
 refactors to `Developer` on `claude-opus-5` (8/10). `Planner` and `Reviewer`
 remain available for tasks that must *produce* a plan or an intermediate
-read-only assessment — in `/workflow` the overall planning and the final review
+read-only assessment — in `/goal` the overall planning and the final review
 stay with the coordinator itself, unlike `/plan` and `/review`.
 
 ## Configuring Bindings
