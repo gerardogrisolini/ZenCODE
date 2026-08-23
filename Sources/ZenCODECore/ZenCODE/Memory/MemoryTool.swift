@@ -33,7 +33,7 @@ public enum MemoryTool {
     private static let readDescriptor = ToolDescriptor(
             name: "memory.read",
             title: "Memory Read",
-            description: "Reads durable project memory entries, newest first. Use detail=index for compact Summary/timestamp/ID results before loading full content.",
+            description: "Reads durable project journal entries, newest first. Use detail=index for compact Summary/timestamp/ID results before loading full content.",
             inputSchema: """
             {
               "type": "object",
@@ -54,7 +54,7 @@ public enum MemoryTool {
     private static let searchDescriptor = ToolDescriptor(
             name: "memory.search",
             title: "Memory Search",
-            description: "Searches durable project memory with BM25 keyword retrieval, optional semantic embeddings when configured, and graph links to related entries.",
+            description: "Searches the durable project journal with BM25, optional semantic retrieval, and related graph entries.",
             inputSchema: """
             {
               "type": "object",
@@ -78,7 +78,7 @@ public enum MemoryTool {
     private static let writeDescriptor = ToolDescriptor(
             name: "memory.write",
             title: "Memory Write",
-            description: "Adds one new durable entry to project memory. Use concise entries with Summary, State, and Next; the current local Timestamp is added when missing. Writing content that already matches an active entry returns that entry instead of duplicating it.",
+            description: "Adds a concise durable project-journal entry for a verified handoff, decision, blocker, or published release. Include Summary, State, Next, and publication evidence when relevant; Timestamp is added when missing and active duplicates are reused.",
             inputSchema: """
             {
               "type": "object",
@@ -103,7 +103,7 @@ public enum MemoryTool {
     private static let updateDescriptor = ToolDescriptor(
             name: "memory.update",
             title: "Memory Update",
-            description: "Rewrites one durable memory entry in place. The entry keeps its id, creation date and archive state, so the id stays valid afterwards. It preserves the original Timestamp and adds the current Updated timestamp when those fields are omitted.",
+            description: "Updates an existing durable journal entry in place instead of duplicating changed facts. Its id, creation date, and archive state remain stable; Timestamp is preserved and Updated is added when omitted.",
             inputSchema: """
             {
               "type": "object",
@@ -126,7 +126,7 @@ public enum MemoryTool {
     private static let archiveDescriptor = ToolDescriptor(
             name: "memory.archive",
             title: "Memory Archive",
-            description: "Archives a durable memory entry by id so it no longer influences retrieval or future resume context. The entry is deactivated, not deleted.",
+            description: "Archives a stale, incorrect, or no-longer-useful journal entry by id. It stops influencing retrieval and resume context but is not deleted.",
             inputSchema: """
             {
               "type": "object",

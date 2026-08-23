@@ -23,7 +23,26 @@ struct MemoryServiceTests {
         #expect(MemoryService.toolUsagePromptSection().contains("Treat durable project memory as first-class context"))
         #expect(!MemoryService.toolUsagePromptSection().localizedCaseInsensitiveContains("global memory"))
         #expect(MemoryService.toolUsagePromptSection().contains("At the end of a substantial project turn"))
+        #expect(MemoryService.toolUsagePromptSection().contains("release, version, or publication"))
+        #expect(MemoryService.toolUsagePromptSection().contains("concrete evidence"))
+        #expect(MemoryService.toolUsagePromptSection().contains("speculative plans"))
+        #expect(MemoryService.defaultProjectMemoryContent.contains("release or publication record"))
+        #expect(MemoryService.defaultProjectMemoryContent.contains("unverified claims"))
+        #expect(MemoryService.defaultProjectMemoryContent.contains("durable milestone or change"))
+        #expect(MemoryService.defaultProjectMemoryContent.contains("None currently"))
+        #expect(MemoryService.toolUsagePromptSection().contains("architecture, compatibility, dependencies, or persisted formats"))
+        #expect(MemoryService.toolUsagePromptSection().contains("perform the appropriate mutation before finishing"))
+        #expect(MemoryService.toolUsagePromptSection().contains("version or changelog edit alone"))
+    }
 
+    @Test
+    func readOnlyMemoryPromptDoesNotSuggestUnavailableMutations() {
+        let prompt = MemoryService.toolUsagePromptSection(readOnly: true)
+
+        #expect(prompt.contains("Memory tools (read-only):"))
+        #expect(prompt.contains("do not claim to create, update, archive"))
+        #expect(prompt.contains("memory.search"))
+        #expect(!prompt.contains("Before writing"))
     }
 
     @Test
@@ -683,15 +702,31 @@ struct MemoryServiceTests {
     }
 
     @Test
-    func standalonePromptOmitsMemoryInstructionsWhenMemoryToolIsDisabled() {
-        let prompt = AgentStandaloneSystemPrompt.prompt(
+    func standalonePromptReflectsMemoryToolSurface() {
+        let readOnlyPrompt = AgentStandaloneSystemPrompt.prompt(
+            cwd: "/tmp/project",
+            memoryToolEnabled: true,
+            allowedToolNames: ["memory.read", "memory.search"]
+        )
+        let mutatingPrompt = AgentStandaloneSystemPrompt.prompt(
+            cwd: "/tmp/project",
+            memoryToolEnabled: true,
+            allowedToolNames: ["memory.read", "memory.write"]
+        )
+        let withoutMemoryPrompt = AgentStandaloneSystemPrompt.prompt(
             cwd: "/tmp/project",
             memoryToolEnabled: false
         )
 
-        #expect(!prompt.contains("Memory tools:"))
-        #expect(!prompt.contains("`memory.write`"))
-        #expect(!prompt.contains("memory, feature, and delegated sub-agent tools"))
+        #expect(readOnlyPrompt.contains("Memory tools (read-only):"))
+        #expect(readOnlyPrompt.contains("do not claim to create, update, archive"))
+        #expect(!readOnlyPrompt.contains("Before writing"))
+        #expect(mutatingPrompt.contains("Memory tools:"))
+        #expect(!mutatingPrompt.contains("Memory tools (read-only):"))
+        #expect(mutatingPrompt.contains("`memory.write`"))
+        #expect(!withoutMemoryPrompt.contains("Memory tools:"))
+        #expect(!withoutMemoryPrompt.contains("`memory.write`"))
+        #expect(!withoutMemoryPrompt.contains("memory, feature, and delegated sub-agent tools"))
     }
 
     @Test

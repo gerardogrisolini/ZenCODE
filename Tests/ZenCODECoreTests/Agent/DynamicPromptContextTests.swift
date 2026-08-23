@@ -244,9 +244,43 @@ struct DynamicPromptContextTests {
         )
 
         #expect(sections.dynamicContext.contains("Project guidance marker."))
-        #expect(sections.dynamicContext.contains("Memory tools:"))
+        #expect(sections.dynamicContext.contains("Memory tools (read-only):"))
         #expect(sections.dynamicContext.contains("Delegatable agent profiles and model bindings:"))
         #expect(sections.dynamicContext.contains("Task workflow policy:"))
+    }
+
+    @Test
+    func appProvidedInstructionsUseReadOnlyMemoryGuidanceForReadOnlySurface() {
+        let sections = AgentSessionComposition.appProvidedPromptSections(
+            "Client instructions.",
+            cwd: "/tmp/read-only-memory-project",
+            allowedToolNames: ["memory.read", "memory.search"],
+            selectedAgent: nil
+        )
+
+        #expect(sections.dynamicContext.contains("Memory tools (read-only):"))
+        #expect(sections.dynamicContext.contains("do not claim to create, update, archive"))
+        #expect(!sections.dynamicContext.contains("Before writing"))
+    }
+
+    @Test
+    func memoryReadOnlyClassificationMatchesExecutorAllowlistSemantics() {
+        let cases: [(name: String, allowedToolNames: Set<String>?, isReadOnly: Bool)] = [
+            ("unrestricted", nil, false),
+            ("empty", [], false),
+            ("read-only", ["memory.read", "memory.search"], true),
+            ("explicit mutator", ["memory.read", "memory.write"], false),
+            ("memory namespace", ["memory."], false),
+            ("hybrid", ["memory.read", "memory."], false)
+        ]
+
+        for testCase in cases {
+            #expect(
+                AgentSessionComposition.memoryToolsAreReadOnly(testCase.allowedToolNames)
+                    == testCase.isReadOnly,
+                "Unexpected classification for \(testCase.name) allowlist."
+            )
+        }
     }
 
     @Test

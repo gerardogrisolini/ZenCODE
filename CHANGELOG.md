@@ -18,6 +18,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Project-memory guidance and descriptors now treat memory as a concise,
+  evidence-backed journal: verified handoffs, durable decisions, blockers, and
+  releases/publications are retained while transient activity, speculation, and
+  raw output are excluded. Read-only memory tool surfaces now receive guidance
+  that does not suggest unavailable mutations.
 - Terminal tool output now cycles through **minimal**, **standard**, and
   **detailed** views. The standard view combines concise execution status with
   source changes, while detailed output includes full metadata and read results.

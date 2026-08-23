@@ -485,6 +485,17 @@ Durable context is separated by responsibility:
 
 The Memory tool group maintains project memory without accumulating avoidable duplicates:
 
+Treat this memory as a concise project journal, not a general preference or
+activity log. Create or update an entry for a verified handoff, a material
+architecture/compatibility decision, a durable blocker or caveat, or a
+completed release/publication. A release entry records its version or
+identifier, what was published, current caveats and useful next step, backed by
+evidence such as a tag, artifact, successful validation, or deployment result;
+a version or changelog edit alone does not prove publication. Do not journal
+unimplemented plans, unverified claims, command-by-command activity, raw logs,
+large diffs, temporary progress, or facts already obvious from current files.
+A read-only agent can retrieve and verify journal context but cannot mutate it.
+
 - `memory.read` reads recent entries; use `detail: "index"` for a compact summary/ID view and the default `detail: "full"` for complete content.
 - `memory.search` runs BM25 keyword retrieval over the graph and follows links to related entries; with an embedding provider configured it fuses semantic hits in via reciprocal-rank fusion. It is strictly read-only: searching never rewrites the graph or its retrieval statistics — only automatic recall performs that maintenance.
 - `memory.write` adds a new entry; writing content that already matches an active entry returns that entry instead of duplicating it, and the tool says so — the result reports `written`/`deduplicated` truthfully instead of claiming every call saved something.

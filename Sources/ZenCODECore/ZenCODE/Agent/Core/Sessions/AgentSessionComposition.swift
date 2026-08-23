@@ -29,6 +29,20 @@ public enum AgentSessionComposition {
         return allowedToolNames.contains { $0.hasPrefix("memory.") }
     }
 
+    /// Whether an explicit memory-tool allowlist grants reads but no mutation.
+    /// An unrestricted (`nil`) surface includes mutation-capable memory tools.
+    static func memoryToolsAreReadOnly(_ allowedToolNames: Set<String>?) -> Bool {
+        guard allowedToolNames != nil else { return false }
+        let grants: (ToolDescriptor) -> Bool = { descriptor in
+            DirectToolExecutor.isAllowed(
+                descriptor.name,
+                allowedToolNames: allowedToolNames
+            )
+        }
+        return MemoryTool.readOnlyToolDescriptors.contains(where: grants)
+            && !MemoryTool.mutatingToolDescriptors.contains(where: grants)
+    }
+
     /// Adds the intrinsic prompt-skill tools to an explicit allowlist.
     ///
     /// Both skill tools are always-on, so they must survive any user tool
@@ -166,7 +180,11 @@ public enum AgentSessionComposition {
             SystemPromptBuilder.taskOrchestrationSection(
                 allowedToolNames: allowedToolNames
             ),
-            memoryToolEnabled ? MemoryService.toolUsagePromptSection() : nil
+            memoryToolEnabled
+                ? MemoryService.toolUsagePromptSection(
+                    readOnly: memoryToolsAreReadOnly(allowedToolNames)
+                )
+                : nil
         ]
         .compactMap { $0?.nilIfBlank }
         .joined(separator: "\n\n")

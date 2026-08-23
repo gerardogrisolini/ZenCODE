@@ -590,7 +590,11 @@ public enum AgentStandaloneSystemPrompt {
         return SystemPromptBuilder.standalonePromptSections(
             cwd: cwd,
             agentsSection: agentsSection,
-            memorySection: memoryToolEnabled ? MemoryService.toolUsagePromptSection() : nil,
+            memorySection: memoryToolEnabled
+                ? MemoryService.toolUsagePromptSection(
+                    readOnly: AgentSessionComposition.memoryToolsAreReadOnly(allowedToolNames)
+                )
+                : nil,
             memoryToolEnabled: memoryToolEnabled,
             allowedToolNames: allowedToolNames,
             selectedSkillSection: selectedSkillSection,
