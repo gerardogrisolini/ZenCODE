@@ -169,7 +169,7 @@ extension TerminalChat {
     }
 
     public nonisolated static func renderSkillSelectionUsage() -> String {
-        "Usage: /skills [all|none|skill-name|skill-number|install <github-url|local-path>|<github-url|local-path>]\n"
+        "Usage: /skills [all|none|skill-name|skill-number|install <github-url|local-path>|uninstall|<github-url|local-path>]\n"
     }
 
     public nonisolated static func renderStartupBox(lines: [String]) -> String {

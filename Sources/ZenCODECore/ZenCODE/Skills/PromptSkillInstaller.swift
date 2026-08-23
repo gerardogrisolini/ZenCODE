@@ -108,6 +108,42 @@ public enum PromptSkillInstaller {
         )
     }
 
+    /// Removes prompt skills from the app-owned catalog.
+    ///
+    /// The source directory recorded on a discovered skill is treated as
+    /// untrusted input. Every destination is validated before any item is
+    /// removed, so a stale or unsafe skill cannot make the operation delete
+    /// outside the catalog (or the catalog root itself).
+    public static func uninstall(
+        skills: [PromptSkill],
+        allowedRoots: [URL]? = nil,
+        fileManager: FileManager = .default
+    ) throws {
+        guard !skills.isEmpty else {
+            return
+        }
+
+        let roots = uniqueStandardizedURLs(
+            allowedRoots
+                ?? PromptSkillCatalog.appCatalogSearchRoots(fileManager: fileManager)
+        )
+        let destinations = try skills.map { skill in
+            try uninstallDestination(
+                for: skill,
+                allowedRoots: roots,
+                fileManager: fileManager
+            )
+        }
+
+        var removedPaths: Set<String> = []
+        for destinationURL in destinations {
+            guard removedPaths.insert(destinationURL.path).inserted else {
+                continue
+            }
+            try fileManager.removeItem(at: destinationURL)
+        }
+    }
+
     static func installSkillDirectory(
         from sourceDirectoryURL: URL,
         sourceURL: URL,
@@ -394,6 +430,78 @@ public enum PromptSkillInstaller {
     private static func isContained(_ candidate: URL, in root: URL) -> Bool {
         let rootPath = root.path.hasSuffix("/") ? root.path : root.path + "/"
         return candidate.path == root.path || candidate.path.hasPrefix(rootPath)
+    }
+
+    private static func uninstallDestination(
+        for skill: PromptSkill,
+        allowedRoots: [URL],
+        fileManager: FileManager
+    ) throws -> URL {
+        guard let sourceDirectoryPath = skill.sourceDirectoryPath?.nilIfBlank else {
+            throw PromptSkillInstallerError.skillNotFound(skill.id)
+        }
+
+        let destinationURL = URL(
+            fileURLWithPath: sourceDirectoryPath,
+            isDirectory: true
+        ).standardizedFileURL
+        let resolvedDestinationURL = destinationURL
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+
+        for rootURL in allowedRoots {
+            let rootValues = try? rootURL.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey
+            ])
+            guard rootValues?.isSymbolicLink != true,
+                  rootValues?.isDirectory == true else {
+                continue
+            }
+
+            let resolvedRootURL = rootURL
+                .resolvingSymlinksInPath()
+                .standardizedFileURL
+            guard destinationURL.path != rootURL.path,
+                  isContained(destinationURL, in: rootURL) else {
+                continue
+            }
+            guard isContained(resolvedDestinationURL, in: resolvedRootURL) else {
+                throw PromptSkillInstallerError.unsafeSkillPath(
+                    resolvedDestinationURL.path
+                )
+            }
+
+            let values = try? destinationURL.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey
+            ])
+            guard values?.isSymbolicLink != true,
+                  values?.isDirectory == true else {
+                throw PromptSkillInstallerError.unsafeSkillPath(destinationURL.path)
+            }
+
+            let skillURL = destinationURL.appendingPathComponent("SKILL.md")
+            try validateSkillFile(skillURL, containedIn: resolvedRootURL)
+            return destinationURL
+        }
+
+        throw PromptSkillInstallerError.unsafeSkillPath(destinationURL.path)
+    }
+
+    private static func uniqueStandardizedURLs(_ urls: [URL]) -> [URL] {
+        var uniqueURLs: [URL] = []
+        var seenPaths: Set<String> = []
+
+        for url in urls {
+            let standardizedURL = url.standardizedFileURL
+            guard seenPaths.insert(standardizedURL.path).inserted else {
+                continue
+            }
+            uniqueURLs.append(standardizedURL)
+        }
+
+        return uniqueURLs
     }
 
     private static func validateSkillFile(

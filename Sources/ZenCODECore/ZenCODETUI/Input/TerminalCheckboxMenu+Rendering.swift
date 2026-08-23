@@ -27,7 +27,7 @@ extension TerminalCheckboxMenu {
 
         return renderFrame(
             title: title,
-            helpLines: ["↑/↓ move · Space toggle · A all · N none · Enter confirm · Esc/Q cancel"],
+            helpLines: ["↑/↓ move · Space/X toggle · A all · N none · Enter confirm · Esc/Q cancel"],
             itemLines: itemLines,
             focusedIndex: focusedIndex,
             reservedBottomRows: reservedBottomRows,

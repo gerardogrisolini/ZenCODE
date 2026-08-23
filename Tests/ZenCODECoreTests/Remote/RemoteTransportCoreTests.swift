@@ -845,12 +845,18 @@ struct RemoteTransportCoreTests {
             )
             var body = context.channel.allocator.buffer(capacity: actualBytes)
             body.writeString(payload)
+            let channel = context.channel
+            let flushPromise = context.eventLoop.makePromise(of: Void.self)
             context.writeAndFlush(
                 LocalHTTPResponseHandler.wrapOutboundOut(.body(.byteBuffer(body))),
-                promise: nil
+                promise: flushPromise
             )
-            // Close the socket mid-body to truncate the declared length.
-            context.close(promise: nil)
+            // Close only after the body is flushed. Closing immediately after
+            // `writeAndFlush` can race the write and make this test exercise a
+            // connection closed before the response instead of a truncation.
+            flushPromise.futureResult.whenComplete { _ in
+                channel.close(promise: nil)
+            }
         }
         let transport = RemoteTransportCore(owningEventLoopThreads: 1)
 

@@ -223,6 +223,11 @@ extension TerminalChat {
             commandPrefix: "/skills"
         )
 
+        if Self.isSkillUninstallRequest(rawArguments) {
+            await uninstallSkillsInteractively()
+            return
+        }
+
         if Self.isSkillInstallRequest(rawArguments),
            Self.githubSkillInstallURL(from: rawArguments) == nil,
            Self.localSkillInstallURL(
@@ -275,6 +280,59 @@ extension TerminalChat {
         }
 
         await applySkillSelection(rawArguments)
+    }
+
+    private func uninstallSkillsInteractively() async {
+        guard stdinIsTerminal else {
+            await writeFailureMessage(
+                "ZenCODE: /skills uninstall requires an interactive terminal.\n"
+            )
+            await writeSystemMessage(Self.renderSkillSelectionUsage())
+            return
+        }
+
+        let installedSkills = availableSkills()
+        guard !installedSkills.isEmpty else {
+            await writeSystemMessage("No prompt skills installed by the app.\n")
+            return
+        }
+
+        let selectedSkillIDs = await TerminalCheckboxMenu.selectOffActor(
+            title: "Uninstall prompt skills",
+            items: skillCheckboxItems(),
+            selected: [],
+            reservedBottomRows: await statusBar.reservedRowsForOverlay()
+        )
+        guard let selectedSkillIDs else {
+            return
+        }
+
+        let selectedSkills = installedSkills.filter {
+            selectedSkillIDs.contains($0.id)
+        }
+        guard !selectedSkills.isEmpty else {
+            await writeSystemMessage("No skills selected for uninstall.\n")
+            return
+        }
+
+        do {
+            try PromptSkillInstaller.uninstall(skills: selectedSkills)
+            availableSkillsCache = nil
+            self.selectedSkillIDs.subtract(selectedSkillIDs)
+            await applySkillSelection(
+                self.selectedSkillIDs,
+                reportsSelection: false
+            )
+
+            let titles = selectedSkills.map(\.title).joined(separator: ", ")
+            let label = selectedSkills.count == 1 ? "skill" : "skills"
+            await writeSystemMessage(
+                "Uninstalled \(label): \(titles)\n"
+            )
+        } catch {
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeSystemMessage(Self.renderSkillSelectionUsage())
+        }
     }
 
     public func installSkill(fromGitHubURL url: URL) async {
@@ -440,6 +498,12 @@ extension TerminalChat {
             return false
         }
         return ["install", "add"].contains(command)
+    }
+
+    public nonisolated static func isSkillUninstallRequest(_ rawArguments: String) -> Bool {
+        let tokens = rawArguments
+            .split { $0.isWhitespace }
+        return tokens.count == 1 && tokens[0].lowercased() == "uninstall"
     }
 
     public nonisolated static func skillInstallValue(from rawArguments: String) -> String? {

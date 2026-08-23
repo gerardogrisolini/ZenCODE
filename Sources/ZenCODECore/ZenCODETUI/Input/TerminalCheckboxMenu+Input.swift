@@ -124,6 +124,8 @@ extension TerminalCheckboxMenu {
             return .submit
         case 0x20:
             return .toggle
+        case 0x58, 0x78:
+            return .toggle
         case 0x1B:
             return readEscapeKey(rawInput: rawInput)
         case 0x61, 0x41:

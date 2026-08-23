@@ -216,8 +216,8 @@ extension TerminalChat {
         ),
         TerminalChatCommandDescriptor(
             command: "/skills",
-            summary: "select/install prompt skills",
-            help: "/skills selects installed prompt skills or installs one from GitHub or a local folder."
+            summary: "select/install/uninstall prompt skills",
+            help: "/skills selects installed prompt skills, installs one from GitHub or a local folder, or opens a picker to uninstall selected app-installed skills."
         ),
         TerminalChatCommandDescriptor(
                         command: "/sessions",

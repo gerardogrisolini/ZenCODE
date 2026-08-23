@@ -348,9 +348,22 @@ struct TerminalInputLifecycleTests {
         let rawInput = TerminalRawInput(
             fileDescriptor: pipe.fileHandleForReading.fileDescriptor
         )
-        pipe.fileHandleForWriting.write(Data([0x20]))
+        pipe.fileHandleForWriting.write(Data([0x20, 0x78, 0x58]))
 
-        // UX unchanged: space still toggles the focused item.
+        // Space remains a toggle, and x/X are the visible checkbox
+        // marker/keys exposed by the uninstall picker.
+        #expect(
+            TerminalCheckboxMenu.readKey(
+                rawInput: rawInput,
+                shouldCancel: { false }
+            ) == .toggle
+        )
+        #expect(
+            TerminalCheckboxMenu.readKey(
+                rawInput: rawInput,
+                shouldCancel: { false }
+            ) == .toggle
+        )
         #expect(
             TerminalCheckboxMenu.readKey(
                 rawInput: rawInput,
