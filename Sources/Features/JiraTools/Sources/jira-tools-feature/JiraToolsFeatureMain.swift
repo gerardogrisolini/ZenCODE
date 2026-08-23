@@ -94,7 +94,7 @@ struct JiraToolsFeatureMain {
     static func main() async {
         if CommandLine.arguments.dropFirst().contains("--setup") {
             let exitCode = await JiraSetupRunner.run()
-            terminate(code: exitCode)
+            FeatureProcessProtocol.terminate(code: exitCode)
         }
 
         await FeatureRunner.run([
@@ -102,14 +102,6 @@ struct JiraToolsFeatureMain {
             AnyFeatureTool(JiraReadTool()),
             AnyFeatureTool(JiraSignOutTool())
         ])
-    }
-
-    private static func terminate(code: Int32) -> Never {
-        #if canImport(Darwin) || canImport(Glibc)
-        exit(code)
-        #else
-        fatalError("jira-tools-feature terminated with code \(code).")
-        #endif
     }
 }
 

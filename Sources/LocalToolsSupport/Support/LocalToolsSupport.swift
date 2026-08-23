@@ -270,14 +270,3 @@ enum LocalToolsSupport {
         return url
     }
 }
-
-extension String {
-    func replacingFirstOccurrence(of target: String, with replacement: String) -> String {
-        guard let range = range(of: target) else {
-            return self
-        }
-        var copy = self
-        copy.replaceSubrange(range, with: replacement)
-        return copy
-    }
-}

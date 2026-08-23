@@ -110,27 +110,6 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration, PersistentMCP
         )
     }
 
-    func listTools(
-        environment: [String: String]
-    ) async throws -> [FeatureToolDescriptor] {
-        guard isAvailable(environment: environment) else {
-            return []
-        }
-        let executor = try await makeExecutor(environment: environment)
-        let tools: [ToolDescriptor]
-        do {
-            tools = try await executor.loadTools()
-        } catch {
-            await executor.disconnect()
-            throw error
-        }
-        await executor.disconnect()
-
-        return ToolDescriptor.canonicalized(tools).map(
-            XcodeToolsFeatureRunner.featureToolDescriptor(for:)
-        )
-    }
-
     /// Uses `XcodeToolExecutor` for invoke to get retry-on-indentation-mismatch.
     func invoke(
         toolName: String,

@@ -493,11 +493,9 @@ extension TerminalStatusBar {
            let tokenCountsText = Self.generationTokenCountsFragment(latestMetrics) {
             fragments.append(tokenCountsText)
         }
-        if let prefillRate = state.latestMetrics?.promptTokensPerSecond {
-            fragments.append("p:\(Self.rateText(prefillRate)) t/s")
-        }
-        if let generationRate = state.latestMetrics?.completionTokensPerSecond {
-            fragments.append("g:\(Self.rateText(generationRate)) t/s")
+        if let prefillRate = state.latestMetrics?.promptTokensPerSecond,
+           let generationRate = state.latestMetrics?.completionTokensPerSecond {
+            fragments.append("p:\(Self.rateText(prefillRate)) g:\(Self.rateText(generationRate)) tok/s")
         }
         if let latestSubscriptionUsage = state.latestSubscriptionUsage,
            let usageText = Self.subscriptionUsageFragment(latestSubscriptionUsage) {

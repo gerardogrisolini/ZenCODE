@@ -19,7 +19,7 @@ nonisolated func firstStringArrayValue(
         switch value {
         case let .string(string):
             let trimmedString = string.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let decodedValue = decodedStructuredJSONStringToolValue(trimmedString),
+            if let decodedValue = decodedStructuredJSONValue(trimmedString),
                case let .array(items) = decodedValue {
                 let strings = items.compactMap { item in
                     item.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -56,7 +56,7 @@ nonisolated func firstStringArrayValue(
     return nil
 }
 
-nonisolated func decodedStructuredJSONStringToolValue(
+nonisolated func decodedStructuredJSONValue(
     _ rawValue: String
 ) -> JSONValue? {
     let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)

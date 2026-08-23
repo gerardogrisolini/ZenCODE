@@ -63,7 +63,7 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
     }
 
     public func decode<T: Decodable>(_ type: T.Type) throws -> T {
-        try JSONDecoder().decode(type, from: encodedData())
+        try JSONDecoder().decode(type, from: JSONEncoder().encode(self))
     }
 
     public init(jsonObject value: Any?) {
@@ -274,7 +274,7 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
     public func encoded() -> Data {
         (try? encodedData()) ?? Data()
     }
-    
+
     public var objectValue: [String: JSONValue]? {
         guard case let .object(value) = self else {
             return nil

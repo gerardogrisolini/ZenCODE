@@ -136,7 +136,7 @@ public nonisolated struct ToolDescriptor: Codable, Identifiable, Hashable, Senda
                 let name = dict["name"]?.stringValue ?? jsonString
                 let title = dict["title"]?.stringValue
                 let description = dict["description"]?.stringValue ?? ""
-                
+
                 let inputSchema = dict["input_schema"]?.stringValue ?? dict["inputSchema"]?.stringValue ?? "{}"
                 let outputSchema = dict["output_schema"]?.stringValue ?? dict["outputSchema"]?.stringValue
                 let presentation: ToolPresentationDefinition?

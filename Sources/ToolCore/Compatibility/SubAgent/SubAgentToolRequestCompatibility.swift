@@ -255,7 +255,7 @@ public nonisolated enum SubAgentToolRequestCompatibility {
 
         let decodedValue: JSONValue
         if let stringValue = value.stringValue,
-           let structuredValue = decodedStructuredJSONValue(from: stringValue) {
+           let structuredValue = decodedStructuredJSONValue(stringValue) {
             decodedValue = structuredValue
         } else {
             decodedValue = value
@@ -297,7 +297,7 @@ public nonisolated enum SubAgentToolRequestCompatibility {
         }
 
         if let stringValue = value.stringValue,
-           let decodedValue = decodedStructuredJSONValue(from: stringValue) {
+           let decodedValue = decodedStructuredJSONValue(stringValue) {
             normalized[destinationKey] = decodedValue
             return
         }
@@ -305,16 +305,4 @@ public nonisolated enum SubAgentToolRequestCompatibility {
         normalized[destinationKey] = value
     }
 
-    private static func decodedStructuredJSONValue(
-        from rawValue: String
-    ) -> JSONValue? {
-        let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let firstCharacter = trimmedValue.first,
-              firstCharacter == "[" || firstCharacter == "{",
-              let data = trimmedValue.data(using: .utf8) else {
-            return nil
-        }
-
-        return try? JSONDecoder().decode(JSONValue.self, from: data)
-    }
 }

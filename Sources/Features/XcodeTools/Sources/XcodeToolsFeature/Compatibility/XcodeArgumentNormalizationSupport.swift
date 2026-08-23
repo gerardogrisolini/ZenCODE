@@ -17,18 +17,6 @@ nonisolated func assignXcodeSnippetString(
     normalized[destinationKey] = .string(normalizedXcodeSnippetString(value))
 }
 
-nonisolated func assignNormalizedTextEditOperations(
-    _ sourceKeys: [String],
-    from arguments: [String: JSONValue],
-    to destinationKey: String,
-    in normalized: inout [String: JSONValue]
-) {
-    guard let value = firstXcodeJSONValue(sourceKeys, in: arguments) else {
-        return
-    }
-    normalized[destinationKey] = normalizedTextEditOperations(value)
-}
-
 nonisolated func assignNormalizedXcodeTestSpecifiers(
     _ sourceKeys: [String],
     from arguments: [String: JSONValue],

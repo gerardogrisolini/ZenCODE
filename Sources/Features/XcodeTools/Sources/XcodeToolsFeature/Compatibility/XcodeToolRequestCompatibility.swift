@@ -119,10 +119,6 @@ public nonisolated enum XcodeToolRequestCompatibility {
         return nil
     }
 
-    public static func requiresTabIdentifier(_ toolName: String) -> Bool {
-        toolsRequiringTabIdentifier.contains(toolName)
-    }
-
     private static func normalizedArguments(
         _ arguments: [String: JSONValue],
         for toolName: String

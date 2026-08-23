@@ -77,19 +77,6 @@ public nonisolated enum XcodeMCPServerConfiguration {
         return executableName == "mcpbridge"
     }
 
-    public static func environment(
-        for configuration: MCPServerConfiguration,
-        processEnvironment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> [String: String] {
-        var resolvedEnvironment = configuration.environment
-        for key in ["MCP_XCODE_PID", "MCP_XCODE_SESSION_ID"] {
-            if let value = trimmed(processEnvironment[key]) {
-                resolvedEnvironment[key] = value
-            }
-        }
-        return resolvedEnvironment
-    }
-
     static func authorizationError() -> MCPClientError {
         .authorizationRequired(service: "Xcode", message: authorizationMessage)
     }

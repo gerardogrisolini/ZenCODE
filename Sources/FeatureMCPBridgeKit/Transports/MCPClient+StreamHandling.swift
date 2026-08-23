@@ -18,10 +18,6 @@ import ToolCore
 extension MCPClient {
     private static let maxDiagnosticBytes = 65_536
 
-    nonisolated static func readLoop(from handle: FileHandle, client: MCPClient) async {
-        await runReadLoop(from: handle, client: client, connectionID: nil)
-    }
-
     nonisolated static func readLoop(
         from handle: FileHandle,
         client: MCPClient,
@@ -66,10 +62,6 @@ extension MCPClient {
         case .cancelled, .stopped:
             return
         }
-    }
-
-    nonisolated static func errorLoop(from handle: FileHandle, client: MCPClient) async {
-        await runErrorLoop(from: handle, client: client, connectionID: nil)
     }
 
     nonisolated static func errorLoop(
@@ -403,10 +395,6 @@ extension MCPClient {
             logBufferedPrefixIfNeeded()
         }
 
-    }
-
-    func nextMessageBody() -> Data? {
-        MCPTransportCodec.nextMessageBody(from: &buffer)
     }
 
     private func appendDiagnostic(_ chunk: Data, to buffer: inout Data) {

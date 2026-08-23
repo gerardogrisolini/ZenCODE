@@ -502,17 +502,6 @@ extension MCPClient {
         }
     }
 
-    private func notify(method: String) async throws {
-        let notification = MCPNotificationWithoutParams(
-            jsonrpc: "2.0",
-            method: method
-        )
-
-        let payload = try JSONEncoder().encode(notification)
-        log("Notification -> \(method): \(String(data: payload, encoding: .utf8) ?? "<non-utf8>")")
-        try await write(payload)
-    }
-
     private func notify<Params: Encodable>(method: String, params: Params) async throws {
         let notification = MCPNotification(
             jsonrpc: "2.0",
