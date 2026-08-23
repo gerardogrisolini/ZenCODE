@@ -45,6 +45,7 @@ extension TerminalChatRenderCoordinator {
 
     enum ToolBlockStyle: Sendable, Equatable {
         case compact
+        case intermediate
         case detailed
     }
 

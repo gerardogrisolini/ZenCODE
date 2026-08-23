@@ -1,4 +1,5 @@
 import Foundation
+internal import ToolCore
 
 struct MemoryQueryPlan: Codable, Sendable, Equatable {
     public var shouldRecall: Bool
@@ -164,6 +165,6 @@ struct BulletMemoryContextFormatter: MemoryContextFormatter {
     }
 }
 
-private extension String {
-    var nilIfEmpty: String? { isEmpty ? nil : self }
-}
+//private extension String {
+//    var nilIfEmpty: String? { isEmpty ? nil : self }
+//}

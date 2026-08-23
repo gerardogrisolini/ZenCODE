@@ -524,6 +524,10 @@ actor TerminalChatRenderCoordinator {
     ) {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
+        let style = toolBlockStyle(for: toolState.detailLevel)
+        guard !shouldSuppressDetailedRead(toolCall, style: style) else {
+            return
+        }
         prepareForToolOutput()
         toolState.startInstants[toolCall.id] = toolNow()
         toolState.activeBlockIsSubAgentTool = DirectSubAgentRuntime
@@ -531,7 +535,7 @@ actor TerminalChatRenderCoordinator {
         renderToolBlock(
             toolCall,
             lifecycle: .started,
-            style: toolBlockStyle(for: toolState.detailLevel),
+            style: style,
             maximumInPlaceRows: maximumInPlaceRows
         )
     }
@@ -543,6 +547,12 @@ actor TerminalChatRenderCoordinator {
     ) {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
+        let style = toolState.activeBlock.flatMap { block in
+            block.id == toolCall.id ? block.style : nil
+        } ?? toolBlockStyle(for: toolState.detailLevel)
+        guard !shouldSuppressDetailedRead(toolCall, style: style) else {
+            return
+        }
         let elapsed = toolState.startInstants.removeValue(forKey: toolCall.id)
             .map { $0.duration(to: toolNow()) }
         let compactStatusDetail = TerminalChat.compactToolCompletionDetail(
@@ -555,9 +565,6 @@ actor TerminalChatRenderCoordinator {
         // user toggled details while the tool was running. A stale completion
         // uses the current preference but never takes ownership from a newer
         // active block.
-        let style = toolState.activeBlock.flatMap { block in
-            block.id == toolCall.id ? block.style : nil
-        } ?? toolBlockStyle(for: toolState.detailLevel)
         renderToolBlock(
             toolCall,
             lifecycle: .completed(
@@ -594,6 +601,13 @@ actor TerminalChatRenderCoordinator {
         renderPendingOverviewsIfIdle()
     }
 
+    private func shouldSuppressDetailedRead(
+        _ toolCall: DirectAgentToolCall,
+        style: ToolBlockStyle
+    ) -> Bool {
+        style != .compact && TerminalChat.isFileReadTool(toolCall)
+    }
+
     private func prepareForToolOutput() {
         flushChatOutput()
         if standardErrorIsTerminal {
@@ -618,10 +632,11 @@ actor TerminalChatRenderCoordinator {
             contentInsetWidth: contentInsetWidth,
             columnWidth: columnWidth
         )
-        if !lifecycle.isCompletion, style == .detailed {
+        if !lifecycle.isCompletion, style != .compact {
             rows = boundedStartedToolRows(
                 rows,
-                maximumInPlaceRows: maximumInPlaceRows
+                maximumInPlaceRows: maximumInPlaceRows,
+                includeCompletionMarker: style == .detailed
             )
         }
 
@@ -707,12 +722,14 @@ actor TerminalChatRenderCoordinator {
     /// otherwise a block that exactly fills the region scrolls its title beyond
     /// the top margin before completion can replace it.
     ///
-    /// Large edit/write payloads are shown in full by the completion; while the
-    /// tool is running, retain a bounded prefix plus status so that completion
-    /// can replace rather than duplicate the pending block.
+    /// Large edit/write payloads are shown in full by the completion. Detailed
+    /// pending blocks retain a bounded prefix plus status so completion can
+    /// replace rather than duplicate the pending block; intermediate blocks
+    /// retain only source rows and never receive a completion marker.
     private func boundedStartedToolRows(
         _ rows: [TerminalChat.DetailedToolRow],
-        maximumInPlaceRows: Int?
+        maximumInPlaceRows: Int?,
+        includeCompletionMarker: Bool
     ) -> [TerminalChat.DetailedToolRow] {
         guard let maximumReplaceableRows = replaceableToolRowCapacity(
             maximumInPlaceRows
@@ -727,6 +744,12 @@ actor TerminalChatRenderCoordinator {
         }
         guard maximumReplaceableRows > 2 else {
             return [rows[0], rows[rows.count - 1]]
+        }
+
+        guard includeCompletionMarker else {
+            return Array(rows.prefix(maximumReplaceableRows - 1)) + [
+                rows[rows.count - 1]
+            ]
         }
 
         return Array(rows.prefix(maximumReplaceableRows - 2)) + [
@@ -749,7 +772,11 @@ actor TerminalChatRenderCoordinator {
     private func toolBlockStyle(
         for detailLevel: ToolOutputDetailLevel
     ) -> ToolBlockStyle {
-        detailLevel == .compact ? .compact : .detailed
+        switch detailLevel {
+        case .compact: return .compact
+        case .intermediate: return .intermediate
+        case .expanded: return .detailed
+        }
     }
 
     private func toolBlockRows(
@@ -781,6 +808,23 @@ actor TerminalChatRenderCoordinator {
                 columnWidth: columnWidth
             )
             .map(TerminalChat.DetailedToolRow.text)
+        case (.intermediate, .started):
+            return TerminalChat.safelyWrappedDetailedToolRows(
+                TerminalChat.intermediateToolCallRows(for: toolCall),
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
+        case let (.intermediate, .completed(result, _, _)):
+            let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
+            return TerminalChat.safelyWrappedDetailedToolRows(
+                TerminalChat.intermediateToolCallRows(
+                    for: toolCall,
+                    result: result,
+                    contentWidth: safeContentWidth
+                ),
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
         case (.detailed, .started):
             return TerminalChat.safelyWrappedDetailedToolRows(
                 TerminalChat.detailedToolCallStartedRows(for: toolCall),
@@ -811,7 +855,7 @@ actor TerminalChatRenderCoordinator {
         switch style {
         case .compact:
             writeCompactToolLines(rows.map(\.plainText), newline: lifecycle.isCompletion)
-        case .detailed:
+        case .intermediate, .detailed:
             writeToolBlock(
                 rows,
                 codeLanguage: TerminalChat.codeLanguageHint(for: toolCall)
@@ -1390,7 +1434,7 @@ actor TerminalChatRenderCoordinator {
             case .compact:
                 compact = (activeBlock.id, activeBlock.rows)
                 detailed = (nil, 0)
-            case .detailed:
+            case .intermediate, .detailed:
                 compact = (nil, 0)
                 detailed = (activeBlock.id, activeBlock.rows)
             }

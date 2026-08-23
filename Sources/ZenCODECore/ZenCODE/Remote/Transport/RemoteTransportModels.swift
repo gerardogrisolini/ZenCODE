@@ -6,6 +6,7 @@
 //
 
 import Foundation
+internal import ToolCore
 
 /// A single HTTP header, preserving duplicate header names and their order.
 public struct RemoteHTTPHeader: Sendable, Hashable, Equatable {
@@ -206,8 +207,8 @@ public enum RemoteTransportError: Error, Sendable, Equatable, LocalizedError {
     }
 }
 
-private extension String {
-    var nilIfEmpty: String? {
-        isEmpty ? nil : self
-    }
-}
+//private extension String {
+//    var nilIfEmpty: String? {
+//        isEmpty ? nil : self
+//    }
+//}

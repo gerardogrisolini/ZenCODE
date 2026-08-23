@@ -107,6 +107,99 @@ extension TerminalChat {
         )
     }
 
+    /// The intermediate level deliberately exposes only source payloads from
+    /// mutation tools. It shares the exact code/diff row constructors used by
+    /// the expanded level, retaining syntax highlighting while omitting call
+    /// headings, metadata, parameters, summaries, and lifecycle status.
+    nonisolated static func intermediateToolCallRows(
+        for toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult? = nil,
+        contentWidth: Int? = nil
+    ) -> [DetailedToolRow] {
+        let presentation = ToolCallPresentation.resolved(
+            for: toolCall,
+            result: result,
+            mode: .expanded
+        )
+        guard presentation.kind != .read else { return [] }
+        let isMutation: Bool
+        switch presentation.kind {
+        case .create, .edit, .delete, .move:
+            isMutation = true
+        case .read:
+            isMutation = false
+        case .search, .execute, .inspect, .communicate, .manage, .other:
+            isMutation = isFileMutationTool(toolCall.name)
+        }
+        guard isMutation else { return [] }
+
+        let arguments = toolCall.argumentsObject
+        switch normalizedMutationToolName(toolCall.name) {
+        case "local.writeFile", "local.append":
+            guard let content = rawStringArgument(arguments, keys: ["content", "text"]) else {
+                return []
+            }
+            return numberedCodeSnippetRows(content)
+        case "local.replace", "local.editFile":
+            return sourceChangeRows(
+                old: rawStringArgument(arguments, keys: ["old"]),
+                new: rawStringArgument(arguments, keys: ["new"]),
+                contentWidth: contentWidth
+            )
+        case "local.multiEdit":
+            return arrayObjectArgument(arguments, keys: ["edits"]).flatMap { edit in
+                sourceChangeRows(
+                    old: rawStringArgument(edit, keys: ["old"]),
+                    new: rawStringArgument(edit, keys: ["new"]),
+                    contentWidth: contentWidth,
+                    indentation: "    "
+                )
+            }
+        case "local.applyPatch":
+            guard let patch = rawStringArgument(arguments, keys: ["patch", "diff"]) else {
+                return []
+            }
+            return numberedCodeSnippetRows(patch)
+        default:
+            return presentation.elements.flatMap {
+                intermediateSemanticElementRows($0, contentWidth: contentWidth)
+            }
+        }
+    }
+
+    nonisolated private static func sourceChangeRows(
+        old: String?,
+        new: String?,
+        contentWidth: Int?,
+        indentation: String = ""
+    ) -> [DetailedToolRow] {
+        if let old, let new {
+            return numberedDiffSnippetRows(
+                old: old,
+                new: new,
+                contentWidth: contentWidth,
+                indentation: indentation
+            )
+        }
+        if let old { return numberedCodeSnippetRows(old, indentation: indentation) }
+        if let new { return numberedCodeSnippetRows(new, indentation: indentation) }
+        return []
+    }
+
+    nonisolated private static func intermediateSemanticElementRows(
+        _ element: ToolPresentationElement,
+        contentWidth: Int?
+    ) -> [DetailedToolRow] {
+        switch element {
+        case let .code(_, content, _):
+            return numberedCodeSnippetRows(content)
+        case let .diff(_, old, new, _):
+            return numberedDiffSnippetRows(old: old, new: new, contentWidth: contentWidth)
+        case .parameters, .list, .summary:
+            return []
+        }
+    }
+
     /// Converts the core's unstyled semantic presentation into the existing TUI
     /// row primitives. Every label/value is still sanitized here; definitions
     /// from feature processes and MCP servers are untrusted metadata.
@@ -530,6 +623,15 @@ extension TerminalChat {
             }
         }
         return rows
+    }
+
+    nonisolated static func isFileReadTool(
+        _ toolCall: DirectAgentToolCall
+    ) -> Bool {
+        ToolCallPresentation.resolved(
+            for: toolCall,
+            mode: .expanded
+        ).kind == .read
     }
 
     nonisolated static func isFileMutationTool(_ toolName: String) -> Bool {

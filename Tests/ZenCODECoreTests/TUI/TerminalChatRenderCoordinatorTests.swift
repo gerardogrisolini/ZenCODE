@@ -11,6 +11,118 @@ import ToolCore
 @Suite("Terminal chat async render coordinator")
 struct TerminalChatRenderCoordinatorTests {
     @Test
+    func toolOutputDetailLevelCyclesCompactIntermediateExpanded() {
+        #expect(ToolOutputDetailLevel.compact.next.label == "intermediate")
+        #expect(ToolOutputDetailLevel.intermediate.next.label == "expanded")
+        #expect(ToolOutputDetailLevel.expanded.next.label == "compact")
+        #expect(ToolOutputDetailLevel.intermediate.label == "intermediate")
+    }
+
+    @Test
+    func intermediateShowsOnlyMutationSourceWhileExpandedRetainsMutationDetails() async {
+        let toolCall = presentedToolCall(
+            id: "intermediate-edit",
+            name: "local.editFile",
+            argumentsObject: [
+                "path": "/tmp/Example.swift",
+                "old": "let oldValue = 1",
+                "new": "let newValue = 2"
+            ],
+            argumentsJSON: "{}"
+        )
+        let intermediate = makeRenderer(standardErrorIsTerminal: true)
+        await intermediate.setToolOutputDetailLevel(.intermediate)
+        await intermediate.writeToolCallStarted(toolCall)
+        await intermediate.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Updated", summary: "Updated")
+        )
+        let intermediateText = TerminalANSIText.stripANSI(
+            await intermediate.capturedWriteEvents().map(\.text).joined()
+        )
+        #expect(intermediateText.contains("oldValue"))
+        #expect(intermediateText.contains("newValue"))
+        #expect(!intermediateText.contains("kind:"))
+        #expect(!intermediateText.contains("change:"))
+        #expect(!intermediateText.contains("status:"))
+
+        let expanded = makeRenderer(standardErrorIsTerminal: true)
+        await expanded.setToolOutputDetailLevel(.expanded)
+        await expanded.writeToolCallStarted(toolCall)
+        await expanded.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Updated", summary: "Updated")
+        )
+        let expandedText = TerminalANSIText.stripANSI(
+            await expanded.capturedWriteEvents().map(\.text).joined()
+        )
+        #expect(expandedText.contains("change: replace /tmp/Example.swift"))
+        #expect(expandedText.contains("status:"))
+    }
+
+    @Test
+    func intermediateHidesCodeAndDiffFromNonMutationPresentation() {
+        let toolCall = presentedToolCall(
+            id: "intermediate-inspect-source",
+            name: "thirdparty.inspect",
+            argumentsObject: [
+                "code": "let hiddenSource = true",
+                "old": "let before = 1",
+                "new": "let after = 2"
+            ],
+            argumentsJSON: "{}",
+            presentation: ToolPresentationDefinition(
+                title: "Inspection",
+                action: "Inspect",
+                kind: .inspect,
+                sections: [
+                    .code(
+                        label: "source",
+                        value: .argument(["code"], format: .text)
+                    ),
+                    .diff(
+                        label: "comparison",
+                        old: .argument(["old"], format: .text),
+                        new: .argument(["new"], format: .text)
+                    )
+                ]
+            )
+        )
+
+        #expect(TerminalChat.intermediateToolCallRows(for: toolCall).isEmpty)
+    }
+
+    @Test(arguments: [ToolOutputDetailLevel.intermediate, .expanded])
+    func detailedLevelsOmitFileReadTools(_ level: ToolOutputDetailLevel) async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let toolCall = presentedToolCall(
+            id: "read-hidden-\(level.label)",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/Secret.swift"],
+            argumentsJSON: #"{"path":"/tmp/Secret.swift"}"#
+        )
+        await renderer.setToolOutputDetailLevel(level)
+        await renderer.writeToolCallStarted(toolCall)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "let secret = true", summary: "Read")
+        )
+        let text = TerminalANSIText.stripANSI(
+            await renderer.capturedWriteEvents().map(\.text).joined()
+        )
+        #expect(!text.contains("local.readFile"))
+        #expect(!text.contains("/tmp/Secret.swift"))
+        #expect(!text.contains("let secret = true"))
+        #expect(!text.contains("status:"))
+        #expect(!text.contains("⏳"))
+        #expect(!text.contains("✅"))
+        let snapshot = await renderer.snapshot()
+        #expect(snapshot.activeCompactToolCallID == nil)
+        #expect(snapshot.activeDetailedToolCallID == nil)
+        #expect(await renderer.capturedWriteEvents().isEmpty)
+    }
+
+    @Test
     func compactToolCompletionClearsOnlyOwnedRows() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = presentedToolCall(
@@ -362,9 +474,9 @@ struct TerminalChatRenderCoordinatorTests {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = presentedToolCall(
             id: "tool-detailed",
-            name: "local.readFile",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
+            name: "local.exec",
+            argumentsObject: ["command": "printf done"],
+            argumentsJSON: #"{"command":"printf done"}"#
         )
         await renderer.setToolOutputDetailLevel(.expanded)
         await renderer.writeToolCallStarted(toolCall)
@@ -482,9 +594,9 @@ struct TerminalChatRenderCoordinatorTests {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = presentedToolCall(
             id: "detailed-elapsed-render",
-            name: "agent.wait",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
+            name: "local.exec",
+            argumentsObject: ["command": "printf done"],
+            argumentsJSON: #"{"command":"printf done"}"#
         )
         await renderer.setToolOutputDetailLevel(.expanded)
         await renderer.writeToolCallStarted(toolCall)
@@ -723,6 +835,70 @@ struct TerminalChatRenderCoordinatorTests {
         )
         #expect(visibleRows.contains { $0.contains("status: ✅") })
         #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 80 })
+    }
+
+    @Test
+    func intermediatePendingMutationBeyondScrollRegionKeepsOnlySourceRows() async {
+        let scrollableRows = 4
+        let oldContent = (0..<40)
+            .map { "let oldValue\($0) = \($0)" }
+            .joined(separator: "\n")
+        let newContent = (0..<40)
+            .map { "let newValue\($0) = \($0)" }
+            .joined(separator: "\n")
+        let renderer = makeRenderer(
+            stdinIsTerminal: true,
+            standardErrorIsTerminal: true,
+            // Keep this case focused on vertical bounding: enough horizontal
+            // room preserves visible source/diff cells before the 4-row clip.
+            columnWidthProvider: { 140 }
+        )
+        let toolCall = presentedToolCall(
+            id: "tool-intermediate-edit-overflow",
+            name: "local.editFile",
+            argumentsObject: [
+                "path": "/tmp/project/Sources/App.swift",
+                "old": oldContent,
+                "new": newContent
+            ],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.setToolOutputDetailLevel(.intermediate)
+        await renderer.writeToolCallStarted(
+            toolCall,
+            maximumInPlaceRows: scrollableRows
+        )
+        let started = await renderer.snapshot()
+        let startedText = TerminalANSIText.stripANSI(
+            (await renderer.capturedWriteEvents()).map(\.text).joined()
+        )
+        #expect(
+            started.activeDetailedToolRenderedRowCount == scrollableRows - 1
+        )
+        let sourceRows = startedText
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .filter { $0.contains("oldValue") || $0.contains("newValue") }
+        #expect(!sourceRows.isEmpty)
+        #expect(sourceRows.allSatisfy { $0.contains("│") })
+        #expect(!startedText.contains("... details shown on completion"))
+        #expect(!startedText.contains("status:"))
+        #expect(!startedText.contains("kind:"))
+        #expect(!startedText.contains("change:"))
+        #expect(!startedText.contains("/tmp/project/Sources/App.swift"))
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Updated", summary: "Updated"),
+            maximumInPlaceRows: scrollableRows
+        )
+        let completionText = TerminalANSIText.stripANSI(
+            (await renderer.capturedWriteEvents()).map(\.text).joined()
+        )
+        #expect(!completionText.contains("... details shown on completion"))
+        #expect(!completionText.contains("status:"))
+        #expect(!completionText.contains("kind:"))
+        #expect(!completionText.contains("change:"))
     }
 
     @Test
@@ -2121,9 +2297,9 @@ struct TerminalChatRenderCoordinatorTests {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = presentedToolCall(
             id: "detailed-style-change",
-            name: "local.readFile",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
+            name: "local.exec",
+            argumentsObject: ["command": "printf done"],
+            argumentsJSON: #"{"command":"printf done"}"#
         )
 
         await renderer.setToolOutputDetailLevel(.expanded)
@@ -2644,9 +2820,9 @@ struct TerminalChatToolBlockResizeTests {
         )
         let toolCall = presentedToolCall(
             id: "resize-detailed-100-40",
-            name: "local.readFile",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
+            name: "local.exec",
+            argumentsObject: ["command": "printf done"],
+            argumentsJSON: #"{"command":"printf done"}"#
         )
         await renderer.setToolOutputDetailLevel(.expanded)
 
@@ -2724,9 +2900,9 @@ struct TerminalChatToolBlockResizeTests {
         )
         let toolCall = presentedToolCall(
             id: "resize-detailed-stable",
-            name: "local.readFile",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
+            name: "local.exec",
+            argumentsObject: ["command": "printf done"],
+            argumentsJSON: #"{"command":"printf done"}"#
         )
         await renderer.setToolOutputDetailLevel(.expanded)
 

@@ -19,6 +19,8 @@ import ToolCore
 public enum ToolOutputDetailLevel: CaseIterable, Sendable {
     /// Single inline status line per tool call.
     case compact
+    /// Source changes only, without call metadata or completion details.
+    case intermediate
     /// Title, kind, location, full call parameters, and change/summary/error
     /// snippets with syntax-highlighted code areas.
     case expanded
@@ -26,7 +28,8 @@ public enum ToolOutputDetailLevel: CaseIterable, Sendable {
     /// Returns the other level when toggling between detail levels.
     public var next: ToolOutputDetailLevel {
         switch self {
-        case .compact: return .expanded
+        case .compact: return .intermediate
+        case .intermediate: return .expanded
         case .expanded: return .compact
         }
     }
@@ -35,6 +38,7 @@ public enum ToolOutputDetailLevel: CaseIterable, Sendable {
     public var label: String {
         switch self {
         case .compact: return "compact"
+        case .intermediate: return "intermediate"
         case .expanded: return "expanded"
         }
     }
