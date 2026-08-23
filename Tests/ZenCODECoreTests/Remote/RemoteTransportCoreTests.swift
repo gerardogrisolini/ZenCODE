@@ -980,13 +980,17 @@ struct RemoteTransportCoreTests {
             )
             var body = context.channel.allocator.buffer(capacity: payload.utf8.count)
             body.writeString(payload)
+            let channel = context.channel
+            let flushPromise = context.eventLoop.makePromise(of: Void.self)
             context.writeAndFlush(
                 LocalHTTPResponseHandler.wrapOutboundOut(
                     .body(.byteBuffer(body))
                 ),
-                promise: nil
+                promise: flushPromise
             )
-            context.close(promise: nil)
+            flushPromise.futureResult.whenComplete { _ in
+                channel.close(promise: nil)
+            }
         }
         let transport = RemoteTransportCore(owningEventLoopThreads: 1)
         let pool = ChatGPTSubscriptionWebSocketPool(
