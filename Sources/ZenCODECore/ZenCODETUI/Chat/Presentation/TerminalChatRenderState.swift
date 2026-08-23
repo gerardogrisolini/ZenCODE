@@ -76,7 +76,6 @@ extension TerminalChatRenderCoordinator {
     }
 
     struct ActiveOverviewBlock: Sendable {
-        let anchorID: String?
         let rows: Int
         let columnWidth: Int
         let maximumInPlaceRows: Int?

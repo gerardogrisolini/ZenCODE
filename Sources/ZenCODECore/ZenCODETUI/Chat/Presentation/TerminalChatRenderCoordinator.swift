@@ -1249,7 +1249,6 @@ actor TerminalChatRenderCoordinator {
             return
         }
         activeSubAgentOverviewBlock = ActiveOverviewBlock(
-            anchorID: overviewBatchID,
             rows: rows,
             columnWidth: columnWidth,
             maximumInPlaceRows: maximumInPlaceRows,
@@ -1283,15 +1282,17 @@ actor TerminalChatRenderCoordinator {
     }
 
     /// Returns the previously drawn section when it can still be safely erased.
+    /// A new non-nil batch takes over the same live overview slot: requiring the
+    /// old and new batch identifiers to match would leave the old section above
+    /// the new one even though no intervening output invalidated its ownership.
     private func reusableSubAgentOverviewBlock(
         anchorID: String?,
         columnWidth: Int,
         maximumInPlaceRows: Int?
     ) -> ActiveOverviewBlock? {
         guard standardErrorIsTerminal,
-              let anchorID,
+              anchorID != nil,
               let block = activeSubAgentOverviewBlock,
-              block.anchorID == anchorID,
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth else {
             return nil

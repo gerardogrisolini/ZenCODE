@@ -1989,7 +1989,7 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func subAgentOverviewDifferentWaveDoesNotReusePreviousRegion() async {
+    func subAgentOverviewDifferentWaveReusesTheOwnedLiveRegion() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
             columnWidthProvider: { 80 }
@@ -2016,10 +2016,12 @@ struct TerminalChatRenderCoordinatorTests {
             .map(\.text)
             .joined()
 
-        // The same physical row count is insufficient: a new wave owns a new
-        // logical region and must not erase the preceding wave's section.
-        #expect(!containsCursorUpSequence(newWaveText))
-        #expect(newWaveText.contains("wave B running"))
+        // A different wave still replaces the single live Sub-Agents slot when
+        // no intervening output has invalidated ownership of its physical rows.
+        #expect(newWaveText.hasPrefix("\u{1B}[3A\r"))
+        #expect(newWaveText.components(separatedBy: "\u{1B}[2K").count - 1 == 3)
+        #expect(TerminalANSIText.stripANSI(newWaveText).contains("wave B running"))
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
     }
 
     @Test
