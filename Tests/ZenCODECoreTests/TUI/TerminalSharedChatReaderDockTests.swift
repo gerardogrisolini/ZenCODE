@@ -104,6 +104,19 @@ struct TerminalSharedChatReaderDockTests {
         )
     }
 
+    private func operatorMessage(_ number: Int) -> AgentSharedChat.Message {
+        AgentSharedChat.Message(
+            roomID: "reader-room",
+            sender: AgentSharedChat.Participant(
+                id: AgentSharedChat.operatorID(for: "reader-room"),
+                name: "operator",
+                kind: .operator
+            ),
+            recipientIDs: ["coordinator:reader-room"],
+            text: "operator message \(number)"
+        )
+    }
+
     private func harnessSupervisor(
         roomID: String,
         harness: SharedChatObservationHarness,
@@ -214,6 +227,72 @@ struct TerminalSharedChatReaderDockTests {
         #expect(await harness.attachedIDs.count == 3)
         #expect(await harness.detachedIDs.count == 3)
         #expect(await supervisor.currentObservation() == nil)
+    }
+
+    @Test
+    func operatorMessagesRemainInReaderHistoryWithoutBecomingUnread() {
+        let outbound = operatorMessage(1)
+        var buffer = TerminalSharedChatReadingBuffer()
+
+        #expect(buffer.append([outbound]) == [outbound])
+        #expect(buffer.messages.map(\.id) == [outbound.id])
+        #expect(buffer.unreadCount == 0)
+        #expect(buffer.readerOpeningMessageID == outbound.id)
+
+        buffer.openReader()
+
+        #expect(buffer.selectedMessageID == outbound.id)
+        #expect(buffer.unreadCount == 0)
+
+        buffer.closeReader()
+        buffer.append([operatorMessage(2)])
+        #expect(buffer.unreadCount == 0)
+    }
+
+    @Test
+    func operatorMessagesDoNotShiftUnreadBoundaryWhenInterleaved() {
+        let first = message(1)
+        let outbound = operatorMessage(2)
+        let second = message(3)
+        var buffer = TerminalSharedChatReadingBuffer()
+        buffer.append([first, outbound, second])
+
+        #expect(buffer.unreadCount == 2)
+        #expect(buffer.readerOpeningMessageID == first.id)
+
+        buffer.openReader()
+        #expect(buffer.selectedMessageID == first.id)
+        #expect(buffer.unreadCount == 1)
+
+        buffer.navigate(.nextMessage)
+        #expect(buffer.selectedMessageID == outbound.id)
+        #expect(buffer.unreadCount == 1)
+
+        buffer.navigate(.nextMessage)
+        #expect(buffer.selectedMessageID == second.id)
+        #expect(buffer.unreadCount == 0)
+    }
+
+    @Test
+    func dockNavigationSkipsOperatorEntriesWhenAdvancingUnreadBoundary() {
+        let first = message(4)
+        let outbound = operatorMessage(5)
+        let second = message(6)
+        let entries = [
+            TerminalSharedChatReaderEntry(message: first, participantMap: [:]),
+            TerminalSharedChatReaderEntry(message: outbound, participantMap: [:]),
+            TerminalSharedChatReaderEntry(message: second, participantMap: [:]),
+        ]
+        var dock = TerminalSharedChatReaderDock()
+        dock.replace(entries: entries, unreadCount: 2, selection: .message(first.id))
+
+        dock.navigate(.nextMessage, viewportRows: 2, width: 80)
+        #expect(dock.selectedIndex == 1)
+        #expect(dock.unreadCount == 2)
+
+        dock.navigate(.nextMessage, viewportRows: 2, width: 80)
+        #expect(dock.selectedIndex == 2)
+        #expect(dock.unreadCount == 0)
     }
 
     @Test

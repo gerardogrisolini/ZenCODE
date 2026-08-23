@@ -15,6 +15,11 @@ struct TerminalSharedChatReadingBuffer: Sendable {
     /// Outbound and inbound messages both arrive through the room observation and
     /// remain readable here without being appended to that transcript.
     private var messageIDs: Set<UUID> = []
+    /// Only messages written by the coordinator or an agent participate in the
+    /// unread boundary. Operator messages remain in `messages` for history, but
+    /// are already known to the human who wrote them and must never become
+    /// unread merely because the observation stream replayed them.
+    private var unreadMessageIDs: Set<UUID> = []
     private(set) var unreadCount = 0
     /// The message currently selected by the open reader. Keeping an identity
     /// rather than an array offset lets new arrivals leave the selection in
@@ -23,25 +28,21 @@ struct TerminalSharedChatReadingBuffer: Sendable {
     private(set) var isReaderOpen = false
 
     /// The message the reader should show when it opens. Unread messages are
-    /// retained as a suffix of the bounded history, so the first unread entry
-    /// is the oldest message in that suffix. With no unread arrivals, opening
-    /// still starts at the newest message as it did before.
+    /// retained as a suffix of the non-operator history; operator messages may
+    /// be interleaved because they remain visible in the bounded transcript.
+    /// With no unread arrivals, opening still starts at the newest message as
+    /// it did before.
     var readerOpeningMessageID: UUID? {
         guard !messages.isEmpty else { return nil }
-        let targetIndex: Int
-        if unreadCount > 0 {
-            targetIndex = max(0, messages.count - min(unreadCount, messages.count))
-        } else {
-            targetIndex = messages.count - 1
-        }
-        return messages[targetIndex].id
+        return messages.first(where: { unreadMessageIDs.contains($0.id) })?.id
+            ?? messages.last?.id
     }
 
     /// Opening shows (and therefore consumes) only the first unread message.
-    /// The remaining unread suffix is consumed progressively as the operator
-    /// advances through it.
+    /// The remaining non-operator unread suffix is consumed progressively as
+    /// the operator advances through it.
     var readerOpeningUnreadCount: Int {
-        max(0, unreadCount - (unreadCount > 0 ? 1 : 0))
+        max(0, unreadMessageIDs.count - (unreadMessageIDs.isEmpty ? 0 : 1))
     }
 
     /// Adds transcript messages once per `Message.id` and returns the entries
@@ -58,8 +59,14 @@ struct TerminalSharedChatReadingBuffer: Sendable {
             let evicted = Array(messages.prefix(overflow))
             messages.removeFirst(overflow)
             messageIDs.subtract(evicted.map(\.id))
+            unreadMessageIDs.subtract(evicted.map(\.id))
         }
-        unreadCount = min(messages.count, unreadCount + appended.count)
+        unreadMessageIDs.formUnion(
+            appended
+                .filter { messageIDs.contains($0.id) && $0.sender.kind != .operator }
+                .map(\.id)
+        )
+        unreadCount = unreadMessageIDs.count
 
         guard isReaderOpen else { return appended }
         // `TerminalSharedChatReaderDock.replace` selects the newest message
@@ -69,7 +76,7 @@ struct TerminalSharedChatReadingBuffer: Sendable {
         guard let selectedMessageID,
               messages.contains(where: { $0.id == selectedMessageID }) else {
             self.selectedMessageID = messages.last?.id
-            unreadCount = 0
+            markRead()
             return appended
         }
         return appended
@@ -82,8 +89,9 @@ struct TerminalSharedChatReadingBuffer: Sendable {
     mutating func openReader() {
         isReaderOpen = true
         selectedMessageID = readerOpeningMessageID
-        if unreadCount > 0 {
-            unreadCount -= 1
+        if let selectedMessageID {
+            unreadMessageIDs.remove(selectedMessageID)
+            unreadCount = unreadMessageIDs.count
         }
     }
 
@@ -93,7 +101,10 @@ struct TerminalSharedChatReadingBuffer: Sendable {
     }
 
     /// Retained for callers that explicitly consume the whole buffer.
-    mutating func markRead() { unreadCount = 0 }
+    mutating func markRead() {
+        unreadMessageIDs.removeAll(keepingCapacity: true)
+        unreadCount = 0
+    }
 
     /// Applies message-selection navigation to the reader state. Scrolling
     /// within a message intentionally does not change the read marker: only
@@ -120,10 +131,14 @@ struct TerminalSharedChatReadingBuffer: Sendable {
         }
 
         selectedMessageID = messages[targetIndex].id
-        let firstUnreadIndex = messages.count - unreadCount
-        if targetIndex >= firstUnreadIndex {
-            unreadCount = messages.count - targetIndex - 1
+        guard unreadMessageIDs.contains(messages[targetIndex].id) else {
+            return
         }
+        // Selecting an unread message advances the boundary through that
+        // message. Operator entries are skipped by the ID set, so they cannot
+        // consume or create unread state when interleaved with agent traffic.
+        unreadMessageIDs.subtract(messages.prefix(through: targetIndex).map(\.id))
+        unreadCount = unreadMessageIDs.count
     }
 }
 
@@ -131,17 +146,22 @@ struct TerminalSharedChatReaderEntry: Sendable, Equatable {
     let id: UUID
     let route: String
     let text: String
+    /// Whether this entry is eligible for the reader's unread boundary. The
+    /// default keeps manually-created layout fixtures backward compatible.
+    let countsTowardUnread: Bool
 
-    init(id: UUID, route: String, text: String) {
+    init(id: UUID, route: String, text: String, countsTowardUnread: Bool = true) {
         self.id = id
         self.route = route
         self.text = text
+        self.countsTowardUnread = countsTowardUnread
     }
 
     init(message: AgentSharedChat.Message, participantMap: [String: AgentSharedChat.Participant]) {
         id = message.id
         route = TerminalChat.sharedChatIncomingCardRoute(for: message, participantMap: participantMap)
         text = message.text
+        countsTowardUnread = message.sender.kind != .operator
     }
 }
 
@@ -171,7 +191,10 @@ struct TerminalSharedChatReaderDock: Sendable, Equatable {
     ) {
         let selectedID = self.entries.indices.contains(selectedIndex) ? self.entries[selectedIndex].id : nil
         self.entries = Array(entries.suffix(TerminalSharedChatReadingBuffer.capacity))
-        self.unreadCount = min(self.entries.count, max(0, unreadCount))
+        let eligibleCount = self.entries.reduce(into: 0) { count, entry in
+            if entry.countsTowardUnread { count += 1 }
+        }
+        self.unreadCount = min(eligibleCount, max(0, unreadCount))
         let requestedID: UUID?
         let isExplicitSelection: Bool
         switch selection {
@@ -217,9 +240,13 @@ struct TerminalSharedChatReaderDock: Sendable, Equatable {
         // status bar still get the same marker semantics as the input loop.
         switch action {
         case .previousMessage, .nextMessage, .firstMessage, .lastMessage:
-            let firstUnreadIndex = entries.count - unreadCount
-            if selectedIndex >= firstUnreadIndex {
-                unreadCount = entries.count - selectedIndex - 1
+            let eligibleIndices = entries.indices.filter { entries[$0].countsTowardUnread }
+            guard let eligiblePosition = eligibleIndices.firstIndex(of: selectedIndex) else {
+                return
+            }
+            let firstUnreadPosition = eligibleIndices.count - unreadCount
+            if eligiblePosition >= firstUnreadPosition {
+                unreadCount = eligibleIndices.count - eligiblePosition - 1
             }
         case .scrollUp, .scrollDown, .pageUp, .pageDown:
             break
