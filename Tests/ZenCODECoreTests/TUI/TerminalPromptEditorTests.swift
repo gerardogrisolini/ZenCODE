@@ -424,10 +424,10 @@ struct TerminalPromptEditorTests {
         // `clear` is initially the last subcommand. Selecting it then editing
         // must not retain that numeric position into the newly ordered match
         // list.
-        for _ in 0..<5 {
+        for _ in 0..<7 {
             _ = editor.apply(.down, context: context)
         }
-        #expect(editor.suggestionIndex == 5)
+        #expect(editor.suggestionIndex == 7)
         #expect(editor.visibleSuggestions(context: context)[editor.suggestionIndex].command == "clear")
 
         _ = editor.apply(.character("c"), context: context)
@@ -447,9 +447,18 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
-    func featureArgumentCompletionsIncludeEveryParserActionThatNeedsAnID() {
+    func featureArgumentCompletionsIncludeEveryStaticParserAction() {
         let arguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/feature")
-        let idActions = ["enable", "disable", "delete", "build", "validate"]
+        #expect(
+            arguments.map(\.command)
+                == [
+                    "list", "ls", "status", "reload", "enable", "disable", "edit",
+                    "modify", "update", "promote", "delete", "build", "validate"
+                ]
+        )
+        let idActions = [
+            "enable", "disable", "edit", "modify", "update", "promote", "delete", "build", "validate"
+        ]
 
         for action in idActions {
             #expect(arguments.first(where: { $0.command == action })?.requiresArgument == true)
@@ -460,6 +469,44 @@ struct TerminalPromptEditorTests {
         #expect(editor.visibleSuggestions(context: context).map(\.command) == ["enable"])
         #expect(editor.apply(.enter, context: context) == .changed)
         #expect(String(editor.buffer) == "/feature enable ")
+    }
+
+    @Test
+    func taskAndChangesCompletionsIncludeStaticParserAliases() {
+        let taskArguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/tasks")
+        #expect(
+            taskArguments.map(\.command)
+                == ["status", "list", "ls", "show", "get", "retry", "cancel", "clear"]
+        )
+        #expect(taskArguments.first(where: { $0.command == "get" })?.requiresArgument == true)
+
+        let changesArguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/changes")
+        #expect(changesArguments.map(\.command) == ["diff", "--diff"])
+    }
+
+    @Test
+    func agentAndToolCompletionsIncludeEveryStaticParserParameter() {
+        let agentArguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/agents")
+        #expect(agentArguments.map(\.command) == ["list", "ls", "status"])
+
+        let toolArguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/tools")
+        #expect(toolArguments.map(\.command) == ["all", "none", "off", "clear", "disabled"])
+    }
+
+    @Test
+    func skillArgumentCompletionsListAndSelectEveryStaticParameter() {
+        let arguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/skills")
+        #expect(arguments.map(\.command) == ["all", "none", "add", "install", "uninstall"])
+        #expect(arguments.first(where: { $0.command == "add" })?.requiresArgument == true)
+        #expect(arguments.first(where: { $0.command == "install" })?.requiresArgument == true)
+        #expect(arguments.first(where: { $0.command == "uninstall" })?.requiresArgument == false)
+
+        let context = TerminalPromptEditorContext(
+            suggestions: [TerminalCommandSuggestion(command: "/skills", summary: "manage skills")]
+        )
+        var editor = makeEditor("/skills un")
+        #expect(editor.visibleSuggestions(context: context).map(\.command) == ["uninstall"])
+        #expect(editor.apply(.enter, context: context) == .submitted("/skills uninstall"))
     }
 
     @Test

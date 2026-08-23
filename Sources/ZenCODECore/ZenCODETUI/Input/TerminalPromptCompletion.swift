@@ -195,8 +195,14 @@ enum TerminalPromptCompletionCatalog {
         "/tasks": [
             TerminalCommandSuggestion(command: "status", summary: "show the task graph"),
             TerminalCommandSuggestion(command: "list", summary: "list tasks"),
+            TerminalCommandSuggestion(command: "ls", summary: "list tasks"),
             TerminalCommandSuggestion(
                 command: "show",
+                summary: "show one task by id",
+                requiresArgument: true
+            ),
+            TerminalCommandSuggestion(
+                command: "get",
                 summary: "show one task by id",
                 requiresArgument: true
             ),
@@ -228,8 +234,21 @@ enum TerminalPromptCompletionCatalog {
                 summary: "discard the active plan in this session"
             )
         ],
+        "/agents": [
+            TerminalCommandSuggestion(command: "list", summary: "list agent profiles"),
+            TerminalCommandSuggestion(command: "ls", summary: "list agent profiles"),
+            TerminalCommandSuggestion(command: "status", summary: "list agent profiles")
+        ],
+        "/tools": [
+            TerminalCommandSuggestion(command: "all", summary: "select all tool groups"),
+            TerminalCommandSuggestion(command: "none", summary: "clear the tool selection"),
+            TerminalCommandSuggestion(command: "off", summary: "clear the tool selection"),
+            TerminalCommandSuggestion(command: "clear", summary: "clear the tool selection"),
+            TerminalCommandSuggestion(command: "disabled", summary: "clear the tool selection")
+        ],
         "/feature": [
             TerminalCommandSuggestion(command: "list", summary: "enable/disable features"),
+            TerminalCommandSuggestion(command: "ls", summary: "enable/disable features"),
             TerminalCommandSuggestion(command: "status", summary: "print known features"),
             TerminalCommandSuggestion(command: "reload", summary: "reload feature packages"),
             TerminalCommandSuggestion(
@@ -245,6 +264,21 @@ enum TerminalPromptCompletionCatalog {
             TerminalCommandSuggestion(
                 command: "edit",
                 summary: "edit a feature by id",
+                requiresArgument: true
+            ),
+            TerminalCommandSuggestion(
+                command: "modify",
+                summary: "edit a feature by id",
+                requiresArgument: true
+            ),
+            TerminalCommandSuggestion(
+                command: "update",
+                summary: "edit a feature by id",
+                requiresArgument: true
+            ),
+            TerminalCommandSuggestion(
+                command: "promote",
+                summary: "promote a feature by id",
                 requiresArgument: true
             ),
             TerminalCommandSuggestion(
@@ -272,17 +306,29 @@ enum TerminalPromptCompletionCatalog {
             )
         ],
         "/changes": [
-            TerminalCommandSuggestion(command: "diff", summary: "include patches")
+            TerminalCommandSuggestion(command: "diff", summary: "include patches"),
+            TerminalCommandSuggestion(command: "--diff", summary: "include patches")
         ],
         "/telegram": [
             TerminalCommandSuggestion(command: "on", summary: "start Telegram control"),
             TerminalCommandSuggestion(command: "off", summary: "stop Telegram control")
         ],
         "/skills": [
+            TerminalCommandSuggestion(command: "all", summary: "select all installed skills"),
+            TerminalCommandSuggestion(command: "none", summary: "clear the skill selection"),
+            TerminalCommandSuggestion(
+                command: "add",
+                summary: "install from GitHub or a local path",
+                requiresArgument: true
+            ),
             TerminalCommandSuggestion(
                 command: "install",
                 summary: "install from GitHub or a local path",
                 requiresArgument: true
+            ),
+            TerminalCommandSuggestion(
+                command: "uninstall",
+                summary: "uninstall selected app-installed skills"
             )
         ]
     ]
