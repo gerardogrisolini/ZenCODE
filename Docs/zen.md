@@ -385,6 +385,10 @@ Delegated sub-agents ask for the same approvals as the coordinator. Their reques
 
 Tool groups include filesystem, shell, text, search, Git, memory, sub-agents, generated Swift features, and installed optional feature packages such as XcodeTools on macOS or FigmaTools. Use `/tools` to select per session. ACP clients pass enabled tools directly.
 
+### Local file editing
+
+`local.editFile`, `local.multiEdit`, and `local.replace` accept only the canonical `old`/`new` payload fields; the legacy aliases `oldString`, `old_string`, `newString`, and `new_string` are not supported. Empty or ambiguous matches are rejected, existing line endings are preserved, and `local.multiEdit` applies its edits atomically. Results provide only bounded contextual feedback around affected lines.
+
 ## Task Orchestration
 
 `todo.*` is a lightweight checklist for model-local coordination. `tasks.*` operates on the authoritative session task graph owned by `SessionTaskOrchestrator` — a validated DAG with atomic creation, dependency gating, optimistic fencing, and attempt history.

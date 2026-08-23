@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Release tags follow the strict `vX.Y.Z` contract described in
 [Docs/release.md](Docs/release.md) and must match `ZenPackageMetadata.version`.
 
-## [Unreleased]
+## [1.3.0] - 2026-08-23
 
 ### Added
 
@@ -43,6 +43,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - The setup menu moved **Features** and **Memory embeddings** from the Optional
   group to the Recommended group, so the recommended configuration steps are
   shown together before the optional integration toggles.
+- File editing tools now use compact canonical `old`/`new` arguments, preserve
+  consistent line endings, reject ambiguous or empty matches, and return
+  bounded post-edit context with affected line ranges. Their schemas and output
+  payloads are substantially smaller while retaining atomic multi-edit
+  semantics.
+
+### Fixed
+
+- The terminal’s live **Sub-Agents** overview now replaces its existing owned
+  rows when a new delegation wave arrives, avoiding duplicated stale sections.
+- Messages written by the terminal operator remain visible in the shared-chat
+  reader but no longer increment, shift, or consume the unread-message marker.
 
 ### Removed
 
@@ -794,7 +806,7 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.6...HEAD
+[1.3.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.6...v1.3.0
 [1.2.6]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.5...v1.2.6
 [1.2.5]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.4...v1.2.5
 [1.2.4]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.3...v1.2.4
