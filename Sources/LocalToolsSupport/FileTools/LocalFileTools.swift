@@ -15,24 +15,49 @@ import FeatureKit
 import ToolCore
 
 
-private func replacing(
+private func replacingAll(
     _ contents: String,
-    oldString: String,
-    with newString: String,
-    replaceAll: Bool,
+    oldText: String,
+    with newText: String,
     notFoundMessage: @autoclosure () -> String
 ) throws -> (contents: String, replacements: Int) {
-    let occurrences = contents.ranges(of: oldString).count
+    let occurrences = contents.ranges(of: oldText).count
     guard occurrences > 0 else {
         throw LocalToolsFeatureError.permissionDenied(notFoundMessage())
     }
-    if !replaceAll && occurrences != 1 {
-        throw LocalToolsFeatureError.permissionDenied("oldString matched \(occurrences) times. Set replaceAll=true or provide a unique string.")
-    }
     return (
-        replaceAll ? contents.replacingOccurrences(of: oldString, with: newString) : contents.replacingFirstOccurrence(of: oldString, with: newString),
-        replaceAll ? occurrences : 1
+        contents.replacingOccurrences(of: oldText, with: newText),
+        occurrences
     )
+}
+
+private func editFailureMessage(_ failure: LocalFileEditFailure, path: String) -> String {
+    switch failure {
+    case .emptyOld:
+        "Edit failed in \(path): old text must not be empty."
+    case .notFound:
+        "Edit failed in \(path): old text was not found. Re-read the target range and retry with exact text."
+    case let .ambiguous(count):
+        "Edit failed in \(path): old text matched \(count) times. Include more surrounding context to make it unique."
+    }
+}
+
+private func multiEditFailureMessage(
+    _ failure: LocalFileEditFailure,
+    edit: Int,
+    total: Int,
+    path: String
+) -> String {
+    let reason: String
+    switch failure {
+    case .emptyOld:
+        reason = "old text must not be empty."
+    case .notFound:
+        reason = "old text was not found. Re-read the target range and retry with exact text."
+    case let .ambiguous(count):
+        reason = "old text matched \(count) times. Include more surrounding context to make it unique."
+    }
+    return "Multi-edit failed at edit \(edit) of \(total) in \(path): \(reason) No changes were written."
 }
 
 
@@ -201,31 +226,28 @@ struct LocalWriteFileTool: FeatureTool {
 struct LocalReplaceTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let path: String?
-        let file_path: String?
-        let oldString: String?
-        let old_string: String?
-        let newString: String?
-        let new_string: String?
+        let old: String?
+        let new: String?
     }
 
     static let name = "local.replace"
-    static let description = "Replaces all occurrences of oldString with newString in a UTF-8 text file."
+    static let description = "Replaces all occurrences of `old` with `new` in a UTF-8 text file."
     static let inputSchema = buildInputSchema(
-        CommonSchemaProperties.pathAliases + CommonSchemaProperties.editStrings,
-        required: ["path", "oldString", "newString"]
+        [.string("path")] + CommonSchemaProperties.edit,
+        required: ["path", "old", "new"]
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
-        let oldString = try LocalToolsSupport.requiredRawString(input.oldString, input.old_string, name: "oldString")
-        guard let newString = input.newString ?? input.new_string else {
-            throw LocalToolsFeatureError.missingArgument("newString")
+        let path = try LocalToolsSupport.requiredPath(input.path, context: context)
+        let oldText = try LocalToolsSupport.requiredRawString(input.old, name: "old")
+        guard let newText = input.new else {
+            throw LocalToolsFeatureError.missingArgument("new")
         }
         return try await LocalIOOffloader.run {
             let original = try String(contentsOf: path, encoding: .utf8)
-            let replacement = try replacing(
-                original, oldString: oldString, with: newString, replaceAll: true,
-                notFoundMessage: "oldString was not found in \(path.path)."
+            let replacement = try replacingAll(
+                original, oldText: oldText, with: newText,
+                notFoundMessage: "old text was not found in \(path.path)."
             )
             try replacement.contents.write(to: path, atomically: true, encoding: .utf8)
             return "Replaced \(replacement.replacements) occurrence(s) in \(path.path)."
@@ -236,38 +258,33 @@ struct LocalReplaceTool: FeatureTool {
 struct LocalEditFileTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let path: String?
-        let file_path: String?
-        let oldString: String?
-        let old_string: String?
-        let newString: String?
-        let new_string: String?
-        let replaceAll: Bool?
-        let replace_all: Bool?
+        let old: String?
+        let new: String?
     }
 
     static let name = "local.editFile"
-    static let description = "Applies a targeted string replacement in a file. By default exactly one occurrence must match; set replaceAll=true to update every occurrence."
+    static let description = "Replaces exactly one occurrence of `old` with `new`. Read enough context to make `old` unique. Use `multiEdit` for multiple atomic edits to one file."
     static let inputSchema = buildInputSchema(
-        CommonSchemaProperties.pathAliases + CommonSchemaProperties.editStrings
-            + [.boolean("replaceAll"), .boolean("replace_all")],
-        required: ["path", "oldString", "newString"]
+        [.string("path")] + CommonSchemaProperties.edit,
+        required: ["path", "old", "new"]
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
-        let oldString = try LocalToolsSupport.requiredRawString(input.oldString, input.old_string, name: "oldString")
-        guard let newString = input.newString ?? input.new_string else {
-            throw LocalToolsFeatureError.missingArgument("newString")
+        let path = try LocalToolsSupport.requiredPath(input.path, context: context)
+        let oldText = input.old ?? ""
+        guard let newText = input.new else {
+            throw LocalToolsFeatureError.missingArgument("new")
         }
-        let replaceAll = input.replaceAll ?? input.replace_all ?? false
         return try await LocalIOOffloader.run {
             let original = try String(contentsOf: path, encoding: .utf8)
-            let replacement = try replacing(
-                original, oldString: oldString, with: newString, replaceAll: replaceAll,
-                notFoundMessage: "oldString was not found in \(path.path)."
-            )
-            try replacement.contents.write(to: path, atomically: true, encoding: .utf8)
-            return "Updated \(path.path). Replacements: \(replacement.replacements)."
+            let result: LocalFileEditResult
+            do {
+                result = try LocalFileEditSupport.apply(old: oldText, new: newText, to: original)
+            } catch let failure as LocalFileEditFailure {
+                throw LocalToolsFeatureError.permissionDenied(editFailureMessage(failure, path: path.path))
+            }
+            try result.contents.write(to: path, atomically: true, encoding: .utf8)
+            return LocalFileEditFeedback.single(path: path.path, result: result)
         }
     }
 }
@@ -275,32 +292,31 @@ struct LocalEditFileTool: FeatureTool {
 struct LocalMultiEditTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let path: String?
-        let file_path: String?
-        let edits: [Edit]
+        let edits: [Edit]?
     }
 
     struct Edit: Decodable, Sendable {
-        let oldString: String?
-        let old_string: String?
-        let newString: String?
-        let new_string: String?
-        let replaceAll: Bool?
-        let replace_all: Bool?
+        let old: String?
+        let new: String?
     }
 
     static let name = "local.multiEdit"
-    static let description = "Applies multiple targeted edits to the same file in order."
+    static let description = "Applies ordered unique old/new replacements to one file and writes only if every edit succeeds."
     static let inputSchema = buildInputSchema(
-        CommonSchemaProperties.pathAliases
-            + [.arrayOfObjects("edits", properties: CommonSchemaProperties.editStrings
-                + [.boolean("replaceAll"), .boolean("replace_all")])],
+        [.string("path"), .arrayOfObjects(
+            "edits",
+            properties: CommonSchemaProperties.edit,
+            required: ["old", "new"]
+        )],
         required: ["path", "edits"]
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
-        guard !input.edits.isEmpty else {
-            throw LocalToolsFeatureError.missingArgument("edits")
+        let path = try LocalToolsSupport.requiredPath(input.path, context: context)
+        guard let edits = input.edits, !edits.isEmpty else {
+            throw LocalToolsFeatureError.permissionDenied(
+                "Multi-edit failed in \(path.path): edits must not be empty. No changes were written."
+            )
         }
         // Read off the cooperative pool, then validate/transform on it (pure
         // CPU) so a long edit list can be cancelled between edits, then write
@@ -308,30 +324,54 @@ struct LocalMultiEditTool: FeatureTool {
         var contents = try await LocalIOOffloader.run {
             try String(contentsOf: path, encoding: .utf8)
         }
-        var totalReplacements = 0
-        for (index, edit) in input.edits.enumerated() {
+        var summaries: [LocalFileEditSummary] = []
+        for (index, edit) in edits.enumerated() {
             try Task.checkCancellation()
-            let oldString = try LocalToolsSupport.requiredRawString(
-                edit.oldString,
-                edit.old_string,
-                name: "edits[\(index)].oldString"
-            )
-            guard let newString = edit.newString ?? edit.new_string else {
-                throw LocalToolsFeatureError.missingArgument("edits[\(index)].newString")
+            let oldText = edit.old ?? ""
+            guard let newText = edit.new else {
+                throw LocalToolsFeatureError.permissionDenied(
+                    "Multi-edit failed at edit \(index + 1) of \(edits.count) in \(path.path): new text is required. No changes were written."
+                )
             }
-            let replaceAll = edit.replaceAll ?? edit.replace_all ?? false
-            let replacement = try replacing(
-                contents, oldString: oldString, with: newString, replaceAll: replaceAll,
-                notFoundMessage: "oldString was not found in \(path.path): \(oldString)"
-            )
-            contents = replacement.contents
-            totalReplacements += replacement.replacements
+            let result: LocalFileEditResult
+            do {
+                result = try LocalFileEditSupport.apply(old: oldText, new: newText, to: contents)
+            } catch let failure as LocalFileEditFailure {
+                throw LocalToolsFeatureError.permissionDenied(
+                    multiEditFailureMessage(
+                        failure,
+                        edit: index + 1,
+                        total: edits.count,
+                        path: path.path
+                    )
+                )
+            }
+            for summaryIndex in summaries.indices {
+                if result.originalLine < summaries[summaryIndex].resultingLines.lowerBound {
+                    let summary = summaries[summaryIndex]
+                    summaries[summaryIndex].oldLine += result.lineDelta
+                    summaries[summaryIndex].resultingLines = ClosedRange(
+                        uncheckedBounds: (
+                            lower: summary.resultingLines.lowerBound + result.lineDelta,
+                            upper: summary.resultingLines.upperBound + result.lineDelta
+                        )
+                    )
+                }
+            }
+            summaries.append(LocalFileEditSummary(
+                oldLine: result.originalLine,
+                resultingLines: result.resultingLines,
+                lineDelta: result.lineDelta,
+                multiline: result.replacementWasMultiline
+            ))
+            contents = result.contents
         }
+        try Task.checkCancellation()
         let finalContents = contents
         try await LocalIOOffloader.run {
             try finalContents.write(to: path, atomically: true, encoding: .utf8)
         }
-        return "Edited \(totalReplacements) occurrence(s) across \(input.edits.count) edit(s) in \(path.path)."
+        return LocalFileEditFeedback.multiple(path: path.path, contents: finalContents, summaries: summaries)
     }
 }
 
@@ -561,7 +601,7 @@ extension LocalMultiEditTool {
             title: "File edits",
             action: "Edit",
             kind: .edit,
-            target: .argument(["file_path", "path"], format: .path),
+            target: .argument(["path"], format: .path),
             sections: [
                 .parameters(),
                 .list(label: "edits", value: .argument(["edits"], format: .json))

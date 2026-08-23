@@ -439,20 +439,17 @@ extension TerminalChat {
             return rows
         case "local.replace", "local.editFile":
             var rows: [DetailedToolRow] = [.text("change: replace \(targetPath(arguments) ?? "file")")]
-            if boolArgument(arguments, keys: ["replaceAll", "replace_all"]) == true {
-                rows.append(.text("mode: replace all"))
-            }
-            if let oldString = rawStringArgument(arguments, keys: ["oldString", "old_string"]),
-               let newString = rawStringArgument(arguments, keys: ["newString", "new_string"]) {
+            if let oldString = rawStringArgument(arguments, keys: ["old"]),
+               let newString = rawStringArgument(arguments, keys: ["new"]) {
                 rows.append(contentsOf: numberedDiffSnippetRows(
                     old: oldString,
                     new: newString,
                     contentWidth: contentWidth
                 ))
-            } else if let oldString = rawStringArgument(arguments, keys: ["oldString", "old_string"]) {
+            } else if let oldString = rawStringArgument(arguments, keys: ["old"]) {
                 rows.append(.text("old:"))
                 rows.append(contentsOf: numberedCodeSnippetRows(oldString))
-            } else if let newString = rawStringArgument(arguments, keys: ["newString", "new_string"]) {
+            } else if let newString = rawStringArgument(arguments, keys: ["new"]) {
                 rows.append(.text("new:"))
                 rows.append(contentsOf: numberedCodeSnippetRows(newString))
             }
@@ -494,16 +491,16 @@ extension TerminalChat {
         _ arguments: [String: Any]
     ) -> Bool {
         arrayObjectArgument(arguments, keys: ["edits"]).contains { edit in
-            rawStringArgument(edit, keys: ["oldString", "old_string"]) != nil
-                || rawStringArgument(edit, keys: ["newString", "new_string"]) != nil
+            rawStringArgument(edit, keys: ["old"]) != nil
+                || rawStringArgument(edit, keys: ["new"]) != nil
         }
     }
 
     nonisolated static func editFileHasSourceChanges(
         _ arguments: [String: Any]
     ) -> Bool {
-        rawStringArgument(arguments, keys: ["oldString", "old_string"]) != nil
-            || rawStringArgument(arguments, keys: ["newString", "new_string"]) != nil
+        rawStringArgument(arguments, keys: ["old"]) != nil
+            || rawStringArgument(arguments, keys: ["new"]) != nil
     }
 
     nonisolated static func multiEditChangeDetailRows(
@@ -516,18 +513,18 @@ extension TerminalChat {
         ]
         for (index, edit) in edits.enumerated() {
             rows.append(.text("edit \(index + 1):"))
-            if let oldString = rawStringArgument(edit, keys: ["oldString", "old_string"]),
-               let newString = rawStringArgument(edit, keys: ["newString", "new_string"]) {
+            if let oldString = rawStringArgument(edit, keys: ["old"]),
+               let newString = rawStringArgument(edit, keys: ["new"]) {
                 rows.append(contentsOf: numberedDiffSnippetRows(
                     old: oldString,
                     new: newString,
                     contentWidth: contentWidth,
                     indentation: "    "
                 ))
-            } else if let oldString = rawStringArgument(edit, keys: ["oldString", "old_string"]) {
+            } else if let oldString = rawStringArgument(edit, keys: ["old"]) {
                 rows.append(.text("  old:"))
                 rows.append(contentsOf: numberedCodeSnippetRows(oldString, indentation: "    "))
-            } else if let newString = rawStringArgument(edit, keys: ["newString", "new_string"]) {
+            } else if let newString = rawStringArgument(edit, keys: ["new"]) {
                 rows.append(.text("  new:"))
                 rows.append(contentsOf: numberedCodeSnippetRows(newString, indentation: "    "))
             }

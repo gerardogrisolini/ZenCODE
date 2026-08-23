@@ -1034,8 +1034,8 @@ struct TelegramTUITests {
             "local.editFile",
             arguments: [
                 "path": "/Users/dev/MyProject/code.swift",
-                "oldString": "password123",
-                "newString": "password456"
+                "old": "password123",
+                "new": "password456"
             ]
         )
         #expect(!editResult.contains("password123"))

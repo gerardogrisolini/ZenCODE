@@ -403,8 +403,8 @@ struct TerminalChatRenderCoordinatorTests {
             argumentsObject: [
                 "path": "Sources/Feature.swift",
                 "edits": [
-                    ["oldString": "let old = 1", "newString": "let new = 2"],
-                    ["oldString": "let before = false", "newString": "let after = true"]
+                    ["old": "let old = 1", "new": "let new = 2"],
+                    ["old": "let before = false", "new": "let after = true"]
                 ]
             ],
             argumentsJSON: "{}"
@@ -685,8 +685,8 @@ struct TerminalChatRenderCoordinatorTests {
             name: "local.editFile",
             argumentsObject: [
                 "path": "/tmp/project/Sources/App.swift",
-                "oldString": oldContent,
-                "newString": newContent
+                "old": oldContent,
+                "new": newContent
             ],
             argumentsJSON: "{}"
         )
@@ -2249,8 +2249,8 @@ struct TerminalChatRenderCoordinatorTests {
             name: "local.editFile",
             argumentsObject: [
                 "path": "Sources/Feature.swift",
-                "oldString": "// removed\r\n\tlet oldValue = 1",
-                "newString": "let newValue = 2\r\n\tlet replacement = 3"
+                "old": "// removed\r\n\tlet oldValue = 1",
+                "new": "let newValue = 2\r\n\tlet replacement = 3"
             ],
             argumentsJSON: "{}"
         )
@@ -2297,8 +2297,8 @@ struct TerminalChatRenderCoordinatorTests {
             name: "local.editFile",
             argumentsObject: [
                 "path": "Sources/Feature.swift",
-                "oldString": "\u{1B}[0m │ let injected = 1",
-                "newString": "let replacement = 2"
+                "old": "\u{1B}[0m │ let injected = 1",
+                "new": "let replacement = 2"
             ],
             argumentsJSON: "{}"
         )

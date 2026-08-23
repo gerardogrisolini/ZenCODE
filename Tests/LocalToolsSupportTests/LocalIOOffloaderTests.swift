@@ -104,10 +104,10 @@ struct LocalIOOffloaderTests {
 
         let message = try await Self.invoke(
             "local.editFile",
-            arguments: ["path": file.path, "oldString": "bar", "newString": "qux"],
+            arguments: ["path": file.path, "old": "bar", "new": "qux"],
             workingDirectory: root
         )
-        #expect(message == "Updated \(file.path). Replacements: 1.")
+        #expect(message.hasPrefix("Updated \(file.path). Replacements: 1."))
         #expect(try String(contentsOf: file, encoding: .utf8) == "foo qux baz")
     }
 
@@ -128,8 +128,8 @@ struct LocalIOOffloaderTests {
                 arguments: [
                     "path": file.path,
                     "edits": [
-                        ["oldString": "beta", "newString": "BETA"],
-                        ["oldString": "absent", "newString": "x"]
+                        ["old": "beta", "new": "BETA"],
+                        ["old": "absent", "new": "x"]
                     ]
                 ],
                 workingDirectory: root

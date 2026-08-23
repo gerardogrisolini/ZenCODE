@@ -538,9 +538,9 @@ public extension ToolPresentationDefinition {
     static func fileEdit(
         title: String = "File",
         action: String = "Edit",
-        targetKeyPaths: [String] = ["file_path", "path"],
-        oldKeyPaths: [String] = ["oldString", "old_string"],
-        newKeyPaths: [String] = ["newString", "new_string"]
+        targetKeyPaths: [String] = ["path"],
+        oldKeyPaths: [String] = ["old"],
+        newKeyPaths: [String] = ["new"]
     ) -> ToolPresentationDefinition {
         ToolPresentationDefinition(
             title: title,

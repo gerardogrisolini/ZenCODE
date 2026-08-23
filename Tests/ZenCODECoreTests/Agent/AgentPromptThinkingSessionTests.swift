@@ -57,6 +57,10 @@ extension AgentConfigurationTests {
         #expect(instructions.contains("concise progress updates at phase boundaries"))
         #expect(instructions.contains("do not narrate every trivial call"))
         #expect(instructions.contains("Keep any narration as natural-language assistant text"))
+        #expect(instructions.contains("read enough exact text to make `old` unique"))
+        #expect(instructions.contains("`local.multiEdit` for ordered atomic edits to one file"))
+        #expect(instructions.contains("`local.applyPatch` for large or multi-file changes"))
+        #expect(instructions.contains("avoid `local.writeFile` for partial edits"))
         #expect(!instructions.contains("explanations around tool calls"))
     }
 

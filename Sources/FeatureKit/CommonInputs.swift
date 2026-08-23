@@ -271,11 +271,9 @@ public enum CommonSchemaProperties {
         .string("target"),
     ]
 
-    /// `oldString`, `old_string`, `newString`, `new_string` — text edit aliases.
-    public static let editStrings: [SchemaProperty] = [
-        .string("oldString"),
-        .string("old_string"),
-        .string("newString"),
-        .string("new_string"),
+    /// Canonical `old` / `new` pair used by token-efficient edit tools.
+    public static let edit: [SchemaProperty] = [
+        .string("old"),
+        .string("new"),
     ]
 }

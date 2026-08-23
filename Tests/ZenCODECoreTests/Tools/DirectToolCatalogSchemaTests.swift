@@ -56,6 +56,31 @@ struct DirectToolCatalogSchemaTests {
     }
 
     @Test
+    func localEditSchemasExposeOnlyCanonicalTokenEfficientProperties() throws {
+        for name in ["local.editFile", "local.replace"] {
+            let descriptor = try #require(
+                DirectToolCatalog.coreDescriptors.first { $0.name == name }
+            )
+            let schema = try #require(descriptor.schemaObject as? [String: Any])
+            let properties = try #require(schema["properties"] as? [String: Any])
+            #expect(Set(properties.keys) == ["path", "old", "new"])
+            #expect(schema["required"] as? [String] == ["path", "old", "new"])
+        }
+
+        let descriptor = try #require(
+            DirectToolCatalog.coreDescriptors.first { $0.name == "local.multiEdit" }
+        )
+        let schema = try #require(descriptor.schemaObject as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        #expect(Set(properties.keys) == ["path", "edits"])
+        let edits = try #require(properties["edits"] as? [String: Any])
+        let item = try #require(edits["items"] as? [String: Any])
+        let itemProperties = try #require(item["properties"] as? [String: Any])
+        #expect(Set(itemProperties.keys) == ["old", "new"])
+        #expect(item["required"] as? [String] == ["old", "new"])
+    }
+
+    @Test
     func agentMessageSchemaExposesCanonicalLiveChatDestination() throws {
         let descriptor = try #require(
             DirectToolCatalog.subAgentDescriptors.first { $0.name == "agent.message" }

@@ -100,10 +100,10 @@ extension TerminalChatRenderingTests {
             name: "local.editFile",
             argumentsObject: [
                 "file_path": "Sources/App.swift",
-                "oldString": "old",
-                "newString": "new"
+                "old": "old",
+                "new": "new"
             ],
-            argumentsJSON: #"{"file_path":"Sources/App.swift","oldString":"old","newString":"new"}"#
+            argumentsJSON: #"{"file_path":"Sources/App.swift","old":"old","new":"new"}"#
         )
 
         let lines = TerminalChat.compactToolLines(for: toolCall, statusIcon: "⏳")
@@ -224,10 +224,10 @@ extension TerminalChatRenderingTests {
             name: "local.editFile",
             argumentsObject: [
                 "path": "Sources/App.swift",
-                "oldString": "let oldValue = 1",
-                "newString": "let newValue = 2"
+                "old": "let oldValue = 1",
+                "new": "let newValue = 2"
             ],
-            argumentsJSON: #"{"path":"Sources/App.swift","oldString":"let oldValue = 1","newString":"let newValue = 2"}"#
+            argumentsJSON: #"{"path":"Sources/App.swift","old":"let oldValue = 1","new":"let newValue = 2"}"#
         )
 
         let startedLines = TerminalChat.detailedToolCallStartedLines(for: toolCall)
@@ -478,9 +478,8 @@ extension TerminalChatRenderingTests {
             name: "local.replace",
             argumentsObject: [
                 "path": "/tmp/project/Sources/App.swift",
-                "oldString": "let value = 1",
-                "newString": "let value = 2",
-                "replaceAll": true
+                "old": "let value = 1",
+                "new": "let value = 2"
             ],
             argumentsJSON: "{}"
         )
@@ -488,7 +487,6 @@ extension TerminalChatRenderingTests {
         let lines = TerminalChat.appliedChangeDetailLines(for: toolCall, contentWidth: 88)
 
         #expect(lines.contains("change: replace /tmp/project/Sources/App.swift"))
-        #expect(lines.contains("mode: replace all"))
         #expect(lines.contains { $0.contains("old") && $0.contains("new") })
         #expect(lines.contains { $0.contains("1 │ let value = 1") && $0.contains("1 │ let value = 2") })
     }
@@ -1075,12 +1073,12 @@ extension TerminalChatRenderingTests {
                 "path": "Sources/Feature.swift",
                 "edits": [
                     [
-                        "oldString": "let old = 1",
-                        "newString": "let new = 2"
+                        "old": "let old = 1",
+                        "new": "let new = 2"
                     ],
                     [
-                        "old_string": "let before = false",
-                        "new_string": "let after = true"
+                        "old": "let before = false",
+                        "new": "let after = true"
                     ]
                 ]
             ],
@@ -1102,7 +1100,7 @@ extension TerminalChatRenderingTests {
         for lines in [startedLines, completedLines] {
             #expect(lines.filter { $0 == "🛠️  local.multiEdit" }.count == 1)
             #expect(!lines.contains("parameters:"))
-            #expect(!lines.contains { $0.contains("\"oldString\"") || $0.contains("\"newString\"") })
+            #expect(!lines.contains { $0.contains("\"old\"") || $0.contains("\"new\"") })
             #expect(lines.contains("edit 1:"))
             #expect(lines.contains("edit 2:"))
             #expect(lines.contains { $0.contains("1 │ let old = 1") && $0.contains("1 │ let new = 2") })
@@ -1117,7 +1115,7 @@ extension TerminalChatRenderingTests {
             name: "local.multiEdit",
             argumentsObject: [
                 "path": "Sources/Feature.swift",
-                "edits": [["replaceAll": true]]
+                "edits": [["note": true]]
             ],
             argumentsJSON: "{}"
         )
@@ -1126,7 +1124,7 @@ extension TerminalChatRenderingTests {
 
         #expect(lines.contains("parameters:"))
         #expect(lines.contains { $0.contains("\"edits\"") })
-        #expect(lines.contains { $0.contains("\"replaceAll\"") })
+        #expect(lines.contains { $0.contains("\"note\"") })
         #expect(!lines.contains("edit 1:"))
         #expect(!lines.contains { $0.contains(" │ ") })
     }
