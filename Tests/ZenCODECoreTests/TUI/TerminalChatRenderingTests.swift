@@ -506,11 +506,11 @@ struct TerminalChatRenderingTests {
     @Test
     func systemMessageColoringWrapsNonBlankLines() {
         let rendered = TerminalChatTextFormatting.systemMessageColorApplied(
-            to: "Tool details: full\n",
+            to: "Tool details: detailed\n",
             isEnabled: true
         )
 
-        #expect(rendered.hasPrefix("\u{1B}[38;5;110mTool details: full\u{1B}[0m\n"))
+        #expect(rendered.hasPrefix("\u{1B}[38;5;110mTool details: detailed\u{1B}[0m\n"))
         #expect(rendered.hasSuffix("\n"))
     }
 
@@ -707,7 +707,7 @@ struct TerminalChatRenderingTests {
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
-        await terminal.renderCoordinator.setToolOutputDetailLevel(.expanded)
+        await terminal.renderCoordinator.setToolOutputDetailLevel(.detailed)
         await terminal.writeToolCallStarted(toolCall)
 
         await terminal.writeAccessModeChangeMessage(.standard)
@@ -778,7 +778,7 @@ struct TerminalChatRenderingTests {
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
-        await terminal.renderCoordinator.setToolOutputDetailLevel(.expanded)
+        await terminal.renderCoordinator.setToolOutputDetailLevel(.detailed)
         await terminal.writeToolCallStarted(toolCall)
 
         await terminal.renderSubAgentOverview(force: true)
@@ -814,7 +814,7 @@ struct TerminalChatRenderingTests {
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
-        await terminal.renderCoordinator.setToolOutputDetailLevel(.expanded)
+        await terminal.renderCoordinator.setToolOutputDetailLevel(.detailed)
         await terminal.writeToolCallStarted(toolCall)
 
         await terminal.renderSubAgentOverview(force: true)

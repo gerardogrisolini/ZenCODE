@@ -18,28 +18,19 @@ import ToolCore
 /// Detail level used when rendering executed tool calls in the terminal.
 public enum ToolOutputDetailLevel: CaseIterable, Sendable {
     /// Single inline status line per tool call.
-    case compact
-    /// Source changes only, without call metadata or completion details.
-    case intermediate
+    case minimal
+    /// Minimal tool status plus source changes when available.
+    case standard
     /// Title, kind, location, full call parameters, and change/summary/error
     /// snippets with syntax-highlighted code areas.
-    case expanded
+    case detailed
 
-    /// Returns the other level when toggling between detail levels.
+    /// Returns the next level in the detail cycle.
     public var next: ToolOutputDetailLevel {
         switch self {
-        case .compact: return .intermediate
-        case .intermediate: return .expanded
-        case .expanded: return .compact
-        }
-    }
-
-    /// Human-readable label used in status messages.
-    public var label: String {
-        switch self {
-        case .compact: return "compact"
-        case .intermediate: return "intermediate"
-        case .expanded: return "expanded"
+        case .minimal: return .standard
+        case .standard: return .detailed
+        case .detailed: return .minimal
         }
     }
 }

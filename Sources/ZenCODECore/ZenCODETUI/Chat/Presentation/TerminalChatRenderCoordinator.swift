@@ -581,7 +581,7 @@ actor TerminalChatRenderCoordinator {
         finishActiveToolOutputBeforeInterleavedMessage()
         toolState.detailLevel = toolState.detailLevel.next
         writeSystemMessageWithoutInterrupt(
-            "Tool details: \(toolState.detailLevel.label)\n\n"
+            "Tool details: \(toolState.detailLevel)\n\n"
         )
         renderPendingOverviewsIfIdle()
     }
@@ -605,7 +605,7 @@ actor TerminalChatRenderCoordinator {
         _ toolCall: DirectAgentToolCall,
         style: ToolBlockStyle
     ) -> Bool {
-        style != .compact && TerminalChat.isFileReadTool(toolCall)
+        style == .detailed && TerminalChat.isFileReadTool(toolCall)
     }
 
     private func prepareForToolOutput() {
@@ -632,7 +632,7 @@ actor TerminalChatRenderCoordinator {
             contentInsetWidth: contentInsetWidth,
             columnWidth: columnWidth
         )
-        if !lifecycle.isCompletion, style != .compact {
+        if !lifecycle.isCompletion, style != .minimal {
             rows = boundedStartedToolRows(
                 rows,
                 maximumInPlaceRows: maximumInPlaceRows,
@@ -724,8 +724,8 @@ actor TerminalChatRenderCoordinator {
     ///
     /// Large edit/write payloads are shown in full by the completion. Detailed
     /// pending blocks retain a bounded prefix plus status so completion can
-    /// replace rather than duplicate the pending block; intermediate blocks
-    /// retain only source rows and never receive a completion marker.
+    /// replace rather than duplicate the pending block; standard blocks include
+    /// the minimal status rows and as many source-change rows as fit.
     private func boundedStartedToolRows(
         _ rows: [TerminalChat.DetailedToolRow],
         maximumInPlaceRows: Int?,
@@ -773,9 +773,9 @@ actor TerminalChatRenderCoordinator {
         for detailLevel: ToolOutputDetailLevel
     ) -> ToolBlockStyle {
         switch detailLevel {
-        case .compact: return .compact
-        case .intermediate: return .intermediate
-        case .expanded: return .detailed
+        case .minimal: return .minimal
+        case .standard: return .standard
+        case .detailed: return .detailed
         }
     }
 
@@ -787,37 +787,48 @@ actor TerminalChatRenderCoordinator {
         columnWidth: Int
     ) -> [TerminalChat.DetailedToolRow] {
         switch (style, lifecycle) {
-        case (.compact, .started):
-            return TerminalChat.compactToolLines(
+        case (.minimal, .started):
+            return compactToolRows(
                 for: toolCall,
-                statusIcon: "⏳",
+                lifecycle: lifecycle,
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             )
-            .map(TerminalChat.DetailedToolRow.text)
-        case let (.compact, .completed(result, compactStatusDetail, _)):
-            let hasFailedProcessExit = TerminalChat.compactLocalExecExitCode(
+        case let (.minimal, .completed(result, compactStatusDetail, _)):
+            return compactToolRows(
                 for: toolCall,
-                result: result
-            ).map { $0 != 0 } ?? false
-            return TerminalChat.compactToolLines(
-                for: toolCall,
-                statusIcon: result.isFailure || hasFailedProcessExit ? "⚠️" : "✅",
-                statusDetail: compactStatusDetail,
+                lifecycle: .completed(
+                    result: result,
+                    compactStatusDetail: compactStatusDetail,
+                    elapsed: nil
+                ),
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             )
-            .map(TerminalChat.DetailedToolRow.text)
-        case (.intermediate, .started):
+        case (.standard, .started):
             return TerminalChat.safelyWrappedDetailedToolRows(
-                TerminalChat.intermediateToolCallRows(for: toolCall),
+                compactToolRows(
+                    for: toolCall,
+                    lifecycle: lifecycle,
+                    contentInsetWidth: contentInsetWidth,
+                    columnWidth: columnWidth
+                ) + TerminalChat.standardToolCallRows(for: toolCall),
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             )
-        case let (.intermediate, .completed(result, _, _)):
+        case let (.standard, .completed(result, compactStatusDetail, elapsed)):
             let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
             return TerminalChat.safelyWrappedDetailedToolRows(
-                TerminalChat.intermediateToolCallRows(
+                compactToolRows(
+                    for: toolCall,
+                    lifecycle: .completed(
+                        result: result,
+                        compactStatusDetail: compactStatusDetail,
+                        elapsed: elapsed
+                    ),
+                    contentInsetWidth: contentInsetWidth,
+                    columnWidth: columnWidth
+                ) + TerminalChat.standardToolCallRows(
                     for: toolCall,
                     result: result,
                     contentWidth: safeContentWidth
@@ -846,6 +857,35 @@ actor TerminalChatRenderCoordinator {
         }
     }
 
+    private func compactToolRows(
+        for toolCall: DirectAgentToolCall,
+        lifecycle: ToolBlockLifecycle,
+        contentInsetWidth: Int,
+        columnWidth: Int
+    ) -> [TerminalChat.DetailedToolRow] {
+        let statusIcon: String
+        let statusDetail: String?
+        switch lifecycle {
+        case .started:
+            statusIcon = "⏳"
+            statusDetail = nil
+        case let .completed(result, compactStatusDetail, _):
+            let hasFailedProcessExit = TerminalChat.compactLocalExecExitCode(
+                for: toolCall,
+                result: result
+            ).map { $0 != 0 } ?? false
+            statusIcon = result.isFailure || hasFailedProcessExit ? "⚠️" : "✅"
+            statusDetail = compactStatusDetail
+        }
+        return TerminalChat.compactToolLines(
+            for: toolCall,
+            statusIcon: statusIcon,
+            statusDetail: statusDetail,
+            contentInsetWidth: contentInsetWidth,
+            columnWidth: columnWidth
+        ).map(TerminalChat.DetailedToolRow.text)
+    }
+
     private func writeToolBlockRows(
         _ rows: [TerminalChat.DetailedToolRow],
         for toolCall: DirectAgentToolCall,
@@ -853,9 +893,9 @@ actor TerminalChatRenderCoordinator {
         style: ToolBlockStyle
     ) {
         switch style {
-        case .compact:
+        case .minimal:
             writeCompactToolLines(rows.map(\.plainText), newline: lifecycle.isCompletion)
-        case .intermediate, .detailed:
+        case .standard, .detailed:
             writeToolBlock(
                 rows,
                 codeLanguage: TerminalChat.codeLanguageHint(for: toolCall)
@@ -1431,10 +1471,10 @@ actor TerminalChatRenderCoordinator {
         let detailed: (String?, Int)
         if let activeBlock = toolState.activeBlock {
             switch activeBlock.style {
-            case .compact:
+            case .minimal:
                 compact = (activeBlock.id, activeBlock.rows)
                 detailed = (nil, 0)
-            case .intermediate, .detailed:
+            case .standard, .detailed:
                 compact = (nil, 0)
                 detailed = (activeBlock.id, activeBlock.rows)
             }

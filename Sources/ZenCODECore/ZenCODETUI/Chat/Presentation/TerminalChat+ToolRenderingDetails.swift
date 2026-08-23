@@ -107,11 +107,10 @@ extension TerminalChat {
         )
     }
 
-    /// The intermediate level deliberately exposes only source payloads from
-    /// mutation tools. It shares the exact code/diff row constructors used by
-    /// the expanded level, retaining syntax highlighting while omitting call
-    /// headings, metadata, parameters, summaries, and lifecycle status.
-    nonisolated static func intermediateToolCallRows(
+    /// Builds the source payload appended to the compact tool rows at the
+    /// standard level. It shares the exact code/diff row constructors used by
+    /// the detailed level while omitting detailed metadata and summaries.
+    nonisolated static func standardToolCallRows(
         for toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult? = nil,
         contentWidth: Int? = nil
@@ -162,7 +161,7 @@ extension TerminalChat {
             return numberedCodeSnippetRows(patch)
         default:
             return presentation.elements.flatMap {
-                intermediateSemanticElementRows($0, contentWidth: contentWidth)
+                standardSemanticElementRows($0, contentWidth: contentWidth)
             }
         }
     }
@@ -186,7 +185,7 @@ extension TerminalChat {
         return []
     }
 
-    nonisolated private static func intermediateSemanticElementRows(
+    nonisolated private static func standardSemanticElementRows(
         _ element: ToolPresentationElement,
         contentWidth: Int?
     ) -> [DetailedToolRow] {
