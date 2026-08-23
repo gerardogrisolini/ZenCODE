@@ -5,6 +5,7 @@
 - ZenCODE is a Swift 6.3 package whose main executable is `zen`; it runs on macOS, Linux, and WSL with remote model providers.
 - `Package.swift` is authoritative for the root products, target dependencies, platforms, and build settings. The packages under `Sources/Features` have their own manifests and are outside the root graph.
 - `Docs/architecture.md` is the compatibility and dependency-direction contract. Preserve public modules, executable names, wire formats, persisted formats, feature identities, and task-graph ownership unless an explicit migration changes them.
+- Update `CHANGELOG.md` whenever a change is user-visible or otherwise warrants a release note.
 - Composition starts at `Sources/zen/CLI/ZenCODEMain.swift`; shared session coordination is centered on `AgentCoreSessionRunner`, backend state is behind `AgentCoreBackend`, and direct-tool dispatch is behind `DirectToolExecutor`.
 
 ## Build and Validation

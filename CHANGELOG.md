@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Release tags follow the strict `vX.Y.Z` contract described in
 [Docs/release.md](Docs/release.md) and must match `ZenPackageMetadata.version`.
 
+## [Unreleased]
+
+### Added
+
+- `/skills uninstall` now opens an interactive multi-selection menu for removing
+  app-installed prompt skills. Uninstall destinations are validated against the
+  app catalog roots, including symlink and containment checks, before deletion.
+
+### Changed
+
+- Terminal tool output now cycles through **minimal**, **standard**, and
+  **detailed** views. The standard view combines concise execution status with
+  source changes, while detailed output includes full metadata and read results.
+- Terminal command completion now recognizes parser aliases and static arguments
+  for `/tasks`, `/agents`, `/tools`, `/feature`, `/changes`, and `/skills`,
+  including `/skills add`, `/skills uninstall`, `/tasks ls`, and `/tasks get`.
+- Removed redundant compatibility and helper code across the MCP bridge, bundled
+  features, Xcode tools, and shared tool models without changing public behavior.
+
+### Fixed
+
+- The ChatGPT subscription WebSocket test server now closes its channel only
+  after its response has flushed, eliminating a response-delivery race.
+- Terminal tool-detail status messages and rendering behavior are consistent at
+  every detail level; file reads are rendered only in detailed mode.
+
 ## [1.3.0] - 2026-08-23
 
 ### Added
