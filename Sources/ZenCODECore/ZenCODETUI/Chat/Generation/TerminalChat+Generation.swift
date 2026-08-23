@@ -334,9 +334,6 @@ extension TerminalChat {
                 await writeChatOutput("Done.")
             }
             await writeChatOutput("\n")
-            if let summary = success.fileChangeSummary {
-                await writeFileChangeSummary(summary, includeDiff: false)
-            }
             if let plan = success.automaticallyCompletedPlan {
                 await writeMarkdownMessage(Self.planStatusTable(for: plan))
             }
@@ -349,6 +346,9 @@ extension TerminalChat {
             await finalizeTelegramTurnProgressReporting()
             await startTaskGraphObserver()
             await publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
+            if let summary = success.fileChangeSummary {
+                await writeFinalFileChangeSummary(summary)
+            }
             await sendTelegramCompletionIfLinked(completionText, origin: success.origin)
         case let .failure(failure):
             await finishStreamingOutput()
@@ -360,13 +360,13 @@ extension TerminalChat {
                 await writeFailureMessage("ZenCODE: \(failure.message)\n")
                 remoteFailureText = "ZenCODE failed: \(failure.message)"
             }
-            if let summary = failure.fileChangeSummary {
-                await writeFileChangeSummary(summary, includeDiff: false)
-            }
             await quiesceTaskGraphObserverForTurnBoundary()
             await finalizeTelegramTurnProgressReporting()
             await startTaskGraphObserver()
             await publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
+            if let summary = failure.fileChangeSummary {
+                await writeFinalFileChangeSummary(summary)
+            }
             await sendTelegramSystemMessageIfLinked(
                 remoteFailureText,
                 origin: failure.origin

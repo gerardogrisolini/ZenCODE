@@ -75,6 +75,15 @@ extension TerminalChat {
         await writeFileChangeDiffs(summary)
     }
 
+    /// Emits the summary as the final terminal section of a completed prompt.
+    /// `/changes` continues to use `writeFileChangeSummary`, whose interleaved
+    /// behavior is appropriate for an operator command and optional diff.
+    func writeFinalFileChangeSummary(_ summary: TurnFileChangeSummary) async {
+        await renderCoordinator.writeFinalFileChangeSummaryMessage(
+            Self.renderFileChangeSummary(summary)
+        )
+    }
+
     public nonisolated static func renderFileChangeSummary(
         _ summary: TurnFileChangeSummary
     ) -> String {

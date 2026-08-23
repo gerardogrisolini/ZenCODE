@@ -480,6 +480,22 @@ actor TerminalChatRenderCoordinator {
         ) }
     }
 
+    /// Writes the end-of-turn file-change section after every currently
+    /// renderable overview. Unlike the interleaved variant, this deliberately
+    /// does not render deferred overviews after the summary: the summary is the
+    /// terminal section which closes a completed prompt.
+    func writeFinalFileChangeSummaryMessage(_ text: String) {
+        interruptActiveToolForInterleavedOutputIfNeeded()
+        renderPendingOverviewsIfIdle()
+        writeChat(
+            TerminalChatTextFormatting.fileChangeSummaryColorApplied(
+                to: text,
+                isEnabled: standardErrorIsTerminal
+            ),
+            to: .standardError
+        )
+    }
+
     func writeOperationalMessage(_ text: String) {
         writeInterleavedMessage { writeChat(
             TerminalChatTextFormatting.operationalMessageColorApplied(

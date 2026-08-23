@@ -38,6 +38,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   after its response has flushed, eliminating a response-delivery race.
 - Terminal tool-detail status messages and rendering behavior are consistent at
   every detail level; file reads are rendered only in detailed mode.
+- End-of-turn terminal file-change summaries now remain the final section after
+  pending task-graph and plan output on both successful and failed prompts.
 
 ## [1.3.0] - 2026-08-23
 

@@ -1047,6 +1047,37 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func finalFileChangeSummaryFollowsPendingOverviewWithoutDrainingAfterward() async throws {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let toolCall = presentedToolCall(
+            id: "tool-before-final-summary",
+            name: "tasks.list",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        await renderer.writeToolCallStarted(toolCall)
+        let deferred = await renderer.renderTaskGraphOverview(
+            signature: "graph:before-final-summary",
+            markdown: "## Task graph\n\n- pending\n"
+        )
+
+        await renderer.writeFinalFileChangeSummaryMessage(
+            "\n🪬 Summary: 1 file  +1 -0\n  modified Sources/App.swift  +1 -0\n"
+        )
+
+        let snapshot = await renderer.snapshot()
+        let output = TerminalANSIText.stripANSI(
+            await renderer.capturedWriteEvents().map(\.text).joined()
+        )
+        let overviewRange = try #require(output.range(of: "Task graph"))
+        let summaryRange = try #require(output.range(of: "🪬 Summary:"))
+        #expect(deferred == .deferred)
+        #expect(!snapshot.deferredTaskGraphOverviewRender)
+        #expect(overviewRange.lowerBound < summaryRange.lowerBound)
+        #expect(!output[summaryRange.upperBound...].contains("Task graph"))
+    }
+
+    @Test
     func latestOverviewWaitsForAssistantFormattingBoundary() async {
         let renderer = makeRenderer(standardErrorIsTerminal: false)
 
