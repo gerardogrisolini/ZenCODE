@@ -18,6 +18,108 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func standardReusesMinimalANSICompactRenderingBeforeAppendingSourceChanges() async {
+        let toolCall = presentedToolCall(
+            id: "standard-ansi-edit",
+            name: "local.editFile",
+            argumentsObject: [
+                "path": "/tmp/Example.swift",
+                "old": "let oldValue = 1",
+                "new": "let newValue = 2"
+            ],
+            argumentsJSON: "{}"
+        )
+        let result = DirectAgentToolResult(output: "Updated", summary: "Updated")
+        let clock = StreamingClock()
+
+        let minimal = makeRenderer(
+            standardErrorIsTerminal: true,
+            toolNow: { clock.now }
+        )
+        await minimal.writeToolCallStarted(toolCall)
+        let minimalStart = await minimal.capturedWriteEvents().map(\.text).joined()
+        let minimalStartEventCount = await minimal.capturedWriteEvents().count
+        await minimal.writeToolCallCompleted(toolCall, result: result)
+        let minimalCompletion = await minimal.capturedWriteEvents()
+            .dropFirst(minimalStartEventCount)
+            .map(\.text)
+            .joined()
+
+        let standard = makeRenderer(
+            standardErrorIsTerminal: true,
+            toolNow: { clock.now }
+        )
+        await standard.setToolOutputDetailLevel(.standard)
+        await standard.writeToolCallStarted(toolCall)
+        let standardStart = await standard.capturedWriteEvents().map(\.text).joined()
+        let standardStartEventCount = await standard.capturedWriteEvents().count
+        await standard.writeToolCallCompleted(toolCall, result: result)
+        let standardCompletion = await standard.capturedWriteEvents()
+            .dropFirst(standardStartEventCount)
+            .map(\.text)
+            .joined()
+
+        // The standard start is byte-for-byte the minimal compact block, then
+        // only its source appendix. This covers ANSI colors, CR/erase prefixes,
+        // status layout, and the compact lifecycle writer in one assertion.
+        #expect(standardStart.hasPrefix(minimalStart))
+        #expect(standardStart.dropFirst(minimalStart.count).contains("oldValue"))
+        #expect(standardStart.dropFirst(minimalStart.count).contains("newValue"))
+
+        let compactCompletion = TerminalChat.compactToolTerminalText(
+            TerminalChat.compactToolLines(
+                for: toolCall,
+                statusIcon: "✅",
+                statusDetail: "0ms"
+            ),
+            lineInset: "",
+            newline: false
+        )
+        #expect(minimalCompletion.contains(compactCompletion))
+        #expect(standardCompletion.contains(compactCompletion))
+        #expect(standardCompletion.contains("oldValue"))
+        #expect(standardCompletion.contains("newValue"))
+
+        // Without an appendix, standard has no separate rendering behavior at
+        // all: it is exactly the minimal byte stream.
+        let compactOnly = presentedToolCall(
+            id: "standard-ansi-compact-only",
+            name: "thirdparty.a-very-long-tool-name-for-a-narrow-terminal",
+            argumentsObject: ["path": "/tmp/target"],
+            argumentsJSON: #"{"path":"/tmp/target"}"#,
+            presentation: ToolPresentationDefinition(
+                title: "Long operation",
+                action: "Run",
+                kind: .manage,
+                target: .argument(["path"], format: .path)
+            )
+        )
+        let minimalCompactOnly = makeRenderer(
+            standardErrorIsTerminal: true,
+            toolNow: { clock.now },
+            columnWidthProvider: { 24 }
+        )
+        await minimalCompactOnly.writeToolCallStarted(compactOnly)
+        await minimalCompactOnly.writeToolCallCompleted(compactOnly, result: result)
+        let standardCompactOnly = makeRenderer(
+            standardErrorIsTerminal: true,
+            toolNow: { clock.now },
+            columnWidthProvider: { 24 }
+        )
+        await standardCompactOnly.setToolOutputDetailLevel(.standard)
+        await standardCompactOnly.writeToolCallStarted(compactOnly)
+        await standardCompactOnly.writeToolCallCompleted(compactOnly, result: result)
+        // A following operation forces any spacing/newline state to be emitted;
+        // this catches a completion-only buffered newline divergence.
+        await minimalCompactOnly.writeToolCallStarted(compactOnly)
+        await standardCompactOnly.writeToolCallStarted(compactOnly)
+        #expect(
+            await standardCompactOnly.capturedWriteEvents().map(\.text).joined()
+                == minimalCompactOnly.capturedWriteEvents().map(\.text).joined()
+        )
+    }
+
+    @Test
     func standardShowsCompactStatusAndMutationSource() async {
         let toolCall = presentedToolCall(
             id: "standard-edit",

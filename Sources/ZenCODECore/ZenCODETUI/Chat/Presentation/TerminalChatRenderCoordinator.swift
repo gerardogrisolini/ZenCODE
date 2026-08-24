@@ -91,6 +91,19 @@ actor TerminalChatRenderCoordinator {
         }
     }
 
+    /// A tool block separates the compact lifecycle prefix from optional
+    /// detailed/source rows. Standard output shares the former byte-for-byte
+    /// with minimal output and renders only the latter through the detailed
+    /// renderer.
+    private struct ToolBlockRenderRows {
+        var compactRows: [TerminalChat.DetailedToolRow]
+        var detailRows: [TerminalChat.DetailedToolRow]
+
+        var allRows: [TerminalChat.DetailedToolRow] {
+            compactRows + detailRows
+        }
+    }
+
     private let standardOutput: FileHandle?
     private let standardError: FileHandle?
     private var standardOutputState: ChannelState
@@ -641,7 +654,7 @@ actor TerminalChatRenderCoordinator {
             ? freshColumnWidthProvider()
             : columnWidthProvider()
         let contentInsetWidth = TerminalChat.displayWidth(lineInset)
-        var rows = toolBlockRows(
+        var renderRows = toolBlockRows(
             for: toolCall,
             lifecycle: lifecycle,
             style: style,
@@ -649,11 +662,24 @@ actor TerminalChatRenderCoordinator {
             columnWidth: columnWidth
         )
         if !lifecycle.isCompletion, style != .minimal {
-            rows = boundedStartedToolRows(
-                rows,
-                maximumInPlaceRows: maximumInPlaceRows,
-                includeCompletionMarker: style == .detailed
-            )
+            if style == .standard {
+                // Keep the compact prefix intact. It must remain renderable by
+                // the same path as minimal, even when the source appendix is
+                // constrained by the in-place redraw budget.
+                renderRows.detailRows = boundedStartedStandardToolRows(
+                    renderRows.detailRows,
+                    compactRows: renderRows.compactRows,
+                    contentInsetWidth: contentInsetWidth,
+                    columnWidth: columnWidth,
+                    maximumInPlaceRows: maximumInPlaceRows
+                )
+            } else {
+                renderRows.detailRows = boundedStartedToolRows(
+                    renderRows.detailRows,
+                    maximumInPlaceRows: maximumInPlaceRows,
+                    includeCompletionMarker: true
+                )
+            }
         }
 
         switch lifecycle {
@@ -662,7 +688,7 @@ actor TerminalChatRenderCoordinator {
                 id: toolCall.id,
                 style: style,
                 rows: TerminalChat.renderedTerminalRowCount(
-                    for: rows.map(\.plainText),
+                    for: renderRows.allRows.map(\.plainText),
                     contentInsetWidth: contentInsetWidth,
                     columnWidth: columnWidth
                 ),
@@ -726,7 +752,7 @@ actor TerminalChatRenderCoordinator {
         }
 
         writeToolBlockRows(
-            rows,
+            renderRows,
             for: toolCall,
             lifecycle: lifecycle,
             style: style
@@ -774,6 +800,48 @@ actor TerminalChatRenderCoordinator {
         ]
     }
 
+    /// Standard output is the compact block plus an optional source appendix.
+    /// Unlike detailed output, its bounded pending form must never promote an
+    /// appendix row into the compact prefix: that would change its ANSI style
+    /// and could drop the compact status row.
+    private func boundedStartedStandardToolRows(
+        _ sourceRows: [TerminalChat.DetailedToolRow],
+        compactRows: [TerminalChat.DetailedToolRow],
+        contentInsetWidth: Int,
+        columnWidth: Int,
+        maximumInPlaceRows: Int?
+    ) -> [TerminalChat.DetailedToolRow] {
+        guard let maximumReplaceableRows = replaceableToolRowCapacity(
+            maximumInPlaceRows
+        ) else {
+            return sourceRows
+        }
+        let compactRowCount = TerminalChat.renderedTerminalRowCount(
+            for: compactRows.map(\.plainText),
+            contentInsetWidth: contentInsetWidth,
+            columnWidth: columnWidth
+        )
+        let sourceCapacity = maximumReplaceableRows - compactRowCount
+        guard sourceCapacity > 0 else {
+            // The compact prefix is never truncated merely to make room for
+            // standard's optional source appendix.
+            return []
+        }
+        let sourceRowCount = TerminalChat.renderedTerminalRowCount(
+            for: sourceRows.map(\.plainText),
+            contentInsetWidth: contentInsetWidth,
+            columnWidth: columnWidth
+        )
+        guard sourceRowCount > sourceCapacity else {
+            return sourceRows
+        }
+        guard sourceCapacity > 1 else {
+            return [sourceRows[sourceRows.count - 1]]
+        }
+        return Array(sourceRows.prefix(sourceCapacity - 1))
+            + [sourceRows[sourceRows.count - 1]]
+    }
+
     /// Converts the scrolling-region height into the number of content rows
     /// that remain cursor-reachable after `writeToolBlock` appends its newline.
     private func replaceableToolRowCapacity(
@@ -801,75 +869,67 @@ actor TerminalChatRenderCoordinator {
         style: ToolBlockStyle,
         contentInsetWidth: Int,
         columnWidth: Int
-    ) -> [TerminalChat.DetailedToolRow] {
-        switch (style, lifecycle) {
-        case (.minimal, .started):
-            return compactToolRows(
-                for: toolCall,
-                lifecycle: lifecycle,
-                contentInsetWidth: contentInsetWidth,
-                columnWidth: columnWidth
-            )
-        case let (.minimal, .completed(result, compactStatusDetail, _)):
-            return compactToolRows(
-                for: toolCall,
-                lifecycle: .completed(
-                    result: result,
-                    compactStatusDetail: compactStatusDetail,
-                    elapsed: nil
-                ),
-                contentInsetWidth: contentInsetWidth,
-                columnWidth: columnWidth
-            )
-        case (.standard, .started):
-            return TerminalChat.safelyWrappedDetailedToolRows(
-                compactToolRows(
+    ) -> ToolBlockRenderRows {
+        switch style {
+        case .minimal, .standard:
+            let detailRows: [TerminalChat.DetailedToolRow]
+            if style == .standard {
+                let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
+                let result: DirectAgentToolResult?
+                switch lifecycle {
+                case .started:
+                    result = nil
+                case let .completed(completedResult, _, _):
+                    result = completedResult
+                }
+                detailRows = TerminalChat.safelyWrappedDetailedToolRows(
+                    TerminalChat.standardToolCallRows(
+                        for: toolCall,
+                        result: result,
+                        contentWidth: safeContentWidth
+                    ),
+                    contentInsetWidth: contentInsetWidth,
+                    columnWidth: columnWidth
+                )
+            } else {
+                detailRows = []
+            }
+            return ToolBlockRenderRows(
+                compactRows: compactToolRows(
                     for: toolCall,
                     lifecycle: lifecycle,
                     contentInsetWidth: contentInsetWidth,
                     columnWidth: columnWidth
-                ) + TerminalChat.standardToolCallRows(for: toolCall),
-                contentInsetWidth: contentInsetWidth,
-                columnWidth: columnWidth
-            )
-        case let (.standard, .completed(result, compactStatusDetail, elapsed)):
-            let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
-            return TerminalChat.safelyWrappedDetailedToolRows(
-                compactToolRows(
-                    for: toolCall,
-                    lifecycle: .completed(
-                        result: result,
-                        compactStatusDetail: compactStatusDetail,
-                        elapsed: elapsed
-                    ),
-                    contentInsetWidth: contentInsetWidth,
-                    columnWidth: columnWidth
-                ) + TerminalChat.standardToolCallRows(
-                    for: toolCall,
-                    result: result,
-                    contentWidth: safeContentWidth
                 ),
-                contentInsetWidth: contentInsetWidth,
-                columnWidth: columnWidth
+                detailRows: detailRows
             )
-        case (.detailed, .started):
-            return TerminalChat.safelyWrappedDetailedToolRows(
-                TerminalChat.detailedToolCallStartedRows(for: toolCall),
-                contentInsetWidth: contentInsetWidth,
-                columnWidth: columnWidth
-            )
-        case let (.detailed, .completed(result, _, elapsed)):
-            let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
-            return TerminalChat.safelyWrappedDetailedToolRows(
-                TerminalChat.detailedToolCallCompletedRows(
-                    for: toolCall,
-                    result: result,
-                    contentWidth: safeContentWidth,
-                    elapsed: elapsed
-                ),
-                contentInsetWidth: contentInsetWidth,
-                columnWidth: columnWidth
-            )
+        case .detailed:
+            switch lifecycle {
+            case .started:
+                return ToolBlockRenderRows(
+                    compactRows: [],
+                    detailRows: TerminalChat.safelyWrappedDetailedToolRows(
+                        TerminalChat.detailedToolCallStartedRows(for: toolCall),
+                        contentInsetWidth: contentInsetWidth,
+                        columnWidth: columnWidth
+                    )
+                )
+            case let .completed(result, _, elapsed):
+                let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
+                return ToolBlockRenderRows(
+                    compactRows: [],
+                    detailRows: TerminalChat.safelyWrappedDetailedToolRows(
+                        TerminalChat.detailedToolCallCompletedRows(
+                            for: toolCall,
+                            result: result,
+                            contentWidth: safeContentWidth,
+                            elapsed: elapsed
+                        ),
+                        contentInsetWidth: contentInsetWidth,
+                        columnWidth: columnWidth
+                    )
+                )
+            }
         }
     }
 
@@ -903,17 +963,30 @@ actor TerminalChatRenderCoordinator {
     }
 
     private func writeToolBlockRows(
-        _ rows: [TerminalChat.DetailedToolRow],
+        _ renderRows: ToolBlockRenderRows,
         for toolCall: DirectAgentToolCall,
         lifecycle: ToolBlockLifecycle,
         style: ToolBlockStyle
     ) {
         switch style {
-        case .minimal:
-            writeCompactToolLines(rows.map(\.plainText), newline: lifecycle.isCompletion)
-        case .standard, .detailed:
+        case .minimal, .standard:
+            writeCompactToolLines(
+                renderRows.compactRows.map(\.plainText),
+                newline: lifecycle.isCompletion && renderRows.detailRows.isEmpty
+            )
+            guard !renderRows.detailRows.isEmpty else {
+                return
+            }
             writeToolBlock(
-                rows,
+                renderRows.detailRows,
+                codeLanguage: TerminalChat.codeLanguageHint(for: toolCall)
+            )
+            if lifecycle.isCompletion {
+                writeChat("\n", to: .standardError)
+            }
+        case .detailed:
+            writeToolBlock(
+                renderRows.detailRows,
                 codeLanguage: TerminalChat.codeLanguageHint(for: toolCall)
             )
             if lifecycle.isCompletion {

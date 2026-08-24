@@ -34,6 +34,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Standard terminal tool output now preserves the minimal view’s ANSI colors,
+  compact status layout, and redraw lifecycle while appending source changes.
 - The ChatGPT subscription WebSocket test server now closes its channel only
   after its response has flushed, eliminating a response-delivery race.
 - Terminal tool-detail status messages and rendering behavior are consistent at
