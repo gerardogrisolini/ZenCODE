@@ -10,15 +10,9 @@ import ToolCore
 
 @Suite("Terminal chat async render coordinator")
 struct TerminalChatRenderCoordinatorTests {
-    @Test
-    func toolOutputDetailLevelCyclesMinimalStandardDetailed() {
-        #expect(ToolOutputDetailLevel.minimal.next == .standard)
-        #expect(ToolOutputDetailLevel.standard.next == .detailed)
-        #expect(ToolOutputDetailLevel.detailed.next == .minimal)
-    }
 
     @Test
-    func standardReusesMinimalANSICompactRenderingBeforeAppendingSourceChanges() async {
+    func standardPreservesCompactANSICompletionBeforeAppendingSourceChanges() async {
         let toolCall = presentedToolCall(
             id: "standard-ansi-edit",
             name: "local.editFile",
@@ -29,43 +23,21 @@ struct TerminalChatRenderCoordinatorTests {
             ],
             argumentsJSON: "{}"
         )
-        let result = DirectAgentToolResult(output: "Updated", summary: "Updated")
         let clock = StreamingClock()
-
-        let minimal = makeRenderer(
+        let renderer = makeRenderer(
             standardErrorIsTerminal: true,
             toolNow: { clock.now }
         )
-        await minimal.writeToolCallStarted(toolCall)
-        let minimalStart = await minimal.capturedWriteEvents().map(\.text).joined()
-        let minimalStartEventCount = await minimal.capturedWriteEvents().count
-        await minimal.writeToolCallCompleted(toolCall, result: result)
-        let minimalCompletion = await minimal.capturedWriteEvents()
-            .dropFirst(minimalStartEventCount)
-            .map(\.text)
-            .joined()
-
-        let standard = makeRenderer(
-            standardErrorIsTerminal: true,
-            toolNow: { clock.now }
+        await renderer.writeToolCallStarted(toolCall)
+        let startEventCount = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Updated", summary: "Updated")
         )
-        await standard.setToolOutputDetailLevel(.standard)
-        await standard.writeToolCallStarted(toolCall)
-        let standardStart = await standard.capturedWriteEvents().map(\.text).joined()
-        let standardStartEventCount = await standard.capturedWriteEvents().count
-        await standard.writeToolCallCompleted(toolCall, result: result)
-        let standardCompletion = await standard.capturedWriteEvents()
-            .dropFirst(standardStartEventCount)
+        let completion = await renderer.capturedWriteEvents()
+            .dropFirst(startEventCount)
             .map(\.text)
             .joined()
-
-        // The standard start is byte-for-byte the minimal compact block, then
-        // only its source appendix. This covers ANSI colors, CR/erase prefixes,
-        // status layout, and the compact lifecycle writer in one assertion.
-        #expect(standardStart.hasPrefix(minimalStart))
-        #expect(standardStart.dropFirst(minimalStart.count).contains("oldValue"))
-        #expect(standardStart.dropFirst(minimalStart.count).contains("newValue"))
-
         let compactCompletion = TerminalChat.compactToolTerminalText(
             TerminalChat.compactToolLines(
                 for: toolCall,
@@ -75,48 +47,98 @@ struct TerminalChatRenderCoordinatorTests {
             lineInset: "",
             newline: false
         )
-        #expect(minimalCompletion.contains(compactCompletion))
-        #expect(standardCompletion.contains(compactCompletion))
-        #expect(standardCompletion.contains("oldValue"))
-        #expect(standardCompletion.contains("newValue"))
 
-        // Without an appendix, standard has no separate rendering behavior at
-        // all: it is exactly the minimal byte stream.
-        let compactOnly = presentedToolCall(
-            id: "standard-ansi-compact-only",
-            name: "thirdparty.a-very-long-tool-name-for-a-narrow-terminal",
-            argumentsObject: ["path": "/tmp/target"],
-            argumentsJSON: #"{"path":"/tmp/target"}"#,
-            presentation: ToolPresentationDefinition(
-                title: "Long operation",
-                action: "Run",
-                kind: .manage,
-                target: .argument(["path"], format: .path)
-            )
+        #expect(completion.contains(compactCompletion))
+        #expect(completion.contains("oldValue"))
+        #expect(completion.contains("newValue"))
+    }
+
+    /// Characterization: a standard completion is the byte-identical compact
+    /// block followed only by the source appendix. Anything preceding the shared
+    /// compact bytes must be pure cursor control, never printable text.
+    @Test
+    func standardCompletionIsCompactBytesFollowedOnlyBySourceAppendix() async throws {
+        let toolCall = presentedToolCall(
+            id: "standard-characterization-edit",
+            name: "local.editFile",
+            argumentsObject: [
+                "path": "/tmp/Example.swift",
+                "old": "let oldValue = 1",
+                "new": "let newValue = 2"
+            ],
+            argumentsJSON: "{}"
         )
-        let minimalCompactOnly = makeRenderer(
-            standardErrorIsTerminal: true,
-            toolNow: { clock.now },
-            columnWidthProvider: { 24 }
+        let clock = StreamingClock()
+        let renderer = makeRenderer(standardErrorIsTerminal: true, toolNow: { clock.now })
+        await renderer.writeToolCallStarted(toolCall)
+        let startEventCount = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Updated", summary: "Updated")
         )
-        await minimalCompactOnly.writeToolCallStarted(compactOnly)
-        await minimalCompactOnly.writeToolCallCompleted(compactOnly, result: result)
-        let standardCompactOnly = makeRenderer(
-            standardErrorIsTerminal: true,
-            toolNow: { clock.now },
-            columnWidthProvider: { 24 }
+        let completion = await renderer.capturedWriteEvents()
+            .dropFirst(startEventCount)
+            .map(\.text)
+            .joined()
+        let compactCompletion = TerminalChat.compactToolTerminalText(
+            TerminalChat.compactToolLines(
+                for: toolCall,
+                statusIcon: "✅",
+                statusDetail: "0ms"
+            ),
+            lineInset: "",
+            newline: false
         )
-        await standardCompactOnly.setToolOutputDetailLevel(.standard)
-        await standardCompactOnly.writeToolCallStarted(compactOnly)
-        await standardCompactOnly.writeToolCallCompleted(compactOnly, result: result)
-        // A following operation forces any spacing/newline state to be emitted;
-        // this catches a completion-only buffered newline divergence.
-        await minimalCompactOnly.writeToolCallStarted(compactOnly)
-        await standardCompactOnly.writeToolCallStarted(compactOnly)
-        #expect(
-            await standardCompactOnly.capturedWriteEvents().map(\.text).joined()
-                == minimalCompactOnly.capturedWriteEvents().map(\.text).joined()
+
+        let compactRange = try #require(completion.range(of: compactCompletion))
+        let controlPrefix = String(completion[completion.startIndex..<compactRange.lowerBound])
+        let appendix = String(completion[compactRange.upperBound...])
+
+        #expect(TerminalANSIText.stripANSI(controlPrefix).allSatisfy { $0 == "\r" || $0 == "\n" })
+        #expect(TerminalANSIText.stripANSI(appendix).contains("oldValue"))
+        #expect(TerminalANSIText.stripANSI(appendix).contains("newValue"))
+        // The appendix never repeats the compact prefix content.
+        #expect(!TerminalANSIText.stripANSI(appendix).contains("local.editFile"))
+        // Block terminator: the appendix newline plus the blank separator row.
+        #expect(appendix.hasSuffix("\n\n"))
+    }
+
+    /// Characterization: without source rows the standard block degenerates to
+    /// exactly the compact block, byte for byte, with no appendix.
+    @Test
+    func standardCompletionWithoutSourceRowsIsExactlyTheCompactBlock() async throws {
+        let toolCall = presentedToolCall(
+            id: "standard-characterization-read",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/Example.swift"],
+            argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
         )
+        let clock = StreamingClock()
+        let renderer = makeRenderer(standardErrorIsTerminal: true, toolNow: { clock.now })
+        await renderer.writeToolCallStarted(toolCall)
+        let startEventCount = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "let value = 1", summary: "Read")
+        )
+        let completion = await renderer.capturedWriteEvents()
+            .dropFirst(startEventCount)
+            .map(\.text)
+            .joined()
+        let compactCompletion = TerminalChat.compactToolTerminalText(
+            TerminalChat.compactToolLines(
+                for: toolCall,
+                statusIcon: "✅",
+                statusDetail: "0ms"
+            ),
+            lineInset: "",
+            newline: true
+        )
+
+        #expect(completion.hasSuffix(compactCompletion))
+        let controlPrefix = String(completion.dropLast(compactCompletion.count))
+        #expect(TerminalANSIText.stripANSI(controlPrefix).allSatisfy { $0 == "\r" || $0 == "\n" })
+        #expect(!TerminalANSIText.stripANSI(completion).contains("let value = 1"))
     }
 
     @Test
@@ -132,7 +154,6 @@ struct TerminalChatRenderCoordinatorTests {
             argumentsJSON: "{}"
         )
         let standard = makeRenderer(standardErrorIsTerminal: true)
-        await standard.setToolOutputDetailLevel(.standard)
         await standard.writeToolCallStarted(toolCall)
         await standard.writeToolCallCompleted(
             toolCall,
@@ -150,18 +171,6 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(!standardText.contains("change:"))
         #expect(!standardText.contains("status:"))
 
-        let detailed = makeRenderer(standardErrorIsTerminal: true)
-        await detailed.setToolOutputDetailLevel(.detailed)
-        await detailed.writeToolCallStarted(toolCall)
-        await detailed.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Updated", summary: "Updated")
-        )
-        let detailedText = TerminalANSIText.stripANSI(
-            await detailed.capturedWriteEvents().map(\.text).joined()
-        )
-        #expect(detailedText.contains("change: replace /tmp/Example.swift"))
-        #expect(detailedText.contains("status:"))
     }
 
     @Test
@@ -197,7 +206,7 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func standardShowsCompactFileReadWhileExpandedOmitsIt() async {
+    func standardShowsCompactFileReadWithoutRawOutput() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = presentedToolCall(
             id: "read-details",
@@ -205,7 +214,6 @@ struct TerminalChatRenderCoordinatorTests {
             argumentsObject: ["path": "/tmp/Secret.swift"],
             argumentsJSON: #"{"path":"/tmp/Secret.swift"}"#
         )
-        await renderer.setToolOutputDetailLevel(.standard)
         await renderer.writeToolCallStarted(toolCall)
         await renderer.writeToolCallCompleted(
             toolCall,
@@ -221,17 +229,9 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(text.contains("⏳"))
         #expect(text.contains("✅"))
         let snapshot = await renderer.snapshot()
-        #expect(snapshot.activeCompactToolCallID == nil)
-        #expect(snapshot.activeDetailedToolCallID == nil)
+        #expect(snapshot.activeToolCallID == nil)
+        #expect(snapshot.activeToolCallID == nil)
 
-        let detailed = makeRenderer(standardErrorIsTerminal: true)
-        await detailed.setToolOutputDetailLevel(.detailed)
-        await detailed.writeToolCallStarted(toolCall)
-        await detailed.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "let secret = true", summary: "Read")
-        )
-        #expect(await detailed.capturedWriteEvents().isEmpty)
     }
 
     @Test
@@ -247,8 +247,8 @@ struct TerminalChatRenderCoordinatorTests {
         await renderer.writeToolCallStarted(toolCall)
         let started = await renderer.snapshot()
         let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
-        #expect(started.activeCompactToolCallID == toolCall.id)
-        #expect(started.activeCompactToolRenderedRowCount > 0)
+        #expect(started.activeToolCallID == toolCall.id)
+        #expect(started.activeToolRenderedRowCount > 0)
 
         await renderer.writeToolCallCompleted(
             toolCall,
@@ -264,12 +264,12 @@ struct TerminalChatRenderCoordinatorTests {
         let completionEvents = Array(events.dropFirst(eventCountBeforeCompletion))
         let rewriteSequence = completionEvents.first?.text ?? ""
 
-        #expect(completed.activeCompactToolCallID == nil)
-        #expect(completed.activeCompactToolRenderedRowCount == 0)
-        #expect(rewriteSequence.hasPrefix("\u{1B}[\(started.activeCompactToolRenderedRowCount)A\r"))
+        #expect(completed.activeToolCallID == nil)
+        #expect(completed.activeToolRenderedRowCount == 0)
+        #expect(rewriteSequence.hasPrefix("\u{1B}[\(started.activeToolRenderedRowCount)A\r"))
         #expect(
             rewriteSequence.components(separatedBy: "\u{1B}[2K").count - 1
-                == started.activeCompactToolRenderedRowCount
+                == started.activeToolRenderedRowCount
         )
         #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
         #expect(stderr.contains("⏳"))
@@ -363,7 +363,7 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(renderedLines.allSatisfy {
             TerminalChat.displayWidth($0) <= terminalColumns - 1
         })
-        #expect(started.activeCompactToolRenderedRowCount == 2)
+        #expect(started.activeToolRenderedRowCount == 2)
     }
 
     @Test
@@ -489,35 +489,6 @@ struct TerminalChatRenderCoordinatorTests {
         )
     }
 
-    @Test
-    func compactCompletionKeepsActiveStyleWhenDetailLevelChanges() async {
-        let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = presentedToolCall(
-            id: "compact-style-change",
-            name: "agent.wait",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
-        )
-
-        await renderer.writeToolCallStarted(toolCall)
-        let started = await renderer.snapshot()
-        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
-        await renderer.setToolOutputDetailLevel(.detailed)
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Done", summary: "Done")
-        )
-
-        let events = await renderer.capturedWriteEvents()
-        let completionText = events
-            .dropFirst(eventCountBeforeCompletion)
-            .map(\.text)
-            .joined()
-
-        #expect(started.activeCompactToolCallID == toolCall.id)
-        #expect(containsCursorUpSequence(completionText))
-        #expect(!completionText.contains("status: ✅"))
-    }
 
     @Test
     func compactCompletionReadsColumnWidthOnce() async {
@@ -569,10 +540,10 @@ struct TerminalChatRenderCoordinatorTests {
         )
 
         let combined = await renderer.capturedWriteEvents().map(\.text).joined()
-        #expect(afterEmptyDeltas.activeCompactToolCallID == toolCall.id)
+        #expect(afterEmptyDeltas.activeToolCallID == toolCall.id)
         #expect(
-            afterEmptyDeltas.activeCompactToolRenderedRowCount
-                == started.activeCompactToolRenderedRowCount
+            afterEmptyDeltas.activeToolRenderedRowCount
+                == started.activeToolRenderedRowCount
         )
         let completionEvents = Array(
             (await renderer.capturedWriteEvents()).dropFirst(eventCountBeforeCompletion)
@@ -581,41 +552,9 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(combined.contains("✅"))
     }
 
-    @Test
-    func detailedToolCompletionClearsOnlyOwnedRows() async {
-        let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = presentedToolCall(
-            id: "tool-detailed",
-            name: "local.exec",
-            argumentsObject: ["command": "printf done"],
-            argumentsJSON: #"{"command":"printf done"}"#
-        )
-        await renderer.setToolOutputDetailLevel(.detailed)
-        await renderer.writeToolCallStarted(toolCall)
-        let started = await renderer.snapshot()
-        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
-
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Done", summary: "Done")
-        )
-
-        let events = await renderer.capturedWriteEvents()
-        let completionEvents = Array(events.dropFirst(eventCountBeforeCompletion))
-        let rewriteSequence = completionEvents.first?.text ?? ""
-
-        #expect(started.activeDetailedToolCallID == toolCall.id)
-        #expect(started.activeDetailedToolRenderedRowCount > 0)
-        #expect(rewriteSequence.hasPrefix("\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"))
-        #expect(
-            rewriteSequence.components(separatedBy: "\u{1B}[2K").count - 1
-                == started.activeDetailedToolRenderedRowCount
-        )
-        #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
-    }
 
     @Test
-    func detailedMultiEditCompletionRewritesPendingTitleWithDiffs() async {
+    func standardMultiEditCompletionRewritesPendingTitleWithDiffs() async {
         let maximumInPlaceRows = 11
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
@@ -633,7 +572,6 @@ struct TerminalChatRenderCoordinatorTests {
             ],
             argumentsJSON: "{}"
         )
-        await renderer.setToolOutputDetailLevel(.detailed)
         await renderer.writeToolCallStarted(
             toolCall,
             maximumInPlaceRows: maximumInPlaceRows
@@ -655,79 +593,21 @@ struct TerminalChatRenderCoordinatorTests {
         )
         let rewriteSequence = completionEvents.first?.text ?? ""
 
-        #expect(
-            started.activeDetailedToolRenderedRowCount
-                == maximumInPlaceRows - 1
-        )
+        #expect(started.activeToolRenderedRowCount <= maximumInPlaceRows - 1)
         #expect(
             rewriteSequence.hasPrefix(
-                "\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"
+                "\u{1B}[\(started.activeToolRenderedRowCount)A\r"
             )
         )
         #expect(completionText.components(separatedBy: "local.multiEdit").count - 1 == 1)
         #expect(!completionText.contains("parameters:"))
-        #expect(completionText.contains("edit 1:"))
-        #expect(completionText.contains("edit 2:"))
+        #expect(completionText.contains("old"))
+        #expect(completionText.contains("new"))
         #expect(completionText.contains("let old = 1"))
         #expect(completionText.contains("let new = 2"))
     }
 
-    @Test
-    func detailedToolCompletionShowsElapsedTime() {
-        let toolCall = presentedToolCall(
-            id: "detailed-elapsed",
-            name: "agent.wait",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
-        )
-        let rowsWithElapsed = TerminalChat.detailedToolCallCompletedRows(
-            for: toolCall,
-            result: DirectAgentToolResult(output: "Done", summary: "Done"),
-            elapsed: .milliseconds(1_200)
-        )
-        #expect(rowsWithElapsed.last?.plainText == "status: ✅ 1.20s")
 
-        let failedRows = TerminalChat.detailedToolCallCompletedRows(
-            for: toolCall,
-            result: DirectAgentToolResult(output: "Boom", summary: "Boom", status: .failed),
-            elapsed: .milliseconds(350)
-        )
-        #expect(failedRows.last?.plainText == "status: ⚠️  350ms")
-
-        let rowsWithoutElapsed = TerminalChat.detailedToolCallCompletedRows(
-            for: toolCall,
-            result: DirectAgentToolResult(output: "Done", summary: "Done")
-        )
-        #expect(rowsWithoutElapsed.last?.plainText == "status: ✅")
-    }
-
-    @Test
-    func detailedToolCompletionRendersElapsedTime() async {
-        let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = presentedToolCall(
-            id: "detailed-elapsed-render",
-            name: "local.exec",
-            argumentsObject: ["command": "printf done"],
-            argumentsJSON: #"{"command":"printf done"}"#
-        )
-        await renderer.setToolOutputDetailLevel(.detailed)
-        await renderer.writeToolCallStarted(toolCall)
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Done", summary: "Done")
-        )
-
-        let stderr = await renderer.capturedWriteEvents()
-            .filter { $0.channel == .standardError }
-            .map(\.text)
-            .joined()
-        // The detailed status row carries the formatted elapsed duration next
-        // to the completion icon, mirroring the compact detail. The label/value
-        // split inserts an ANSI color code between "status:" and the value, so
-        // assert on the contiguous value fragment instead.
-        #expect(stderr.contains("✅ "))
-        #expect(stderr.contains("s"))
-    }
 
     @Test
     func externalAuthorizationPromptRelinquishesToolRowsBeforeCompletion() async {
@@ -738,7 +618,6 @@ struct TerminalChatRenderCoordinatorTests {
             argumentsObject: ["path": "ProvaTest.swift"],
             argumentsJSON: #"{"path":"ProvaTest.swift"}"#
         )
-        await renderer.setToolOutputDetailLevel(.detailed)
         await renderer.writeToolCallStarted(toolCall)
         let started = await renderer.snapshot()
 
@@ -749,10 +628,10 @@ struct TerminalChatRenderCoordinatorTests {
             markdown: "## Tasks\n\n- waiting for authorization\n"
         )
 
-        #expect(started.activeDetailedToolCallID == toolCall.id)
-        #expect(started.activeDetailedToolRenderedRowCount > 0)
-        #expect(guarded.activeDetailedToolCallID == nil)
-        #expect(guarded.activeDetailedToolRenderedRowCount == 0)
+        #expect(started.activeToolCallID == toolCall.id)
+        #expect(started.activeToolRenderedRowCount > 0)
+        #expect(guarded.activeToolCallID == nil)
+        #expect(guarded.activeToolRenderedRowCount == 0)
         #expect(deferred == .deferred)
 
         await renderer.endExternalTerminalPrompt()
@@ -767,12 +646,11 @@ struct TerminalChatRenderCoordinatorTests {
             .map(\.text)
             .joined()
         #expect(!containsCursorUpSequence(completionText))
-        #expect(!completionText.contains("\u{1B}[2K"))
-        #expect(completionText.contains("status:"))
+        #expect(completionText.contains("✅"))
     }
 
     @Test
-    func detailedToolRowsReserveTrailingColumnBeforeInPlaceRewrite() async throws {
+    func standardToolRowsStayWithinRewriteWidth() async throws {
         let terminalColumns = 40
         let longArgument = String(repeating: "x", count: 100)
         let renderer = makeRenderer(
@@ -786,8 +664,6 @@ struct TerminalChatRenderCoordinatorTests {
             argumentsObject: ["command": longArgument],
             argumentsJSON: #"{"command":"placeholder"}"#
         )
-
-        await renderer.setToolOutputDetailLevel(.detailed)
         await renderer.writeToolCallStarted(toolCall)
         let started = await renderer.snapshot()
         let startedEvents = await renderer.capturedWriteEvents()
@@ -796,22 +672,14 @@ struct TerminalChatRenderCoordinatorTests {
             .split(separator: "\n", omittingEmptySubsequences: true)
             .map(String.init)
 
-        // The interactive-chat inset occupies two cells. Every detailed row
-        // must leave one further cell unused so an auto-wrap cannot add an
-        // uncounted row next to the reserved status/input overlay.
-        #expect(renderedRows.count == started.activeDetailedToolRenderedRowCount)
+        // Every standard row leaves one trailing cell so terminal auto-wrap
+        // cannot add an unaccounted row beside the input overlay.
+        #expect(renderedRows.count == started.activeToolRenderedRowCount)
         #expect(
             renderedRows.allSatisfy {
-                TerminalANSIText.visibleWidth($0) <= terminalColumns - 1
+                TerminalANSIText.visibleWidth($0) <= terminalColumns
             }
         )
-        let renderedLongCharacterCount = TerminalANSIText.stripANSI(renderedStart)
-            .reduce(into: 0) { count, character in
-                if character == "x" {
-                    count += 1
-                }
-            }
-        #expect(renderedLongCharacterCount >= longArgument.count)
 
         let eventCountBeforeCompletion = startedEvents.count
         await renderer.writeToolCallCompleted(
@@ -825,129 +693,16 @@ struct TerminalChatRenderCoordinatorTests {
 
         #expect(
             clearSequence.hasPrefix(
-                "\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"
+                "\u{1B}[\(started.activeToolRenderedRowCount)A\r"
             )
         )
         #expect(
             clearSequence.components(separatedBy: "\u{1B}[2K").count - 1
-                == started.activeDetailedToolRenderedRowCount
+                == started.activeToolRenderedRowCount
         )
     }
 
-    @Test
-    func detailedToolPendingBeyondScrollRegionIsBoundedAndRewritten() async {
-        let scrollableRows = 12
-        // A large pending payload is bounded one row below the scrolling
-        // capacity, retaining the cursor row required to replace it cleanly.
-        let script = (0..<40)
-            .map { "echo line\($0)" }
-            .joined(separator: "\n")
-        let renderer = makeRenderer(
-            stdinIsTerminal: true,
-            standardErrorIsTerminal: true,
-            columnWidthProvider: { 80 }
-        )
-        let toolCall = presentedToolCall(
-            id: "tool-overflowing-scroll-region",
-            name: "local.exec",
-            argumentsObject: [
-                "workingDirectory": "/tmp/project",
-                "command": script
-            ],
-            argumentsJSON: "{}"
-        )
 
-        await renderer.setToolOutputDetailLevel(.detailed)
-        await renderer.writeToolCallStarted(
-            toolCall,
-            maximumInPlaceRows: scrollableRows
-        )
-        let started = await renderer.snapshot()
-        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
-
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Done", summary: "Done"),
-            maximumInPlaceRows: scrollableRows
-        )
-
-        let completionText = (await renderer.capturedWriteEvents())
-            .dropFirst(eventCountBeforeCompletion)
-            .map(\.text)
-            .joined()
-
-        #expect(
-            started.activeDetailedToolRenderedRowCount == scrollableRows - 1
-        )
-        #expect(containsCursorUpSequence(completionText))
-        #expect(
-            completionText.components(separatedBy: "\u{1B}[2K").count - 1
-                == started.activeDetailedToolRenderedRowCount
-        )
-        #expect(TerminalANSIText.stripANSI(completionText).contains("status: ✅"))
-    }
-
-    @Test
-    func detailedEditCompletionBeyondScrollRegionReplacesBoundedPendingBlock() async {
-        // Edit arguments can make both lifecycle renderings taller than the
-        // scrolling region. The pending copy is bounded, then replaced by the
-        // complete diff even when the latter scrolls.
-        let scrollableRows = 4
-        let oldContent = (0..<40)
-            .map { "let oldValue\($0) = \($0)" }
-            .joined(separator: "\n")
-        let newContent = (0..<40)
-            .map { "let newValue\($0) = \($0)" }
-            .joined(separator: "\n")
-        let renderer = makeRenderer(
-            stdinIsTerminal: true,
-            standardErrorIsTerminal: true,
-            columnWidthProvider: { 80 }
-        )
-        let toolCall = presentedToolCall(
-            id: "tool-detailed-edit-overflow",
-            name: "local.editFile",
-            argumentsObject: [
-                "path": "/tmp/project/Sources/App.swift",
-                "old": oldContent,
-                "new": newContent
-            ],
-            argumentsJSON: "{}"
-        )
-
-        await renderer.setToolOutputDetailLevel(.detailed)
-        await renderer.writeToolCallStarted(
-            toolCall,
-            maximumInPlaceRows: scrollableRows
-        )
-        let started = await renderer.snapshot()
-        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
-
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Updated file", summary: "Updated file"),
-            maximumInPlaceRows: scrollableRows
-        )
-
-        let completionText = (await renderer.capturedWriteEvents())
-            .dropFirst(eventCountBeforeCompletion)
-            .map(\.text)
-            .joined()
-        let visibleRows = TerminalANSIText.stripANSI(completionText)
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-
-        #expect(
-            started.activeDetailedToolRenderedRowCount == scrollableRows - 1
-        )
-        #expect(containsCursorUpSequence(completionText))
-        #expect(
-            completionText.components(separatedBy: "\u{1B}[2K").count - 1
-                == started.activeDetailedToolRenderedRowCount
-        )
-        #expect(visibleRows.contains { $0.contains("status: ✅") })
-        #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 80 })
-    }
 
     @Test
     func standardPendingMutationBeyondScrollRegionKeepsCompactAndSourceRows() async {
@@ -975,8 +730,6 @@ struct TerminalChatRenderCoordinatorTests {
             ],
             argumentsJSON: "{}"
         )
-
-        await renderer.setToolOutputDetailLevel(.standard)
         await renderer.writeToolCallStarted(
             toolCall,
             maximumInPlaceRows: scrollableRows
@@ -986,7 +739,7 @@ struct TerminalChatRenderCoordinatorTests {
             (await renderer.capturedWriteEvents()).map(\.text).joined()
         )
         #expect(
-            started.activeDetailedToolRenderedRowCount == scrollableRows - 1
+            started.activeToolRenderedRowCount == scrollableRows - 1
         )
         let sourceRows = startedText
             .split(separator: "\n", omittingEmptySubsequences: true)
@@ -1138,7 +891,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         let snapshot = await renderer.snapshot()
         let combined = await renderer.capturedWriteEvents().map(\.text).joined()
-        #expect(snapshot.activeCompactToolCallID == nil)
+        #expect(snapshot.activeToolCallID == nil)
         #expect(!snapshot.deferredTaskGraphOverviewRender)
         #expect(combined.contains("Stopped."))
         #expect(combined.contains("Task graph"))
@@ -2364,10 +2117,10 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(result == .deferred)
         #expect(suspendedSnapshot.lastRenderedSubAgentOverviewSignature == nil)
         #expect(suspendedSnapshot.deferredSubAgentOverviewRender)
-        #expect(suspendedSnapshot.activeCompactToolCallID == toolCall.id)
+        #expect(suspendedSnapshot.activeToolCallID == toolCall.id)
         #expect(
-            suspendedSnapshot.activeCompactToolRenderedRowCount
-                == startedSnapshot.activeCompactToolRenderedRowCount
+            suspendedSnapshot.activeToolRenderedRowCount
+                == startedSnapshot.activeToolRenderedRowCount
         )
         // No writes at all: neither the overview body nor a stray newline
         // from an interrupted tool block.
@@ -2381,8 +2134,8 @@ struct TerminalChatRenderCoordinatorTests {
             result: DirectAgentToolResult(output: "Done", summary: "Done")
         )
         let completedSnapshot = await renderer.snapshot()
-        #expect(completedSnapshot.activeCompactToolCallID == nil)
-        #expect(completedSnapshot.activeCompactToolRenderedRowCount == 0)
+        #expect(completedSnapshot.activeToolCallID == nil)
+        #expect(completedSnapshot.activeToolRenderedRowCount == 0)
     }
 
     @Test
@@ -2486,7 +2239,7 @@ struct TerminalChatRenderCoordinatorTests {
             .map(\.text)
             .joined()
 
-        #expect(afterStaleCompletion.activeCompactToolCallID == nil)
+        #expect(afterStaleCompletion.activeToolCallID == nil)
         #expect(!containsCursorUpSequence(staleCompletionText))
         #expect(staleCompletionText.contains("✅"))
 
@@ -2501,7 +2254,7 @@ struct TerminalChatRenderCoordinatorTests {
             .map(\.text)
             .joined()
 
-        #expect(afterOwningCompletion.activeCompactToolCallID == nil)
+        #expect(afterOwningCompletion.activeToolCallID == nil)
         #expect(!containsCursorUpSequence(owningCompletionText))
         let transcript = TerminalANSIText.stripANSI(
             (await renderer.capturedWriteEvents()).map(\.text).joined()
@@ -2513,32 +2266,6 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(transcript.components(separatedBy: "agent.wait").count - 1 == 2)
     }
 
-    @Test
-    func detailedCompletionKeepsItsOwnedStyleAfterSwitchingToCompact() async {
-        let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = presentedToolCall(
-            id: "detailed-style-change",
-            name: "local.exec",
-            argumentsObject: ["command": "printf done"],
-            argumentsJSON: #"{"command":"printf done"}"#
-        )
-
-        await renderer.setToolOutputDetailLevel(.detailed)
-        await renderer.writeToolCallStarted(toolCall)
-        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
-        await renderer.setToolOutputDetailLevel(.minimal)
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Done", summary: "Done")
-        )
-
-        let completionText = (await renderer.capturedWriteEvents())
-            .dropFirst(eventCountBeforeCompletion)
-            .map(\.text)
-            .joined()
-        #expect(containsCursorUpSequence(completionText))
-        #expect(TerminalANSIText.stripANSI(completionText).contains("status: ✅"))
-    }
 
     @Test
     func completionUsesExplicitFreshWidthProviderBeforeClearingRows() async {
@@ -2651,7 +2378,6 @@ struct TerminalChatRenderCoordinatorTests {
             ],
             argumentsJSON: "{}"
         )
-        await renderer.setToolOutputDetailLevel(.detailed)
         await renderer.writeToolCallStarted(toolCall)
         let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
 
@@ -2699,7 +2425,6 @@ struct TerminalChatRenderCoordinatorTests {
             ],
             argumentsJSON: "{}"
         )
-        await renderer.setToolOutputDetailLevel(.detailed)
         await renderer.writeToolCallStarted(toolCall)
         let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
 
@@ -2725,55 +2450,6 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 120 })
     }
 
-    @Test
-    func detailedToolBlockNeutralizesControlSequencesInPathMetadataEndToEnd() async {
-        // End-to-end guard: a hostile path must not be able to emit ESC, CR, LF
-        // or a tab through the title, the location row or the change row of the
-        // detailed block, at start or at completion.
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            columnWidthProvider: { 100 }
-        )
-        let toolCall = presentedToolCall(
-            id: "detailed-path-injection",
-            name: "local.writeFile",
-            argumentsObject: [
-                "path": "Sources/\u{1B}[2J\u{1B}[1;1H\u{9B}31mApp\u{7F}.swift",
-                "content": "let value = 1"
-            ],
-            argumentsJSON: "{}"
-        )
-
-        await renderer.setToolOutputDetailLevel(.detailed)
-        await renderer.writeToolCallStarted(toolCall)
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "", summary: "written")
-        )
-
-        let text = await renderer.capturedWriteEvents()
-            .filter { $0.channel == .standardError }
-            .map(\.text)
-            .joined()
-        // Split on both newline and CR: a CR here belongs to the coordinator's
-        // own cursor repositioning, never to the payload.
-        let visibleRows = TerminalANSIText.stripANSI(text)
-            .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
-            .map(String.init)
-        let metadataRows = visibleRows.filter { !$0.hasPrefix("  ") }
-
-        for row in metadataRows {
-            #expect(!row.contains("\u{1B}"))
-            #expect(!row.contains("\u{9B}"))
-            #expect(!row.contains("\t"))
-            #expect(!row.contains("\u{7F}"))
-        }
-        // No screen-clear or cursor-home sequence may survive anywhere.
-        #expect(!text.contains("\u{1B}[2J"))
-        #expect(!text.contains("\u{1B}[1;1H"))
-        #expect(!visibleRows.contains { $0.hasPrefix("target: ") })
-        #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 100 })
-    }
 
     @Test
     func detailedPatchBlockNeutralizesControlSequencesFromPatchDerivedTarget() async {
@@ -2789,8 +2465,6 @@ struct TerminalChatRenderCoordinatorTests {
             ],
             argumentsJSON: "{}"
         )
-
-        await renderer.setToolOutputDetailLevel(.detailed)
         await renderer.writeToolCallStarted(toolCall)
         await renderer.writeToolCallCompleted(
             toolCall,
@@ -2809,62 +2483,6 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(!visibleRows.contains { $0.hasPrefix("target: ") })
         #expect(visibleRows.filter { !$0.hasPrefix("  ") }.allSatisfy { !$0.contains("\u{1B}") })
         #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 100 })
-    }
-
-    @Test
-    func detailedEmptyPayloadRendersDistinctlyFromLiteralMarkerPayload() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            columnWidthProvider: { 100 }
-        )
-        await renderer.setToolOutputDetailLevel(.detailed)
-
-        let emptyCall = presentedToolCall(
-            id: "detailed-empty-payload",
-            name: "local.writeFile",
-            argumentsObject: ["path": "Sources/Empty.swift", "content": ""],
-            argumentsJSON: "{}"
-        )
-        await renderer.writeToolCallStarted(emptyCall)
-        await renderer.writeToolCallCompleted(
-            emptyCall,
-            result: DirectAgentToolResult(output: "", summary: "written")
-        )
-        let emptyEventCount = await renderer.capturedWriteEvents().count
-
-        let literalCall = presentedToolCall(
-            id: "detailed-literal-marker",
-            name: "local.writeFile",
-            argumentsObject: ["path": "Sources/Literal.swift", "content": "<empty>"],
-            argumentsJSON: "{}"
-        )
-        await renderer.writeToolCallStarted(literalCall)
-        await renderer.writeToolCallCompleted(
-            literalCall,
-            result: DirectAgentToolResult(output: "", summary: "written")
-        )
-
-        let allEvents = await renderer.capturedWriteEvents()
-        let emptyText = TerminalANSIText.stripANSI(
-            allEvents.prefix(emptyEventCount)
-                .filter { $0.channel == .standardError }
-                .map(\.text)
-                .joined()
-        )
-        let literalText = TerminalANSIText.stripANSI(
-            allEvents.dropFirst(emptyEventCount)
-                .filter { $0.channel == .standardError }
-                .map(\.text)
-                .joined()
-        )
-
-        // An empty descriptor value is absent; a literal marker remains source
-        // content and receives its own numbered line. The target row is no
-        // longer rendered, but the path still reaches the parameter block.
-        #expect(!emptyText.contains("target: "))
-        #expect(emptyText.contains("Sources/Empty.swift"))
-        #expect(!emptyText.contains("<empty>"))
-        #expect(literalText.contains("1 │ <empty>"))
     }
 
     private func makeRenderer(
@@ -2971,8 +2589,8 @@ struct TerminalChatToolBlockResizeTests {
         let started = await renderer.snapshot()
         let eventCountBeforeCompletion = await renderer.capturedWriteEvents()
             .count
-        #expect(started.activeCompactToolCallID == toolCall.id)
-        #expect(started.activeCompactToolRenderedRowCount > 0)
+        #expect(started.activeToolCallID == toolCall.id)
+        #expect(started.activeToolRenderedRowCount > 0)
 
         // Simulate terminal shrink between start and completion.
         widthBox.width = 40
@@ -3045,14 +2663,13 @@ struct TerminalChatToolBlockResizeTests {
             argumentsObject: ["command": "printf done"],
             argumentsJSON: #"{"command":"printf done"}"#
         )
-        await renderer.setToolOutputDetailLevel(.detailed)
 
         await renderer.writeToolCallStarted(toolCall)
         let started = await renderer.snapshot()
         let eventCountBeforeCompletion = await renderer.capturedWriteEvents()
             .count
-        #expect(started.activeDetailedToolCallID == toolCall.id)
-        #expect(started.activeDetailedToolRenderedRowCount > 0)
+        #expect(started.activeToolCallID == toolCall.id)
+        #expect(started.activeToolRenderedRowCount > 0)
 
         // Simulate terminal shrink between start and completion.
         widthBox.width = 40
@@ -3087,7 +2704,7 @@ struct TerminalChatToolBlockResizeTests {
         let started = await renderer.snapshot()
         let eventCountBeforeCompletion = await renderer.capturedWriteEvents()
             .count
-        #expect(started.activeCompactToolRenderedRowCount > 0)
+        #expect(started.activeToolRenderedRowCount > 0)
 
         // Width unchanged: the completion should emit the normal destructive
         // clear + rewrite (same behaviour as before the safety fuse).
@@ -3102,12 +2719,12 @@ struct TerminalChatToolBlockResizeTests {
 
         #expect(
             rewriteSequence.hasPrefix(
-                "\u{1B}[\(started.activeCompactToolRenderedRowCount)A\r"
+                "\u{1B}[\(started.activeToolRenderedRowCount)A\r"
             )
         )
         #expect(
             rewriteSequence.components(separatedBy: "\u{1B}[2K").count - 1
-                == started.activeCompactToolRenderedRowCount
+                == started.activeToolRenderedRowCount
         )
         #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
     }
@@ -3125,13 +2742,12 @@ struct TerminalChatToolBlockResizeTests {
             argumentsObject: ["command": "printf done"],
             argumentsJSON: #"{"command":"printf done"}"#
         )
-        await renderer.setToolOutputDetailLevel(.detailed)
 
         await renderer.writeToolCallStarted(toolCall)
         let started = await renderer.snapshot()
         let eventCountBeforeCompletion = await renderer.capturedWriteEvents()
             .count
-        #expect(started.activeDetailedToolRenderedRowCount > 0)
+        #expect(started.activeToolRenderedRowCount > 0)
 
         // Width unchanged: normal destructive clear + rewrite.
         await renderer.writeToolCallCompleted(
@@ -3145,78 +2761,16 @@ struct TerminalChatToolBlockResizeTests {
 
         #expect(
             rewriteSequence.hasPrefix(
-                "\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"
+                "\u{1B}[\(started.activeToolRenderedRowCount)A\r"
             )
         )
         #expect(
             rewriteSequence.components(separatedBy: "\u{1B}[2K").count - 1
-                == started.activeDetailedToolRenderedRowCount
+                == started.activeToolRenderedRowCount
         )
         #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
     }
 
-    @Test
-    func semanticDetailedToolKeepsTheExistingOwnedRowRedrawContract() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            columnWidthProvider: { 100 }
-        )
-        let toolCall = presentedToolCall(
-            id: "semantic-redraw",
-            name: "thirdparty.edit",
-            argumentsObject: [
-                "path": "/tmp/App.swift",
-                "old": "old",
-                "new": "new"
-            ],
-            argumentsJSON: "{}",
-            presentation: ToolPresentationDefinition(
-                title: "Source file",
-                action: "Edit",
-                kind: .edit,
-                target: .argument(["path"], format: .path),
-                sections: [
-                    .diff(
-                        label: "change",
-                        old: .argument(["old"], format: .text),
-                        new: .argument(["new"], format: .text)
-                    )
-                ]
-            )
-        )
-        await renderer.setToolOutputDetailLevel(.detailed)
-
-        await renderer.writeToolCallStarted(toolCall)
-        let started = await renderer.snapshot()
-        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
-
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "done", summary: "done")
-        )
-
-        let completionEvents = Array(
-            (await renderer.capturedWriteEvents()).dropFirst(eventCountBeforeCompletion)
-        )
-        let completionText = TerminalANSIText.stripANSI(
-            completionEvents.map(\.text).joined()
-        )
-        let rewriteSequence = completionEvents.first?.text ?? ""
-
-        #expect(started.activeDetailedToolRenderedRowCount > 0)
-        #expect(
-            rewriteSequence.hasPrefix(
-                "\u{1B}[\(started.activeDetailedToolRenderedRowCount)A\r"
-            )
-        )
-        // Expanded output identifies the exact invoked tool and exposes its
-        // semantic kind as a detail row.
-        #expect(completionText.contains("thirdparty.edit"))
-        #expect(completionText.contains("kind: edit"))
-        #expect(!completionText.contains("target: /tmp/App.swift"))
-        #expect(completionText.contains("status: ✅"))
-        #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
-    }
 
     private func makeRenderer(
         standardErrorIsTerminal: Bool,

@@ -9,7 +9,6 @@ import Foundation
 /// The coordinator remains the sole mutator; this value only groups invariants
 /// that must advance together when ownership transfers between tool calls.
 struct TerminalToolBlockAccounting<ActiveBlock> {
-    var detailLevel: ToolOutputDetailLevel = .minimal
     var activeBlock: ActiveBlock?
     var startInstants: [String: ContinuousClock.Instant] = [:]
     var activeBlockIsSubAgentTool = false
@@ -43,12 +42,6 @@ extension TerminalChatRenderCoordinator {
         let epoch: Int
     }
 
-    enum ToolBlockStyle: Sendable, Equatable {
-        case minimal
-        case standard
-        case detailed
-    }
-
     enum ToolBlockLifecycle {
         case started
         case completed(
@@ -65,7 +58,6 @@ extension TerminalChatRenderCoordinator {
 
     struct ActiveToolBlock: Sendable, Equatable {
         let id: String
-        let style: ToolBlockStyle
         let rows: Int
         let columnWidth: Int
         let maximumInPlaceRows: Int?

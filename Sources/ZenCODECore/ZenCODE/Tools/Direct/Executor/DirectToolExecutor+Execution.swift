@@ -28,12 +28,45 @@ extension DirectToolExecutor {
         workingDirectory: URL,
         allowedToolNames: Set<String>?
     ) async throws -> String {
-        try await executeThrowingResult(
+        let clock = ContinuousClock()
+        let started = clock.now
+        let sequence = await toolExecutionLogger.recordStarted(
             sessionID: sessionID,
             toolCall: toolCall,
-            workingDirectory: workingDirectory,
-            allowedToolNames: allowedToolNames
-        ).output
+            workingDirectory: workingDirectory
+        )
+        do {
+            let output = try await executeThrowingResult(
+                sessionID: sessionID,
+                toolCall: toolCall,
+                workingDirectory: workingDirectory,
+                allowedToolNames: allowedToolNames
+            ).output
+            await toolExecutionLogger.recordCompleted(
+                sessionID: sessionID,
+                toolCall: toolCall,
+                workingDirectory: workingDirectory,
+                result: DirectAgentToolResult(
+                    output: output,
+                    summary: output,
+                    status: .completed
+                ),
+                elapsed: started.duration(to: clock.now),
+                sequence: sequence
+            )
+            return output
+        } catch {
+            await toolExecutionLogger.recordCompleted(
+                sessionID: sessionID,
+                toolCall: toolCall,
+                workingDirectory: workingDirectory,
+                elapsed: started.duration(to: clock.now),
+                sequence: sequence,
+                status: String(describing: Self.toolResultStatus(for: error)),
+                failure: error.localizedDescription
+            )
+            throw error
+        }
     }
 
     func executeThrowingResult(

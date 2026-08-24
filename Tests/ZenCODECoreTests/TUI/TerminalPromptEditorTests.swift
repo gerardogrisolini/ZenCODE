@@ -29,6 +29,12 @@ struct TerminalPromptEditorTests {
         ]
     }
 
+    @Test
+    func toolsCompletionIncludesExecutionLogLauncher() {
+        #expect(TerminalPromptCompletionCatalog.argumentSuggestions(for: "/tools")
+            .contains(TerminalCommandSuggestion(command: "logs", summary: "open the tool execution log")))
+    }
+
     // MARK: - Line and buffer motion
 
     @Test
@@ -490,7 +496,7 @@ struct TerminalPromptEditorTests {
         #expect(agentArguments.map(\.command) == ["list", "ls", "status"])
 
         let toolArguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/tools")
-        #expect(toolArguments.map(\.command) == ["all", "none", "off", "clear", "disabled"])
+        #expect(toolArguments.map(\.command) == ["all", "none", "off", "clear", "disabled", "logs"])
     }
 
     @Test

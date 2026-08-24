@@ -429,8 +429,8 @@ struct TerminalInteractiveLineReaderTests {
         #expect(reader.keyFromCSI(Array("27;5;103~".utf8)) == .toggleAccessMode)
         #expect(reader.keyFromCSI(Array("111;5u".utf8)) == .toggleSharedChatReader)
         #expect(reader.keyFromCSI(Array("27;5;111~".utf8)) == .toggleSharedChatReader)
-        #expect(reader.keyFromCSI(Array("116;5u".utf8)) == .toggleToolDetails)
-        #expect(reader.keyFromCSI(Array("27;5;116~".utf8)) == .toggleToolDetails)
+        #expect(reader.keyFromCSI(Array("116;5u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("27;5;116~".utf8)) == .unknown)
 
         // Readline motion shortcuts distinguish Control from Alt.
         #expect(reader.keyFromCSI(Array("98;5u".utf8)) == .left)
@@ -444,7 +444,7 @@ struct TerminalInteractiveLineReaderTests {
 
         // An explicit Kitty press event and additional modifiers retain Control.
         #expect(reader.keyFromCSI(Array("97;5:1u".utf8)) == .home)
-        #expect(reader.keyFromCSI(Array("116;7u".utf8)) == .toggleToolDetails)
+        #expect(reader.keyFromCSI(Array("116;7u".utf8)) == .unknown)
     }
 
     @Test
@@ -472,7 +472,7 @@ struct TerminalInteractiveLineReaderTests {
 
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x0D) == .enter)
         #expect(reader.keyFromCSI(Array("13;5u".utf8)) == .enter)
-        #expect(TerminalInteractiveLineReader.controlKey(for: 0x14) == .toggleToolDetails)
+        #expect(TerminalInteractiveLineReader.controlKey(for: 0x14) == nil)
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x01) == .home)
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x05) == .end)
         #expect(TerminalInteractiveLineReader.controlKey(for: 0x02) == .left)
@@ -610,7 +610,7 @@ struct TerminalInteractiveLineReaderTests {
         #expect(reader.withPanelLock { String($0.panelBuffer) } == "hello")
         #expect(reader.withPanelLock { $0.panelCursorIndex } == 2)
         #expect(reader.withPanelLock {
-            reader.panelHelpTextLocked(state: $0).contains("Ctrl+T tools · Ctrl+G access")
+            reader.panelHelpTextLocked(state: $0).contains("Ctrl+G access")
         })
         #expect(reader.withPanelLock {
             reader.panelCompactHelpTextLocked(state: $0) == "Enter send · Esc clear · Ctrl+G access · Ctrl+Y chat"

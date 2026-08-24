@@ -15,26 +15,6 @@ import Dispatch
 import Foundation
 import ToolCore
 
-/// Detail level used when rendering executed tool calls in the terminal.
-public enum ToolOutputDetailLevel: CaseIterable, Sendable {
-    /// Single inline status line per tool call.
-    case minimal
-    /// Minimal tool status plus source changes when available.
-    case standard
-    /// Title, kind, location, full call parameters, and change/summary/error
-    /// snippets with syntax-highlighted code areas.
-    case detailed
-
-    /// Returns the next level in the detail cycle.
-    public var next: ToolOutputDetailLevel {
-        switch self {
-        case .minimal: return .standard
-        case .standard: return .detailed
-        case .detailed: return .minimal
-        }
-    }
-}
-
 /// TerminalChat coordinates session state; all stateful terminal rendering is isolated by `renderCoordinator`.
 ///
 /// Isolation: every instance member lives on ``TerminalChatActor``, which

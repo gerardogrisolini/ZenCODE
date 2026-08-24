@@ -51,11 +51,8 @@ actor TerminalChatRenderCoordinator {
     }
 
     struct Snapshot: Sendable, Equatable {
-        let toolOutputDetailLevel: ToolOutputDetailLevel
-        let activeCompactToolCallID: String?
-        let activeCompactToolRenderedRowCount: Int
-        let activeDetailedToolCallID: String?
-        let activeDetailedToolRenderedRowCount: Int
+        let activeToolCallID: String?
+        let activeToolRenderedRowCount: Int
         let deferredTaskGraphOverviewRender: Bool
         let deferredSubAgentOverviewRender: Bool
         let lastRenderedTaskGraphOverviewSignature: String?

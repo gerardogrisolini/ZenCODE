@@ -347,8 +347,16 @@ implementation task rather than guessing a task breakdown from prose.
 **Optional integrations:**
 - `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup). Available even while a prompt is running.
 
+**Tool execution log:** every direct tool call produces correlated `started` and
+`completed` JSONL records in an owner-only, per-process file under the app-support
+`logs` directory. Records contain execution metadata and the complete (untruncated)
+executor output after secret redaction. Use the exact command `/tools logs` to open
+the current process log with the platform viewer; launcher failures are reported in
+the terminal and never written to ACP stdout. Recognized prior-process log files
+are retained for 10 days and then removed best-effort; cleanup never interrupts a
+tool execution.
+
 **Interactive shortcuts:**
-- `Ctrl+T` — toggle compact/full tool output.
 - `Ctrl+G` — toggle default/full access mode (temporary, never persisted).
 
 **Prompt editing shortcuts:**

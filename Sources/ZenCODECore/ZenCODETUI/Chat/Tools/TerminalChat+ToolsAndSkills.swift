@@ -5,12 +5,6 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-#if canImport(Darwin)
-
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
 import Foundation
 
 extension TerminalChat {
@@ -19,6 +13,11 @@ extension TerminalChat {
             from: command,
             commandPrefix: "/tools"
         )
+
+        if Self.isToolLogsRequest(rawArguments) {
+            await openToolExecutionLog()
+            return
+        }
 
         if rawArguments.isEmpty {
             guard stdinIsTerminal else {
@@ -46,6 +45,24 @@ extension TerminalChat {
         }
 
         await applyToolSelection(rawArguments)
+    }
+
+    nonisolated static func isToolLogsRequest(_ rawArguments: String) -> Bool {
+        let tokens = rawArguments.split(whereSeparator: \.isWhitespace)
+        return tokens.count == 1 && tokens[0].lowercased() == "logs"
+    }
+
+    private func openToolExecutionLog() async {
+        do {
+            let url = try await ToolExecutionLogger.shared.ensureLogExists()
+            try await SystemFileLauncher.open(url.path, timeout: 30)
+            // TUI messages use stderr; ACP stdout remains reserved for protocol traffic.
+            await writeSystemMessage("Opened tool execution log: \(url.path)\n")
+        } catch {
+            await writeFailureMessage(
+                "ZenCODE: unable to open tool execution log: \(error.localizedDescription)\n"
+            )
+        }
     }
 
     public func applyToolSelection(_ rawSelection: String) async {

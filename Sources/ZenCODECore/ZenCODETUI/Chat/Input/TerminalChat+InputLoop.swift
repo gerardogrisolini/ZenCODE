@@ -900,9 +900,6 @@ extension TerminalChat {
                     }
                 case .cancelRequested:
                     generationTask?.cancel()
-                case .toggleToolDetailsRequested:
-                    await self.toggleToolDetailsOutput()
-                    await interactiveReader.refreshPanel()
                 case .toggleAccessModeRequested:
                     let accessMode = await sessionRunner.toggleLocalExecAccessMode()
                     await statusBar.update(localExecAccessMode: accessMode)

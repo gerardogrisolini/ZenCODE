@@ -22,94 +22,15 @@ private struct DetailedToolDiffRow {
 }
 
 extension TerminalChat {
-    nonisolated static func detailedToolCallStartedLines(
-        for toolCall: DirectAgentToolCall
-    ) -> [String] {
-        detailedToolCallStartedRows(for: toolCall).map(\.plainText)
-    }
 
-    nonisolated static func detailedToolCallStartedRows(
-        for toolCall: DirectAgentToolCall
-    ) -> [DetailedToolRow] {
-        var rows = detailedToolBaseRows(for: toolCall)
-        rows.append(.text("status: ⏳"))
-        return rows
-    }
 
-    nonisolated static func detailedToolCallCompletedLines(
-        for toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult,
-        contentWidth: Int? = nil,
-        elapsed: Duration? = nil
-    ) -> [String] {
-        detailedToolCallCompletedRows(
-            for: toolCall,
-            result: result,
-            contentWidth: contentWidth,
-            elapsed: elapsed
-        )
-        .map(\.plainText)
-    }
 
-    /// Structured counterpart of `detailedToolCallCompletedLines`. Side-by-side
-    /// diff rows keep their two cells in separate fields all the way to the
-    /// renderer, so the column boundary is never encoded into — and never
-    /// recovered from — the payload text.
-    nonisolated static func detailedToolCallCompletedRows(
-        for toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult,
-        contentWidth: Int? = nil,
-        elapsed: Duration? = nil
-    ) -> [DetailedToolRow] {
-        var rows = detailedToolBaseRows(
-            for: toolCall,
-            result: result,
-            contentWidth: contentWidth
-        )
 
-        let elapsedText = elapsed.map { toolElapsedTimeText($0) } ?? ""
-        // ⚠️ carries a variation selector that most terminals render as a
-        // double-width emoji, visually consuming one trailing space. Use an
-        // extra separator so the icon stays separated from the elapsed time.
-        let warningStatus = elapsedText.isEmpty
-            ? "status: ⚠️"
-            : "status: ⚠️  \(elapsedText)"
-        let successStatus = elapsedText.isEmpty
-            ? "status: ✅"
-            : "status: ✅ \(elapsedText)"
 
-        if result.isFailure {
-            rows.append(.text("error:"))
-            rows.append(contentsOf: indentedSnippet(result.output).map(DetailedToolRow.text))
-            rows.append(.text(warningStatus))
-            return rows
-        }
 
-        rows.append(.text(successStatus))
-        return rows
-    }
-
-    nonisolated static func detailedToolBaseLines(
-        for toolCall: DirectAgentToolCall
-    ) -> [String] {
-        detailedToolBaseRows(for: toolCall).map(\.plainText)
-    }
-
-    nonisolated static func detailedToolBaseRows(
-        for toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult? = nil,
-        contentWidth: Int? = nil
-    ) -> [DetailedToolRow] {
-        semanticToolRows(
-            for: toolCall,
-            result: result,
-            contentWidth: contentWidth
-        )
-    }
-
-    /// Builds the source payload appended to the compact tool rows at the
-    /// standard level. It shares the exact code/diff row constructors used by
-    /// the detailed level while omitting detailed metadata and summaries.
+    /// Builds the source payload appended to the compact tool rows. It reuses
+    /// the shared code/diff row constructors while omitting tool metadata,
+    /// summaries, and raw read results.
     nonisolated static func standardToolCallRows(
         for toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult? = nil,
@@ -199,385 +120,17 @@ extension TerminalChat {
         }
     }
 
-    /// Converts the core's unstyled semantic presentation into the existing TUI
-    /// row primitives. Every label/value is still sanitized here; definitions
-    /// from feature processes and MCP servers are untrusted metadata.
-    nonisolated static func semanticToolRows(
-        for toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult?,
-        contentWidth: Int?
-    ) -> [DetailedToolRow] {
-        let presentation = ToolCallPresentation.resolved(
-            for: toolCall,
-            result: result,
-            mode: .expanded
-        )
-        let icon = ToolCallPresentation.toolIcon(for: toolCall.name)
-        let toolName = sanitizedMetadataText(toolCall.name) ?? "tool"
-        var rows: [DetailedToolRow] = [
-            .text("\(icon)  \(toolName)"),
-            .text("kind: \(presentation.kind.rawValue)")
-        ]
-        if let action = presentation.action.flatMap(sanitizedMetadataText) {
-            rows.append(.text("action: \(action)"))
-        }
-        for item in presentation.metadata {
-            guard let label = sanitizedMetadataText(item.label),
-                  let value = sanitizedMetadataText(item.value) else {
-                continue
-            }
-            rows.append(.text("\(label): \(value)"))
-        }
 
-        let isMutationPresentation: Bool
-        switch presentation.kind {
-        case .create, .edit, .delete, .move:
-            isMutationPresentation = true
-        case .read, .search, .execute, .inspect, .communicate, .manage, .other:
-            isMutationPresentation = isFileMutationTool(toolCall.name)
-        }
-        let rendersSourceChanges = isMutationPresentation
-            && presentation.elements.contains { element in
-                switch element {
-                case .code, .diff:
-                    return true
-                case .parameters, .list, .summary:
-                    return false
-                }
-            }
 
-        // `local.editFile` owns a semantic diff, which normally suppresses the
-        // raw parameters but does not render the target. Use the mutation rows
-        // in the presenter so its expanded view retains the filename just like
-        // `local.multiEdit`, without changing the descriptor-owned contract.
-        let mutationToolName = normalizedMutationToolName(toolCall.name)
-        if mutationToolName == "local.editFile",
-           editFileHasSourceChanges(toolCall.argumentsObject) {
-            rows.append(contentsOf: appliedChangeDetailRows(
-                for: toolCall,
-                contentWidth: contentWidth
-            ))
-            for element in presentation.elements {
-                if case .summary = element {
-                    rows.append(contentsOf: semanticElementRows(
-                        element,
-                        contentWidth: contentWidth
-                    ))
-                }
-            }
-            return rows
-        }
 
-        // A multi-edit is structurally a sequence of old/new source pairs. Its
-        // declarative list element preserves that payload for generic consumers,
-        // but when actual source changes are available they use the same
-        // side-by-side diff rows as a single edit. Parameters are suppressed only
-        // in this source-rendering branch; malformed or metadata-only calls fall
-        // through and retain both the heading and their JSON payload.
-        if mutationToolName == "local.multiEdit",
-           multiEditHasSourceChanges(toolCall.argumentsObject) {
-            rows.append(contentsOf: multiEditChangeDetailRows(
-                toolCall.argumentsObject,
-                contentWidth: contentWidth
-            ))
-            for element in presentation.elements {
-                if case .summary = element {
-                    rows.append(contentsOf: semanticElementRows(
-                        element,
-                        contentWidth: contentWidth
-                    ))
-                }
-            }
-            return rows
-        }
 
-        if isMutationPresentation,
-           !rendersSourceChanges,
-           !presentation.elements.contains(where: { element in
-               if case .parameters = element { return true }
-               return false
-           }) {
-            rows.append(contentsOf: parameterRows(for: toolCall))
-        }
 
-        for element in presentation.elements {
-            if rendersSourceChanges, case .parameters = element {
-                continue
-            }
-            rows.append(
-                contentsOf: semanticElementRows(
-                    element,
-                    contentWidth: contentWidth,
-                    preservesSourceLineNumbers: presentation.kind == .read
-                )
-            )
-        }
-        return rows
-    }
 
-    nonisolated static func semanticElementRows(
-        _ element: ToolPresentationElement,
-        contentWidth: Int?,
-        preservesSourceLineNumbers: Bool = false
-    ) -> [DetailedToolRow] {
-        switch element {
-        case let .parameters(label, value):
-            return semanticParameterRows(label: label, value: value)
-        case let .code(label, content, _):
-            var rows: [DetailedToolRow] = []
-            if let label = label.flatMap(sanitizedMetadataText) {
-                rows.append(.text("\(label):"))
-            }
-            rows.append(contentsOf: preservesSourceLineNumbers
-                ? preservedLineNumberCodeSnippetRows(content)
-                : numberedCodeSnippetRows(content))
-            return rows
-        case let .diff(label, old, new, _):
-            var rows: [DetailedToolRow] = []
-            if let label = label.flatMap(sanitizedMetadataText) {
-                rows.append(.text("\(label):"))
-            }
-            rows.append(
-                contentsOf: numberedDiffSnippetRows(
-                    old: old,
-                    new: new,
-                    contentWidth: contentWidth
-                )
-            )
-            return rows
-        case let .list(label, items):
-            var rows: [DetailedToolRow] = []
-            if let label = label.flatMap(sanitizedMetadataText) {
-                rows.append(.text("\(label):"))
-            }
-            for (index, item) in items.enumerated() {
-                let rendered = item.prettyPrinted()
-                let lines = indentedSnippetPreservingIndentation(rendered)
-                if lines.count == 1 {
-                    rows.append(.parameter("  \(index + 1). \(lines[0].dropFirst(2))"))
-                } else {
-                    rows.append(.parameter("  \(index + 1)."))
-                    rows.append(contentsOf: lines.map { .parameter($0) })
-                }
-            }
-            return rows
-        case let .summary(label, text):
-            guard let summary = compactSummaryLine(text) else {
-                return []
-            }
-            let label = label.flatMap(sanitizedMetadataText) ?? "summary"
-            guard let safeSummary = sanitizedMetadataText(summary) else {
-                return []
-            }
-            return [.text("\(label): \(safeSummary)")]
-        }
-    }
 
-    nonisolated static func semanticParameterRows(
-        label: String?,
-        value: JSONValue
-    ) -> [DetailedToolRow] {
-        let label = label.flatMap(sanitizedMetadataText) ?? "parameters"
-        let formatted: (text: String, preservesIndentation: Bool)
-        if case let .object(object) = value {
-            formatted = formattedParameterSnippet(
-                for: object.mapValues(\.jsonObject)
-            )
-        } else {
-            formatted = (value.prettyPrinted(), true)
-        }
-        let lines = formatted.preservesIndentation
-            ? indentedSnippetPreservingIndentation(formatted.text)
-            : indentedSnippet(formatted.text)
-        return [.text("\(label):")]
-            + parameterPayloadRows(lines.map(terminalSafeSnippetLine))
-    }
 
-    /// Builds the payload rows of a parameter block.
-    ///
-    /// Lines inside a `"""` block hold a raw multi-line string, not structured
-    /// data, so they are marked as non-JSON and stay on the flat parameter
-    /// color instead of being tokenized as keys, strings and literals.
-    nonisolated static func parameterPayloadRows(
-        _ lines: [String]
-    ) -> [DetailedToolRow] {
-        var isInsideMultilineString = false
-        return lines.map { line in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if isInsideMultilineString {
-                if trimmed.hasPrefix("\"\"\"") {
-                    isInsideMultilineString = false
-                }
-                return .parameter(line, highlightsJSON: false)
-            }
-            if trimmed.hasSuffix("\"\"\"") {
-                isInsideMultilineString = true
-            }
-            return .parameter(line, highlightsJSON: true)
-        }
-    }
 
-    /// Renders the full call parameters as pretty-printed JSON for the
-    /// `expanded` level, keeping the formatting and the wide limits.
-    nonisolated static func parameterLines(
-        for toolCall: DirectAgentToolCall
-    ) -> [String] {
-        guard !toolCall.argumentsObject.isEmpty else {
-            return []
-        }
-        let pretty = JSONValue(jsonObject: toolCall.argumentsObject).prettyPrinted()
-        guard pretty != "{}" else {
-            return []
-        }
-        var lines = ["parameters:"]
-        let formatted = formattedParameterSnippet(for: toolCall.argumentsObject)
-        if formatted.preservesIndentation {
-            lines.append(contentsOf: indentedSnippetPreservingIndentation(formatted.text))
-        } else {
-            lines.append(contentsOf: indentedSnippet(formatted.text))
-        }
-        return lines
-    }
 
-    /// Keeps parameter payload rows distinct from actual source snippets so the
-    /// renderer can use a metadata palette instead of the target file language.
-    nonisolated static func parameterRows(
-        for toolCall: DirectAgentToolCall
-    ) -> [DetailedToolRow] {
-        let lines = parameterLines(for: toolCall)
-        guard let header = lines.first else {
-            return []
-        }
-        return [.text(header)] + parameterPayloadRows(Array(lines.dropFirst()))
-    }
 
-    nonisolated static func formattedParameterSnippet(
-        for arguments: [String: Any]
-    ) -> (text: String, preservesIndentation: Bool) {
-        let entries = arguments
-            .map { (key: $0.key, value: JSONValue(jsonObject: $0.value)) }
-            .sorted { $0.key < $1.key }
-        guard entries.contains(where: { shouldRenderParameterAsMultilineString($0.value) }) else {
-            return (JSONValue(jsonObject: arguments).prettyPrinted(), false)
-        }
-
-        var lines = ["{"]
-        for (index, entry) in entries.enumerated() {
-            let suffix = index == entries.count - 1 ? "" : ","
-            let key = JSONValue.string(entry.key).compactString(sortedKeys: true)
-            let valueLines = formattedParameterValueLines(entry.value)
-            for (lineIndex, valueLine) in valueLines.enumerated() {
-                let lineSuffix = lineIndex == valueLines.count - 1 ? suffix : ""
-                if lineIndex == 0 {
-                    lines.append("  \(key): \(valueLine)\(lineSuffix)")
-                } else {
-                    lines.append("  \(valueLine)\(lineSuffix)")
-                }
-            }
-        }
-        lines.append("}")
-        return (lines.joined(separator: "\n"), true)
-    }
-
-    nonisolated static func shouldRenderParameterAsMultilineString(_ value: JSONValue) -> Bool {
-        guard case let .string(text) = value else {
-            return false
-        }
-        return text.contains("\n") && !text.contains("\"\"\"")
-    }
-
-    nonisolated static func formattedParameterValueLines(_ value: JSONValue) -> [String] {
-        if case let .string(text) = value,
-           shouldRenderParameterAsMultilineString(value) {
-            let contentLines = text
-                .trimmingCharacters(in: .newlines)
-                .split(separator: "\n", omittingEmptySubsequences: false)
-                .map(String.init)
-            return ["\"\"\""] + contentLines + ["\"\"\""]
-        }
-        return value
-            .prettyPrinted()
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-    }
-
-    nonisolated static func appliedChangeDetailLines(
-        for toolCall: DirectAgentToolCall,
-        contentWidth: Int? = nil
-    ) -> [String] {
-        appliedChangeDetailRows(for: toolCall, contentWidth: contentWidth)
-            .map(\.plainText)
-    }
-
-    nonisolated static func appliedChangeDetailRows(
-        for toolCall: DirectAgentToolCall,
-        contentWidth: Int? = nil
-    ) -> [DetailedToolRow] {
-        let arguments = toolCall.argumentsObject
-        switch normalizedMutationToolName(toolCall.name) {
-        case "local.writeFile":
-            var rows: [DetailedToolRow] = [.text("change: write \(targetPath(arguments) ?? "file")")]
-            if let content = rawStringArgument(arguments, keys: ["content", "text"]) {
-                rows.append(.text("content:"))
-                rows.append(contentsOf: numberedCodeSnippetRows(content))
-            }
-            return rows
-        case "local.append":
-            var rows: [DetailedToolRow] = [.text("change: append \(targetPath(arguments) ?? "file")")]
-            if let content = rawStringArgument(arguments, keys: ["content", "text"]) {
-                rows.append(.text("appended:"))
-                rows.append(contentsOf: numberedCodeSnippetRows(content))
-            }
-            return rows
-        case "local.replace", "local.editFile":
-            var rows: [DetailedToolRow] = [.text("change: replace \(targetPath(arguments) ?? "file")")]
-            if let oldString = rawStringArgument(arguments, keys: ["old"]),
-               let newString = rawStringArgument(arguments, keys: ["new"]) {
-                rows.append(contentsOf: numberedDiffSnippetRows(
-                    old: oldString,
-                    new: newString,
-                    contentWidth: contentWidth
-                ))
-            } else if let oldString = rawStringArgument(arguments, keys: ["old"]) {
-                rows.append(.text("old:"))
-                rows.append(contentsOf: numberedCodeSnippetRows(oldString))
-            } else if let newString = rawStringArgument(arguments, keys: ["new"]) {
-                rows.append(.text("new:"))
-                rows.append(contentsOf: numberedCodeSnippetRows(newString))
-            }
-            return rows
-        case "local.multiEdit":
-            return multiEditChangeDetailRows(arguments, contentWidth: contentWidth)
-        case "local.applyPatch":
-            let target = patchTargetPath(arguments) ?? "file"
-            var rows: [DetailedToolRow] = [.text("change: patch \(target)")]
-            if let patch = rawStringArgument(arguments, keys: ["patch", "diff"]) {
-                rows.append(.text("patch:"))
-                rows.append(contentsOf: numberedCodeSnippetRows(patch))
-            }
-            return rows
-        case "local.delete":
-            return [.text("change: delete \(targetPath(arguments) ?? "file")")]
-        case "local.move":
-            return [
-                .text("change: move"),
-                .text("from: \(metadataArgument(arguments, keys: ["sourcePath", "source_path", "from"]) ?? "unknown")"),
-                .text("to: \(metadataArgument(arguments, keys: ["destinationPath", "destination_path", "to"]) ?? "unknown")")
-            ]
-        case "local.mkdir":
-            return [.text("change: create directory \(targetPath(arguments) ?? "directory")")]
-        default:
-            return []
-        }
-    }
-
-    nonisolated static func multiEditChangeDetailLines(
-        _ arguments: [String: Any],
-        contentWidth: Int? = nil
-    ) -> [String] {
-        multiEditChangeDetailRows(arguments, contentWidth: contentWidth)
-            .map(\.plainText)
-    }
 
     nonisolated static func multiEditHasSourceChanges(
         _ arguments: [String: Any]
@@ -595,43 +148,7 @@ extension TerminalChat {
             || rawStringArgument(arguments, keys: ["new"]) != nil
     }
 
-    nonisolated static func multiEditChangeDetailRows(
-        _ arguments: [String: Any],
-        contentWidth: Int? = nil
-    ) -> [DetailedToolRow] {
-        let edits = arrayObjectArgument(arguments, keys: ["edits"])
-        var rows: [DetailedToolRow] = [
-            .text("change: edit \(targetPath(arguments) ?? "file") (\(edits.count) edits)")
-        ]
-        for (index, edit) in edits.enumerated() {
-            rows.append(.text("edit \(index + 1):"))
-            if let oldString = rawStringArgument(edit, keys: ["old"]),
-               let newString = rawStringArgument(edit, keys: ["new"]) {
-                rows.append(contentsOf: numberedDiffSnippetRows(
-                    old: oldString,
-                    new: newString,
-                    contentWidth: contentWidth,
-                    indentation: "    "
-                ))
-            } else if let oldString = rawStringArgument(edit, keys: ["old"]) {
-                rows.append(.text("  old:"))
-                rows.append(contentsOf: numberedCodeSnippetRows(oldString, indentation: "    "))
-            } else if let newString = rawStringArgument(edit, keys: ["new"]) {
-                rows.append(.text("  new:"))
-                rows.append(contentsOf: numberedCodeSnippetRows(newString, indentation: "    "))
-            }
-        }
-        return rows
-    }
 
-    nonisolated static func isFileReadTool(
-        _ toolCall: DirectAgentToolCall
-    ) -> Bool {
-        ToolCallPresentation.resolved(
-            for: toolCall,
-            mode: .expanded
-        ).kind == .read
-    }
 
     nonisolated static func isFileMutationTool(_ toolName: String) -> Bool {
         switch normalizedMutationToolName(toolName) {
@@ -861,50 +378,7 @@ extension TerminalChat {
         return output
     }
 
-    /// Converts a mutation payload into a bounded sequence of source lines.
-    /// Writes and both sides of an edit use this shared basis so clipping and
-    /// line numbers stay consistent. It deliberately does not trim or
-    /// de-indent source: empty files, trailing newlines and whitespace-only
-    /// changes are semantically meaningful mutation payloads.
-    private nonisolated static func detailedToolSnippet(_ text: String) -> DetailedToolSnippet {
-        var snippet = normalizedTerminalLineEndings(text)
-        var wasTruncated = false
-        if snippet.count > expandedSnippetCharacterLimit {
-            snippet = String(snippet.prefix(expandedSnippetCharacterLimit))
-            wasTruncated = true
-        }
 
-        // `String.split(..., omittingEmptySubsequences: false)` represents an
-        // empty string as one blank element. Keep an actually empty payload
-        // distinct from a source line that is intentionally blank.
-        let lines = snippet.isEmpty
-            ? []
-            : snippet
-                .split(separator: "\n", omittingEmptySubsequences: false)
-                .map(String.init)
-
-        let visibleLines = Array(lines.prefix(expandedSnippetLineLimit))
-        return DetailedToolSnippet(
-            lines: visibleLines,
-            isTruncated: lines.count > visibleLines.count || wasTruncated,
-            isEmptyPayload: visibleLines.isEmpty
-        )
-    }
-
-    /// Visible marker for a payload that carries no source line. It is rendered
-    /// in the line-number gutter position *without* a number, so it can never
-    /// coincide with a numbered source line whose literal text is `<empty>`.
-    private nonisolated static let detailedToolEmptyPayloadMarker = "<empty>"
-
-    /// Prefixes each created/inserted source line with a stable, right-aligned
-    /// local number. The indentation keeps it on the existing highlighted code
-    /// area path rather than the metadata-label path.
-    nonisolated static func numberedCodeSnippetLines(
-        _ text: String,
-        indentation: String = "  "
-    ) -> [String] {
-        numberedCodeSnippetRows(text, indentation: indentation).map(\.plainText)
-    }
 
     /// Prefixes each created/inserted source line with a stable, right-aligned
     /// local number. The indentation keeps it on the existing highlighted code
@@ -931,99 +405,8 @@ extension TerminalChat {
         return rendered
     }
 
-    /// Renders output from file-read tools, whose wire text already prefixes
-    /// source rows with `<real line number>\t`. The prefix is consumed into the
-    /// gutter instead of being displayed as a second number in the source cell.
-    nonisolated static func preservedLineNumberCodeSnippetRows(
-        _ text: String,
-        indentation: String = "  "
-    ) -> [DetailedToolRow] {
-        let snippet = detailedToolSnippet(text)
-        let parsedLines = snippet.lines.map { line -> (number: Int?, content: String) in
-            guard let tab = line.firstIndex(of: "\t") else {
-                return (nil, line)
-            }
-            let numberText = line[..<tab]
-            guard !numberText.isEmpty,
-                  numberText.allSatisfy(\.isWholeNumber),
-                  let number = Int(numberText) else {
-                return (nil, line)
-            }
-            return (number, String(line[line.index(after: tab)...]))
-        }
-        let numberWidth = max(
-            1,
-            parsedLines.compactMap { $0.number }.map { String($0).count }.max() ?? 1
-        )
-        var rendered = parsedLines.map { line in
-            DetailedToolRow.code(DetailedToolCodeLine(
-                indentation: indentation,
-                lineNumber: line.number.map {
-                    paddedLineNumber($0, width: numberWidth)
-                } ?? String(repeating: " ", count: numberWidth),
-                content: terminalSafeSnippetLine(line.content)
-            ))
-        }
-        appendSnippetMarkers(
-            to: &rendered,
-            snippet: snippet,
-            indentation: indentation,
-            numberWidth: numberWidth
-        )
-        return rendered
-    }
 
-    private nonisolated static func appendSnippetMarkers(
-        to rows: inout [DetailedToolRow],
-        snippet: DetailedToolSnippet,
-        indentation: String,
-        numberWidth: Int
-    ) {
-        let blankLineNumber = String(repeating: " ", count: numberWidth)
-        if snippet.isEmptyPayload {
-            // Structural emptiness: no line number is assigned, so this row is
-            // distinct from a numbered line whose content is literally the
-            // marker text.
-            rows.append(.code(DetailedToolCodeLine(
-                indentation: indentation,
-                lineNumber: blankLineNumber,
-                content: detailedToolEmptyPayloadMarker
-            )))
-        }
-        if snippet.isTruncated {
-            rows.append(.code(DetailedToolCodeLine(
-                indentation: indentation,
-                lineNumber: blankLineNumber,
-                content: "... truncated"
-            )))
-        }
-    }
 
-    /// Minimum useful width for each source cell in a side-by-side expanded
-    /// diff. With the standard two-cell indentation and three-cell divider,
-    /// this documents a 53-cell content-width threshold (2 + 3 + 24 * 2).
-    /// At or below a smaller budget the renderer uses stacked unified `-` / `+`
-    /// rows rather than squeezing source code into unusably narrow columns.
-    nonisolated static let detailedToolSideBySideDiffMinimumCellWidth = 24
-
-    /// Renders old and new edit payloads side by side when both columns can
-    /// retain useful source context. Narrow terminals receive a unified,
-    /// stacked `-` / `+` view, which the detailed wrapper safely reflows without
-    /// horizontal scrolling.
-    nonisolated static func numberedDiffSnippetLines(
-        old: String,
-        new: String,
-        contentWidth: Int?,
-        indentation: String = "  "
-    ) -> [String] {
-        numberedDiffSnippetRows(
-            old: old,
-            new: new,
-            contentWidth: contentWidth,
-            indentation: indentation
-        )
-        .map(\.plainText)
-    }
 
     /// Renders old and new edit payloads side by side when both columns can
     /// retain useful source context. Narrow terminals receive a unified,
@@ -1108,6 +491,120 @@ extension TerminalChat {
             )))
         }
         return rows
+    }
+
+
+
+
+
+
+
+
+
+
+    /// Deduces the syntax-highlighting language for the tool's code snippets
+    /// from the extension of the file the call targets, so written/edited
+    /// code is rendered with proper highlighting in the expanded view.
+    nonisolated static func codeLanguageHint(for toolCall: DirectAgentToolCall) -> String? {
+        let presentation = ToolCallPresentation.resolved(
+            for: toolCall,
+            mode: .expanded
+        )
+        for element in presentation.elements {
+            switch element {
+            case let .code(_, _, languageHint),
+                 let .diff(_, _, _, languageHint):
+                if let languageHint = languageHint?.nilIfBlank {
+                    return languageHint
+                }
+            case .parameters, .list, .summary:
+                continue
+            }
+        }
+        return nil
+    }
+
+    nonisolated static func leadingSpaceCount(_ line: String) -> Int {
+        var count = 0
+        for character in line {
+            if character == " " {
+                count += 1
+            } else {
+                break
+            }
+        }
+        return count
+    }
+
+    /// Converts a mutation payload into a bounded sequence of source lines.
+    /// Writes and both sides of an edit use this shared basis so clipping and
+    /// line numbers stay consistent. It deliberately does not trim or
+    /// de-indent source: empty files, trailing newlines and whitespace-only
+    /// changes are semantically meaningful mutation payloads.
+    private nonisolated static func detailedToolSnippet(_ text: String) -> DetailedToolSnippet {
+        var snippet = normalizedTerminalLineEndings(text)
+        var wasTruncated = false
+        if snippet.count > expandedSnippetCharacterLimit {
+            snippet = String(snippet.prefix(expandedSnippetCharacterLimit))
+            wasTruncated = true
+        }
+
+        // `String.split(..., omittingEmptySubsequences: false)` represents an
+        // empty string as one blank element. Keep an actually empty payload
+        // distinct from a source line that is intentionally blank.
+        let lines = snippet.isEmpty
+            ? []
+            : snippet
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+
+        let visibleLines = Array(lines.prefix(expandedSnippetLineLimit))
+        return DetailedToolSnippet(
+            lines: visibleLines,
+            isTruncated: lines.count > visibleLines.count || wasTruncated,
+            isEmptyPayload: visibleLines.isEmpty
+        )
+    }
+
+    /// Visible marker for a payload that carries no source line. It is rendered
+    /// in the line-number gutter position *without* a number, so it can never
+    /// coincide with a numbered source line whose literal text is `<empty>`.
+    private nonisolated static let detailedToolEmptyPayloadMarker = "<empty>"
+
+    /// Prefixes each created/inserted source line with a stable, right-aligned
+    /// local number. The indentation keeps it on the existing highlighted code
+    /// area path rather than the metadata-label path.
+    nonisolated static func numberedCodeSnippetLines(
+        _ text: String,
+        indentation: String = "  "
+    ) -> [String] {
+        numberedCodeSnippetRows(text, indentation: indentation).map(\.plainText)
+    }
+
+    /// Minimum useful width for each source cell in a side-by-side expanded
+    /// diff. With the standard two-cell indentation and three-cell divider,
+    /// this documents a 53-cell content-width threshold (2 + 3 + 24 * 2).
+    /// At or below a smaller budget the renderer uses stacked unified `-` / `+`
+    /// rows rather than squeezing source code into unusably narrow columns.
+    nonisolated static let detailedToolSideBySideDiffMinimumCellWidth = 24
+
+    /// Renders old and new edit payloads side by side when both columns can
+    /// retain useful source context. Narrow terminals receive a unified,
+    /// stacked `-` / `+` view, which the detailed wrapper safely reflows without
+    /// horizontal scrolling.
+    nonisolated static func numberedDiffSnippetLines(
+        old: String,
+        new: String,
+        contentWidth: Int?,
+        indentation: String = "  "
+    ) -> [String] {
+        numberedDiffSnippetRows(
+            old: old,
+            new: new,
+            contentWidth: contentWidth,
+            indentation: indentation
+        )
+        .map(\.plainText)
     }
 
     /// Builds the narrow presentation from the same LCS row model as the wide
@@ -1367,37 +864,29 @@ extension TerminalChat {
         text + String(repeating: " ", count: max(0, width - displayWidth(text)))
     }
 
-    /// Deduces the syntax-highlighting language for the tool's code snippets
-    /// from the extension of the file the call targets, so written/edited
-    /// code is rendered with proper highlighting in the expanded view.
-    nonisolated static func codeLanguageHint(for toolCall: DirectAgentToolCall) -> String? {
-        let presentation = ToolCallPresentation.resolved(
-            for: toolCall,
-            mode: .expanded
-        )
-        for element in presentation.elements {
-            switch element {
-            case let .code(_, _, languageHint),
-                 let .diff(_, _, _, languageHint):
-                if let languageHint = languageHint?.nilIfBlank {
-                    return languageHint
-                }
-            case .parameters, .list, .summary:
-                continue
-            }
+    private nonisolated static func appendSnippetMarkers(
+        to rows: inout [DetailedToolRow],
+        snippet: DetailedToolSnippet,
+        indentation: String,
+        numberWidth: Int
+    ) {
+        let blankLineNumber = String(repeating: " ", count: numberWidth)
+        if snippet.isEmptyPayload {
+            // Structural emptiness: no line number is assigned, so this row is
+            // distinct from a numbered line whose content is literally the
+            // marker text.
+            rows.append(.code(DetailedToolCodeLine(
+                indentation: indentation,
+                lineNumber: blankLineNumber,
+                content: detailedToolEmptyPayloadMarker
+            )))
         }
-        return nil
-    }
-
-    nonisolated static func leadingSpaceCount(_ line: String) -> Int {
-        var count = 0
-        for character in line {
-            if character == " " {
-                count += 1
-            } else {
-                break
-            }
+        if snippet.isTruncated {
+            rows.append(.code(DetailedToolCodeLine(
+                indentation: indentation,
+                lineNumber: blankLineNumber,
+                content: "... truncated"
+            )))
         }
-        return count
     }
 }

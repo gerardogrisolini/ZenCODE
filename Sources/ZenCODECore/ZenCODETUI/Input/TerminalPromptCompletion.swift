@@ -244,7 +244,8 @@ enum TerminalPromptCompletionCatalog {
             TerminalCommandSuggestion(command: "none", summary: "clear the tool selection"),
             TerminalCommandSuggestion(command: "off", summary: "clear the tool selection"),
             TerminalCommandSuggestion(command: "clear", summary: "clear the tool selection"),
-            TerminalCommandSuggestion(command: "disabled", summary: "clear the tool selection")
+            TerminalCommandSuggestion(command: "disabled", summary: "clear the tool selection"),
+            TerminalCommandSuggestion(command: "logs", summary: "open the tool execution log")
         ],
         "/feature": [
             TerminalCommandSuggestion(command: "list", summary: "enable/disable features"),

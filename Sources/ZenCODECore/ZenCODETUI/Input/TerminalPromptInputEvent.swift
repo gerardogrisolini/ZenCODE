@@ -8,7 +8,6 @@ import Foundation
 public enum TerminalPromptInputEvent: Sendable {
     case submitted(String)
     case cancelRequested
-    case toggleToolDetailsRequested
     case toggleAccessModeRequested
     case toggleSharedChatReaderRequested
     case sharedChatReaderNavigation(TerminalSharedChatReaderAction)

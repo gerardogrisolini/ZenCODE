@@ -476,41 +476,17 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func applyPatchDetailRenderingShowsPatchFileInChangeLine() {
-        let patch = """
-        *** Begin Patch
-        *** Update File: Sources/App.swift
-        @@
-        -old
-        +new
-        *** End Patch
-        """
-        let toolCall = presentedToolCall(
-            id: "patch",
-            name: "local.applyPatch",
-            argumentsObject: ["patch": patch],
-            argumentsJSON: "{}"
-        )
-        let result = DirectAgentToolResult(output: "Done", summary: "Done")
-
-        let lines = TerminalChat.detailedToolCallCompletedLines(
-            for: toolCall,
-            result: result
-        )
-
-        #expect(lines.contains("action: Apply"))
-        #expect(!lines.contains { $0.hasPrefix("target: ") })
-        #expect(lines.contains("patch:"))
-    }
-
-    @Test
     func systemMessageColoringWrapsNonBlankLines() {
         let rendered = TerminalChatTextFormatting.systemMessageColorApplied(
-            to: "Tool details: detailed\n",
+            to: "Mode: full access — local.exec commands run without approval.\n",
             isEnabled: true
         )
 
-        #expect(rendered.hasPrefix("\u{1B}[38;5;110mTool details: detailed\u{1B}[0m\n"))
+        #expect(
+            rendered.hasPrefix(
+                "\u{1B}[38;5;110mMode: full access — local.exec commands run without approval.\u{1B}[0m\n"
+            )
+        )
         #expect(rendered.hasSuffix("\n"))
     }
 
@@ -632,7 +608,7 @@ struct TerminalChatRenderingTests {
     func compactPanelHelpAtEightyColumnsKeepsProcessingActionsAndAccessShortcutVisible() {
         let processingLine = TerminalStatusBar.inputPanelModeLineText(
             modeText: "Prompt",
-            helpText: "Enter queue · Ctrl+T tools · Ctrl+G access · Esc stop",
+            helpText: "Enter queue · Ctrl+G access · Esc stop",
             compactHelpText: "Enter queue · Esc stop · Ctrl+G access",
             width: 80
         )
@@ -644,7 +620,7 @@ struct TerminalChatRenderingTests {
 
         let idleLine = TerminalStatusBar.inputPanelModeLineText(
             modeText: "Prompt",
-            helpText: "Enter send · Ctrl+T tools · Ctrl+G access · Esc clear",
+            helpText: "Enter send · Ctrl+G access · Esc clear",
             compactHelpText: "Enter send · Esc clear · Ctrl+G access",
             width: 80
         )
@@ -654,14 +630,13 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func runtimeHelpListsCtrlAAccessModeShortcutAfterCtrlT() throws {
+    func runtimeHelpListsAccessModeShortcut() throws {
         let terminal = try makeTerminalForToolInterleavingTest()
         let help = terminal.renderHelpTextForCurrentAgent()
 
         #expect(
             help.contains(
-                "Ctrl+T toggles compact/full tool output.\n"
-                    + "Ctrl+G toggles default/full access for local.exec approvals in the interactive panel."
+                "Ctrl+G toggles default/full access for local.exec approvals in the interactive panel."
             )
         )
     }
@@ -694,12 +669,12 @@ struct TerminalChatRenderingTests {
         await terminal.writeAccessModeChangeMessage(.fullAccess)
         let snapshot = await terminal.renderCoordinator.snapshot()
 
-        #expect(snapshot.activeCompactToolCallID == nil)
-        #expect(snapshot.activeCompactToolRenderedRowCount == 0)
+        #expect(snapshot.activeToolCallID == nil)
+        #expect(snapshot.activeToolRenderedRowCount == 0)
     }
 
     @Test
-    func interleavedModeMessageClearsDetailedToolRewriteState() async throws {
+    func interleavedModeMessageClearsToolRewriteState() async throws {
         let terminal = try makeTerminalForToolInterleavingTest()
         let toolCall = presentedToolCall(
             id: "detailed-tool",
@@ -707,14 +682,13 @@ struct TerminalChatRenderingTests {
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
-        await terminal.renderCoordinator.setToolOutputDetailLevel(.detailed)
         await terminal.writeToolCallStarted(toolCall)
 
         await terminal.writeAccessModeChangeMessage(.standard)
         let snapshot = await terminal.renderCoordinator.snapshot()
 
-        #expect(snapshot.activeDetailedToolCallID == nil)
-        #expect(snapshot.activeDetailedToolRenderedRowCount == 0)
+        #expect(snapshot.activeToolCallID == nil)
+        #expect(snapshot.activeToolRenderedRowCount == 0)
     }
 
     @Test
@@ -746,8 +720,8 @@ struct TerminalChatRenderingTests {
         let deferredSnapshot = await terminal.renderCoordinator.snapshot()
 
         #expect(deferredSnapshot.lastRenderedTaskGraphOverviewSignature == nil)
-        #expect(deferredSnapshot.activeCompactToolCallID == toolCall.id)
-        #expect(deferredSnapshot.activeCompactToolRenderedRowCount > 0)
+        #expect(deferredSnapshot.activeToolCallID == toolCall.id)
+        #expect(deferredSnapshot.activeToolRenderedRowCount > 0)
         #expect(deferredSnapshot.deferredTaskGraphOverviewRender)
         #expect(!(await terminal.shouldPublishDeferredTaskGraphOverview()))
 
@@ -761,8 +735,8 @@ struct TerminalChatRenderingTests {
         )
         let renderedSnapshot = await terminal.renderCoordinator.snapshot()
 
-        #expect(renderedSnapshot.activeCompactToolCallID == nil)
-        #expect(renderedSnapshot.activeCompactToolRenderedRowCount == 0)
+        #expect(renderedSnapshot.activeToolCallID == nil)
+        #expect(renderedSnapshot.activeToolRenderedRowCount == 0)
         #expect(renderedSnapshot.lastRenderedTaskGraphOverviewSignature != nil)
         #expect(!renderedSnapshot.deferredTaskGraphOverviewRender)
     }
@@ -778,7 +752,6 @@ struct TerminalChatRenderingTests {
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
-        await terminal.renderCoordinator.setToolOutputDetailLevel(.detailed)
         await terminal.writeToolCallStarted(toolCall)
 
         await terminal.renderSubAgentOverview(force: true)
@@ -788,8 +761,8 @@ struct TerminalChatRenderingTests {
         // be interleaved — its in-place rewrite (clearOwnedToolRows) would be
         // corrupted by the interleaved output.
         #expect(deferredSnapshot.lastRenderedSubAgentOverviewSignature == nil)
-        #expect(deferredSnapshot.activeDetailedToolCallID == toolCall.id)
-        #expect(deferredSnapshot.activeDetailedToolRenderedRowCount > 0)
+        #expect(deferredSnapshot.activeToolCallID == toolCall.id)
+        #expect(deferredSnapshot.activeToolRenderedRowCount > 0)
 
         await terminal.writeToolCallCompleted(
             toolCall,
@@ -798,8 +771,8 @@ struct TerminalChatRenderingTests {
         await terminal.renderSubAgentOverview(force: true)
         let renderedSnapshot = await terminal.renderCoordinator.snapshot()
 
-        #expect(renderedSnapshot.activeDetailedToolCallID == nil)
-        #expect(renderedSnapshot.activeDetailedToolRenderedRowCount == 0)
+        #expect(renderedSnapshot.activeToolCallID == nil)
+        #expect(renderedSnapshot.activeToolRenderedRowCount == 0)
         #expect(renderedSnapshot.lastRenderedSubAgentOverviewSignature != nil)
     }
 
@@ -814,7 +787,6 @@ struct TerminalChatRenderingTests {
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
-        await terminal.renderCoordinator.setToolOutputDetailLevel(.detailed)
         await terminal.writeToolCallStarted(toolCall)
 
         await terminal.renderSubAgentOverview(force: true)
@@ -825,7 +797,7 @@ struct TerminalChatRenderingTests {
         // presentation is closed first so progress stays visible during the
         // blocking wait.
         #expect(renderedSnapshot.lastRenderedSubAgentOverviewSignature != nil)
-        #expect(renderedSnapshot.activeDetailedToolCallID == nil)
+        #expect(renderedSnapshot.activeToolCallID == nil)
 
         // Completion still works correctly: the coordinator sees
         // activeToolBlock == nil and writes the final block without an
@@ -836,8 +808,8 @@ struct TerminalChatRenderingTests {
         )
         let completedSnapshot = await terminal.renderCoordinator.snapshot()
 
-        #expect(completedSnapshot.activeDetailedToolCallID == nil)
-        #expect(completedSnapshot.activeDetailedToolRenderedRowCount == 0)
+        #expect(completedSnapshot.activeToolCallID == nil)
+        #expect(completedSnapshot.activeToolRenderedRowCount == 0)
     }
 
     @Test
@@ -851,14 +823,14 @@ struct TerminalChatRenderingTests {
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
-        // Default detail level is .compact.
+        // The single standard tool presentation is active by default.
         await terminal.writeToolCallStarted(toolCall)
 
         await terminal.renderSubAgentOverview(force: true)
         let renderedSnapshot = await terminal.renderCoordinator.snapshot()
 
         #expect(renderedSnapshot.lastRenderedSubAgentOverviewSignature != nil)
-        #expect(renderedSnapshot.activeCompactToolCallID == nil)
+        #expect(renderedSnapshot.activeToolCallID == nil)
     }
 
     @Test

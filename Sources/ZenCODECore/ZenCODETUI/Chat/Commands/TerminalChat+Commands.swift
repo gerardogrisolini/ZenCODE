@@ -206,7 +206,7 @@ extension TerminalChat {
         TerminalChatCommandDescriptor(
             command: "/tools",
             summary: "select tool groups",
-            help: "/tools selects which tool groups are available to the model."
+            help: "/tools selects which tool groups are available to the model. /tools logs opens the tool execution log for this process."
         ),
         TerminalChatCommandDescriptor(
             command: "/feature",

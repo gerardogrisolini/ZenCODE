@@ -134,10 +134,6 @@ extension TerminalChat {
         )
     }
 
-    public func toggleToolDetailsOutput() async {
-        await renderCoordinator.toggleToolDetailsOutput()
-    }
-
     func writeAccessModeChangeMessage(_ accessMode: AgentLocalExecAccessMode) async {
         await renderCoordinator.writeAccessModeChangeMessage(accessMode)
     }

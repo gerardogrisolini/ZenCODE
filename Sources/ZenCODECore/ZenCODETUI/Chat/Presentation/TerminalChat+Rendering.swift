@@ -165,7 +165,7 @@ extension TerminalChat {
     }
 
     public nonisolated static func renderToolSelectionUsage() -> String {
-        "Usage: /tools [all|none|tool-name|package-name|tool-number]\n"
+        "Usage: /tools [all|none|tool-name|package-name|tool-number|logs]\n"
     }
 
     public nonisolated static func renderSkillSelectionUsage() -> String {

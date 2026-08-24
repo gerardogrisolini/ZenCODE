@@ -233,83 +233,8 @@ struct TerminalSemanticToolRenderingTests {
         #expect(lines == ["🛠️  feature.list", "true ✅ 0.02s"])
     }
 
-    @Test
-    func detailedRenderingMapsSemanticElementsToExistingRowPrimitives() {
-        let call = Self.call()
-        let started = TerminalChat.detailedToolCallStartedLines(for: call)
-        let completed = TerminalChat.detailedToolCallCompletedLines(
-            for: call,
-            result: DirectAgentToolResult(
-                output: "changed",
-                summary: "one replacement\nignored"
-            ),
-            contentWidth: 100
-        )
 
-        #expect(started.prefix(3) == [
-            "🛠️  thirdparty.edit",
-            "kind: edit",
-            "action: Edit"
-        ])
-        #expect(!started.contains { $0.hasPrefix("target: ") })
-        #expect(started.contains("kind: edit"))
-        #expect(started.contains("mode: replace"))
-        #expect(!started.contains("parameters:"))
-        #expect(started.contains("change:"))
-        #expect(started.last == "status: ⏳")
-        #expect(completed.contains("summary: one replacement"))
-        #expect(completed.last == "status: ✅")
-        #expect(TerminalChat.codeLanguageHint(for: call) == "swift")
-    }
 
-    @Test
-    func failureStatusAndErrorRemainOwnedByTUI() {
-        let lines = TerminalChat.detailedToolCallCompletedLines(
-            for: Self.call(),
-            result: DirectAgentToolResult(
-                output: "Tool error: denied",
-                summary: "denied",
-                status: .permissionDenied
-            ),
-            contentWidth: 100
-        )
-
-        #expect(lines.contains("error:"))
-        #expect(lines.contains("  Tool error: denied"))
-        #expect(lines.last == "status: ⚠️")
-    }
-
-    @Test
-    func toolProvidedMetadataCannotInjectTerminalControlsOrBidi() {
-        let escape = "\u{1B}[31m"
-        let bidi = "\u{202E}"
-        let definition = ToolPresentationDefinition(
-            title: "Unsafe\(escape)\(bidi) title",
-            action: "Run\nnow",
-            kind: .execute,
-            target: .literal("target\r\nnext\u{0007}")
-        )
-        let call = DirectAgentToolCall(
-            id: "unsafe",
-            name: "thirdparty.unsafe",
-            argumentsObject: [:],
-            argumentsJSON: "{}",
-            presentation: definition
-        )
-
-        let compact = TerminalChat.compactToolLines(
-            for: call,
-            statusIcon: "⏳",
-            columnWidth: 100
-        )
-        let detailed = TerminalChat.detailedToolCallStartedLines(for: call)
-        let rendered = (compact + detailed).joined(separator: "\n")
-
-        #expect(!rendered.contains("\u{1B}"))
-        #expect(!rendered.contains("\u{202E}"))
-        #expect(!rendered.contains("\u{0007}"))
-        #expect(!rendered.contains("\r"))
-    }
 
     @Test
     func acpFacadeUsesSemanticTitleAndKindWhileKeepingLegacyNameAPI() throws {

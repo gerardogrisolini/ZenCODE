@@ -12,6 +12,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- `/tools logs` opens a durable, secret-redacted JSONL tool audit log containing
+  correlated start/completion records, execution metadata, and complete executor
+  output in an owner-only file unique to each process launch; recognized prior
+  process log files are removed best-effort after 10 days.
 - `/skills uninstall` now opens an interactive multi-selection menu for removing
   app-installed prompt skills. Uninstall destinations are validated against the
   app catalog roots, including symlink and containment checks, before deletion.
@@ -26,9 +30,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   releases/publications are retained while transient activity, speculation, and
   raw output are excluded. Read-only memory tool surfaces now receive guidance
   that does not suggest unavailable mutations.
-- Terminal tool output now cycles through **minimal**, **standard**, and
-  **detailed** views. The standard view combines concise execution status with
-  source changes, while detailed output includes full metadata and read results.
+- Terminal tool output now has one stable standard presentation, preserving the
+  existing compact ANSI status layout and source-change appendix. The obsolete
+  output-level toggle and `Ctrl+T` shortcut have been removed.
 - Terminal command completion now recognizes parser aliases and static arguments
   for `/tasks`, `/agents`, `/tools`, `/feature`, `/changes`, and `/skills`,
   including `/skills add`, `/skills uninstall`, `/tasks ls`, and `/tasks get`.
@@ -43,12 +47,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
-- Standard terminal tool output now preserves the minimal view’s ANSI colors,
-  compact status layout, and redraw lifecycle while appending source changes.
+- Standard terminal tool output preserves its ANSI colors, compact status
+  layout, source changes, and redraw lifecycle without alternate detail modes.
 - The ChatGPT subscription WebSocket test server now closes its channel only
   after its response has flushed, eliminating a response-delivery race.
-- Terminal tool-detail status messages and rendering behavior are consistent at
-  every detail level; file reads are rendered only in detailed mode.
 - End-of-turn terminal file-change summaries now remain the final section after
   pending task-graph and plan output on both successful and failed prompts.
 
@@ -584,7 +586,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
-- A detailed in-progress tool block that exactly filled the scrolling region
+- An in-progress tool block that exactly filled the scrolling region
   scrolled its title past the top margin before completion could replace it,
   leaving a stale hourglass copy in the transcript beside the completed result.
   The rewriteable row capacity now reserves the cursor row needed after the

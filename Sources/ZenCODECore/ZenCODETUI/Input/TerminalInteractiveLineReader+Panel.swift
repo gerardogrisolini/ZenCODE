@@ -532,9 +532,6 @@ extension TerminalInteractiveLineReader {
             await renderPanel()
         case .endOfInput:
             await onEvent(.endOfInput)
-        case .toggleToolDetails:
-            await onEvent(.toggleToolDetailsRequested)
-            await renderPanel()
         case .toggleAccessMode:
             await onEvent(.toggleAccessModeRequested)
             await renderPanel()
@@ -628,12 +625,12 @@ extension TerminalInteractiveLineReader {
             if hasActiveCommandSuggestionsLocked(state: state) {
                 return "↑/↓ select · Tab complete · Enter choose · Esc stop"
             }
-            return "Enter queue · Ctrl+T tools · Ctrl+G access · Ctrl+Y chat · Esc stop"
+            return "Enter queue · Ctrl+G access · Ctrl+Y chat · Esc stop"
         }
         if hasActiveCommandSuggestionsLocked(state: state) {
             return "↑/↓ select · Tab complete · Enter choose · Esc dismiss"
         }
-        return "Enter send · Ctrl+T tools · Ctrl+G access · Ctrl+Y chat · Esc clear"
+        return "Enter send · Ctrl+G access · Ctrl+Y chat · Esc clear"
     }
 
     func panelCompactHelpTextLocked(state: State) -> String? {

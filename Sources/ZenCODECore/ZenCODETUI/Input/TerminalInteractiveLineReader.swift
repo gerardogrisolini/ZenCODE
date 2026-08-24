@@ -44,7 +44,6 @@ public final class TerminalInteractiveLineReader: Sendable {
         case clearDraft
         case clearBeforeCursor
         case clearAfterCursor
-        case toggleToolDetails
         /// `Ctrl+G`.
         case toggleAccessMode
         /// `Ctrl+Y` opens the transient shared-chat reader.
@@ -368,7 +367,7 @@ public final class TerminalInteractiveLineReader: Sendable {
                 )
 
                 switch editor.apply(key, context: context) {
-                case .ignored, .toggleToolDetails, .toggleAccessMode, .toggleSharedChatReader, .cancelRequested:
+                case .ignored, .toggleAccessMode, .toggleSharedChatReader, .cancelRequested:
                     continue
                 case .changed:
                     redrawBuffer()

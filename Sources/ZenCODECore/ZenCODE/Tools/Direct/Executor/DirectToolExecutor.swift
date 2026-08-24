@@ -74,6 +74,11 @@ public actor DirectToolExecutor {
     /// Legacy/global providers used by runtimes that do not identify a session.
     public var toolProviderRegistry = AgentToolProviderRegistry()
     private var toolProviderRegistriesBySessionID: [String: AgentToolProviderRegistry] = [:]
+    var toolExecutionLogger = ToolExecutionLogger.shared
+
+    func updateToolExecutionLogger(_ logger: ToolExecutionLogger) {
+        toolExecutionLogger = logger
+    }
 
     public init(
         outputLimit: Int = 48_000,
@@ -482,6 +487,15 @@ public actor DirectToolExecutor {
         workingDirectory: URL,
         allowedToolNames: Set<String>? = nil
     ) async -> DirectAgentToolResult {
+        let clock = ContinuousClock()
+        let started = clock.now
+        let logSequence = await toolExecutionLogger.recordStarted(
+            sessionID: sessionID,
+            toolCall: toolCall,
+            workingDirectory: workingDirectory
+        )
+        let result: DirectAgentToolResult
+        var rawOutput: String?
         do {
             let isAllowed = Self.isAllowed(
                 toolCall.name,
@@ -500,8 +514,9 @@ public actor DirectToolExecutor {
                 workingDirectory: workingDirectory,
                 allowedToolNames: allowedToolNames
             )
-            return await deliveringInlineSharedChatMessages(
-                result(
+            rawOutput = execution.output
+            result = await deliveringInlineSharedChatMessages(
+                self.result(
                     output: execution.output,
                     toolName: toolCall.name,
                     status: .completed,
@@ -512,8 +527,11 @@ public actor DirectToolExecutor {
         } catch {
             if let executorError = error as? DirectToolExecutorError,
                case let .authorizationDenied(denialOutput) = executorError {
-                return await deliveringInlineSharedChatMessages(
-                    result(
+                // The audit record keeps the untruncated denial notice, exactly
+                // like a completed execution keeps its untruncated output.
+                rawOutput = denialOutput
+                result = await deliveringInlineSharedChatMessages(
+                    self.result(
                         output: denialOutput,
                         toolName: toolCall.name,
                         status: .permissionDenied,
@@ -521,17 +539,28 @@ public actor DirectToolExecutor {
                     ),
                     sessionID: sessionID
                 )
+            } else {
+                let output = "Tool error: \(error.localizedDescription)"
+                result = await deliveringInlineSharedChatMessages(
+                    DirectAgentToolResult(
+                        output: output,
+                        summary: output,
+                        status: Self.toolResultStatus(for: error)
+                    ),
+                    sessionID: sessionID
+                )
             }
-            let output = "Tool error: \(error.localizedDescription)"
-            return await deliveringInlineSharedChatMessages(
-                DirectAgentToolResult(
-                    output: output,
-                    summary: output,
-                    status: Self.toolResultStatus(for: error)
-                ),
-                sessionID: sessionID
-            )
         }
+        await toolExecutionLogger.recordCompleted(
+            sessionID: sessionID,
+            toolCall: toolCall,
+            workingDirectory: workingDirectory,
+            result: result,
+            rawOutput: rawOutput,
+            elapsed: started.duration(to: clock.now),
+            sequence: logSequence
+        )
+        return result
     }
 
     /// Injects live messages into the recipient's next model round while its
@@ -578,7 +607,7 @@ public actor DirectToolExecutor {
         )
     }
 
-    private static func toolResultStatus(for error: Error) -> DirectAgentToolResult.Status {
+    static func toolResultStatus(for error: Error) -> DirectAgentToolResult.Status {
         isPermissionDenied(error) ? .permissionDenied : .failed
     }
 

@@ -30,7 +30,6 @@ extension TerminalChat {
         lines.append(contentsOf: visibleCommandDescriptorsForCurrentAgent().map(\.help))
         lines.append(contentsOf: [
             "Live chat: @coordinator <message>, @all <message>, or an @agent-name handle.",
-            "Ctrl+T toggles compact/full tool output.",
             "Ctrl+G toggles default/full access for local.exec approvals in the interactive panel.",
             "Editing: Ctrl+A/Ctrl+E line start/end, Alt+</Alt+> draft start/end, "
                 + "Alt+←/→ (or ESC b / ESC f) word motion.",

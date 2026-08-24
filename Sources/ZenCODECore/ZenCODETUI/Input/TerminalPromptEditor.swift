@@ -21,7 +21,6 @@ enum TerminalPromptEditorEffect: Equatable, Sendable {
     case cancelRequested
     /// `Ctrl+D` on an empty draft.
     case endOfInput
-    case toggleToolDetails
     case toggleAccessMode
     case toggleSharedChatReader
 }
@@ -216,8 +215,6 @@ struct TerminalPromptEditor: Equatable, Sendable {
             buffer.removeSubrange(cursorIndex..<buffer.count)
             didEditBuffer()
             return .changed
-        case .toggleToolDetails:
-            return .toggleToolDetails
         case .toggleAccessMode:
             return .toggleAccessMode
         case .toggleSharedChatReader:

@@ -40,6 +40,34 @@ Failures to apply required POSIX permissions cause the corresponding sensitive
 manifest operation to fail rather than silently accepting a known weak mode.
 No credential values are logged by this layer.
 
+## Tool execution audit logs
+
+Every direct tool execution is recorded locally as two correlated JSON Lines
+records (`started` and `completed`), including success, permission denial, and
+error outcomes. Each application process launch uses a distinct file in the
+application-support `logs` directory, preventing concurrent processes from
+interleaving partial records. Records include timestamps, process/session/tool
+identifiers, working directory, structured arguments, status, duration, summary,
+and the complete executor output rather than the model-facing truncated output.
+
+Before serialization, sensitive argument keys are replaced structurally and
+credential-shaped values in metadata, failures, summaries, and output are
+redacted; long output is redacted line-aligned chunk by chunk so a large payload
+keeps its complete content instead of collapsing into a single placeholder. The
+directory is normalized to mode `0700` and the JSONL file to mode
+`0600` on POSIX platforms. The file is opened atomically with
+`O_NOFOLLOW|O_APPEND` and validated through the descriptor itself (`fstat`,
+`fchmod`), so symbolic links (dangling ones included), symlinked log
+directories, and non-regular nodes are refused without any write.
+Recognized JSONL files from prior process launches are retained for 10 days.
+Cleanup runs best-effort while preparing the current log, never follows symbolic
+links or descends into directories, and cannot prevent logging or tool execution
+when filesystem cleanup fails.
+Logging is local-only, performs no telemetry, never writes to ACP stdout, and is
+best-effort so a logging failure cannot alter a tool result. `/tools logs` opens
+the current process file through the shared platform launcher and reports a
+missing launcher, timeout, or nonzero exit status in the terminal.
+
 ## Backup archives
 
 The setup **Data management** export writes the entire support directory to a

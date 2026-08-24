@@ -65,7 +65,6 @@ extension TerminalInteractiveLineReader {
         case 0x0F, 0x19: return .toggleSharedChatReader
         case 0x0B: return .clearAfterCursor
         case 0x15: return .clearBeforeCursor
-        case 0x14: return .toggleToolDetails
         case 0x17: return .deleteWordBefore
         case 0x0D: return .enter
         case 0x09: return .tab
@@ -483,8 +482,6 @@ extension TerminalInteractiveLineReader {
             return .up
         case 11:
             return .clearAfterCursor
-        case 20:
-            return .toggleToolDetails
         case 21:
             return .clearBeforeCursor
         case 23:
@@ -537,8 +534,6 @@ extension TerminalInteractiveLineReader {
             return .endOfInput
         case 107 where isControlModified:
             return .clearAfterCursor
-        case 116 where isControlModified:
-            return .toggleToolDetails
         case 117 where isControlModified:
             return .clearBeforeCursor
         case 101 where isControlModified:
