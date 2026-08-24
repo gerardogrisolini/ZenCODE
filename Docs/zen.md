@@ -347,14 +347,14 @@ implementation task rather than guessing a task breakdown from prose.
 **Optional integrations:**
 - `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup). Available even while a prompt is running.
 
-**Tool execution log:** every direct tool call produces correlated `started` and
-`completed` JSONL records in an owner-only, per-process file under the app-support
-`logs` directory. Records contain execution metadata and the complete (untruncated)
-executor output after secret redaction. Use the exact command `/tools logs` to open
-the current process log with the platform viewer; launcher failures are reported in
-the terminal and never written to ACP stdout. Recognized prior-process log files
-are retained for 10 days and then removed best-effort; cleanup never interrupts a
-tool execution.
+**Tool execution logs:** every direct tool call emits a secret-redacted structured
+record through the platform system logger. Records include agent ID/name, model,
+session, tool arguments, status, optional execution duration, and detailed typed
+error causes; delegated agents are logged with the child's identity. On macOS the
+records use Unified Logging subsystem `com.zencode.zen` and category
+`tool-execution`. Use the exact command `/tools logs` to open the native system
+log viewer (Console.app on macOS); launcher failures are reported in the terminal
+and never written to ACP stdout.
 
 **Interactive shortcuts:**
 - `Ctrl+G` — toggle default/full access mode (temporary, never persisted).

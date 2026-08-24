@@ -446,6 +446,8 @@ public struct AgentRuntimeConfiguration: Sendable {
     public let appMode: Bool
     public let locksModelToSession: Bool
     public let toolAuthorizationHandler: AgentToolAuthorizationHandler?
+    public let agentID: String?
+    public let agentName: String?
 
     public init(
         modelID: String?,
@@ -457,7 +459,9 @@ public struct AgentRuntimeConfiguration: Sendable {
         verboseLogging: Bool,
         appMode: Bool = false,
         locksModelToSession: Bool = false,
-        toolAuthorizationHandler: AgentToolAuthorizationHandler?
+        toolAuthorizationHandler: AgentToolAuthorizationHandler?,
+        agentID: String? = nil,
+        agentName: String? = nil
     ) {
         self.modelID = modelID?.nilIfBlank
         self.workingDirectory = workingDirectory
@@ -471,6 +475,8 @@ public struct AgentRuntimeConfiguration: Sendable {
         self.appMode = appMode
         self.locksModelToSession = locksModelToSession
         self.toolAuthorizationHandler = toolAuthorizationHandler
+        self.agentID = agentID?.nilIfBlank
+        self.agentName = agentName?.nilIfBlank
     }
 
     public func withModelID(_ modelID: String?) -> AgentRuntimeConfiguration {
@@ -484,7 +490,9 @@ public struct AgentRuntimeConfiguration: Sendable {
             verboseLogging: verboseLogging,
             appMode: appMode,
             locksModelToSession: locksModelToSession,
-            toolAuthorizationHandler: toolAuthorizationHandler
+            toolAuthorizationHandler: toolAuthorizationHandler,
+            agentID: agentID,
+            agentName: agentName
         )
     }
 
@@ -506,7 +514,9 @@ public struct AgentRuntimeConfiguration: Sendable {
             verboseLogging: verboseLogging,
             appMode: appMode,
             locksModelToSession: locksModelToSession,
-            toolAuthorizationHandler: toolAuthorizationHandler
+            toolAuthorizationHandler: toolAuthorizationHandler,
+            agentID: agentID,
+            agentName: agentName
         )
     }
 
@@ -523,7 +533,29 @@ public struct AgentRuntimeConfiguration: Sendable {
             verboseLogging: verboseLogging,
             appMode: appMode,
             locksModelToSession: locksModelToSession,
-            toolAuthorizationHandler: toolAuthorizationHandler
+            toolAuthorizationHandler: toolAuthorizationHandler,
+            agentID: agentID,
+            agentName: agentName
+        )
+    }
+
+    public func withToolExecutionIdentity(
+        agentID: String?,
+        agentName: String?
+    ) -> AgentRuntimeConfiguration {
+        AgentRuntimeConfiguration(
+            modelID: modelID,
+            workingDirectory: workingDirectory,
+            configuredContextWindowLimit: configuredContextWindowLimit,
+            generationParameterOverrides: generationParameterOverrides,
+            maxToolRounds: maxToolRounds,
+            maxOutputTokens: maxOutputTokens,
+            verboseLogging: verboseLogging,
+            appMode: appMode,
+            locksModelToSession: locksModelToSession,
+            toolAuthorizationHandler: toolAuthorizationHandler,
+            agentID: agentID,
+            agentName: agentName
         )
     }
 }

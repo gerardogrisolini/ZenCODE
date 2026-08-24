@@ -12,10 +12,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
-- `/tools logs` opens a durable, secret-redacted JSONL tool audit log containing
-  correlated start/completion records, execution metadata, and complete executor
-  output in an owner-only file unique to each process launch; recognized prior
-  process log files are removed best-effort after 10 days.
+- Tool executions now emit secret-redacted structured records through Swift's
+  system `Logger` instead of application-owned files. Records include tool and
+  session data, agent identity, model, status, optional duration, and detailed
+  typed error causes; delegated-agent executions carry the child's identity.
+  `/tools logs` opens the platform system log viewer (Console.app on macOS).
 - `/skills uninstall` now opens an interactive multi-selection menu for removing
   app-installed prompt skills. Uninstall destinations are validated against the
   app catalog roots, including symlink and containment checks, before deletion.

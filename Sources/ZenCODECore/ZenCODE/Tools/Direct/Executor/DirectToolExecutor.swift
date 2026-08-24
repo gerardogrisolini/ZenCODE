@@ -70,15 +70,11 @@ public actor DirectToolExecutor {
     public let taskToolAdapter = DirectTaskToolAdapter()
     public let execJobRuntime = DirectExecJobRuntime()
     public let preferredWorkspaceRootURL: URL?
+    public let toolExecutionContext: ToolExecutionContext
     public var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
     /// Legacy/global providers used by runtimes that do not identify a session.
     public var toolProviderRegistry = AgentToolProviderRegistry()
     private var toolProviderRegistriesBySessionID: [String: AgentToolProviderRegistry] = [:]
-    var toolExecutionLogger = ToolExecutionLogger.shared
-
-    func updateToolExecutionLogger(_ logger: ToolExecutionLogger) {
-        toolExecutionLogger = logger
-    }
 
     public init(
         outputLimit: Int = 48_000,
@@ -90,6 +86,7 @@ public actor DirectToolExecutor {
         sharedChat: AgentSharedChat? = nil,
         sharedChatSenderID: String? = nil,
         sharedChatRootSessionID: String? = nil,
+        toolExecutionContext: ToolExecutionContext = ToolExecutionContext(),
         subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory
     ) {
         self.init(
@@ -105,7 +102,8 @@ public actor DirectToolExecutor {
             coordinatesLiveManifestReads: true,
             sharedChat: sharedChat,
             sharedChatSenderID: sharedChatSenderID,
-            sharedChatRootSessionID: sharedChatRootSessionID
+            sharedChatRootSessionID: sharedChatRootSessionID,
+            toolExecutionContext: toolExecutionContext
         )
     }
 
@@ -116,6 +114,7 @@ public actor DirectToolExecutor {
         swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
         preferredWorkspaceRootURL: URL? = nil,
         borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
+        toolExecutionContext: ToolExecutionContext = ToolExecutionContext(),
         subAgentBackendFactory: @escaping DirectSubAgentBackendFactory
     ) {
         self.init(
@@ -128,7 +127,8 @@ public actor DirectToolExecutor {
             subAgentContextualBackendFactory: { _ in subAgentBackendFactory() },
             subAgentProfileResolver: DirectSubAgentRuntime.liveProfileResolver,
             subAgentModelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
-            coordinatesLiveManifestReads: true
+            coordinatesLiveManifestReads: true,
+            toolExecutionContext: toolExecutionContext
         )
     }
 
@@ -139,6 +139,7 @@ public actor DirectToolExecutor {
         swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
         preferredWorkspaceRootURL: URL? = nil,
         borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
+        toolExecutionContext: ToolExecutionContext = ToolExecutionContext(),
         subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
         subAgentProfileResolver: @escaping DirectSubAgentProfileResolver
     ) {
@@ -152,7 +153,8 @@ public actor DirectToolExecutor {
             subAgentContextualBackendFactory: subAgentContextualBackendFactory,
             subAgentProfileResolver: subAgentProfileResolver,
             subAgentModelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
-            coordinatesLiveManifestReads: false
+            coordinatesLiveManifestReads: false,
+            toolExecutionContext: toolExecutionContext
         )
     }
 
@@ -163,6 +165,7 @@ public actor DirectToolExecutor {
         swiftFeatureRuntime: SwiftFeatureRuntime,
         preferredWorkspaceRootURL: URL?,
         borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?,
+        toolExecutionContext: ToolExecutionContext = ToolExecutionContext(),
         subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
         subAgentProfileResolver: @escaping DirectSubAgentProfileResolver,
         subAgentModelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider
@@ -177,7 +180,8 @@ public actor DirectToolExecutor {
             subAgentContextualBackendFactory: subAgentContextualBackendFactory,
             subAgentProfileResolver: subAgentProfileResolver,
             subAgentModelCatalogProvider: subAgentModelCatalogProvider,
-            coordinatesLiveManifestReads: false
+            coordinatesLiveManifestReads: false,
+            toolExecutionContext: toolExecutionContext
         )
     }
 
@@ -194,7 +198,8 @@ public actor DirectToolExecutor {
         coordinatesLiveManifestReads: Bool,
         sharedChat: AgentSharedChat? = nil,
         sharedChatSenderID: String? = nil,
-        sharedChatRootSessionID: String? = nil
+        sharedChatRootSessionID: String? = nil,
+        toolExecutionContext: ToolExecutionContext
     ) {
         self.outputLimit = outputLimit
         self.authorizationHandler = authorizationHandler
@@ -203,6 +208,9 @@ public actor DirectToolExecutor {
         self.sharedChat = sharedChat ?? AgentSharedChat()
         self.sharedChatSenderID = sharedChatSenderID?.nilIfBlank
         self.sharedChatRootSessionID = sharedChatRootSessionID?.nilIfBlank
+        self.toolExecutionContext = toolExecutionContext.resolved(
+            fallbackAgentID: self.sharedChatSenderID
+        )
         self.preferredWorkspaceRootURL = preferredWorkspaceRootURL?
             .standardizedFileURL
             .resolvingSymlinksInPath()
@@ -489,13 +497,8 @@ public actor DirectToolExecutor {
     ) async -> DirectAgentToolResult {
         let clock = ContinuousClock()
         let started = clock.now
-        let logSequence = await toolExecutionLogger.recordStarted(
-            sessionID: sessionID,
-            toolCall: toolCall,
-            workingDirectory: workingDirectory
-        )
         let result: DirectAgentToolResult
-        var rawOutput: String?
+        var executionError: Error?
         do {
             let isAllowed = Self.isAllowed(
                 toolCall.name,
@@ -514,7 +517,6 @@ public actor DirectToolExecutor {
                 workingDirectory: workingDirectory,
                 allowedToolNames: allowedToolNames
             )
-            rawOutput = execution.output
             result = await deliveringInlineSharedChatMessages(
                 self.result(
                     output: execution.output,
@@ -525,11 +527,9 @@ public actor DirectToolExecutor {
                 sessionID: sessionID
             )
         } catch {
+            executionError = error
             if let executorError = error as? DirectToolExecutorError,
                case let .authorizationDenied(denialOutput) = executorError {
-                // The audit record keeps the untruncated denial notice, exactly
-                // like a completed execution keeps its untruncated output.
-                rawOutput = denialOutput
                 result = await deliveringInlineSharedChatMessages(
                     self.result(
                         output: denialOutput,
@@ -551,14 +551,14 @@ public actor DirectToolExecutor {
                 )
             }
         }
-        await toolExecutionLogger.recordCompleted(
+        ToolExecutionLog.record(
+            context: toolExecutionContext,
             sessionID: sessionID,
             toolCall: toolCall,
             workingDirectory: workingDirectory,
             result: result,
-            rawOutput: rawOutput,
-            elapsed: started.duration(to: clock.now),
-            sequence: logSequence
+            duration: started.duration(to: clock.now),
+            error: executionError
         )
         return result
     }

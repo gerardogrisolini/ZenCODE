@@ -76,6 +76,12 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             sharedChat: sharedChat,
             sharedChatSenderID: sharedChatSenderID,
             sharedChatRootSessionID: sharedChatRootSessionID,
+            toolExecutionContext: ToolExecutionContext(
+                agentID: configuration.agentID,
+                agentName: configuration.agentName,
+                modelID: configuration.modelID ?? provider.modelID,
+                isSubAgent: sharedChatSenderID != nil
+            ),
             subAgentContextualBackendFactory: subAgentContextualBackendFactory
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory
         )

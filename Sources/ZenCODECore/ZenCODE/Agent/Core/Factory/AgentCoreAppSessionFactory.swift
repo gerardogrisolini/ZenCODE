@@ -105,6 +105,8 @@ public enum AgentCoreAppSessionFactory {
         return AgentCoreSessionConfigurationBuilder(
             sessionID: request.sessionID,
             modelID: effectiveModelID,
+            agentID: agentConfiguration.selectedAgent?.id,
+            agentName: agentConfiguration.selectedAgent?.name,
             workingDirectory: request.workingDirectory,
             systemPrompt: promptSections.systemPrompt,
             dynamicContext: promptSections.dynamicContext,

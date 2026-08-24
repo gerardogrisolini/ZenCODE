@@ -204,6 +204,8 @@ public enum AgentSessionComposition {
 public struct AgentCoreSessionConfigurationBuilder: Sendable {
     public var sessionID: String
     public var modelID: String?
+    public var agentID: String?
+    public var agentName: String?
     public var workingDirectory: URL
     public var systemPrompt: String?
     public var dynamicContext: String?
@@ -221,6 +223,8 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
     public init(
         sessionID: String,
         modelID: String?,
+        agentID: String? = nil,
+        agentName: String? = nil,
         workingDirectory: URL,
         systemPrompt: String?,
         dynamicContext: String? = nil,
@@ -237,6 +241,8 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
     ) {
         self.sessionID = sessionID
         self.modelID = modelID
+        self.agentID = agentID
+        self.agentName = agentName
         self.workingDirectory = workingDirectory
         self.systemPrompt = systemPrompt
         self.dynamicContext = dynamicContext
@@ -258,6 +264,8 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
         AgentCoreSessionConfiguration(
             sessionID: sessionID,
             modelID: modelID,
+            agentID: agentID,
+            agentName: agentName,
             workingDirectory: workingDirectory,
             systemPrompt: systemPrompt,
             dynamicContext: dynamicContext,

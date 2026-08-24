@@ -30,11 +30,6 @@ extension DirectToolExecutor {
     ) async throws -> String {
         let clock = ContinuousClock()
         let started = clock.now
-        let sequence = await toolExecutionLogger.recordStarted(
-            sessionID: sessionID,
-            toolCall: toolCall,
-            workingDirectory: workingDirectory
-        )
         do {
             let output = try await executeThrowingResult(
                 sessionID: sessionID,
@@ -42,7 +37,8 @@ extension DirectToolExecutor {
                 workingDirectory: workingDirectory,
                 allowedToolNames: allowedToolNames
             ).output
-            await toolExecutionLogger.recordCompleted(
+            ToolExecutionLog.record(
+                context: toolExecutionContext,
                 sessionID: sessionID,
                 toolCall: toolCall,
                 workingDirectory: workingDirectory,
@@ -51,19 +47,22 @@ extension DirectToolExecutor {
                     summary: output,
                     status: .completed
                 ),
-                elapsed: started.duration(to: clock.now),
-                sequence: sequence
+                duration: started.duration(to: clock.now)
             )
             return output
         } catch {
-            await toolExecutionLogger.recordCompleted(
+            ToolExecutionLog.record(
+                context: toolExecutionContext,
                 sessionID: sessionID,
                 toolCall: toolCall,
                 workingDirectory: workingDirectory,
-                elapsed: started.duration(to: clock.now),
-                sequence: sequence,
-                status: String(describing: Self.toolResultStatus(for: error)),
-                failure: error.localizedDescription
+                result: DirectAgentToolResult(
+                    output: "Tool error: \(error.localizedDescription)",
+                    summary: error.localizedDescription,
+                    status: Self.toolResultStatus(for: error)
+                ),
+                duration: started.duration(to: clock.now),
+                error: error
             )
             throw error
         }

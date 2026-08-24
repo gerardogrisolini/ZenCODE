@@ -744,14 +744,18 @@ extension AgentRuntimeConfiguration {
     public func applyingSubAgentBackendContext(
         _ context: DirectSubAgentRuntime.BackendContext
     ) -> AgentRuntimeConfiguration {
+        let identifiedConfiguration = withToolExecutionIdentity(
+            agentID: context.sharedChatSenderID,
+            agentName: context.requestedName
+        )
         if locksModelToSession {
-            return self
+            return identifiedConfiguration
         }
         guard let canonicalModelID = context.modelID else {
-            return self
+            return identifiedConfiguration
         }
 
-        let configuration = withModelID(canonicalModelID)
+        let configuration = identifiedConfiguration.withModelID(canonicalModelID)
         guard let selection = context.modelSelection else {
             return configuration
         }

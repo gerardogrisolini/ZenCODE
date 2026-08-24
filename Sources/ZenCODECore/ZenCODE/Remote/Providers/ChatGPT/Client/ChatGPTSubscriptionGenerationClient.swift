@@ -248,6 +248,12 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
             sharedChat: sharedChat,
             sharedChatSenderID: sharedChatSenderID,
             sharedChatRootSessionID: sharedChatRootSessionID,
+            toolExecutionContext: ToolExecutionContext(
+                agentID: configuration.agentID,
+                agentName: configuration.agentName,
+                modelID: configuration.modelID,
+                isSubAgent: sharedChatSenderID != nil
+            ),
             subAgentContextualBackendFactory: subAgentContextualBackendFactory
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory
         )

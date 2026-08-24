@@ -11,6 +11,8 @@ import ToolCore
 public struct AgentCoreSessionConfiguration: Sendable {
     public let sessionID: String
     public let modelID: String?
+    public let agentID: String?
+    public let agentName: String?
     public let workingDirectory: URL
     public let systemPrompt: String?
     /// Session-specific context is delivered as the first user message rather
@@ -32,6 +34,8 @@ public struct AgentCoreSessionConfiguration: Sendable {
     public init(
         sessionID: String,
         modelID: String?,
+        agentID: String? = nil,
+        agentName: String? = nil,
         workingDirectory: URL,
         systemPrompt: String?,
         dynamicContext: String? = nil,
@@ -51,6 +55,8 @@ public struct AgentCoreSessionConfiguration: Sendable {
         self.sessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             ?? "agent-core-\(UUID().uuidString.lowercased())"
         self.modelID = modelID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.agentID = agentID?.nilIfBlank
+        self.agentName = agentName?.nilIfBlank
         self.workingDirectory = workingDirectory
         self.systemPrompt = systemPrompt?.nilIfBlank
         self.dynamicContext = dynamicContext?.nilIfBlank
@@ -77,6 +83,8 @@ public struct AgentCoreSessionConfiguration: Sendable {
     public init(
         sessionID: String,
         modelID: String?,
+        agentID: String? = nil,
+        agentName: String? = nil,
         workingDirectory: String,
         systemPrompt: String?,
         dynamicContext: String? = nil,
@@ -96,6 +104,8 @@ public struct AgentCoreSessionConfiguration: Sendable {
         self.init(
             sessionID: sessionID,
             modelID: modelID,
+            agentID: agentID,
+            agentName: agentName,
             workingDirectory: URL(fileURLWithPath: workingDirectory),
             systemPrompt: systemPrompt,
             dynamicContext: dynamicContext,
@@ -123,12 +133,16 @@ public struct AgentCoreSessionConfiguration: Sendable {
     public var runtimeConfiguration: AgentRuntimeConfiguration {
         projectedRuntimeConfiguration(
             configuredContextWindowLimit: configuredContextWindowLimit,
-            generationParameterOverrides: generationParameterOverrides
+            generationParameterOverrides: generationParameterOverrides,
+            agentID: agentID,
+            agentName: agentName
         )
     }
 
     public func matchesRuntime(_ other: AgentCoreSessionConfiguration) -> Bool {
         modelID == other.modelID
+            && agentID == other.agentID
+            && agentName == other.agentName
             && workingDirectory.standardizedFileURL == other.workingDirectory.standardizedFileURL
             && configuredContextWindowLimit == other.configuredContextWindowLimit
             && generationParameterOverrides == other.generationParameterOverrides
@@ -175,6 +189,8 @@ public struct AgentCoreSessionConfiguration: Sendable {
         AgentCoreSessionConfiguration(
             sessionID: sessionID,
             modelID: modelID,
+            agentID: agentID,
+            agentName: agentName,
             workingDirectory: workingDirectory,
             systemPrompt: systemPrompt,
             dynamicContext: dynamicContext,

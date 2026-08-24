@@ -40,33 +40,36 @@ Failures to apply required POSIX permissions cause the corresponding sensitive
 manifest operation to fail rather than silently accepting a known weak mode.
 No credential values are logged by this layer.
 
-## Tool execution audit logs
+## Tool execution system logs
 
-Every direct tool execution is recorded locally as two correlated JSON Lines
-records (`started` and `completed`), including success, permission denial, and
-error outcomes. Each application process launch uses a distinct file in the
-application-support `logs` directory, preventing concurrent processes from
-interleaving partial records. Records include timestamps, process/session/tool
-identifiers, working directory, structured arguments, status, duration, summary,
-and the complete executor output rather than the model-facing truncated output.
+Every direct tool execution emits one structured completion record through the
+platform system logger. On Apple platforms ZenCODE uses Swift's `OSLog.Logger`
+and Unified Logging directly, under subsystem `com.zencode.zen` and category
+`tool-execution`; Linux uses the operating system `logger(1)` bridge so records
+reach syslog or the systemd journal. ZenCODE does not create, rotate, retain, or
+parse a separate tool-log file.
 
-Before serialization, sensitive argument keys are replaced structurally and
-credential-shaped values in metadata, failures, summaries, and output are
-redacted; long output is redacted line-aligned chunk by chunk so a large payload
-keeps its complete content instead of collapsing into a single placeholder. The
-directory is normalized to mode `0700` and the JSONL file to mode
-`0600` on POSIX platforms. The file is opened atomically with
-`O_NOFOLLOW|O_APPEND` and validated through the descriptor itself (`fstat`,
-`fchmod`), so symbolic links (dangling ones included), symlinked log
-directories, and non-regular nodes are refused without any write.
-Recognized JSONL files from prior process launches are retained for 10 days.
-Cleanup runs best-effort while preparing the current log, never follows symbolic
-links or descends into directories, and cannot prevent logging or tool execution
-when filesystem cleanup fails.
+Records contain the tool and call identifiers, structured arguments, session and
+working-directory data, agent ID/name, model, coordinator/sub-agent ownership,
+status, summary, and an optional execution duration. Failed and denied calls
+also include the concrete error type, domain, code, localized description,
+debug description, failure reason, recovery suggestion, and bounded underlying
+error chain when those values exist. Child backends receive their own execution
+identity, so tools run by delegated agents are attributed to that agent and its
+resolved model; duration is omitted when a caller cannot provide it.
+
+Sensitive argument keys are replaced structurally, and credential-shaped values
+in arguments, identifiers, summaries, and error metadata are redacted before the
+record is made public to the system logger. Large text fields are bounded; full
+tool output is not copied into the system log. Access control, persistence, and
+retention are consequently governed by the host logging service rather than by
+ZenCODE.
+
 Logging is local-only, performs no telemetry, never writes to ACP stdout, and is
 best-effort so a logging failure cannot alter a tool result. `/tools logs` opens
-the current process file through the shared platform launcher and reports a
-missing launcher, timeout, or nonzero exit status in the terminal.
+the native system log viewer (Console.app on macOS, or an available platform
+viewer elsewhere) and reports a missing viewer, timeout, or nonzero launcher
+exit status in the terminal.
 
 ## Backup archives
 

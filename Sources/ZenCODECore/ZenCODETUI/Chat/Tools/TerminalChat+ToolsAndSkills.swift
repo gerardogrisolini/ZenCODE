@@ -54,13 +54,15 @@ extension TerminalChat {
 
     private func openToolExecutionLog() async {
         do {
-            let url = try await ToolExecutionLogger.shared.ensureLogExists()
-            try await SystemFileLauncher.open(url.path, timeout: 30)
+            try await SystemLogViewerLauncher.open(timeout: 30)
             // TUI messages use stderr; ACP stdout remains reserved for protocol traffic.
-            await writeSystemMessage("Opened tool execution log: \(url.path)\n")
+            await writeSystemMessage(
+                "Opened the system log viewer. Filter subsystem \"\(ToolExecutionLog.subsystem)\" "
+                    + "and category \"\(ToolExecutionLog.category)\" for tool execution logs.\n"
+            )
         } catch {
             await writeFailureMessage(
-                "ZenCODE: unable to open tool execution log: \(error.localizedDescription)\n"
+                "ZenCODE: unable to open the system log viewer: \(error.localizedDescription)\n"
             )
         }
     }

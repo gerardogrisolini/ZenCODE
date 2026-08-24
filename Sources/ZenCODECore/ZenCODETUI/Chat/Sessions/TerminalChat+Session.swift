@@ -68,6 +68,8 @@ extension TerminalChat {
         return AgentCoreSessionConfigurationBuilder(
             sessionID: sessionID,
             modelID: currentEffectiveModelID(),
+            agentID: selectedAgent?.id,
+            agentName: selectedAgent?.name,
             workingDirectory: configuration.workingDirectory,
             systemPrompt: promptSections.systemPrompt,
             dynamicContext: dynamicContext,

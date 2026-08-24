@@ -32,7 +32,7 @@ struct TerminalPromptEditorTests {
     @Test
     func toolsCompletionIncludesExecutionLogLauncher() {
         #expect(TerminalPromptCompletionCatalog.argumentSuggestions(for: "/tools")
-            .contains(TerminalCommandSuggestion(command: "logs", summary: "open the tool execution log")))
+            .contains(TerminalCommandSuggestion(command: "logs", summary: "open the system log viewer")))
     }
 
     // MARK: - Line and buffer motion

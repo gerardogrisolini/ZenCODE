@@ -325,7 +325,9 @@ public struct AgentConfiguration: Sendable {
     @available(*, deprecated, message: "Use AgentCoreSessionConfiguration.runtimeConfiguration")
     public var runtimeConfiguration: AgentRuntimeConfiguration {
         projectedRuntimeConfiguration(
-            locksModelToSession: hostedAgentProfiles != nil
+            locksModelToSession: hostedAgentProfiles != nil,
+            agentID: selectedAgent?.id,
+            agentName: selectedAgent?.name
         )
     }
 

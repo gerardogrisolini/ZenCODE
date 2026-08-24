@@ -35,7 +35,9 @@ extension AgentRuntimeConfigurationProjecting {
         configuredContextWindowLimit: Int? = nil,
         generationParameterOverrides: AgentGenerationParameterOverrides = AgentGenerationParameterOverrides(),
         locksModelToSession: Bool = false,
-        toolAuthorizationHandler: AgentToolAuthorizationHandler? = nil
+        toolAuthorizationHandler: AgentToolAuthorizationHandler? = nil,
+        agentID: String? = nil,
+        agentName: String? = nil
     ) -> AgentRuntimeConfiguration {
         AgentRuntimeConfiguration(
             modelID: projectedRuntimeModelID,
@@ -47,7 +49,9 @@ extension AgentRuntimeConfigurationProjecting {
             verboseLogging: projectedRuntimeVerboseLogging,
             appMode: projectedRuntimeAppMode,
             locksModelToSession: locksModelToSession,
-            toolAuthorizationHandler: toolAuthorizationHandler
+            toolAuthorizationHandler: toolAuthorizationHandler,
+            agentID: agentID,
+            agentName: agentName
         )
     }
 }
