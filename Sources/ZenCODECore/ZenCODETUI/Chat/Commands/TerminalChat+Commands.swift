@@ -78,6 +78,12 @@ extension TerminalChat {
         guard let command = commandToken(from: line) else {
             return false
         }
+        let arguments = line
+            .split(whereSeparator: \.isWhitespace)
+            .map { $0.lowercased() }
+        if arguments == ["/tools", "logs"] {
+            return true
+        }
         switch command {
         case "/help":
             return true

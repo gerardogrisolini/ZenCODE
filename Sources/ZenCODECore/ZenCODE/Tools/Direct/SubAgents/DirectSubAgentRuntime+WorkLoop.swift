@@ -191,12 +191,13 @@ extension DirectSubAgentRuntime {
     public func recordEvent(
         _ event: DirectAgentEvent,
         agentID: String
-    ) {
+    ) async {
         guard var agent = agents[agentID],
               agent.status != .closed else {
             return
         }
 
+        var delegatedToolEvent: DirectSubAgentToolEvent?
         switch event {
         case .status, .diagnostic:
             // Backend status and diagnostic events are not model-authored chat
@@ -227,12 +228,24 @@ extension DirectSubAgentRuntime {
             agent.currentToolName = toolCall.name
             agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
             agent.latestContentPreview = nil
-        case let .toolCallCompleted(toolCall, _):
-            // Retain the compact tool presentation until the next meaningful
-            // model state. This makes short tool calls observable on the next
-            // periodic refresh without adding a second completion publication.
+            delegatedToolEvent = DirectSubAgentToolEvent(
+                agentID: agent.id,
+                agentName: agent.name,
+                toolCall: toolCall,
+                lifecycle: .started
+            )
+        case let .toolCallCompleted(toolCall, result):
+            // Keep the compatibility snapshot projection until the next model
+            // state. Terminal presentation receives the lossless event below and
+            // does not reconstruct a separate tool row from these fields.
             agent.currentToolName = toolCall.name
             agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
+            delegatedToolEvent = DirectSubAgentToolEvent(
+                agentID: agent.id,
+                agentName: agent.name,
+                toolCall: toolCall,
+                lifecycle: .completed(result)
+            )
         case let .sessionSnapshot(snapshot):
             agent.modelID = snapshot.modelID?.nilIfBlank ?? agent.modelID
         case .metrics,
@@ -245,6 +258,10 @@ extension DirectSubAgentRuntime {
         agent.latestEventAt = .now
         agent.updatedAt = .now
         agents[agentID] = agent
+        if let delegatedToolEvent,
+           let subAgentToolEventHandler {
+            await subAgentToolEventHandler(delegatedToolEvent)
+        }
     }
 
     private static func takeCompletedContent(

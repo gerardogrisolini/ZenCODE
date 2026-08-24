@@ -69,6 +69,9 @@ public final class TerminalChat {
     /// `agent.*` tool call (e.g. `agent.wait`) is executing. Started from
     /// `.toolCallStarted` and stopped from `.toolCallCompleted` / end-of-turn.
     var subAgentOverviewRefreshTask: Task<Void, Never>?
+    /// The runner retains this handler across backend rebuilds, so each terminal
+    /// installs it once and delegated tools can outlive their spawning turn.
+    var didInstallSubAgentToolEventHandler = false
     /// Interval between automatic sub-agent overview refreshes. Exposed as a
     /// mutable instance property so tests can shorten it.
     var subAgentOverviewRefreshInterval = Duration.seconds(2)

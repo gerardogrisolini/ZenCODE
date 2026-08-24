@@ -227,6 +227,12 @@ extension ChatGPTSubscriptionGenerationClient {
         await toolExecutor.subAgentSnapshots()
     }
 
+    public func updateSubAgentToolEventHandler(
+        _ handler: DirectSubAgentToolEventHandler?
+    ) async {
+        await toolExecutor.updateSubAgentToolEventHandler(handler)
+    }
+
     public func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? {
         guard let session = sessions[id] else {
             return nil

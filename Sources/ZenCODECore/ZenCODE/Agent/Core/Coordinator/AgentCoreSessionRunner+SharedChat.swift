@@ -26,6 +26,13 @@ extension AgentCoreSessionRunner {
         return await backend.subAgentSnapshots()
     }
 
+    public func updateSubAgentToolEventHandler(
+        _ handler: DirectSubAgentToolEventHandler?
+    ) async {
+        subAgentToolEventHandler = handler
+        await backend?.updateSubAgentToolEventHandler(handler)
+    }
+
     public func sharedChatParticipants(
         rootSessionID: String
     ) async -> [AgentSharedChat.Participant] {

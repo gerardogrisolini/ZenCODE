@@ -571,6 +571,9 @@ extension AgentCoreSessionRunner {
             backendFactory: backendFactory
         )
         await backend.installTaskOrchestrator(taskOrchestrator)
+        await backend.updateSubAgentToolEventHandler(
+            subAgentToolEventHandler
+        )
         guard isCurrentBackendGeneration(generation) else {
             // Reset or shutdown ran while this backend was being prepared:
             // discard the orphan instead of installing stale state.

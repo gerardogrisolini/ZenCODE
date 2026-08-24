@@ -68,11 +68,21 @@ extension TerminalChat {
         await renderSubAgentOverview(force: false)
     }
 
+    func installSubAgentToolEventHandlerIfNeeded() async {
+        guard !didInstallSubAgentToolEventHandler else {
+            return
+        }
+        didInstallSubAgentToolEventHandler = true
+        await sessionRunner.updateSubAgentToolEventHandler { [weak self] event in
+            await self?.writeSubAgentToolEvent(event)
+        }
+    }
+
     // MARK: - Live refresh during agent.* tool calls
 
-    /// Starts a periodic refresh of the sub-agent overview so progress
-    /// (current activity and tool) remains visible while a blocking `agent.*`
-    /// tool call such as `agent.wait` is executing.
+    /// Starts a periodic refresh of the sub-agent overview so agent status,
+    /// model-authored activity, and the latest canonical tool rows remain visible
+    /// while a blocking `agent.*` tool call such as `agent.wait` is executing.
     ///
     /// Each tick reuses the existing signature-deduped publication path
     /// (`renderSubAgentOverview(force:)`): when the snapshot signature has not
@@ -134,6 +144,7 @@ extension TerminalChat {
         // fence this publication if this snapshot returns after it.
         let publicationRevision = await renderCoordinator.beginOverviewPublication(.subAgents)
         let snapshots = await sessionRunner.subAgentSnapshots()
+        let toolPresentations = await renderCoordinator.subAgentToolPresentationSnapshot()
         await refreshStatusBarGitStatusSummaryForCompletedSubAgents(snapshots)
         guard force || !snapshots.isEmpty else {
             await renderCoordinator.clearSubAgentOverview(
@@ -142,6 +153,7 @@ extension TerminalChat {
             return
         }
         let signature = Self.subAgentOverviewSignature(snapshots)
+            + "\u{1C}tools:\(toolPresentations.revision)"
         // The runtime marks the current wave while producing this snapshot.
         // The overview can also contain older standby/reused agents (or agents
         // active through shared chat), so array order is not a valid authority.
@@ -155,6 +167,7 @@ extension TerminalChat {
             snapshots,
             modelTitleResolver: resolver,
             includesFinalResponses: false,
+            toolPresentationsByAgentID: toolPresentations.presentationsByAgentID,
             rowBudget: Self.subAgentOverviewRowBudget(
                 forInPlaceRows: maximumInPlaceRows
             )
@@ -179,7 +192,8 @@ extension TerminalChat {
         renderSubAgentOverview(
             snapshots,
             modelTitleResolver: modelTitleResolver,
-            includesFinalResponses: true
+            includesFinalResponses: true,
+            toolPresentationsByAgentID: [:]
         )
     }
 
@@ -254,6 +268,9 @@ extension TerminalChat {
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         modelTitleResolver: (String) -> String,
         includesFinalResponses: Bool,
+        toolPresentationsByAgentID: [
+            String: TerminalChatRenderCoordinator.SubAgentToolPresentation
+        ],
         rowBudget: Int? = nil
     ) -> String {
         guard !snapshots.isEmpty else {
@@ -273,6 +290,7 @@ extension TerminalChat {
                     snapshots,
                     modelTitleResolver: modelTitleResolver,
                     includesFinalResponses: includesFinalResponses,
+                    toolPresentationsByAgentID: toolPresentationsByAgentID,
                     density: density
                 )
             )
@@ -292,12 +310,16 @@ extension TerminalChat {
     /// without driving a terminal.
     nonisolated static func renderSubAgentOverviewRowsForTesting(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
-        rowBudget: Int?
+        rowBudget: Int?,
+        toolPresentationsByAgentID: [
+            String: TerminalChatRenderCoordinator.SubAgentToolPresentation
+        ] = [:]
     ) -> [String] {
         let rendered = renderSubAgentOverview(
             snapshots,
             modelTitleResolver: { $0 },
             includesFinalResponses: false,
+            toolPresentationsByAgentID: toolPresentationsByAgentID,
             rowBudget: rowBudget
         )
         return rendered
@@ -309,6 +331,9 @@ extension TerminalChat {
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         modelTitleResolver: (String) -> String,
         includesFinalResponses: Bool,
+        toolPresentationsByAgentID: [
+            String: TerminalChatRenderCoordinator.SubAgentToolPresentation
+        ],
         density: SubAgentOverviewDensity
     ) -> [SubAgentOverviewLine] {
         var lines = [SubAgentOverviewLine.summary(renderSubAgentSummary(snapshots))]
@@ -375,6 +400,10 @@ extension TerminalChat {
             }
             let activityLines = renderSubAgentActivityLines(
                 snapshot,
+                toolPresentation: matchingSubAgentToolPresentation(
+                    for: snapshot,
+                    in: toolPresentationsByAgentID
+                ),
                 density: density
             )
             if !activityLines.isEmpty {
@@ -595,6 +624,8 @@ extension TerminalChat {
 
     private nonisolated static func renderSubAgentActivityLines(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        toolPresentation:
+            TerminalChatRenderCoordinator.SubAgentToolPresentation? = nil,
         density: SubAgentOverviewDensity = .full
     ) -> [SubAgentOverviewLine] {
         let currentToolName = snapshot.currentToolName?.nilIfBlank
@@ -615,36 +646,123 @@ extension TerminalChat {
         }
 
         if let currentToolName {
-            let target = snapshot.currentToolTarget?.nilIfBlank
-            let tool = colorText(inlineText(currentToolName), code: TerminalStyle.Tool.title)
-            let parameter = target.map {
-                colorText(" \(inlineText($0))", code: TerminalStyle.Tool.value)
-            } ?? ""
-            lines.append(
-                density == .full
-                    ? subAgentOverviewEntryLine(
-                        "🛠️  \(tool)\(parameter)",
+            if let toolPresentation {
+                lines.append(
+                    contentsOf: renderSubAgentToolLines(
+                        toolPresentation,
                         density: density
                     )
-                    : .regular(
-                        "🛠️  \(tool)\(parameter)",
-                        maxWrappedLines: 1,
-                        clipsOverflowWithoutEllipsis: true
+                )
+            } else {
+                lines.append(
+                    subAgentToolFallbackLine(
+                        name: currentToolName,
+                        target: snapshot.currentToolTarget?.nilIfBlank,
+                        density: density
                     )
-            )
+                )
+            }
         }
 
         if lines.isEmpty, snapshot.pending {
             lines.append(.regular(colorText("🤔 thinking…", code: TerminalStyle.Thinking.title), maxWrappedLines: 1))
         }
 
-        // The most specific entry is appended last, so a capped presentation
-        // keeps the running tool rather than the older activity line.
         if let limit = density.activityLineLimit, lines.count > limit {
             lines = Array(lines.suffix(limit))
         }
 
         return lines
+    }
+
+    private nonisolated static func matchingSubAgentToolPresentation(
+        for snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        in presentationsByAgentID: [
+            String: TerminalChatRenderCoordinator.SubAgentToolPresentation
+        ]
+    ) -> TerminalChatRenderCoordinator.SubAgentToolPresentation? {
+        guard let currentToolName = snapshot.currentToolName?.nilIfBlank,
+              let presentation = presentationsByAgentID[snapshot.id],
+              presentation.toolCall.name == currentToolName else {
+            return nil
+        }
+        return presentation
+    }
+
+    /// Uses the canonical tool row factory, changing only the available width
+    /// and the three-column placement owned by the sub-agent section.
+    private nonisolated static func renderSubAgentToolLines(
+        _ presentation: TerminalChatRenderCoordinator.SubAgentToolPresentation,
+        density: SubAgentOverviewDensity
+    ) -> [SubAgentOverviewLine] {
+        guard density == .full || density == .compact else {
+            return [
+                subAgentToolFallbackLine(
+                    name: presentation.toolCall.name,
+                    target: ToolCallPresentation.displayToolTarget(
+                        for: presentation.toolCall
+                    ),
+                    density: density
+                )
+            ]
+        }
+
+        let result: DirectAgentToolResult?
+        switch presentation.lifecycle {
+        case .started:
+            result = nil
+        case let .completed(completedResult, _, _):
+            result = completedResult
+        }
+        let wrapWidth = subAgentOverviewWrapWidth(indentation: 3)
+        let rows = toolPresentationRows(
+            for: presentation.toolCall,
+            result: result,
+            statusDetail: presentation.lifecycle.compactStatusDetail,
+            contentInsetWidth: 0,
+            // The canonical renderer reserves its own final safety column.
+            columnWidth: wrapWidth + 1
+        )
+        let reset = TerminalStyle.reset
+        var lines = rows.compactRows.enumerated().map { index, row in
+            let text = AgentOutput.standardErrorIsTerminal
+                ? "\(renderCompactToolLine(row.plainText, isTitle: index == 0))\(reset)"
+                : row.plainText
+            return SubAgentOverviewLine.complete(text)
+        }
+        guard density == .full else {
+            return lines
+        }
+
+        let codeLanguage = codeLanguageHint(for: presentation.toolCall)
+        lines.append(contentsOf: rows.detailRows.map { row in
+            let text = AgentOutput.standardErrorIsTerminal
+                ? "\(renderDetailedToolRow(row, codeLanguage: codeLanguage))\(reset)"
+                : row.plainText
+            return SubAgentOverviewLine.complete(text)
+        })
+        return lines
+    }
+
+    /// Compatibility projection used before a lossless lifecycle event arrives
+    /// (and by non-terminal/static snapshot consumers).
+    private nonisolated static func subAgentToolFallbackLine(
+        name: String,
+        target: String?,
+        density: SubAgentOverviewDensity
+    ) -> SubAgentOverviewLine {
+        let tool = colorText(inlineText(name), code: TerminalStyle.Tool.title)
+        let parameter = (target?.nilIfBlank).map {
+            colorText(" \(inlineText($0))", code: TerminalStyle.Tool.value)
+        } ?? ""
+        let text = "🛠️  \(tool)\(parameter)"
+        return density == .full
+            ? subAgentOverviewEntryLine(text, density: density)
+            : .regular(
+                text,
+                maxWrappedLines: 1,
+                clipsOverflowWithoutEllipsis: true
+            )
     }
 
     /// Builds one activity or detail line at the requested density: unbounded
@@ -890,6 +1008,18 @@ extension TerminalChat {
             }
         }
         return output
+    }
+
+    private nonisolated static func subAgentOverviewWrapWidth(
+        indentation: Int
+    ) -> Int {
+        let columns = terminalColumnCount()
+        let horizontalInset = terminalBoxHorizontalInset(columns: columns)
+        let contentWidth = max(
+            40,
+            columns - horizontalInset - subAgentOverviewReservedColumns
+        )
+        return max(1, contentWidth - max(0, indentation))
     }
 
     /// Columns left unused on every row so the section keeps its in-place

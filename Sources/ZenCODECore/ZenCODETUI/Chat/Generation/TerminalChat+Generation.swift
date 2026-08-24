@@ -16,6 +16,7 @@ extension TerminalChat {
     func generateResponse(
         attempt: TerminalPromptAttempt
     ) async throws -> TerminalChatGenerationSuccess {
+        await installSubAgentToolEventHandlerIfNeeded()
         let planPointCollector = TerminalPlanPointCollector()
         let preexistingSubAgentIDs: Set<String>
         if case .plan = attempt.purpose {

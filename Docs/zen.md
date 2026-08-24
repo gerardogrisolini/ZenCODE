@@ -352,9 +352,12 @@ record through the platform system logger. Records include agent ID/name, model,
 session, tool arguments, status, optional execution duration, and detailed typed
 error causes; delegated agents are logged with the child's identity. On macOS the
 records use Unified Logging subsystem `com.zencode.zen` and category
-`tool-execution`. Use the exact command `/tools logs` to open the native system
-log viewer (Console.app on macOS); launcher failures are reported in the terminal
-and never written to ACP stdout.
+`tool-execution`. Use the exact command `/tools logs` to open Console.app. Console
+does not accept a preconfigured filter when ZenCODE opens it, so paste
+`c:tool-execution` into Console's search field and press Return. Then click
+**Save**, give the search a name such as **ZenCODE**, and reuse it from Console's
+Favorites whenever needed. Launcher failures are reported in the terminal and
+never written to ACP stdout.
 
 **Interactive shortcuts:**
 - `Ctrl+G` — toggle default/full access mode (temporary, never persisted).

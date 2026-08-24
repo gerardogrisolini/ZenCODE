@@ -71,6 +71,12 @@ the native system log viewer (Console.app on macOS, or an available platform
 viewer elsewhere) and reports a missing viewer, timeout, or nonzero launcher
 exit status in the terminal.
 
+Console.app does not provide ZenCODE with a supported way to preset its search
+when it opens. On macOS, paste `c:tool-execution` into Console's search field and
+press Return to show the ZenCODE tool-execution category. Click **Save**, name the
+search (for example, **ZenCODE**), and it will remain available in Console's
+Favorites for subsequent sessions.
+
 ## Backup archives
 
 The setup **Data management** export writes the entire support directory to a

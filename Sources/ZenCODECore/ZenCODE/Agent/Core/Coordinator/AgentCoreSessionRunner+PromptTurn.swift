@@ -60,6 +60,10 @@ extension AgentCoreSessionRunner {
             borrowedSubAgentToolExecutor
         )
         try verifyBackendGeneration(generation)
+        await backend.updateSubAgentToolEventHandler(
+            subAgentToolEventHandler
+        )
+        try verifyBackendGeneration(generation)
         let ownedSkillProvider = promptSkillProvidersBySessionID[configuration.sessionID]?.asToolProvider()
         let nonSkillProviders = toolProviders.filter { provider in
             !provider.tools.contains { PromptSkillToolProvider.toolNames.contains($0.name) }

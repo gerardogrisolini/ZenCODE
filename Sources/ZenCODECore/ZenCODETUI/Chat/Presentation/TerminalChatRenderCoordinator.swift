@@ -113,6 +113,7 @@ actor TerminalChatRenderCoordinator {
     var hasWrittenSubmittedPrompt = false
 
     var toolState = TerminalToolBlockAccounting<ActiveToolBlock>()
+    var subAgentToolState = TerminalSubAgentToolPresentationState()
     var activeSubAgentOverviewBlock: ActiveOverviewBlock?
     var overviewState = TerminalOverviewArbitration<OverviewKind, PendingOverview>()
 

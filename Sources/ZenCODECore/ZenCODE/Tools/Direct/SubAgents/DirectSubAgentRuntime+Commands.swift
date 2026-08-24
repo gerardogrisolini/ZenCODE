@@ -161,6 +161,7 @@ extension DirectSubAgentRuntime {
                         toolCall: toolCall
                     )
                 }
+                await synchronizeSubAgentToolEventHandler(with: backend)
                 createdBackends.append((id, backend))
                 if let taskOrchestrator {
                     await backend.installTaskOrchestrator(taskOrchestrator)

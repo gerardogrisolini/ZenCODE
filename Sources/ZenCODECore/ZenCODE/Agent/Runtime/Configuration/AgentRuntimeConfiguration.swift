@@ -684,6 +684,12 @@ public protocol AgentRuntimeBackend: Actor {
         _ handler: (@Sendable (String) -> Void)?
     ) async
 
+    /// Installs the presentation-only lifecycle sink for tools executed by
+    /// delegated descendants. Backends without delegation may ignore it.
+    func updateSubAgentToolEventHandler(
+        _ handler: DirectSubAgentToolEventHandler?
+    ) async
+
     func updateToolProviders(
         _ providers: [AgentToolProvider],
         sessionID: String?
@@ -759,6 +765,10 @@ extension AgentRuntimeBackend {
 
     public func updateSharedChatMessageAvailableHandler(
         _ handler: (@Sendable (String) -> Void)?
+    ) async {}
+
+    public func updateSubAgentToolEventHandler(
+        _ handler: DirectSubAgentToolEventHandler?
     ) async {}
 
     public func updateToolProviders(

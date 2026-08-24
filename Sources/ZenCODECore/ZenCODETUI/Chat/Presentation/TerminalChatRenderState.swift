@@ -14,6 +14,17 @@ struct TerminalToolBlockAccounting<ActiveBlock> {
     var activeBlockIsSubAgentTool = false
 }
 
+/// Actor-confined latest-tool projection for the live sub-agent overview.
+/// One entry per agent preserves the historical presentation contract: a new
+/// call replaces that agent's previous call instead of becoming transcript.
+struct TerminalSubAgentToolPresentationState {
+    var startInstants: [String: ContinuousClock.Instant] = [:]
+    var presentationsByAgentID: [
+        String: TerminalChatRenderCoordinator.SubAgentToolPresentation
+    ] = [:]
+    var revision: UInt64 = 0
+}
+
 /// Actor-confined overview revision/signature arbitration state.
 struct TerminalOverviewArbitration<Kind: Hashable, Pending> {
     var pending: [Kind: Pending] = [:]
@@ -42,7 +53,7 @@ extension TerminalChatRenderCoordinator {
         let epoch: Int
     }
 
-    enum ToolBlockLifecycle {
+    enum ToolBlockLifecycle: Sendable {
         case started
         case completed(
             result: DirectAgentToolResult,
@@ -54,6 +65,25 @@ extension TerminalChatRenderCoordinator {
             if case .completed = self { return true }
             return false
         }
+
+        var compactStatusDetail: String? {
+            if case let .completed(_, compactStatusDetail, _) = self {
+                return compactStatusDetail
+            }
+            return nil
+        }
+    }
+
+    struct SubAgentToolPresentation: Sendable {
+        let agentID: String
+        let agentName: String
+        let toolCall: DirectAgentToolCall
+        let lifecycle: ToolBlockLifecycle
+    }
+
+    struct SubAgentToolPresentationSnapshot: Sendable {
+        let revision: UInt64
+        let presentationsByAgentID: [String: SubAgentToolPresentation]
     }
 
     struct ActiveToolBlock: Sendable, Equatable {

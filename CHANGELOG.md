@@ -23,6 +23,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Delegated sub-agent tool calls now reuse the coordinator's canonical terminal
+  rows—including lifecycle status, duration, failures, and source-change diffs—
+  while remaining indented inside the live Sub-Agents section. Each agent keeps
+  one current tool area, replaced in place with the rest of the overview.
 - Successful `local.editFile` and `local.multiEdit` responses are now fixed compact
   confirmations containing only the path and replacement/edit count; they no longer
   return post-edit file context or diff-like content.
@@ -48,6 +52,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- `/tools logs` is now available while a prompt is running; other `/tools`
+  invocations remain unavailable.
 - Standard terminal tool output preserves its ANSI colors, compact status
   layout, source changes, and redraw lifecycle without alternate detail modes.
 - The ChatGPT subscription WebSocket test server now closes its channel only

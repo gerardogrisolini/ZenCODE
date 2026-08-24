@@ -290,3 +290,32 @@ public enum DirectAgentEvent: Sendable {
     case sessionSnapshot(AgentRuntimeSessionSnapshot)
     case turnEnded(DirectAgentTurnOutcome)
 }
+
+/// A delegated agent's tool lifecycle event. Rendering surfaces receive the
+/// original call and result instead of a lossy name/target projection, allowing
+/// them to reuse the coordinator's canonical tool rows in their own layout.
+public struct DirectSubAgentToolEvent: Sendable {
+    public enum Lifecycle: Sendable {
+        case started
+        case completed(DirectAgentToolResult)
+    }
+
+    public let agentID: String
+    public let agentName: String
+    public let toolCall: DirectAgentToolCall
+    public let lifecycle: Lifecycle
+
+    public init(
+        agentID: String,
+        agentName: String,
+        toolCall: DirectAgentToolCall,
+        lifecycle: Lifecycle
+    ) {
+        self.agentID = agentID
+        self.agentName = agentName
+        self.toolCall = toolCall
+        self.lifecycle = lifecycle
+    }
+}
+
+public typealias DirectSubAgentToolEventHandler = @Sendable (DirectSubAgentToolEvent) async -> Void

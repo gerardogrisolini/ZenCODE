@@ -468,6 +468,71 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func delegatedToolLifecycleForwardsLosslessEventsOnly() async throws {
+        let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        let recorder = DirectSubAgentToolEventRecorder()
+        await runtime.updateSubAgentToolEventHandler { event in
+            await recorder.record(event)
+        }
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("tool-worker"),
+                "profile": .string("Developer"),
+                "prompt": .string("Inspect the implementation")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tool-events"),
+            parentAllowedToolNames: nil
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+        await backend.waitUntilSentPromptCount(1)
+        #expect(await backend.hasSubAgentToolEventHandler())
+
+        await runtime.recordEvent(.thought("private reasoning"), agentID: agentID)
+        let toolCall = presentedToolCall(
+            id: "edit-call",
+            name: "local.editFile",
+            argumentsObject: [
+                "path": "/tmp/Example.swift",
+                "old": "old",
+                "new": "new"
+            ],
+            argumentsJSON: "{}"
+        )
+        let result = DirectAgentToolResult(output: "Updated", summary: "Updated")
+        await runtime.recordEvent(.toolCallStarted(toolCall), agentID: agentID)
+        await runtime.recordEvent(
+            .toolCallCompleted(toolCall, result),
+            agentID: agentID
+        )
+
+        let events = await recorder.snapshot()
+        #expect(events.count == 2)
+        #expect(events.allSatisfy { $0.agentID == agentID })
+        #expect(events.allSatisfy { $0.agentName == "tool-worker" })
+        #expect(events.allSatisfy { $0.toolCall.id == toolCall.id })
+        if events.count == 2 {
+            if case .started = events[0].lifecycle {
+                // Expected lifecycle.
+            } else {
+                Issue.record("First delegated tool event was not started")
+            }
+            if case let .completed(completedResult) = events[1].lifecycle {
+                #expect(completedResult.summary == result.summary)
+                #expect(completedResult.output == result.output)
+            } else {
+                Issue.record("Second delegated tool event was not completed")
+            }
+        }
+
+        await runtime.shutdown()
+    }
+
+    @Test
     func getAndWaitReturnCompleteLongOutputToTheModel() async throws {
         let endMarker = "PLANNER_OUTPUT_END"
         let plannerOutput = String(
@@ -3797,6 +3862,18 @@ struct DirectSubAgentRuntimeTests {
     // test; the standby lifecycle the refresh depends on is covered above.
 }
 
+private actor DirectSubAgentToolEventRecorder {
+    private var events: [DirectSubAgentToolEvent] = []
+
+    func record(_ event: DirectSubAgentToolEvent) {
+        events.append(event)
+    }
+
+    func snapshot() -> [DirectSubAgentToolEvent] {
+        events
+    }
+}
+
 private func directToolCall(
     name: String,
     arguments: [String: Any]
@@ -3886,6 +3963,7 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     private var shutdownCountWaiters: [ShutdownCountWaiter] = []
     private var installedTaskOrchestrator = false
     private var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
+    private var subAgentToolEventHandler: DirectSubAgentToolEventHandler?
     private(set) var toolProviderUpdates: [(providers: [AgentToolProvider], sessionID: String?)] = []
 
     private struct SentPromptCountWaiter {
@@ -3918,6 +3996,12 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
         _ executor: AgentBorrowedToolExecutor?
     ) async {
         borrowedSubAgentToolExecutor = executor
+    }
+
+    func updateSubAgentToolEventHandler(
+        _ handler: DirectSubAgentToolEventHandler?
+    ) async {
+        subAgentToolEventHandler = handler
     }
 
     func executeBorrowedSubAgentTool(_ toolCall: AgentBorrowedToolCall) async throws -> String {
@@ -4039,6 +4123,10 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
 
     func didInstallTaskOrchestrator() -> Bool {
         installedTaskOrchestrator
+    }
+
+    func hasSubAgentToolEventHandler() -> Bool {
+        subAgentToolEventHandler != nil
     }
 
     func createdThinkingSelection() -> AgentThinkingSelection? {

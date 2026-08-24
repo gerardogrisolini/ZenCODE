@@ -476,6 +476,10 @@ public actor DirectSubAgentRuntime {
     /// callbacks remain recipient-specific; this callback is room-wide because
     /// coordinator→agent and agent→agent traffic must also be rendered.
     var sharedChatMessageAvailableHandler: (@Sendable (String) -> Void)?
+    /// Presentation sink inherited by every delegated backend. It is transient,
+    /// never enters task/session persistence, and forwards only tool lifecycles.
+    var subAgentToolEventHandler: DirectSubAgentToolEventHandler?
+    var subAgentToolEventHandlerRevision: UInt64 = 0
     private var agentStorage: [String: AgentRecord] = [:]
     /// Lifecycle-transition failures that happen during global shutdown, when
     /// no individual agent record remains available to carry the error.
@@ -584,6 +588,35 @@ public actor DirectSubAgentRuntime {
         self.sharedChatSenderID = sharedChatSenderID?.nilIfBlank
         self.sharedChatRootSessionID = sharedChatRootSessionID?.nilIfBlank
         self.sharedChatMessageAvailableHandler = nil
+        self.subAgentToolEventHandler = nil
+    }
+
+    /// Updates the lifecycle sink for existing descendants and future agents.
+    /// Synchronization is revision-fenced because actor reentrancy can otherwise
+    /// let an older suspended update overwrite a newer handler in a child backend.
+    public func updateSubAgentToolEventHandler(
+        _ handler: DirectSubAgentToolEventHandler?
+    ) async {
+        subAgentToolEventHandler = handler
+        subAgentToolEventHandlerRevision &+= 1
+        let backends = agents.values.map(\.backend)
+        for backend in backends {
+            await synchronizeSubAgentToolEventHandler(with: backend)
+        }
+    }
+
+    func synchronizeSubAgentToolEventHandler(
+        with backend: any AgentRuntimeBackend
+    ) async {
+        while true {
+            let revision = subAgentToolEventHandlerRevision
+            let handler = subAgentToolEventHandler
+            await backend.updateSubAgentToolEventHandler(handler)
+            guard revision == subAgentToolEventHandlerRevision else {
+                continue
+            }
+            return
+        }
     }
 
     public func installTaskOrchestrator(

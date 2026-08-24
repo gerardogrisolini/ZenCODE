@@ -54,6 +54,47 @@ extension TerminalChatRenderCoordinator {
         )
     }
 
+    /// Records the latest delegated call for each agent without writing a
+    /// standalone transcript block. The next overview publication lays these
+    /// calls out with the canonical tool rows inside its single rewrite slot.
+    func recordSubAgentToolEvent(_ event: DirectSubAgentToolEvent) {
+        let executionID = "\u{1E}sub-agent\u{1F}\(event.agentID)\u{1F}\(event.toolCall.id)"
+        let lifecycle: ToolBlockLifecycle
+        switch event.lifecycle {
+        case .started:
+            subAgentToolState.startInstants[executionID] = toolNow()
+            lifecycle = .started
+        case let .completed(result):
+            let elapsed = subAgentToolState.startInstants
+                .removeValue(forKey: executionID)
+                .map { $0.duration(to: toolNow()) }
+            lifecycle = .completed(
+                result: result,
+                compactStatusDetail: TerminalChat.compactToolCompletionDetail(
+                    for: event.toolCall,
+                    result: result,
+                    elapsed: elapsed
+                ),
+                elapsed: elapsed
+            )
+        }
+        subAgentToolState.presentationsByAgentID[event.agentID] =
+            SubAgentToolPresentation(
+                agentID: event.agentID,
+                agentName: event.agentName,
+                toolCall: event.toolCall,
+                lifecycle: lifecycle
+            )
+        subAgentToolState.revision &+= 1
+    }
+
+    func subAgentToolPresentationSnapshot() -> SubAgentToolPresentationSnapshot {
+        SubAgentToolPresentationSnapshot(
+            revision: subAgentToolState.revision,
+            presentationsByAgentID: subAgentToolState.presentationsByAgentID
+        )
+    }
+
     func writeAccessModeChangeMessage(_ accessMode: AgentLocalExecAccessMode) {
         finishActiveToolOutputBeforeInterleavedMessage()
         switch accessMode {
@@ -236,8 +277,7 @@ extension TerminalChatRenderCoordinator {
         lifecycle: ToolBlockLifecycle,
         contentInsetWidth: Int,
         columnWidth: Int
-    ) -> ToolBlockRenderRows {
-        let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
+    ) -> TerminalChat.ToolPresentationRows {
         let result: DirectAgentToolResult?
         switch lifecycle {
         case .started:
@@ -245,56 +285,17 @@ extension TerminalChatRenderCoordinator {
         case let .completed(completedResult, _, _):
             result = completedResult
         }
-        return ToolBlockRenderRows(
-            compactRows: compactToolRows(
-                for: toolCall,
-                lifecycle: lifecycle,
-                contentInsetWidth: contentInsetWidth,
-                columnWidth: columnWidth
-            ),
-            detailRows: TerminalChat.safelyWrappedDetailedToolRows(
-                TerminalChat.standardToolCallRows(
-                    for: toolCall,
-                    result: result,
-                    contentWidth: safeContentWidth
-                ),
-                contentInsetWidth: contentInsetWidth,
-                columnWidth: columnWidth
-            )
+        return TerminalChat.toolPresentationRows(
+            for: toolCall,
+            result: result,
+            statusDetail: lifecycle.compactStatusDetail,
+            contentInsetWidth: contentInsetWidth,
+            columnWidth: columnWidth
         )
     }
 
-    private func compactToolRows(
-        for toolCall: DirectAgentToolCall,
-        lifecycle: ToolBlockLifecycle,
-        contentInsetWidth: Int,
-        columnWidth: Int
-    ) -> [TerminalChat.DetailedToolRow] {
-        let statusIcon: String
-        let statusDetail: String?
-        switch lifecycle {
-        case .started:
-            statusIcon = "⏳"
-            statusDetail = nil
-        case let .completed(result, compactStatusDetail, _):
-            let hasFailedProcessExit = TerminalChat.compactLocalExecExitCode(
-                for: toolCall,
-                result: result
-            ).map { $0 != 0 } ?? false
-            statusIcon = result.isFailure || hasFailedProcessExit ? "⚠️" : "✅"
-            statusDetail = compactStatusDetail
-        }
-        return TerminalChat.compactToolLines(
-            for: toolCall,
-            statusIcon: statusIcon,
-            statusDetail: statusDetail,
-            contentInsetWidth: contentInsetWidth,
-            columnWidth: columnWidth
-        ).map(TerminalChat.DetailedToolRow.text)
-    }
-
     private func writeToolBlockRows(
-        _ renderRows: ToolBlockRenderRows,
+        _ renderRows: TerminalChat.ToolPresentationRows,
         for toolCall: DirectAgentToolCall,
         lifecycle: ToolBlockLifecycle
     ) {
@@ -377,15 +378,4 @@ extension TerminalChatRenderCoordinator {
         writeChat("\n", to: .standardError)
     }
 
-    /// A tool block separates the compact lifecycle prefix from optional
-    /// source rows. The prefix is written byte-for-byte by the compact writer
-    /// and only the source appendix goes through the detailed row renderer.
-    private struct ToolBlockRenderRows {
-        var compactRows: [TerminalChat.DetailedToolRow]
-        var detailRows: [TerminalChat.DetailedToolRow]
-
-        var allRows: [TerminalChat.DetailedToolRow] {
-            compactRows + detailRows
-        }
-    }
 }

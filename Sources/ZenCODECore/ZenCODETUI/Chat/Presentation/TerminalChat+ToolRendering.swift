@@ -114,6 +114,60 @@ extension TerminalChat {
         }
     }
 
+    /// Layout-ready rows shared by every terminal surface that presents a tool.
+    /// The coordinator owns lifecycle/redraw policy, while this value keeps the
+    /// compact prefix and optional source appendix byte-for-byte consistent.
+    struct ToolPresentationRows: Sendable, Equatable {
+        var compactRows: [DetailedToolRow]
+        var detailRows: [DetailedToolRow]
+
+        var allRows: [DetailedToolRow] {
+            compactRows + detailRows
+        }
+    }
+
+    /// Builds the canonical compact and detailed rows for a tool lifecycle.
+    /// Callers provide only their available geometry and placement; coordinator
+    /// calls and delegated calls therefore cannot drift in status or diff output.
+    nonisolated static func toolPresentationRows(
+        for toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult?,
+        statusDetail: String?,
+        contentInsetWidth: Int,
+        columnWidth: Int
+    ) -> ToolPresentationRows {
+        let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
+        let statusIcon: String
+        if let result {
+            let hasFailedProcessExit = compactLocalExecExitCode(
+                for: toolCall,
+                result: result
+            ).map { $0 != 0 } ?? false
+            statusIcon = result.isFailure || hasFailedProcessExit ? "⚠️" : "✅"
+        } else {
+            statusIcon = "⏳"
+        }
+
+        return ToolPresentationRows(
+            compactRows: compactToolLines(
+                for: toolCall,
+                statusIcon: statusIcon,
+                statusDetail: statusDetail,
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            ).map(DetailedToolRow.text),
+            detailRows: safelyWrappedDetailedToolRows(
+                standardToolCallRows(
+                    for: toolCall,
+                    result: result,
+                    contentWidth: safeContentWidth
+                ),
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
+        )
+    }
+
     public func writeToolCallStarted(_ toolCall: DirectAgentToolCall) async {
         let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
         await renderCoordinator.writeToolCallStarted(
@@ -132,6 +186,11 @@ extension TerminalChat {
             result: result,
             maximumInPlaceRows: maximumInPlaceRows
         )
+    }
+
+    func writeSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
+        await renderCoordinator.recordSubAgentToolEvent(event)
+        await renderSubAgentOverview(force: false)
     }
 
     func writeAccessModeChangeMessage(_ accessMode: AgentLocalExecAccessMode) async {

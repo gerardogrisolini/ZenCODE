@@ -72,6 +72,9 @@ public actor AgentCoreSessionRunner {
     /// reset alongside the shared-chat coordinator so aliases are never recycled
     /// within a session but start clean on a new one.
     var sharedChatMentionCatalogStorage: SharedChatMentionCatalog?
+    /// Presentation-only tool lifecycle sink retained across backend rebuilds so
+    /// delegated work that outlives its spawning turn keeps the same renderer.
+    var subAgentToolEventHandler: DirectSubAgentToolEventHandler?
     var authorizationRouter = AgentCoreAuthorizationRouter()
     /// Session-scoped copy of the same handler, kept alive across turns.
     ///

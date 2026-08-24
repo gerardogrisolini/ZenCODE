@@ -13,6 +13,53 @@ import Testing
 @Suite
 struct AgentCoreSessionRunnerTests {
     @Test
+    func delegatedToolEventHandlerReachesTheRuntimeBackend() async throws {
+        let backend = CapturingAgentRuntimeBackend()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in backend }
+        )
+        let collector = SubAgentToolEventCollector()
+        await runner.updateSubAgentToolEventHandler { event in
+            await collector.record(event)
+        }
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: "delegated-tool-events-\(UUID().uuidString)",
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["agent.create"]
+        )
+
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "delegate",
+            attachments: [],
+            onEvent: { _ in }
+        )
+        let toolCall = DirectAgentToolCall(
+            id: "child-read",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/Example.swift"],
+            argumentsJSON: "{}"
+        )
+        await backend.emitSubAgentToolEvent(
+            DirectSubAgentToolEvent(
+                agentID: "agent-child",
+                agentName: "child",
+                toolCall: toolCall,
+                lifecycle: .started
+            )
+        )
+
+        let events = await collector.snapshot()
+        #expect(events.count == 1)
+        #expect(events.first?.agentID == "agent-child")
+        #expect(events.first?.toolCall.id == toolCall.id)
+    }
+
+    @Test
     func updateSessionOptionsPropagatesSystemPrompt() async throws {
         let backend = CapturingAgentRuntimeBackend()
         let runner = AgentCoreSessionRunner(
@@ -1279,6 +1326,7 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
     private var sessions: [String: AgentRuntimeSessionSnapshot] = [:]
     private var createdHistories: [[AgentRuntimeMessage]] = []
     private var interruptedRoots: [String] = []
+    private var subAgentToolEventHandler: DirectSubAgentToolEventHandler?
     private let promptEvents: [DirectAgentEvent]
     private let sendPromptError: Error?
 
@@ -1353,6 +1401,16 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
         _: AgentBorrowedToolExecutor?
     ) async {}
 
+    func updateSubAgentToolEventHandler(
+        _ handler: DirectSubAgentToolEventHandler?
+    ) async {
+        subAgentToolEventHandler = handler
+    }
+
+    func emitSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
+        await subAgentToolEventHandler?(event)
+    }
+
     func updateToolProviders(_: [AgentToolProvider]) async {}
 
     func closeSession(id _: String) {}
@@ -1413,6 +1471,18 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
 
     func interruptedRootSessionIDs() -> [String] {
         interruptedRoots
+    }
+}
+
+private actor SubAgentToolEventCollector {
+    private var events: [DirectSubAgentToolEvent] = []
+
+    func record(_ event: DirectSubAgentToolEvent) {
+        events.append(event)
+    }
+
+    func snapshot() -> [DirectSubAgentToolEvent] {
+        events
     }
 }
 
