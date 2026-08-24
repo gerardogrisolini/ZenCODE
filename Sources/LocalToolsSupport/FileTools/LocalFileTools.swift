@@ -284,7 +284,7 @@ struct LocalEditFileTool: FeatureTool {
                 throw LocalToolsFeatureError.permissionDenied(editFailureMessage(failure, path: path.path))
             }
             try result.contents.write(to: path, atomically: true, encoding: .utf8)
-            return LocalFileEditFeedback.single(path: path.path, result: result)
+            return LocalFileEditFeedback.single(path: path.path)
         }
     }
 }
@@ -324,7 +324,6 @@ struct LocalMultiEditTool: FeatureTool {
         var contents = try await LocalIOOffloader.run {
             try String(contentsOf: path, encoding: .utf8)
         }
-        var summaries: [LocalFileEditSummary] = []
         for (index, edit) in edits.enumerated() {
             try Task.checkCancellation()
             let oldText = edit.old ?? ""
@@ -346,24 +345,6 @@ struct LocalMultiEditTool: FeatureTool {
                     )
                 )
             }
-            for summaryIndex in summaries.indices {
-                if result.originalLine < summaries[summaryIndex].resultingLines.lowerBound {
-                    let summary = summaries[summaryIndex]
-                    summaries[summaryIndex].oldLine += result.lineDelta
-                    summaries[summaryIndex].resultingLines = ClosedRange(
-                        uncheckedBounds: (
-                            lower: summary.resultingLines.lowerBound + result.lineDelta,
-                            upper: summary.resultingLines.upperBound + result.lineDelta
-                        )
-                    )
-                }
-            }
-            summaries.append(LocalFileEditSummary(
-                oldLine: result.originalLine,
-                resultingLines: result.resultingLines,
-                lineDelta: result.lineDelta,
-                multiline: result.replacementWasMultiline
-            ))
             contents = result.contents
         }
         try Task.checkCancellation()
@@ -371,7 +352,7 @@ struct LocalMultiEditTool: FeatureTool {
         try await LocalIOOffloader.run {
             try finalContents.write(to: path, atomically: true, encoding: .utf8)
         }
-        return LocalFileEditFeedback.multiple(path: path.path, contents: finalContents, summaries: summaries)
+        return LocalFileEditFeedback.multiple(path: path.path, editCount: edits.count)
     }
 }
 

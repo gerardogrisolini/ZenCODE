@@ -18,6 +18,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Successful `local.editFile` and `local.multiEdit` responses are now fixed compact
+  confirmations containing only the path and replacement/edit count; they no longer
+  return post-edit file context or diff-like content.
 - Project-memory guidance and descriptors now treat memory as a concise,
   evidence-backed journal: verified handoffs, durable decisions, blockers, and
   releases/publications are retained while transient activity, speculation, and

@@ -1,6 +1,6 @@
 # Editing tool size baseline
 
-Byte counts use compact UTF-8 JSON. They are provider-independent; provider token counts remain part of the model-driven release smoke test.
+Byte counts use compact UTF-8 JSON from `JSONSerialization` with `[.sortedKeys, .withoutEscapingSlashes]`. They are provider-independent; provider token counts remain part of the model-driven release smoke test.
 
 | Metric | Before | After |
 | --- | ---: | ---: |
@@ -12,7 +12,7 @@ Byte counts use compact UTF-8 JSON. They are provider-independent; provider toke
 | Five `editFile` argument objects | 430 | 370 |
 | One five-item `multiEdit` argument object | 338 | 278 |
 
-The combined schema reduction is 46.96%. Contract tests enforce the canonical property sets, nested requirements, maximum schema sizes, output budgets, and the five-call comparison.
+The combined schema reduction is 46.96%. Contract tests enforce the canonical property sets, nested requirements, maximum schema sizes, and the five-call comparison. Successful `local.editFile` and `local.multiEdit` responses are fixed compact confirmations: they report the path and replacement/edit count, but never include a post-edit diff, line context, or file content.
 
 ## Model-driven smoke metrics
 
@@ -26,6 +26,6 @@ For each release smoke scenario, record input tokens, output tokens, tool calls,
 6. five ordered atomic edits;
 7. failure of edit 3 with unchanged file;
 8. routing a large change to `applyPatch`;
-9. no follow-up read when post-edit context is sufficient.
+9. a follow-up read when further post-edit context is needed.
 
 Provider token and round measurements are intentionally not asserted in unit tests because they depend on the selected model and provider. Byte-level regressions are deterministic and run in the normal test suite.

@@ -28,18 +28,30 @@ struct LocalFileEditTests {
         #expect(Set(itemProperties.keys) == ["old", "new"])
         #expect(item["required"] as? [String] == ["old", "new"])
 
-        // Baseline before this migration: editFile 318, multiEdit 368, replace 253 bytes.
-        #expect(edit.inputSchema.utf8.count <= 170)
-        #expect(multi.inputSchema.utf8.count <= 240)
-        #expect(replace.inputSchema.utf8.count <= 170)
-        #expect(
-            Double(edit.inputSchema.utf8.count + multi.inputSchema.utf8.count + replace.inputSchema.utf8.count)
-                <= 0.6 * Double(318 + 368 + 253)
-        )
+        // Compact UTF-8 schemas measured in Docs/editing-tool-size-baseline.md.
+        #expect(edit.inputSchema.utf8.count == 137)
+        #expect(multi.inputSchema.utf8.count == 224)
+        #expect(replace.inputSchema.utf8.count == 137)
+        #expect(edit.inputSchema.utf8.count + multi.inputSchema.utf8.count + replace.inputSchema.utf8.count == 498)
     }
 
     @Test
     func fiveEditsUseLessArgumentPayloadThanFiveCalls() throws {
+        let representativeArguments = [
+            "path": "Sources/App.swift",
+            "old": "let value = 1",
+            "new": "let value = 2"
+        ]
+        let representativeData = try JSONSerialization.data(
+            withJSONObject: representativeArguments,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+        #expect(representativeData.count == 72)
+        #expect(
+            String(decoding: representativeData, as: UTF8.self)
+                == #"{"new":"let value = 2","old":"let value = 1","path":"Sources/App.swift"}"#
+        )
+
         let edits = (0..<5).map { index in
             ["old": "let value\(index) = \(index)", "new": "let value\(index) = \(index + 1)"]
         }
@@ -47,12 +59,17 @@ struct LocalFileEditTests {
             ["path": "Sources/App.swift", "old": edit["old"]!, "new": edit["new"]!]
         }
         let fiveBytes = try calls.map {
-            try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]).count
+            try JSONSerialization.data(
+                withJSONObject: $0,
+                options: [.sortedKeys, .withoutEscapingSlashes]
+            ).count
         }.reduce(0, +)
         let multiBytes = try JSONSerialization.data(
             withJSONObject: ["path": "Sources/App.swift", "edits": edits],
-            options: [.sortedKeys]
+            options: [.sortedKeys, .withoutEscapingSlashes]
         ).count
+        #expect(fiveBytes == 370)
+        #expect(multiBytes == 278)
         #expect(multiBytes < fiveBytes)
     }
 
@@ -199,7 +216,7 @@ struct LocalFileEditTests {
     }
 
     @Test
-    func multilineFeedbackUsesHeadTailOmissionWithinBudget() async throws {
+    func editFileFeedbackIsAlwaysCompactAndContainsNoEditedContent() async throws {
         let root = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("multiline.txt")
@@ -213,13 +230,12 @@ struct LocalFileEditTests {
             "old": originalLines[9...39].joined(separator: "\n"),
             "new": replacement
         ], root)
-        #expect(output.components(separatedBy: "\n").count <= 16)
-        #expect(output.utf8.count <= 3_072)
-        #expect(output.contains("omitted"))
+        #expect(output == "Updated \(file.path). Replacements: 1.")
+        #expect(!output.contains("new line"))
     }
 
     @Test
-    func feedbackMergesWindowsAndHonorsLineAndByteBudgets() async throws {
+    func multiEditFeedbackIsAlwaysCompactAndContainsNoEditedContent() async throws {
         let root = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("large.txt")
@@ -229,8 +245,7 @@ struct LocalFileEditTests {
         let single = try await Self.invoke("local.editFile", [
             "path": file.path, "old": "line 40 "+String(repeating: "x", count: 300), "new": "changed"
         ], root)
-        #expect(single.components(separatedBy: "\n").count <= 8)
-        #expect(single.utf8.count <= 2_048)
+        #expect(single == "Updated \(file.path). Replacements: 1.")
 
         let multi = try await Self.invoke("local.multiEdit", [
             "path": file.path,
@@ -240,10 +255,8 @@ struct LocalFileEditTests {
                 ["old": "line 70 "+String(repeating: "x", count: 300), "new": "seventy"]
             ]
         ], root)
-        #expect(multi.components(separatedBy: "\n").count <= 24)
-        #expect(multi.utf8.count <= 4_096)
-        #expect(multi.components(separatedBy: "Current file around edits").count - 1 == 1)
-        #expect(multi.contains("omitted"))
+        #expect(multi == "Updated \(file.path). Edits: 3.")
+        #expect(!multi.contains("forty-one"))
     }
 
     private static func descriptor(_ name: String) throws -> FeatureToolDescriptor {
