@@ -31,6 +31,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   including `/skills add`, `/skills uninstall`, `/tasks ls`, and `/tasks get`.
 - Removed redundant compatibility and helper code across the MCP bridge, bundled
   features, Xcode tools, and shared tool models without changing public behavior.
+- Decomposed the session runner, terminal render coordinator, feature process
+  lifecycle, and local MCP transport into focused domain units — shared
+  lifecycle/teardown primitives, typed stream-pump handlers, and per-domain
+  companion files. No existing public API, wire, or persistence behavior
+  changed; one new public helper, `FeatureProcessTreeSupervisor.terminateImmediately`,
+  was lifted out of a private teardown path.
 
 ### Fixed
 

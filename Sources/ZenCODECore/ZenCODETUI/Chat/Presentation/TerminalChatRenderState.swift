@@ -104,4 +104,28 @@ extension TerminalChatRenderCoordinator {
         let content: OverviewContent
         let sequence: UInt64
     }
+
+    /// One pending buffered streaming write, coalesced per channel.
+    struct PendingWrite: Sendable {
+        let channel: OutputChannel
+        var text: String
+    }
+
+    /// Channel-level terminal and cursor state for one output channel.
+    struct ChannelState: Sendable {
+        let isTerminal: Bool
+        var cursor = CursorState()
+        var hasContent = false
+    }
+
+    /// Mutable formatting state for one independently streamed content flow.
+    struct StreamingContentState {
+        var boldBreakState = TerminalChatBoldBreakState()
+        var markdownFormatter: TerminalMarkdownStreamFormatter
+        var isStreaming = false
+
+        init(markdownFormatter: TerminalMarkdownStreamFormatter) {
+            self.markdownFormatter = markdownFormatter
+        }
+    }
 }

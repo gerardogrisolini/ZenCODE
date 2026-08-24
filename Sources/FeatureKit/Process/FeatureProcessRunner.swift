@@ -9,7 +9,6 @@ import Darwin
 #elseif canImport(Glibc)
 import Glibc
 #endif
-import Synchronization
 
 public enum FeatureProcessRunner {
     public static func run(
@@ -23,7 +22,7 @@ public enum FeatureProcessRunner {
     ) async throws -> FeatureProcessResult {
         #if os(macOS) || os(Linux)
         try Task.checkCancellation()
-        ignoreSIGPIPEOnce()
+        FeatureProcessDescriptors.ignoreSIGPIPEOnce()
 
         let process = Process()
         process.executableURL = executableURL
@@ -46,7 +45,7 @@ public enum FeatureProcessRunner {
             process.standardInput = FileHandle.nullDevice
         }
 
-        let exitObserver = FeatureProcessExitObserver()
+        let exitObserver = FeatureProcessExitSignal()
         let exitMonitor = FeatureProcessExitMonitor { exitCode in
             exitObserver.finish(exitCode: exitCode)
         }
@@ -65,10 +64,10 @@ public enum FeatureProcessRunner {
         // (the runner is used concurrently by several feature tools) and could
         // never observe cancellation; the polling loops below yield with
         // `Task.sleep` instead, which is cancellation-aware and thread-free.
-        makeNonBlocking(stdoutPipe.fileHandleForReading)
-        makeNonBlocking(stderrPipe.fileHandleForReading)
+        FeatureProcessDescriptors.makeNonBlocking(stdoutPipe.fileHandleForReading)
+        FeatureProcessDescriptors.makeNonBlocking(stderrPipe.fileHandleForReading)
         if let stdinPipe {
-            makeNonBlocking(stdinPipe.fileHandleForWriting)
+            FeatureProcessDescriptors.makeNonBlocking(stdinPipe.fileHandleForWriting)
         }
 
         // One-shot signal bridging the output readers and the exit supervisor.
@@ -76,7 +75,7 @@ public enum FeatureProcessRunner {
         // supervisor treats that as a first-class escalation trigger on the same
         // footing as timeout/cancellation, so a child that ignores SIGTERM is
         // still guaranteed to reach SIGKILL and be reaped.
-        let terminationRequest = FeatureProcessTerminationRequest()
+        let terminationRequest = FeatureProcessTerminationSignal()
 
         // Drain stdout/stderr while writing stdin. Starting all three streams as
         // structured `async let` children guarantees the pipes are drained
@@ -140,31 +139,6 @@ public enum FeatureProcessRunner {
     }
 
     #if os(macOS) || os(Linux)
-    /// Writing to a pipe whose reader already exited raises SIGPIPE, whose
-    /// default disposition kills ZenCODE itself. Ignore it once so the write
-    /// path observes `EPIPE` as an ordinary error instead.
-    private static let sigpipeIgnored = Mutex(false)
-
-    private static func ignoreSIGPIPEOnce() {
-        let shouldInstall = sigpipeIgnored.withLock { installed -> Bool in
-            guard !installed else { return false }
-            installed = true
-            return true
-        }
-        if shouldInstall {
-            signal(SIGPIPE, SIG_IGN)
-        }
-    }
-
-    /// Best-effort switch to `O_NONBLOCK`. A failure only degrades to the
-    /// previous blocking behaviour, so it must not fail the run.
-    private static func makeNonBlocking(_ handle: FileHandle) {
-        let descriptor = handle.fileDescriptor
-        let currentFlags = fcntl(descriptor, F_GETFL)
-        guard currentFlags >= 0 else { return }
-        _ = fcntl(descriptor, F_SETFL, currentFlags | O_NONBLOCK)
-    }
-
     /// Reads a child pipe to EOF without ever blocking a cooperative executor
     /// thread. The loop also stops once the child has exited and the pipe is
     /// drained: a descendant that inherited the write end can keep it open
@@ -172,9 +146,9 @@ public enum FeatureProcessRunner {
     /// long after its child (and any timeout escalation) is gone.
     private static func drainPipe(
         _ handle: FileHandle,
-        exitObserver: FeatureProcessExitObserver,
+        exitObserver: FeatureProcessExitSignal,
         lineLimit: Int?,
-        terminationRequest: FeatureProcessTerminationRequest
+        terminationRequest: FeatureProcessTerminationSignal
     ) async -> (Data, Bool) {
         let descriptor = handle.fileDescriptor
         var output = Data()
@@ -202,7 +176,7 @@ public enum FeatureProcessRunner {
                         // even when the child ignores SIGTERM, while the outcome
                         // keeps timedOut == false because this is a truncation,
                         // not a timeout.
-                        terminationRequest.request()
+                        terminationRequest.resolve(.stdoutLineLimit)
                         break
                     }
                 }
@@ -223,7 +197,7 @@ public enum FeatureProcessRunner {
                 // before it exits, so an empty pipe after the owned exit was
                 // observed means drained. A descendant may otherwise keep the
                 // inherited write end open indefinitely.
-                if exitObserver.hasFinished {
+                if exitObserver.hasExited {
                     break
                 }
                 do {
@@ -259,7 +233,7 @@ public enum FeatureProcessRunner {
     private static func writeStdin(
         _ pipe: Pipe?,
         data: Data?,
-        exitObserver: FeatureProcessExitObserver
+        exitObserver: FeatureProcessExitSignal
     ) async -> StdinWriteOutcome {
         guard let data, let pipe else { return .nothingToWrite }
         let writer = pipe.fileHandleForWriting
@@ -289,7 +263,7 @@ public enum FeatureProcessRunner {
             }
 
             if written == -1, capturedErrno == EAGAIN || capturedErrno == EWOULDBLOCK {
-                if exitObserver.hasFinished {
+                if exitObserver.hasExited {
                     outcome = .failed
                     break
                 }
@@ -319,9 +293,9 @@ public enum FeatureProcessRunner {
     /// `timedOut == false` because the run was truncated, not timed out.
     private static func superviseProcessExit(
         _ process: Process,
-        exitObserver: FeatureProcessExitObserver,
+        exitObserver: FeatureProcessExitSignal,
         timeout: TimeInterval?,
-        terminationRequest: FeatureProcessTerminationRequest
+        terminationRequest: FeatureProcessTerminationSignal
     ) async -> Bool {
         let outcome = await withTaskGroup(of: FeatureProcessExitOutcome.self) { group -> FeatureProcessExitOutcome in
             // Natural exit waiter. `exitObserver.wait()` resumes on process exit
@@ -335,7 +309,7 @@ public enum FeatureProcessRunner {
             // Escalation trigger: fires when the timeout elapses (if any) or the
             // task is cancelled, whichever happens first.
             group.addTask(name: "Feature process timeout") {
-                await waitForTimeoutOrCancellation(timeout)
+                await FeatureProcessTerminationEscalator.waitForTimeoutOrCancellation(timeout)
                 return .timeoutOrCancellation
             }
 
@@ -359,263 +333,27 @@ public enum FeatureProcessRunner {
         // the trigger (timeout, cancellation, or line limit) won and we must
         // escalate to reach a guaranteed kill, even for a process that ignores
         // SIGTERM.
-        guard exitObserver.hasFinished else {
-            _ = await escalateTermination(process, exitObserver: exitObserver)
+        guard exitObserver.hasExited else {
+            // Shared, bounded TERM -> grace -> KILL -> reap escalation.
+            await FeatureProcessTerminationEscalator.escalate(
+                process,
+                exitSignal: exitObserver
+            )
             // A line-limit truncation triggers escalation so the run always
             // returns, but it is not a timeout: preserve timedOut == false.
             return outcome == .timeoutOrCancellation
         }
         return false
     }
-
-    /// Suspends until `timeout` elapses or the task is cancelled. With no timeout
-    /// it suspends until cancellation only: `Task.sleep` is cancellation-aware
-    /// and returns by throwing, which `try?` turns into a normal return.
-    private static func waitForTimeoutOrCancellation(_ timeout: TimeInterval?) async {
-        let nanoseconds: UInt64
-        if let timeout, timeout.isFinite, timeout > 0 {
-            let maximumSleepSeconds = Double(UInt64.max) / 1_000_000_000
-            if timeout >= maximumSleepSeconds {
-                nanoseconds = UInt64.max
-            } else {
-                nanoseconds = UInt64(timeout * 1_000_000_000)
-            }
-        } else {
-            nanoseconds = UInt64.max
-        }
-        try? await Task.sleep(nanoseconds: nanoseconds)
-    }
-
-    /// `SIGTERM -> grace -> SIGKILL`. Returns `true` to signal that escalation
-    /// occurred (reported as a timeout-equivalent outcome).
-    private static func escalateTermination(
-        _ process: Process,
-        exitObserver: FeatureProcessExitObserver
-    ) async -> Bool {
-        if !exitObserver.hasFinished {
-            FeatureProcessTreeSupervisor.send(
-                SIGTERM,
-                to: process,
-                processGroupLeader: FeatureProcessTreeSupervisor.isProcessGroupLeader(process)
-            )
-        }
-
-        if await waitForExitAfterTermination(exitObserver: exitObserver) {
-            return true
-        }
-
-        if !exitObserver.hasFinished {
-            FeatureProcessTreeSupervisor.send(
-                SIGKILL,
-                to: process,
-                processGroupLeader: FeatureProcessTreeSupervisor.isProcessGroupLeader(process)
-            )
-        }
-        // The process monitor owns Linux reaping independently from
-        // Foundation's shared manager run loop, so this wait remains bounded
-        // even when another long-running Process has parked that manager.
-        await waitForExitAfterSIGKILL(exitObserver: exitObserver)
-        return true
-    }
-
-    /// Waits a bounded interval for the independent exit monitor to observe a
-    /// SIGKILL. The bound protects against platform-level waitpid failures while
-    /// preserving a deterministic return path.
-    private static func waitForExitAfterSIGKILL(
-        exitObserver: FeatureProcessExitObserver
-    ) async {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while ContinuousClock.now < deadline, !exitObserver.hasFinished {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-    }
-
-    private static func waitForExitAfterTermination(
-        exitObserver: FeatureProcessExitObserver
-    ) async -> Bool {
-        await withTaskGroup(of: Bool.self) { group in
-            group.addTask(name: "Feature process SIGTERM grace exit") {
-                await exitObserver.wait()
-                return true
-            }
-
-            group.addTask(name: "Feature process SIGTERM grace timeout") {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                return false
-            }
-
-            let exited = await group.next() ?? false
-            group.cancelAll()
-            // `wait()` now also resumes on cancellation. Only consider the grace
-            // period satisfied when the process genuinely exited; a cancellation
-            // that broke the wait must fall through to the SIGKILL fallback.
-            return exited && exitObserver.hasFinished
-        }
-    }
     #endif
 }
 
 #if os(macOS) || os(Linux)
+/// Which supervised condition ended the run first.
 private enum FeatureProcessExitOutcome: Sendable {
     case exited
     case timeoutOrCancellation
     case stdoutTruncated
-}
-
-/// Cancellation-aware one-shot signal used to request process termination from
-/// an output reader. A cancelled wait only resolves its own continuation, so a
-/// later line-limit request is never lost while the process supervisor races the
-/// other exit conditions.
-private final class FeatureProcessTerminationRequest: Sendable {
-    private struct State: Sendable {
-        var hasBeenRequested = false
-        var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
-        var cancelledWaiters: Set<UUID> = []
-    }
-
-    private let state = Mutex(State())
-
-    func request() {
-        let continuations = state.withLock { state -> [CheckedContinuation<Void, Never>] in
-            guard !state.hasBeenRequested else { return [] }
-            state.hasBeenRequested = true
-            let pending = Array(state.waiters.values)
-            state.waiters.removeAll()
-            state.cancelledWaiters.removeAll()
-            return pending
-        }
-        for continuation in continuations {
-            continuation.resume()
-        }
-    }
-
-    func wait() async {
-        if state.withLock({ $0.hasBeenRequested }) { return }
-
-        let waiterID = UUID()
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                register(continuation, id: waiterID)
-            }
-        } onCancel: {
-            cancelWaiter(waiterID)
-        }
-    }
-
-    private func register(_ continuation: CheckedContinuation<Void, Never>, id: UUID) {
-        let resumeImmediately = state.withLock { state -> Bool in
-            if state.hasBeenRequested {
-                return true
-            }
-            if state.cancelledWaiters.remove(id) != nil {
-                return true
-            }
-            state.waiters[id] = continuation
-            return false
-        }
-        if resumeImmediately {
-            continuation.resume()
-        }
-    }
-
-    private func cancelWaiter(_ id: UUID) {
-        let continuation = state.withLock { state -> CheckedContinuation<Void, Never>? in
-            guard let pending = state.waiters.removeValue(forKey: id) else {
-                state.cancelledWaiters.insert(id)
-                return nil
-            }
-            return pending
-        }
-        continuation?.resume()
-    }
-}
-
-/// Cancellation-aware exit signal for a spawned process.
-///
-/// Every `wait()` registers its own continuation, so cancelling one waiter
-/// resolves only that waiter: the observer itself is never "poisoned" and later
-/// waits (the SIGTERM grace window and the post-SIGKILL reap) still block until
-/// the process really exits. Continuations are resumed exactly once under a
-/// `Mutex`, including when cancellation is observed before registration.
-private final class FeatureProcessExitObserver: Sendable {
-    private struct State: Sendable {
-        var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
-        var cancelledWaiters: Set<UUID> = []
-        var exitCode: Int32?
-    }
-    private let state = Mutex(State())
-
-    /// Suspends until the process exits or the calling task is cancelled.
-    func wait() async {
-        if state.withLock({ $0.exitCode != nil }) { return }
-
-        let waiterID = UUID()
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                register(continuation, id: waiterID)
-            }
-        } onCancel: {
-            cancelWaiter(waiterID)
-        }
-    }
-
-    private func register(_ continuation: CheckedContinuation<Void, Never>, id: UUID) {
-        let resumeImmediately = state.withLock { state -> Bool in
-            if state.exitCode != nil {
-                return true
-            }
-            // Cancellation can be observed before the continuation exists; the
-            // recorded ticket makes the late registration resume right away
-            // instead of leaking a suspended waiter.
-            if state.cancelledWaiters.remove(id) != nil {
-                return true
-            }
-            state.waiters[id] = continuation
-            return false
-        }
-        if resumeImmediately {
-            continuation.resume()
-        }
-    }
-
-    /// Resolves a single cancelled waiter. Other waiters and the observer's
-    /// ability to report a later real exit are untouched.
-    private func cancelWaiter(_ id: UUID) {
-        let continuation = state.withLock { state -> CheckedContinuation<Void, Never>? in
-            guard let pending = state.waiters.removeValue(forKey: id) else {
-                state.cancelledWaiters.insert(id)
-                return nil
-            }
-            return pending
-        }
-        continuation?.resume()
-    }
-
-    /// Marks the process finished and resumes every waiter. Idempotent, and each
-    /// continuation is resumed exactly once.
-    func finish(exitCode: Int32) {
-        let continuations = state.withLock { state -> [CheckedContinuation<Void, Never>] in
-            guard state.exitCode == nil else {
-                return []
-            }
-            state.exitCode = exitCode
-            let pending = Array(state.waiters.values)
-            state.waiters.removeAll()
-            state.cancelledWaiters.removeAll()
-            return pending
-        }
-        for continuation in continuations {
-            continuation.resume()
-        }
-    }
-
-    var hasFinished: Bool {
-        state.withLock { $0.exitCode != nil }
-    }
-
-    var exitCode: Int32? {
-        state.withLock { $0.exitCode }
-    }
 }
 #endif
 

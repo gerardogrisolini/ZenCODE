@@ -1630,6 +1630,83 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(TerminalANSIText.stripANSI(refreshText).contains("second"))
     }
 
+    /// Characterizes the cross-file seam between the streaming write buffer
+    /// (+Streaming) and deferred overview publication (+Overviews): while a
+    /// thought stream is active the overview defers, and finishing the stream
+    /// must flush the buffered bytes to the terminal before the deferred
+    /// section renders, preserving transcript order.
+    @Test
+    func deferredOverviewRendersAfterBufferedStreamingFlushesInOrder() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+
+        // No trailing-edge timer is armed (streamingFlushDelay is nil in this
+        // renderer), so these bytes stay pending inside the coordinator.
+        await renderer.writeThought("still buffered reasoning\n")
+        let bufferedEventCount = await renderer.capturedWriteEvents().count
+        #expect(bufferedEventCount == 0)
+
+        let result = await renderer.renderSubAgentOverview(
+            signature: "agents:during-stream",
+            text: "\n👥 Sub-Agents:\n   1 total\n   running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave-with-stream"
+        )
+        #expect(result == .deferred)
+        #expect(await renderer.capturedWriteEvents().count == 0)
+
+        await renderer.finishStreamingOutput()
+
+        let stderr = TerminalANSIText.stripANSI(
+            (await renderer.capturedWriteEvents())
+                .filter { $0.channel == .standardError }
+                .map(\.text)
+                .joined()
+        )
+        let bufferedRange = stderr.range(of: "still buffered reasoning")
+        let overviewRange = stderr.range(of: "Sub-Agents")
+        #expect(bufferedRange != nil)
+        #expect(overviewRange != nil)
+        #expect(bufferedRange!.lowerBound < overviewRange!.lowerBound)
+        // The deferred section rendered exactly once, after the flush.
+        #expect(stderr.components(separatedBy: "Sub-Agents").count - 1 == 1)
+    }
+
+    /// Characterizes the mirroring epoch seam: the queue lives as stored
+    /// coordinator state while `advanceMirrorEpoch` mutates it from
+    /// +Overviews. Each advanced epoch must stamp subsequent notifications so
+    /// a turn boundary fences stale deliveries.
+    @Test
+    func mirrorEpochStampsNotificationsAtEachTurnBoundary() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let epochs = EpochRecorder()
+        await renderer.setOverviewMirroringHandler { _, _, _, epoch in
+            await epochs.append(epoch)
+        }
+
+        _ = await renderer.renderTaskGraphOverview(
+            signature: "tasks:1",
+            markdown: "# Tasks v1\n",
+            force: true,
+            rememberSignature: true
+        )
+        let firstEpoch = await renderer.advanceMirrorEpoch()
+        #expect(firstEpoch == 1)
+        _ = await renderer.renderTaskGraphOverview(
+            signature: "tasks:2",
+            markdown: "# Tasks v2\n",
+            force: true,
+            rememberSignature: true
+        )
+        await renderer.waitForOverviewMirrorsToDrain()
+
+        let recorded = await epochs.values()
+        #expect(recorded == [0, 1])
+    }
+
     @Test
     func subAgentOverviewIsAppendedWhenOtherOutputFollowedIt() async {
         let renderer = makeRenderer(
@@ -3167,5 +3244,19 @@ private actor OverviewMirrorRecorder {
 
     func recordedKinds() -> [TerminalChatRenderCoordinator.OverviewKind] {
         kinds
+    }
+}
+
+/// Records the epoch carried by each delivered mirror notification, so tests
+/// can characterize the turn-boundary fencing contract of the mirror queue.
+private actor EpochRecorder {
+    private var recorded: [Int] = []
+
+    func append(_ epoch: Int) {
+        recorded.append(epoch)
+    }
+
+    func values() -> [Int] {
+        recorded
     }
 }

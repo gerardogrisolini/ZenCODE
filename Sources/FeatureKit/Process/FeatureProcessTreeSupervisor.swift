@@ -41,6 +41,24 @@ public enum FeatureProcessTreeSupervisor {
         }
     }
 
+    /// Synchronous, allocation-free `TERM` immediately followed by `KILL` for a
+    /// teardown path that cannot suspend (actor `deinit`, session invalidation).
+    /// The signal targets the child's process group when the child leads one, so
+    /// a persistent session does not leak its descendants; otherwise it targets
+    /// the child only, never the caller's own group.
+    public static func terminateImmediately(_ process: Process) {
+        let pid = process.processIdentifier
+        guard pid > 0 else { return }
+        let target = isProcessGroupLeader(process) ? -pid : pid
+        #if canImport(Darwin)
+        _ = Darwin.kill(target, SIGTERM)
+        _ = Darwin.kill(target, SIGKILL)
+        #elseif canImport(Glibc)
+        _ = Glibc.kill(target, SIGTERM)
+        _ = Glibc.kill(target, SIGKILL)
+        #endif
+    }
+
     public static func isProcessGroupLeader(_ process: Process) -> Bool {
         let pid = process.processIdentifier
         guard pid > 0 else { return false }

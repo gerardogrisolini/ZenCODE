@@ -72,11 +72,11 @@ public actor FeaturePersistentProcess {
     deinit {
         stdoutReader?.cancel()
         stderrReader?.cancel()
-        try? inputHandle?.close()
-        try? outputHandle?.close()
-        try? errorHandle?.close()
+        FeatureProcessDescriptors.closeQuietly(inputHandle)
+        FeatureProcessDescriptors.closeQuietly(outputHandle)
+        FeatureProcessDescriptors.closeQuietly(errorHandle)
         if let process, process.isRunning {
-            Self.killImmediately(process)
+            FeatureProcessTreeSupervisor.terminateImmediately(process)
         }
     }
 
@@ -236,7 +236,7 @@ public actor FeaturePersistentProcess {
 
     private func startProcess() throws {
         #if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
-        signal(SIGPIPE, SIG_IGN)
+        FeatureProcessDescriptors.ignoreSIGPIPEOnce()
 
         let process = Process()
         process.executableURL = executableURL
@@ -272,9 +272,9 @@ public actor FeaturePersistentProcess {
         let inputHandle = inputPipe.fileHandleForWriting
         let outputHandle = outputPipe.fileHandleForReading
         let errorHandle = errorPipe.fileHandleForReading
-        Self.setNonBlocking(inputHandle.fileDescriptor)
-        Self.setNonBlocking(outputHandle.fileDescriptor)
-        Self.setNonBlocking(errorHandle.fileDescriptor)
+        FeatureProcessDescriptors.makeNonBlocking(inputHandle)
+        FeatureProcessDescriptors.makeNonBlocking(outputHandle)
+        FeatureProcessDescriptors.makeNonBlocking(errorHandle)
 
         self.process = process
         self.inputHandle = inputHandle
@@ -620,9 +620,9 @@ public actor FeaturePersistentProcess {
 
         currentProcess?.terminationHandler = nil
         if let currentProcess, currentProcess.isRunning {
-            Self.killImmediately(currentProcess)
+            FeatureProcessTreeSupervisor.terminateImmediately(currentProcess)
         }
-        try? inputHandle?.close()
+        FeatureProcessDescriptors.closeQuietly(inputHandle)
 
         // Join cancelled readers before closing their descriptors. This avoids
         // an old reader racing a recycled file-descriptor number owned by an
@@ -633,28 +633,9 @@ public actor FeaturePersistentProcess {
         if let stderrReader {
             _ = await stderrReader.value
         }
-        try? outputHandle?.close()
-        try? errorHandle?.close()
+        FeatureProcessDescriptors.closeQuietly(outputHandle)
+        FeatureProcessDescriptors.closeQuietly(errorHandle)
 
         stdoutBuffer.removeAll(keepingCapacity: true)
     }
-
-    #if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
-    private static func setNonBlocking(_ descriptor: Int32) {
-        let flags = fcntl(descriptor, F_GETFL)
-        guard flags >= 0 else {
-            return
-        }
-        _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
-    }
-
-    private static func killImmediately(_ process: Process) {
-        let processID = process.processIdentifier
-        guard processID > 0 else {
-            return
-        }
-        _ = kill(processID, SIGTERM)
-        _ = kill(processID, SIGKILL)
-    }
-    #endif
 }

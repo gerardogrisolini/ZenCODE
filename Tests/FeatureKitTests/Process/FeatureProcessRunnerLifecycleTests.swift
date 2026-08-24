@@ -118,6 +118,25 @@ struct FeatureProcessRunnerLifecycleTests {
     }
 
     @Test
+    func startupFailureThrowsWithoutLeavingAnObservedProcess() async throws {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode_missing_executable_\(UUID().uuidString)")
+
+        do {
+            _ = try await FeatureProcessRunner.run(
+                executableURL: missing,
+                arguments: [],
+                timeout: 5
+            )
+            Issue.record("Expected a launch failure for a missing executable.")
+        } catch is CancellationError {
+            Issue.record("Startup failure must not be reported as cancellation.")
+        } catch {
+            // Expected: the launch error is surfaced unchanged.
+        }
+    }
+
+    @Test
     func stderrIsCapturedAlongsideTheExitCode() async throws {
         let result = try await FeatureProcessRunner.run(
             executableURL: Self.shell,
