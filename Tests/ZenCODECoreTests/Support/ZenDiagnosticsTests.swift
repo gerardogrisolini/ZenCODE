@@ -112,7 +112,7 @@ struct ZenDiagnosticsTests {
     }
 
     @Test
-    func resolutionUsesZencodeLogOptInAndZencodeLogLevelOverride() {
+    func resolutionUsesZencodeLogAsTheOnlyDiagnosticConfigurationVariable() {
         #expect(
             ZenLoggerConfiguration.resolve(environment: [:])?.minimumLevel == nil
         )
@@ -132,13 +132,17 @@ struct ZenDiagnosticsTests {
             ZenLoggerConfiguration.resolve(environment: ["ZENCODE_LOG": "warning"])?
                 .minimumLevel == .warning
         )
+        // ZENCODE_LOG_LEVEL was removed and cannot enable or change diagnostics.
+        #expect(
+            ZenLoggerConfiguration.resolve(environment: ["ZENCODE_LOG_LEVEL": "debug"]) == nil
+        )
         #expect(
             ZenLoggerConfiguration.resolve(environment: ["ZENCODE_LOG": "1", "ZENCODE_LOG_LEVEL": "warning"])?
-                .minimumLevel == .warning
+                .minimumLevel == .info
         )
         #expect(
             ZenLoggerConfiguration.resolve(environment: ["ZENCODE_LOG": "debug", "ZENCODE_LOG_LEVEL": "error"])?
-                .minimumLevel == .error
+                .minimumLevel == .debug
         )
         for disabled in ["0", "false", "off", "no", "disable", "disabled", "  "] {
             #expect(
@@ -221,7 +225,7 @@ struct ZenDiagnosticsTests {
     @Test
     func explicitDisableOverridesAnEnablingEnvironmentOnTheStore() {
         let store = ZenLogConfigurationStore(
-            environmentProvider: { ["ZENCODE_LOG": "1", "ZENCODE_LOG_LEVEL": "warning"] }
+            environmentProvider: { ["ZENCODE_LOG": "warning"] }
         )
         #expect(store.resolvedConfiguration()?.minimumLevel == .warning)
         store.configure(.disabled)

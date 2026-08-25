@@ -80,7 +80,7 @@ Favorites for subsequent sessions.
 ## Opt-in diagnostics
 
 The same shared system-log backend carries ZenCODE's opt-in diagnostics
-(`ZENCODE_LOG`, threshold overridable with `ZENCODE_LOG_LEVEL`). Diagnostics are
+(`ZENCODE_LOG`, which also selects the threshold). Diagnostics are
 disabled by default, secret-redacted, bounded in size, published as public
 OSLog payloads, and emitted under subsystem `com.zencode.zen` with
 `diagnostics-<category>` categories (for example `diagnostics-MemoryService`),

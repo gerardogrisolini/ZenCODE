@@ -188,7 +188,8 @@ ZENCODE_LOG=debug zen
 
 Diagnostics are emitted to the platform system log — Unified Logging on macOS
 (subsystem `com.zencode.zen`, categories `diagnostics-*`) and syslog/journal on
-Linux/WSL — with `ZENCODE_LOG_LEVEL` overriding the threshold. They never write
+Linux/WSL — with `ZENCODE_LOG` selecting the threshold (for example, `debug`,
+`info`, `warning`, or `error`). They never write
 to stdout, stderr, or an application-owned file, so ACP JSON-RPC output remains
 clean. The legacy `ZENCODE_LOG_FILE` and `ZENCODE_LOG=stderr` destinations have
 been removed and are reported as invalid by `zen --doctor`. Use `/tools logs`

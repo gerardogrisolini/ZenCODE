@@ -18,13 +18,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
   ACP verbose file logging, and verbose-only provider diagnostics (tool
   exposure, prompt-cache usage) were removed; prompt-cache warnings and the
   structured tool execution log remain available.
+- Removed `ZENCODE_LOG_LEVEL`; `ZENCODE_LOG` is now the sole environment
+  variable that enables diagnostics and selects their threshold. The removed
+  variable is ignored when present.
 - Removed the application-owned diagnostic log destination: `ZenLogger` now
   emits through the shared platform system-log backend, so the
   `~/.zencode/logs/zencode.log` file, its per-run creation, custom timestamps,
   and the `ZENCODE_LOG_FILE` override are gone. `ZENCODE_LOG_FILE` is ignored
   and `ZENCODE_LOG=stderr`/`=2` no longer enable logging; `zen --doctor`
   reports both as legacy/invalid. Diagnostics remain opt-in via `ZENCODE_LOG`
-  (threshold overridable with `ZENCODE_LOG_LEVEL`) and are redacted, size
+  (which also selects the threshold) and are redacted, size
   bounded, and never written to stdout, stderr, or a file. Semantic-embedding
   fallback errors still always print one redacted ERROR line to stderr and
   additionally forward an opt-in copy to the system log, without

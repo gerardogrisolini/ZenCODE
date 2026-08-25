@@ -32,7 +32,7 @@ public enum ZenLogLevel: Int, Comparable, Sendable, CaseIterable {
         }
     }
 
-    /// Parses a level name from the `ZENCODE_LOG`/`ZENCODE_LOG_LEVEL` value.
+    /// Parses a level name from the `ZENCODE_LOG` value.
     public static func parse(_ rawValue: String) -> ZenLogLevel? {
         switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "debug", "trace", "verbose":
@@ -331,7 +331,6 @@ public struct ZenLoggerConfiguration: Sendable, Equatable {
     ///   set the threshold; `0`/`false`/`off`/`no` keep logging disabled.
     ///   `ZENCODE_LOG=stderr` and `ZENCODE_LOG=2` no longer select a
     ///   destination and do not enable logging.
-    /// - `ZENCODE_LOG_LEVEL` overrides the threshold.
     /// - `ZENCODE_LOG_FILE` is a removed legacy destination override and is
     ///   ignored entirely.
     ///
@@ -354,14 +353,8 @@ public struct ZenLoggerConfiguration: Sendable, Equatable {
             return nil
         }
 
-        var minimumLevel = ZenLogLevel.parse(rawEnable) ?? .info
-        if let rawLevel = environment["ZENCODE_LOG_LEVEL"]?.nilIfBlank,
-           let parsedLevel = ZenLogLevel.parse(rawLevel) {
-            minimumLevel = parsedLevel
-        }
-
         return ZenLoggerConfiguration(
-            minimumLevel: minimumLevel,
+            minimumLevel: ZenLogLevel.parse(rawEnable) ?? .info,
             destination: .systemLog
         )
     }
