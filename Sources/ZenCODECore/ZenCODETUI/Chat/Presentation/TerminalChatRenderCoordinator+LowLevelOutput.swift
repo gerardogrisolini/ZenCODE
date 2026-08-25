@@ -18,9 +18,10 @@ extension TerminalChatRenderCoordinator {
             return
         }
         var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: channelIsTerminal(channel)
+            isEnabled: channelIsTerminal(channel),
+            presentationPrefixWidth: TerminalANSIText.visibleWidth(linePrefix)
         )
-        let rendered = indentedMarkdown(
+        let rendered = Self.indentedMarkdown(
             formatter.consume(markdown) + formatter.finish(),
             with: linePrefix
         )
@@ -42,20 +43,19 @@ extension TerminalChatRenderCoordinator {
 
     /// Applies presentation-only nesting after Markdown has been rendered, so
     /// prefixes cannot change the source Markdown's block structure.
-    private func indentedMarkdown(_ text: String, with linePrefix: String) -> String {
+    static func indentedMarkdown(_ text: String, with linePrefix: String) -> String {
         guard !linePrefix.isEmpty, !text.isEmpty else {
             return text
         }
 
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        return lines.enumerated().map { index, line in
-            // `split` retains a final empty element for a trailing newline. Do
-            // not turn that terminal newline into a whitespace-only row.
-            if line.isEmpty, index == lines.indices.last {
-                return ""
-            }
-            return linePrefix + line
-        }.joined(separator: "\n")
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        // A fenced code block closes with a newline. The normal output writer
+        // supplies its own terminator, so retaining this final element would
+        // create an extra unindented terminal row after nested Markdown.
+        while lines.last?.isEmpty == true {
+            lines.removeLast()
+        }
+        return lines.map { linePrefix + $0 }.joined(separator: "\n")
     }
 
     func writeSystemMessageWithoutInterrupt(_ text: String) {

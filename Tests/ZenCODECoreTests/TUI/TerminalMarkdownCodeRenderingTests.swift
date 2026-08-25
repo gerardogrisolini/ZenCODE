@@ -11,6 +11,105 @@ import Testing
 @Suite
 struct TerminalMarkdownCodeRenderingTests {
     @Test
+    func indentedCodeFenceDoesNotAddAnUnindentedBlankRow() {
+        var stream = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: 32,
+            supportsHyperlinks: false,
+            palette: .dark
+        )
+
+        let rendered = stream.consume("```text\nvalue\n```\n") + stream.finish()
+        let indented = TerminalChatRenderCoordinator.indentedMarkdown(
+            rendered,
+            with: "   "
+        )
+        let rows = TerminalANSIText.stripANSI(indented)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+
+        #expect(rows.count == 2)
+        #expect(rows.allSatisfy { $0.hasPrefix("   ") })
+    }
+
+    @Test
+    func tablesReservePresentationIndentationInTheirLayoutWidth() {
+        let terminalWidth = 24
+        let prefix = "   "
+        var stream = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: terminalWidth,
+            supportsHyperlinks: false,
+            presentationPrefixWidth: TerminalANSIText.visibleWidth(prefix),
+            palette: .dark
+        )
+        let source = """
+        | Name | Description |
+        | --- | --- |
+        | item | A deliberately long table value |
+        """
+
+        let rendered = stream.consume(source) + stream.finish()
+        let nested = TerminalChatRenderCoordinator.indentedMarkdown(
+            rendered,
+            with: prefix
+        )
+        var isAtLineStart = true
+        let chatInsetRows = TerminalANSIText.stripANSI(
+            TerminalChatTextFormatting.chatLineInsetApplied(
+                to: nested,
+                prefix: TerminalChatTextFormatting.chatLineInsetPrefix,
+                isAtLineStart: &isAtLineStart
+            )
+        )
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        #expect(!chatInsetRows.isEmpty)
+        #expect(chatInsetRows.allSatisfy {
+            TerminalANSIText.visibleWidth($0) <= terminalWidth
+        })
+    }
+
+    @Test
+    func fencedCodeBlocksReservePresentationIndentationAndChatInsetInTheirLayoutWidth() {
+        let terminalWidth = 24
+        let prefix = "   "
+        var stream = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: terminalWidth,
+            supportsHyperlinks: false,
+            presentationPrefixWidth: TerminalANSIText.visibleWidth(prefix),
+            palette: .dark
+        )
+        let source = """
+        ```swift
+        let value = "a deliberately long code value"
+        ```
+        """
+
+        let rendered = stream.consume(source) + stream.finish()
+        let nested = TerminalChatRenderCoordinator.indentedMarkdown(
+            rendered,
+            with: prefix
+        )
+        var isAtLineStart = true
+        let chatInsetRows = TerminalANSIText.stripANSI(
+            TerminalChatTextFormatting.chatLineInsetApplied(
+                to: nested,
+                prefix: TerminalChatTextFormatting.chatLineInsetPrefix,
+                isAtLineStart: &isAtLineStart
+            )
+        )
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        #expect(!chatInsetRows.isEmpty)
+        #expect(chatInsetRows.allSatisfy {
+            TerminalANSIText.visibleWidth($0) <= terminalWidth
+        })
+    }
+
+    @Test
     func completeAndStreamingCodeBlocksShareHeaderWrappingAndWidthSemantics() {
         let source = """
         ```swift

@@ -12,6 +12,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Nested Sub-Agent Markdown code blocks no longer add a spurious blank row, and
+  nested tables and code blocks now reserve their indentation when fitting to
+  the terminal width.
 - Fixed live Sub-Agents rendering losing its terminal anchor when the first
   shared-chat message makes the compact Chat header appear.
 

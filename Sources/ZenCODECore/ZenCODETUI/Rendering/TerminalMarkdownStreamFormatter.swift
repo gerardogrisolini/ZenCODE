@@ -118,6 +118,9 @@ public struct TerminalMarkdownStreamFormatter {
     private let fixedRenderWidth: Int?
     private let supportsHyperlinks: Bool
     private let removesUnbalancedStrongMarkers: Bool
+    /// Visible columns occupied by presentation added after Markdown rendering,
+    /// such as nested sub-agent response indentation.
+    private let presentationPrefixWidth: Int
     private let palette: TerminalMarkdownPalette
     
     /// Visible terminal width used for structured Markdown reflow. When no fixed
@@ -161,12 +164,14 @@ public struct TerminalMarkdownStreamFormatter {
     public init(
         isEnabled: Bool,
         removesUnbalancedStrongMarkers: Bool = false,
-        usesTerminalWidthForStructuredContent: Bool = true
+        usesTerminalWidthForStructuredContent: Bool = true,
+        presentationPrefixWidth: Int = 0
     ) {
         self.isEnabled = isEnabled
         self.fixedRenderWidth = usesTerminalWidthForStructuredContent ? nil : 0
         self.supportsHyperlinks = Self.detectHyperlinkSupport()
         self.removesUnbalancedStrongMarkers = removesUnbalancedStrongMarkers
+        self.presentationPrefixWidth = max(0, presentationPrefixWidth)
         self.palette = .detected
     }
     
@@ -176,12 +181,14 @@ public struct TerminalMarkdownStreamFormatter {
         supportsHyperlinks: Bool,
         removesUnbalancedStrongMarkers: Bool = false,
         usesTerminalWidthForStructuredContent: Bool = true,
+        presentationPrefixWidth: Int = 0,
         palette: TerminalMarkdownPalette? = nil
     ) {
         self.isEnabled = isEnabled
         self.fixedRenderWidth = usesTerminalWidthForStructuredContent ? renderWidth : 0
         self.supportsHyperlinks = supportsHyperlinks
         self.removesUnbalancedStrongMarkers = removesUnbalancedStrongMarkers
+        self.presentationPrefixWidth = max(0, presentationPrefixWidth)
         self.palette = palette ?? .detected
     }
     
@@ -357,7 +364,7 @@ public struct TerminalMarkdownStreamFormatter {
     ) -> String {
         let newline = appendsNewline ? "\n" : ""
         let trimmed = line.trimmingCharacters(in: .whitespaces)
-        
+
         // Fences are presentation boundaries, never literal terminal output.
         // The exact opening marker/run is retained so shorter inner runs and
         // fence-looking payload text remain code rather than being discarded.
@@ -1203,8 +1210,11 @@ public struct TerminalMarkdownStreamFormatter {
         // Structured surfaces (tables, thematic rules, code blocks) still need a
         // terminal width to preserve borders and padding; free conversational
         // prose is never reflowed here and relies on the terminal's own wrap.
-        // Leave one column for the chat inset prefix.
-        let rendererWidth = renderWidth > 0 ? max(1, renderWidth - 1) : 0
+        // Leave one column for the chat inset plus any presentation-only prefix
+        // applied by the caller after Markdown has been laid out.
+        let rendererWidth = renderWidth > 0
+            ? max(1, renderWidth - 1 - presentationPrefixWidth)
+            : 0
         return TerminalSwiftMarkdownRenderer(
             supportsHyperlinks: supportsHyperlinks,
             renderWidth: rendererWidth,
@@ -1213,13 +1223,13 @@ public struct TerminalMarkdownStreamFormatter {
     }
 
     /// Code is emitted directly by the stream (rather than via `makeRenderer`)
-    /// and therefore reserves the same one-column chat inset as a complete
-    /// Markdown renderer created above.
+    /// and therefore reserves the same chat inset and presentation prefix as a
+    /// complete Markdown renderer created above.
     private var codeBlockWidth: Int {
         guard renderWidth > 0 else {
             return 0
         }
-        return max(1, renderWidth - 1)
+        return max(1, renderWidth - 1 - presentationPrefixWidth)
     }
     
     private func shouldFlushPendingLineForStreaming(_ line: String) -> Bool {
