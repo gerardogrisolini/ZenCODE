@@ -65,6 +65,20 @@ public enum TerminalCheckboxMenu {
         case endOfInput
     }
 
+    enum SelectionState<Value: Hashable> {
+        case multiple(Set<Value>)
+        case single(Value?)
+
+        var helpLines: [String] {
+            switch self {
+            case .multiple:
+                ["↑/↓ move · Space/X toggle · A all · N none · Enter confirm · Esc/Q cancel"]
+            case .single:
+                ["↑/↓ move · Enter select · Esc/Q cancel"]
+            }
+        }
+    }
+
     static let escapeSequenceInitialTimeout: Int32 = 120
     static let escapeSequenceContinuationTimeout: Int32 = 60
     static let escapeSequenceMaximumLength = 24
@@ -162,61 +176,11 @@ public enum TerminalCheckboxMenu {
             AgentOutput.standardError.writeString("\(title)\nNo selectable items.\n")
             return initialSelection
         }
-
-        var selectedValues = initialSelection
-        var focusedIndex = 0
-        var renderedFrame: RenderedFrame?
-
-        AgentOutput.standardError.writeString("\u{1B}[?25l")
-        defer {
-            AgentOutput.standardError.writeString("\u{1B}[?25h")
-        }
-
-        let rawInput = TerminalRawInput()
-        return rawInput.withRawTerminal {
-            while true {
-                clear(frame: renderedFrame)
-                renderedFrame = render(
-                    title: title,
-                    items: items,
-                    selectedValues: selectedValues,
-                    focusedIndex: focusedIndex,
-                    reservedBottomRows: reservedBottomRows,
-                    reserveSpaceBeforeDrawing: renderedFrame == nil
-                )
-
-                guard let key = readKey(rawInput: rawInput, shouldCancel: shouldCancel) else {
-                    clear(frame: renderedFrame)
-                    return nil
-                }
-
-                switch key {
-                case .up:
-                    focusedIndex = max(0, focusedIndex - 1)
-                case .down:
-                    focusedIndex = min(items.count - 1, focusedIndex + 1)
-                case .toggle:
-                    let value = items[focusedIndex].value
-                    if selectedValues.contains(value) {
-                        selectedValues.remove(value)
-                    } else {
-                        selectedValues.insert(value)
-                    }
-                case .selectAll:
-                    selectedValues = Set(items.map(\.value))
-                case .selectNone:
-                    selectedValues.removeAll()
-                case .submit:
-                    clear(frame: renderedFrame)
-                    return selectedValues
-                case .cancel:
-                    clear(frame: renderedFrame)
-                    return nil
-                case .unknown:
-                    continue
-                }
-            }
-        }
+        guard case let .multiple(selectedValues)? = selectMenu(
+            title: title, items: items, initialState: .multiple(initialSelection),
+            focusedIndex: 0, reservedBottomRows: reservedBottomRows, shouldCancel: shouldCancel
+        ) else { return nil }
+        return selectedValues
     }
 
     public static func selectOne<Value: Hashable>(
@@ -225,13 +189,8 @@ public enum TerminalCheckboxMenu {
         selected initialSelection: Value?,
         reservedBottomRows: Int = 0
     ) -> Value? {
-        selectOne(
-            title: title,
-            items: items,
-            selected: initialSelection,
-            reservedBottomRows: reservedBottomRows,
-            shouldCancel: nil
-        )
+        selectOne(title: title, items: items, selected: initialSelection,
+                  reservedBottomRows: reservedBottomRows, shouldCancel: nil)
     }
 
     static func selectOne<Value: Hashable>(
@@ -245,54 +204,92 @@ public enum TerminalCheckboxMenu {
             AgentOutput.standardError.writeString("\(title)\nNo selectable items.\n")
             return nil
         }
+        let focusedIndex = items.firstIndex { $0.value == initialSelection } ?? 0
+        guard case let .single(selectedValue)? = selectMenu(
+            title: title, items: items, initialState: .single(initialSelection),
+            focusedIndex: focusedIndex, reservedBottomRows: reservedBottomRows, shouldCancel: shouldCancel
+        ) else { return nil }
+        return selectedValue
+    }
 
-        var focusedIndex = items.firstIndex { item in
-            item.value == initialSelection
-        } ?? 0
-        var selectedValue = initialSelection
+    static func selectMenu<Value: Hashable>(
+        title: String,
+        items: [TerminalCheckboxMenuItem<Value>],
+        initialState: SelectionState<Value>,
+        focusedIndex initialFocusedIndex: Int,
+        reservedBottomRows: Int,
+        shouldCancel: (@Sendable () -> Bool)?
+    ) -> SelectionState<Value>? {
+        var state = initialState
+        var focusedIndex = initialFocusedIndex
         var renderedFrame: RenderedFrame?
-
         AgentOutput.standardError.writeString("\u{1B}[?25l")
-        defer {
-            AgentOutput.standardError.writeString("\u{1B}[?25h")
-        }
+        defer { AgentOutput.standardError.writeString("\u{1B}[?25h") }
 
         let rawInput = TerminalRawInput()
         return rawInput.withRawTerminal {
             while true {
                 clear(frame: renderedFrame)
-                renderedFrame = renderSingle(
-                    title: title,
-                    items: items,
-                    selectedValue: selectedValue,
-                    focusedIndex: focusedIndex,
+                renderedFrame = renderMenu(
+                    title: title, items: items, selection: state, focusedIndex: focusedIndex,
                     reservedBottomRows: reservedBottomRows,
                     reserveSpaceBeforeDrawing: renderedFrame == nil
                 )
-
                 guard let key = readKey(rawInput: rawInput, shouldCancel: shouldCancel) else {
                     clear(frame: renderedFrame)
                     return nil
                 }
-
-                switch key {
-                case .up:
-                    focusedIndex = max(0, focusedIndex - 1)
-                    selectedValue = items[focusedIndex].value
-                case .down:
-                    focusedIndex = min(items.count - 1, focusedIndex + 1)
-                    selectedValue = items[focusedIndex].value
-                case .toggle, .submit:
+                switch apply(key: key, items: items, state: &state, focusedIndex: &focusedIndex) {
+                case .continue: continue
+                case .submit:
                     clear(frame: renderedFrame)
-                    return items[focusedIndex].value
+                    return state
                 case .cancel:
                     clear(frame: renderedFrame)
                     return nil
-                case .selectAll, .selectNone, .unknown:
-                    continue
                 }
             }
         }
+    }
+
+    enum SelectionAction { case `continue`, submit, cancel }
+
+    static func apply<Value: Hashable>(
+        key: Key,
+        items: [TerminalCheckboxMenuItem<Value>],
+        state: inout SelectionState<Value>,
+        focusedIndex: inout Int
+    ) -> SelectionAction {
+        switch key {
+        case .up:
+            focusedIndex = max(0, focusedIndex - 1)
+            if case .single = state { state = .single(items[focusedIndex].value) }
+        case .down:
+            focusedIndex = min(items.count - 1, focusedIndex + 1)
+            if case .single = state { state = .single(items[focusedIndex].value) }
+        case .toggle:
+            switch state {
+            case var .multiple(selectedValues):
+                let value = items[focusedIndex].value
+                selectedValues.formSymmetricDifference([value])
+                state = .multiple(selectedValues)
+            case .single:
+                state = .single(items[focusedIndex].value)
+                return .submit
+            }
+        case .selectAll:
+            if case .multiple = state { state = .multiple(Set(items.map(\.value))) }
+        case .selectNone:
+            if case .multiple = state { state = .multiple([]) }
+        case .submit:
+            if case .single = state { state = .single(items[focusedIndex].value) }
+            return .submit
+        case .cancel:
+            return .cancel
+        case .unknown:
+            break
+        }
+        return .continue
     }
 
     public static func promptLine(
@@ -323,62 +320,18 @@ public enum TerminalCheckboxMenu {
         reservedBottomRows: Int,
         shouldCancel: (@Sendable () -> Bool)?
     ) -> String? {
-        var didReserveFrameSpace = false
         let rawInput = TerminalRawInput()
         guard rawInput.beginRawMode() else {
             return fallbackPromptLine(
-                title: title,
-                prompt: prompt,
-                defaultValue: defaultValue,
-                allowEmpty: allowEmpty,
-                help: help,
-                reservedBottomRows: reservedBottomRows
+                title: title, prompt: prompt, defaultValue: defaultValue,
+                allowEmpty: allowEmpty, help: help, reservedBottomRows: reservedBottomRows
             )
         }
-        defer {
-            rawInput.restoreRawMode()
-        }
-
-        while true {
-            let suffix = defaultValue.map { " [\($0)]" } ?? ""
-            let promptText = "\(prompt)\(suffix): "
-            let helpLines = inputHelpLines(help)
-            let renderedFrame = renderInput(
-                title: title,
-                prompt: promptText,
-                help: help,
-                reservedBottomRows: reservedBottomRows,
-                reserveSpaceBeforeDrawing: !didReserveFrameSpace
-            )
-            didReserveFrameSpace = true
-            let inputRow = renderedFrame.row + helpLines.count + 3
-            let inputColumn = min(3 + promptText.count, terminalGeometry().columns)
-            AgentOutput.standardError.writeString("\u{1B}[?25h\u{1B}[\(inputRow);\(inputColumn)H")
-
-            let readResult = readInputLine(rawInput: rawInput, shouldCancel: shouldCancel)
-            switch readResult {
-            case .submitted(let rawValue):
-                clear(frame: renderedFrame)
-
-                let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                if value == "?", let help {
-                    AgentOutput.standardError.writeString("\(help)\n")
-                    continue
-                }
-                if value.isEmpty, let defaultValue {
-                    return defaultValue
-                }
-                if value.isEmpty, allowEmpty {
-                    return ""
-                }
-                if !value.isEmpty {
-                    return value
-                }
-            case .cancel, .endOfInput:
-                clear(frame: renderedFrame)
-                return nil
-            }
-        }
+        defer { rawInput.restoreRawMode() }
+        return readPromptLine(
+            title: title, prompt: prompt, defaultValue: defaultValue,
+            allowEmpty: allowEmpty, help: help, reservedBottomRows: reservedBottomRows
+        ) { readInputLine(rawInput: rawInput, shouldCancel: shouldCancel) }
     }
 
     static func fallbackPromptLine(
@@ -389,15 +342,30 @@ public enum TerminalCheckboxMenu {
         help: String?,
         reservedBottomRows: Int
     ) -> String? {
+        readPromptLine(
+            title: title, prompt: prompt, defaultValue: defaultValue,
+            allowEmpty: allowEmpty, help: help, reservedBottomRows: reservedBottomRows
+        ) {
+            Swift.readLine().map(InputLineReadResult.submitted) ?? .endOfInput
+        }
+    }
+
+    static func readPromptLine(
+        title: String,
+        prompt: String,
+        defaultValue: String?,
+        allowEmpty: Bool,
+        help: String?,
+        reservedBottomRows: Int,
+        read: () -> InputLineReadResult
+    ) -> String? {
         var didReserveFrameSpace = false
         while true {
             let suffix = defaultValue.map { " [\($0)]" } ?? ""
             let promptText = "\(prompt)\(suffix): "
             let helpLines = inputHelpLines(help)
             let renderedFrame = renderInput(
-                title: title,
-                prompt: promptText,
-                help: help,
+                title: title, prompt: promptText, help: help,
                 reservedBottomRows: reservedBottomRows,
                 reserveSpaceBeforeDrawing: !didReserveFrameSpace
             )
@@ -405,26 +373,23 @@ public enum TerminalCheckboxMenu {
             let inputRow = renderedFrame.row + helpLines.count + 3
             let inputColumn = min(3 + promptText.count, terminalGeometry().columns)
             AgentOutput.standardError.writeString("\u{1B}[?25h\u{1B}[\(inputRow);\(inputColumn)H")
-            guard let rawValue = Swift.readLine() else {
+
+            switch read() {
+            case let .submitted(rawValue):
+                clear(frame: renderedFrame)
+                let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if value == "?", let help {
+                    AgentOutput.standardError.writeString("\(help)\n")
+                    continue
+                }
+                if value.isEmpty, let defaultValue { return defaultValue }
+                if value.isEmpty, allowEmpty { return "" }
+                if !value.isEmpty { return value }
+            case .cancel, .endOfInput:
                 clear(frame: renderedFrame)
                 return nil
             }
-            clear(frame: renderedFrame)
-
-            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if value == "?", let help {
-                AgentOutput.standardError.writeString("\(help)\n")
-                continue
-            }
-            if value.isEmpty, let defaultValue {
-                return defaultValue
-            }
-            if value.isEmpty, allowEmpty {
-                return ""
-            }
-            if !value.isEmpty {
-                return value
-            }
         }
     }
+
 }

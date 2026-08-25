@@ -6,6 +6,15 @@
 import Foundation
 
 extension ZenCODESetupRunner {
+    struct SubscriptionModelCandidate {
+        let manifestID: String
+        let modelID: String
+        let title: String
+        let detail: String
+        let contextWindowTokenLimit: Int?
+        let thinkingSupport: ModelThinkingSupport?
+    }
+
     static func reconfigureModels(
         providerID: UUID,
         providerName: String,
@@ -608,96 +617,75 @@ extension ZenCODESetupRunner {
     }
 
 
-    static func selectChatGPTSubscriptionModels(
-        defaultModels: [AgentSettingsModelManifest] = []
-    ) throws -> [CodexAgentModel.ModelOption] {
-        let models = CodexAgentModel.availableModels
-        let defaultSelection = chatGPTSubscriptionModelSelectionDefaultIndexes(
-            models: models,
-            defaultModels: defaultModels
-        )
-        let items = models.enumerated().map { index, model in
+    static var chatGPTSubscriptionModelCandidates: [SubscriptionModelCandidate] {
+        CodexAgentModel.availableModels.map { model in
             let context = model.contextWindowTokenLimit.map { "ctx \($0)" } ?? "ctx default"
-            return TerminalCheckboxMenuItem(
-                value: index,
+            return SubscriptionModelCandidate(
+                manifestID: CodexAgentModel.selectionID(forModelID: model.modelID),
+                modelID: model.modelID,
                 title: model.title,
-                detail: "\(model.modelID) [\(context), thinking]"
+                detail: "\(model.modelID) [\(context), thinking]",
+                contextWindowTokenLimit: model.contextWindowTokenLimit,
+                thinkingSupport: model.thinkingSupport
             )
         }
-        let selectedIndexes = promptMenuSelection(
-            title: "ChatGPT Subscription models",
-            items: items,
-            selected: defaultSelection
-        )
-        return selectedIndexes.sorted().compactMap { index in
-            models.indices.contains(index) ? models[index] : nil
-        }
     }
 
-
-    static func chatGPTSubscriptionModelSelectionDefaultIndexes(
-        models: [CodexAgentModel.ModelOption],
-        defaultModels: [AgentSettingsModelManifest]
-    ) -> Set<Int> {
-        guard !defaultModels.isEmpty else {
-            return models.isEmpty ? [] : [0]
-        }
-        let selectedIndexes = defaultModels.compactMap { defaultModel in
-            models.firstIndex { option in
-                option.modelID == defaultModel.modelID
-                    || CodexAgentModel.selectionID(forModelID: option.modelID) == defaultModel.id
-            }
-        }
-        guard !selectedIndexes.isEmpty else {
-            return models.isEmpty ? [] : [0]
-        }
-        return Set(selectedIndexes)
-    }
-
-
-    static func selectAnthropicSubscriptionModels(
-        defaultModels: [AgentSettingsModelManifest] = []
-    ) throws -> [AnthropicSubscriptionModel.ModelOption] {
-        let models = AnthropicSubscriptionModel.availableModels
-        let defaultSelection = anthropicSubscriptionModelSelectionDefaultIndexes(
-            models: models,
-            defaultModels: defaultModels
-        )
-        let items = models.enumerated().map { index, model in
+    static var anthropicSubscriptionModelCandidates: [SubscriptionModelCandidate] {
+        AnthropicSubscriptionModel.availableModels.map { model in
             let context = model.contextWindowTokenLimit.map { "ctx \($0)" } ?? "ctx default"
             let thinking = model.thinkingSupport?.supportsThinking == true ? ", thinking" : ""
-            return TerminalCheckboxMenuItem(
-                value: index,
+            return SubscriptionModelCandidate(
+                manifestID: AnthropicSubscriptionModel.selectionID(forModelID: model.modelID),
+                modelID: model.modelID,
                 title: model.title,
-                detail: "\(model.modelID) [\(context)\(thinking)]"
+                detail: "\(model.modelID) [\(context)\(thinking)]",
+                contextWindowTokenLimit: model.contextWindowTokenLimit,
+                thinkingSupport: model.thinkingSupport
             )
-        }
-        let selectedIndexes = promptMenuSelection(
-            title: "Claude Subscription models",
-            items: items,
-            selected: defaultSelection
-        )
-        return selectedIndexes.sorted().compactMap { index in
-            models.indices.contains(index) ? models[index] : nil
         }
     }
 
+    static func selectSubscriptionModelCandidates(
+        _ candidates: [SubscriptionModelCandidate],
+        title: String,
+        defaultModels: [AgentSettingsModelManifest] = []
+    ) throws -> [SubscriptionModelCandidate] {
+        let items = candidates.enumerated().map { index, candidate in
+            TerminalCheckboxMenuItem(
+                value: index,
+                title: candidate.title,
+                detail: candidate.detail
+            )
+        }
+        let selectedIndexes = promptMenuSelection(
+            title: title,
+            items: items,
+            selected: subscriptionModelSelectionDefaultIndexes(
+                candidates: candidates,
+                defaultModels: defaultModels
+            )
+        )
+        return selectedIndexes.sorted().compactMap { index in
+            candidates.indices.contains(index) ? candidates[index] : nil
+        }
+    }
 
-    static func anthropicSubscriptionModelSelectionDefaultIndexes(
-        models: [AnthropicSubscriptionModel.ModelOption],
+    static func subscriptionModelSelectionDefaultIndexes(
+        candidates: [SubscriptionModelCandidate],
         defaultModels: [AgentSettingsModelManifest]
     ) -> Set<Int> {
         guard !defaultModels.isEmpty else {
-            return models.isEmpty ? [] : [0]
+            return candidates.isEmpty ? [] : [0]
         }
         let selectedIndexes = defaultModels.compactMap { defaultModel in
-            models.firstIndex { option in
-                option.modelID == defaultModel.modelID
-                    || AnthropicSubscriptionModel.selectionID(forModelID: option.modelID) == defaultModel.id
+            candidates.firstIndex { candidate in
+                candidate.modelID == defaultModel.modelID
+                    || candidate.manifestID == defaultModel.id
             }
         }
         guard !selectedIndexes.isEmpty else {
-            return models.isEmpty ? [] : [0]
+            return candidates.isEmpty ? [] : [0]
         }
         return Set(selectedIndexes)
     }

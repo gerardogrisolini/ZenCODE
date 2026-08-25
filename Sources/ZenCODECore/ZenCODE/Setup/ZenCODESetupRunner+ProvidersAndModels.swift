@@ -402,11 +402,13 @@ extension ZenCODESetupRunner {
         let name = CodexAgentModel.displayTitle
         let baseURL = AgentRemoteProvider.chatGPTSubscriptionBaseURL
         let chatEndpoint = AgentRemoteChatEndpoint.responses
-        let models = try selectChatGPTSubscriptionModels(
+        let models = try selectSubscriptionModelCandidates(
+            chatGPTSubscriptionModelCandidates,
+            title: "ChatGPT Subscription models",
             defaultModels: existingModels
-        ).map { option in
-            chatGPTSubscriptionModelManifest(
-                option: option,
+        ).map { candidate in
+            subscriptionModelManifest(
+                candidate: candidate,
                 providerID: id,
                 providerName: name,
                 baseURL: baseURL,
@@ -439,11 +441,13 @@ extension ZenCODESetupRunner {
         let name = AnthropicSubscriptionModel.displayTitle
         let baseURL = AgentRemoteProvider.anthropicSubscriptionBaseURL
         let chatEndpoint = AgentRemoteChatEndpoint.responses
-        let models = try selectAnthropicSubscriptionModels(
+        let models = try selectSubscriptionModelCandidates(
+            anthropicSubscriptionModelCandidates,
+            title: "Claude Subscription models",
             defaultModels: existingModels
-        ).map { option in
-            anthropicSubscriptionModelManifest(
-                option: option,
+        ).map { candidate in
+            subscriptionModelManifest(
+                candidate: candidate,
                 providerID: id,
                 providerName: name,
                 baseURL: baseURL,

@@ -11,47 +11,28 @@ import Glibc
 import Foundation
 
 extension TerminalCheckboxMenu {
-    static func render<Value: Hashable>(
+    static func renderMenu<Value: Hashable>(
         title: String,
         items: [TerminalCheckboxMenuItem<Value>],
-        selectedValues: Set<Value>,
+        selection: SelectionState<Value>,
         focusedIndex: Int,
         reservedBottomRows: Int,
         reserveSpaceBeforeDrawing: Bool
     ) -> RenderedFrame {
         let itemLines = groupedItemLines(items: items) { offset, item in
             let focus = offset == focusedIndex ? ">" : " "
-            let checkbox = selectedValues.contains(item.value) ? "[x]" : "[ ]"
-            return "\(focus) \(checkbox) \(item.title)\(detailSuffix(for: item))"
-        }
-
-        return renderFrame(
-            title: title,
-            helpLines: ["↑/↓ move · Space/X toggle · A all · N none · Enter confirm · Esc/Q cancel"],
-            itemLines: itemLines,
-            focusedIndex: focusedIndex,
-            reservedBottomRows: reservedBottomRows,
-            reserveSpaceBeforeDrawing: reserveSpaceBeforeDrawing
-        )
-    }
-
-    static func renderSingle<Value: Hashable>(
-        title: String,
-        items: [TerminalCheckboxMenuItem<Value>],
-        selectedValue: Value?,
-        focusedIndex: Int,
-        reservedBottomRows: Int,
-        reserveSpaceBeforeDrawing: Bool
-    ) -> RenderedFrame {
-        let itemLines = groupedItemLines(items: items) { offset, item in
-            let focus = offset == focusedIndex ? ">" : " "
-            let marker = item.value == selectedValue ? "(x)" : "( )"
+            let marker: String
+            switch selection {
+            case let .multiple(selectedValues):
+                marker = selectedValues.contains(item.value) ? "[x]" : "[ ]"
+            case let .single(selectedValue):
+                marker = item.value == selectedValue ? "(x)" : "( )"
+            }
             return "\(focus) \(marker) \(item.title)\(detailSuffix(for: item))"
         }
-
         return renderFrame(
             title: title,
-            helpLines: ["↑/↓ move · Enter select · Esc/Q cancel"],
+            helpLines: selection.helpLines,
             itemLines: itemLines,
             focusedIndex: focusedIndex,
             reservedBottomRows: reservedBottomRows,

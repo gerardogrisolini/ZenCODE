@@ -27,47 +27,24 @@ extension ZenCODESetupRunner {
         )
     }
 
-    static func chatGPTSubscriptionModelManifest(
-        option: CodexAgentModel.ModelOption,
+    static func subscriptionModelManifest(
+        candidate: SubscriptionModelCandidate,
         providerID: UUID,
         providerName: String,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint
     ) -> AgentSettingsModelManifest {
-        let manifestID = CodexAgentModel.selectionID(forModelID: option.modelID)
         return AgentSettingsModelManifestFactory.remoteAPIModel(
-            manifestID: manifestID,
-            title: option.title,
-            modelID: option.modelID,
+            manifestID: candidate.manifestID,
+            title: candidate.title,
+            modelID: candidate.modelID,
             providerID: providerID,
             providerName: providerName,
             baseURL: baseURL,
             chatEndpoint: chatEndpoint,
-            configuredContextWindowLimit: option.contextWindowTokenLimit,
+            configuredContextWindowLimit: candidate.contextWindowTokenLimit,
             generationParameterOverrides: nil,
-            thinkingSupport: option.thinkingSupport
-        )
-    }
-
-    static func anthropicSubscriptionModelManifest(
-        option: AnthropicSubscriptionModel.ModelOption,
-        providerID: UUID,
-        providerName: String,
-        baseURL: String,
-        chatEndpoint: AgentRemoteChatEndpoint
-    ) -> AgentSettingsModelManifest {
-        let manifestID = AnthropicSubscriptionModel.selectionID(forModelID: option.modelID)
-        return AgentSettingsModelManifestFactory.remoteAPIModel(
-            manifestID: manifestID,
-            title: option.title,
-            modelID: option.modelID,
-            providerID: providerID,
-            providerName: providerName,
-            baseURL: baseURL,
-            chatEndpoint: chatEndpoint,
-            configuredContextWindowLimit: option.contextWindowTokenLimit,
-            generationParameterOverrides: nil,
-            thinkingSupport: option.thinkingSupport
+            thinkingSupport: candidate.thinkingSupport
         )
     }
 

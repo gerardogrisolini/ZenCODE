@@ -326,4 +326,34 @@ struct ZenCODESetupProviderPresetTests {
         #expect(optional.allowEmpty)
         #expect(optional.label == "New API key (empty clears it)")
     }
+
+    @Test
+    func subscriptionCandidatesProjectBothCatalogsInOrder() {
+        let expected = [
+            CodexAgentModel.availableModels.map { model in (model.title, model.modelID, CodexAgentModel.selectionID(forModelID: model.modelID), "\(model.modelID) [ctx \(model.contextWindowTokenLimit.map(String.init) ?? "default"), thinking]") },
+            AnthropicSubscriptionModel.availableModels.map { model in (model.title, model.modelID, AnthropicSubscriptionModel.selectionID(forModelID: model.modelID), "\(model.modelID) [ctx \(model.contextWindowTokenLimit.map(String.init) ?? "default")\(model.thinkingSupport?.supportsThinking == true ? ", thinking" : "")]") }
+        ]
+        for (candidates, contract) in zip([ZenCODESetupRunner.chatGPTSubscriptionModelCandidates, ZenCODESetupRunner.anthropicSubscriptionModelCandidates], expected) {
+            #expect(candidates.map(\.title) == contract.map { $0.0 })
+            #expect(candidates.map(\.modelID) == contract.map { $0.1 })
+            #expect(candidates.map(\.manifestID) == contract.map { $0.2 })
+            #expect(candidates.map(\.detail) == contract.map { $0.3 })
+        }
+    }
+
+    @Test
+    func subscriptionCandidateDefaultsMatchExactlyOrFallBack() {
+        let candidates = ZenCODESetupRunner.chatGPTSubscriptionModelCandidates
+        let cases: [(String, String, Set<Int>)] = [("other", candidates[1].modelID, [1]), (candidates[1].manifestID, "other", [1]), ("other", candidates[1].modelID.uppercased(), [0])]
+        for (id, modelID, expected) in cases {
+            #expect(ZenCODESetupRunner.subscriptionModelSelectionDefaultIndexes(candidates: candidates, defaultModels: [subscriptionDefaultModel(id: id, modelID: modelID)]) == expected)
+        }
+        #expect(ZenCODESetupRunner.subscriptionModelSelectionDefaultIndexes(candidates: [], defaultModels: []).isEmpty)
+    }
+
+    private func subscriptionDefaultModel(id: String, modelID: String) -> AgentSettingsModelManifest {
+        let provider = AgentRemoteProvider(name: "Test", baseURL: "https://example.test", modelID: modelID)
+        return AgentSettingsModelManifest(id: id, kind: .remoteAPI, title: nil, llmID: id, modelID: modelID, providerID: provider.id, provider: provider, configuredContextWindowLimit: nil, generationParameterOverrides: nil, thinkingOptions: nil, defaultThinkingSelection: nil)
+    }
+
 }
