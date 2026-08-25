@@ -1028,6 +1028,11 @@ extension TerminalChat {
                 let newMessages = sharedChatReadingBuffer.append(messages)
                 guard !newMessages.isEmpty else { continue }
                 let entries = await sharedChatReaderEntries()
+                // The first message makes the compact chat header visible and
+                // can grow the status bar's reserved bottom rows. That direct
+                // redraw is outside the coordinator's write accounting, so it
+                // must not retain the live Sub-Agents anchor across it.
+                await renderCoordinator.relinquishSubAgentOverviewOwnership()
                 await statusBar.setSharedChatReader(
                     entries: entries,
                     unreadCount: sharedChatReadingBuffer.unreadCount,

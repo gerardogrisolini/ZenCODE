@@ -1640,6 +1640,68 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func firstSharedChatMessageHeaderRelinquishesSubAgentOverviewOwnership() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let statusBar = TerminalStatusBar(isEnabled: true) { _ in }
+        await statusBar.configureForTesting(row: 9, columns: 80)
+        await statusBar.updateInputPanel(
+            text: "draft",
+            cursorIndex: 5,
+            modeText: "Chat",
+            helpText: "Enter"
+        )
+
+        // An attached room has no compact dock until its first message arrives.
+        await statusBar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: false)
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:before-first-chat-message",
+            text: "\n👥 Sub-Agents:\n   running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave"
+        )
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
+
+        // This is the `.sharedChatMessages` transition: the status bar starts
+        // drawing its compact header outside the coordinator's write accounting.
+        await renderer.relinquishSubAgentOverviewOwnership()
+        await statusBar.setSharedChatReader(
+            entries: [
+                TerminalSharedChatReaderEntry(
+                    id: UUID(),
+                    route: "worker",
+                    text: "Ready"
+                )
+            ],
+            unreadCount: 1,
+            isExpanded: false
+        )
+        #expect(await statusBar.state.sharedChatReaderDock?.entries.count == 1)
+        #expect(await statusBar.reservedRowsForOverlay() == 7)
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:after-first-chat-message",
+            text: "\n👥 Sub-Agents:\n   completed\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave"
+        )
+        let refreshText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeRefresh)
+            .map(\.text)
+            .joined()
+
+        #expect(!containsCursorUpSequence(refreshText))
+        #expect(!refreshText.contains("\u{1B}[2K"))
+        #expect(TerminalANSIText.stripANSI(refreshText).contains("completed"))
+    }
+
+    @Test
     func emptySubAgentTransitionClearsOwnedRowsAndSignature() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,

@@ -10,6 +10,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed live Sub-Agents rendering losing its terminal anchor when the first
+  shared-chat message makes the compact Chat header appear.
+
 ### Removed
 
 - Removed the `--verbose` CLI flag and its `ZENCODE_AGENT_VERBOSE` environment
