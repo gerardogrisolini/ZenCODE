@@ -2031,7 +2031,7 @@ struct TerminalChatRenderingTests {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { ansiStripped(String($0)) }
 
-        #expect(visibleLines[1] == "🧬 Sub-Agents:")
+        #expect(visibleLines[1] == "👥 Sub-Agents:")
         #expect(rendered.hasPrefix("\n"))
         #expect(rendered.hasSuffix("\n"))
         #expect(!rendered.contains("┌"))

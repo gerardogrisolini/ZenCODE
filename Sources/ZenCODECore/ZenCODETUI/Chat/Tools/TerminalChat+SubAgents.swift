@@ -987,8 +987,8 @@ extension TerminalChat {
         let dim = TerminalStyle.Text.muted
         let reset = TerminalStyle.reset
         let title = AgentOutput.standardErrorIsTerminal
-            ? "🧬 \(orange)Sub-Agents:\(reset)"
-            : "🧬 Sub-Agents:"
+            ? "👥 \(orange)Sub-Agents:\(reset)"
+            : "👥 Sub-Agents:"
 
         var output = ["\(linePrefix)\(title)"]
         for line in lines {

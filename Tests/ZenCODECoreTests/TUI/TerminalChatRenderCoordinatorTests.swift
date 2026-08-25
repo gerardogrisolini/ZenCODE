@@ -1567,7 +1567,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:1",
-            text: "\n🧬 Sub-Agents:\n   1 total\n   running\n",
+            text: "\n👥 Sub-Agents:\n   1 total\n   running\n",
             force: false,
             rememberSignature: true,
             overviewBatchID: "same-wave"
@@ -1577,7 +1577,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:2",
-            text: "\n🧬 Sub-Agents:\n   1 total\n   completed\n",
+            text: "\n👥 Sub-Agents:\n   1 total\n   completed\n",
             force: false,
             rememberSignature: true,
             overviewBatchID: "same-wave"
@@ -1612,7 +1612,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:before-chat",
-            text: "\n🧬 Sub-Agents:\n   running\n",
+            text: "\n👥 Sub-Agents:\n   running\n",
             force: false,
             rememberSignature: true,
             overviewBatchID: "wave"
@@ -1624,7 +1624,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:after-chat",
-            text: "\n🧬 Sub-Agents:\n   completed\n",
+            text: "\n👥 Sub-Agents:\n   completed\n",
             force: false,
             rememberSignature: true,
             overviewBatchID: "wave"
@@ -1658,7 +1658,7 @@ struct TerminalChatRenderCoordinatorTests {
         await statusBar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: false)
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:before-first-chat-message",
-            text: "\n🧬 Sub-Agents:\n   running\n",
+            text: "\n👥 Sub-Agents:\n   running\n",
             force: false,
             rememberSignature: true,
             overviewBatchID: "wave"
@@ -1686,7 +1686,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:after-first-chat-message",
-            text: "\n🧬 Sub-Agents:\n   completed\n",
+            text: "\n👥 Sub-Agents:\n   completed\n",
             force: false,
             rememberSignature: true,
             overviewBatchID: "wave"
@@ -1709,7 +1709,7 @@ struct TerminalChatRenderCoordinatorTests {
         )
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:active",
-            text: "\n🧬 Sub-Agents:\n   running\n",
+            text: "\n👥 Sub-Agents:\n   running\n",
             force: false,
             rememberSignature: true,
             overviewBatchID: "wave"
@@ -1737,7 +1737,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:unanchored:first",
-            text: "\n🧬 Sub-Agents:\n   first\n",
+            text: "\n👥 Sub-Agents:\n   first\n",
             force: false,
             rememberSignature: true
         )
@@ -1746,7 +1746,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:unanchored:second",
-            text: "\n🧬 Sub-Agents:\n   second\n",
+            text: "\n👥 Sub-Agents:\n   second\n",
             force: false,
             rememberSignature: true
         )
@@ -1779,7 +1779,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         let result = await renderer.renderSubAgentOverview(
             signature: "agents:during-stream",
-            text: "\n🧬 Sub-Agents:\n   1 total\n   running\n",
+            text: "\n👥 Sub-Agents:\n   1 total\n   running\n",
             force: false,
             rememberSignature: true,
             overviewBatchID: "wave-with-stream"
@@ -1845,7 +1845,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:1",
-            text: "\n🧬 Sub-Agents:\n   1 total\n",
+            text: "\n👥 Sub-Agents:\n   1 total\n",
             force: false,
             rememberSignature: true
         )
@@ -1855,7 +1855,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:2",
-            text: "\n🧬 Sub-Agents:\n   2 total\n",
+            text: "\n👥 Sub-Agents:\n   2 total\n",
             force: false,
             rememberSignature: true
         )
@@ -1877,7 +1877,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:1",
-            text: "\n🧬 Sub-Agents:\n   1 total\n",
+            text: "\n👥 Sub-Agents:\n   1 total\n",
             force: false,
             rememberSignature: true
         )
@@ -1886,7 +1886,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:2",
-            text: "\n🧬 Sub-Agents:\n   2 total\n",
+            text: "\n👥 Sub-Agents:\n   2 total\n",
             force: false,
             rememberSignature: true
         )
@@ -1908,7 +1908,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:1",
-            text: "\n🧬 Sub-Agents:\n   1 total\n   running\n",
+            text: "\n👥 Sub-Agents:\n   1 total\n   running\n",
             force: false,
             rememberSignature: true,
             maximumInPlaceRows: 2
@@ -1918,7 +1918,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:2",
-            text: "\n🧬 Sub-Agents:\n   1 total\n   completed\n",
+            text: "\n👥 Sub-Agents:\n   1 total\n   completed\n",
             force: false,
             rememberSignature: true,
             maximumInPlaceRows: 2
@@ -1946,7 +1946,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:completed",
-            text: "\n🧬 Sub-Agents:\n   1 total\n",
+            text: "\n👥 Sub-Agents:\n   1 total\n",
             responses: [response],
             force: false,
             rememberSignature: true
@@ -1957,7 +1957,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:after-response",
-            text: "\n🧬 Sub-Agents:\n   1 total closed\n",
+            text: "\n👥 Sub-Agents:\n   1 total closed\n",
             responses: [response],
             force: false,
             rememberSignature: true
@@ -2626,7 +2626,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:wave-a:running",
-            text: "\n🧬 Sub-Agents:\n   wave A running\n",
+            text: "\n👥 Sub-Agents:\n   wave A running\n",
             force: false,
             rememberSignature: true,
             overviewBatchID: "wave-a"
@@ -2635,7 +2635,7 @@ struct TerminalChatRenderCoordinatorTests {
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:wave-b:running",
-            text: "\n🧬 Sub-Agents:\n   wave B running\n",
+            text: "\n👥 Sub-Agents:\n   wave B running\n",
             force: false,
             rememberSignature: true,
             overviewBatchID: "wave-b"
