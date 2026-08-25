@@ -43,26 +43,6 @@ extension ACPCompatibilityTests {
     }
 
     @Test
-    func acpVerboseLogFileWritesToSupportLogsDirectory() async throws {
-        let supportURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("acp-log-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: supportURL)
-        }
-
-        let logFile = try #require(
-            ACPVerboseLogFile.open(supportDirectoryURL: supportURL)
-        )
-        await logFile.write("sample diagnostic")
-
-        let contents = try String(contentsOf: logFile.url, encoding: .utf8)
-
-        #expect(logFile.url.deletingLastPathComponent().lastPathComponent == "logs")
-        #expect(logFile.url.lastPathComponent.hasPrefix("acp-"))
-        #expect(contents.contains("sample diagnostic"))
-    }
-
-    @Test
     func mcpServersParseACPStdioConfiguration() throws {
         let definitions = ZenCODEACPBridge.mcpServerDefinitions(from: [
             "mcpServers": [
@@ -157,11 +137,6 @@ extension ACPCompatibilityTests {
         #expect(definition.name == "Fixture")
         #expect(definition.configuration.executablePath == "/usr/bin/env")
         #expect(definition.configuration.arguments == ["fixture-server"])
-        #expect(ZenCODEACPBridge.mcpServerInputSummary(from: [
-            "mcpServers": [
-                "Fixture": [:] as [String: Any]
-            ] as [String: Any]
-        ]) == "object(1:Fixture)")
     }
 
     #if os(macOS)

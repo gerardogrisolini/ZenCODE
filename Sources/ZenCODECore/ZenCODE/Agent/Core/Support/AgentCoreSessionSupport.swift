@@ -189,7 +189,6 @@ extension AgentCoreSessionConfiguration {
             generationParameterOverrides: generationParameterOverrides,
             maxToolRounds: maxToolRounds,
             maxOutputTokens: maxOutputTokens,
-            verboseLogging: verboseLogging,
             appMode: appMode,
             thinkingSelection: snapshot.thinkingSelection,
             preserveThinking: snapshot.preserveThinking

@@ -286,55 +286,6 @@ extension RemoteGenerationClient {
         return lines.joined(separator: "\n")
     }
 
-    /// Builds a verbose diagnostic line describing how many prompt tokens were
-    /// reused from the provider prompt cache versus freshly processed. Returns
-    /// `nil` when no token usage is available, so callers can guard on it.
-    public static func cacheUsageDiagnostic(
-        provider: String,
-        usage: RemoteGenerationUsage?
-    ) -> String? {
-        guard let usage else {
-            return nil
-        }
-        let promptTokens = usage.promptTokens
-        let cachedTokens = usage.cachedPromptTokens
-        let processedTokens = usage.processedPromptTokens
-            ?? {
-                guard let promptTokens else {
-                    return nil
-                }
-                return max(promptTokens - (cachedTokens ?? 0), 0)
-            }()
-        guard promptTokens != nil
-            || cachedTokens != nil
-            || processedTokens != nil
-            || usage.completionTokens != nil else {
-            return nil
-        }
-
-        var parts: [String] = []
-        if let promptTokens {
-            parts.append("prompt=\(promptTokens)")
-        }
-        if let cachedTokens {
-            parts.append("cached=\(cachedTokens)")
-        }
-        if let processedTokens {
-            parts.append("new=\(processedTokens)")
-        }
-        if let completionTokens = usage.completionTokens {
-            parts.append("output=\(completionTokens)")
-        }
-        if let promptTokens, promptTokens > 0, let cachedTokens {
-            let hitRate = Double(cachedTokens) / Double(promptTokens) * 100
-            parts.append("cache_hit=\(String(format: "%.0f%%", hitRate))")
-        }
-        guard !parts.isEmpty else {
-            return nil
-        }
-        return "\(provider) cache: \(parts.joined(separator: " "))"
-    }
-
     public static func messagesExpectPromptCache(_ messages: [[String: Any]]) -> Bool {
         messages.contains { message in
             let role = stringValue(message["role"])?

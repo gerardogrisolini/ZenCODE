@@ -21,7 +21,6 @@ public struct AgentCoreAppSessionRequest: Sendable {
     public let selectedSkillIDs: Set<String>
     public let maxToolRounds: Int
     public let maxOutputTokens: Int?
-    public let verboseLogging: Bool
     public let thinkingSelection: AgentThinkingSelection?
     public let preserveThinking: Bool
 
@@ -38,7 +37,6 @@ public struct AgentCoreAppSessionRequest: Sendable {
         selectedSkillIDs: Set<String> = [],
         maxToolRounds: Int = AgentToolRoundPolicy.defaultMaxToolRounds,
         maxOutputTokens: Int? = nil,
-        verboseLogging: Bool = false,
         thinkingSelection: AgentThinkingSelection? = nil,
         preserveThinking: Bool = false
     ) {
@@ -54,7 +52,6 @@ public struct AgentCoreAppSessionRequest: Sendable {
         self.selectedSkillIDs = selectedSkillIDs
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
         self.maxOutputTokens = maxOutputTokens
-        self.verboseLogging = verboseLogging
         self.thinkingSelection = thinkingSelection
         self.preserveThinking = preserveThinking
     }
@@ -115,7 +112,6 @@ public enum AgentCoreAppSessionFactory {
             allowedToolNames: allowedToolNames,
             maxToolRounds: request.maxToolRounds,
             maxOutputTokens: request.maxOutputTokens,
-            verboseLogging: request.verboseLogging,
             appMode: true,
             thinkingSelection: thinkingSelection,
             preserveThinking: request.preserveThinking
@@ -187,9 +183,6 @@ public enum AgentCoreAppSessionFactory {
         }
         if let maxOutputTokens = request.maxOutputTokens {
             arguments.append(contentsOf: ["--max-output-tokens", "\(max(1, maxOutputTokens))"])
-        }
-        if request.verboseLogging {
-            arguments.append("--verbose")
         }
 
         return try AgentConfiguration(arguments: arguments, appModeOverride: true)

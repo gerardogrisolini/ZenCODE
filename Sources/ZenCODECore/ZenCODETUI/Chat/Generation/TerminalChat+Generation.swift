@@ -89,14 +89,8 @@ extension TerminalChat {
                 toolProviders: [],
                 onEvent: { @TerminalChatActor event in
                     switch event {
-                    case let .status(message):
-                        if self.configuration.verboseLogging {
-                            await self.writeChatError("[ZenCODE] \(message)\n")
-                        }
-                    case let .diagnostic(message):
-                        if self.configuration.verboseLogging {
-                            await self.writeDiagnostic(message)
-                        }
+                    case .status, .diagnostic:
+                        break
                     case let .thought(message):
                         await transcriptTurn.appendThought(message)
                         await self.writeThought(message)
@@ -104,7 +98,6 @@ extension TerminalChat {
                     case let .modelLoaded(modelID):
                         await self.printModelIfNeeded(modelID)
                     case let .metrics(metrics):
-                        self.didReceiveMetricsForCurrentPrompt = true
                         await self.writeMetricsStatus(metrics)
                     case let .contextWindow(status):
                         await self.writeContextWindowStatus(status)

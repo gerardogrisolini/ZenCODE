@@ -125,16 +125,6 @@ extension ZenCODEACPBridge {
         } else {
             promptConfiguration = session.configuration
         }
-        if configuration.verboseLogging {
-            let mcpDescriptors = await sessionRunner.knownMCPToolDescriptors(
-                allowedToolNames: promptConfiguration.allowedToolNames,
-                preferredWorkspaceRootURL: URL(fileURLWithPath: session.cwd),
-                sessionID: sessionID
-            )
-            await verboseACPLog(
-                "session/prompt id=\(sessionID) knownMCPTools=\(Self.verboseDescriptorSummary(mcpDescriptors)) allowedTools=\(Self.verboseToolNameSummary(promptConfiguration.allowedToolNames))"
-            )
-        }
 
         let visiblePromptText = routedPromptText.isEmpty ? "Analyze the attached media." : routedPromptText
         await sendUserMessageChunk(sessionID: sessionID, text: visiblePromptText)
@@ -205,7 +195,6 @@ extension ZenCODEACPBridge {
                             )
                         }
                     case let .diagnostic(message):
-                        await self.verboseACPLog("diagnostic \(message)")
                         if Self.isAppSuppressedDiagnostic(message) {
                             break
                         }
@@ -728,7 +717,6 @@ extension ZenCODEACPBridge {
             generationParameterOverrides: baseConfiguration.generationParameterOverrides,
             maxToolRounds: baseConfiguration.maxToolRounds,
             maxOutputTokens: baseConfiguration.maxOutputTokens,
-            verboseLogging: baseConfiguration.verboseLogging,
             appMode: baseConfiguration.appMode,
             thinkingSelection: baseConfiguration.thinkingSelection,
             preserveThinking: baseConfiguration.preserveThinking

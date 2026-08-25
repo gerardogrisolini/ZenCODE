@@ -371,7 +371,6 @@ struct AnthropicSubscriptionNIOStreamingTests {
                 configuredContextWindowLimit: configuredContextWindowLimit,
                 maxToolRounds: 4,
                 maxOutputTokens: maxOutputTokens,
-                verboseLogging: false,
                 toolAuthorizationHandler: nil
             ),
             provider: AgentRemoteProvider(

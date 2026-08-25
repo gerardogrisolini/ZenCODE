@@ -26,7 +26,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
     public let generationParameterOverrides: AgentGenerationParameterOverrides
     public let maxToolRounds: Int
     public let maxOutputTokens: Int?
-    public let verboseLogging: Bool
     public let appMode: Bool
     public let thinkingSelection: AgentThinkingSelection?
     public let preserveThinking: Bool
@@ -47,7 +46,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
         generationParameterOverrides: AgentGenerationParameterOverrides = AgentGenerationParameterOverrides(),
         maxToolRounds: Int = AgentToolRoundPolicy.defaultMaxToolRounds,
         maxOutputTokens: Int? = nil,
-        verboseLogging: Bool = false,
         appMode: Bool = false,
         thinkingSelection: AgentThinkingSelection? = nil,
         preserveThinking: Bool = false
@@ -74,7 +72,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
         self.generationParameterOverrides = generationParameterOverrides.normalized()
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
         self.maxOutputTokens = maxOutputTokens.map { max(1, $0) }
-        self.verboseLogging = verboseLogging
         self.appMode = appMode
         self.thinkingSelection = thinkingSelection
         self.preserveThinking = preserveThinking
@@ -96,7 +93,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
         generationParameterOverrides: AgentGenerationParameterOverrides = AgentGenerationParameterOverrides(),
         maxToolRounds: Int = AgentToolRoundPolicy.defaultMaxToolRounds,
         maxOutputTokens: Int? = nil,
-        verboseLogging: Bool = false,
         appMode: Bool = false,
         thinkingSelection: AgentThinkingSelection? = nil,
         preserveThinking: Bool = false
@@ -117,7 +113,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
             generationParameterOverrides: generationParameterOverrides,
             maxToolRounds: maxToolRounds,
             maxOutputTokens: maxOutputTokens,
-            verboseLogging: verboseLogging,
             appMode: appMode,
             thinkingSelection: thinkingSelection,
             preserveThinking: preserveThinking
@@ -148,7 +143,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
             && generationParameterOverrides == other.generationParameterOverrides
             && maxToolRounds == other.maxToolRounds
             && maxOutputTokens == other.maxOutputTokens
-            && verboseLogging == other.verboseLogging
             && appMode == other.appMode
     }
 
@@ -202,7 +196,6 @@ public struct AgentCoreSessionConfiguration: Sendable {
             generationParameterOverrides: generationParameterOverrides,
             maxToolRounds: maxToolRounds,
             maxOutputTokens: maxOutputTokens,
-            verboseLogging: verboseLogging,
             appMode: appMode,
             thinkingSelection: thinkingSelection,
             preserveThinking: preserveThinking

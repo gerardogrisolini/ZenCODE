@@ -79,7 +79,6 @@ extension TerminalChat {
             allowedToolNames: effectiveAllowedToolNames,
             maxToolRounds: configuration.maxToolRounds,
             maxOutputTokens: configuration.maxOutputTokens,
-            verboseLogging: configuration.verboseLogging,
             appMode: configuration.appMode,
             thinkingSelection: currentAgentThinkingSelection(),
             preserveThinking: false

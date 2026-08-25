@@ -5,11 +5,6 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
 import Foundation
 import Synchronization
 import ToolCore
@@ -90,9 +85,15 @@ public enum ZenLogCategory: String, Sendable {
 /// ACP/chat stdout stream stays clean. It is enabled explicitly with the
 /// `ZENCODE_LOG` environment variable (or programmatically via
 /// ``configure(_:)``). Output is always redacted with ``ZenSecretRedactor`` and
-/// is written to a local file — or, only when explicitly requested, to stderr —
-/// but never to stdout. There is no remote telemetry.
+/// is emitted through the shared platform system logger (Unified Logging on
+/// Apple platforms, syslog/journal through `logger(1)` on Linux/WSL) — never to
+/// stdout, stderr, or an application-owned file. There is no remote telemetry.
 public enum ZenLogger {
+    /// Maximum characters of a redacted diagnostic message body. Longer bodies
+    /// are truncated so a single pathological diagnostic cannot flood the
+    /// system log.
+    public static let maximumMessageCharacters = 4_096
+
     public static func debug(
         _ category: ZenLogCategory,
         _ message: @autoclosure () -> String
@@ -126,17 +127,65 @@ public enum ZenLogger {
         _ category: ZenLogCategory,
         _ message: () -> String
     ) {
-        guard let sink = ZenLogSink.shared.resolvedSink(minimumLevel: level) else {
+        guard let configuration = resolvedConfiguration(),
+              level >= configuration.minimumLevel else {
             // Disabled or below the active threshold: never evaluate the message
             // closure, so logging stays truly zero-cost when off.
             return
         }
-        let rendered = formattedMessage(
-            level: level,
-            category: category,
-            message: message()
+        SystemLogEmitter.emit(
+            systemLogRecord(
+                level: level,
+                category: category,
+                message: message()
+            )
         )
-        sink.write(timestampedLine: rendered)
+    }
+
+    /// Renders the public, redacted, bounded system-log record for a message.
+    /// Threshold gating happens in ``log(_:_:_:)``: rendering itself depends
+    /// only on level, category, and body.
+    static func systemLogRecord(
+        level: ZenLogLevel,
+        category: ZenLogCategory,
+        message: String
+    ) -> SystemLogRecord {
+        SystemLogRecord(
+            category: diagnosticCategory(for: category),
+            severity: systemLogSeverity(for: level),
+            message: limitedMessage(
+                formattedMessage(
+                    level: level,
+                    category: category,
+                    message: message
+                )
+            )
+        )
+    }
+
+    /// Maps ``ZenLogLevel`` onto the shared system-log severity scale.
+    static func systemLogSeverity(for level: ZenLogLevel) -> SystemLogSeverity {
+        switch level {
+        case .debug:
+            return .debug
+        case .info:
+            return .info
+        case .warning:
+            return .warning
+        case .error:
+            return .error
+        }
+    }
+
+    static func diagnosticCategory(for category: ZenLogCategory) -> String {
+        "diagnostics-\(category.rawValue)"
+    }
+
+    static func limitedMessage(_ message: String) -> String {
+        guard message.count > maximumMessageCharacters else {
+            return message
+        }
+        return String(message.prefix(maximumMessageCharacters)) + "…"
     }
 
     public static func formattedMessage(
@@ -152,41 +201,64 @@ public enum ZenLogger {
 
     /// Whether the diagnostic logger is currently emitting output.
     public static var isEnabled: Bool {
-        ZenLogSink.shared.isEnabled
+        resolvedConfiguration() != nil
     }
 
     /// A human-readable, secret-free description of where diagnostics are
     /// written, or `nil` when logging is disabled. Used by `zen --doctor`.
     public static var destinationDescription: String? {
-        ZenLogSink.shared.destinationDescription
+        resolvedConfiguration()?.destinationDescription
     }
 
     /// The active minimum level, or `nil` when logging is disabled.
     public static var activeLevel: ZenLogLevel? {
-        ZenLogSink.shared.activeLevel
+        resolvedConfiguration()?.minimumLevel
     }
 
-    /// Resolves the current diagnostic destination without opening a file or
-    /// writing anything. This is intentionally separate from ``isEnabled`` so
-    /// inspection commands such as `zen --doctor` remain read-only.
+    /// Resolves the current diagnostic destination without writing anything.
+    /// This is intentionally separate from ``isEnabled`` so inspection commands
+    /// such as `zen --doctor` remain read-only. Resolution is pure: no support
+    /// directory, file, or system-log handle is created here.
+    public static func previewConfiguration(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> ZenLoggerConfiguration? {
+        ZenLoggerConfiguration.resolve(environment: environment)
+    }
+
+    /// Resolves the current diagnostic destination using the historical
+    /// directory-taking API.
+    ///
+    /// `supportDirectory` is accepted for source compatibility but ignored:
+    /// diagnostics now resolve exclusively to the system log and never create
+    /// an application support directory. The parameter intentionally has no
+    /// default value so this overload cannot be ambiguous with
+    /// ``previewConfiguration(environment:)``.
     public static func previewConfiguration(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        supportDirectory: URL? = nil
+        supportDirectory: URL?
     ) -> ZenLoggerConfiguration? {
-        let supportDirectory = supportDirectory?.standardizedFileURL
-            ?? AppStorageDirectory.appSupportDirectoryURL()
-        return ZenLoggerConfiguration.resolve(
-            environment: environment,
-            defaultLogDirectory: supportDirectory
-                .appendingPathComponent("logs", isDirectory: true)
-                .standardizedFileURL
+        ZenLoggerConfiguration.resolve(environment: environment)
+    }
+
+    /// Overrides the resolved configuration. Passing `nil` clears any override
+    /// and restores resolution from the process environment; use ``disable()``
+    /// to force diagnostics off regardless of the environment. Primarily for
+    /// tests and explicit hosts.
+    public static func configure(_ configuration: ZenLoggerConfiguration?) {
+        ZenLogConfigurationStore.shared.configure(
+            configuration.map(ZenLogOverride.configuration) ?? .environment
         )
     }
 
-    /// Overrides the resolved configuration. Passing `nil` restores resolution
-    /// from the process environment. Primarily for tests and explicit hosts.
-    public static func configure(_ configuration: ZenLoggerConfiguration?) {
-        ZenLogSink.shared.configure(configuration)
+    /// Forces diagnostics off for the current process, ignoring `ZENCODE_LOG`.
+    /// Distinct from ``configure(_:)`` with `nil`, which restores environment
+    /// resolution instead of disabling.
+    public static func disable() {
+        ZenLogConfigurationStore.shared.configure(.disabled)
+    }
+
+    static func resolvedConfiguration() -> ZenLoggerConfiguration? {
+        ZenLogConfigurationStore.shared.resolvedConfiguration()
     }
 
     private static func messageBody(
@@ -207,7 +279,20 @@ public enum ZenLogger {
 /// Immutable resolved logger configuration.
 public struct ZenLoggerConfiguration: Sendable, Equatable {
     public enum Destination: Sendable, Equatable {
+        /// Records are emitted through the shared platform system logger
+        /// (Unified Logging on Apple platforms, syslog/journal via `logger(1)`
+        /// on Linux/WSL) under subsystem `com.zencode.zen`.
+        case systemLog
+
+        /// The legacy file destination was removed together with the
+        /// application-owned log file and its timestamp/retention behaviour.
+        /// Use ``systemLog``.
+        @available(*, unavailable, message: "ZenCODE diagnostics now use the system log; use .systemLog")
         case file(URL)
+
+        /// The legacy stderr destination was removed: diagnostics never write
+        /// to stdout or stderr. Use ``systemLog``.
+        @available(*, unavailable, message: "ZenCODE diagnostics never write to stderr; use .systemLog")
         case standardError
     }
 
@@ -222,29 +307,39 @@ public struct ZenLoggerConfiguration: Sendable, Equatable {
     /// A secret-free description of the destination for diagnostics/help.
     public var destinationDescription: String {
         switch destination {
-        case let .file(url):
-            return url.path
-        case .standardError:
-            return "stderr"
+        case .systemLog:
+            return "system log"
         }
+    }
+
+    /// Values that historically selected a removed application-owned
+    /// destination rather than a threshold.
+    private static let legacyDestinationValues: Set<String> = ["stderr", "2"]
+
+    /// Whether a normalized `ZENCODE_LOG` value names the removed stderr
+    /// destination (`stderr`/`2`) instead of an enabling value or threshold.
+    /// Such values must not silently enable the system log.
+    static func isLegacyDestinationValue(_ normalizedEnable: String) -> Bool {
+        legacyDestinationValues.contains(normalizedEnable)
     }
 
     /// Resolves configuration from an environment, or returns `nil` when logging
     /// is not enabled. Enabling is explicit and opt-in:
     ///
-    /// - `ZENCODE_LOG` must be present and truthy. Recognized level names
-    ///   (`debug`/`info`/`warning`/`error`) also set the threshold; the special
-    ///   value `stderr` selects the stderr destination. `0`/`false`/`off`/`no`
-    ///   keep logging disabled.
+    /// - `ZENCODE_LOG` must be present, truthy, and not a legacy destination
+    ///   value. Recognized level names (`debug`/`info`/`warning`/`error`) also
+    ///   set the threshold; `0`/`false`/`off`/`no` keep logging disabled.
+    ///   `ZENCODE_LOG=stderr` and `ZENCODE_LOG=2` no longer select a
+    ///   destination and do not enable logging.
     /// - `ZENCODE_LOG_LEVEL` overrides the threshold.
-    /// - `ZENCODE_LOG_FILE` overrides the destination with an explicit path.
+    /// - `ZENCODE_LOG_FILE` is a removed legacy destination override and is
+    ///   ignored entirely.
     ///
-    /// When enabled without an explicit destination, logs go to a per-run file
-    /// under the support directory's `logs/` folder. Output never goes to
-    /// stdout.
+    /// When enabled, records are emitted through the shared platform system
+    /// logger; no application-owned file is opened and output never goes to
+    /// stdout or stderr.
     public static func resolve(
-        environment: [String: String],
-        defaultLogDirectory: @autoclosure () -> URL
+        environment: [String: String]
     ) -> ZenLoggerConfiguration? {
         guard let rawEnable = environment["ZENCODE_LOG"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -255,6 +350,9 @@ public struct ZenLoggerConfiguration: Sendable, Equatable {
         if ["0", "false", "off", "no", "disable", "disabled"].contains(normalizedEnable) {
             return nil
         }
+        if isLegacyDestinationValue(normalizedEnable) {
+            return nil
+        }
 
         var minimumLevel = ZenLogLevel.parse(rawEnable) ?? .info
         if let rawLevel = environment["ZENCODE_LOG_LEVEL"]?.nilIfBlank,
@@ -262,193 +360,89 @@ public struct ZenLoggerConfiguration: Sendable, Equatable {
             minimumLevel = parsedLevel
         }
 
-        let destination: Destination
-        if let rawFile = environment["ZENCODE_LOG_FILE"]?.nilIfBlank {
-            destination = .file(
-                URL(fileURLWithPath: (rawFile as NSString).expandingTildeInPath)
-                    .standardizedFileURL
-            )
-        } else if normalizedEnable == "stderr" || normalizedEnable == "2" {
-            destination = .standardError
-        } else {
-            destination = .file(
-                defaultLogDirectory()
-                    .appendingPathComponent("zencode.log")
-                    .standardizedFileURL
-            )
-        }
-
         return ZenLoggerConfiguration(
             minimumLevel: minimumLevel,
-            destination: destination
+            destination: .systemLog
         )
     }
 }
 
-/// Process-wide diagnostic sink. Thread-safe, lazily resolved, and never writes
-/// to stdout.
-final class ZenLogSink: Sendable {
-    static let shared = ZenLogSink()
+/// Unambiguous override state for the process-wide diagnostic configuration.
+///
+/// A three-case enum instead of a nested optional: `Optional<Optional<_>>`
+/// made "no override" and "explicitly disabled" visually interchangeable and
+/// silently turned ``ZenLogger/configure(_:)`` with `nil` into a permanent
+/// disable instead of the documented environment restore.
+enum ZenLogOverride: Sendable, Equatable {
+    /// No override: resolve from the environment.
+    case environment
+    /// Explicitly enabled with a fixed configuration.
+    case configuration(ZenLoggerConfiguration)
+    /// Explicitly disabled, whatever the environment says.
+    case disabled
+}
+
+/// Process-wide resolved diagnostic configuration. Thread-safe and lazily
+/// resolved from the process environment unless overridden; resolution itself
+/// performs no I/O, so nothing is ever opened, created, or written.
+final class ZenLogConfigurationStore: Sendable {
+    static let shared = ZenLogConfigurationStore()
 
     private enum Resolution {
         case unresolved
         case disabled
-        case enabled(ActiveSink)
-    }
-
-    fileprivate struct ActiveSink {
-        let configuration: ZenLoggerConfiguration
-        let handle: FileHandle?
+        case enabled(ZenLoggerConfiguration)
     }
 
     private let state: Mutex<Resolution>
-    private let overrideConfiguration: Mutex<ZenLoggerConfiguration??>
+    private let override: Mutex<ZenLogOverride>
+    /// Environment seam: the shared store reads the process environment, while
+    /// tests inject a fixed environment to prove restore-versus-disable
+    /// behaviour deterministically and without mutating the process.
+    private let environmentProvider: @Sendable () -> [String: String]
 
-    private init() {
+    init(
+        environmentProvider: @escaping @Sendable () -> [String: String] = {
+            ProcessInfo.processInfo.environment
+        }
+    ) {
         state = Mutex(.unresolved)
-        overrideConfiguration = Mutex(.none)
+        override = Mutex(.environment)
+        self.environmentProvider = environmentProvider
     }
 
-    func configure(_ configuration: ZenLoggerConfiguration?) {
-        overrideConfiguration.withLock { $0 = .some(configuration) }
-        state.withLock { resolution in
-            if case let .enabled(active) = resolution {
-                closeIfNeeded(active)
-            }
-            resolution = .unresolved
-        }
+    func configure(_ override: ZenLogOverride) {
+        self.override.withLock { $0 = override }
+        state.withLock { $0 = .unresolved }
     }
 
-    var isEnabled: Bool {
-        resolvedActiveSink() != nil
-    }
-
-    var destinationDescription: String? {
-        resolvedActiveSink()?.configuration.destinationDescription
-    }
-
-    var activeLevel: ZenLogLevel? {
-        resolvedActiveSink()?.configuration.minimumLevel
-    }
-
-    /// Returns a writable sink when logging is enabled and `minimumLevel` meets
-    /// the active threshold, otherwise `nil`.
-    func resolvedSink(minimumLevel: ZenLogLevel) -> WritableSink? {
-        guard let active = resolvedActiveSink(),
-              minimumLevel >= active.configuration.minimumLevel else {
-            return nil
-        }
-        return WritableSink(sink: self, active: active)
-    }
-
-    fileprivate func write(active: ActiveSink, timestampedLine line: String) {
-        let entry = Self.timestampPrefix() + line + "\n"
-        guard let data = entry.data(using: .utf8) else {
-            return
-        }
-        state.withLock { _ in
-            switch active.configuration.destination {
-            case .standardError:
-                // Written under the shared state lock so concurrent log lines do
-                // not interleave. AgentOutput.standardError is the preserved
-                // stderr descriptor, so diagnostics survive stderr silencing and
-                // never reach stdout.
-                try? AgentOutput.standardError.write(contentsOf: data)
-            case .file:
-                try? active.handle?.write(contentsOf: data)
-            }
-        }
-    }
-
-    private func resolvedActiveSink() -> ActiveSink? {
+    /// Returns the active configuration when logging is enabled, otherwise
+    /// `nil`.
+    func resolvedConfiguration() -> ZenLoggerConfiguration? {
         state.withLock { resolution in
             switch resolution {
-            case let .enabled(active):
-                return active
+            case let .enabled(configuration):
+                return configuration
             case .disabled:
                 return nil
             case .unresolved:
-                let active = makeActiveSink()
-                resolution = active.map(Resolution.enabled) ?? .disabled
-                return active
+                let configuration = makeConfiguration()
+                resolution = configuration.map(Resolution.enabled) ?? .disabled
+                return configuration
             }
         }
     }
 
-    private func makeActiveSink() -> ActiveSink? {
-        let configuration: ZenLoggerConfiguration?
-        if let override = overrideConfiguration.withLock({ $0 }) {
-            configuration = override
-        } else {
-            configuration = ZenLoggerConfiguration.resolve(
-                environment: ProcessInfo.processInfo.environment,
-                defaultLogDirectory: Self.defaultLogDirectory()
+    private func makeConfiguration() -> ZenLoggerConfiguration? {
+        switch override.withLock({ $0 }) {
+        case .environment:
+            return ZenLoggerConfiguration.resolve(
+                environment: environmentProvider()
             )
-        }
-        guard let configuration else {
+        case let .configuration(configuration):
+            return configuration
+        case .disabled:
             return nil
         }
-
-        switch configuration.destination {
-        case .standardError:
-            return ActiveSink(configuration: configuration, handle: nil)
-        case let .file(url):
-            guard let handle = Self.openLogFile(at: url) else {
-                // Never fall back to stdout. If the file cannot be opened,
-                // diagnostics stay silent.
-                return nil
-            }
-            return ActiveSink(configuration: configuration, handle: handle)
-        }
-    }
-
-    private func closeIfNeeded(_ active: ActiveSink) {
-        guard case .file = active.configuration.destination else {
-            return
-        }
-        try? active.handle?.close()
-    }
-
-    private static func defaultLogDirectory() -> URL {
-        AppStorageDirectory.appSupportDirectoryURL()
-            .appendingPathComponent("logs", isDirectory: true)
-            .standardizedFileURL
-    }
-
-    private static func openLogFile(at url: URL) -> FileHandle? {
-        let directoryURL = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(
-            at: directoryURL,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        if !FileManager.default.fileExists(atPath: url.path) {
-            _ = FileManager.default.createFile(
-                atPath: url.path,
-                contents: nil,
-                attributes: [.posixPermissions: 0o600]
-            )
-        }
-        guard let handle = try? FileHandle(forWritingTo: url) else {
-            return nil
-        }
-        _ = try? handle.seekToEnd()
-        return handle
-    }
-
-    private static func timestampPrefix() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return "[\(formatter.string(from: Date()))] "
-    }
-}
-
-/// A short-lived writable handle returned by ``ZenLogSink/resolvedSink(minimumLevel:)``.
-struct WritableSink {
-    fileprivate let sink: ZenLogSink
-    fileprivate let active: ZenLogSink.ActiveSink
-
-    func write(timestampedLine line: String) {
-        sink.write(active: active, timestampedLine: line)
     }
 }

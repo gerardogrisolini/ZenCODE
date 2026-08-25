@@ -140,15 +140,6 @@ extension ChatGPTSubscriptionGenerationClient {
                         sessionID: session.id
                     )
                 )
-                if configuration.verboseLogging {
-                    await onEvent(
-                        .diagnostic(
-                            RemoteStreamTransport.toolExposureDiagnostic(
-                                from: toolCatalog.bindings.map(\.descriptor)
-                            )
-                        )
-                    )
-                }
                 guard let latestSession = currentSession(for: lease) else {
                     throw ChatGPTSubscriptionGenerationError.missingSession
                 }
@@ -399,14 +390,6 @@ extension ChatGPTSubscriptionGenerationClient {
                     expectsCacheRead: expectsPromptCache
                 ) {
                     await onEvent(.diagnostic(cacheWarning))
-                }
-
-                if configuration.verboseLogging,
-                   let cacheDiagnostic = RemoteGenerationClient.cacheUsageDiagnostic(
-                       provider: "ChatGPT",
-                       usage: streamResult.usage
-                   ) {
-                    await onEvent(.diagnostic(cacheDiagnostic))
                 }
 
                 guard mutateSession(for: lease, { session in

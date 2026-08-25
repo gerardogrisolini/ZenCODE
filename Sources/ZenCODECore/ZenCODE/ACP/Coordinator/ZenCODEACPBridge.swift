@@ -83,7 +83,6 @@ public actor ZenCODEACPBridge {
     public let writer: ACPWriter
     public let permissionBroker: ACPPermissionBroker
     public let sessionRunner: AgentCoreSessionRunner
-    public let verboseLogFile: ACPVerboseLogFile?
     public var sessions: [String: SessionState] = [:]
     /// Shared-chat renderers by session id, one per live incarnation. Keyed
     /// separately from `sessions` so no session rebuild can drop a live
@@ -140,8 +139,6 @@ public actor ZenCODEACPBridge {
     ) {
         self.configuration = configuration
         self.writer = writer
-        let verboseLogFile = configuration.verboseLogging ? ACPVerboseLogFile.open() : nil
-        self.verboseLogFile = verboseLogFile
         let permissionBroker = ACPPermissionBroker(writer: writer)
         self.permissionBroker = permissionBroker
         self.sessionRunner = AgentCoreSessionRunner(
@@ -219,7 +216,7 @@ public actor ZenCODEACPBridge {
     /// Re-checkable fence for lifecycle handlers.
     ///
     /// `newSession` and `restoreSession` suspend several times (MCP server
-    /// registration, external-tool discovery, verbose logging) before they
+    /// registration, external-tool discovery) before they
     /// mutate `sessions`, call the runner, or write to the transport. Calling
     /// this after every such suspension guarantees a request that was already
     /// in flight when `shutdown()` latched can no longer create a session, spin
@@ -433,14 +430,6 @@ public actor ZenCODEACPBridge {
         }
     }
 
-    public func verboseACPLog(_ message: @autoclosure () -> String) async {
-        guard configuration.verboseLogging else {
-            return
-        }
-        let message = message()
-        await verboseLogFile?.write("[ZenCODE][ACP] \(message)")
-    }
-
     public func handleLine(_ line: String) async {
         guard let data = line.data(using: .utf8) else {
             await writer.sendError(id: .null, code: -32700, message: "Input is not valid UTF-8.")
@@ -525,7 +514,6 @@ public actor ZenCODEACPBridge {
             // The transport is closing: deliberately send nothing. `shutdown()`
             // already failed every pending host request, and writing a late
             // response here is exactly the leak this fence prevents.
-            await verboseACPLog("request abandoned: agent is shutting down")
         } catch is CancellationError {
             await writer.sendResultIfRequest(
                 id: id,

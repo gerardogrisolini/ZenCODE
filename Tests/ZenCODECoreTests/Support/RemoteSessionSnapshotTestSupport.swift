@@ -78,7 +78,6 @@ extension RemoteSessionSnapshotTests {
             modelID: "unit-model",
             workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
             maxToolRounds: 4,
-            verboseLogging: false,
             toolAuthorizationHandler: nil
         )
     }

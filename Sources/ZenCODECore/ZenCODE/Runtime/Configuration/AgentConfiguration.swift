@@ -47,7 +47,6 @@ public struct AgentConfiguration: Sendable {
       --skills LIST           Initial chat skill selection by name/number, all, or none. In chat mode use /skills to change or install skills.
       --max-tool-rounds N     Maximum model/tool loop rounds per prompt. Default: \(AgentToolRoundPolicy.defaultMaxToolRounds).
       --max-output-tokens N   Maximum generated tokens per model call. Default: model default.
-      --verbose               Show status/tool progress on stderr. Default: quiet chat output.
 
     Tool discovery:
       In chat mode, use /setup to reconfigure ZenCODE and restore the current session without restarting the app.
@@ -67,7 +66,6 @@ public struct AgentConfiguration: Sendable {
       ZENCODE_AGENT_MODEL          Model id, remoteapimodel:<uuid>, or remoteapi:<uuid>. Overrides the agent-selected model for this run.
       ZENCODE_AGENT_CWD            Working directory for local tools.
       ZENCODE_AGENT_SKILLS         Initial chat skill selection by name/number, all, or none.
-      ZENCODE_AGENT_VERBOSE        1/true to show status/tool progress on stderr.
 
     In ACP mode stdout contains only ACP JSON-RPC messages. In chat mode stdout contains only assistant text.
     """
@@ -81,7 +79,6 @@ public struct AgentConfiguration: Sendable {
     public let initialSkillSelection: String?
     public let maxToolRounds: Int
     public let maxOutputTokens: Int?
-    public let verboseLogging: Bool
     public let appMode: Bool
     public let printHelp: Bool
     public let printVersion: Bool
@@ -135,7 +132,6 @@ public struct AgentConfiguration: Sendable {
         var rawInitialSkillSelection = agentEnvironmentValue("SKILLS")
         var rawMaxToolRounds = agentEnvironmentValue("MAX_TOOL_ROUNDS")
         var rawMaxOutputTokens = agentEnvironmentValue("MAX_OUTPUT_TOKENS")
-        var rawVerboseLogging = agentEnvironmentValue("VERBOSE")
         var shouldPrintHelp = false
         var shouldPrintVersion = false
         var shouldPrintDoctor = false
@@ -189,8 +185,6 @@ public struct AgentConfiguration: Sendable {
                     throw AgentConfigurationError.missingValue(argument)
                 }
                 rawMaxOutputTokens = arguments[index]
-            case "--verbose":
-                rawVerboseLogging = "true"
             default:
                 throw AgentConfigurationError.unknownArgument(argument)
             }
@@ -212,7 +206,6 @@ public struct AgentConfiguration: Sendable {
             argument: "--max-tool-rounds"
         )
         let maxOutputTokens = try Self.positiveInt(rawMaxOutputTokens, argument: "--max-output-tokens")
-        let verboseLogging = Self.bool(rawVerboseLogging)
         let appMode = appModeOverride ?? false
         let requestedAgentName = rawAgentName?.nilIfBlank
         let settingsManifest: AgentSettingsManifest?
@@ -249,7 +242,6 @@ public struct AgentConfiguration: Sendable {
         self.initialSkillSelection = rawInitialSkillSelection?.nilIfBlank
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
         self.maxOutputTokens = maxOutputTokens
-        self.verboseLogging = verboseLogging
         self.appMode = appMode
         self.printHelp = shouldPrintHelp
         self.printVersion = shouldPrintVersion
@@ -270,7 +262,6 @@ public struct AgentConfiguration: Sendable {
         initialSkillSelection: String? = nil,
         maxToolRounds: Int = AgentToolRoundPolicy.defaultMaxToolRounds,
         maxOutputTokens: Int? = nil,
-        verboseLogging: Bool = false,
         appMode: Bool = false
     ) throws {
         let requestedAgentName = rawAgentName?.nilIfBlank
@@ -299,7 +290,6 @@ public struct AgentConfiguration: Sendable {
         self.initialSkillSelection = initialSkillSelection?.nilIfBlank
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
         self.maxOutputTokens = maxOutputTokens.map { max(1, $0) }
-        self.verboseLogging = verboseLogging
         self.appMode = appMode
         self.printHelp = false
         self.printVersion = false
@@ -396,15 +386,6 @@ public struct AgentConfiguration: Sendable {
             throw AgentConfigurationError.invalidValue(argument, rawValue)
         }
         return value
-    }
-
-    private static func bool(_ rawValue: String?) -> Bool {
-        switch rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "1", "true", "yes", "y", "on":
-            return true
-        default:
-            return false
-        }
     }
 
     private static func selectedAgent(

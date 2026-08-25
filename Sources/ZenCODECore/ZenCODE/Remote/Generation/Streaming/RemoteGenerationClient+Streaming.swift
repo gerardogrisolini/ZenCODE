@@ -245,11 +245,6 @@ extension RemoteGenerationClient {
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
             sessionID: sessionID
         )
-        if configuration.verboseLogging {
-            await onEvent(.diagnostic(
-                RemoteStreamTransport.toolExposureDiagnostic(from: descriptors)
-            ))
-        }
         return RemoteToolWireCatalog(descriptors: descriptors)
     }
 

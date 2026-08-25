@@ -25,19 +25,6 @@ extension TerminalChat {
         _ = await statusBar.update(subscriptionUsage: status)
     }
 
-    public func compactGenerationSummary(_ message: String) -> String {
-        if let range = message.range(of: "\n  Cache:") {
-            return String(message[..<range.lowerBound])
-        }
-        if let range = message.range(of: "\nCache:") {
-            return String(message[..<range.lowerBound])
-        }
-        if let range = message.range(of: "; cache ") {
-            return String(message[..<range.lowerBound])
-        }
-        return message
-    }
-
     public nonisolated static func shouldPrintMetricsForAutomation() -> Bool {
         ProcessInfo.processInfo.environment["ZENCODE_PRINT_METRICS"] == "1"
     }

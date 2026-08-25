@@ -360,14 +360,11 @@ extension TerminalChat {
             configuration: await currentSessionConfiguration()
         ) { @TerminalChatActor event in
             switch event {
-            case let .status(message):
-                if emitStatus && self.configuration.verboseLogging {
-                    await self.writeChatError("[ZenCODE] \(message)\n")
-                }
             case let .modelLoaded(modelID):
                 _ = await self.statusBar.update(modelID: modelID)
                 self.printedModelID = self.loadedModelDisplayTitle(modelID)
-            case .diagnostic,
+            case .status,
+                 .diagnostic,
                  .thought,
                  .metrics,
                  .contextWindow,
@@ -395,18 +392,7 @@ extension TerminalChat {
         printedModelID = displayTitle
         await refreshStatusBarThinkingSelection()
         _ = await statusBar.update(modelID: modelID)
-        let loadedModelHeading = "ZenCODE loaded model"
-
-        guard configuration.verboseLogging else {
-            await writeOperationalMessage("\(loadedModelHeading): \(displayTitle)\n")
-            return
-        }
-
-        let lines = [
-            "\(loadedModelHeading):",
-            "  model: \(modelID)"
-        ]
-        await writeOperationalMessage(lines.joined(separator: "\n") + "\n")
+        await writeOperationalMessage("ZenCODE loaded model: \(displayTitle)\n")
     }
 
     public func loadedModelDisplayTitle(_ modelID: String) -> String {

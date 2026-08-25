@@ -132,7 +132,6 @@ extension RemoteSessionSnapshotTests {
             modelID: "remote-model",
             workingDirectory: URL(fileURLWithPath: "/tmp/project"),
             maxToolRounds: 4,
-            verboseLogging: false,
             toolAuthorizationHandler: nil
         )
         let client = RemoteGenerationClient(
@@ -188,7 +187,6 @@ extension RemoteSessionSnapshotTests {
             configuredContextWindowLimit: 30_000,
             maxToolRounds: 4,
             maxOutputTokens: 4_000,
-            verboseLogging: false,
             toolAuthorizationHandler: nil
         )
         let client = AnthropicSubscriptionGenerationClient(

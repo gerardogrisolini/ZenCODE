@@ -108,7 +108,7 @@ exact paths involved.
 ## Command Line Options
 
 ```text
-zen [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N] [--verbose]
+zen [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
 ```
 
 - `--version`: print the ZenCODE version and exit.
@@ -124,9 +124,8 @@ zen [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--z
 - `--skills LIST`: initial skill selection by name/number, `all`, or `none`.
 - `--max-tool-rounds N`: maximum model/tool loop rounds per prompt.
 - `--max-output-tokens N`: maximum generated tokens per model call.
-- `--verbose`: show status/tool progress on stderr.
 
-Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, `ZENCODE_AGENT_MODEL`, `ZENCODE_AGENT_CWD`, `ZENCODE_AGENT_SKILLS`, `ZENCODE_AGENT_MAX_TOOL_ROUNDS`, `ZENCODE_AGENT_MAX_OUTPUT_TOKENS`, and `ZENCODE_AGENT_VERBOSE`.
+Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, `ZENCODE_AGENT_MODEL`, `ZENCODE_AGENT_CWD`, `ZENCODE_AGENT_SKILLS`, `ZENCODE_AGENT_MAX_TOOL_ROUNDS`, and `ZENCODE_AGENT_MAX_OUTPUT_TOKENS`.
 
 ## Optional Feature Packages
 
@@ -181,17 +180,20 @@ credentials. A missing setup is a warning, so the command remains convenient in
 scripts and clean installations.
 
 Local diagnostics are off by default and never use remote telemetry. Enable a
-redacted local log explicitly when investigating an issue:
+redacted system log explicitly when investigating an issue:
 
 ```bash
 ZENCODE_LOG=debug zen
-# Optionally choose a different local destination instead of ~/.zencode/logs/zencode.log:
-ZENCODE_LOG=debug ZENCODE_LOG_FILE=/tmp/zencode.log zen
 ```
 
-`ZENCODE_LOG=stderr` is also available when stderr is appropriate; it never
-writes to stdout, so ACP JSON-RPC output remains clean. See
-[security.md](security.md) for the persisted-credential protection model.
+Diagnostics are emitted to the platform system log — Unified Logging on macOS
+(subsystem `com.zencode.zen`, categories `diagnostics-*`) and syslog/journal on
+Linux/WSL — with `ZENCODE_LOG_LEVEL` overriding the threshold. They never write
+to stdout, stderr, or an application-owned file, so ACP JSON-RPC output remains
+clean. The legacy `ZENCODE_LOG_FILE` and `ZENCODE_LOG=stderr` destinations have
+been removed and are reported as invalid by `zen --doctor`. Use `/tools logs`
+to open the native system log viewer (Console.app on macOS). See
+[security.md](security.md) for the protection model.
 
 ## Agent Profiles
 

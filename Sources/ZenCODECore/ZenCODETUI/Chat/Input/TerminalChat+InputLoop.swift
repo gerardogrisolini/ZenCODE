@@ -671,7 +671,6 @@ extension TerminalChat {
 
         func startGeneration(attempt: TerminalPromptAttempt) async {
             isGenerating = true
-            didReceiveMetricsForCurrentPrompt = false
             didRefreshGitStatusDuringCurrentPrompt = false
             // Declare the busy state before the first suspension so the Core
             // cannot authorise a synthetic turn in the window between this

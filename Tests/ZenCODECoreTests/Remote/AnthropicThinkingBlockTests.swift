@@ -244,25 +244,6 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
-    func cacheUsageDiagnosticReportsHitRate() {
-        let usage = RemoteGenerationUsage(
-            promptTokens: 1_000,
-            completionTokens: 200,
-            totalTokens: 1_200,
-            cachedPromptTokens: 800,
-            promptTokensPerSecond: nil,
-            completionTokensPerSecond: nil
-        )
-        let diagnostic = RemoteGenerationClient.cacheUsageDiagnostic(
-            provider: "Anthropic",
-            usage: usage
-        )
-        #expect(diagnostic?.contains("cached=800") == true)
-        #expect(diagnostic?.contains("new=200") == true)
-        #expect(diagnostic?.contains("cache_hit=80%") == true)
-    }
-
-    @Test
     func subscriptionSystemBlocksMarkOnlyLastBlockForCaching() throws {
         let withUserPrompt = AnthropicSubscriptionGenerationClient.subscriptionSystemBlocks(
             userSystemPrompt: "Project instructions"

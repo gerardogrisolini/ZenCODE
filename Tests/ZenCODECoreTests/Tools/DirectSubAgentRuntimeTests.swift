@@ -1245,7 +1245,6 @@ struct DirectSubAgentRuntimeTests {
             modelID: "parent-model",
             workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
             maxToolRounds: 4,
-            verboseLogging: false,
             toolAuthorizationHandler: nil
         )
         let profile = AgentProfile(
@@ -1274,7 +1273,6 @@ struct DirectSubAgentRuntimeTests {
             modelID: "parent-model",
             workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
             maxToolRounds: 4,
-            verboseLogging: false,
             toolAuthorizationHandler: nil
         )
         let profile = AgentProfile(
@@ -1296,7 +1294,6 @@ struct DirectSubAgentRuntimeTests {
             modelID: "local-model",
             workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
             maxToolRounds: 4,
-            verboseLogging: false,
             locksModelToSession: true,
             toolAuthorizationHandler: nil
         )

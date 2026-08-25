@@ -135,24 +135,6 @@ extension ZenCODEACPBridge {
         return merged
     }
 
-    public static func verboseToolNameSummary(_ toolNames: Set<String>?) -> String {
-        guard let toolNames else {
-            return "all"
-        }
-        return verboseNameSummary(toolNames)
-    }
-
-    public static func verboseDescriptorSummary(_ descriptors: [DirectToolDescriptor]) -> String {
-        verboseNameSummary(descriptors.map(\.name))
-    }
-
-    private static func verboseNameSummary<S: Sequence>(_ names: S) -> String where S.Element == String {
-        let sortedNames = names.filter { !$0.isEmpty }.sorted()
-        let sample = sortedNames.prefix(8).joined(separator: ",")
-        let suffix = sortedNames.count > 8 ? ",..." : ""
-        return "\(sortedNames.count)[\(sample)\(suffix)]"
-    }
-
     public func sessionConfiguration(
         from configuration: AgentCoreSessionConfiguration,
         allowedToolNames: Set<String>?
@@ -170,7 +152,6 @@ extension ZenCODEACPBridge {
             generationParameterOverrides: configuration.generationParameterOverrides,
             maxToolRounds: configuration.maxToolRounds,
             maxOutputTokens: configuration.maxOutputTokens,
-            verboseLogging: configuration.verboseLogging,
             appMode: configuration.appMode,
             thinkingSelection: configuration.thinkingSelection,
             preserveThinking: configuration.preserveThinking
@@ -205,7 +186,6 @@ extension ZenCODEACPBridge {
                 generationParameterOverrides: session.configuration.generationParameterOverrides,
                 maxToolRounds: configuration.maxToolRounds,
                 maxOutputTokens: configuration.maxOutputTokens,
-                verboseLogging: configuration.verboseLogging,
                 appMode: configuration.appMode,
                 thinkingSelection: snapshot.thinkingSelection,
                 preserveThinking: snapshot.preserveThinking

@@ -37,6 +37,28 @@ struct AgentConfigurationTests {
     }
 
     @Test
+    func syntaxValidationRejectsRemovedVerboseOptionWithoutLoadingConfiguration() {
+        #expect(throws: AgentConfigurationError.self) {
+            try AgentConfiguration.validateArguments(["zen", "--verbose"])
+        }
+        #expect {
+            try AgentConfiguration.validateArguments(["zen", "--verbose"])
+        } throws: { error in
+            guard case let AgentConfigurationError.unknownArgument(argument) = error else {
+                return false
+            }
+            return argument == "--verbose"
+        }
+    }
+
+    @Test
+    func helpTextNoLongerMentionsVerboseOption() throws {
+        _ = try AgentConfiguration(arguments: ["zen", "--help"])
+        #expect(!AgentConfiguration.helpText.contains("--verbose"))
+        #expect(!AgentConfiguration.helpText.contains("ZENCODE_AGENT_VERBOSE"))
+    }
+
+    @Test
     func missingRemoteAPIKeyDirectsUsersToProviderSetup() {
         #expect(
             AgentCoreBackendError.missingRemoteAPIKey("Example provider")
@@ -51,7 +73,6 @@ struct AgentConfigurationTests {
             modelID: "claude-unit-test",
             workingDirectory: URL(fileURLWithPath: "/tmp/provider-factory-tests", isDirectory: true),
             maxToolRounds: 1,
-            verboseLogging: false,
             toolAuthorizationHandler: nil
         )
         let anthropicAPISelection = AgentModelSelection(
@@ -87,7 +108,6 @@ struct AgentConfigurationTests {
             modelID: "gpt-test",
             workingDirectory: URL(fileURLWithPath: "/tmp/provider-factory-tests", isDirectory: true),
             maxToolRounds: 1,
-            verboseLogging: false,
             toolAuthorizationHandler: nil
         )
         let selection = AgentModelSelection(

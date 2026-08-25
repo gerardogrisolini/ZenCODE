@@ -206,7 +206,6 @@ extension TerminalChat {
 
     func runPromptBlocking(_ attempt: TerminalPromptAttempt) async {
         do {
-            didReceiveMetricsForCurrentPrompt = false
             didRefreshGitStatusDuringCurrentPrompt = false
             await statusBar.beginRequest()
             await statusBar.setProcessing(true)

@@ -43,11 +43,11 @@ No credential values are logged by this layer.
 ## Tool execution system logs
 
 Every direct tool execution emits one structured completion record through the
-platform system logger. On Apple platforms ZenCODE uses Swift's `OSLog.Logger`
-and Unified Logging directly, under subsystem `com.zencode.zen` and category
-`tool-execution`; Linux uses the operating system `logger(1)` bridge so records
-reach syslog or the systemd journal. ZenCODE does not create, rotate, retain, or
-parse a separate tool-log file.
+shared platform system-log backend. On Apple platforms ZenCODE uses Swift's
+`OSLog.Logger` and Unified Logging directly, under subsystem `com.zencode.zen`
+and category `tool-execution`; Linux uses the operating system `logger(1)`
+bridge so records reach syslog or the systemd journal. ZenCODE does not create,
+rotate, retain, or parse a separate tool-log file.
 
 Records contain the tool and call identifiers, structured arguments, session and
 working-directory data, agent ID/name, model, coordinator/sub-agent ownership,
@@ -76,6 +76,21 @@ when it opens. On macOS, paste `c:tool-execution` into Console's search field an
 press Return to show the ZenCODE tool-execution category. Click **Save**, name the
 search (for example, **ZenCODE**), and it will remain available in Console's
 Favorites for subsequent sessions.
+
+## Opt-in diagnostics
+
+The same shared system-log backend carries ZenCODE's opt-in diagnostics
+(`ZENCODE_LOG`, threshold overridable with `ZENCODE_LOG_LEVEL`). Diagnostics are
+disabled by default, secret-redacted, bounded in size, published as public
+OSLog payloads, and emitted under subsystem `com.zencode.zen` with
+`diagnostics-<category>` categories (for example `diagnostics-MemoryService`),
+so level and category stay identifiable in Console or the journal. Diagnostics
+never write to stdout, stderr, or an application-owned file; the legacy
+`ZENCODE_LOG_FILE` override and `ZENCODE_LOG=stderr` destination were removed
+and are reported as legacy/invalid by `zen --doctor`. One always-visible
+exception exists by design: semantic-embedding fallback errors always print one
+redacted ERROR line to the preserved stderr descriptor (never stdout) and
+additionally forward an opt-in copy to the system log.
 
 ## Backup archives
 

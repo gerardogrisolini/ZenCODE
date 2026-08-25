@@ -46,7 +46,6 @@ public final class TerminalChat {
     public var activeCheckpointTree: SessionCheckpointTree?
     public var printedModelID: String?
     public var didPrintActiveTools = false
-    public var didReceiveMetricsForCurrentPrompt = false
     /// Tracks whether the status-bar git summary has already been refreshed
     /// during the current prompt. Read and written by both the periodic
     /// sub-agent overview refresh task and the generation callback; their

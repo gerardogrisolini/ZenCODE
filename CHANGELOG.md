@@ -10,6 +10,31 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Removed
+
+- Removed the `--verbose` CLI flag and its `ZENCODE_AGENT_VERBOSE` environment
+  variable along with the `verboseLogging` runtime setting. The flag is now
+  rejected as an unknown argument. Status and tool-progress output on stderr,
+  ACP verbose file logging, and verbose-only provider diagnostics (tool
+  exposure, prompt-cache usage) were removed; prompt-cache warnings and the
+  structured tool execution log remain available.
+- Removed the application-owned diagnostic log destination: `ZenLogger` now
+  emits through the shared platform system-log backend, so the
+  `~/.zencode/logs/zencode.log` file, its per-run creation, custom timestamps,
+  and the `ZENCODE_LOG_FILE` override are gone. `ZENCODE_LOG_FILE` is ignored
+  and `ZENCODE_LOG=stderr`/`=2` no longer enable logging; `zen --doctor`
+  reports both as legacy/invalid. Diagnostics remain opt-in via `ZENCODE_LOG`
+  (threshold overridable with `ZENCODE_LOG_LEVEL`) and are redacted, size
+  bounded, and never written to stdout, stderr, or a file. Semantic-embedding
+  fallback errors still always print one redacted ERROR line to stderr and
+  additionally forward an opt-in copy to the system log, without
+  destination-based deduplication. The public
+  `ZenLoggerConfiguration.Destination` keeps only `.systemLog`; the legacy
+  `.file`/`.standardError` cases are unavailable at compile time.
+  `ZenLogger.configure(nil)` now really clears the override and restores
+  environment resolution, and the new `ZenLogger.disable()` forces diagnostics
+  off regardless of `ZENCODE_LOG`.
+
 ### Added
 
 - Tool executions now emit secret-redacted structured records through Swift's

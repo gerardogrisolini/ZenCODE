@@ -44,9 +44,6 @@ extension AnthropicSubscriptionGenerationClient {
             preferredWorkspaceRootURL: initialSession.cwd,
             sessionID: initialSession.id
         )
-        if configuration.verboseLogging {
-            await onEvent(.diagnostic(RemoteStreamTransport.toolExposureDiagnostic(from: toolDescriptors)))
-        }
         // Re-read after the tool-descriptor suspension: the actor may have
         // accepted a compaction or a new turn in the meantime.
         guard let session = currentSession(for: lease) else {
@@ -315,13 +312,6 @@ extension AnthropicSubscriptionGenerationClient {
             await onEvent(.content(normalizedRemainder))
         }
 
-        if configuration.verboseLogging,
-           let cacheDiagnostic = RemoteGenerationClient.cacheUsageDiagnostic(
-               provider: "Anthropic",
-               usage: usage
-           ) {
-            await onEvent(.diagnostic(cacheDiagnostic))
-        }
         if let cacheWarning = RemoteGenerationClient.promptCacheWarning(
             provider: "Anthropic",
             usage: usage,

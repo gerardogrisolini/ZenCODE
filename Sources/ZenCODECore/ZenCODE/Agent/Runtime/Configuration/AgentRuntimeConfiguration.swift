@@ -442,7 +442,6 @@ public struct AgentRuntimeConfiguration: Sendable {
     public let generationParameterOverrides: AgentGenerationParameterOverrides
     public let maxToolRounds: Int
     public let maxOutputTokens: Int?
-    public let verboseLogging: Bool
     public let appMode: Bool
     public let locksModelToSession: Bool
     public let toolAuthorizationHandler: AgentToolAuthorizationHandler?
@@ -456,7 +455,6 @@ public struct AgentRuntimeConfiguration: Sendable {
         generationParameterOverrides: AgentGenerationParameterOverrides = AgentGenerationParameterOverrides(),
         maxToolRounds: Int,
         maxOutputTokens: Int? = nil,
-        verboseLogging: Bool,
         appMode: Bool = false,
         locksModelToSession: Bool = false,
         toolAuthorizationHandler: AgentToolAuthorizationHandler?,
@@ -471,7 +469,6 @@ public struct AgentRuntimeConfiguration: Sendable {
         self.generationParameterOverrides = generationParameterOverrides.normalized()
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
         self.maxOutputTokens = maxOutputTokens
-        self.verboseLogging = verboseLogging
         self.appMode = appMode
         self.locksModelToSession = locksModelToSession
         self.toolAuthorizationHandler = toolAuthorizationHandler
@@ -487,7 +484,6 @@ public struct AgentRuntimeConfiguration: Sendable {
             generationParameterOverrides: generationParameterOverrides,
             maxToolRounds: maxToolRounds,
             maxOutputTokens: maxOutputTokens,
-            verboseLogging: verboseLogging,
             appMode: appMode,
             locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler,
@@ -511,7 +507,6 @@ public struct AgentRuntimeConfiguration: Sendable {
                 ?? AgentGenerationParameterOverrides(),
             maxToolRounds: maxToolRounds,
             maxOutputTokens: maxOutputTokens,
-            verboseLogging: verboseLogging,
             appMode: appMode,
             locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler,
@@ -530,7 +525,6 @@ public struct AgentRuntimeConfiguration: Sendable {
             generationParameterOverrides: generationParameterOverrides,
             maxToolRounds: maxToolRounds,
             maxOutputTokens: maxOutputTokens,
-            verboseLogging: verboseLogging,
             appMode: appMode,
             locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler,
@@ -550,7 +544,6 @@ public struct AgentRuntimeConfiguration: Sendable {
             generationParameterOverrides: generationParameterOverrides,
             maxToolRounds: maxToolRounds,
             maxOutputTokens: maxOutputTokens,
-            verboseLogging: verboseLogging,
             appMode: appMode,
             locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler,

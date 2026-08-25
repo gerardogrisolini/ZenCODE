@@ -31,8 +31,7 @@ struct SubscriptionPromptCacheIntegrationTests {
                 modelID: selection.modelID,
                 contextWindow: selection.configuredContextWindowLimit,
                 overrides: selection.generationParameterOverrides,
-                maxOutputTokens: nil,
-                verboseLogging: true
+                maxOutputTokens: nil
             )
         )
         let events = LiveSubscriptionCacheEvents()
@@ -76,10 +75,9 @@ struct SubscriptionPromptCacheIntegrationTests {
             !secondTurnDiagnostics.contains { $0.contains("Cache warning:") },
             "ChatGPT reported low cache reuse with the stable tool catalog: \(secondTurnDiagnostics.joined(separator: "\n"))"
         )
-        let cachedPromptTokens = Self.maxCachedPromptTokens(
-            in: secondTurnDiagnostics,
-            provider: "ChatGPT"
-        )
+        let cachedPromptTokens = await events.secondTurnMetrics()
+            .compactMap(\.cachedPromptTokenCount)
+            .max()
         #expect(
             cachedPromptTokens.map { $0 >= 1_024 } == true,
             "ChatGPT cached only \(cachedPromptTokens ?? 0) prompt tokens with the stable tool catalog."
@@ -109,8 +107,7 @@ struct SubscriptionPromptCacheIntegrationTests {
                 modelID: selection.modelID,
                 contextWindow: selection.configuredContextWindowLimit,
                 overrides: selection.generationParameterOverrides,
-                maxOutputTokens: 512,
-                verboseLogging: true
+                maxOutputTokens: 512
             ),
             provider: provider
         )
@@ -150,14 +147,14 @@ struct SubscriptionPromptCacheIntegrationTests {
             !secondTurnDiagnostics.contains { $0.contains("Cache warning:") },
             "Anthropic reported low prompt-cache reuse on the second turn: \(secondTurnDiagnostics.joined(separator: "\n"))"
         )
-        let cachedPromptTokens = Self.maxCachedPromptTokens(
-            in: secondTurnDiagnostics,
-            provider: "Anthropic"
-        )
+        let secondTurnMetrics = await events.secondTurnMetrics()
+        let cachedPromptTokens = secondTurnMetrics
+            .compactMap(\.cachedPromptTokenCount)
+            .max()
         guard let cachedPromptTokens else {
-            throw LiveSubscriptionCacheIntegrationError.missingCacheDiagnostic(
+            throw LiveSubscriptionCacheIntegrationError.missingCacheMetrics(
                 provider: "Anthropic",
-                diagnostics: secondTurnDiagnostics
+                metrics: secondTurnMetrics
             )
         }
         #expect(
@@ -212,8 +209,7 @@ struct SubscriptionPromptCacheIntegrationTests {
         modelID: String,
         contextWindow: Int?,
         overrides: AgentGenerationParameterOverrides?,
-        maxOutputTokens: Int?,
-        verboseLogging: Bool
+        maxOutputTokens: Int?
     ) -> AgentRuntimeConfiguration {
         AgentRuntimeConfiguration(
             modelID: modelID,
@@ -222,7 +218,6 @@ struct SubscriptionPromptCacheIntegrationTests {
             generationParameterOverrides: overrides ?? AgentGenerationParameterOverrides(),
             maxToolRounds: 1,
             maxOutputTokens: maxOutputTokens,
-            verboseLogging: verboseLogging,
             toolAuthorizationHandler: nil
         )
     }
@@ -251,46 +246,36 @@ struct SubscriptionPromptCacheIntegrationTests {
         }
         return selection
     }
-
-    private static func maxCachedPromptTokens(
-        in diagnostics: [String],
-        provider: String
-    ) -> Int? {
-        diagnostics
-            .filter { $0.hasPrefix("\(provider) cache:") }
-            .compactMap { cachedPromptTokens(in: $0) }
-            .max()
-    }
-
-    private static func cachedPromptTokens(in diagnostic: String) -> Int? {
-        diagnostic
-            .split(whereSeparator: \.isWhitespace)
-            .compactMap { part -> Int? in
-                guard part.hasPrefix("cached=") else {
-                    return nil
-                }
-                return Int(part.dropFirst("cached=".count))
-            }
-            .max()
-    }
 }
 
 private actor LiveSubscriptionCacheEvents {
     private var diagnostics: [String] = []
-    private var turnBoundaryIndex: Int?
+    private var allMetrics: [DirectAgentGenerationMetrics] = []
+    private var turnBoundaryDiagnosticsIndex: Int?
+    private var turnBoundaryMetricsIndex: Int?
 
     func append(_ event: DirectAgentEvent) {
-        if case let .diagnostic(message) = event {
+        switch event {
+        case let .diagnostic(message):
             diagnostics.append(message)
+        case let .metrics(metrics):
+            allMetrics.append(metrics)
+        default:
+            break
         }
     }
 
     func markTurnBoundary() {
-        turnBoundaryIndex = diagnostics.count
+        turnBoundaryDiagnosticsIndex = diagnostics.count
+        turnBoundaryMetricsIndex = allMetrics.count
     }
 
     func secondTurnDiagnostics() -> [String] {
-        Array(diagnostics[(turnBoundaryIndex ?? 0)...])
+        Array(diagnostics[(turnBoundaryDiagnosticsIndex ?? 0)...])
+    }
+
+    func secondTurnMetrics() -> [DirectAgentGenerationMetrics] {
+        Array(allMetrics[(turnBoundaryMetricsIndex ?? 0)...])
     }
 }
 
@@ -302,17 +287,20 @@ private extension ChatGPTSubscriptionGenerationClient {
 
 private enum LiveSubscriptionCacheIntegrationError: LocalizedError {
     case missingModel
-    case missingCacheDiagnostic(provider: String, diagnostics: [String])
+    case missingCacheMetrics(provider: String, metrics: [DirectAgentGenerationMetrics])
 
     var errorDescription: String? {
         switch self {
         case .missingModel:
             return "No matching subscription model is configured in ~/.zencode/settings.json."
-        case let .missingCacheDiagnostic(provider, diagnostics):
+        case let .missingCacheMetrics(provider, metrics):
+            let rendered = metrics
+                .map { "prompt=\($0.promptTokenCount.map(String.init) ?? "n/a") cached=\($0.cachedPromptTokenCount.map(String.init) ?? "n/a")" }
+                .joined(separator: "\n")
             return """
-            \(provider) completed the live two-turn request but did not emit a cache diagnostic with cached prompt tokens.
-            Diagnostics:
-            \(diagnostics.joined(separator: "\n"))
+            \(provider) completed the live two-turn request but did not report cached prompt tokens in its generation metrics.
+            Metrics:
+            \(rendered)
             """
         }
     }

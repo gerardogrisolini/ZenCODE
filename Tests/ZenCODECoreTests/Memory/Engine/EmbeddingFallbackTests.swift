@@ -136,7 +136,6 @@ struct EmbeddingFallbackTests {
         var captured: [Data] = []
         MemorySemanticFallbackDiagnostics.emitVisibleError(
             message: "semantic embedding retrieval failed (httpStatus 503); continuing with BM25-only results (failedQueries=1/1).",
-            loggerDestination: nil,
             stderrWriter: { captured.append($0) }
         )
 
@@ -157,7 +156,6 @@ struct EmbeddingFallbackTests {
         var captured: [Data] = []
         MemorySemanticFallbackDiagnostics.emitVisibleError(
             message: "semantic embedding retrieval failed (httpStatus 500); api_key=\(secret)",
-            loggerDestination: nil,
             stderrWriter: { captured.append($0) }
         )
 
@@ -168,13 +166,15 @@ struct EmbeddingFallbackTests {
     }
 
     @Test
-    func zenLoggerFileChannelIsKeptButStderrIsNotDuplicated() throws {
-        // The diagnostic-file channel still receives the line when it targets
-        // a file (or is disabled, where the call is a harmless no-op)...
-        #expect(MemorySemanticFallbackDiagnostics.shouldDuplicateToZenLogger(destinationDescription: "/tmp/memory.log") == true)
-        #expect(MemorySemanticFallbackDiagnostics.shouldDuplicateToZenLogger(destinationDescription: nil) == true)
-        // ...but never twice when the logger already writes to stderr.
-        #expect(MemorySemanticFallbackDiagnostics.shouldDuplicateToZenLogger(destinationDescription: "stderr") == false)
+    func visibleErrorAlwaysDuplicatesToTheOptInSystemLogChannel() {
+        // The system-log copy is opt-in and independent of the visible stderr
+        // line: there is no destination-based deduplication anymore. With the
+        // logger disabled (the default in the test process) the ZenLogger call
+        // is a no-op, and the stderr line was still written above.
+        let message = "semantic embedding retrieval failed (httpStatus 503); continuing with BM25-only results."
+        let rendered = ZenLogger.formattedMessage(level: .error, category: .memory, message: message)
+        #expect(rendered.contains("[MemoryService][ERROR]"))
+        #expect(MemorySemanticFallbackDiagnostics.visibleLine(message: message) == rendered + "\n")
     }
 
     @Test

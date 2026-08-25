@@ -65,9 +65,7 @@ public enum ZenCODECommandLineRunner {
 
             switch resolvedRunMode {
             case .chat:
-                AgentOutput.silenceInheritedProcessOutput(
-                    keepStandardError: configuration.verboseLogging
-                )
+                AgentOutput.silenceInheritedProcessOutput()
                 let permissionAuthorizer = LocalExecPermissionAuthorizer()
                 let sessionRunner = AgentCoreSessionRunner(
                     defaultToolAuthorizationHandler: { request in
@@ -111,9 +109,7 @@ public enum ZenCODECommandLineRunner {
                     throw error
                 }
             case .acp:
-                if !configuration.verboseLogging {
-                    AgentOutput.silenceInheritedProcessError()
-                }
+                AgentOutput.silenceInheritedProcessError()
                 break
             }
 
@@ -171,7 +167,6 @@ public enum ZenCODECommandLineRunner {
             || argument == "--skills"
             || argument == "--max-tool-rounds"
             || argument == "--max-output-tokens"
-            || argument == "--verbose"
     }
 }
 

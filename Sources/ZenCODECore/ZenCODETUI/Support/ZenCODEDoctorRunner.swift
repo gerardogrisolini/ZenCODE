@@ -15,7 +15,7 @@ import Foundation
 public enum ZenCODEDoctorRunner {
     public static let option = "--doctor"
     public static let troubleshootingHint =
-        "Run 'zen --doctor' for a redacted diagnostic report; set ZENCODE_LOG=debug to capture local logs.\n"
+        "Run 'zen --doctor' for a redacted diagnostic report; set ZENCODE_LOG=debug to emit redacted diagnostics to the system log.\n"
 
     /// Whether the sanitized arguments request the doctor command.
     public static func shouldRun(arguments: [String]) -> Bool {

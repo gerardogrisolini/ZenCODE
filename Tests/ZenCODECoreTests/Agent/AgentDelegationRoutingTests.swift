@@ -678,7 +678,6 @@ struct AgentDelegationRoutingTests {
             modelID: Self.alphaModelID,
             workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
             maxToolRounds: 4,
-            verboseLogging: false,
             toolAuthorizationHandler: nil
         )
         let profile = Self.profile(
@@ -715,7 +714,6 @@ struct AgentDelegationRoutingTests {
             modelID: Self.alphaModelID,
             workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
             maxToolRounds: 4,
-            verboseLogging: false,
             toolAuthorizationHandler: nil
         )
         let profile = Self.profile(
@@ -788,7 +786,6 @@ struct AgentDelegationRoutingTests {
             modelID: Self.alphaModelID,
             workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
             maxToolRounds: 4,
-            verboseLogging: false,
             toolAuthorizationHandler: nil
         ).applyingSubAgentBackendContext(context)
 

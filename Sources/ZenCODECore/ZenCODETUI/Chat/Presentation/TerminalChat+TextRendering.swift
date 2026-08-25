@@ -6,23 +6,6 @@
 import Foundation
 
 extension TerminalChat {
-    public func writeDiagnostic(_ message: String) async {
-        if message.hasPrefix("Generation done:") {
-            if !didReceiveMetricsForCurrentPrompt {
-                await writeChatError("\n\n[ZenCODE] \(compactGenerationSummary(message))\n")
-            }
-            return
-        }
-
-        guard !message.hasPrefix("Remote request:") else {
-            return
-        }
-
-        await writeChatError(
-            "\(TerminalStyle.Text.muted)[ZenCODE] \(message)\(TerminalStyle.reset)\n"
-        )
-    }
-
     public func writeThought(_ delta: String) async {
         await renderCoordinator.writeThought(delta)
     }

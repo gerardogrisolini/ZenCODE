@@ -107,9 +107,6 @@ extension ZenCODEACPBridge {
             rawValue: rawCwd,
             applyLaunchDirectoryFallback: false
         ).path
-        await verboseACPLog(
-            "session/new cwd=\(cwd) mcpServers=\(Self.mcpServerInputSummary(from: params))"
-        )
         try ensureLifecycleOperationLive(operation)
         let requestedModelID = Self.modelID(from: params)
         let modelID = requestedModelID
@@ -159,9 +156,6 @@ extension ZenCODEACPBridge {
                     effectiveAllowedToolNames
                 )
             }
-            await verboseACPLog(
-                "session/new allowedTools=\(Self.verboseToolNameSummary(allowedToolNames))"
-            )
             try ensureLifecycleOperationLive(operation)
             let promptSections = resolvedPromptSections(
                 providedSystemPrompt: nil,
@@ -195,7 +189,6 @@ extension ZenCODEACPBridge {
                 allowedToolNames: allowedToolNames,
                 maxToolRounds: self.configuration.maxToolRounds,
                 maxOutputTokens: self.configuration.maxOutputTokens,
-                verboseLogging: self.configuration.verboseLogging,
                 appMode: self.configuration.appMode,
                 thinkingSelection: thinkingSelection,
                 preserveThinking: preserveThinking
@@ -269,12 +262,6 @@ extension ZenCODEACPBridge {
         operation: UInt64? = nil
     ) async -> [DirectToolDescriptor] {
         let definitions = Self.mcpServerDefinitions(from: params)
-        await verboseACPLog(
-            "ACP mcpServers input=\(Self.mcpServerInputSummary(from: params)) parsed=\(definitions.count)"
-        )
-        await verboseACPLog(
-            "ACP mcpServers detail=\(Self.mcpServerInputDetails(from: params))"
-        )
         guard !definitions.isEmpty else {
             return []
         }
@@ -296,22 +283,13 @@ extension ZenCODEACPBridge {
                 return []
             }
             do {
-                await verboseACPLog(
-                    "connecting ACP MCP server name=\(definition.name) type=\(definition.type)"
-                )
                 let installedDescriptors = try await sessionRunner.installACPProvidedMCPServer(
                     name: definition.name,
                     configuration: definition.configuration,
                     ownership: ownership
                 )
-                                        await verboseACPLog(
-                    "installed ACP MCP server name=\(definition.name) tools=\(Self.verboseDescriptorSummary(installedDescriptors))"
-                )
                 descriptors.append(contentsOf: installedDescriptors)
             } catch {
-                await verboseACPLog(
-                    "failed ACP MCP server name=\(definition.name): \(error.localizedDescription)"
-                )
                 ZenLogger.warning(
                     .viewModelRuntime,
                     "failed to install ACP MCP server '\(definition.name)': \(error.localizedDescription)"
@@ -622,9 +600,6 @@ extension ZenCODEACPBridge {
             rawValue: rawCwd,
             applyLaunchDirectoryFallback: false
         )
-        await verboseACPLog(
-            "session/restore id=\(sessionID) cwd=\(workingDirectory.path) replay=\(replayHistory) mcpServers=\(Self.mcpServerInputSummary(from: params))"
-        )
         try ensureLifecycleOperationLive(operation)
         // Same early epoch reservation as `newSession`: the MCP registrations
         // installed below carry the ownership of the incarnation this handler
@@ -652,9 +627,6 @@ extension ZenCODEACPBridge {
                 selectedAgent: selectedAgent
             )
             try ensureLifecycleOperationLive(operation)
-            await verboseACPLog(
-                "session/restore allowedTools=\(Self.verboseToolNameSummary(configuration.allowedToolNames)) history=\(configuration.history.count)"
-            )
             // Last fence before the session entry, the runner session, the history
             // replay and the reply become observable.
             try ensureLifecycleOperationLive(operation)
@@ -779,7 +751,6 @@ extension ZenCODEACPBridge {
             history: [],
             maxToolRounds: configuration.maxToolRounds,
             maxOutputTokens: configuration.maxOutputTokens,
-            verboseLogging: configuration.verboseLogging,
             appMode: configuration.appMode,
             thinkingSelection: nil,
             preserveThinking: false
@@ -852,7 +823,6 @@ extension ZenCODEACPBridge {
             allowedToolNames: allowedToolNames,
             maxToolRounds: configuration.maxToolRounds,
             maxOutputTokens: configuration.maxOutputTokens,
-            verboseLogging: configuration.verboseLogging,
             appMode: configuration.appMode,
             thinkingSelection: thinkingSelection,
             preserveThinking: preserveThinking

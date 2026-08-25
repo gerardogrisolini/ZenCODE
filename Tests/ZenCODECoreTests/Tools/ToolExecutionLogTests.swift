@@ -163,7 +163,6 @@ struct ToolExecutionLogTests {
             modelID: "parent-model",
             workingDirectory: URL(fileURLWithPath: "/tmp"),
             maxToolRounds: 4,
-            verboseLogging: false,
             locksModelToSession: true,
             toolAuthorizationHandler: nil,
             agentID: "coordinator-id",
@@ -274,6 +273,23 @@ struct ToolExecutionLogTests {
             SystemLogViewerLauncher.LaunchError.failed(3).errorDescription
                 == "The system log viewer failed with exit code 3."
         )
+    }
+
+    @Test
+    func emitterRecordCarriesSharedSubsystemCategoryAndSeverity() {
+        #expect(ToolExecutionLog.subsystem == SystemLogEmitter.subsystem)
+        #expect(ToolExecutionLog.subsystem == "com.zencode.zen")
+        #expect(ToolExecutionLog.category == "tool-execution")
+        #expect(ToolExecutionLog.linuxTag == SystemLogEmitter.linuxTag)
+        // The tool channel maps completed executions to notice and every other
+        // status to error, preserving the record payload unchanged.
+        let completed = SystemLogRecord(
+            category: ToolExecutionLog.category,
+            severity: .notice,
+            message: "{}"
+        )
+        #expect(completed.severity.syslogPriority == "user.notice")
+        #expect(SystemLogSeverity.error.syslogPriority == "user.err")
     }
 
     private func toolCall() -> DirectAgentToolCall {

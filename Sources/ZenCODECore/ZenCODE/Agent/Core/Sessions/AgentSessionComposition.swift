@@ -215,7 +215,6 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
     public var allowedToolNames: Set<String>?
     public var maxToolRounds: Int
     public var maxOutputTokens: Int?
-    public var verboseLogging: Bool
     public var appMode: Bool
     public var thinkingSelection: AgentThinkingSelection?
     public var preserveThinking: Bool
@@ -234,7 +233,6 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
         allowedToolNames: Set<String>? = nil,
         maxToolRounds: Int = AgentToolRoundPolicy.defaultMaxToolRounds,
         maxOutputTokens: Int? = nil,
-        verboseLogging: Bool = false,
         appMode: Bool = false,
         thinkingSelection: AgentThinkingSelection? = nil,
         preserveThinking: Bool = false
@@ -252,7 +250,6 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
         self.allowedToolNames = allowedToolNames
         self.maxToolRounds = maxToolRounds
         self.maxOutputTokens = maxOutputTokens
-        self.verboseLogging = verboseLogging
         self.appMode = appMode
         self.thinkingSelection = thinkingSelection
         self.preserveThinking = preserveThinking
@@ -276,7 +273,6 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
                 .allowedToolNamesIncludingIntrinsicSkillTools(allowedToolNames),
             maxToolRounds: maxToolRounds,
             maxOutputTokens: maxOutputTokens,
-            verboseLogging: verboseLogging,
             appMode: appMode,
             thinkingSelection: thinkingSelection,
             preserveThinking: preserveThinking

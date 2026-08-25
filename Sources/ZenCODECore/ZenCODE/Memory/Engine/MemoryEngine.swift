@@ -70,11 +70,11 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
 /// ``ZenLogger`` alone cannot satisfy "print a visible error": it is opt-in
 /// (`ZENCODE_LOG`) and disabled by default. This helper therefore always
 /// writes one redacted ERROR line to the preserved stderr descriptor
-/// (``AgentOutput/standardError``, never stdout) and additionally feeds the
-/// opt-in diagnostic file — unless the logger already targets stderr, in which
-/// case a duplicate line is avoided. `stderrWriter` and `loggerDestination`
-/// are seams so tests can prove the emission and the dedup decision without
-/// touching the process-global stderr or the global logger configuration.
+/// (``AgentOutput/standardError``, never stdout) and additionally forwards a
+/// copy to the opt-in system-log diagnostic channel. The two channels are
+/// distinct by design — terminal-visible feedback versus system-log records —
+/// so no destination-based deduplication exists. `stderrWriter` is a seam so
+/// tests can prove the emission without touching the process-global stderr.
 enum MemorySemanticFallbackDiagnostics {
     /// The visible line: same category/level/redaction contract as the
     /// diagnostic channel, with a trailing newline for the raw descriptor.
@@ -84,7 +84,6 @@ enum MemorySemanticFallbackDiagnostics {
 
     static func emitVisibleError(
         message: String,
-        loggerDestination: String? = ZenLogger.destinationDescription,
         stderrWriter: ((Data) throws -> Void)? = nil
     ) {
         let data = Data(visibleLine(message: message).utf8)
@@ -93,17 +92,9 @@ enum MemorySemanticFallbackDiagnostics {
         } else {
             try? AgentOutput.standardError.write(contentsOf: data)
         }
-        if shouldDuplicateToZenLogger(destinationDescription: loggerDestination) {
-            ZenLogger.error(.memory, message)
-        }
-    }
-
-    /// Whether the diagnostic-file channel should also receive the line.
-    /// `true` when the logger is disabled (the `ZenLogger.error` call is then
-    /// a no-op) or points at a file; `false` only when it already writes to
-    /// stderr, so the visible line is not duplicated.
-    static func shouldDuplicateToZenLogger(destinationDescription: String?) -> Bool {
-        destinationDescription != "stderr"
+        // The system-log channel is opt-in (a no-op when diagnostics are off);
+        // it is separate from the visible stderr line, which is always written.
+        ZenLogger.error(.memory, message)
     }
 
     /// Maps an embedding failure to a short, secret-free summary for the
@@ -212,10 +203,9 @@ actor MemoryEngine {
     /// Visible-diagnostic sink for semantic embedding failures during
     /// recall/search and best-effort memory mutations. Defaults to an
     /// always-visible redacted ERROR line on the preserved stderr descriptor
-    /// (plus the opt-in ZenLogger file channel
-    /// unless it already targets stderr); tests inject a deterministic
-    /// recorder instead of touching process-global stderr or the logger
-    /// configuration.
+    /// plus an opt-in copy on the system-log diagnostic channel; tests inject a
+    /// deterministic recorder instead of touching process-global stderr or the
+    /// logger configuration.
     private let semanticFailureReporter: @Sendable (String) -> Void
     /// Write-lock state backing ``transaction(_:)``. See that method for why
     /// actor isolation alone is not enough.
@@ -235,8 +225,8 @@ actor MemoryEngine {
     private var needsSave: Bool
 
     /// Default reporter: always emits a redacted ERROR line on the preserved
-    /// stderr descriptor (visible even with `ZENCODE_LOG` off) and feeds the
-    /// opt-in diagnostic file unless it already targets stderr.
+    /// stderr descriptor (visible even with `ZENCODE_LOG` off) and forwards an
+    /// opt-in copy to the system-log diagnostic channel.
     private static let defaultSemanticFailureReporter = MemoryEmbeddingFallback.defaultReporter
 
     public init(

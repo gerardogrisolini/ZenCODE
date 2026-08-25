@@ -249,7 +249,6 @@ struct ProviderThinkingAdapterTests {
                 modelID: model,
                 workingDirectory: URL(fileURLWithPath: "/tmp/provider-adapter-tests", isDirectory: true),
                 maxToolRounds: 1,
-                verboseLogging: false,
                 toolAuthorizationHandler: nil
             ),
             provider: AgentRemoteProvider(
@@ -297,7 +296,6 @@ extension RemoteSessionSnapshotTests {
             workingDirectory: URL(fileURLWithPath: "/tmp/provider-adapter-tests", isDirectory: true),
             maxToolRounds: 1,
             maxOutputTokens: 2048,
-            verboseLogging: false,
             toolAuthorizationHandler: nil
         )
         let client = RemoteGenerationClient(
@@ -346,7 +344,6 @@ extension RemoteSessionSnapshotTests {
                 modelID: "kimi-k3",
                 workingDirectory: URL(fileURLWithPath: "/tmp/provider-adapter-tests", isDirectory: true),
                 maxToolRounds: 1,
-                verboseLogging: false,
                 toolAuthorizationHandler: nil
             ),
             provider: AgentRemoteProvider(
@@ -395,7 +392,6 @@ extension RemoteSessionSnapshotTests {
                 workingDirectory: URL(fileURLWithPath: "/tmp/provider-adapter-tests", isDirectory: true),
                 maxToolRounds: 1,
                 maxOutputTokens: maxOutputTokens,
-                verboseLogging: false,
                 toolAuthorizationHandler: nil
             ),
             provider: AgentRemoteProvider(
@@ -466,7 +462,6 @@ extension RemoteSessionSnapshotTests {
                 modelID: "local-model",
                 workingDirectory: URL(fileURLWithPath: "/tmp/provider-adapter-tests", isDirectory: true),
                 maxToolRounds: 1,
-                verboseLogging: false,
                 toolAuthorizationHandler: nil
             ),
             provider: AgentRemoteProvider(
@@ -502,7 +497,6 @@ extension RemoteSessionSnapshotTests {
                 modelID: "optional-model",
                 workingDirectory: URL(fileURLWithPath: "/tmp/provider-adapter-tests", isDirectory: true),
                 maxToolRounds: 1,
-                verboseLogging: false,
                 toolAuthorizationHandler: nil
             ),
             provider: AgentRemoteProvider(

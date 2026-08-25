@@ -5,9 +5,6 @@
 
 import Foundation
 import ToolCore
-#if canImport(OSLog)
-import OSLog
-#endif
 
 /// Immutable identity attached to every tool execution log record.
 ///
@@ -73,21 +70,18 @@ struct ToolExecutionLogEntry: Codable, Sendable, Equatable {
     let error: ToolExecutionErrorMetadata?
 }
 
-/// Emits tool execution records through the platform system logger.
+/// Emits tool execution records through the shared platform system logger.
 ///
-/// On Apple platforms this uses Swift's ``Logger`` and Unified Logging directly;
-/// no application-owned log file, retention policy, or parser is involved. The
-/// open-source Swift toolchain does not ship `OSLog`, so Linux falls back to the
-/// operating system's `logger(1)` bridge and therefore still targets syslog/the
-/// systemd journal instead of an application file.
+/// On Apple platforms this uses Swift's ``Logger`` and Unified Logging directly
+/// through ``SystemLogEmitter``; no application-owned log file, retention
+/// policy, or parser is involved. The open-source Swift toolchain does not ship
+/// `OSLog`, so Linux/WSL bridges to the operating system's `logger(1)` command
+/// and therefore still targets syslog or the systemd journal instead of an
+/// application file.
 enum ToolExecutionLog {
-    static let subsystem = "com.zencode.zen"
+    static let subsystem = SystemLogEmitter.subsystem
     static let category = "tool-execution"
-    static let linuxTag = "zen"
-
-    #if canImport(OSLog)
-    private static let logger = Logger(subsystem: subsystem, category: category)
-    #endif
+    static let linuxTag = SystemLogEmitter.linuxTag
 
     static func record(
         context: ToolExecutionContext,
@@ -162,18 +156,15 @@ enum ToolExecutionLog {
 
     private static func emit(_ entry: ToolExecutionLogEntry) {
         let message = encodedMessage(for: entry)
-        #if canImport(OSLog)
-        if entry.status == DirectAgentToolResult.Status.completed.rawValue {
-            logger.notice("\(message, privacy: .public)")
-        } else {
-            logger.error("\(message, privacy: .public)")
-        }
-        #else
-        emitThroughSystemLoggerCommand(
-            message,
-            isError: entry.status != DirectAgentToolResult.Status.completed.rawValue
+        SystemLogEmitter.emit(
+            SystemLogRecord(
+                category: category,
+                severity: entry.status == DirectAgentToolResult.Status.completed.rawValue
+                    ? .notice
+                    : .error,
+                message: message
+            )
         )
-        #endif
     }
 
     private static func redactedArguments(_ json: String) -> JSONValue {
@@ -285,31 +276,4 @@ enum ToolExecutionLog {
             }
         )
     }
-
-    #if !canImport(OSLog)
-    private static func emitThroughSystemLoggerCommand(
-        _ message: String,
-        isError: Bool
-    ) {
-        let candidates = ["/usr/bin/logger", "/bin/logger"]
-        guard let executable = candidates.first(where: {
-            FileManager.default.isExecutableFile(atPath: $0)
-        }) else {
-            return
-        }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = [
-            "-t", linuxTag,
-            "-p", isError ? "user.err" : "user.notice",
-            "--", message
-        ]
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            // System logging is observational and must never alter tool behavior.
-        }
-    }
-    #endif
 }

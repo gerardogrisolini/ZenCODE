@@ -47,11 +47,11 @@ public enum AgentOutput {
         standardError.writeString("\u{1B}[2J\u{1B}[H")
     }
 
-    public static func silenceInheritedProcessOutput(keepStandardError: Bool) {
+    public static func silenceInheritedProcessOutput() {
         _ = standardOutput
         _ = standardError
 
-        redirectToNull(keepStandardError ? [STDOUT_FILENO] : [STDOUT_FILENO, STDERR_FILENO])
+        redirectToNull([STDOUT_FILENO, STDERR_FILENO])
     }
 
     public static func silenceInheritedProcessError() {

@@ -100,40 +100,6 @@ extension ZenCODEACPBridge {
         }
     }
 
-    public static func mcpServerInputSummary(from params: [String: Any]) -> String {
-        guard let value = mcpServerValue(from: params) else {
-            return "absent"
-        }
-        if let values = value as? [Any] {
-            return "array(\(values.count))"
-        }
-        if let object = value as? [String: Any] {
-            if mcpServerObjectLooksLikeDefinition(object) {
-                return "object(single)"
-            }
-            let keys = object.keys.sorted().prefix(6).joined(separator: ",")
-            let suffix = object.count > 6 ? ",..." : ""
-            return "object(\(object.count):\(keys)\(suffix))"
-        }
-        return "\(type(of: value))"
-    }
-
-    public static func mcpServerInputDetails(from params: [String: Any]) -> String {
-        guard let value = mcpServerValue(from: params) else {
-            return "absent"
-        }
-        let sanitizedValue = sanitizedMCPServerLogValue(value)
-        guard JSONSerialization.isValidJSONObject(sanitizedValue),
-              let data = try? JSONSerialization.data(
-                  withJSONObject: sanitizedValue,
-                  options: [.sortedKeys]
-              ),
-              let text = String(data: data, encoding: .utf8) else {
-            return String(describing: sanitizedValue)
-        }
-        return text
-    }
-
     public static func allowedToolNames(from params: [String: Any]) -> Set<String>? {
         for key in allowedToolParameterKeys {
             if let names = allowedToolNames(from: params[key]) {
@@ -267,53 +233,6 @@ extension ZenCODEACPBridge {
                 "endpoint_url"
             ]
         ) != nil
-    }
-
-    private static func sanitizedMCPServerLogValue(_ value: Any, key: String? = nil) -> Any {
-        if let object = value as? [String: Any] {
-            let namedValueKey = stringValue(from: object, keys: ["name", "key"])
-            return object.keys.sorted().reduce(into: [String: Any]()) { result, childKey in
-                guard let childValue = object[childKey] else {
-                    return
-                }
-                let redactionKey = childKey == "value" ? (namedValueKey ?? childKey) : childKey
-                result[childKey] = sanitizedMCPServerLogValue(childValue, key: redactionKey)
-            }
-        }
-        if let values = value as? [Any] {
-            return values.map { sanitizedMCPServerLogValue($0) }
-        }
-        if let string = value as? String {
-            return shouldRedactMCPServerLogValue(for: key)
-                ? "<redacted:\(string.count)>"
-                : string
-        }
-        if value is NSNull || value is Bool || value is NSNumber {
-            return value
-        }
-        return String(describing: value)
-    }
-
-    private static func shouldRedactMCPServerLogValue(for key: String?) -> Bool {
-        guard let key = key?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !key.isEmpty else {
-            return false
-        }
-        let lowercasedKey = key.lowercased()
-        if lowercasedKey.hasPrefix("mcp_") {
-            return false
-        }
-        return [
-            "authorization",
-            "bearer",
-            "cookie",
-            "credential",
-            "password",
-            "secret",
-            "token",
-            "api_key",
-            "apikey"
-        ].contains { lowercasedKey.contains($0) }
     }
 
     private static func stringArrayValue(

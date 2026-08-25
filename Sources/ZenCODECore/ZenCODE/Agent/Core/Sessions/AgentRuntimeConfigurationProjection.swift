@@ -20,7 +20,6 @@ protocol AgentRuntimeConfigurationProjecting {
     var projectedRuntimeWorkingDirectory: URL { get }
     var projectedRuntimeMaxToolRounds: Int { get }
     var projectedRuntimeMaxOutputTokens: Int? { get }
-    var projectedRuntimeVerboseLogging: Bool { get }
     var projectedRuntimeAppMode: Bool { get }
 }
 
@@ -46,7 +45,6 @@ extension AgentRuntimeConfigurationProjecting {
             generationParameterOverrides: generationParameterOverrides,
             maxToolRounds: projectedRuntimeMaxToolRounds,
             maxOutputTokens: projectedRuntimeMaxOutputTokens,
-            verboseLogging: projectedRuntimeVerboseLogging,
             appMode: projectedRuntimeAppMode,
             locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler,
@@ -63,7 +61,6 @@ extension AgentConfiguration: AgentRuntimeConfigurationProjecting {
     var projectedRuntimeWorkingDirectory: URL { workingDirectory }
     var projectedRuntimeMaxToolRounds: Int { maxToolRounds }
     var projectedRuntimeMaxOutputTokens: Int? { maxOutputTokens }
-    var projectedRuntimeVerboseLogging: Bool { verboseLogging }
     var projectedRuntimeAppMode: Bool { appMode }
 }
 
@@ -72,6 +69,5 @@ extension AgentCoreSessionConfiguration: AgentRuntimeConfigurationProjecting {
     var projectedRuntimeWorkingDirectory: URL { workingDirectory }
     var projectedRuntimeMaxToolRounds: Int { maxToolRounds }
     var projectedRuntimeMaxOutputTokens: Int? { maxOutputTokens }
-    var projectedRuntimeVerboseLogging: Bool { verboseLogging }
     var projectedRuntimeAppMode: Bool { appMode }
 }
