@@ -23,6 +23,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- `/plan` now requires the read-only Planner to produce a concise, self-contained
+  functional analysis. Every numbered implementation point is a complete
+  specification implementable from the plan and workspace after declared
+  prerequisites, with observable behavior/flow, verified files or symbols,
+  applicable constraints and edge cases, and concrete validation. It omits context
+  summaries, generic background, non-pertinent sections, and detail that does not
+  change implementation, using the fewest points and words that preserve
+  implementation certainty. The Planner resolves necessary choices from evidence
+  or asks a focused blocking question.
 - Delegated sub-agent tool calls now reuse the coordinator's canonical terminal
   rows—including lifecycle status, duration, failures, and source-change diffs—
   while remaining indented inside the live Sub-Agents section. Each agent keeps

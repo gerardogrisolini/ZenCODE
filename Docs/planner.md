@@ -4,14 +4,32 @@ The `Planner` profile is the read-only planning profile. It authors delegated pl
 
 ## What Planner Does
 
-The Planner inspects only the context needed to make a plan concrete, then identifies:
+The Planner inspects only the context needed to make a plan concrete. Its final
+response is a concise, self-contained functional analysis that an implementer
+can use with only the plan and the workspace. It provides an ordered,
+numbered implementation plan whose every point is self-contained as a
+specification and implementable from the plan and workspace after its declared
+dependencies.
+Each point states:
 
-- the goal and assumptions;
-- likely files, modules, or areas to change;
-- implementation phases and recommended order;
-- dependencies, risks, edge cases, and open questions;
-- validation commands or manual checks;
-- when to run `/review` after implementation.
+- the concrete observable behavior and relevant flow;
+- verified components, files, or symbols involved;
+- applicable constraints and edge cases;
+- a concrete validation command or manual check; and
+- `Dependencies`, naming prerequisite point numbers or `none`.
+
+The plan avoids generic formulations, placeholders, repetition, alternatives,
+and decisions left to the implementer. It omits context summaries, generic
+background, non-pertinent sections, and detail that does not change
+implementation; it uses the fewest points and words that preserve implementation
+certainty. It resolves needed decisions from the workspace and conversation; when
+one is genuinely blocking, it asks one focused question rather than guessing. It
+includes risks, open questions, persistence, compatibility, security,
+concurrency, and other cross-cutting details only when they are pertinent to the
+requested work.
+Dependencies form a minimum-safe-edge DAG; independent points remain parallel
+where that has a real latency or ownership benefit. The plan also indicates
+when to run `/review` after implementation.
 
 ## Running A Plan
 

@@ -848,6 +848,38 @@ struct PlanCommandTests {
     }
 
     @Test
+    func planDelegationPromptRequiresSelfContainedFunctionalItems() {
+        let planner = AgentProfile(
+            id: AgentProfileStore.plannerAgentID.uuidString,
+            name: AgentProfileStore.plannerAgentName,
+            tools: []
+        )
+
+        let prompt = TerminalChat.planDelegationPrompt(
+            goal: "add a Planner command",
+            planner: planner
+        )
+
+        #expect(prompt.contains("concise, self-contained functional analysis"))
+        #expect(prompt.contains("only that plan and the workspace"))
+        #expect(prompt.contains("self-contained as a specification"))
+        #expect(prompt.contains("after its declared dependencies"))
+        #expect(prompt.contains("concrete observable behavior and relevant flow"))
+        #expect(prompt.contains("verified components/files/symbols"))
+        #expect(prompt.contains("applicable constraints and edge cases"))
+        #expect(prompt.contains("concrete validation"))
+        #expect(prompt.contains("Prohibit generic formulations, placeholders, repetition, alternatives"))
+        #expect(prompt.contains("decisions left to the implementer"))
+        #expect(prompt.contains("Do not include context summaries, generic background"))
+        #expect(prompt.contains("non-pertinent sections, or detail that does not"))
+        #expect(prompt.contains("Use the fewest points and words that preserve implementation certainty"))
+        #expect(prompt.contains("Resolve needed decisions from the workspace and conversation"))
+        #expect(prompt.contains("ask one focused question rather than guessing"))
+        #expect(prompt.contains("only when pertinent to the requested work"))
+        #expect(!prompt.contains("plus likely files/areas to touch"))
+    }
+
+    @Test
     func plannerAuthoredResponseIgnoresTheCurrentAgentsDraft() throws {
         let parentResponse = DirectAgentResponse(
             text: "Default rewrote the plan",

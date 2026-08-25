@@ -964,11 +964,21 @@ extension TerminalChat {
             - Give that Planner the complete requested goal and every relevant constraint \
             from the conversation. Explicitly tell it that it, not the current coordinator, \
             must inspect the workspace as needed and write the complete final plan.
-            - Require the Planner's final response to include an ordered, numbered \
-            "Implementation plan" whose items are directly actionable, plus likely \
-            files/areas to touch, dependencies, risks, edge cases, open questions, and the \
-            test/validation strategy. For every numbered item, require an explicit \
-            "Dependencies" entry that names prerequisite item numbers or says "none".
+            - Require the Planner's final response to be a concise, self-contained functional \
+            analysis with an ordered, numbered "Implementation plan", usable by an implementer \
+            who has only that plan and the workspace. Every numbered item must be self-contained \
+            as a specification, and implementable from that plan and workspace after its declared \
+            dependencies: state the concrete observable behavior and relevant flow, verified \
+            components/files/symbols, applicable constraints and edge cases, and concrete \
+            validation. For every numbered item, require an explicit "Dependencies" entry that \
+            names prerequisite item numbers or says "none". Prohibit generic formulations, \
+            placeholders, repetition, alternatives, and decisions left to the implementer. Do not include \
+            context summaries, generic background, non-pertinent sections, or detail that does not \
+            change implementation. Use the fewest points and words that preserve implementation certainty. \
+            Resolve needed decisions from the workspace and conversation; if a decision is genuinely \
+            blocking, ask one focused question rather than guessing. Include risks, open questions, \
+            persistence, compatibility, security, concurrency, and other cross-cutting details only \
+            when pertinent to the requested work.
             - Require the Planner to design those dependencies as a DAG with the minimum safe \
             edges. It should expose parallel branches when tasks can proceed independently and \
             parallel execution provides a real latency or ownership benefit. It must add an edge \
