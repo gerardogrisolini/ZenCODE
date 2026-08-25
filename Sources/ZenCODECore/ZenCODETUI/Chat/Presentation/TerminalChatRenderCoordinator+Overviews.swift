@@ -328,11 +328,16 @@ extension TerminalChatRenderCoordinator {
             // A completed response is model-authored transcript content: it is
             // printed once and must never be erased by a later refresh.
             for response in pendingResponses {
-                // Keep the completed response distinct from both the live
-                // status overview above and any later transcript entry.
-                writeChat("\n\n", to: .standardError)
+                // Place the response immediately under its agent metadata.
+                // The rendered Markdown is nested as presentation, rather
+                // than source indentation, so lists and other blocks retain
+                // their normal Markdown semantics.
                 writeChat(response.heading, to: .standardError)
-                renderMarkdownMessage(response.markdown, to: .standardError)
+                renderMarkdownMessage(
+                    response.markdown,
+                    to: .standardError,
+                    linePrefix: "   "
+                )
                 writeChat("\n\n", to: .standardError)
                 overviewState.consumedResponseTokens.insert(response.token)
             }

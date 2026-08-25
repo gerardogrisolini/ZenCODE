@@ -11,7 +11,8 @@ extension TerminalChatRenderCoordinator {
 
     func renderMarkdownMessage(
         _ markdown: String,
-        to channel: OutputChannel = .standardOutput
+        to channel: OutputChannel = .standardOutput,
+        linePrefix: String = ""
     ) {
         guard !markdown.isEmpty else {
             return
@@ -19,7 +20,10 @@ extension TerminalChatRenderCoordinator {
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: channelIsTerminal(channel)
         )
-        let rendered = formatter.consume(markdown) + formatter.finish()
+        let rendered = indentedMarkdown(
+            formatter.consume(markdown) + formatter.finish(),
+            with: linePrefix
+        )
         guard !rendered.isEmpty else {
             return
         }
@@ -34,6 +38,24 @@ extension TerminalChatRenderCoordinator {
             writeChat("\n", to: channel)
         }
         flushChatOutput()
+    }
+
+    /// Applies presentation-only nesting after Markdown has been rendered, so
+    /// prefixes cannot change the source Markdown's block structure.
+    private func indentedMarkdown(_ text: String, with linePrefix: String) -> String {
+        guard !linePrefix.isEmpty, !text.isEmpty else {
+            return text
+        }
+
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        return lines.enumerated().map { index, line in
+            // `split` retains a final empty element for a trailing newline. Do
+            // not turn that terminal newline into a whitespace-only row.
+            if line.isEmpty, index == lines.indices.last {
+                return ""
+            }
+            return linePrefix + line
+        }.joined(separator: "\n")
     }
 
     func writeSystemMessageWithoutInterrupt(_ text: String) {

@@ -51,6 +51,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Completed sub-agent responses now render directly beneath their agent metadata,
+  with every Markdown output line indented as nested agent content instead of
+  resembling a coordinator response.
 - `/plan` now requires the read-only Planner to produce a concise, self-contained
   functional analysis. Every numbered implementation point is a complete
   specification implementable from the plan and workspace after declared
