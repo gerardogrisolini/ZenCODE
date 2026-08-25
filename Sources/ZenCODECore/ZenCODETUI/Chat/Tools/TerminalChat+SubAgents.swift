@@ -622,6 +622,11 @@ extension TerminalChat {
         return modelName.isEmpty ? modelID : String(modelName)
     }
 
+    /// Stable affordance shown while an agent is reasoning but has no
+    /// renderable paragraph yet. Presentation owns this string: the runtime
+    /// reports the thinking phase through `currentActivityKind`.
+    nonisolated static let thinkingPlaceholder = "🤔 thinking…"
+
     private nonisolated static func renderSubAgentActivityLines(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
         toolPresentation:
@@ -632,10 +637,33 @@ extension TerminalChat {
         let currentActivity = snapshot.currentActivity?.nilIfBlank
         var lines: [SubAgentOverviewLine] = []
 
-        if let currentActivity {
-            if currentActivity == "🤔 thinking…" {
-                lines.append(.regular(colorText(currentActivity, code: TerminalStyle.Thinking.title), maxWrappedLines: 1))
-            } else {
+        switch snapshot.currentActivityKind {
+        case .thinking:
+            // Mirror the coordinator's two-level thinking layout: its stable
+            // title is always emitted first, and the model-authored paragraph
+            // occupies the separate rewrite slot below it. Therefore a new
+            // paragraph can replace only the value without ever turning the
+            // title into a growing transcript.
+            lines.append(
+                .regular(
+                    colorText(thinkingPlaceholder, code: TerminalStyle.Thinking.title),
+                    maxWrappedLines: 1
+                )
+            )
+            // Reasoning is model-authored text printed straight into the
+            // terminal, so neutralize it through the shared metadata sanitizer:
+            // ESC (CSI/OSC), BEL, C1 and bidi/zero-width controls become spaces
+            // and cannot move the cursor or corrupt the rows rewritten in place.
+            if let paragraph = currentActivity.flatMap(sanitizedMetadataText) {
+                lines.append(
+                    subAgentOverviewEntryLine(
+                        colorText(paragraph, code: TerminalStyle.Thinking.body),
+                        density: density
+                    )
+                )
+            }
+        case .content, nil:
+            if let currentActivity {
                 lines.append(
                     subAgentOverviewEntryLine(
                         "💬 \(inlineText(currentActivity))",
@@ -665,11 +693,21 @@ extension TerminalChat {
         }
 
         if lines.isEmpty, snapshot.pending {
-            lines.append(.regular(colorText("🤔 thinking…", code: TerminalStyle.Thinking.title), maxWrappedLines: 1))
+            lines.append(
+                .regular(
+                    colorText(thinkingPlaceholder, code: TerminalStyle.Thinking.title),
+                    maxWrappedLines: 1
+                )
+            )
         }
 
         if let limit = density.activityLineLimit, lines.count > limit {
-            lines = Array(lines.suffix(limit))
+            // A constrained presentation may omit the replaceable value, but
+            // never the thinking header. This retains the coordinator's stable
+            // title even in the one-row dense fallback.
+            lines = snapshot.currentActivityKind == .thinking
+                ? Array(lines.prefix(limit))
+                : Array(lines.suffix(limit))
         }
 
         return lines
@@ -1046,6 +1084,10 @@ extension TerminalChat {
                 snapshot.status.rawValue,
                 snapshot.pending ? "pending" : "idle",
                 snapshot.modelID?.nilIfBlank ?? "",
+                // The kind participates in the signature: the same text can be
+                // rendered as reasoning or as a message, and a phase change
+                // with no visible activity still changes the placeholder row.
+                snapshot.currentActivityKind?.rawValue ?? "",
                 snapshot.currentActivity?.nilIfBlank ?? "",
                 snapshot.currentToolName?.nilIfBlank ?? "",
                 snapshot.currentToolTarget?.nilIfBlank ?? "",

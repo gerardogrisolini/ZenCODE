@@ -343,7 +343,7 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func thoughtDeltasKeepOneStableThinkingPresentation() async throws {
+    func thoughtDeltasRenderOnlyTheirLatestParagraphIncrementally() async throws {
         let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
@@ -362,25 +362,269 @@ struct DirectSubAgentRuntimeTests {
         let agentID = try #require(await runtime.snapshots().first?.id)
         await backend.waitUntilSentPromptCount(1)
 
+        let waitingSnapshot = try #require(await runtime.snapshots().first)
+        #expect(waitingSnapshot.currentActivity == nil)
+        #expect(waitingSnapshot.currentActivityKind == nil)
+        #expect(
+            TerminalChat.renderSubAgentOverview([waitingSnapshot])
+                .contains(TerminalChat.thinkingPlaceholder)
+        )
+
         await runtime.recordEvent(.thought("Considering the "), agentID: agentID)
         let firstSnapshot = try #require(await runtime.snapshots().first)
         let firstSignature = TerminalChat.subAgentOverviewSignature([firstSnapshot])
-        #expect(firstSnapshot.currentActivity == "🤔 thinking…")
-        #expect(firstSnapshot.currentActivity?.contains("Considering") == false)
+        #expect(firstSnapshot.currentActivity == "Considering the")
+        #expect(firstSnapshot.currentActivityKind == .thinking)
 
         await runtime.recordEvent(.thought("available evidence"), agentID: agentID)
-        await runtime.recordEvent(
-            .thought(String(repeating: "x", count: 200)),
-            agentID: agentID
-        )
-        await runtime.recordEvent(.thought("additional delta"), agentID: agentID)
+        let updatedSnapshot = try #require(await runtime.snapshots().first)
+        #expect(updatedSnapshot.currentActivity == "Considering the available evidence")
+        #expect(TerminalChat.subAgentOverviewSignature([updatedSnapshot]) != firstSignature)
+
+        // CRLF and the blank-line boundary deliberately arrive in separate
+        // chunks. The next paragraph replaces, rather than appends to, the
+        // paragraph currently visible in the overview rewrite slot.
+        await runtime.recordEvent(.thought("\r"), agentID: agentID)
+        await runtime.recordEvent(.thought("\n\r\nNext paragraph"), agentID: agentID)
+        await runtime.recordEvent(.thought(" continues"), agentID: agentID)
         let latestSnapshot = try #require(await runtime.snapshots().first)
 
-        #expect(latestSnapshot.currentActivity == "🤔 thinking…")
+        #expect(latestSnapshot.currentActivity == "Next paragraph continues")
+        #expect(latestSnapshot.currentActivityKind == .thinking)
+        let overview = TerminalChat.renderSubAgentOverview([latestSnapshot])
+        let overviewRows = TerminalANSIText.stripANSI(overview)
+            .components(separatedBy: "\n")
+        #expect(overviewRows.contains { $0.contains(TerminalChat.thinkingPlaceholder) })
+        #expect(overviewRows.contains { $0.contains("Next paragraph continues") })
+        #expect(!overviewRows.contains { $0.contains("🤔 Next paragraph continues") })
+        #expect(!overview.contains("Considering the available evidence"))
+
+        await runtime.shutdown()
+    }
+
+    /// A CR that ends one delta and an LF that opens the next form a single
+    /// line ending, not a paragraph boundary.
+    @Test
+    func thoughtParagraphSurvivesACRLFSplitAcrossDeltas() async throws {
+        var buffer: String?
         #expect(
-            TerminalChat.subAgentOverviewSignature([latestSnapshot])
-                == firstSignature
+            DirectSubAgentRuntime.latestThoughtParagraph(
+                appending: "first line\r",
+                to: &buffer
+            ) == "first line"
         )
+        #expect(
+            DirectSubAgentRuntime.latestThoughtParagraph(
+                appending: "\nsecond line",
+                to: &buffer
+            ) == "first line\nsecond line"
+        )
+
+        // The same text delivered in one delta must reduce identically.
+        var single: String?
+        #expect(
+            DirectSubAgentRuntime.latestThoughtParagraph(
+                appending: "first line\r\nsecond line",
+                to: &single
+            ) == "first line\nsecond line"
+        )
+
+        // A lone CR followed by another CR is a real blank line and therefore a
+        // paragraph boundary even when the deltas are split around it.
+        var split: String?
+        _ = DirectSubAgentRuntime.latestThoughtParagraph(appending: "old\r", to: &split)
+        #expect(
+            DirectSubAgentRuntime.latestThoughtParagraph(
+                appending: "\rfresh",
+                to: &split
+            ) == "fresh"
+        )
+    }
+
+    /// The visible paragraph is a function of the concatenated stream only, so
+    /// every chunking of the same text - including a single delta that closes a
+    /// paragraph, such as "A\n\n" - reaches the same state.
+    @Test
+    func thoughtParagraphIsInvariantAcrossEveryChunkBoundary() async throws {
+        func reduce(_ chunks: [String]) -> (paragraph: String?, buffer: String?) {
+            var buffer: String?
+            var paragraph: String?
+            for chunk in chunks {
+                paragraph = DirectSubAgentRuntime.latestThoughtParagraph(
+                    appending: chunk,
+                    to: &buffer
+                )
+            }
+            return (paragraph, buffer)
+        }
+
+        for text in [
+            "A\n\n",
+            "A\n\nB",
+            "first\r\n\r\nsecond\r\nthird",
+            "alpha\n \t \nbeta",
+            "trailing\r"
+        ] {
+            let reference = reduce([text])
+            let characters = Array(text)
+            for splitIndex in 0...characters.count {
+                let chunks = [
+                    String(characters[..<splitIndex]),
+                    String(characters[splitIndex...])
+                ]
+                let split = reduce(chunks)
+                #expect(
+                    split.paragraph == reference.paragraph,
+                    "paragraph differs for \(text.debugDescription) at \(splitIndex)"
+                )
+                #expect(
+                    split.buffer == reference.buffer,
+                    "buffer differs for \(text.debugDescription) at \(splitIndex)"
+                )
+            }
+        }
+
+        // A single delta that closes the paragraph leaves nothing in progress,
+        // so the overview falls back to the placeholder instead of keeping a
+        // paragraph the model already finished.
+        #expect(reduce(["A\n\n"]).paragraph == nil)
+        #expect(reduce(["A", "\n\n"]).paragraph == nil)
+    }
+
+    /// Reasoning is model-authored text printed straight into the terminal, so
+    /// CSI, OSC and BEL payloads must not survive into a rendered row.
+    @Test
+    func thoughtParagraphIsNeutralizedAgainstTerminalControls() async throws {
+        let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("control-worker"),
+                "profile": .string("Developer"),
+                "prompt": .string("Investigate the issue")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-control-tests"),
+            parentAllowedToolNames: nil
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+        await backend.waitUntilSentPromptCount(1)
+
+        await runtime.recordEvent(
+            .thought("before\u{1B}[2J\u{1B}]0;title\u{7}\u{7}after"),
+            agentID: agentID
+        )
+        let snapshot = try #require(await runtime.snapshots().first)
+        let rendered = TerminalChat.renderSubAgentOverview([snapshot])
+        let activityRow = try #require(
+            TerminalANSIText.stripANSI(rendered)
+                .components(separatedBy: "\n")
+                .first { $0.contains("before") }
+        )
+
+        #expect(!rendered.contains("\u{7}"))
+        #expect(!rendered.contains("\u{1B}[2J"))
+        #expect(!rendered.contains("\u{1B}]0;"))
+        // Whatever survives is inert text: the escape introducers are gone, so
+        // the payload cannot move the cursor or clear the rows the section owns.
+        #expect(
+            !activityRow.unicodeScalars.contains {
+                CharacterSet.controlCharacters.contains($0)
+            }
+        )
+        #expect(activityRow.contains("before"))
+        #expect(activityRow.contains("after"))
+
+        await runtime.shutdown()
+    }
+
+    /// A completed turn clears the private paragraph buffer, so reasoning from
+    /// the next turn cannot be appended to the paragraph of the previous one.
+    @Test
+    func completionClearsThePendingThoughtParagraphBuffer() async throws {
+        let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("completion-worker"),
+                "profile": .string("Developer"),
+                "prompt": .string("Investigate the issue")
+            ],
+            workingDirectory: URL(
+                fileURLWithPath: "/tmp/ZenCODE-sub-agent-completion-tests"
+            ),
+            parentAllowedToolNames: nil
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+        await backend.waitUntilSentPromptCount(1)
+
+        await runtime.recordEvent(.thought("stale paragraph"), agentID: agentID)
+        await runtime.recordCompletion(
+            DirectAgentResponse(
+                text: "Done.",
+                stopReason: "stop",
+                modelID: "test-model"
+            ),
+            agentID: agentID
+        )
+        let completedSnapshot = try #require(await runtime.snapshots().first)
+        #expect(completedSnapshot.currentActivity == nil)
+        #expect(completedSnapshot.currentActivityKind == nil)
+
+        await runtime.recordEvent(.thought(" fresh paragraph"), agentID: agentID)
+        let resumedSnapshot = try #require(await runtime.snapshots().first)
+        #expect(resumedSnapshot.currentActivity == "fresh paragraph")
+        #expect(resumedSnapshot.currentActivityKind == .thinking)
+
+        await runtime.shutdown()
+    }
+
+    /// Assistant content that literally starts with the thinking marker is
+    /// still a message: the typed kind, not the text, selects the affordance.
+    @Test
+    func contentStartingWithTheThinkingMarkerIsRenderedAsAMessage() async throws {
+        let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("marker-worker"),
+                "profile": .string("Developer"),
+                "prompt": .string("Investigate the issue")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-marker-tests"),
+            parentAllowedToolNames: nil
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+        await backend.waitUntilSentPromptCount(1)
+
+        await runtime.recordEvent(.content("🤔 thinking\u{2026} about the API"), agentID: agentID)
+        await runtime.recordEvent(
+            .toolCallStarted(
+                presentedToolCall(
+                    id: "grep-call",
+                    name: "search.grep",
+                    argumentsObject: ["pattern": "needle"],
+                    argumentsJSON: #"{"pattern":"needle"}"#
+                )
+            ),
+            agentID: agentID
+        )
+        let snapshot = try #require(await runtime.snapshots().first)
+        #expect(snapshot.currentActivityKind == .content)
+        let rendered = TerminalChat.renderSubAgentOverview([snapshot])
+
+        #expect(rendered.contains("💬 🤔 thinking\u{2026} about the API"))
 
         await runtime.shutdown()
     }
@@ -412,7 +656,8 @@ struct DirectSubAgentRuntimeTests {
         await runtime.recordEvent(.content("I’ll inspect "), agentID: agentID)
         await runtime.recordEvent(.content("the matching files."), agentID: agentID)
         let streamingSnapshot = try #require(await runtime.snapshots().first)
-        #expect(streamingSnapshot.currentActivity == "🤔 thinking…")
+        #expect(streamingSnapshot.currentActivity == "private reasoning")
+        #expect(streamingSnapshot.currentActivityKind == .thinking)
         #expect(
             TerminalChat.subAgentOverviewSignature([streamingSnapshot])
                 == thinkingSignature
@@ -429,6 +674,7 @@ struct DirectSubAgentRuntimeTests {
         let startedSignature = TerminalChat.subAgentOverviewSignature([startedSnapshot])
 
         #expect(startedSnapshot.currentActivity == "I’ll inspect the matching files.")
+        #expect(startedSnapshot.currentActivityKind == .content)
         #expect(startedSnapshot.currentToolName == "search.grep")
         #expect(startedSnapshot.currentToolTarget == "needle")
         #expect(startedSignature != thinkingSignature)
@@ -462,6 +708,7 @@ struct DirectSubAgentRuntimeTests {
         #expect(finalSnapshot.latestOutput == "I’ll inspect the matching files. Final answer.")
         #expect(finalSnapshot.latestOutputRevision == 1)
         #expect(finalSnapshot.currentActivity == nil)
+        #expect(finalSnapshot.currentActivityKind == nil)
         #expect(finalSnapshot.currentToolName == nil)
 
         await runtime.shutdown()

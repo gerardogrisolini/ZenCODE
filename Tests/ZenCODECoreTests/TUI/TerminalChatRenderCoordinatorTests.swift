@@ -1917,6 +1917,109 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(plainStderr.contains("1 total closed"))
     }
 
+    /// Streamed reasoning replaces the section in place even when the new
+    /// paragraph is taller or shorter than the one on screen: the refresh
+    /// erases exactly the rows the previous paragraph owned, and only one
+    /// paragraph stays visible in the live rewrite slot.
+    @Test
+    func subAgentThinkingParagraphsOfDifferentHeightsRewriteTheSectionInPlace() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 200 }
+        )
+
+        func snapshot(_ paragraph: String) -> DirectSubAgentRuntime.AgentSnapshot {
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "agent_thinking",
+                name: "researcher",
+                role: "researcher",
+                status: .running,
+                pending: true,
+                currentActivity: paragraph,
+                currentActivityKind: .thinking,
+                latestOutput: nil,
+                latestError: nil,
+                createdAt: Date(),
+                updatedAt: Date()
+            )
+        }
+
+        let shortParagraph = "Weighing the two options."
+        let tallParagraph = String(
+            repeating: "Weighing every dependency of the failing target. ",
+            count: 6
+        )
+        let shortText = TerminalChat.renderSubAgentOverview([snapshot(shortParagraph)])
+        let tallText = TerminalChat.renderSubAgentOverview([snapshot(tallParagraph)])
+
+        // The coordinator-style header is stable and the only replaceable
+        // content is the paragraph below it: no reasoning transcript accrues.
+        let shortRowsText = TerminalANSIText.stripANSI(shortText)
+            .components(separatedBy: "\n")
+        let tallRowsText = TerminalANSIText.stripANSI(tallText)
+            .components(separatedBy: "\n")
+        #expect(shortRowsText.contains { $0.contains(TerminalChat.thinkingPlaceholder) })
+        #expect(shortRowsText.contains { $0.contains(shortParagraph) })
+        #expect(!shortRowsText.contains { $0.contains("🤔 \(shortParagraph)") })
+        #expect(tallRowsText.contains { $0.contains(TerminalChat.thinkingPlaceholder) })
+        #expect(tallText.components(separatedBy: "🤔").count - 1 == 1)
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:thinking:short",
+            text: shortText,
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "thinking-wave"
+        )
+        let shortRows = await renderer.snapshot().activeSubAgentOverviewRowCount
+        #expect(shortRows > 0)
+        let eventsBeforeGrowth = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:thinking:tall",
+            text: tallText,
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "thinking-wave"
+        )
+        let growthRefresh = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeGrowth)
+            .map(\.text)
+            .joined()
+        let tallRows = await renderer.snapshot().activeSubAgentOverviewRowCount
+
+        #expect(tallRows > shortRows)
+        #expect(growthRefresh.hasPrefix("\u{1B}[\(shortRows)A\r"))
+        #expect(growthRefresh.components(separatedBy: "\u{1B}[2K").count - 1 == shortRows)
+        #expect(!growthRefresh.contains("\u{1B}[J"))
+        #expect(
+            TerminalANSIText.stripANSI(growthRefresh)
+                .contains("Weighing every dependency of the failing target.")
+        )
+
+        let eventsBeforeShrink = await renderer.capturedWriteEvents().count
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:thinking:short-again",
+            text: shortText,
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "thinking-wave"
+        )
+        let shrinkRefresh = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeShrink)
+            .map(\.text)
+            .joined()
+
+        // Shrinking must erase every row the taller paragraph owned, otherwise
+        // its tail would survive underneath the shorter one.
+        #expect(shrinkRefresh.hasPrefix("\u{1B}[\(tallRows)A\r"))
+        #expect(shrinkRefresh.components(separatedBy: "\u{1B}[2K").count - 1 == tallRows)
+        #expect(!shrinkRefresh.contains("\u{1B}[J"))
+        #expect(TerminalANSIText.stripANSI(shrinkRefresh).contains(shortParagraph))
+        #expect(!TerminalANSIText.stripANSI(shrinkRefresh).contains(tallParagraph))
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == shortRows)
+    }
+
     @Test
     func thoughtFragmentsAreBufferedUntilTheStreamIsFlushed() async {
         let renderer = makeRenderer(standardErrorIsTerminal: false)

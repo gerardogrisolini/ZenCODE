@@ -537,10 +537,7 @@ extension DirectSubAgentRuntime {
         // flight would let a concurrent `queuePrompt` pass the
         // `startAgentIfNeeded` guard and start a second parallel loop.
         agent.status = .idle
-        agent.currentActivity = nil
-        agent.pendingContentBuffer = nil
-        agent.currentToolName = nil
-        agent.currentToolTarget = nil
+        agent.resetActivityState()
         if error != nil {
             agent.latestContentPreview = nil
         }
@@ -651,10 +648,7 @@ extension DirectSubAgentRuntime {
             agent.pendingReleaseReason = nil
             agent.status = .closed
             agent.latestError = "Delegated execution interrupted with its root session."
-            agent.currentActivity = nil
-            agent.pendingContentBuffer = nil
-            agent.currentToolName = nil
-            agent.currentToolTarget = nil
+            agent.resetActivityState()
             agent.latestContentPreview = nil
             agent.updatedAt = .now
             let releasedReservation = takeTasklessDelegationReservation(from: &agent)
@@ -711,10 +705,7 @@ extension DirectSubAgentRuntime {
         agent.pendingReleaseReason = nil
         agent.status = .closed
         agent.latestError = nil
-        agent.currentActivity = nil
-        agent.pendingContentBuffer = nil
-        agent.currentToolName = nil
-        agent.currentToolTarget = nil
+        agent.resetActivityState()
         agent.updatedAt = .now
         let releasedReservation = takeTasklessDelegationReservation(from: &agent)
         agents[id] = agent

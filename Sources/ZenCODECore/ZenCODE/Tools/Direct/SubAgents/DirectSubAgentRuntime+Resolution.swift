@@ -178,6 +178,7 @@ extension DirectSubAgentRuntime {
             pending: agent.hasWorkInFlight,
             modelID: agent.modelID,
             currentActivity: agent.currentActivity,
+            currentActivityKind: agent.currentActivityKind,
             currentToolName: agent.currentToolName,
             currentToolTarget: agent.currentToolTarget,
             latestContentPreview: agent.latestContentPreview,

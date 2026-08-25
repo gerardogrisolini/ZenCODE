@@ -70,6 +70,18 @@ public actor DirectSubAgentRuntime {
         }
     }
 
+    /// Which model phase produced `currentActivity`. Presentation selects the
+    /// thinking affordance from this value instead of sniffing a marker prefix
+    /// out of the activity text, so model-authored content that happens to
+    /// start with "🤔 " is never mistaken for reasoning.
+    public enum ActivityKind: String, Sendable, Equatable {
+        /// Streamed reasoning. `currentActivity` holds the paragraph in
+        /// progress, or nil while no non-blank paragraph exists yet.
+        case thinking
+        /// A completed assistant message projected into the overview.
+        case content
+    }
+
     /// Actor-internal mutable storage. External callers receive
     /// `AgentSnapshot`, which is a Sendable value projection.
     struct AgentRecord {
@@ -108,6 +120,14 @@ public actor DirectSubAgentRuntime {
         public var latestError: String?
         public var modelID: String? = nil
         public var currentActivity: String? = nil
+        /// Typed provenance of `currentActivity`; nil when there is no activity.
+        public var currentActivityKind: ActivityKind? = nil
+        /// The incomplete thinking paragraph currently being streamed, kept in
+        /// its raw stream form (a trailing CR is preserved so a CRLF split
+        /// across deltas is not mistaken for a paragraph break). Completed
+        /// paragraphs are deliberately discarded: the overview owns one rewrite
+        /// slot and presents only the latest paragraph.
+        var pendingThoughtParagraph: String? = nil
         var pendingContentBuffer: String? = nil
         public var currentToolName: String? = nil
         public var currentToolTarget: String? = nil
@@ -145,6 +165,20 @@ public actor DirectSubAgentRuntime {
         var hasWorkInFlight: Bool {
             status.isPending || !pendingPrompts.isEmpty
         }
+
+        /// Clears every in-flight model-phase projection: the visible activity
+        /// and its kind plus the private thinking/content buffers and the tool
+        /// row. Lifecycle transitions call this so no partial paragraph or
+        /// buffered message can survive into the next turn or into a closed
+        /// agent.
+        mutating func resetActivityState() {
+            currentActivity = nil
+            currentActivityKind = nil
+            pendingThoughtParagraph = nil
+            pendingContentBuffer = nil
+            currentToolName = nil
+            currentToolTarget = nil
+        }
     }
 
     public struct AgentWork {
@@ -173,6 +207,9 @@ public actor DirectSubAgentRuntime {
         public let pending: Bool
         public let modelID: String?
         public let currentActivity: String?
+        /// Typed provenance of `currentActivity`. Presentation must branch on
+        /// this instead of inspecting the activity text.
+        public let currentActivityKind: ActivityKind?
         public let currentToolName: String?
         public let currentToolTarget: String?
         public let latestContentPreview: String?
@@ -200,6 +237,7 @@ public actor DirectSubAgentRuntime {
             pending: Bool,
             modelID: String? = nil,
             currentActivity: String? = nil,
+            currentActivityKind: ActivityKind? = nil,
             currentToolName: String? = nil,
             currentToolTarget: String? = nil,
             latestContentPreview: String? = nil,
@@ -226,6 +264,7 @@ public actor DirectSubAgentRuntime {
             self.pending = pending
             self.modelID = modelID
             self.currentActivity = currentActivity
+            self.currentActivityKind = currentActivityKind
             self.currentToolName = currentToolName
             self.currentToolTarget = currentToolTarget
             self.latestContentPreview = latestContentPreview

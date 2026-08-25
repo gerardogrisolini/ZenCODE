@@ -175,6 +175,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   types, clears stale delegated rows, respects display width and CommonMark
   ordered-list limits, and mirrors only task-graph overviews to Telegram;
   high-frequency sub-agent snapshots remain terminal-only.
+- Sub-agent thinking now keeps a stable `🤔 thinking…` header in the terminal
+  overview and renders the currently streamed paragraph beneath it, replacing
+  only that value in place when the next paragraph begins. Paragraph
+  detection is independent of stream chunk boundaries (including CRLF split
+  across deltas), the phase is tracked as typed state instead of a marker
+  prefix, and the reasoning text is neutralized against terminal control
+  sequences before it is rendered.
 - Direct Anthropic requests now share subscription thinking capability and
   payload rules, while model catalog URLs preserve configured base paths and
   query items.

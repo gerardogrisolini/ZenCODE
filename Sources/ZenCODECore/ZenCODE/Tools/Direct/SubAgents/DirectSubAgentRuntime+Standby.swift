@@ -337,10 +337,7 @@ extension DirectSubAgentRuntime {
         agent.pendingReleaseReason = nil
         agent.status = .closed
         agent.latestError = reason
-        agent.currentActivity = nil
-        agent.pendingContentBuffer = nil
-        agent.currentToolName = nil
-        agent.currentToolTarget = nil
+        agent.resetActivityState()
         agent.updatedAt = .now
         agents[id] = agent
 

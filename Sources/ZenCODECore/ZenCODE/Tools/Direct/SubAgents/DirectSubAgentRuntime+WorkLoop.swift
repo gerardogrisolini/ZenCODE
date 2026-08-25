@@ -173,10 +173,7 @@ extension DirectSubAgentRuntime {
         agent.currentTurnRepliesToOperator = repliesToOperator
         agent.currentTurnSentOperatorMessage = false
         agent.status = .running
-        agent.currentActivity = nil
-        agent.pendingContentBuffer = nil
-        agent.currentToolName = nil
-        agent.currentToolTarget = nil
+        agent.resetActivityState()
         agent.latestContentPreview = nil
         agent.updatedAt = .now
         agents[agentID] = agent
@@ -204,27 +201,39 @@ extension DirectSubAgentRuntime {
             // updates. Keeping them out of the overview prevents incidental
             // transport chatter from republishing the whole sub-agent section.
             break
-        case .thought:
-            // Reasoning arrives as a high-frequency delta stream. Its contents
-            // are intentionally private here: publish one stable state for the
-            // entire thinking phase so signature-based rendering can dedupe all
-            // subsequent deltas.
-            agent.currentActivity = "🤔 thinking…"
+        case let .thought(delta):
+            // Reasoning arrives incrementally. Keep only the paragraph in
+            // progress: each paragraph update replaces the overview's single
+            // rewrite slot, rather than appending a growing private transcript.
+            // The activity text is the bare paragraph and the kind marks it as
+            // reasoning, so presentation never has to recognize a marker
+            // prefix. A nil paragraph (nothing streamed yet, or the previous
+            // paragraph just ended) leaves the thinking placeholder visible.
+            agent.currentActivityKind = .thinking
+            agent.currentActivity = Self.latestThoughtParagraph(
+                appending: delta,
+                to: &agent.pendingThoughtParagraph
+            )
             agent.currentToolName = nil
             agent.currentToolTarget = nil
             agent.latestContentPreview = nil
         case let .modelLoaded(modelID):
             agent.modelID = modelID.nilIfBlank ?? agent.modelID
         case let .content(delta):
+            // A visible answer starts a new model phase; never let a later
+            // thought delta continue the paragraph that preceded it.
+            agent.pendingThoughtParagraph = nil
             // Assistant content is also streamed as deltas. Buffer it without
             // touching snapshot-visible fields; it becomes visible only when a
             // tool boundary proves that the model's message is complete, or in
             // `recordCompletion` as the final response.
             agent.pendingContentBuffer = (agent.pendingContentBuffer ?? "") + delta
         case let .toolCallStarted(toolCall):
+            agent.pendingThoughtParagraph = nil
             agent.currentActivity = Self.takeCompletedContent(
                 from: &agent.pendingContentBuffer
             )
+            agent.currentActivityKind = agent.currentActivity == nil ? nil : .content
             agent.currentToolName = toolCall.name
             agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
             agent.latestContentPreview = nil
@@ -262,6 +271,40 @@ extension DirectSubAgentRuntime {
            let subAgentToolEventHandler {
             await subAgentToolEventHandler(delegatedToolEvent)
         }
+    }
+
+    /// Reduces the reasoning stream to the paragraph currently being written.
+    ///
+    /// The result depends only on the concatenation of every delta received so
+    /// far, never on where the transport split it: the unfinished tail is kept
+    /// in `buffer`, and a trailing CR is preserved verbatim because it may be
+    /// the first half of a CRLF whose LF arrives in the next delta. Normalizing
+    /// that CR eagerly would turn one line ending into two and fabricate a
+    /// paragraph boundary. A delta that completes a paragraph (for example the
+    /// single delta "A\n\n") leaves an empty tail and returns nil, exactly as
+    /// the same text split across two deltas does.
+    static func latestThoughtParagraph(
+        appending delta: String,
+        to buffer: inout String?
+    ) -> String? {
+        var raw = (buffer ?? "") + delta
+        let endsWithUnresolvedCR = raw.hasSuffix("\r")
+        if endsWithUnresolvedCR {
+            raw.removeLast()
+        }
+        var tail = raw
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        // A blank line (optionally padded with horizontal whitespace) ends a
+        // paragraph. Only the text after the last boundary is still in progress.
+        while let boundary = tail.range(
+            of: #"\n[ \t]*\n"#,
+            options: .regularExpression
+        ) {
+            tail = String(tail[boundary.upperBound...])
+        }
+        buffer = endsWithUnresolvedCR ? tail + "\r" : tail
+        return tail.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
     }
 
     private static func takeCompletedContent(
@@ -359,9 +402,10 @@ extension DirectSubAgentRuntime {
         }
         agent.latestError = nil
         agent.modelID = response.modelID.nilIfBlank ?? agent.modelID
-        agent.currentActivity = nil
-        agent.currentToolName = nil
-        agent.currentToolTarget = nil
+        // The turn is over: drop the visible activity together with the private
+        // thinking/content buffers so no partial paragraph leaks into the next
+        // turn.
+        agent.resetActivityState()
         // `response.text` may contain commentary from every prior tool round.
         // Preserve it for agent.get/wait, but let the TUI present only the final
         // completed content block when the backend emitted one.
@@ -461,10 +505,7 @@ extension DirectSubAgentRuntime {
         if agent.status != .closed {
             agent.status = .failed
             agent.latestError = error.localizedDescription
-            agent.currentActivity = nil
-            agent.pendingContentBuffer = nil
-            agent.currentToolName = nil
-            agent.currentToolTarget = nil
+            agent.resetActivityState()
         }
         agent.updatedAt = .now
         let releasedReservation = takeTasklessDelegationReservation(from: &agent)
@@ -499,10 +540,7 @@ extension DirectSubAgentRuntime {
         if agent.status != .closed {
             agent.status = .closed
             agent.latestError = "Cancelled."
-            agent.currentActivity = nil
-            agent.pendingContentBuffer = nil
-            agent.currentToolName = nil
-            agent.currentToolTarget = nil
+            agent.resetActivityState()
         }
         agent.updatedAt = .now
         let releasedReservation = takeTasklessDelegationReservation(from: &agent)
