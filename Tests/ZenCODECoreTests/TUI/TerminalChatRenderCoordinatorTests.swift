@@ -367,6 +367,79 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(visibleRefresh.contains("newValue"))
     }
 
+    @Test
+    func agentToolAndOverviewTransferTheSingleRewriteAnchorWithoutStalePendingSections() async {
+        let clock = StreamingClock()
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            toolNow: { clock.now },
+            columnWidthProvider: { 120 }
+        )
+        let toolCall = presentedToolCall(
+            id: "wait-for-live-overview",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.writeToolCallStarted(toolCall)
+        let pendingToolRows = await renderer.snapshot().activeToolRenderedRowCount
+        let eventsBeforeOverview = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:pending",
+            text: "\n👥 Sub-Agents:\n   worker ⏳\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: 20
+        )
+        let overviewEvents = Array(
+            (await renderer.capturedWriteEvents()).dropFirst(eventsBeforeOverview)
+        )
+        let pendingOverviewRows = await renderer.snapshot().activeSubAgentOverviewRowCount
+
+        #expect(pendingToolRows > 0)
+        #expect(overviewEvents.first?.text.hasPrefix("\u{1B}[\(pendingToolRows)A\r") == true)
+        #expect(await renderer.snapshot().activeToolCallID == nil)
+        #expect(pendingOverviewRows > 0)
+
+        clock.advance(by: .milliseconds(1_200))
+        let eventsBeforeCompletion = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done"),
+            maximumInPlaceRows: 20
+        )
+        let completionEvents = Array(
+            (await renderer.capturedWriteEvents()).dropFirst(eventsBeforeCompletion)
+        )
+        let completionText = completionEvents.map(\.text).joined()
+
+        #expect(completionEvents.first?.text.hasPrefix("\u{1B}[\(pendingOverviewRows)A\r") == true)
+        #expect(completionText.contains("✅"))
+        #expect(TerminalANSIText.stripANSI(completionText).contains("1.20s"))
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+
+        let eventsBeforeCompletedOverview = await renderer.capturedWriteEvents().count
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:completed",
+            text: "\n👥 Sub-Agents:\n   worker ✅ 1.20s\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: 20
+        )
+        let completedOverviewText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeCompletedOverview)
+            .map(\.text)
+            .joined()
+
+        #expect(!containsCursorUpSequence(completedOverviewText))
+        #expect(TerminalANSIText.stripANSI(completedOverviewText).contains("worker ✅ 1.20s"))
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount > 0)
+    }
+
     /// Characterization: a standard completion is the byte-identical compact
     /// block followed only by the source appendix. Anything preceding the shared
     /// compact bytes must be pure cursor control, never printable text.

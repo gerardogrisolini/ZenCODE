@@ -123,6 +123,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Coordinator `agent.*` tool calls and the live Sub-Agents overview now transfer
+  their shared terminal rewrite anchor safely, so pending hourglass rows are
+  erased before completion status and elapsed time are drawn instead of leaving
+  repeated tool and Sub-Agents sections in the transcript.
 - Nested Sub-Agent Markdown code blocks no longer add a spurious blank row, and
   nested tables and code blocks now reserve their indentation when fitting to
   the terminal width.

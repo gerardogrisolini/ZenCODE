@@ -210,7 +210,15 @@ extension TerminalChatRenderCoordinator {
            !overviewState.isSuspended,
            !assistantStreamingState.isStreaming,
            !thoughtStreamingState.isStreaming {
-            finishActiveToolOutputBeforeInterleavedMessage()
+            let maximumInPlaceRows: Int?
+            if case let .subAgents(_, _, _, rows) = content {
+                maximumInPlaceRows = rows
+            } else {
+                maximumInPlaceRows = nil
+            }
+            replaceActiveSubAgentToolWithOverview(
+                maximumInPlaceRows: maximumInPlaceRows
+            )
         }
 
         guard canRenderOverview else {
@@ -421,6 +429,25 @@ extension TerminalChatRenderCoordinator {
     /// that the coordinator would otherwise cursor-up and erase.
     func relinquishSubAgentOverviewOwnership() {
         activeSubAgentOverviewBlock = nil
+    }
+
+    /// Removes a still-owned transient overview before a coordinator `agent.*`
+    /// completion is written. The completion and its elapsed time become durable
+    /// transcript content; the next overview refresh can then establish a fresh
+    /// anchor beneath it instead of appending beside the stale pending section.
+    func clearOwnedSubAgentOverviewBeforeInterleavedOutput() {
+        flushChatOutput()
+        guard let block = activeSubAgentOverviewBlock else { return }
+        activeSubAgentOverviewBlock = nil
+        let columnWidth = freshColumnWidthProvider()
+        guard standardErrorIsTerminal,
+              block.writeSequence == emittedWriteCount,
+              block.columnWidth == columnWidth,
+              block.rows <= (block.maximumInPlaceRows ?? Int.max) else {
+            return
+        }
+        clearOwnedRows(block.rows)
+        restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
     }
 
     /// Tears down the live sub-agent section when the runtime transitions to an

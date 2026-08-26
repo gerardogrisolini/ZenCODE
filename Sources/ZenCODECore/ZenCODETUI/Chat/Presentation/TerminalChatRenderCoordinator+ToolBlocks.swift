@@ -33,6 +33,9 @@ extension TerminalChatRenderCoordinator {
     ) {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
+        if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
+            clearOwnedSubAgentOverviewBeforeInterleavedOutput()
+        }
         let elapsed = toolState.startInstants.removeValue(forKey: toolCall.id)
             .map { $0.duration(to: toolNow()) }
         let compactStatusDetail = TerminalChat.compactToolCompletionDetail(
@@ -376,6 +379,35 @@ extension TerminalChatRenderCoordinator {
         toolState.activeBlock = nil
         toolState.activeBlockIsSubAgentTool = false
         writeChat("\n", to: .standardError)
+    }
+
+    /// Transfers the terminal's single live rewrite slot from a pending
+    /// coordinator `agent.*` call to the Sub-Agents overview. Unlike a generic
+    /// interleaved message, the overview is another transient presentation of
+    /// the same delegated work, so retaining the hourglass block in transcript
+    /// would make its later completion append a duplicate section.
+    func replaceActiveSubAgentToolWithOverview(maximumInPlaceRows: Int?) {
+        guard toolState.activeBlockIsSubAgentTool,
+              let block = toolState.activeBlock else {
+            return
+        }
+        toolState.activeBlock = nil
+        toolState.activeBlockIsSubAgentTool = false
+
+        let columnWidth = freshColumnWidthProvider()
+        let maximumReplaceableRows = min(
+            replaceableToolRowCapacity(block.maximumInPlaceRows) ?? Int.max,
+            replaceableToolRowCapacity(maximumInPlaceRows) ?? Int.max
+        )
+        guard standardErrorIsTerminal,
+              block.columnWidth == columnWidth,
+              block.rows <= maximumReplaceableRows else {
+            // The pending rows are no longer cursor-reachable. Preserve them
+            // append-safely rather than risking transcript erasure.
+            writeChat("\n", to: .standardError)
+            return
+        }
+        clearOwnedRows(block.rows)
     }
 
 }
