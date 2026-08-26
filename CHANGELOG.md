@@ -123,6 +123,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- File mutation tool completions now show every changed source line without
+  snippet limits; recognized code extensions use their matching syntax colors,
+  while text, documentation, and unknown file types remain unhighlighted.
 - Coordinator `agent.*` tool calls and the live Sub-Agents overview now transfer
   their shared terminal rewrite anchor safely, so pending hourglass rows are
   erased before completion status and elapsed time are drawn instead of leaving

@@ -54,6 +54,48 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func standardKeepsPendingCompactAndEmitsAllSourceChangesOnCompletion() async {
+        let old = (0..<150).map { "let old\($0) = \($0)" }.joined(separator: "\n")
+        let new = (0..<150).map { "let new\($0) = \($0)" }.joined(separator: "\n")
+        let toolCall = presentedToolCall(
+            id: "large-edit",
+            name: "local.editFile",
+            argumentsObject: [
+                "path": "/tmp/Large.swift",
+                "old": old,
+                "new": new
+            ],
+            argumentsJSON: "{}"
+        )
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 120 }
+        )
+
+        await renderer.writeToolCallStarted(toolCall, maximumInPlaceRows: 6)
+        let startedEvents = await renderer.capturedWriteEvents()
+        let startedText = TerminalANSIText.stripANSI(startedEvents.map(\.text).joined())
+        #expect(!startedText.contains("old0"))
+        #expect(!startedText.contains("new0"))
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Updated", summary: "Updated"),
+            maximumInPlaceRows: 6
+        )
+        let completionText = TerminalANSIText.stripANSI(
+            (await renderer.capturedWriteEvents())
+                .dropFirst(startedEvents.count)
+                .map(\.text)
+                .joined()
+        )
+
+        #expect(completionText.contains("old149"))
+        #expect(completionText.contains("new149"))
+        #expect(!completionText.contains("truncated"))
+    }
+
+    @Test
     func delegatedToolEventsUseCanonicalRowsInsideTheIndentedOverview() async {
         let toolCall = presentedToolCall(
             id: "shared-render-edit",
@@ -1090,69 +1132,6 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
 
-
-    @Test
-    func standardPendingMutationBeyondScrollRegionKeepsCompactAndSourceRows() async {
-        let scrollableRows = 4
-        let oldContent = (0..<40)
-            .map { "let oldValue\($0) = \($0)" }
-            .joined(separator: "\n")
-        let newContent = (0..<40)
-            .map { "let newValue\($0) = \($0)" }
-            .joined(separator: "\n")
-        let renderer = makeRenderer(
-            stdinIsTerminal: true,
-            standardErrorIsTerminal: true,
-            // Keep this case focused on vertical bounding: enough horizontal
-            // room preserves visible source/diff cells before the 4-row clip.
-            columnWidthProvider: { 140 }
-        )
-        let toolCall = presentedToolCall(
-            id: "tool-standard-edit-overflow",
-            name: "local.editFile",
-            argumentsObject: [
-                "path": "/tmp/project/Sources/App.swift",
-                "old": oldContent,
-                "new": newContent
-            ],
-            argumentsJSON: "{}"
-        )
-        await renderer.writeToolCallStarted(
-            toolCall,
-            maximumInPlaceRows: scrollableRows
-        )
-        let started = await renderer.snapshot()
-        let startedText = TerminalANSIText.stripANSI(
-            (await renderer.capturedWriteEvents()).map(\.text).joined()
-        )
-        #expect(
-            started.activeToolRenderedRowCount == scrollableRows - 1
-        )
-        let sourceRows = startedText
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .filter { $0.contains("oldValue") || $0.contains("newValue") }
-        #expect(!sourceRows.isEmpty)
-        #expect(sourceRows.allSatisfy { $0.contains("│") })
-        #expect(!startedText.contains("... details shown on completion"))
-        #expect(!startedText.contains("status:"))
-        #expect(!startedText.contains("kind:"))
-        #expect(!startedText.contains("change:"))
-        #expect(startedText.contains("local.editFile"))
-        #expect(startedText.contains("/tmp/project/Sources/App.swift"))
-
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Updated", summary: "Updated"),
-            maximumInPlaceRows: scrollableRows
-        )
-        let completionText = TerminalANSIText.stripANSI(
-            (await renderer.capturedWriteEvents()).map(\.text).joined()
-        )
-        #expect(!completionText.contains("... details shown on completion"))
-        #expect(!completionText.contains("status:"))
-        #expect(!completionText.contains("kind:"))
-        #expect(!completionText.contains("change:"))
-    }
 
     @Test
     func overviewIsDeferredUntilToolNoLongerOwnsRows() async {

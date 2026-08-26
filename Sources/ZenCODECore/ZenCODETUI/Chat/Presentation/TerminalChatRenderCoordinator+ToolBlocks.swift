@@ -129,24 +129,12 @@ extension TerminalChatRenderCoordinator {
             ? freshColumnWidthProvider()
             : columnWidthProvider()
         let contentInsetWidth = TerminalChat.displayWidth(lineInset)
-        var renderRows = toolBlockRows(
+        let renderRows = toolBlockRows(
             for: toolCall,
             lifecycle: lifecycle,
             contentInsetWidth: contentInsetWidth,
             columnWidth: columnWidth
         )
-        if !lifecycle.isCompletion {
-            // Keep the compact prefix intact. It must remain renderable by the
-            // same path as the completed block, even when the source appendix
-            // is constrained by the in-place redraw budget.
-            renderRows.detailRows = boundedStartedStandardToolRows(
-                renderRows.detailRows,
-                compactRows: renderRows.compactRows,
-                contentInsetWidth: contentInsetWidth,
-                columnWidth: columnWidth,
-                maximumInPlaceRows: maximumInPlaceRows
-            )
-        }
 
         switch lifecycle {
         case .started:
@@ -222,48 +210,6 @@ extension TerminalChatRenderCoordinator {
         )
     }
 
-    /// Standard output is the compact block plus an optional source appendix.
-    /// Its bounded pending form must never promote an appendix row into the
-    /// compact prefix: that would change its ANSI style and could drop the
-    /// compact status row.
-    private func boundedStartedStandardToolRows(
-        _ sourceRows: [TerminalChat.DetailedToolRow],
-        compactRows: [TerminalChat.DetailedToolRow],
-        contentInsetWidth: Int,
-        columnWidth: Int,
-        maximumInPlaceRows: Int?
-    ) -> [TerminalChat.DetailedToolRow] {
-        guard let maximumReplaceableRows = replaceableToolRowCapacity(
-            maximumInPlaceRows
-        ) else {
-            return sourceRows
-        }
-        let compactRowCount = TerminalChat.renderedTerminalRowCount(
-            for: compactRows.map(\.plainText),
-            contentInsetWidth: contentInsetWidth,
-            columnWidth: columnWidth
-        )
-        let sourceCapacity = maximumReplaceableRows - compactRowCount
-        guard sourceCapacity > 0 else {
-            // The compact prefix is never truncated merely to make room for
-            // standard's optional source appendix.
-            return []
-        }
-        let sourceRowCount = TerminalChat.renderedTerminalRowCount(
-            for: sourceRows.map(\.plainText),
-            contentInsetWidth: contentInsetWidth,
-            columnWidth: columnWidth
-        )
-        guard sourceRowCount > sourceCapacity else {
-            return sourceRows
-        }
-        guard sourceCapacity > 1 else {
-            return [sourceRows[sourceRows.count - 1]]
-        }
-        return Array(sourceRows.prefix(sourceCapacity - 1))
-            + [sourceRows[sourceRows.count - 1]]
-    }
-
     /// Converts the scrolling-region height into the number of content rows
     /// that remain cursor-reachable after `writeToolBlock` appends its newline.
     private func replaceableToolRowCapacity(
@@ -293,7 +239,10 @@ extension TerminalChatRenderCoordinator {
             result: result,
             statusDetail: lifecycle.compactStatusDetail,
             contentInsetWidth: contentInsetWidth,
-            columnWidth: columnWidth
+            columnWidth: columnWidth,
+            // Pending blocks stay compact and therefore cursor-rewritable.
+            // Source changes are emitted once, in full, by the completion.
+            includesSourceChanges: lifecycle.isCompletion
         )
     }
 

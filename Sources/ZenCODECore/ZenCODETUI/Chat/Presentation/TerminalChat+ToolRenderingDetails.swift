@@ -8,7 +8,6 @@ import ToolCore
 
 private struct DetailedToolSnippet {
     let lines: [String]
-    let isTruncated: Bool
     /// Structural property of the payload: it carried no source line at all.
     /// Emptiness is deliberately *not* encoded as a sentinel line, so a payload
     /// whose literal text happens to be the empty marker stays distinguishable
@@ -313,71 +312,6 @@ extension TerminalChat {
         return truncatedByCount(summary, limit: 160)
     }
 
-    nonisolated static func indentedSnippet(
-        _ text: String,
-        indentation: String = "  "
-    ) -> [String] {
-        let characterLimit = expandedSnippetCharacterLimit
-        let lineLimit = expandedSnippetLineLimit
-        var snippet = text.trimmingCharacters(in: .newlines)
-        var wasTruncated = false
-        if snippet.count > characterLimit {
-            snippet = String(snippet.prefix(characterLimit))
-            wasTruncated = true
-        }
-        var lines = snippet
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-
-        // De-indent: use the minimum leading whitespace of non-empty lines
-        // excluding the first as the reference. The first line often loses
-        // its original indentation in transit, so using it as reference
-        // would prevent de-indentation. Remove that amount from all lines.
-        let minIndent = lines.dropFirst()
-            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            .map { leadingSpaceCount($0) }
-            .min() ?? 0
-        if minIndent > 0 {
-            lines = lines.map { line in
-                line.isEmpty ? line : String(line.dropFirst(min(minIndent, leadingSpaceCount(line))))
-            }
-        }
-
-        let visibleLines = Array(lines.prefix(lineLimit))
-        var output = visibleLines.isEmpty
-            ? ["\(indentation)<empty>"]
-            : visibleLines.map { terminalSafeSnippetLine("\(indentation)\($0)") }
-        if lines.count > visibleLines.count || wasTruncated {
-            output.append("\(indentation)... truncated")
-        }
-        return output
-    }
-
-    nonisolated static func indentedSnippetPreservingIndentation(
-        _ text: String,
-        indentation: String = "  "
-    ) -> [String] {
-        let characterLimit = expandedSnippetCharacterLimit
-        let lineLimit = expandedSnippetLineLimit
-        var snippet = text.trimmingCharacters(in: .newlines)
-        var wasTruncated = false
-        if snippet.count > characterLimit {
-            snippet = String(snippet.prefix(characterLimit))
-            wasTruncated = true
-        }
-        let lines = snippet
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-        let visibleLines = Array(lines.prefix(lineLimit))
-        var output = visibleLines.isEmpty
-            ? ["\(indentation)<empty>"]
-            : visibleLines.map { terminalSafeSnippetLine("\(indentation)\($0)") }
-        if lines.count > visibleLines.count || wasTruncated {
-            output.append("\(indentation)... truncated")
-        }
-        return output
-    }
-
 
 
     /// Prefixes each created/inserted source line with a stable, right-aligned
@@ -481,15 +415,6 @@ extension TerminalChat {
                 newCell: newCell
             )))
         }
-        if oldSnippet.isTruncated || newSnippet.isTruncated {
-            let oldMarker = oldSnippet.isTruncated ? "... truncated" : ""
-            let newMarker = newSnippet.isTruncated ? "... truncated" : ""
-            rows.append(.diff(DetailedToolDiffCells(
-                indentation: indentation,
-                oldCell: paddedToDisplayWidth(oldMarker, width: columnWidth),
-                newCell: paddedToDisplayWidth(newMarker, width: columnWidth)
-            )))
-        }
         return rows
     }
 
@@ -502,52 +427,48 @@ extension TerminalChat {
 
 
 
-    /// Deduces the syntax-highlighting language for the tool's code snippets
-    /// from the extension of the file the call targets, so written/edited
-    /// code is rendered with proper highlighting in the expanded view.
+    /// Selects syntax highlighting strictly from the target file extension.
+    /// Text, documentation, configuration and unknown extensions stay neutral.
     nonisolated static func codeLanguageHint(for toolCall: DirectAgentToolCall) -> String? {
-        let presentation = ToolCallPresentation.resolved(
-            for: toolCall,
-            mode: .expanded
-        )
-        for element in presentation.elements {
-            switch element {
-            case let .code(_, _, languageHint),
-                 let .diff(_, _, _, languageHint):
-                if let languageHint = languageHint?.nilIfBlank {
-                    return languageHint
-                }
-            case .parameters, .list, .summary:
-                continue
-            }
+        let arguments = toolCall.argumentsObject
+        let path = normalizedMutationToolName(toolCall.name) == "local.applyPatch"
+            ? patchTargetPath(arguments)
+            : targetPath(arguments)
+        guard let path else { return nil }
+        switch URL(fileURLWithPath: path).pathExtension.lowercased() {
+        case "swift": return "swift"
+        case "c", "h": return "c"
+        case "cc", "cpp", "cxx", "hh", "hpp", "hxx": return "cpp"
+        case "m": return "objc"
+        case "js", "jsx", "mjs", "cjs": return "javascript"
+        case "ts", "tsx": return "typescript"
+        case "py": return "python"
+        case "sh", "bash", "zsh": return "shell"
+        case "rs": return "rust"
+        case "go": return "go"
+        case "java": return "java"
+        case "kt", "kts": return "kotlin"
+        case "cs": return "csharp"
+        case "rb": return "ruby"
+        case "php": return "php"
+        case "json", "jsonl", "jsonc": return "json"
+        case "yaml", "yml": return "yaml"
+        case "toml": return "toml"
+        case "html", "htm": return "html"
+        case "xml": return "xml"
+        case "css": return "css"
+        case "sql": return "sql"
+        default: return nil
         }
-        return nil
     }
 
-    nonisolated static func leadingSpaceCount(_ line: String) -> Int {
-        var count = 0
-        for character in line {
-            if character == " " {
-                count += 1
-            } else {
-                break
-            }
-        }
-        return count
-    }
-
-    /// Converts a mutation payload into a bounded sequence of source lines.
-    /// Writes and both sides of an edit use this shared basis so clipping and
-    /// line numbers stay consistent. It deliberately does not trim or
+    /// Converts a mutation payload into its complete sequence of source lines.
+    /// Writes and both sides of an edit use this shared basis so line numbers
+    /// stay consistent. It deliberately does not trim or
     /// de-indent source: empty files, trailing newlines and whitespace-only
     /// changes are semantically meaningful mutation payloads.
     private nonisolated static func detailedToolSnippet(_ text: String) -> DetailedToolSnippet {
-        var snippet = normalizedTerminalLineEndings(text)
-        var wasTruncated = false
-        if snippet.count > expandedSnippetCharacterLimit {
-            snippet = String(snippet.prefix(expandedSnippetCharacterLimit))
-            wasTruncated = true
-        }
+        let snippet = normalizedTerminalLineEndings(text)
 
         // `String.split(..., omittingEmptySubsequences: false)` represents an
         // empty string as one blank element. Keep an actually empty payload
@@ -558,11 +479,9 @@ extension TerminalChat {
                 .split(separator: "\n", omittingEmptySubsequences: false)
                 .map(String.init)
 
-        let visibleLines = Array(lines.prefix(expandedSnippetLineLimit))
         return DetailedToolSnippet(
-            lines: visibleLines,
-            isTruncated: lines.count > visibleLines.count || wasTruncated,
-            isEmptyPayload: visibleLines.isEmpty
+            lines: lines,
+            isEmptyPayload: lines.isEmpty
         )
     }
 
@@ -610,8 +529,8 @@ extension TerminalChat {
     /// Builds the narrow presentation from the same LCS row model as the wide
     /// view. Changed source lines become adjacent `-` / `+` rows; unchanged
     /// lines are emitted once as context. This preserves source numbering and
-    /// structural empty/truncation markers without relying on in-band text
-    /// sentinels or a side-by-side divider.
+    /// structural empty markers without relying on in-band text sentinels or a
+    /// side-by-side divider.
     private nonisolated static func numberedUnifiedDiffSnippetRows(
         old: DetailedToolSnippet,
         new: DetailedToolSnippet,
@@ -683,46 +602,25 @@ extension TerminalChat {
             }
         }
 
-        if old.isTruncated {
-            rows.append(unifiedRow(
-                marker: "-",
-                lineIndex: nil,
-                content: "... truncated"
-            ))
-        }
-        if new.isTruncated {
-            rows.append(unifiedRow(
-                marker: "+",
-                lineIndex: nil,
-                content: "... truncated"
-            ))
-        }
         return rows
     }
 
-    /// Uses LCS to retain unchanged lines on the same visual row. Intervening
-    /// removals and insertions are paired in order, keeping replacements easy
-    /// to compare while preserving blanks for pure additions/removals.
+    /// Retains unchanged lines on the same visual row and pairs intervening
+    /// removals/insertions as replacements. `CollectionDifference` avoids the
+    /// old `old.count × new.count` LCS matrix, which was incompatible with
+    /// rendering complete, unbounded file changes.
     private nonisolated static func detailedToolDiffRows(
         old: [String],
         new: [String]
     ) -> [DetailedToolDiffRow] {
-        var lcs = Array(
-            repeating: Array(repeating: 0, count: new.count + 1),
-            count: old.count + 1
-        )
-        if !old.isEmpty, !new.isEmpty {
-            for oldIndex in stride(from: old.count - 1, through: 0, by: -1) {
-                for newIndex in stride(from: new.count - 1, through: 0, by: -1) {
-                    if old[oldIndex] == new[newIndex] {
-                        lcs[oldIndex][newIndex] = lcs[oldIndex + 1][newIndex + 1] + 1
-                    } else {
-                        lcs[oldIndex][newIndex] = max(
-                            lcs[oldIndex + 1][newIndex],
-                            lcs[oldIndex][newIndex + 1]
-                        )
-                    }
-                }
+        var removedOffsets = Set<Int>()
+        var insertedOffsets = Set<Int>()
+        for change in new.difference(from: old) {
+            switch change {
+            case let .remove(offset, _, _):
+                removedOffsets.insert(offset)
+            case let .insert(offset, _, _):
+                insertedOffsets.insert(offset)
             }
         }
 
@@ -746,6 +644,8 @@ extension TerminalChat {
         while oldIndex < old.count || newIndex < new.count {
             if oldIndex < old.count,
                newIndex < new.count,
+               !removedOffsets.contains(oldIndex),
+               !insertedOffsets.contains(newIndex),
                old[oldIndex] == new[newIndex] {
                 flushPending()
                 rows.append(DetailedToolDiffRow(
@@ -754,13 +654,30 @@ extension TerminalChat {
                 ))
                 oldIndex += 1
                 newIndex += 1
-            } else if oldIndex < old.count,
-                      (newIndex == new.count || lcs[oldIndex + 1][newIndex] >= lcs[oldIndex][newIndex + 1]) {
-                pendingOld.append(oldIndex)
-                oldIndex += 1
             } else {
-                pendingNew.append(newIndex)
-                newIndex += 1
+                while oldIndex < old.count, removedOffsets.contains(oldIndex) {
+                    pendingOld.append(oldIndex)
+                    oldIndex += 1
+                }
+                while newIndex < new.count, insertedOffsets.contains(newIndex) {
+                    pendingNew.append(newIndex)
+                    newIndex += 1
+                }
+
+                // Defensive progress for an unexpected unassociated change.
+                // Normal `CollectionDifference` output is consumed by the two
+                // loops above, but malformed alignment must never spin forever.
+                if pendingOld.isEmpty, pendingNew.isEmpty {
+                    if oldIndex < old.count {
+                        pendingOld.append(oldIndex)
+                        oldIndex += 1
+                    }
+                    if newIndex < new.count {
+                        pendingNew.append(newIndex)
+                        newIndex += 1
+                    }
+                }
+                flushPending()
             }
         }
         flushPending()
@@ -878,13 +795,6 @@ extension TerminalChat {
                 indentation: indentation,
                 lineNumber: blankLineNumber,
                 content: detailedToolEmptyPayloadMarker
-            )))
-        }
-        if snippet.isTruncated {
-            rows.append(.code(DetailedToolCodeLine(
-                indentation: indentation,
-                lineNumber: blankLineNumber,
-                content: "... truncated"
             )))
         }
     }

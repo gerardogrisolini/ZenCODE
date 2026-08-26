@@ -134,7 +134,8 @@ extension TerminalChat {
         result: DirectAgentToolResult?,
         statusDetail: String?,
         contentInsetWidth: Int,
-        columnWidth: Int
+        columnWidth: Int,
+        includesSourceChanges: Bool = true
     ) -> ToolPresentationRows {
         let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
         let statusIcon: String
@@ -156,15 +157,17 @@ extension TerminalChat {
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth
             ).map(DetailedToolRow.text),
-            detailRows: safelyWrappedDetailedToolRows(
-                standardToolCallRows(
-                    for: toolCall,
-                    result: result,
-                    contentWidth: safeContentWidth
-                ),
-                contentInsetWidth: contentInsetWidth,
-                columnWidth: columnWidth
-            )
+            detailRows: includesSourceChanges
+                ? safelyWrappedDetailedToolRows(
+                    standardToolCallRows(
+                        for: toolCall,
+                        result: result,
+                        contentWidth: safeContentWidth
+                    ),
+                    contentInsetWidth: contentInsetWidth,
+                    columnWidth: columnWidth
+                )
+                : []
         )
     }
 
@@ -926,6 +929,9 @@ extension TerminalChat {
         _ line: String,
         language: String?
     ) -> String {
+        guard let language else {
+            return line
+        }
         let reset = TerminalStyle.reset
         return TerminalCodeBlockRenderer
             // Expanded tool snippets always paint their own dark code surface,
@@ -958,6 +964,4 @@ extension TerminalChat {
     // Dark gray background framing the code areas of expanded tool blocks,
     // matching the background used for submitted prompts.
     nonisolated static let codeAreaBackgroundColor = TerminalStyle.Tool.codeBackground
-    nonisolated static let expandedSnippetLineLimit = 100
-    nonisolated static let expandedSnippetCharacterLimit = 10_000
 }

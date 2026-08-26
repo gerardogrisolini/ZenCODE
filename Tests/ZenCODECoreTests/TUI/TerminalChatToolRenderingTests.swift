@@ -242,14 +242,56 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func indentedSnippetsDoNotMarkTrimmedTerminalNewlineAsTruncated() {
-        let normal = TerminalChat.indentedSnippet("line\n")
-        let preservingIndentation = TerminalChat.indentedSnippetPreservingIndentation("  line\n")
+    func sourceChangesKeepEveryLineWithoutTruncationMarkers() {
+        let old = (0..<150).map { "let old\($0) = \($0)" }.joined(separator: "\n")
+        let new = (0..<150).map { "let new\($0) = \($0)" }.joined(separator: "\n")
 
-        #expect(normal == ["  line"])
-        #expect(preservingIndentation == ["    line"])
-        #expect(!normal.contains("  ... truncated"))
-        #expect(!preservingIndentation.contains("  ... truncated"))
+        let rows = TerminalChat.numberedDiffSnippetRows(
+            old: old,
+            new: new,
+            contentWidth: 120
+        )
+        let text = rows.map(\.plainText).joined(separator: "\n")
+
+        #expect(text.contains("old149"))
+        #expect(text.contains("new149"))
+        #expect(!text.contains("truncated"))
+    }
+
+    @Test
+    func sourceSyntaxLanguageComesFromKnownCodeExtensionsOnly() {
+        func tool(path: String) -> DirectAgentToolCall {
+            presentedToolCall(
+                id: path,
+                name: "local.writeFile",
+                argumentsObject: ["path": path, "content": "let value = true"],
+                argumentsJSON: "{}"
+            )
+        }
+
+        let swift = tool(path: "Sources/App.swift")
+        let c = tool(path: "Sources/main.c")
+        let text = tool(path: "Notes/readme.txt")
+        let markdown = tool(path: "Docs/readme.md")
+        let unknown = tool(path: "Data/readme.custom")
+
+        #expect(TerminalChat.codeLanguageHint(for: swift) == "swift")
+        #expect(TerminalChat.codeLanguageHint(for: c) == "c")
+        #expect(TerminalChat.codeLanguageHint(for: text) == nil)
+        #expect(TerminalChat.codeLanguageHint(for: markdown) == nil)
+        #expect(TerminalChat.codeLanguageHint(for: unknown) == nil)
+
+        let row = TerminalChat.DetailedToolRow.code(
+            TerminalChat.DetailedToolCodeLine(
+                indentation: "  ",
+                lineNumber: "1",
+                content: "let value = true"
+            )
+        )
+        let highlighted = TerminalChat.renderDetailedToolRow(row, codeLanguage: "swift")
+        let neutral = TerminalChat.renderDetailedToolRow(row, codeLanguage: nil)
+        #expect(highlighted.contains(TerminalMarkdownPalette.dark.syntaxKeyword))
+        #expect(!neutral.contains(TerminalMarkdownPalette.dark.syntaxKeyword))
     }
 
     @Test
