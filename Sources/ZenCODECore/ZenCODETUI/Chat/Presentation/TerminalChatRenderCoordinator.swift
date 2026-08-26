@@ -89,8 +89,8 @@ actor TerminalChatRenderCoordinator {
     let freshColumnWidthProvider: @Sendable () -> Int
     var nextWriteSequence: UInt64 = 0
     /// Counts every physical emission, whether or not writes are captured.
-    /// The sub-agent overview uses it to detect that some other output was
-    /// written after the section, which makes an in-place rewrite unsafe.
+    /// Live tool and sub-agent blocks use it to detect output written after
+    /// their section, which makes an in-place rewrite unsafe.
     var emittedWriteCount: UInt64 = 0
     var capturedWrites: [WriteEvent] = []
     var pendingStreamingWrites: [PendingWrite] = []

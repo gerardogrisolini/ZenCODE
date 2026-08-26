@@ -94,11 +94,13 @@ extension TerminalChatRenderCoordinator {
         let presentationsByAgentID: [String: SubAgentToolPresentation]
     }
 
-    struct ActiveToolBlock: Sendable, Equatable {
+    struct ActiveToolBlock: Sendable {
         let id: String
         let rows: Int
         let columnWidth: Int
         let maximumInPlaceRows: Int?
+        let cursorStateBeforeRender: CursorState
+        let writeSequence: UInt64
     }
 
     struct CursorState: Sendable {

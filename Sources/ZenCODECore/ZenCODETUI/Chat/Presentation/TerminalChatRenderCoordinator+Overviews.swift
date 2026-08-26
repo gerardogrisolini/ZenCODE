@@ -432,18 +432,24 @@ extension TerminalChatRenderCoordinator {
     }
 
     /// Removes a still-owned transient overview before a coordinator `agent.*`
-    /// completion is written. The completion and its elapsed time become durable
-    /// transcript content; the next overview refresh can then establish a fresh
-    /// anchor beneath it instead of appending beside the stale pending section.
-    func clearOwnedSubAgentOverviewBeforeInterleavedOutput() {
+    /// lifecycle block is written. Starts and completions both replace the live
+    /// overview in the one shared rewrite slot; otherwise every subsequent
+    /// coordinator call would strand the prior section in the transcript.
+    func clearOwnedSubAgentOverviewBeforeInterleavedOutput(
+        maximumInPlaceRows: Int?
+    ) {
         flushChatOutput()
         guard let block = activeSubAgentOverviewBlock else { return }
         activeSubAgentOverviewBlock = nil
         let columnWidth = freshColumnWidthProvider()
+        let maximumSafeRows = min(
+            block.maximumInPlaceRows ?? Int.max,
+            maximumInPlaceRows ?? Int.max
+        )
         guard standardErrorIsTerminal,
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth,
-              block.rows <= (block.maximumInPlaceRows ?? Int.max) else {
+              block.rows <= maximumSafeRows else {
             return
         }
         clearOwnedRows(block.rows)

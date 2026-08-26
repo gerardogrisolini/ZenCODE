@@ -15,10 +15,15 @@ extension TerminalChatRenderCoordinator {
     ) {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
+        let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
+        if isSubAgentTool {
+            clearOwnedSubAgentOverviewBeforeInterleavedOutput(
+                maximumInPlaceRows: maximumInPlaceRows
+            )
+        }
         prepareForToolOutput()
         toolState.startInstants[toolCall.id] = toolNow()
-        toolState.activeBlockIsSubAgentTool = DirectSubAgentRuntime
-            .isSubAgentToolName(toolCall.name)
+        toolState.activeBlockIsSubAgentTool = isSubAgentTool
         renderToolBlock(
             toolCall,
             lifecycle: .started,
@@ -34,7 +39,9 @@ extension TerminalChatRenderCoordinator {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
-            clearOwnedSubAgentOverviewBeforeInterleavedOutput()
+            clearOwnedSubAgentOverviewBeforeInterleavedOutput(
+                maximumInPlaceRows: maximumInPlaceRows
+            )
         }
         let elapsed = toolState.startInstants.removeValue(forKey: toolCall.id)
             .map { $0.duration(to: toolNow()) }
@@ -135,19 +142,23 @@ extension TerminalChatRenderCoordinator {
             contentInsetWidth: contentInsetWidth,
             columnWidth: columnWidth
         )
-
-        switch lifecycle {
-        case .started:
-            toolState.activeBlock = ActiveToolBlock(
-                id: toolCall.id,
+        let pendingOwnership: (rows: Int, cursorState: CursorState)?
+        if lifecycle.isCompletion {
+            pendingOwnership = nil
+        } else {
+            pendingOwnership = (
                 rows: TerminalChat.renderedTerminalRowCount(
                     for: renderRows.allRows.map(\.plainText),
                     contentInsetWidth: contentInsetWidth,
                     columnWidth: columnWidth
                 ),
-                columnWidth: columnWidth,
-                maximumInPlaceRows: maximumInPlaceRows
+                cursorState: currentCursorState(for: .standardError)
             )
+        }
+
+        switch lifecycle {
+        case .started:
+            break
         case .completed:
             let activeBlock = toolState.activeBlock
             let ownsActiveBlock = activeBlock?.id == toolCall.id
@@ -180,6 +191,7 @@ extension TerminalChatRenderCoordinator {
                 )
                 return block.id == toolCall.id
                     && standardErrorIsTerminal
+                    && block.writeSequence == emittedWriteCount
                     && block.columnWidth == columnWidth
                     && block.rows <= maximumReplaceableRows
             } ?? false
@@ -200,6 +212,10 @@ extension TerminalChatRenderCoordinator {
 
             if shouldRewriteActiveBlock, let activeBlock {
                 clearOwnedRows(activeBlock.rows)
+                restoreCursorState(
+                    activeBlock.cursorStateBeforeRender,
+                    for: .standardError
+                )
             }
         }
 
@@ -208,6 +224,16 @@ extension TerminalChatRenderCoordinator {
             for: toolCall,
             lifecycle: lifecycle
         )
+        if let pendingOwnership {
+            toolState.activeBlock = ActiveToolBlock(
+                id: toolCall.id,
+                rows: pendingOwnership.rows,
+                columnWidth: columnWidth,
+                maximumInPlaceRows: maximumInPlaceRows,
+                cursorStateBeforeRender: pendingOwnership.cursorState,
+                writeSequence: emittedWriteCount
+            )
+        }
     }
 
     /// Converts the scrolling-region height into the number of content rows
@@ -349,6 +375,7 @@ extension TerminalChatRenderCoordinator {
             replaceableToolRowCapacity(maximumInPlaceRows) ?? Int.max
         )
         guard standardErrorIsTerminal,
+              block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth,
               block.rows <= maximumReplaceableRows else {
             // The pending rows are no longer cursor-reachable. Preserve them
@@ -357,6 +384,7 @@ extension TerminalChatRenderCoordinator {
             return
         }
         clearOwnedRows(block.rows)
+        restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
     }
 
 }

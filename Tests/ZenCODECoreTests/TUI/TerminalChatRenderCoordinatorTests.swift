@@ -482,6 +482,104 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(await renderer.snapshot().activeSubAgentOverviewRowCount > 0)
     }
 
+    @Test
+    func repeatedAgentToolCyclesTransferTheRewriteAnchorInBothDirections() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 120 }
+        )
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:seed",
+            text: "\n👥 Sub-Agents:\n   worker ready\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: 20
+        )
+        var overviewRows = await renderer.snapshot().activeSubAgentOverviewRowCount
+        #expect(overviewRows > 0)
+
+        for cycle in 1...3 {
+            let toolCall = presentedToolCall(
+                id: "wait-cycle-\(cycle)",
+                name: "agent.wait",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            )
+
+            let eventsBeforeStart = await renderer.capturedWriteEvents().count
+            await renderer.writeToolCallStarted(
+                toolCall,
+                maximumInPlaceRows: 20
+            )
+            let startEvents = Array(
+                (await renderer.capturedWriteEvents()).dropFirst(eventsBeforeStart)
+            )
+            let started = await renderer.snapshot()
+
+            // Starting the next coordinator call must replace the prior live
+            // overview. Appending here loses the only rewrite anchor and makes
+            // every subsequent refresh leave another Sub-Agents section behind.
+            #expect(
+                startEvents.first?.text.hasPrefix("\u{1B}[\(overviewRows)A\r") == true
+            )
+            #expect(started.activeSubAgentOverviewRowCount == 0)
+            #expect(started.activeToolCallID == toolCall.id)
+            #expect(started.activeToolRenderedRowCount > 0)
+
+            let eventsBeforeRunningOverview = await renderer.capturedWriteEvents().count
+            _ = await renderer.renderSubAgentOverview(
+                signature: "agents:running:\(cycle)",
+                text: "\n👥 Sub-Agents:\n   worker \(cycle) ⏳\n",
+                force: false,
+                rememberSignature: true,
+                overviewBatchID: "wave",
+                maximumInPlaceRows: 20
+            )
+            let runningOverviewEvents = Array(
+                (await renderer.capturedWriteEvents()).dropFirst(eventsBeforeRunningOverview)
+            )
+            let runningOverview = await renderer.snapshot()
+
+            #expect(
+                runningOverviewEvents.first?.text.hasPrefix(
+                    "\u{1B}[\(started.activeToolRenderedRowCount)A\r"
+                ) == true
+            )
+            #expect(runningOverview.activeToolCallID == nil)
+            #expect(runningOverview.activeSubAgentOverviewRowCount > 0)
+
+            let eventsBeforeCompletion = await renderer.capturedWriteEvents().count
+            await renderer.writeToolCallCompleted(
+                toolCall,
+                result: DirectAgentToolResult(output: "Done", summary: "Done"),
+                maximumInPlaceRows: 20
+            )
+            let completionEvents = Array(
+                (await renderer.capturedWriteEvents()).dropFirst(eventsBeforeCompletion)
+            )
+
+            #expect(
+                completionEvents.first?.text.hasPrefix(
+                    "\u{1B}[\(runningOverview.activeSubAgentOverviewRowCount)A\r"
+                ) == true
+            )
+            #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+
+            _ = await renderer.renderSubAgentOverview(
+                signature: "agents:completed:\(cycle)",
+                text: "\n👥 Sub-Agents:\n   worker \(cycle) ✅\n",
+                force: false,
+                rememberSignature: true,
+                overviewBatchID: "wave",
+                maximumInPlaceRows: 20
+            )
+            overviewRows = await renderer.snapshot().activeSubAgentOverviewRowCount
+            #expect(overviewRows > 0)
+        }
+    }
+
     /// Characterization: a standard completion is the byte-identical compact
     /// block followed only by the source appendix. Anything preceding the shared
     /// compact bytes must be pure cursor control, never printable text.

@@ -127,9 +127,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   snippet limits; recognized code extensions use their matching syntax colors,
   while text, documentation, and unknown file types remain unhighlighted.
 - Coordinator `agent.*` tool calls and the live Sub-Agents overview now transfer
-  their shared terminal rewrite anchor safely, so pending hourglass rows are
-  erased before completion status and elapsed time are drawn instead of leaving
-  repeated tool and Sub-Agents sections in the transcript.
+  their shared terminal rewrite anchor in both directions across repeated calls.
+  Starts, progress refreshes, and completions erase only their still-owned rows
+  instead of accumulating duplicate tool and Sub-Agents sections.
 - Nested Sub-Agent Markdown code blocks no longer add a spurious blank row, and
   nested tables and code blocks now reserve their indentation when fitting to
   the terminal width.
