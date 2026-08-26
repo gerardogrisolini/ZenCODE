@@ -94,6 +94,50 @@ extension AgentCoreSessionRunner {
         id sessionID: String,
         history: [AgentRuntimeMessage]
     ) async -> Bool {
+        guard let expectedSessionGeneration = currentSessionGeneration(
+            for: sessionID
+        ) else {
+            return false
+        }
+        return await replaceSessionHistory(
+            id: sessionID,
+            history: history,
+            expectedSessionGeneration: expectedSessionGeneration
+        )
+    }
+
+    @discardableResult
+    func replaceSessionHistory(
+        id sessionID: String,
+        history: [AgentRuntimeMessage],
+        expectedSessionGeneration: SessionGeneration
+    ) async -> Bool {
+        do {
+            return try await sessionMutationLease.withLease(
+                sessionID: sessionID
+            ) { [self] in
+                await replaceSessionHistoryUsingMutationLease(
+                    id: sessionID,
+                    history: history,
+                    expectedSessionGeneration: expectedSessionGeneration
+                )
+            }
+        } catch {
+            return false
+        }
+    }
+
+    private func replaceSessionHistoryUsingMutationLease(
+        id sessionID: String,
+        history: [AgentRuntimeMessage],
+        expectedSessionGeneration: SessionGeneration
+    ) async -> Bool {
+        guard isCurrentSessionGeneration(
+            expectedSessionGeneration,
+            for: sessionID
+        ) else {
+            return false
+        }
         guard let baseConfiguration = sessions[sessionID] else {
             return false
         }
@@ -101,7 +145,11 @@ extension AgentCoreSessionRunner {
         let currentSnapshot = await backend?.snapshotSession(id: sessionID)
             ?? lastKnownSessionSnapshots[sessionID]
             ?? AgentRuntimeSessionSnapshot(configuration: baseConfiguration)
-        guard isCurrentBackendGeneration(generation) else {
+        guard isCurrentBackendGeneration(generation),
+              isCurrentSessionGeneration(
+                  expectedSessionGeneration,
+                  for: sessionID
+              ) else {
             return false
         }
         let replacement = currentSnapshot.replacingHistory(history)
@@ -109,11 +157,13 @@ extension AgentCoreSessionRunner {
             with: replacement
         )
 
-        sessions[sessionID] = replacementConfiguration
-        lastKnownSessionSnapshots[sessionID] = replacement
         if let backend {
             await backend.clearSession(id: sessionID)
-            guard isCurrentBackendGeneration(generation) else {
+            guard isCurrentBackendGeneration(generation),
+                  isCurrentSessionGeneration(
+                      expectedSessionGeneration,
+                      for: sessionID
+                  ) else {
                 return false
             }
             await backend.createSession(
@@ -127,10 +177,16 @@ extension AgentCoreSessionRunner {
                 thinkingSelection: replacement.thinkingSelection,
                 preserveThinking: replacement.preserveThinking
             )
-            guard isCurrentBackendGeneration(generation) else {
+            guard isCurrentBackendGeneration(generation),
+                  isCurrentSessionGeneration(
+                      expectedSessionGeneration,
+                      for: sessionID
+                  ) else {
                 return false
             }
         }
+        sessions[sessionID] = replacementConfiguration
+        lastKnownSessionSnapshots[sessionID] = replacement
         return true
     }
 

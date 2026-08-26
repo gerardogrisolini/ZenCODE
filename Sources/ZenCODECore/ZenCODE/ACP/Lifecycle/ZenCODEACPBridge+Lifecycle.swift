@@ -520,10 +520,12 @@ extension ZenCODEACPBridge {
               activeID == reconfigurationID else {
             throw ACPShutdownFenceError()
         }
-        sessions[sessionID] = sessionState(
+        sessions[sessionID] = sessionStateWithCommandState(
             configuration: configuration,
             selectedAgent: selectedAgent,
-            epoch: epoch
+            epoch: epoch,
+            activePlan: currentState.activePlan,
+            planBrainstorming: currentState.planBrainstorming
         )
     }
 
@@ -567,11 +569,15 @@ extension ZenCODEACPBridge {
         let sessionID = Self.sessionID(from: params)
             ?? "swift-agent-\(UUID().uuidString.lowercased())"
         if let session = sessions[sessionID] {
-            // Bind to the incarnation we are about to replay/answer for: a
-            // `session/close` landing inside `snapshotSession` must stop this
-            // handler from replaying history and reporting success for a
-            // session that no longer exists.
+            // Bind before the first suspension: a concurrent close must fence
+            // both the Planner teardown and the subsequent replay/reply.
             bindLifecycleOperation(operation, sessionID: sessionID, epoch: session.epoch)
+            // ACP load/resume is a restore boundary even when the client reuses
+            // an already-live id. Never infer an unfinished Planner exchange
+            // from replayed chat history.
+            await clearACPPlanBrainstorming(sessionID: sessionID, epoch: session.epoch)
+            try ensureLifecycleOperationLive(operation)
+            // The remaining replay belongs to the same fenced incarnation.
             if replayHistory,
                let snapshot = await sessionRunner.snapshotSession(id: sessionID) {
                 try ensureLifecycleOperationLive(operation)

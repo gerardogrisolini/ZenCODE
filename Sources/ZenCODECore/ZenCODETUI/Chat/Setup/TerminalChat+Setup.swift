@@ -28,6 +28,9 @@ extension TerminalChat {
         activeSessionHistory = snapshot.history
         activeSessionTranscript = snapshot.transcriptHistory
         activePlan = snapshot.activePlan
+        // A setup restart restores persisted session data only, never an
+        // unfinished conversational planning exchange.
+        planBrainstorming = nil
         activeCheckpointTree = snapshot.checkpointTree
         activeSavedSessionName = snapshot.savedSessionName
         activeSessionSystemPromptOverride = nil

@@ -57,6 +57,7 @@ extension TerminalChat {
     public func startNewSession() async {
         do {
             await stopTaskGraphObserver()
+            await abandonPlanBrainstorming()
             await sessionRunner.resetSession(id: sessionID)
             sessionID = Self.newTerminalSessionID()
             activeSessionCacheKey = nil
@@ -326,6 +327,7 @@ extension TerminalChat {
         }
 
         await stopTaskGraphObserver()
+        await abandonPlanBrainstorming()
         await sessionRunner.resetSession(id: sessionID)
         sessionID = savedSession.sessionID
         activeSessionCacheKey = savedSession.cacheKey
@@ -334,6 +336,8 @@ extension TerminalChat {
         activeSessionSystemPromptOverride = savedSession.systemPrompt
         activeSessionDynamicContextOverride = savedSession.dynamicContext
         activePlan = savedSession.activePlan
+        // Deliberately absent from TerminalSavedSession; abandonment above closes
+        // the runtime Planner before the restored state is installed.
         activeCheckpointTree = workingTree
         resetResponseLanguageLock()
         activeSavedSessionName = savedSession.name

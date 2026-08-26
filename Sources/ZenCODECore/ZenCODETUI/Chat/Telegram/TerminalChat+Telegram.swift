@@ -54,6 +54,38 @@ extension TerminalChat {
             )
             return .continueChat
         case .none:
+            switch Self.parseSharedChatMention(
+                from: prompt,
+                readableHandles: await sessionRunner.sharedChatMentionHandles(
+                    rootSessionID: sessionID
+                )
+            ) {
+            case let .route(sharedChatRoute):
+                await sendSharedChatMention(sharedChatRoute)
+                return .continueChat
+            case .missingText:
+                await sendTelegramSystemMessageIfLinked(
+                    "ZenCODE message: add a message after the live mention."
+                )
+                return .continueChat
+            case .none:
+                break
+            }
+
+            if let coordinatorCommand = CoordinatorCommandParser.parse(prompt) {
+                switch coordinatorCommand {
+                case .plan:
+                    return await handlePlanCommand(prompt)
+                case .goal:
+                    return await handleWorkflowCommand(prompt)
+                case .review:
+                    return await handleReviewCommand(prompt)
+                }
+            }
+            if !CoordinatorCommandParser.isSlashCommand(prompt),
+               let action = handlePlanBrainstormingReply(prompt) {
+                return action
+            }
             return .runPrompt(prompt)
         }
     }
@@ -679,7 +711,8 @@ extension TerminalChat {
     private func telegramRemoteHelpText() -> String {
         """
         Send a message to prompt the current ZenCODE TUI session.
-        Remote commands: /status, /changes, /help.
+        Remote commands: /status, /changes, /help, /plan <goal> and its subcommands, /goal <goal>.
+        While /plan is asking questions, ordinary replies continue that same runtime discussion.
         Permission replies: /allow ID, /always ID, /deny ID.
         Gated operations (shell commands, deletions, git push/restore) are asked here.
         Turn Telegram off from the TUI with /telegram off.

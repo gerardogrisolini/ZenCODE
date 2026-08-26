@@ -59,6 +59,9 @@ public final class TerminalChat {
     public var pendingAttachments: [AgentRuntimeAttachment] = []
     public var lastFileChangeSummary: TurnFileChangeSummary?
     public var activePlan: TerminalSessionPlan?
+    /// Ephemeral `/plan` clarification state. Never copy this into snapshots or
+    /// persisted session models.
+    var planBrainstorming: TerminalPlanBrainstormingState?
     public var taskGraphObserverTask: Task<Void, Never>?
     /// In-flight debounced task-graph render scheduled by the observer task.
     /// Tracked on the chat so a turn boundary can quiesce the debounce before
@@ -340,6 +343,7 @@ public final class TerminalChat {
             } else {
                 outcome = .exited
             }
+            await abandonPlanBrainstorming()
             await sessionRunner.closeSession(id: sessionID)
             await stopTerminalServices()
             return outcome

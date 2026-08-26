@@ -196,6 +196,90 @@ struct TelegramTUITests {
     }
 
     @Test
+    func telegramRoutesPlanGoalReviewAndClarificationWithoutAbsorbingCommandsOrMentions() async throws {
+        let workingDirectory = URL(
+            fileURLWithPath: "/tmp/telegram-plan-routing-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: workingDirectory
+            ),
+            stdinIsTerminal: false
+        )
+        terminal.selectedToolKeys.insert("sub-agents")
+        try await terminal.sessionRunner.taskOrchestrator.registerSession(
+            id: terminal.sessionID,
+            workingDirectory: workingDirectory
+        )
+
+        guard case let .runHiddenPrompt(startPrompt, startPurpose) =
+            await terminal.submittedTelegramLineAction("/plan route all frontends") else {
+            Issue.record("Telegram /plan should use the local hidden planning router")
+            return
+        }
+        #expect(startPrompt.contains("Planning goal requested by the user: route all frontends"))
+        #expect(startPurpose == .plan(originalGoal: "route all frontends"))
+
+        var discussion = try #require(terminal.planBrainstorming)
+        discussion.recordPlannerOutput(
+            "Planner questions\n1. Keep it runtime-only?",
+            agentID: "planner-telegram",
+            revision: 1
+        )
+        terminal.planBrainstorming = discussion
+
+        guard case let .runHiddenPrompt(replyPrompt, replyPurpose) =
+            await terminal.submittedTelegramLineAction("Yes, runtime-only.") else {
+            Issue.record("A Telegram plain-text reply should continue the Planner")
+            return
+        }
+        #expect(replyPurpose == .plan(originalGoal: "route all frontends"))
+        #expect(replyPrompt.contains("planner-telegram"))
+        #expect(replyPrompt.contains("Yes, runtime-only."))
+
+        // Restore an awaiting state and verify higher-priority remote commands
+        // and mentions are not consumed as planning answers.
+        discussion = try #require(terminal.planBrainstorming)
+        discussion.recordPlannerOutput(
+            "Planner questions\n1. Another choice?",
+            agentID: "planner-telegram",
+            revision: 2
+        )
+        terminal.planBrainstorming = discussion
+        guard case .continueChat = await terminal.submittedTelegramLineAction("/help") else {
+            Issue.record("Telegram /help must retain remote-command precedence")
+            return
+        }
+        #expect(terminal.planBrainstorming?.isAwaitingReply == true)
+        guard case .continueChat = await terminal.submittedTelegramLineAction("@coordinator keep this separate") else {
+            Issue.record("Telegram live mentions must retain mention routing precedence")
+            return
+        }
+        #expect(terminal.planBrainstorming?.isAwaitingReply == true)
+
+        terminal.planBrainstorming = nil
+        guard case let .runHiddenPrompt(goalPrompt, goalPurpose) =
+            await terminal.submittedTelegramLineAction("/goal implement parity") else {
+            Issue.record("Telegram /goal should create a workflow and use its hidden prompt")
+            return
+        }
+        #expect(goalPurpose == .workflow(originalGoal: "implement parity"))
+        #expect(goalPrompt.contains("Goal: implement parity"))
+
+        guard case let .runHiddenPrompt(reviewPrompt, reviewPurpose) =
+            await terminal.submittedTelegramLineAction("/review focus on routing") else {
+            Issue.record("Telegram /review should use the local hidden review router")
+            return
+        }
+        #expect(reviewPurpose == .review)
+        #expect(reviewPrompt.contains("Review focus requested by the user: focus on routing"))
+        #expect(reviewPrompt.contains("role \"Reviewer\""))
+    }
+
+    @Test
     func telegramProgressReporterRequiresActiveTelegramSession() throws {
         let configuration = try AgentConfiguration(
             hostedModelID: "remote-community/test",

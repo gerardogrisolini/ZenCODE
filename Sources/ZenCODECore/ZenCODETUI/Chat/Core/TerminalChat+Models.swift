@@ -58,6 +58,10 @@ enum TerminalPromptPurpose: Sendable, Equatable {
     case review
 }
 
+/// Compatibility name used by the terminal frontend. The implementation lives
+/// in the shared coordinator kernel and remains deliberately non-Codable.
+typealias TerminalPlanBrainstormingState = PlanningCommandRuntimeState
+
 struct TerminalPromptAttempt: Sendable {
     let prompt: String
     let attachments: [AgentRuntimeAttachment]

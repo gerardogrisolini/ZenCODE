@@ -12,6 +12,22 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- `/plan`, `/goal`, and `/review` are now routed consistently in the terminal TUI,
+  Telegram, and ACP. `/plan` and `/goal` use one Agent Core command kernel, while
+  `/review` delegates read-only inspection through the configured `Reviewer`
+  profile on every frontend. `/plan` supports an ephemeral multi-turn Planner
+  clarification loop: question blocks do not create tasks or replace the active
+  plan, normal replies return to the same Planner with output-revision fencing,
+  and a new `/plan <goal>` or `/plan clear` closes and abandons the prior
+  collection. Its control state is never persisted or reconstructed after a
+  session restore; visible question/reply messages may remain in normal history,
+  but question blocks cannot be saved as plans. ACP keeps the original command
+  visible while sending only the hidden operational prompt to the model, fences
+  late results by session, epoch, prompt, collection, and runner-generation
+  identity, and rolls back stale history/task-graph commits. Final plans now
+  require one pending, ordinal `plan-<token>-N` task per numbered point with exact
+  text and dependency agreement before they can replace or approve a plan.
+
 - Telegram now mirrors every response a turn produces — each intermediate root
   response that precedes a tool call, each completed sub-agent response, Task
   updates, authorization requests, the final response, and the file-change

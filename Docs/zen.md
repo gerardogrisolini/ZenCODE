@@ -263,7 +263,7 @@ Commands start with `/`:
 - `/tasks clear` — remove all task graphs for the logical session.
 
 **Agentic workflow:**
-- `/plan <goal>` — delegate planning to a sub-agent using the configured `Planner` profile. See [planner.md](planner.md).
+- `/plan <goal>` — delegate planning to a sub-agent using the configured `Planner` profile. It may ask numbered clarification blocks over multiple turns; normal replies continue that runtime-only discussion with the same Planner, while a new goal closes and replaces it. The same command family is routed by the linked Telegram chat and ACP. See [planner.md](planner.md).
 - `/plan save` — save the active plan, or the latest non-empty assistant response, as a reusable unapproved draft in the current project's plan library.
 - `/plan load` — when no plan is active, load the latest saved project plan into the current context as unapproved and pending. Use `/plan clear` first to replace an active plan; loading never resumes old execution attempts.
 - `/plan status` — show plan progress from the graph state.

@@ -61,6 +61,29 @@ struct GoalCommandTests {
     }
 
     @Test
+    func goalCommandDoesNotOverlapAnUnfinishedPlannerDiscussion() async throws {
+        let terminal = try makeTerminal()
+        var discussion = PlanningCommandRuntimeState(goal: "clarify first")
+        discussion.recordPlannerOutput(
+            "Planner questions\n1. Choose the compatibility behavior?",
+            agentID: "planner-goal-block",
+            revision: 1
+        )
+        terminal.planBrainstorming = discussion
+
+        guard case .continueChat = await terminal.submittedLineAction(
+            "/goal must not overlap"
+        ) else {
+            Issue.record("/goal must not overlap an unfinished /plan discussion")
+            return
+        }
+        #expect(terminal.planBrainstorming == discussion)
+        #expect(try await terminal.sessionRunner.taskGraphSnapshot(
+            sessionID: terminal.sessionID
+        ) == nil)
+    }
+
+    @Test
     func goalPromptRequiresDelegationWithoutAReadOnlyCoordinatorPolicy() {
         let prompt = TerminalChat.workflowPrompt(
             goal: "Ship delegated work",

@@ -10,36 +10,49 @@ import ToolCore
 
 extension TerminalChat {
     func handlePlanCommand(_ command: String) async -> TerminalSubmittedLineAction {
-        let argument = Self.slashCommandArguments(
-            from: command,
-            commandPrefix: "/plan"
-        )
+        guard case let .plan(action) = CoordinatorCommandParser.parse(command) else {
+            await writeFailureMessage(Self.planMissingGoalMessage)
+            return .continueChat
+        }
 
-        switch argument.lowercased() {
-        case "save":
+        switch action {
+        case .save:
             await writeSubmittedPrompt(command)
+            guard planBrainstorming == nil else {
+                await writeFailureMessage(Self.planDiscussionBlocksMutationMessage)
+                return .continueChat
+            }
             await saveReusablePlan()
             return .continueChat
-        case "load":
+        case .load:
             await writeSubmittedPrompt(command)
+            guard planBrainstorming == nil else {
+                await writeFailureMessage(Self.planDiscussionBlocksMutationMessage)
+                return .continueChat
+            }
             await loadReusablePlan()
             return .continueChat
-        case "list":
+        case .list:
             await writeSubmittedPrompt(command)
             await listSavedPlans()
             return .continueChat
-        case "delete":
+        case let .delete(target):
             await writeSubmittedPrompt(command)
-            await deleteSavedPlan(argument: argument)
+            await deleteSavedPlan(
+                argument: target.map { "delete \($0)" } ?? "delete"
+            )
             return .continueChat
-        case let deletionCommand where deletionCommand.hasPrefix("delete "):
+        case .status:
             await writeSubmittedPrompt(command)
-            await deleteSavedPlan(argument: argument)
-            return .continueChat
-        case "status":
-            await writeSubmittedPrompt(command)
+            if let planBrainstorming {
+                await writeSystemMessage(
+                    "Planner clarification is active for: \(planBrainstorming.goal)\n"
+                )
+            }
             guard let activePlan else {
-                await writeSystemMessage("No active plan.\n")
+                if planBrainstorming == nil {
+                    await writeSystemMessage("No active plan.\n")
+                }
                 return .continueChat
             }
             let graph = try? await sessionRunner.taskGraphSnapshot(
@@ -52,8 +65,12 @@ extension TerminalChat {
             self.activePlan = projectedPlan
             await writeMarkdownMessage(Self.planStatusTable(for: projectedPlan, graph: graph))
             return .continueChat
-        case "approve":
+        case .approve:
             await writeSubmittedPrompt(command)
+            guard planBrainstorming == nil else {
+                await writeFailureMessage(Self.planDiscussionBlocksMutationMessage)
+                return .continueChat
+            }
             guard var plan = activePlan,
                   !plan.consolidatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 await writeFailureMessage(Self.planUnavailableForApprovalMessage)
@@ -107,10 +124,16 @@ extension TerminalChat {
                 Self.planImplementationPrompt(for: plan),
                 purpose: .normal
             )
-        case "clear":
+        case .clear:
             await writeSubmittedPrompt(command)
+            let hadDiscussion = planBrainstorming != nil
+            await abandonPlanBrainstorming()
             guard let plan = activePlan else {
-                await writeSystemMessage("No active plan to clear.\n")
+                await writeSystemMessage(
+                    hadDiscussion
+                        ? "Cleared the unfinished planning discussion.\n"
+                        : "No active plan or planning discussion to clear.\n"
+                )
                 return .continueChat
             }
             do {
@@ -128,42 +151,88 @@ extension TerminalChat {
                 return .continueChat
             }
             activePlan = nil
-        await writeSystemMessage(
-            "Cleared the active plan and archived its task graph in this session. "
-                + "Saved-plan library copies are unaffected; use /plan delete to remove those.\n"
-        )
-            return .continueChat
-        default:
-            break
-        }
-
-        guard !argument.isEmpty else {
-            await writeFailureMessage(Self.planMissingGoalMessage)
-            return .continueChat
-        }
-
-        if !isSubAgentToolEnabled {
-            await writeFailureMessage(
-                """
-                ZenCODE: /plan requires the sub-agents tool group. \
-                Enable it with /tools (or switch to an agent that includes it) and try again.
-
-                """
+            await writeSystemMessage(
+                "Cleared the active plan and archived its task graph in this session. "
+                    + "Saved-plan library copies are unaffected; use /plan delete to remove those.\n"
             )
             return .continueChat
+        case .missingGoal:
+            await writeFailureMessage(Self.planMissingGoalMessage)
+            return .continueChat
+        case let .start(goal):
+            if !isSubAgentToolEnabled {
+                await writeFailureMessage(
+                    """
+                    ZenCODE: /plan requires the sub-agents tool group. \
+                    Enable it with /tools (or switch to an agent that includes it) and try again.
+
+                    """
+                )
+                return .continueChat
+            }
+
+            let plannerProfile = plannerProfileForDelegation()
+            await writeSubmittedPrompt(command)
+            // A new goal abandons the previous collection and closes its author,
+            // but the completed active plan remains until a fresh final plan is valid.
+            await abandonPlanBrainstorming(closeAllPlanAuthors: true)
+            planBrainstorming = TerminalPlanBrainstormingState(goal: goal)
+
+            return .runHiddenPrompt(
+                Self.planDelegationPrompt(
+                    goal: goal,
+                    planner: plannerProfile
+                ),
+                purpose: .plan(originalGoal: goal)
+            )
         }
+    }
 
-        let plannerProfile = plannerProfileForDelegation()
-
-        await writeSubmittedPrompt(command)
-
+    /// Routes plain text received while the Planner is collecting decisions.
+    /// Slash commands and mentions are handled by `submittedLineAction` before
+    /// this method is reached.
+    func handlePlanBrainstormingReply(_ reply: String) -> TerminalSubmittedLineAction? {
+        guard var brainstorming = planBrainstorming,
+              brainstorming.recordReply(reply) else {
+            return nil
+        }
+        planBrainstorming = brainstorming
+        let planner = plannerProfileForDelegation()
         return .runHiddenPrompt(
-            Self.planDelegationPrompt(
-                goal: argument,
-                planner: plannerProfile
+            PlanningCommandKernel.planContinuationPrompt(
+                state: brainstorming,
+                planner: planner
             ),
-            purpose: .plan(originalGoal: argument)
+            purpose: .plan(originalGoal: brainstorming.goal)
         )
+    }
+
+    func abandonPlanBrainstorming(
+        closeAllPlanAuthors: Bool = false,
+        expectedCollectionID: UUID? = nil
+    ) async {
+        let state = planBrainstorming
+        if let expectedCollectionID,
+           state?.collectionID != expectedCollectionID {
+            return
+        }
+        planBrainstorming = nil
+        var agentIDs = Set<String>()
+        if let plannerAgentID = state?.plannerAgentID {
+            agentIDs.insert(plannerAgentID)
+        }
+        if closeAllPlanAuthors || (state != nil && agentIDs.isEmpty) {
+            let snapshots = await sessionRunner.subAgentSnapshots()
+            agentIDs.formUnion(
+                PlanningCommandKernel.plannerSnapshots(
+                    snapshots,
+                    rootSessionID: sessionID
+                ).map(\.id)
+            )
+        }
+        for agentID in agentIDs {
+            _ = await sessionRunner.closeSubAgent(id: agentID)
+        }
     }
 
     nonisolated static let planMissingGoalMessage =
@@ -173,6 +242,10 @@ extension TerminalChat {
     nonisolated static let planUnavailableForApprovalMessage =
         "ZenCODE: no completed plan is available to approve. "
         + "Run /plan <goal> and wait for it to finish successfully.\n"
+
+    nonisolated static let planDiscussionBlocksMutationMessage =
+        "ZenCODE: finish the current Planner clarification or use /plan clear before "
+        + "approving, saving, or loading a plan.\n"
 
     nonisolated static let planUnavailableForSavingMessage =
         "ZenCODE: no plan is available to save. Run /plan <goal>, or ask an agent "
@@ -331,11 +404,7 @@ extension TerminalChat {
         }
     }
 
-    enum SavedPlanDeletionResolution: Equatable {
-        case ids([String])
-        case ambiguous(matches: [String])
-        case notFound
-    }
+    typealias SavedPlanDeletionResolution = PlanningCommandKernel.SavedPlanDeletionResolution
 
     /// Resolves the target of /plan delete among the known saved-plan ids:
     /// `all` selects everything, an exact id wins, and otherwise a unique id
@@ -344,27 +413,7 @@ extension TerminalChat {
         _ target: String,
         in planIDs: [String]
     ) -> SavedPlanDeletionResolution {
-        let trimmedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTarget.isEmpty else {
-            return .notFound
-        }
-        if trimmedTarget.lowercased() == "all" {
-            return .ids(planIDs)
-        }
-        if let exactID = planIDs.first(where: { $0 == trimmedTarget }) {
-            return .ids([exactID])
-        }
-        let prefixMatches = planIDs
-            .filter { $0.hasPrefix(trimmedTarget) }
-            .sorted()
-        switch prefixMatches.count {
-        case 0:
-            return .notFound
-        case 1:
-            return .ids(prefixMatches)
-        default:
-            return .ambiguous(matches: prefixMatches)
-        }
+        PlanningCommandKernel.savedPlanDeletionTarget(target, in: planIDs)
     }
 
     /// Extracts the delete target from the raw /plan argument, e.g.
@@ -383,86 +432,37 @@ extension TerminalChat {
     nonisolated static func loadableSavedPlan(
         from savedPlans: [SavedTaskPlan]
     ) -> SavedTaskPlan? {
-        savedPlans.first { !$0.graph.state.isTerminal }
+        PlanningCommandKernel.loadableSavedPlan(from: savedPlans)
     }
 
     nonisolated static func planDeleteNotFoundMessage(
         availablePlanIDs: [String]
     ) -> String {
-        "ZenCODE: no saved plan matches. Available plans: "
-            + availablePlanIDs.joined(separator: ", ")
-            + ".\n"
+        PlanningCommandKernel.planDeleteNotFoundMessage(
+            availablePlanIDs: availablePlanIDs
+        )
     }
 
     nonisolated static func planDeleteAmbiguousMessage(
         matches: [String]
     ) -> String {
-        "ZenCODE: the plan id prefix is ambiguous: "
-            + matches.joined(separator: ", ")
-            + ". Provide more characters.\n"
+        PlanningCommandKernel.planDeleteAmbiguousMessage(matches: matches)
     }
 
     nonisolated static func planDeleteSuccessMessage(
         deletedPlanIDs: [String],
         activePlanAffected: Bool
     ) -> String {
-        guard !deletedPlanIDs.isEmpty else {
-            return "ZenCODE: no saved plans were deleted.\n"
-        }
-        var message: String
-        if deletedPlanIDs.count == 1, let planID = deletedPlanIDs.first {
-            message = "Deleted saved plan `\(planID)`.\n"
-        } else {
-            message = "Deleted \(deletedPlanIDs.count) saved plans.\n"
-        }
-        if activePlanAffected {
-            message += "The active plan in this session is unaffected; use /plan clear to discard it.\n"
-        }
-        return message
+        PlanningCommandKernel.planDeleteSuccessMessage(
+            deletedPlanIDs: deletedPlanIDs,
+            activePlanAffected: activePlanAffected
+        )
     }
 
     nonisolated static func savedPlansListMessage(
         for savedPlans: [SavedTaskPlan]
     ) -> String {
-        var lines = [
-            "## Saved plans",
-            "",
-            "**Total:** \(savedPlans.count)",
-            "",
-            "| Plan | Saved | Status | Items done | Goal |",
-            "|---|---|---|---:|---|",
-        ]
-        for saved in savedPlans {
-            let id = saved.graph.id
-            // The displayed token must be a prefix /plan delete accepts, so
-            // keep the `plan-` stem: `plan-aaaaaaaa` resolves, `aaaaaaaa`
-            // would not.
-            let shortID = id.hasPrefix("plan-")
-                ? String(id.prefix("plan-".count + 8))
-                : String(id.prefix(12))
-            let savedAt = saved.snapshot.savedAt.formatted(
-                date: .abbreviated,
-                time: .shortened
-            )
-            let completedCount = saved.graph.tasks
-                .filter { $0.status == .completed }
-                .count
-            let goal = saved.snapshot.plan.originalGoal
-                .replacingOccurrences(of: "\n", with: " ")
-            let truncatedGoal = goal.count > 60
-                ? String(goal.prefix(60)) + "…"
-                : goal
-            lines.append(
-                "| `\(shortID)` | \(savedAt) | `\(saved.graph.state.rawValue)` "
-                    + "| \(completedCount)/\(saved.graph.tasks.count) "
-                    + "| \(escapedPlanTableCell(truncatedGoal)) |"
-            )
-        }
-        lines.append("")
-        lines.append(
-            "Use /plan load to restore the newest draft, or /plan delete <plan|prefix|all> to remove saved plans."
-        )
-        return lines.joined(separator: "\n") + "\n"
+        PlanningCommandKernel.savedPlansListMessage(for: savedPlans)
     }
 
     func reusablePlanCandidate(createdAt: Date = Date()) -> TerminalSessionPlan? {
@@ -498,45 +498,15 @@ extension TerminalChat {
     nonisolated static func planPreparedForSaving(
         _ plan: TerminalSessionPlan
     ) -> TerminalSessionPlan {
-        TerminalSessionPlan(
-            id: plan.id,
-            originalGoal: plan.originalGoal,
-            consolidatedText: plan.consolidatedText,
-            createdAt: plan.createdAt,
-            isApproved: false,
-            points: plan.points.map { point in
-                TerminalSessionPlanPoint(
-                    id: point.id,
-                    text: point.text,
-                    dependsOn: point.dependsOn,
-                    hasExplicitDependencies: point.hasExplicitDependencies
-                )
-            }
-        )
+        PlanningCommandKernel.planPreparedForSaving(plan)
     }
 
     nonisolated static func planFromLatestAssistantMessage(
         in messages: [AgentRuntimeMessage],
         createdAt: Date = Date()
     ) -> TerminalSessionPlan? {
-        guard let assistantIndex = messages.indices.reversed().first(where: { index in
-            messages[index].role == .assistant
-                && messages[index].content.nilIfBlank != nil
-        }), let content = messages[assistantIndex].content.nilIfBlank else {
-            return nil
-        }
-
-        let originalGoal = messages[..<assistantIndex]
-            .reversed()
-            .first(where: { message in
-                message.role == .user && message.content.nilIfBlank != nil
-            })?
-            .content
-            .nilIfBlank
-            ?? "Saved plan"
-        return TerminalSessionPlan(
-            originalGoal: originalGoal,
-            consolidatedText: content,
+        PlanningCommandKernel.planFromLatestAssistantMessage(
+            in: messages,
             createdAt: createdAt
         )
     }
@@ -544,45 +514,7 @@ extension TerminalChat {
     nonisolated static func planPreparedForReuse(
         _ savedPlan: SavedTaskPlan
     ) -> TerminalSessionPlan {
-        let sourcePlan = savedPlan.snapshot.plan
-        let savedPointsByID = Dictionary(
-            sourcePlan.points.map { ($0.id, $0) },
-            uniquingKeysWith: { current, _ in current }
-        )
-        let points: [TerminalSessionPlanPoint]
-        if savedPlan.graph.tasks.isEmpty {
-            points = sourcePlan.points.map { point in
-                TerminalSessionPlanPoint(
-                    id: point.id,
-                    text: point.text,
-                    dependsOn: point.dependsOn,
-                    hasExplicitDependencies: point.hasExplicitDependencies
-                )
-            }
-        } else {
-            points = savedPlan.graph.tasks
-                .sorted { lhs, rhs in
-                    if lhs.order == rhs.order { return lhs.id < rhs.id }
-                    return lhs.order < rhs.order
-                }
-                .map { task in
-                    TerminalSessionPlanPoint(
-                        id: task.id,
-                        text: task.title,
-                        dependsOn: task.dependsOn,
-                        hasExplicitDependencies: savedPointsByID[task.id]?
-                            .hasExplicitDependencies ?? !task.dependsOn.isEmpty
-                    )
-                }
-        }
-        return TerminalSessionPlan(
-            id: sourcePlan.id,
-            originalGoal: sourcePlan.originalGoal,
-            consolidatedText: sourcePlan.consolidatedText,
-            createdAt: sourcePlan.createdAt,
-            isApproved: false,
-            points: points
-        )
+        PlanningCommandKernel.planPreparedForReuse(savedPlan)
     }
 
     /// Gives a legacy text-only plan one stable task at approval time rather
@@ -591,210 +523,54 @@ extension TerminalChat {
     nonisolated static func planMaterializedForApproval(
         _ plan: TerminalSessionPlan
     ) -> TerminalSessionPlan {
-        guard plan.points.isEmpty else {
-            return plan
-        }
-
-        var materializedPlan = plan
-        materializedPlan.points = [
-            TerminalSessionPlanPoint(
-                id: "\(plan.id)-implementation",
-                text: "Implement approved plan: \(plan.originalGoal)",
-                hasExplicitDependencies: true
-            )
-        ]
-        return materializedPlan
+        PlanningCommandKernel.planMaterializedForApproval(plan)
     }
 
     nonisolated static func savedPlanContextMessage(
         _ savedPlan: SavedTaskPlan,
         plan: TerminalSessionPlan
     ) -> String {
-        let savingAgent = savedPlan.snapshot.savingAgentName?.nilIfBlank.map {
-            "\nSaved by agent: \($0)"
-        } ?? ""
-        return """
-        [Saved plan handoff]
-        A plan from an earlier ZenCODE session has been loaded for review and further elaboration. \
-        Treat it as unapproved until the user explicitly runs /plan approve.\(savingAgent)
-
-        Original goal:
-        \(plan.originalGoal)
-
-        Saved plan:
-        \(plan.consolidatedText)
-        """
+        PlanningCommandKernel.savedPlanContextMessage(savedPlan, plan: plan)
     }
 
-    nonisolated static let planAuthorAgentName = "plan-author"
+    nonisolated static let planAuthorAgentName = PlanningCommandKernel.planAuthorAgentName
 
     nonisolated static func planImplementationPrompt(for plan: TerminalSessionPlan) -> String {
-        return """
-        Implement the active approved plan now, using the session task graph as the control \
-        plane. Complete every task in the graph, deciding for yourself whether to work \
-        directly or delegate. Validate important changes before marking tasks completed. \
-        Stop when the graph is completed or a real blocker is reached. Do not recreate or \
-        replace the approved plan.
-
-        Goal: \(plan.originalGoal)
-
-        Approved plan:
-        \(plan.consolidatedText)
-
-        Your final summary must follow the session response language from the system prompt. \
-        Do not answer in English merely because this internal prompt is in English.
-        """
+        PlanningCommandKernel.planImplementationPrompt(for: plan)
     }
 
     nonisolated static func planStatusTable(for plan: TerminalSessionPlan) -> String {
-        planStatusTable(for: plan, graph: nil)
+        PlanningCommandKernel.planStatusTable(for: plan, graph: nil)
     }
 
     nonisolated static func planStatusTable(
         for plan: TerminalSessionPlan,
         graph: TaskGraphSnapshot?
     ) -> String {
-        let overallStatus: String
-        if let graph {
-            switch graph.state {
-            case .draft:
-                overallStatus = "awaiting_approval"
-            case .completed, .cancelled, .archived:
-                overallStatus = graph.state.rawValue
-            case .active:
-                if graph.tasks.contains(where: { $0.status == .failed }) {
-                    overallStatus = "failed"
-                } else if graph.tasks.contains(where: { $0.status == .blocked }) {
-                    overallStatus = "blocked"
-                } else if graph.tasks.contains(where: { $0.status == .inProgress }) {
-                    overallStatus = "in_progress"
-                } else if graph.tasks.contains(where: { $0.status == .awaitingValidation }) {
-                    overallStatus = "awaiting_validation"
-                } else if graph.tasks.contains(where: { $0.status == .cancelled }) {
-                    overallStatus = "cancelled"
-                } else {
-                    overallStatus = "active"
-                }
-            }
-        } else if plan.isCompleted {
-            overallStatus = "completed"
-        } else if plan.points.contains(where: { $0.status == .failed }) {
-            overallStatus = "failed"
-        } else if plan.points.contains(where: { $0.status == .blocked }) {
-            overallStatus = "blocked"
-        } else if plan.points.contains(where: { $0.status == .inProgress }) {
-            overallStatus = "in_progress"
-        } else if plan.points.contains(where: { $0.status == .awaitingValidation }) {
-            overallStatus = "awaiting_validation"
-        } else if plan.isApproved {
-            overallStatus = "pending"
-        } else {
-            overallStatus = "awaiting_approval"
-        }
-
-        var lines = [
-            "## Plan status",
-            "",
-            "**Goal:** \(plan.originalGoal)",
-            "",
-            "**Overall status:** `\(overallStatus)`",
-            "",
-            "| # | Plan item | Status |",
-            "|---:|---|---|",
-        ]
-        if plan.points.isEmpty {
-            lines.append("| 1 | Legacy plan without structured items | `not_tracked` |")
-        } else {
-            lines.append(contentsOf: plan.points.enumerated().map { index, point in
-                "| \(index + 1) | \(escapedPlanTableCell(point.text)) | `\(point.status.rawValue)` |"
-            })
-        }
-        return lines.joined(separator: "\n") + "\n"
+        PlanningCommandKernel.planStatusTable(for: plan, graph: graph)
     }
 
     nonisolated static func plan(
         _ plan: TerminalSessionPlan,
         applying graph: TaskGraphSnapshot
     ) -> TerminalSessionPlan {
-        var projected = plan
-        let tasksByID = Dictionary(uniqueKeysWithValues: graph.tasks.map { ($0.id, $0) })
-        for index in projected.points.indices {
-            guard let task = tasksByID[projected.points[index].id] else { continue }
-            projected.points[index].status = planPointStatus(for: task.status)
-            projected.points[index].dependsOn = task.dependsOn
-        }
-        return projected
+        PlanningCommandKernel.plan(plan, applying: graph)
     }
 
     nonisolated static func planPointStatus(for status: TaskStatus) -> TerminalSessionPlanPointStatus {
-        switch status {
-        case .pending: .pending
-        case .inProgress: .inProgress
-        case .awaitingValidation: .awaitingValidation
-        case .completed: .completed
-        case .blocked: .blocked
-        case .failed: .failed
-        case .cancelled: .cancelled
-        }
+        PlanningCommandKernel.planPointStatus(for: status)
     }
 
     nonisolated static func taskDefinitions(
         for points: [TerminalSessionPlanPoint]
     ) -> [TaskDefinition] {
-        points.enumerated().map { index, point in
-            TaskDefinition(
-                id: point.id,
-                title: point.text,
-                order: index + 1,
-                // List order is presentational, not an implicit dependency. The
-                // Planner/coordinator must record every real prerequisite explicitly.
-                dependsOn: point.dependsOn
-            )
-        }
+        PlanningCommandKernel.taskDefinitions(for: points)
     }
 
     nonisolated static func planPointUpdates(
         from toolCall: DirectAgentToolCall
     ) -> (points: [TerminalSessionPlanPoint], mode: DirectTodoTaskRuntime.TodoWriteMode)? {
-        let request = DirectTodoTaskRuntime.normalizedToolRequest(for: toolCall)
-        guard request.name == "todo.write",
-              let todos = try? DirectTodoTaskRuntime.requestedTodos(from: request.arguments) else {
-            return nil
-        }
-        let points = todos.compactMap { todo -> TerminalSessionPlanPoint? in
-            let id = todo.id.trimmingCharacters(in: .whitespacesAndNewlines)
-            let text = todo.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard id.hasPrefix("plan-"), !text.isEmpty else {
-                return nil
-            }
-            let status: TerminalSessionPlanPointStatus
-            switch todo.status {
-            case .pending:
-                status = .pending
-            case .inProgress:
-                status = .inProgress
-            case .completed:
-                status = .completed
-            case .blocked:
-                status = .blocked
-            }
-            return TerminalSessionPlanPoint(
-                id: id,
-                text: text,
-                status: status,
-                dependsOn: todo.dependsOn ?? [],
-                hasExplicitDependencies: todo.dependsOn != nil
-            )
-        }
-        guard !points.isEmpty else {
-            return nil
-        }
-        return (
-            points,
-            DirectTodoTaskRuntime.TodoWriteMode(
-                rawValue: DirectTodoTaskRuntime.firstString(["mode"], in: request.arguments)
-            )
-        )
+        PlanningCommandKernel.planPointUpdates(from: toolCall)
     }
 
     @discardableResult
@@ -913,14 +689,6 @@ extension TerminalChat {
         }
     }
 
-    private nonisolated static func escapedPlanTableCell(_ text: String) -> String {
-        text
-            .replacingOccurrences(of: "|", with: "\\|")
-            .replacingOccurrences(of: "\r\n", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-    }
-
     /// Resolves the Planner profile used to configure delegated sub-agents.
     /// Prefers a user-configured "Planner" profile from agents.json and falls
     /// back to the built-in default so the command works before any setup.
@@ -944,82 +712,24 @@ extension TerminalChat {
         goal: String,
         planner: AgentProfile
     ) -> String {
-        let goalSection = """
-            Planning goal requested by the user: \(goal)
-            Plan only this requested activity unless the conversation clearly provides \
-            required constraints.
-            """
+        PlanningCommandKernel.planStartPrompt(goal: goal, planner: planner)
+    }
 
-        return """
-            You are only the coordinator for this planning pass. Stay on your current agent \
-            profile, but do not author, draft, consolidate, rewrite, or improve the plan \
-            yourself. The Planner agent is the sole author of the final plan.
+    nonisolated static func planContinuationDelegationPrompt(
+        goal: String,
+        exchanges: [TerminalPlanBrainstormingState.Exchange],
+        planner: AgentProfile
+    ) -> String {
+        var state = TerminalPlanBrainstormingState(goal: goal)
+        state.exchanges = exchanges
+        return PlanningCommandKernel.planContinuationPrompt(
+            state: state,
+            planner: planner
+        )
+    }
 
-            \(goalSection)
-
-            Planner authoring rules:
-            - Create exactly one sub-agent with agent.create. Use name \
-            "\(planAuthorAgentName)", role "Planner", and profile "\(planner.id)". The Planner \
-            must not edit files or run mutating commands.
-            - Give that Planner the complete requested goal and every relevant constraint \
-            from the conversation. Explicitly tell it that it, not the current coordinator, \
-            must inspect the workspace as needed and write the complete final plan.
-            - Require the Planner's final response to be a concise, self-contained functional \
-            analysis with an ordered, numbered "Implementation plan", usable by an implementer \
-            who has only that plan and the workspace. Every numbered item must be self-contained \
-            as a specification, and implementable from that plan and workspace after its declared \
-            dependencies: state the concrete observable behavior and relevant flow, verified \
-            components/files/symbols, applicable constraints and edge cases, and concrete \
-            validation. For every numbered item, require an explicit "Dependencies" entry that \
-            names prerequisite item numbers or says "none". Prohibit generic formulations, \
-            placeholders, repetition, alternatives, and decisions left to the implementer. Do not include \
-            context summaries, generic background, non-pertinent sections, or detail that does not \
-            change implementation. Use the fewest points and words that preserve implementation certainty. \
-            Resolve needed decisions from the workspace and conversation; if a decision is genuinely \
-            blocking, ask one focused question rather than guessing. Include risks, open questions, \
-            persistence, compatibility, security, concurrency, and other cross-cutting details only \
-            when pertinent to the requested work.
-            - Require the Planner to design those dependencies as a DAG with the minimum safe \
-            edges. It should expose parallel branches when tasks can proceed independently and \
-            parallel execution provides a real latency or ownership benefit. It must add an edge \
-            when one item consumes another's output or decision, validation must follow \
-            implementation, or concurrent work would mutate overlapping files or shared state. \
-            It must not chain items merely because they are numbered in that order, and must not \
-            split trivial work solely to manufacture parallelism. A sequential chain is correct \
-            when concurrency offers no meaningful benefit or would add conflict risk.
-            - Require the Planner to support this workflow loop: /plan <goal> -> /plan \
-            approve (which automatically starts implementation) -> /review -> corrections \
-            until the work is complete. It must not tell the user to send another \
-            implementation prompt after approval.
-            - Require the Planner's final response to follow the session response language \
-            from the system prompt. It must not answer in English merely because this \
-            internal coordination prompt is written in English.
-            - Do not create supporting Planners or split authorship across multiple agents. \
-            The single Planner must own the complete plan from investigation through final \
-            wording.
-
-            After delegating:
-            - Wait for the Planner to finish with agent.wait.
-            - If its output is failed, empty, or missing required planning detail, ask that \
-            same Planner to correct it with agent.message and wait again. Never fill gaps or \
-            produce a replacement plan yourself.
-            - Before the final response, call todo.write once with mode "upsert" and one \
-            item for every numbered implementation point authored by the Planner. Copy each \
-            point's wording and order without reinterpretation. Use a fresh short token \
-            shared by this plan and stable IDs "plan-<token>-1", "plan-<token>-2", and so \
-            on. Keep every status "pending". Include dependsOn for every item: translate the \
-            Planner's prerequisite item numbers to stable task IDs, and use an explicit empty \
-            array for independent points. If a dependency is missing or ambiguous, infer only \
-            genuine prerequisites using the same DAG rules above; never add an edge merely \
-            because one point appears earlier. Use sequential dependencies when parallelism has \
-            no useful benefit or overlapping mutable work would make concurrent execution unsafe. \
-            Do not include risks, background notes, open questions, or validation summaries as \
-            separate items.
-            - Your final response must be exactly the Planner's latest output, verbatim. Do \
-            not add an introduction or conclusion, summarize it, change its wording, reorder \
-            it, or wrap it in a quotation or code block.
-            - Do not edit any files yourself in this planning turn.
-            """
+    nonisolated static func isPlannerQuestionResponse(_ text: String) -> Bool {
+        PlanningCommandKernel.isPlannerQuestionResponse(text)
     }
 
     nonisolated static func plannerAuthoredPlanResponse(
@@ -1027,69 +737,34 @@ extension TerminalChat {
         snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         excludingAgentIDs: Set<String> = []
     ) -> DirectAgentResponse? {
-        let completedAuthors = snapshots.filter { snapshot in
-            !excludingAgentIDs.contains(snapshot.id)
-                && snapshot.name.caseInsensitiveCompare(planAuthorAgentName) == .orderedSame
-                && snapshot.role.caseInsensitiveCompare(
-                    AgentProfileStore.plannerAgentName
-                ) == .orderedSame
-                && isPlannerSnapshotProfile(snapshot)
-                && (snapshot.status == .idle || snapshot.status == .closed)
-                && !snapshot.pending
-                && snapshot.latestOutput?.trimmingCharacters(
-                    in: .whitespacesAndNewlines
-                ).isEmpty == false
-        }
-        guard completedAuthors.count == 1,
-              let author = completedAuthors.first else {
-            return nil
-        }
-        // Prefer accumulated output so that multi-turn planner corrections
-        // (e.g. when the coordinator asked the planner to complete a truncated
-        // plan) are captured in full. Fall back to latestOutput for backwards
-        // compatibility.
-        let text = author.accumulatedOutput?.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        ).isEmpty == false
-            ? author.accumulatedOutput!
-            : author.latestOutput ?? ""
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        return DirectAgentResponse(
-            text: text,
-            stopReason: parentResponse.stopReason,
-            modelID: author.modelID?.nilIfBlank ?? parentResponse.modelID
+        let eligibleSnapshots = snapshots.filter { !excludingAgentIDs.contains($0.id) }
+        let baseline = PlannerTurnBaseline(
+            state: nil,
+            snapshots: [],
+            rootSessionID: nil
         )
+        return PlanningCommandKernel.plannerResponse(
+            parentResponse: parentResponse,
+            snapshots: eligibleSnapshots,
+            baseline: baseline,
+            rootSessionID: nil
+        )?.response
     }
 
     nonisolated static func isPlannerSnapshotProfile(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> Bool {
-        snapshot.profileID?.caseInsensitiveCompare(
-            AgentProfileStore.plannerAgentID.uuidString
-        ) == .orderedSame
-            || snapshot.profileName?.caseInsensitiveCompare(
-                AgentProfileStore.plannerAgentName
-            ) == .orderedSame
+        PlanningCommandKernel.isPlannerSnapshotProfile(snapshot)
     }
 
     nonisolated static func historyByReplacingPlanCoordinatorOutput(
         _ history: [AgentRuntimeMessage],
         with plannerOutput: String
     ) -> [AgentRuntimeMessage] {
-        guard let turnStart = history.lastIndex(where: { $0.role == .user }) else {
-            return history + [AgentRuntimeMessage(role: .assistant, content: plannerOutput)]
-        }
-
-        var correctedHistory = Array(history[...turnStart])
-        correctedHistory.append(contentsOf: history[history.index(after: turnStart)...].filter {
-            !($0.role == .assistant && $0.toolCalls.isEmpty)
-        })
-        correctedHistory.append(
-            AgentRuntimeMessage(role: .assistant, content: plannerOutput)
+        PlanningCommandKernel.historyByReplacingCoordinatorOutput(
+            history,
+            with: plannerOutput
         )
-        return correctedHistory
     }
 }
 
@@ -1097,11 +772,12 @@ enum TerminalPlanGenerationError: LocalizedError {
     case plannerOutputUnavailable
     case sessionHistoryUnavailable
     case structuredTasksUnavailable
+    case unexpectedStructuredTasksForQuestions
 
     var errorDescription: String? {
         switch self {
         case .plannerOutputUnavailable:
-            return "The Planner agent did not produce a completed plan. The current agent "
+            return "The Planner agent did not produce fresh output for this planning turn. The current agent "
                 + "was not allowed to substitute its own plan; run /plan <goal> again."
         case .sessionHistoryUnavailable:
             return "The Planner produced a plan, but ZenCODE could not replace the current "
@@ -1109,47 +785,11 @@ enum TerminalPlanGenerationError: LocalizedError {
         case .structuredTasksUnavailable:
             return "The Planner produced text but did not register a valid structured task list; "
                 + "the previous plan and task graph were left unchanged."
+        case .unexpectedStructuredTasksForQuestions:
+            return "The Planner asked clarification questions, but the coordinator also registered plan tasks; "
+                + "the previous plan and task graph were left unchanged."
         }
     }
 }
 
-actor TerminalPlanPointCollector {
-    private var points: [TerminalSessionPlanPoint] = []
-    private var completedPlan: TerminalSessionPlan?
-
-    func apply(
-        _ updates: [TerminalSessionPlanPoint],
-        mode: DirectTodoTaskRuntime.TodoWriteMode
-    ) {
-        switch mode {
-        case .replace:
-            points = updates
-        case .append:
-            points.append(contentsOf: updates)
-        case .upsert:
-            var pointsByID = Dictionary(
-                points.map { ($0.id, $0) },
-                uniquingKeysWith: { current, _ in current }
-            )
-            for point in updates {
-                pointsByID[point.id] = point
-            }
-            points = DirectTodoTaskRuntime.orderedValues(
-                from: pointsByID,
-                preserving: points.map(\.id) + updates.map(\.id)
-            )
-        }
-    }
-
-    func snapshot() -> [TerminalSessionPlanPoint] {
-        points
-    }
-
-    func recordAutomaticCompletion(_ plan: TerminalSessionPlan) {
-        completedPlan = plan
-    }
-
-    func automaticallyCompletedPlan() -> TerminalSessionPlan? {
-        completedPlan
-    }
-}
+typealias TerminalPlanPointCollector = PlanningPointCollector

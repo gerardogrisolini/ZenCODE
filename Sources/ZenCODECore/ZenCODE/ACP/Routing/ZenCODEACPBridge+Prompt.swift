@@ -102,7 +102,7 @@ extension ZenCODEACPBridge {
             throw ACPError.invalidParams("session/prompt requires prompt text or attachments.")
         }
 
-        let promptConfiguration: AgentCoreSessionConfiguration
+        var promptConfiguration: AgentCoreSessionConfiguration
         if let agentMentionResolution {
             promptConfiguration = await acpSessionConfiguration(
                 applying: agentMentionResolution.agent,
@@ -110,12 +110,14 @@ extension ZenCODEACPBridge {
             )
             // Keep the same incarnation and reservation: routing to another
             // agent updates the configuration, it does not restart the session.
-            session = sessionState(
+            session = sessionStateWithCommandState(
                 configuration: promptConfiguration,
                 selectedAgent: agentMentionResolution.agent,
                 epoch: epoch,
                 activePromptID: promptID,
-                operationState: .prompting(promptID)
+                operationState: .prompting(promptID),
+                activePlan: session.activePlan,
+                planBrainstorming: session.planBrainstorming
             )
             guard updateLiveSession(id: sessionID, epoch: epoch, { liveSession in
                 liveSession = session
@@ -126,9 +128,97 @@ extension ZenCODEACPBridge {
             promptConfiguration = session.configuration
         }
 
-        let visiblePromptText = routedPromptText.isEmpty ? "Analyze the attached media." : routedPromptText
+        let coordinatorCommand = CoordinatorCommandParser.parse(routedPromptText)
+        let isPlanningReply = coordinatorCommand == nil
+            && agentMentionResolution == nil
+            && !CoordinatorCommandParser.isSlashCommand(routedPromptText)
+            && session.planBrainstorming?.isAwaitingReply == true
+        // Commands remain visible exactly as the client sent them (including an
+        // optional leading agent mention); only their hidden operational prompt
+        // is substituted before generation.
+        let visibleSource = coordinatorCommand != nil || isPlanningReply
+            ? promptText
+            : routedPromptText
+        let visiblePromptText = visibleSource.isEmpty
+            ? "Analyze the attached media."
+            : visibleSource
         await sendUserMessageChunk(sessionID: sessionID, text: visiblePromptText)
         await sendSessionInfoUpdate(sessionID: sessionID, title: promptTitle(from: visiblePromptText))
+
+        let commandRoute: ACPCommandTurnRoute
+        do {
+            commandRoute = try await routeACPCommandTurn(
+                command: coordinatorCommand,
+                routedPromptText: routedPromptText,
+                hasAgentMention: agentMentionResolution != nil,
+                sessionID: sessionID,
+                epoch: epoch,
+                promptID: promptID
+            )
+        } catch is CancellationError {
+            await writer.sendResultIfRequest(
+                id: id,
+                result: JSONValue.acpValue(from: ["stopReason": "cancelled"])
+            )
+            releaseReservation()
+            return
+        }
+        guard let routedSession = liveSession(id: sessionID, epoch: epoch),
+              routedSession.activePromptID == promptID,
+              case let .prompting(activePromptID) = routedSession.operationState,
+              activePromptID == promptID else {
+            await writer.sendResultIfRequest(
+                id: id,
+                result: JSONValue.acpValue(from: ["stopReason": "cancelled"])
+            )
+            releaseReservation()
+            return
+        }
+        let modelPromptText: String
+        let commandPurpose: ACPCommandPromptPurpose
+        switch commandRoute {
+        case let .immediate(message):
+            await writer.sendSessionUpdate(
+                sessionID: sessionID,
+                update: Self.textChunkJSONUpdate(
+                    kind: "agent_message_chunk",
+                    text: message
+                )
+            )
+            await writer.sendResultIfRequest(
+                id: id,
+                result: JSONValue.acpValue(from: ["stopReason": "end_turn"])
+            )
+            releaseReservation()
+            return
+        case let .generate(prompt, purpose, prelude):
+            modelPromptText = prompt
+            commandPurpose = purpose
+            if let prelude {
+                await writer.sendSessionUpdate(
+                    sessionID: sessionID,
+                    update: Self.textChunkJSONUpdate(
+                        kind: "agent_message_chunk",
+                        text: prelude
+                    )
+                )
+            }
+        }
+
+        guard let liveCommandSession = liveSession(id: sessionID, epoch: epoch),
+              liveCommandSession.activePromptID == promptID else {
+            throw CancellationError()
+        }
+        session = liveCommandSession
+        promptConfiguration = session.configuration
+        if var allowedToolNames = promptConfiguration.allowedToolNames,
+           !commandPurpose.additionalToolNames.isEmpty {
+            allowedToolNames.formUnion(commandPurpose.additionalToolNames)
+            promptConfiguration = sessionConfiguration(
+                from: promptConfiguration,
+                allowedToolNames: allowedToolNames
+            )
+        }
 
         let writer = self.writer
         let appMode = configuration.appMode
@@ -176,6 +266,7 @@ extension ZenCODEACPBridge {
             throw CancellationError()
         }
 
+        let planPointCollector = PlanningPointCollector()
         let activePromptTask = Task(name: "ZenCODEACPBridge.prompt") {
             await sessionRunner.updatePromptSkillSelection(
                 selectedAgentSkills(for: session.selectedAgent),
@@ -183,7 +274,7 @@ extension ZenCODEACPBridge {
             )
             let response = try await sessionRunner.sendPrompt(
                 configuration: promptConfiguration,
-                prompt: routedPromptText,
+                prompt: modelPromptText,
                 attachments: attachments,
                 toolProviders: [],
                 onEvent: { event in
@@ -231,9 +322,11 @@ extension ZenCODEACPBridge {
                             )
                         }
                     case let .content(content):
-                        await sendPromptUpdate(
-                            Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: content)
-                        )
+                        if !commandPurpose.suppressesCoordinatorContent {
+                            await sendPromptUpdate(
+                                Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: content)
+                            )
+                        }
                     case let .toolCallStarted(toolCall):
                         await sendPromptUpdate(
                             Self.toolCallCreateJSONUpdate(
@@ -248,6 +341,17 @@ extension ZenCODEACPBridge {
                             )
                         )
                     case let .toolCallCompleted(toolCall, result):
+                        if case .planning = commandPurpose {
+                            let request = DirectTodoTaskRuntime.normalizedToolRequest(
+                                for: toolCall
+                            )
+                            if request.name == "todo.write" {
+                                let update = result.isFailure
+                                    ? nil
+                                    : PlanningCommandKernel.planPointUpdates(from: toolCall)
+                                await planPointCollector.recordTodoWrite(update)
+                            }
+                        }
                         await sendPromptUpdate(
                             Self.toolCallCompletionJSONUpdate(
                                 for: toolCall,
@@ -263,7 +367,8 @@ extension ZenCODEACPBridge {
             )
             return PromptCompletion(
                 text: response.text,
-                stopReason: Self.acpStopReason(response.stopReason)
+                stopReason: Self.acpStopReason(response.stopReason),
+                modelID: response.modelID
             )
         }
 
@@ -286,9 +391,30 @@ extension ZenCODEACPBridge {
         }
 
         do {
-            let completion = try await activePromptTask.value
+            var completion = try await activePromptTask.value
+            if case .planning = commandPurpose {
+                completion = try await finalizeACPPlanningTurn(
+                    parent: completion,
+                    purpose: commandPurpose,
+                    collector: planPointCollector,
+                    sessionID: sessionID,
+                    epoch: epoch,
+                    promptID: promptID
+                )
+                await sendPromptUpdate(
+                    Self.textChunkJSONUpdate(
+                        kind: "agent_message_chunk",
+                        text: completion.text
+                    )
+                )
+            }
             await flushPromptUpdates()
-            await refreshSessionStateIfAvailable(sessionID: sessionID)
+            await refreshSessionStateIfAvailable(
+                sessionID: sessionID,
+                preservingAllowedToolNames: session.allowedToolNames,
+                expectedEpoch: epoch,
+                expectedPromptID: promptID
+            )
 
             await writer.sendResultIfRequest(
                 id: id,
@@ -296,16 +422,50 @@ extension ZenCODEACPBridge {
             )
             releaseReservation()
         } catch is CancellationError {
+            if case let .planning(collectionID, _) = commandPurpose {
+                await clearACPPlanBrainstorming(
+                    sessionID: sessionID,
+                    epoch: epoch,
+                    expectedCollectionID: collectionID
+                )
+            } else if case let .workflow(graphID) = commandPurpose {
+                _ = try? await sessionRunner.removeTaskGraph(
+                    id: graphID,
+                    sessionID: sessionID
+                )
+            }
             await flushPromptUpdates()
-            await refreshSessionStateIfAvailable(sessionID: sessionID)
+            await refreshSessionStateIfAvailable(
+                sessionID: sessionID,
+                preservingAllowedToolNames: session.allowedToolNames,
+                expectedEpoch: epoch,
+                expectedPromptID: promptID
+            )
             await writer.sendResultIfRequest(
                 id: id,
                 result: JSONValue.acpValue(from: ["stopReason": "cancelled"])
             )
             releaseReservation()
         } catch {
+            if case let .planning(collectionID, _) = commandPurpose {
+                await clearACPPlanBrainstorming(
+                    sessionID: sessionID,
+                    epoch: epoch,
+                    expectedCollectionID: collectionID
+                )
+            } else if case let .workflow(graphID) = commandPurpose {
+                _ = try? await sessionRunner.removeTaskGraph(
+                    id: graphID,
+                    sessionID: sessionID
+                )
+            }
             await flushPromptUpdates()
-            await refreshSessionStateIfAvailable(sessionID: sessionID)
+            await refreshSessionStateIfAvailable(
+                sessionID: sessionID,
+                preservingAllowedToolNames: session.allowedToolNames,
+                expectedEpoch: epoch,
+                expectedPromptID: promptID
+            )
             releaseReservation()
             throw error
         }
@@ -341,13 +501,15 @@ extension ZenCODEACPBridge {
               var session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        // Cancel and clear synchronously: the prompt's own release is fenced by
-        // prompt id and epoch, so it cannot revive this reservation afterwards.
         session.activePromptTask?.cancel()
         session.activePromptTask = nil
         session.activePromptID = nil
         session.operationState = .idle
         sessions[sessionID] = session
+        await clearACPPlanBrainstorming(
+            sessionID: sessionID,
+            epoch: session.epoch
+        )
         await writer.sendResultIfRequest(id: id, result: .object([:]))
     }
 

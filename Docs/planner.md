@@ -18,7 +18,8 @@ Each point states:
 - a concrete validation command or manual check; and
 - `Dependencies`, naming prerequisite point numbers or `none`.
 
-The plan avoids generic formulations, placeholders, repetition, alternatives,
+The plan begins with `Specifiche concordate` and then its numbered
+`Implementation plan`. The plan avoids generic formulations, placeholders, repetition, alternatives,
 and decisions left to the implementer. It omits context summaries, generic
 background, non-pertinent sections, and detail that does not change
 implementation; it uses the fewest points and words that preserve implementation
@@ -51,6 +52,28 @@ A goal is required. Examples:
 
 Requires the `sub-agents` tool group. Enable it with `/tools sub-agents` or switch to a profile that includes it (such as `Developer`).
 
+The same `/plan`, `/goal`, and `/review` command families are available from the terminal TUI,
+the linked Telegram chat, and ACP clients. All three use the Agent Core command
+routing kernel; Telegram keeps the Telegram chat as the response destination,
+while ACP keeps the client's original command visible and sends only the hidden
+operational prompt to the model. ACP resolves an optional leading `@agent` mention
+before command routing.
+
+Before finalizing, the Planner may emit one numbered `Planner questions` block
+per turn when material decisions remain unknown. Ordinary follow-up messages
+answer that block and return to the same Planner; further question blocks are
+allowed until the specification is complete. Slash commands and live-chat
+mentions retain their normal meanings. A new `/plan <goal>` closes the previous
+Planner and replaces the unfinished discussion, while `/plan clear` cancels it.
+The clarification control state and Planner ownership are runtime-only: neither is
+saved in sessions, checkpoints, or the plan library, and collection must restart
+after a new session, load/resume, setup restart, close, or shutdown. Visible
+questions and replies may remain in ordinary chat history, but replay never
+reactivates the collection and a question block is never accepted by `/plan save`.
+While collection is active, `/plan save`, `/plan load`, `/plan approve`, and
+`/goal` are refused; `/plan status`, list, delete, a replacement goal, and clear
+remain available.
+
 ## Profile Tools
 
 `/plan` selects the `Planner` profile explicitly. The delegated Planner receives
@@ -64,9 +87,9 @@ feature, MCP, and other external grants remain outside that classification.
 
 1. The current agent stays as coordinator only — it cannot draft, consolidate, or rewrite the plan.
 2. One sub-agent named `plan-author` is created with profile `Planner`.
-3. The Planner receives the complete goal and writes the final plan itself.
-4. The coordinator copies the Planner's numbered points into a `todo.write` bootstrap. The TUI validates those in-memory todo items as a DAG and records them in the active, unapproved plan.
-5. If the output is incomplete, the coordinator asks the same Planner to revise — it never fills gaps itself.
+3. The Planner receives the complete goal and either asks its single question block or writes the final plan itself.
+4. Only a final answer copies the Planner's numbered points into a `todo.write` bootstrap. The shared kernel validates those in-memory todo items as a DAG and records them in the active, unapproved plan.
+5. If the output is incomplete, the coordinator asks the same Planner to revise — it never fills gaps itself. Follow-up turns accept only a fresh output revision from that Planner; recreation is allowed only when the previous instance is gone.
 6. The Planner-authored plan becomes the active, unapproved session plan.
 
 If no completed Planner output or valid graph is available, the turn fails rather than falling back to a plan from another profile.

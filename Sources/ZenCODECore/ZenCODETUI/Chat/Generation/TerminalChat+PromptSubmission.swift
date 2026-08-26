@@ -79,6 +79,14 @@ extension TerminalChat {
             break
         }
 
+        // A plain message is a clarification reply only while a Planner
+        // explicitly has an unfinished question block.  This sits after live
+        // mention routing and before slash processing so neither is absorbed.
+        if Self.commandToken(from: prompt) == nil,
+           let action = handlePlanBrainstormingReply(prompt) {
+            return action
+        }
+
         if case .slashCommand = Self.submittedLineRole(for: prompt) {
             if let unavailableMessage = unavailableLocalSlashCommandMessage(for: prompt) {
                 await writeFailureMessage(unavailableMessage)

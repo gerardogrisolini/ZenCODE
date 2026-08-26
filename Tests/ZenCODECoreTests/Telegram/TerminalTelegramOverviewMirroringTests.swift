@@ -118,13 +118,15 @@ struct TerminalTelegramOverviewMirroringTests {
         )
     }
 
-    /// Deterministic replacement for fixed sleeps: the coordinator's drain
-    /// barrier returns only after every queued mirror reached the handler.
+    /// Deterministic replacement for fixed sleeps: first hand every mirror to
+    /// the reporter, then wait for the reporter's own delivery queue. The two
+    /// queues are intentionally independent in production.
     @discardableResult
     private func drainMirrors(
         _ terminal: TerminalChat
     ) async -> TerminalChat {
         await terminal.renderCoordinator.waitForOverviewMirrorsToDrain()
+        await terminal.activeTelegramProgressReporter?.flush()
         return terminal
     }
 

@@ -2,7 +2,7 @@
 
 The `Reviewer` profile is the read-only code review profile. It is designed for delegated review, not implementation.
 
-Use it through `/review` when you want independent review feedback before applying fixes or committing.
+Use it through `/review` when you want independent review feedback before applying fixes or committing. The command is available in the terminal TUI, the linked Telegram chat, and ACP clients.
 
 ## What Reviewer Does
 
@@ -26,7 +26,7 @@ Findings include severity and concrete `file:line` references.
 
 With no argument, `/review` reviews the latest tracked file changes. If a task graph or approved plan exists, it also verifies every task/plan claim against current files and actual validation output, classifying each as `implemented`, `validated`, `unverified`, `failed`, `deviated`, `cancelled`, or `blocked`.
 
-A graph or approved plan enables coverage-only review even without tracked changes. With no inputs, `/review` exits with `No tracked session file changes to review.`
+A graph or approved plan enables coverage-only review even without tracked changes. With no inputs, terminal and Telegram `/review` exit with `No tracked session file changes to review.` ACP does not own the TUI change tracker, so its fallback reviews the current workspace changes directly, constrained by any supplied focus.
 
 Requires the `sub-agents` tool group. Enable it with `/tools sub-agents` or switch to a profile that includes it.
 

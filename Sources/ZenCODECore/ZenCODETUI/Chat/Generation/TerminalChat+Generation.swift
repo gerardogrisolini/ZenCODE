@@ -18,13 +18,20 @@ extension TerminalChat {
     ) async throws -> TerminalChatGenerationSuccess {
         await installSubAgentToolEventHandlerIfNeeded()
         let planPointCollector = TerminalPlanPointCollector()
-        let preexistingSubAgentIDs: Set<String>
+        let turnSessionID = sessionID
+        let plannerTurnBaseline: PlannerTurnBaseline?
+        let planningCollectionID: UUID?
         if case .plan = attempt.purpose {
-            preexistingSubAgentIDs = Set(
-                await sessionRunner.subAgentSnapshots().map(\.id)
+            let snapshots = await sessionRunner.subAgentSnapshots()
+            plannerTurnBaseline = PlannerTurnBaseline(
+                state: planBrainstorming,
+                snapshots: snapshots,
+                rootSessionID: turnSessionID
             )
+            planningCollectionID = planBrainstorming?.collectionID
         } else {
-            preexistingSubAgentIDs = []
+            plannerTurnBaseline = nil
+            planningCollectionID = nil
         }
         if attempt.locksResponseLanguage {
             lockResponseLanguageIfNeeded()
@@ -124,15 +131,19 @@ extension TerminalChat {
                     case let .toolCallCompleted(toolCall, result):
                         await transcriptTurn.appendToolCallCompleted(toolCall, result: result)
                         await self.writeToolCallCompleted(toolCall, result: result)
-                        if !result.isFailure,
-                           let update = Self.planPointUpdates(from: toolCall) {
-                            switch attempt.purpose {
-                            case .plan:
-                                await planPointCollector.apply(
-                                    update.points,
-                                    mode: update.mode
-                                )
-                            case .normal:
+                        let planPointUpdate = result.isFailure
+                            ? nil
+                            : Self.planPointUpdates(from: toolCall)
+                        switch attempt.purpose {
+                        case .plan:
+                            let request = DirectTodoTaskRuntime.normalizedToolRequest(
+                                for: toolCall
+                            )
+                            if request.name == "todo.write" {
+                                await planPointCollector.recordTodoWrite(planPointUpdate)
+                            }
+                        case .normal:
+                            if planPointUpdate != nil {
                                 if self.synchronizeActivePlanStatus(
                                     from: toolCall,
                                     result: result
@@ -143,9 +154,9 @@ extension TerminalChat {
                                     toolCall: toolCall,
                                     result: result
                                 )
-                            case .review, .workflow:
-                                break
                             }
+                        case .review, .workflow:
+                            break
                         }
                         if !result.isFailure,
                            DirectTaskToolAdapter.isTaskToolName(toolCall.name),
@@ -184,23 +195,75 @@ extension TerminalChat {
                 }
             )
             if case .plan = attempt.purpose {
-                guard let plannerResponse = Self.plannerAuthoredPlanResponse(
+                guard let plannerTurnBaseline,
+                      let plannerResult = PlanningCommandKernel.plannerResponse(
                     parentResponse: response,
                     snapshots: await sessionRunner.subAgentSnapshots(),
-                    excludingAgentIDs: preexistingSubAgentIDs
+                    baseline: plannerTurnBaseline,
+                    rootSessionID: turnSessionID
                 ) else {
                     throw TerminalPlanGenerationError.plannerOutputUnavailable
                 }
-                response = plannerResponse
-                activeSessionHistory = Self.historyByReplacingPlanCoordinatorOutput(
+                guard let planningCollectionID,
+                      var brainstorming = planBrainstorming,
+                      brainstorming.collectionID == planningCollectionID else {
+                    throw CancellationError()
+                }
+                brainstorming.recordPlannerOutput(
+                    plannerResult.response.text,
+                    agentID: plannerResult.snapshot.id,
+                    revision: plannerResult.snapshot.latestOutputRevision
+                )
+                response = plannerResult.response
+                let plannerPoints: [TerminalSessionPlanPoint]
+                if Self.isPlannerQuestionResponse(response.text) {
+                    guard !(await planPointCollector.hasObservedTodoWrites()) else {
+                        throw TerminalPlanGenerationError.unexpectedStructuredTasksForQuestions
+                    }
+                    plannerPoints = []
+                } else {
+                    guard let finalPoints = await planPointCollector.validFinalPlanPoints(),
+                          PlanningCommandKernel.structuredPlanOutputIsCoherent(
+                              text: response.text,
+                              points: finalPoints
+                          ) else {
+                        throw TerminalPlanGenerationError.structuredTasksUnavailable
+                    }
+                    plannerPoints = finalPoints
+                }
+                let historyBeforePlannerCorrection = activeSessionHistory
+                let correctedPlanningHistory = Self.historyByReplacingPlanCoordinatorOutput(
                     activeSessionHistory,
                     with: response.text
                 )
                 guard await sessionRunner.replaceSessionHistory(
-                    id: sessionID,
-                    history: activeSessionHistory
+                    id: turnSessionID,
+                    history: correctedPlanningHistory
                 ) else {
                     throw TerminalPlanGenerationError.sessionHistoryUnavailable
+                }
+                guard sessionID == turnSessionID,
+                      let currentPlanningState = planBrainstorming,
+                      currentPlanningState.collectionID == planningCollectionID else {
+                    if let installed = await sessionRunner.snapshotSession(id: turnSessionID),
+                       installed.history == correctedPlanningHistory {
+                        _ = await sessionRunner.replaceSessionHistory(
+                            id: turnSessionID,
+                            history: historyBeforePlannerCorrection
+                        )
+                    }
+                    throw CancellationError()
+                }
+                activeSessionHistory = correctedPlanningHistory
+                if Self.isPlannerQuestionResponse(response.text) {
+                    planBrainstorming = brainstorming
+                } else {
+                    try await recordStructuredPlanIfNeeded(
+                        responseText: response.text,
+                        purpose: attempt.purpose,
+                        points: plannerPoints
+                    )
+                    planBrainstorming = nil
                 }
                 await transcriptTurn.appendAssistantContent(response.text)
             }
@@ -212,12 +275,13 @@ extension TerminalChat {
             await renderCoordinator.waitForOverviewMirrorsToDrain()
             if case .plan = attempt.purpose {
                 await writeAssistantContent(response.text)
+            } else {
+                try await recordStructuredPlanIfNeeded(
+                    responseText: response.text,
+                    purpose: attempt.purpose,
+                    points: await planPointCollector.snapshot()
+                )
             }
-            try await recordStructuredPlanIfNeeded(
-                responseText: response.text,
-                purpose: attempt.purpose,
-                points: await planPointCollector.snapshot()
-            )
             return TerminalChatGenerationSuccess(
                 response: response,
                 origin: attempt.origin,
@@ -225,6 +289,11 @@ extension TerminalChat {
                 automaticallyCompletedPlan: await planPointCollector.automaticallyCompletedPlan()
             )
         } catch {
+            if let planningCollectionID {
+                await abandonPlanBrainstorming(
+                    expectedCollectionID: planningCollectionID
+                )
+            }
             activeSessionTranscript.append(contentsOf: await transcriptTurn.messages())
             let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
             await stopSubAgentOverviewRefresh()
@@ -271,15 +340,7 @@ extension TerminalChat {
     }
 
     nonisolated static func planID(from points: [TerminalSessionPlanPoint]) -> String {
-        guard let firstID = points.first?.id.nilIfBlank else {
-            return "plan-\(UUID().uuidString.lowercased())"
-        }
-        let components = firstID.split(separator: "-", omittingEmptySubsequences: false)
-        if components.count > 1,
-           components.last.flatMap({ Int($0) }) != nil {
-            return components.dropLast().joined(separator: "-")
-        }
-        return "plan-\(UUID().uuidString.lowercased())"
+        PlanningCommandKernel.planID(from: points)
     }
 
     @discardableResult

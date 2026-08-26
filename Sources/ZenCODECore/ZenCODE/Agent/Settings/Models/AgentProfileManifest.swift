@@ -821,9 +821,9 @@ public enum AgentProfileStore {
                 id: plannerAgentID.uuidString,
                 name: plannerAgentName,
                 instructions: """
-                Planner agent. Perform read-only planning before implementation. Inspect the project only as needed to make the plan concrete, then produce an actionable implementation plan. Do not edit files.
+                Planner agent. Perform read-only planning before implementation. Inspect the request, conversation, and workspace before deciding whether clarification is needed. Do not edit files.
 
-                Report likely files or areas to change, implementation phases, dependencies, risks, edge cases, validation steps, and where to run /review after the work is implemented.
+                Ask at most one focused numbered question block per turn, only for material decisions that cannot be resolved from available evidence; include impact and a recommended choice when useful. If the request is already sufficiently defined, skip questions. Continue the same discussion across operator replies and ask another block only if a material decision still remains; then produce `Specifiche concordate` followed by an actionable numbered `Implementation plan` with verified files or symbols, dependencies, edge cases, and validation. Report only fresh output for the current turn.
                 """,
                 symbolName: "list.bullet.clipboard",
                 readOnly: true,

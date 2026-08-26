@@ -109,6 +109,26 @@ extension ZenCODEACPBridge {
         activePromptTask: Task<PromptCompletion, Error>? = nil,
         operationState: SessionOperationState = .idle
     ) -> SessionState {
+        sessionStateWithCommandState(
+            configuration: configuration,
+            selectedAgent: selectedAgent,
+            epoch: epoch,
+            activePromptID: activePromptID,
+            activePromptTask: activePromptTask,
+            operationState: operationState
+        )
+    }
+
+    func sessionStateWithCommandState(
+        configuration: AgentCoreSessionConfiguration,
+        selectedAgent: AgentProfile? = nil,
+        epoch: UInt64? = nil,
+        activePromptID: UUID? = nil,
+        activePromptTask: Task<PromptCompletion, Error>? = nil,
+        operationState: SessionOperationState = .idle,
+        activePlan: TerminalSessionPlan? = nil,
+        planBrainstorming: PlanningCommandRuntimeState? = nil
+    ) -> SessionState {
         SessionState(
             id: configuration.sessionID,
             cwd: configuration.workingDirectory.path,
@@ -118,7 +138,9 @@ extension ZenCODEACPBridge {
             selectedAgent: selectedAgent,
             activePromptID: activePromptID,
             activePromptTask: activePromptTask,
-            operationState: operationState
+            operationState: operationState,
+            activePlan: activePlan,
+            planBrainstorming: planBrainstorming
         )
     }
 
@@ -142,8 +164,11 @@ extension ZenCODEACPBridge {
         AgentCoreSessionConfiguration(
             sessionID: configuration.sessionID,
             modelID: configuration.modelID,
+            agentID: configuration.agentID,
+            agentName: configuration.agentName,
             workingDirectory: configuration.workingDirectory,
             systemPrompt: configuration.systemPrompt,
+            dynamicContext: configuration.dynamicContext,
             cacheKey: configuration.cacheKey,
             sessionRevision: configuration.sessionRevision,
             history: configuration.history,
@@ -158,10 +183,22 @@ extension ZenCODEACPBridge {
         )
     }
 
-    public func refreshSessionStateIfAvailable(sessionID: String) async {
+    public func refreshSessionStateIfAvailable(
+        sessionID: String,
+        preservingAllowedToolNames allowedToolNames: Set<String>? = nil,
+        expectedEpoch: UInt64? = nil,
+        expectedPromptID: UUID? = nil
+    ) async {
         // Capture the incarnation before suspending so a close/shutdown that
         // lands during the snapshot read cannot be undone by this refresh.
         guard let existingSession = sessions[sessionID] else {
+            return
+        }
+        if let expectedEpoch, existingSession.epoch != expectedEpoch {
+            return
+        }
+        if let expectedPromptID,
+           existingSession.activePromptID != expectedPromptID {
             return
         }
         let epoch = existingSession.epoch
@@ -171,17 +208,22 @@ extension ZenCODEACPBridge {
         guard let session = liveSession(id: sessionID, epoch: epoch) else {
             return
         }
-        sessions[sessionID] = sessionState(
+        if let expectedPromptID, session.activePromptID != expectedPromptID {
+            return
+        }
+        sessions[sessionID] = sessionStateWithCommandState(
             configuration: AgentCoreSessionConfiguration(
                 sessionID: snapshot.sessionID,
                 modelID: snapshot.modelID ?? configuration.effectiveModelID,
+                agentID: session.configuration.agentID,
+                agentName: session.configuration.agentName,
                 workingDirectory: snapshot.workingDirectoryPath,
                 systemPrompt: snapshot.systemPrompt,
                 dynamicContext: snapshot.dynamicContext,
                 cacheKey: snapshot.cacheKey,
                 sessionRevision: session.configuration.sessionRevision,
                 history: snapshot.history,
-                allowedToolNames: snapshot.allowedToolNames,
+                allowedToolNames: allowedToolNames ?? snapshot.allowedToolNames,
                 configuredContextWindowLimit: session.configuration.configuredContextWindowLimit,
                 generationParameterOverrides: session.configuration.generationParameterOverrides,
                 maxToolRounds: configuration.maxToolRounds,
@@ -194,7 +236,9 @@ extension ZenCODEACPBridge {
             epoch: session.epoch,
             activePromptID: session.activePromptID,
             activePromptTask: session.activePromptTask,
-            operationState: session.operationState
+            operationState: session.operationState,
+            activePlan: session.activePlan,
+            planBrainstorming: session.planBrainstorming
         )
     }
 

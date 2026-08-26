@@ -42,11 +42,17 @@ public actor ZenCODEACPBridge {
         /// prevents a prompt and a configuration change (or two configuration
         /// changes) from both observing the session as idle.
         public var operationState: SessionOperationState
+        /// Completed plan state is runtime session state; the unfinished
+        /// clarification below is even more deliberately ephemeral and is never
+        /// represented by ACP resume history or a task checkpoint.
+        var activePlan: TerminalSessionPlan?
+        var planBrainstorming: PlanningCommandRuntimeState?
     }
 
     public struct PromptCompletion: Sendable {
         public let text: String
         public let stopReason: String
+        public let modelID: String
     }
 
     /// One ACP session's shared-chat renderer.

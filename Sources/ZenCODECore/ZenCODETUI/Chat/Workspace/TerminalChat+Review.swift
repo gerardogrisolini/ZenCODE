@@ -40,7 +40,7 @@ extension TerminalChat {
 
     let reviewerProfile = reviewerProfileForDelegation()
 
-      await writeSubmittedPrompt("/review")
+    await writeSubmittedPrompt(command)
 
     return .runHiddenPrompt(
       Self.reviewDelegationPrompt(

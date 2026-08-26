@@ -107,6 +107,12 @@ extension ZenCODEACPBridge {
         }
         return thinking?["currentValue"] as? String
     }
+
+    func planStateForTesting(
+        sessionID: String
+    ) -> (activePlan: TerminalSessionPlan?, brainstorming: PlanningCommandRuntimeState?) {
+        (sessions[sessionID]?.activePlan, sessions[sessionID]?.planBrainstorming)
+    }
 }
 
 actor CapturingACPBackend: AgentRuntimeBackend {

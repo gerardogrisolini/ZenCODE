@@ -610,6 +610,345 @@ struct PlanCommandTests {
     }
 
     @Test
+    func sharedCoordinatorCommandParserCoversPlanGoalAndReview() {
+        #expect(
+            CoordinatorCommandParser.parse(" /PLAN   replace routing ")
+                == .plan(.start(goal: "replace routing"))
+        )
+        #expect(CoordinatorCommandParser.parse("/plan") == .plan(.missingGoal))
+        #expect(CoordinatorCommandParser.parse("/plan CLEAR") == .plan(.clear))
+        #expect(
+            CoordinatorCommandParser.parse("/plan delete plan-abcd")
+                == .plan(.delete(target: "plan-abcd"))
+        )
+        #expect(CoordinatorCommandParser.parse("/goal ship it") == .goal("ship it"))
+        #expect(CoordinatorCommandParser.parse("/review") == .review(""))
+        #expect(
+            CoordinatorCommandParser.parse("/review@zencode_bot focus on races")
+                == .review("focus on races")
+        )
+        #expect(
+            CoordinatorCommandParser.parse("/plan@zencode_bot telegram goal")
+                == .plan(.start(goal: "telegram goal"))
+        )
+        #expect(CoordinatorCommandParser.parse("/help") == nil)
+        #expect(CoordinatorCommandParser.parse("@planner answer") == nil)
+    }
+
+    @Test
+    func planningRuntimeStateTransitionsAcrossMultipleQuestionBlocks() throws {
+        var state = PlanningCommandRuntimeState(
+            goal: "  clarify shared routing  ",
+            collectionID: UUID(uuidString: "00000000-0000-0000-0000-000000000123")!
+        )
+        #expect(state.goal == "clarify shared routing")
+        #expect(!state.isAwaitingReply)
+        let acceptedEarlyReply = state.recordReply("too early")
+        #expect(!acceptedEarlyReply)
+
+        state.recordPlannerOutput(
+            "# Planner questions\n1. First decision?",
+            agentID: "planner-1",
+            revision: 4
+        )
+        #expect(state.isAwaitingReply)
+        let acceptedFirstReply = state.recordReply("Use the recommended choice.")
+        #expect(acceptedFirstReply)
+        #expect(state.exchanges.count == 1)
+        #expect(!state.isAwaitingReply)
+
+        state.recordPlannerOutput(
+            "Planner questions:\n1. Remaining decision?",
+            agentID: "planner-1",
+            revision: 5
+        )
+        let acceptedSecondReply = state.recordReply("Keep it runtime-only.")
+        #expect(acceptedSecondReply)
+        #expect(state.exchanges.map(\.userReply) == [
+            "Use the recommended choice.",
+            "Keep it runtime-only.",
+        ])
+    }
+
+    @Test
+    func plannerFreshnessReusesAvailableAuthorAndAllowsRecreationOnlyAfterClosure() throws {
+        func snapshot(
+            id: String,
+            status: DirectSubAgentRuntime.Status,
+            revision: UInt64,
+            output: String
+        ) -> DirectSubAgentRuntime.AgentSnapshot {
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: id,
+                rootSessionID: "planning-session",
+                name: PlanningCommandKernel.planAuthorAgentName,
+                role: AgentProfileStore.plannerAgentName,
+                profileID: AgentProfileStore.plannerAgentID.uuidString,
+                status: status,
+                pending: false,
+                latestOutput: output,
+                latestOutputRevision: revision,
+                latestError: nil,
+                createdAt: Date(timeIntervalSince1970: 1),
+                updatedAt: Date(timeIntervalSince1970: Double(revision + 1))
+            )
+        }
+
+        var state = PlanningCommandRuntimeState(goal: "reuse planner")
+        state.recordPlannerOutput(
+            "Planner questions\n1. Choice?",
+            agentID: "planner-existing",
+            revision: 2
+        )
+        let available = snapshot(
+            id: "planner-existing",
+            status: .idle,
+            revision: 2,
+            output: "Planner questions\n1. Choice?"
+        )
+        let availableBaseline = PlannerTurnBaseline(
+            state: state,
+            snapshots: [available],
+            rootSessionID: "planning-session"
+        )
+        let improperReplacement = snapshot(
+            id: "planner-replacement",
+            status: .idle,
+            revision: 1,
+            output: "Replacement output"
+        )
+        #expect(PlanningCommandKernel.freshPlannerSnapshot(
+            from: [available, improperReplacement],
+            baseline: availableBaseline,
+            rootSessionID: "planning-session"
+        ) == nil)
+
+        let updatedExisting = snapshot(
+            id: "planner-existing",
+            status: .idle,
+            revision: 3,
+            output: "Specifiche concordate\n\nImplementation plan\n1. Implement"
+        )
+        #expect(PlanningCommandKernel.freshPlannerSnapshot(
+            from: [updatedExisting, improperReplacement],
+            baseline: availableBaseline,
+            rootSessionID: "planning-session"
+        )?.id == "planner-existing")
+
+        let closedBaseline = PlannerTurnBaseline(
+            state: state,
+            snapshots: [snapshot(
+                id: "planner-existing",
+                status: .closed,
+                revision: 2,
+                output: "Planner questions\n1. Choice?"
+            )],
+            rootSessionID: "planning-session"
+        )
+        #expect(PlanningCommandKernel.freshPlannerSnapshot(
+            from: [improperReplacement],
+            baseline: closedBaseline,
+            rootSessionID: "planning-session"
+        )?.id == "planner-replacement")
+    }
+
+    @Test
+    func sharedKernelRejectsTextTaskMismatchAndInvalidDependencyBootstrap() {
+        let text = """
+        Specifiche concordate
+        - Keep compatibility.
+
+        Implementation plan
+        1. Implement shared routing.
+           Dependencies: none
+        2. Validate every frontend.
+           Dependencies: 1
+        """
+        let coherent = [
+            TerminalSessionPlanPoint(
+                id: "plan-coherent-1",
+                text: "Implement shared routing.",
+                dependsOn: [],
+                hasExplicitDependencies: true
+            ),
+            TerminalSessionPlanPoint(
+                id: "plan-coherent-2",
+                text: "Validate every frontend.",
+                dependsOn: ["plan-coherent-1"],
+                hasExplicitDependencies: true
+            ),
+        ]
+        #expect(PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: text,
+            points: coherent
+        ))
+        #expect(!PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: text,
+            points: [coherent[0]]
+        ))
+
+        var wrongText = coherent
+        wrongText[1] = TerminalSessionPlanPoint(
+            id: "plan-coherent-2",
+            text: "Publish a release instead.",
+            dependsOn: ["plan-coherent-1"],
+            hasExplicitDependencies: true
+        )
+        #expect(!PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: text,
+            points: wrongText
+        ))
+
+        var wrongDependencies = coherent
+        wrongDependencies[1] = TerminalSessionPlanPoint(
+            id: "plan-coherent-2",
+            text: "Validate every frontend.",
+            dependsOn: [],
+            hasExplicitDependencies: true
+        )
+        #expect(!PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: text,
+            points: wrongDependencies
+        ))
+
+        var terminalStatus = coherent
+        terminalStatus[0] = TerminalSessionPlanPoint(
+            id: "plan-coherent-1",
+            text: "Implement shared routing.",
+            status: .completed,
+            dependsOn: [],
+            hasExplicitDependencies: true
+        )
+        #expect(!PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: text,
+            points: terminalStatus
+        ))
+
+        var mixedToken = coherent
+        mixedToken[1] = TerminalSessionPlanPoint(
+            id: "plan-other-2",
+            text: "Validate every frontend.",
+            dependsOn: ["plan-coherent-1"],
+            hasExplicitDependencies: true
+        )
+        #expect(!PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: text,
+            points: mixedToken
+        ))
+        #expect(!PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: "1. Implement shared routing.",
+            points: [coherent[0]]
+        ))
+        for invalidDependency in ["2", "1, 1", "3"] {
+            #expect(!PlanningCommandKernel.structuredPlanOutputIsCoherent(
+                text: text.replacingOccurrences(
+                    of: "Dependencies: 1",
+                    with: "Dependencies: \(invalidDependency)"
+                ),
+                points: coherent
+            ))
+        }
+
+        let symbolText = """
+        Specifiche concordate
+        - Preserve concrete identifiers.
+
+        Implementation plan
+        1. Update `foo_bar.swift` and preserve C# behavior.
+           Dependencies: none
+        """
+        let symbolPoint = TerminalSessionPlanPoint(
+            id: "plan-symbol-1",
+            text: "Update `foo_bar.swift` and preserve C# behavior.",
+            dependsOn: [],
+            hasExplicitDependencies: true
+        )
+        #expect(PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: symbolText,
+            points: [symbolPoint]
+        ))
+        #expect(!PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: symbolText,
+            points: [TerminalSessionPlanPoint(
+                id: "plan-symbol-1",
+                text: "Update foobar.swift and preserve C behavior.",
+                dependsOn: [],
+                hasExplicitDependencies: true
+            )]
+        ))
+
+        let cyclic = [
+            TerminalSessionPlanPoint(
+                id: "plan-cycle-1",
+                text: "Implement shared routing.",
+                dependsOn: ["plan-cycle-2"],
+                hasExplicitDependencies: true
+            ),
+            TerminalSessionPlanPoint(
+                id: "plan-cycle-2",
+                text: "Validate every frontend.",
+                dependsOn: ["plan-cycle-1"],
+                hasExplicitDependencies: true
+            ),
+        ]
+        #expect(!PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: text,
+            points: cyclic
+        ))
+    }
+
+    @Test
+    func plannerQuestionHistoryCannotBecomeASavedPlanCandidate() {
+        let messages = [
+            AgentRuntimeMessage(role: .user, content: "/plan clarify behavior"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "Planner questions\n1. Which behavior should be used?"
+            ),
+        ]
+        #expect(PlanningCommandKernel.planFromLatestAssistantMessage(
+            in: messages
+        ) == nil)
+    }
+
+    @Test
+    func newPlanReplacesOnlyTheDiscussionAndClearCancelsIt() async throws {
+        let terminal = try makeTerminal()
+        terminal.activePlan = TerminalSessionPlan(
+            id: "plan-existing",
+            originalGoal: "existing goal",
+            consolidatedText: "Existing completed draft"
+        )
+        var discussion = PlanningCommandRuntimeState(goal: "old goal")
+        discussion.recordPlannerOutput(
+            "Planner questions\n1. Old question?",
+            agentID: "missing-old-planner",
+            revision: 1
+        )
+        terminal.planBrainstorming = discussion
+
+        let oldCollectionID = discussion.collectionID
+        guard case .runHiddenPrompt = await terminal.handlePlanCommand("/plan new goal") else {
+            Issue.record("A new /plan goal should start a fresh hidden turn")
+            return
+        }
+        #expect(terminal.activePlan?.id == "plan-existing")
+        #expect(terminal.planBrainstorming?.goal == "new goal")
+        #expect(terminal.planBrainstorming?.collectionID != oldCollectionID)
+
+        // A late failure/cancellation from the abandoned turn is fenced by its
+        // collection id and cannot clear the replacement discussion.
+        await terminal.abandonPlanBrainstorming(
+            expectedCollectionID: oldCollectionID
+        )
+        #expect(terminal.planBrainstorming?.goal == "new goal")
+
+        terminal.activePlan = nil
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan clear")))
+        #expect(terminal.planBrainstorming == nil)
+    }
+
+    @Test
     func successfulPlanOutputIsRecordedAndReplacementRequiresApprovalAgain() async throws {
         let terminal = try makeTerminal()
         let firstDate = Date(timeIntervalSince1970: 100)
@@ -798,12 +1137,21 @@ struct PlanCommandTests {
             isApproved: true
         )
         terminal.activePlan = plan
+        var discussion = PlanningCommandRuntimeState(goal: "runtime-only discussion")
+        discussion.recordPlannerOutput(
+            "Planner questions\n1. Continue?",
+            agentID: "planner-reset-test",
+            revision: 1
+        )
+        terminal.planBrainstorming = discussion
 
         await terminal.handleUndoFileChangesCommand()
         #expect(terminal.activePlan == plan)
+        #expect(terminal.planBrainstorming == discussion)
 
         await terminal.startNewSession()
         #expect(terminal.activePlan == nil)
+        #expect(terminal.planBrainstorming == nil)
     }
 
     @Test
@@ -984,7 +1332,7 @@ struct PlanCommandTests {
     }
 
     @Test
-    func plannerAuthoredResponsePrefersAccumulatedOutputOverLatestOutput() throws {
+    func plannerAuthoredResponseUsesFreshLatestOutputInsteadOfAccumulatedHistory() throws {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent-plan-author",
             name: TerminalChat.planAuthorAgentName,
@@ -1007,7 +1355,7 @@ struct PlanCommandTests {
             ),
             snapshots: [snapshot]
         ))
-        #expect(response.text == "First part of the plan\n\nFinal fragment only")
+        #expect(response.text == "Final fragment only")
     }
 
     @Test

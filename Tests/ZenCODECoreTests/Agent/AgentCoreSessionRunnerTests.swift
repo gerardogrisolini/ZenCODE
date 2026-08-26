@@ -129,6 +129,101 @@ struct AgentCoreSessionRunnerTests {
     }
 
     @Test
+    func fencedHistoryReplacementCannotMutateARecreatedSession() async throws {
+        let backend = CapturingAgentRuntimeBackend()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in backend }
+        )
+        let sessionID = "session-fenced-\(UUID().uuidString)"
+        let oldConfiguration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: "old",
+            cacheKey: "old-cache",
+            history: [AgentRuntimeMessage(role: .user, content: "old")],
+            allowedToolNames: []
+        )
+        try await runner.createSession(configuration: oldConfiguration)
+        let oldGeneration = try #require(
+            await runner.currentSessionGeneration(for: sessionID)
+        )
+
+        await runner.closeSession(id: sessionID)
+        let newHistory = [AgentRuntimeMessage(role: .user, content: "new incarnation")]
+        let newConfiguration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: "new",
+            cacheKey: "new-cache",
+            history: newHistory,
+            allowedToolNames: []
+        )
+        try await runner.createSession(configuration: newConfiguration)
+
+        #expect(!(await runner.replaceSessionHistory(
+            id: sessionID,
+            history: [AgentRuntimeMessage(role: .assistant, content: "stale")],
+            expectedSessionGeneration: oldGeneration
+        )))
+        #expect(await runner.snapshotSession(id: sessionID)?.history == newHistory)
+    }
+
+    @Test
+    func historyReplacementSerializesBackendMutationWithSameIDRecreation() async throws {
+        let clearGate = SessionRunnerTestGate()
+        let backend = CapturingAgentRuntimeBackend(closeSessionGate: clearGate)
+        let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
+        let sessionID = "session-mutation-lease-\(UUID().uuidString)"
+        let oldConfiguration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: "old",
+            cacheKey: "old-cache",
+            history: [AgentRuntimeMessage(role: .user, content: "old")],
+            allowedToolNames: []
+        )
+        try await runner.createSession(configuration: oldConfiguration)
+        _ = try await runner.preloadModel(
+            configuration: oldConfiguration,
+            onEvent: { _ in }
+        )
+        let generation = try #require(
+            await runner.currentSessionGeneration(for: sessionID)
+        )
+
+        let replacementTask = Task {
+            return await runner.replaceSessionHistory(
+                id: sessionID,
+                history: [AgentRuntimeMessage(role: .assistant, content: "corrected")],
+                expectedSessionGeneration: generation
+            )
+        }
+        await clearGate.waitUntilEntered()
+
+        let newHistory = [AgentRuntimeMessage(role: .user, content: "new incarnation")]
+        let recreationTask = Task {
+            await runner.closeSession(id: sessionID)
+            try await runner.createSession(configuration: AgentCoreSessionConfiguration(
+                sessionID: sessionID,
+                modelID: "test-model",
+                workingDirectory: FileManager.default.temporaryDirectory,
+                systemPrompt: "new",
+                cacheKey: "new-cache",
+                history: newHistory,
+                allowedToolNames: []
+            ))
+        }
+
+        await clearGate.open()
+        #expect(!(await replacementTask.value))
+        try await recreationTask.value
+        #expect(await runner.snapshotSession(id: sessionID)?.history == newHistory)
+    }
+
+    @Test
     func failedPromptPublishesRecoveredSessionSnapshot() async throws {
         let backend = CapturingAgentRuntimeBackend(
             promptEvents: [.content("partial answer")],
@@ -1320,6 +1415,42 @@ private actor AuthorizationInvokingBackend: AgentRuntimeBackend {
     }
 }
 
+private actor SessionRunnerTestGate {
+    private var isOpen = false
+    private var entered = false
+    private var enteredWaiters: [CheckedContinuation<Void, Never>] = []
+    private var openWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func waitUntilEntered() async {
+        guard !entered else { return }
+        await withCheckedContinuation { continuation in
+            enteredWaiters.append(continuation)
+        }
+    }
+
+    func waitIfClosed() async {
+        entered = true
+        let waiters = enteredWaiters
+        enteredWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            openWaiters.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let waiters = openWaiters
+        openWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+}
+
 private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
     private var updatedSystemPrompt: String?
     private var updatedAllowedToolNames: Set<String>?
@@ -1329,13 +1460,16 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
     private var subAgentToolEventHandler: DirectSubAgentToolEventHandler?
     private let promptEvents: [DirectAgentEvent]
     private let sendPromptError: Error?
+    private let closeSessionGate: SessionRunnerTestGate?
 
     init(
         promptEvents: [DirectAgentEvent] = [],
-        sendPromptError: Error? = nil
+        sendPromptError: Error? = nil,
+        closeSessionGate: SessionRunnerTestGate? = nil
     ) {
         self.promptEvents = promptEvents
         self.sendPromptError = sendPromptError
+        self.closeSessionGate = closeSessionGate
     }
 
     func createSession(
@@ -1413,7 +1547,10 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
 
     func updateToolProviders(_: [AgentToolProvider]) async {}
 
-    func closeSession(id _: String) {}
+    func closeSession(id: String) async {
+        await closeSessionGate?.waitIfClosed()
+        sessions.removeValue(forKey: id)
+    }
 
     func shutdown() async {
         sessions.removeAll()

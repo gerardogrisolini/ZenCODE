@@ -64,6 +64,11 @@ public actor AgentCoreSessionRunner {
     /// sessions. It is deliberately outside backend state so a turn remains
     /// ordered across backend creation, recovery, and finalisation.
     let sessionTurnLease: AgentSessionTurnLease
+    /// Serializes session creation/recreation with history replacement for the
+    /// same logical id. Close remains deliberately preemptive: it invalidates the
+    /// generation while a suspended mutation unwinds, and a replacement checks
+    /// that generation before every commit.
+    let sessionMutationLease = AgentSessionTurnLease()
     /// Core-side owner of coordinator-mailbox monitoring, batching and the
     /// single-flight auto-trigger decision. Built lazily so its message source
     /// can capture this runner weakly and never form a reference cycle.
@@ -164,6 +169,16 @@ public actor AgentCoreSessionRunner {
     }
 
     public func createSession(
+        configuration: AgentCoreSessionConfiguration
+    ) async throws {
+        try await sessionMutationLease.withLease(
+            sessionID: configuration.sessionID
+        ) { [self] in
+            try await createSessionUsingMutationLease(configuration: configuration)
+        }
+    }
+
+    private func createSessionUsingMutationLease(
         configuration: AgentCoreSessionConfiguration
     ) async throws {
         try await taskOrchestrator.registerSession(
