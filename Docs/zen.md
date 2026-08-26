@@ -229,8 +229,8 @@ Commands start with `/`:
 - `/setup` — save the current session, open setup, rebuild the runtime from the updated configuration, and restore the conversation.
 - `/models` — show every configured model and choose the model for the current session.
 - `/agents [list|<name>|<number>]` — switch agent profile.
-- `/tools [all|none|tool-name|package-name|number]` — select exposed tool groups.
-- `/skills` — select or install prompt skills.
+- `/tools [all|none|tool-name|package-name|number]` — select exposed tool groups; `/tools logs` opens the platform system log viewer (Console.app on macOS).
+- `/skills` — select or install prompt skills; `/skills uninstall` opens a multi-selection menu for removing app-installed skills.
 - `/exit` — close the session.
 
 **Sessions and memory:**
@@ -401,7 +401,7 @@ Tool groups include filesystem, shell, text, search, Git, memory, sub-agents, ge
 
 ### Local file editing
 
-`local.editFile`, `local.multiEdit`, and `local.replace` accept only the canonical `old`/`new` payload fields; the legacy aliases `oldString`, `old_string`, `newString`, and `new_string` are not supported. Empty or ambiguous matches are rejected, existing line endings are preserved, and `local.multiEdit` applies its edits atomically. Results provide only bounded contextual feedback around affected lines.
+`local.editFile`, `local.multiEdit`, and `local.replace` accept only the canonical `old`/`new` payload fields; the legacy aliases `oldString`, `old_string`, `newString`, and `new_string` are not supported. Empty or ambiguous matches are rejected, existing line endings are preserved, and `local.multiEdit` applies its edits atomically. Successful `local.editFile` and `local.multiEdit` responses are compact confirmations containing only the path and replacement/edit count; they do not return post-edit context or diffs.
 
 ## Task Orchestration
 
@@ -435,7 +435,9 @@ than being silently resumed. See
 ## Skills
 
 ```text
+/tools logs                       # open the platform system log viewer
 /skills                          # select or install skills
+/skills uninstall                # remove app-installed skills
 zen --skills all                 # initial selection at launch
 zen --skills "review,swift"
 ```

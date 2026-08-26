@@ -14,14 +14,14 @@ Windows (via WSL), all the way down to a Raspberry Pi.
 ## Highlights
 
 - **Provider-agnostic** — any OpenAI-compatible endpoint (OpenRouter, local servers, any `/v1` API), or a browser sign-in with your ChatGPT or Claude subscription.
-- **Native Swift, tiny footprint** — a single compiled binary with no interpreter or Node event loop; around 20 MB of RAM at startup, small enough to run on constrained ARM boards.
+- **Native Swift, small footprint** — a single compiled binary with no interpreter or Node event loop, suitable for constrained ARM boards.
 - **Runs everywhere** — macOS, Linux, and Windows (via WSL); model inference stays on the remote provider, so even a single-board computer can host the agent.
 - **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, as a native coding agent.
 - **Agentic workflows** — dependency-aware task graph with `/plan`, `/goal`, and `/review`; `/plan save` and `/plan load` hand plans between sessions of the same project, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
 - **Live agent chat** — while sub-agents run, the operator, coordinator, and agent instances share a transient chat room: message the coordinator or broadcast to all agents from the terminal with `@coordinator` / `@all`, or reach a specific agent by its handle. See [agents.md](Docs/agents.md).
 - **Task recovery at startup** — incomplete task graphs are detected per project and presented in a scrollable picker, so you can resume the exact graph you selected or remove obsolete work before starting a new session.
 - **Durable project memory** — workspace-scoped facts are recalled automatically without bloating conversation history; default retrieval stays local with BM25, and optional embeddings add semantic ranking.
-- **Full control over tools** — granular `/tools` selection (filesystem, shell, Git, search, memory, sub-agents, Xcode, Figma, features), with change tracking and `/undo` as a safety net.
+- **Full control over tools** — granular `/tools` selection (filesystem, shell, Git, search, memory, sub-agents, Xcode, Figma, features), with change tracking and `/undo` as a safety net. Successful file edits return compact path-and-count confirmations instead of post-edit context or diffs.
 - **Extensible** — the Builder generates reusable Dynamic Swift Features as durable tools; skills are selectable per session and installable from GitHub or a local folder.
 
 See [Why ZenCODE](Docs/why-zen.md) for the full rationale.
@@ -44,7 +44,7 @@ ZenCODE supports several ways to run the model, all selected during automatic fi
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh" \
-  | bash -s -- --ref v1.3.0
+  | bash -s -- --ref v2.0.0
 ```
 
 `--ref` pins the source checkout to the release tag. Replace it with the latest
@@ -66,7 +66,7 @@ Xcode or the Apple command line tools.
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh" \
-  | bash -s -- --ref v1.3.0
+  | bash -s -- --ref v2.0.0
 ```
 
 For a development build from the moving `main` branch:
@@ -143,8 +143,8 @@ swift build -c release --product zen
 /setup       Reconfigure ZenCODE, then restore the current session
 /models      Select a model for the current session
 /agents      Select an agent profile
-/tools       Select tool groups
-/skills      Select or install prompt skills
+/tools       Select tool groups (`/tools logs` opens the system log viewer)
+/skills      Select, install, or uninstall prompt skills (`/skills uninstall`)
 /sessions    Manage sessions and checkpoint trees
 /open        Open a referenced file, URL, or attachment
 /changes     Review the latest tracked file changes

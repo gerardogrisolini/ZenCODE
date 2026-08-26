@@ -66,3 +66,6 @@ fastlane/test_output
 # standalone feature lockfiles are tracked for the same reason and validated by
 # their dedicated CI matrix.
 MEMORY.md
+
+# macOS Finder metadata
+.DS_Store

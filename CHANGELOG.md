@@ -10,41 +10,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
-### Fixed
+## [2.0.0] - 2026-08-26
 
-- Nested Sub-Agent Markdown code blocks no longer add a spurious blank row, and
-  nested tables and code blocks now reserve their indentation when fitting to
-  the terminal width.
-- Fixed live Sub-Agents rendering losing its terminal anchor when the first
-  shared-chat message makes the compact Chat header appear.
-
-### Removed
-
-- Removed the `--verbose` CLI flag and its `ZENCODE_AGENT_VERBOSE` environment
-  variable along with the `verboseLogging` runtime setting. The flag is now
-  rejected as an unknown argument. Status and tool-progress output on stderr,
-  ACP verbose file logging, and verbose-only provider diagnostics (tool
-  exposure, prompt-cache usage) were removed; prompt-cache warnings and the
-  structured tool execution log remain available.
-- Removed `ZENCODE_LOG_LEVEL`; `ZENCODE_LOG` is now the sole environment
-  variable that enables diagnostics and selects their threshold. The removed
-  variable is ignored when present.
-- Removed the application-owned diagnostic log destination: `ZenLogger` now
-  emits through the shared platform system-log backend, so the
-  `~/.zencode/logs/zencode.log` file, its per-run creation, custom timestamps,
-  and the `ZENCODE_LOG_FILE` override are gone. `ZENCODE_LOG_FILE` is ignored
-  and `ZENCODE_LOG=stderr`/`=2` no longer enable logging; `zen --doctor`
-  reports both as legacy/invalid. Diagnostics remain opt-in via `ZENCODE_LOG`
-  (which also selects the threshold) and are redacted, size
-  bounded, and never written to stdout, stderr, or a file. Semantic-embedding
-  fallback errors still always print one redacted ERROR line to stderr and
-  additionally forward an opt-in copy to the system log, without
-  destination-based deduplication. The public
-  `ZenLoggerConfiguration.Destination` keeps only `.systemLog`; the legacy
-  `.file`/`.standardError` cases are unavailable at compile time.
-  `ZenLogger.configure(nil)` now really clears the override and restores
-  environment resolution, and the new `ZenLogger.disable()` forces diagnostics
-  off regardless of `ZENCODE_LOG`.
+> **Breaking release:** compared with v1.3.0, v2.0.0 removes public
+> `ToolOutputDetailLevel` and the TUI output-detail toggle (`Ctrl+T`), the
+> `--verbose`/`verboseLogging` and legacy logging interfaces, and the former
+> contextual result payloads of `local.editFile` and `local.multiEdit`. Update
+> integrations to use `ZENCODE_LOG` and the platform system log.
 
 ### Added
 
@@ -75,17 +47,23 @@ Release tags follow the strict `vX.Y.Z` contract described in
   rows—including lifecycle status, duration, failures, and source-change diffs—
   while remaining indented inside the live Sub-Agents section. Each agent keeps
   one current tool area, replaced in place with the rest of the overview.
-- Successful `local.editFile` and `local.multiEdit` responses are now fixed compact
-  confirmations containing only the path and replacement/edit count; they no longer
-  return post-edit file context or diff-like content.
+- Sub-agent thinking now keeps a stable `🤔 thinking…` header in the terminal
+  overview and renders the currently streamed paragraph beneath it, replacing
+  only that value in place when the next paragraph begins. Paragraph detection is
+  independent of stream chunk boundaries (including CRLF split across deltas),
+  the phase is tracked as typed state instead of a marker prefix, and the reasoning
+  text is neutralized against terminal control sequences before it is rendered.
+- **Breaking:** `local.editFile` and `local.multiEdit` now return fixed compact
+  confirmations with only the path and replacement/edit count, not post-edit
+  context or diff-like output.
 - Project-memory guidance and descriptors now treat memory as a concise,
   evidence-backed journal: verified handoffs, durable decisions, blockers, and
   releases/publications are retained while transient activity, speculation, and
   raw output are excluded. Read-only memory tool surfaces now receive guidance
   that does not suggest unavailable mutations.
-- Terminal tool output now has one stable standard presentation, preserving the
-  existing compact ANSI status layout and source-change appendix. The obsolete
-  output-level toggle and `Ctrl+T` shortcut have been removed.
+- **Breaking:** Removed public `ToolOutputDetailLevel` and the terminal
+  output-detail toggle, including its `Ctrl+T` shortcut. Tool output now has one
+  standard compact presentation.
 - Terminal command completion now recognizes parser aliases and static arguments
   for `/tasks`, `/agents`, `/tools`, `/feature`, `/changes`, and `/skills`,
   including `/skills add`, `/skills uninstall`, `/tasks ls`, and `/tasks get`.
@@ -98,8 +76,22 @@ Release tags follow the strict `vX.Y.Z` contract described in
   changed; one new public helper, `FeatureProcessTreeSupervisor.terminateImmediately`,
   was lifted out of a private teardown path.
 
+### Removed
+
+- **Breaking:** Removed `--verbose`, `ZENCODE_AGENT_VERBOSE`, and the
+  `verboseLogging` runtime setting, along with verbose stderr/progress, ACP
+  file-log, and provider-diagnostic output. The flag is rejected.
+- **Breaking:** Removed `ZENCODE_LOG_LEVEL`, `ZENCODE_LOG_FILE`, and legacy
+  `ZenLoggerConfiguration.Destination.file`/`.standardError`; logging uses
+  `ZENCODE_LOG` and the platform system log.
+
 ### Fixed
 
+- Nested Sub-Agent Markdown code blocks no longer add a spurious blank row, and
+  nested tables and code blocks now reserve their indentation when fitting to
+  the terminal width.
+- Fixed live Sub-Agents rendering losing its terminal anchor when the first
+  shared-chat message makes the compact Chat header appear.
 - `/tools logs` is now available while a prompt is running; other `/tools`
   invocations remain unavailable.
 - Standard terminal tool output preserves its ANSI colors, compact status
@@ -186,13 +178,6 @@ Release tags follow the strict `vX.Y.Z` contract described in
   types, clears stale delegated rows, respects display width and CommonMark
   ordered-list limits, and mirrors only task-graph overviews to Telegram;
   high-frequency sub-agent snapshots remain terminal-only.
-- Sub-agent thinking now keeps a stable `🤔 thinking…` header in the terminal
-  overview and renders the currently streamed paragraph beneath it, replacing
-  only that value in place when the next paragraph begins. Paragraph
-  detection is independent of stream chunk boundaries (including CRLF split
-  across deltas), the phase is tracked as typed state instead of a marker
-  prefix, and the reasoning text is neutralized against terminal control
-  sequences before it is rendered.
 - Direct Anthropic requests now share subscription thinking capability and
   payload rules, while model catalog URLs preserve configured base paths and
   query items.
@@ -648,7 +633,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
-- An in-progress tool block that exactly filled the scrolling region
+- A detailed in-progress tool block that exactly filled the scrolling region
   scrolled its title past the top margin before completion could replace it,
   leaving a stale hourglass copy in the transcript beside the completed result.
   The rewriteable row capacity now reserves the cursor row needed after the
@@ -914,6 +899,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.6...v1.3.0
 [1.2.6]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.5...v1.2.6
 [1.2.5]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.4...v1.2.5
