@@ -778,11 +778,10 @@ extension TerminalChat {
         }
         let prefix = "\(paddedLineNumber(number, width: numberWidth)) │ "
         let terminalSafeLine = terminalSafeSnippetLine(line)
-        let availableContentWidth = max(0, width - displayWidth(prefix))
-        let fittedLine = displayWidth(terminalSafeLine) > availableContentWidth
-            ? TerminalANSIText.truncate(terminalSafeLine, to: availableContentWidth)
-            : terminalSafeLine
-        return paddedToDisplayWidth("\(prefix)\(fittedLine)", width: width)
+        // Leave overlong source content intact: `safelyWrappedDetailedToolRows`
+        // reflows each diff cell independently after this layout pass, retaining
+        // the gutter, divider and syntax-coloring boundaries on continuations.
+        return paddedToDisplayWidth("\(prefix)\(terminalSafeLine)", width: width)
     }
 
     /// Cell for a structurally empty side. The line-number gutter stays blank,

@@ -94,6 +94,65 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
+    func sideBySideDiffWrapsLongSourceLinesWithoutTruncatingEitherCell() {
+        let old = String(repeating: "oldPayload", count: 12)
+        let new = String(repeating: "newPayload", count: 12)
+        let rows = TerminalChat.safelyWrappedDetailedToolRows(
+            TerminalChat.numberedDiffSnippetRows(
+                old: old,
+                new: new,
+                contentWidth: 80
+            ),
+            contentInsetWidth: 0,
+            columnWidth: 80
+        )
+
+        let diffCells = rows.compactMap { row -> TerminalChat.DetailedToolDiffCells? in
+            guard case let .diff(cells) = row else { return nil }
+            return cells
+        }
+        let oldRendered = diffCells.dropFirst().map(\.oldCell).joined()
+        let newRendered = diffCells.dropFirst().map(\.newCell).joined()
+
+        #expect(oldRendered.contains(old))
+        #expect(newRendered.contains(new))
+        #expect(!rows.map(\.plainText).joined().contains("…"))
+        #expect(rows.allSatisfy { TerminalChat.displayWidth($0.plainText) <= 79 })
+    }
+
+    @Test
+    func newFileWriteWrapsLongSourceLinesWithoutTruncatingContent() {
+        let content = String(repeating: "newFilePayload", count: 12)
+        let toolCall = presentedToolCall(
+            id: "call_write_long_line",
+            name: "local.writeFile",
+            argumentsObject: [
+                "path": "Sources/Generated.swift",
+                "content": content
+            ],
+            argumentsJSON: ""
+        )
+
+        let rows = TerminalChat.toolPresentationRows(
+            for: toolCall,
+            result: nil,
+            statusDetail: nil,
+            contentInsetWidth: 0,
+            columnWidth: 80
+        ).detailRows
+        let codeLines = rows.compactMap { row -> TerminalChat.DetailedToolCodeLine? in
+            guard case let .code(line) = row else { return nil }
+            return line
+        }
+
+        #expect(codeLines.count > 1)
+        #expect(codeLines.map(\.content).joined() == content)
+        #expect(codeLines.dropFirst().allSatisfy { $0.lineNumber.trimmingCharacters(in: .whitespaces).isEmpty })
+        #expect(!rows.map(\.plainText).joined().contains("…"))
+        #expect(rows.allSatisfy { TerminalChat.displayWidth($0.plainText) <= 79 })
+    }
+
+    @Test
     func compactToolLinesUseTheCanonicalName() {
         let toolCall = presentedToolCall(
             id: "call_1",
