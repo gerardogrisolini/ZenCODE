@@ -439,6 +439,14 @@ extension TerminalChatRenderCoordinator {
         maximumInPlaceRows: Int?
     ) {
         flushChatOutput()
+        // The lifecycle block removes the live overview from the terminal's
+        // current presentation even when the snapshot itself has not changed.
+        // Forget its signature so the publication immediately following an
+        // `agent.*` start/completion can redraw that same snapshot. Otherwise
+        // `agent.wait` keeps only its tool row visible until agent state changes
+        // (or the wait completes), because every periodic refresh is incorrectly
+        // deduplicated against a section that is no longer on screen.
+        overviewState.signatures.removeValue(forKey: .subAgents)
         guard let block = activeSubAgentOverviewBlock else { return }
         activeSubAgentOverviewBlock = nil
         let columnWidth = freshColumnWidthProvider()

@@ -483,6 +483,68 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func agentWaitRedrawsUnchangedOverviewAfterTakingItsRewriteAnchor() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 120 }
+        )
+        let signature = "agents:unchanged"
+        let overview = "\n👥 Sub-Agents:\n   worker ⏳\n"
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: signature,
+            text: overview,
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: 20
+        )
+        let initialOverviewRows = await renderer.snapshot().activeSubAgentOverviewRowCount
+        let toolCall = presentedToolCall(
+            id: "wait-for-unchanged-overview",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.writeToolCallStarted(
+            toolCall,
+            maximumInPlaceRows: 20
+        )
+        let started = await renderer.snapshot()
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+
+        let result = await renderer.renderSubAgentOverview(
+            signature: signature,
+            text: overview,
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: 20
+        )
+        let refreshEvents = Array(
+            (await renderer.capturedWriteEvents()).dropFirst(eventsBeforeRefresh)
+        )
+        let refreshed = await renderer.snapshot()
+
+        #expect(initialOverviewRows > 0)
+        #expect(started.activeToolCallID == toolCall.id)
+        #expect(result == .rendered)
+        #expect(
+            refreshEvents.first?.text.hasPrefix(
+                "\u{1B}[\(started.activeToolRenderedRowCount)A\r"
+            ) == true
+        )
+        #expect(
+            TerminalANSIText.stripANSI(refreshEvents.map(\.text).joined())
+                .contains("worker ⏳")
+        )
+        #expect(refreshed.activeToolCallID == nil)
+        #expect(refreshed.activeSubAgentOverviewRowCount > 0)
+        #expect(refreshed.lastRenderedSubAgentOverviewSignature == signature)
+    }
+
+    @Test
     func repeatedAgentToolCyclesTransferTheRewriteAnchorInBothDirections() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
