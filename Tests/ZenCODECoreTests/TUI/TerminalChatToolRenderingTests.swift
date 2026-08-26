@@ -121,6 +121,36 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
+    func wrappedSideBySideDiffPreservesSwiftCommentColorOnContinuations() {
+        let comment = "// " + String(repeating: "comment payload ", count: 12)
+        let rows = TerminalChat.safelyWrappedDetailedToolRows(
+            TerminalChat.numberedDiffSnippetRows(
+                old: "",
+                new: comment,
+                contentWidth: 80
+            ),
+            contentInsetWidth: 0,
+            columnWidth: 80,
+            codeLanguage: "swift"
+        )
+        let renderedContinuations = rows
+            .dropFirst(2)
+            .map { TerminalChat.renderDetailedToolRow($0, codeLanguage: "swift") }
+            .filter { TerminalANSIText.stripANSI($0).contains("comment payload") }
+
+        #expect(!renderedContinuations.isEmpty)
+        #expect(
+            renderedContinuations.allSatisfy {
+                $0.contains(TerminalMarkdownPalette.dark.syntaxComment)
+            }
+        )
+        #expect(
+            TerminalANSIText.stripANSI(renderedContinuations.joined())
+                .contains("comment payload")
+        )
+    }
+
+    @Test
     func newFileWriteWrapsLongSourceLinesWithoutTruncatingContent() {
         let content = String(repeating: "newFilePayload", count: 12)
         let toolCall = presentedToolCall(

@@ -47,20 +47,36 @@ extension TerminalChat {
         let indentation: String
         let lineNumber: String
         let content: String
+        /// The complete logical source line was highlighted before wrapping, so
+        /// this fragment already carries the ANSI state active at its boundary.
+        let contentIsPreHighlighted: Bool
+
+        init(
+            indentation: String,
+            lineNumber: String,
+            content: String,
+            contentIsPreHighlighted: Bool = false
+        ) {
+            self.indentation = indentation
+            self.lineNumber = lineNumber
+            self.content = content
+            self.contentIsPreHighlighted = contentIsPreHighlighted
+        }
 
         var prefix: String {
             "\(indentation)\(lineNumber)\(Self.gutter)"
         }
 
         var plainText: String {
-            "\(prefix)\(content)"
+            "\(prefix)\(TerminalANSIText.stripANSI(content))"
         }
 
         var continuation: DetailedToolCodeLine {
             DetailedToolCodeLine(
                 indentation: indentation,
                 lineNumber: String(repeating: " ", count: lineNumber.count),
-                content: content
+                content: content,
+                contentIsPreHighlighted: contentIsPreHighlighted
             )
         }
     }
@@ -74,9 +90,25 @@ extension TerminalChat {
         let indentation: String
         let oldCell: String
         let newCell: String
+        /// Both cells were highlighted as complete logical source lines before
+        /// they were split into physical rows.
+        let cellsArePreHighlighted: Bool
+
+        init(
+            indentation: String,
+            oldCell: String,
+            newCell: String,
+            cellsArePreHighlighted: Bool = false
+        ) {
+            self.indentation = indentation
+            self.oldCell = oldCell
+            self.newCell = newCell
+            self.cellsArePreHighlighted = cellsArePreHighlighted
+        }
 
         var plainText: String {
-            "\(indentation)\(oldCell)\(Self.divider)\(newCell)"
+            "\(indentation)\(TerminalANSIText.stripANSI(oldCell))"
+                + "\(Self.divider)\(TerminalANSIText.stripANSI(newCell))"
         }
     }
 
@@ -95,13 +127,28 @@ extension TerminalChat {
         /// for an empty payload / wrapped continuation.
         let lineNumber: String
         let content: String
+        let contentIsPreHighlighted: Bool
+
+        init(
+            indentation: String,
+            marker: String,
+            lineNumber: String,
+            content: String,
+            contentIsPreHighlighted: Bool = false
+        ) {
+            self.indentation = indentation
+            self.marker = marker
+            self.lineNumber = lineNumber
+            self.content = content
+            self.contentIsPreHighlighted = contentIsPreHighlighted
+        }
 
         var prefix: String {
             "\(indentation)\(marker) \(lineNumber)\(Self.gutter)"
         }
 
         var plainText: String {
-            "\(prefix)\(content)"
+            "\(prefix)\(TerminalANSIText.stripANSI(content))"
         }
 
         var continuation: DetailedToolUnifiedDiffLine {
@@ -109,7 +156,8 @@ extension TerminalChat {
                 indentation: indentation,
                 marker: marker,
                 lineNumber: String(repeating: " ", count: lineNumber.count),
-                content: content
+                content: content,
+                contentIsPreHighlighted: contentIsPreHighlighted
             )
         }
     }
@@ -165,7 +213,8 @@ extension TerminalChat {
                         contentWidth: safeContentWidth
                     ),
                     contentInsetWidth: contentInsetWidth,
-                    columnWidth: columnWidth
+                    columnWidth: columnWidth,
+                    codeLanguage: codeLanguageHint(for: toolCall)
                 )
                 : []
         )
@@ -520,7 +569,8 @@ extension TerminalChat {
     nonisolated static func safelyWrappedDetailedToolRows(
         _ rows: [DetailedToolRow],
         contentInsetWidth: Int = 0,
-        columnWidth: Int? = nil
+        columnWidth: Int? = nil,
+        codeLanguage: String? = nil
     ) -> [DetailedToolRow] {
         let resolvedColumns = columnWidth ?? terminalColumnCount()
         let contentColumns = max(1, resolvedColumns - contentInsetWidth)
@@ -535,11 +585,23 @@ extension TerminalChat {
                 return wrappedDetailedToolTextLines(line, width: safeLineWidth)
                     .map { .parameter($0, highlightsJSON: highlightsJSON) }
             case let .code(line):
-                return wrappedDetailedToolCodeRows(line, width: safeLineWidth)
+                return wrappedDetailedToolCodeRows(
+                    line,
+                    width: safeLineWidth,
+                    codeLanguage: codeLanguage
+                )
             case let .diff(cells):
-                return wrappedDetailedToolDiffRows(cells, width: safeLineWidth)
+                return wrappedDetailedToolDiffRows(
+                    cells,
+                    width: safeLineWidth,
+                    codeLanguage: codeLanguage
+                )
             case let .unifiedDiff(line):
-                return wrappedDetailedToolUnifiedDiffRows(line, width: safeLineWidth)
+                return wrappedDetailedToolUnifiedDiffRows(
+                    line,
+                    width: safeLineWidth,
+                    codeLanguage: codeLanguage
+                )
             }
         }
     }
@@ -548,7 +610,8 @@ extension TerminalChat {
     /// number on continuation rows.
     private nonisolated static func wrappedDetailedToolCodeRows(
         _ line: DetailedToolCodeLine,
-        width: Int
+        width: Int,
+        codeLanguage: String?
     ) -> [DetailedToolRow] {
         guard displayWidth(line.plainText) > width else {
             return [.code(line)]
@@ -560,8 +623,11 @@ extension TerminalChat {
                 .map(DetailedToolRow.text)
         }
 
+        let content = codeLanguage.map {
+            renderCodeAreaFragment(line.content, language: $0)
+        } ?? line.content
         let fragments = TerminalANSIText.wrapPreservingWhitespace(
-            line.content,
+            content,
             width: width - prefixWidth
         )
         return fragments.enumerated().map { index, fragment in
@@ -569,7 +635,8 @@ extension TerminalChat {
             return .code(DetailedToolCodeLine(
                 indentation: wrappedLine.indentation,
                 lineNumber: wrappedLine.lineNumber,
-                content: fragment
+                content: fragment,
+                contentIsPreHighlighted: codeLanguage != nil
             ))
         }
     }
@@ -609,7 +676,8 @@ extension TerminalChat {
     /// the payload text to find the divider.
     private nonisolated static func wrappedDetailedToolDiffRows(
         _ cells: DetailedToolDiffCells,
-        width: Int
+        width: Int,
+        codeLanguage: String?
     ) -> [DetailedToolRow] {
         guard displayWidth(cells.plainText) > width else {
             return [.diff(cells)]
@@ -633,12 +701,18 @@ extension TerminalChat {
             ).map(DetailedToolRow.text)
         }
 
+        let oldCell = codeLanguage.map {
+            renderDiffCellFragment(cells.oldCell, language: $0)
+        } ?? cells.oldCell
+        let newCell = codeLanguage.map {
+            renderDiffCellFragment(cells.newCell, language: $0)
+        } ?? cells.newCell
         let oldFragments = TerminalANSIText.wrapPreservingWhitespace(
-            cells.oldCell,
+            oldCell,
             width: columnWidth
         )
         let newFragments = TerminalANSIText.wrapPreservingWhitespace(
-            cells.newCell,
+            newCell,
             width: columnWidth
         )
         let rowCount = max(1, max(oldFragments.count, newFragments.count))
@@ -648,7 +722,8 @@ extension TerminalChat {
             return .diff(DetailedToolDiffCells(
                 indentation: cells.indentation,
                 oldCell: paddedToColumnWidth(oldFragment, width: columnWidth),
-                newCell: paddedToColumnWidth(newFragment, width: columnWidth)
+                newCell: paddedToColumnWidth(newFragment, width: columnWidth),
+                cellsArePreHighlighted: codeLanguage != nil
             ))
         }
     }
@@ -659,7 +734,8 @@ extension TerminalChat {
     /// in-place terminal redraw budget.
     private nonisolated static func wrappedDetailedToolUnifiedDiffRows(
         _ line: DetailedToolUnifiedDiffLine,
-        width: Int
+        width: Int,
+        codeLanguage: String?
     ) -> [DetailedToolRow] {
         guard displayWidth(line.plainText) > width else {
             return [.unifiedDiff(line)]
@@ -674,8 +750,11 @@ extension TerminalChat {
                 .map(DetailedToolRow.text)
         }
 
+        let content = codeLanguage.map {
+            renderCodeAreaFragment(line.content, language: $0)
+        } ?? line.content
         let fragments = TerminalANSIText.wrapPreservingWhitespace(
-            line.content,
+            content,
             width: width - prefixWidth
         )
         return fragments.enumerated().map { index, fragment in
@@ -686,7 +765,8 @@ extension TerminalChat {
                 indentation: wrappedLine.indentation,
                 marker: wrappedLine.marker,
                 lineNumber: wrappedLine.lineNumber,
-                content: fragment
+                content: fragment,
+                contentIsPreHighlighted: codeLanguage != nil
             ))
         }
     }
@@ -762,14 +842,14 @@ extension TerminalChat {
                 indentation: line.indentation,
                 lineNumber: line.lineNumber,
                 content: line.content,
-                language: codeLanguage
+                language: line.contentIsPreHighlighted ? nil : codeLanguage
             )
         case let .diff(cells):
             return renderDiffCodeAreaLine(
                 indentation: cells.indentation,
                 oldCell: cells.oldCell,
                 newCell: cells.newCell,
-                language: codeLanguage
+                language: cells.cellsArePreHighlighted ? nil : codeLanguage
             )
         case let .unifiedDiff(line):
             return renderUnifiedDiffCodeAreaLine(
@@ -777,7 +857,7 @@ extension TerminalChat {
                 marker: line.marker,
                 lineNumber: line.lineNumber,
                 content: line.content,
-                language: codeLanguage
+                language: line.contentIsPreHighlighted ? nil : codeLanguage
             )
         }
     }

@@ -184,6 +184,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - `agent.wait` now redraws and continuously refreshes the live Sub-Agents section
   even when the agent snapshot is unchanged when the wait begins, instead of
   showing only the blocking tool row until completion.
+- Wrapped source lines in file-change tool output now preserve the syntax color
+  active at each line break instead of rendering continuation fragments in the
+  default foreground color.
 - File mutation tool completions now show every changed source line without
   snippet limits; recognized code extensions use their matching syntax colors,
   while text, documentation, and unknown file types remain unhighlighted.
