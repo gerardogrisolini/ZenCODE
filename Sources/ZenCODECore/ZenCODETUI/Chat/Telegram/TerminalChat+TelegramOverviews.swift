@@ -15,52 +15,72 @@ extension TerminalChat {
     /// generating.
     func installOverviewMirroringHandler() async {
         await renderCoordinator.setOverviewMirroringHandler { [weak self]
-            kind,
-            signature,
-            text,
+            notification,
             epoch in
             await self?.mirrorRenderedOverviewToTelegram(
-                kind: kind,
-                signature: signature,
-                text: text,
+                notification: notification,
                 epoch: epoch
             )
         }
     }
 
-    /// Mirrors a locally rendered task-graph overview to the linked Telegram
-    /// chat while that turn's progress is mirrored. Sub-agent overviews remain
-    /// terminal-only: their frequently changing full snapshots would otherwise
-    /// produce excessive Telegram traffic.
+    /// Mirrors typed overview publications to the linked Telegram chat while
+    /// that turn's progress is mirrored. The live sub-agent overview remains
+    /// terminal-only; each completed model response is instead a distinct
+    /// remote message.
     ///
     /// Task graphs are mirrored only when the content actually changed. Sends
     /// go through the turn reporter's ordered queue, so a section cannot
     /// overtake the tool activity that produced it. Outside a mirrored turn
     /// there is no remote audience and the section stays terminal-only.
     func mirrorRenderedOverviewToTelegram(
-        kind: TerminalChatRenderCoordinator.OverviewKind,
-        signature: String,
-        text: String,
+        notification: TerminalChatRenderCoordinator.OverviewMirrorNotification,
         epoch: Int
     ) async {
-        guard kind == .taskGraph,
-              epoch == currentTelegramMirrorEpoch,
+        guard epoch == currentTelegramMirrorEpoch,
               activeTelegramProgressReporter != nil else {
             return
         }
-        guard mirroredTaskGraphOverviewSignature != signature else {
-            return
+        switch notification {
+        case let .taskGraph(signature, markdown):
+            guard mirroredTaskGraphOverviewSignature != signature else {
+                return
+            }
+            mirroredTaskGraphOverviewSignature = signature
+            let plainText = TerminalANSIText.stripANSI(markdown)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !plainText.isEmpty else {
+                return
+            }
+            await activeTelegramProgressReporter?.enqueue(
+                .tasks("📋 Task graph\n\n\(plainText)")
+            )
+        case let .subAgentResponse(response):
+            guard let payload = Self.telegramSubAgentResponsePayload(
+                heading: response.heading,
+                markdown: response.markdown
+            ) else {
+                return
+            }
+            await activeTelegramProgressReporter?.enqueue(payload)
         }
-        mirroredTaskGraphOverviewSignature = signature
+    }
 
-        let plainText = TerminalANSIText.stripANSI(text)
+    /// Builds the distinct Telegram payload used for a completed sub-agent
+    /// response. Keeping the discriminator here makes this routing observable
+    /// before the reporter renders payloads to text.
+    static func telegramSubAgentResponsePayload(
+        heading: String,
+        markdown: String
+    ) -> TerminalTelegramTurnPayload? {
+        let heading = TerminalANSIText.stripANSI(heading)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !plainText.isEmpty else {
-            return
+        let markdown = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !markdown.isEmpty else {
+            return nil
         }
-        // The reporter truncates to Telegram's message limit and preserves
-        // turn ordering.
-        await activeTelegramProgressReporter?.send("📋 Task graph\n\n\(plainText)")
+        let text = heading.isEmpty ? markdown : "\(heading)\n\n\(markdown)"
+        return .subAgentResponse(text)
     }
 
     /// Clears the per-turn mirroring dedup so the first section publication of
@@ -77,8 +97,22 @@ extension TerminalChat {
     /// completion flow and by loop teardown paths that bypass
     /// `finishPromptResult` (end-of-input during generation, cancellation of
     /// the interactive loop's task).
-    func finalizeTelegramTurnProgressReporting() async {
+    func finalizeTelegramTurnProgressReporting(
+        outcome: TerminalTelegramTurnPayload? = nil,
+        fileChangeSummary: TurnFileChangeSummary? = nil
+    ) async {
         await renderCoordinator.waitForOverviewMirrorsToDrain()
+        if let outcome {
+            await activeTelegramProgressReporter?.enqueue(outcome)
+        }
+        if let fileChangeSummary,
+           !fileChangeSummary.entries.isEmpty {
+            let summary = Self.renderFileChangeSummary(fileChangeSummary)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !summary.isEmpty {
+                await activeTelegramProgressReporter?.enqueue(.summary(summary))
+            }
+        }
         await activeTelegramProgressReporter?.flush()
         endTelegramTurnProgressReporting()
     }

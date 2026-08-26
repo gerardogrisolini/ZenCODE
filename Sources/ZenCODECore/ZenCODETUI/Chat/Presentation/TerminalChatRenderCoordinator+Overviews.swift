@@ -21,9 +21,7 @@ extension TerminalChatRenderCoordinator {
     /// handler swap cannot race an in-flight mirror dispatch.
     func setOverviewMirroringHandler(
         _ handler: (@Sendable (
-            _ kind: OverviewKind,
-            _ signature: String,
-            _ text: String,
+            _ notification: OverviewMirrorNotification,
             _ epoch: Int
         ) async -> Void)?
     ) {
@@ -51,7 +49,12 @@ extension TerminalChatRenderCoordinator {
     private func enqueueMirrorNotification(
         _ notification: OverviewMirrorNotification
     ) {
-        mirrorQueue.pending.append(notification)
+        mirrorQueue.pending.append(
+            OverviewMirrorQueueEntry(
+                notification: notification,
+                epoch: mirrorQueue.epoch
+            )
+        )
         guard !mirrorQueue.isDraining else {
             return
         }
@@ -70,9 +73,7 @@ extension TerminalChatRenderCoordinator {
             let notification = mirrorQueue.pending.removeFirst()
             if let overviewMirroringHandler {
                 await overviewMirroringHandler(
-                    notification.kind,
-                    notification.signature,
-                    notification.text,
+                    notification.notification,
                     notification.epoch
                 )
             }
@@ -252,31 +253,18 @@ extension TerminalChatRenderCoordinator {
         if overview.rememberSignature {
             overviewState.signatures[overview.kind] = overview.rememberedSignature
         }
-        let mirroredText: String
         switch overview.content {
         case let .markdown(markdown):
             renderMarkdownMessage(markdown)
-            mirroredText = markdown
+            enqueueMirrorNotification(
+                .taskGraph(signature: overview.signature, markdown: markdown)
+            )
         case let .subAgents(text, responses, overviewBatchID, maximumInPlaceRows):
             renderSubAgentOverviewContent(
                 text: text,
                 responses: responses,
                 overviewBatchID: overviewBatchID,
                 maximumInPlaceRows: maximumInPlaceRows
-            )
-            mirroredText = text
-        }
-        // Only task-graph sections have a remote audience. Sub-agent snapshots
-        // are terminal-only, so keeping them out of the queue avoids spawning a
-        // drain task that can only call a no-op handler on every refresh tick.
-        if overview.kind == .taskGraph {
-            enqueueMirrorNotification(
-                OverviewMirrorNotification(
-                    kind: overview.kind,
-                    signature: overview.signature,
-                    text: mirroredText,
-                    epoch: mirrorQueue.epoch
-                )
             )
         }
     }
@@ -340,6 +328,7 @@ extension TerminalChatRenderCoordinator {
                 )
                 writeChat("\n\n", to: .standardError)
                 overviewState.consumedResponseTokens.insert(response.token)
+                enqueueMirrorNotification(.subAgentResponse(response))
             }
             return
         }

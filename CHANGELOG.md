@@ -10,6 +10,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Telegram now exposes only root and delegated responses, Task updates, authorization
+  requests, and the final Summary; it no longer mirrors tool-call activity.
+
 ## [2.0.0] - 2026-08-26
 
 > **Breaking release:** compared with v1.3.0, v2.0.0 removes public

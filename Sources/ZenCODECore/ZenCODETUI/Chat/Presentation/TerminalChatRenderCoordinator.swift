@@ -117,9 +117,10 @@ actor TerminalChatRenderCoordinator {
     var activeSubAgentOverviewBlock: ActiveOverviewBlock?
     var overviewState = TerminalOverviewArbitration<OverviewKind, PendingOverview>()
 
-    /// Optional mirror invoked after an overview section is actually rendered
-    /// locally, carrying the kind, the change signature, and the section text
-    /// (markdown for the task graph, the plain overview text for sub-agents).
+    /// Optional mirror invoked after publishable overview content is actually
+    /// rendered locally. The typed notification deliberately excludes the live
+    /// sub-agent overview: only task graphs and completed model responses have
+    /// a remote audience.
     /// Deferred overviews flow through here too, once they become renderable,
     /// so remote mirrors (e.g. Telegram) cannot miss a section that only
     /// rendered after streaming finished.
@@ -130,13 +131,11 @@ actor TerminalChatRenderCoordinator {
     /// and never blocks local rendering. Use
     /// ``waitForOverviewMirrorsToDrain()`` as an end-of-turn barrier.
     var overviewMirroringHandler: (@Sendable (
-        _ kind: OverviewKind,
-        _ signature: String,
-        _ text: String,
+        _ notification: OverviewMirrorNotification,
         _ epoch: Int
     ) async -> Void)?
 
-    var mirrorQueue = TerminalOverviewMirrorQueue<OverviewMirrorNotification>()
+    var mirrorQueue = TerminalOverviewMirrorQueue<OverviewMirrorQueueEntry>()
 
     init(
         stdinIsTerminal: Bool,

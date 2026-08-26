@@ -229,6 +229,50 @@ struct TerminalTelegramOverviewMirroringTests {
     }
 
     @Test
+    func completedSubAgentResponsesAreSeparateMarkdownOnlyMessages() async throws {
+        let (root, support, working) = try makeTemp()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = try makeTerminal(working: working, support: support)
+        await terminal.installOverviewMirroringHandler()
+
+        let recorder = TelegramMessageRecorder()
+        terminal.activeTelegramProgressReporter = TerminalTelegramTurnProgressReporter(
+            chatID: 42
+        ) { message, _ in
+            recorder.append(message)
+            return true
+        }
+        let first = TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
+            token: "worker\u{1F}1",
+            heading: "\u{1B}[36m   ✅ Response from worker:\u{1B}[0m\n",
+            markdown: "**First** answer"
+        )
+        let second = TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
+            token: "reviewer\u{1F}1",
+            heading: "   ✅ Response from reviewer:\n",
+            markdown: "Second answer"
+        )
+
+        await terminal.renderCoordinator.renderSubAgentOverview(
+            signature: "agents:completed",
+            text: "thinking marker\ntool marker\nagent metadata\n",
+            responses: [first, second],
+            force: false,
+            rememberSignature: true
+        )
+        await drainMirrors(terminal)
+
+        let messages = recorder.messages
+        #expect(messages.count == 2)
+        #expect(messages[0] == "✅ Response from worker:\n\n**First** answer")
+        #expect(messages[1] == "✅ Response from reviewer:\n\nSecond answer")
+        #expect(messages.allSatisfy { !$0.contains("\u{1B}[") })
+        #expect(messages.allSatisfy { !$0.contains("thinking marker") })
+        #expect(messages.allSatisfy { !$0.contains("tool marker") })
+        #expect(messages.allSatisfy { !$0.contains("agent metadata") })
+    }
+
+    @Test
     func overviewWithoutActiveReporterStaysTerminalOnly() async throws {
         let (root, support, working) = try makeTemp()
         defer { try? FileManager.default.removeItem(at: root) }

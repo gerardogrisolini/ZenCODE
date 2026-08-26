@@ -242,10 +242,7 @@ extension TerminalChat {
             let activationMessage = activeTelegramTurnOrigin == nil
                 ? "ZenCODE remote control is active. Send a prompt or /help to begin."
                 : "ZenCODE remote control is active. The current ZenCODE request is now being mirrored."
-            await sendTelegramTurnMessage(
-                activationMessage,
-                to: linkedChatID
-            )
+            await sendTelegramSystemMessage(activationMessage, to: linkedChatID)
         } catch {
             telegramControlState = await telegramControlService.currentState()
             telegramControlState.lastError = error.localizedDescription
@@ -359,7 +356,7 @@ extension TerminalChat {
                     request,
                     chatID: chatID
                 ) { [weak self] message in
-                    await self?.sendTelegramTurnMessage(message, to: chatID) ?? false
+                    await self?.sendTelegramTurnMessage(.authorization(message), to: chatID) ?? false
                 }
                 return .telegram(outcome)
             }
@@ -391,9 +388,11 @@ extension TerminalChat {
         case let .terminal(outcome):
             let approved = outcome.isApproved
             await sendTelegramTurnMessage(
-                approved
-                    ? "✅ Permission granted in the terminal for \(request.toolName). Continuing."
-                    : "⛔ Permission denied in the terminal for \(request.toolName).",
+                .authorization(
+                    approved
+                        ? "✅ Permission granted in the terminal for \(request.toolName). Continuing."
+                        : "⛔ Permission denied in the terminal for \(request.toolName)."
+                ),
                 to: chatID
             )
             return approved
@@ -461,20 +460,10 @@ extension TerminalChat {
             return false
         case let .handled(reply):
             if let reply = reply?.nilIfBlank {
-                await sendTelegramTurnMessage(reply, to: chatID)
+                await sendTelegramTurnMessage(.authorization(reply), to: chatID)
             }
             return true
         }
-    }
-
-    func sendTelegramCompletionIfLinked(
-        _ text: String,
-        origin: TerminalPromptOrigin
-    ) async {
-        await sendTelegramSystemMessageIfLinked(
-            "*ZenCODE completed*\n\n\(String(text.prefix(3_600)))",
-            origin: origin
-        )
     }
 
     func sendTelegramSystemMessageIfLinked(_ message: String) async {
@@ -495,32 +484,34 @@ extension TerminalChat {
         await sendTelegramSystemMessage(message, to: chatID)
     }
 
-    /// Publishes a turn-scoped message on the ordered Telegram channel.
+    /// Publishes an authorization message on the ordered Telegram channel.
     ///
     /// While a mirrored turn is generating, its reporter owns the outgoing
-    /// order: enqueueing here keeps permission dialogue behind the tool call
-    /// that raised it instead of racing the progress queue. Outside a turn
-    /// there is no queue to preserve, so the message is sent directly.
+    /// order. Bot control messages deliberately use `sendTelegramSystemMessage`
+    /// instead.
     @discardableResult
-    func sendTelegramTurnMessage(_ message: String, to chatID: Int64) async -> Bool {
+    func sendTelegramTurnMessage(
+        _ payload: TerminalTelegramTurnPayload,
+        to chatID: Int64
+    ) async -> Bool {
         guard telegramControlState.isActive,
               telegramLinkedChatID == chatID else {
             return false
         }
         if let reporter = activeTelegramProgressReporter, reporter.chatID == chatID {
-            return await reporter.send(message)
+            return await reporter.send(payload)
         }
-        return await sendTelegramSystemMessage(message, to: chatID)
+        return await sendTelegramSystemMessage(payload.text, to: chatID)
     }
 
     func sendTelegramTurnMessageIfLinked(
-        _ message: String,
+        _ payload: TerminalTelegramTurnPayload,
         origin: TerminalPromptOrigin
     ) async {
         guard let chatID = telegramOutgoingChatID(for: origin) else {
             return
         }
-        await sendTelegramTurnMessage(message, to: chatID)
+        await sendTelegramTurnMessage(payload, to: chatID)
     }
 
     /// Returns the linked chat to use for outgoing messages, when Telegram

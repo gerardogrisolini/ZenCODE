@@ -46,10 +46,18 @@ struct TerminalOverviewMirrorQueue<Notification> {
 }
 
 extension TerminalChatRenderCoordinator {
-    struct OverviewMirrorNotification: Sendable {
-        let kind: OverviewKind
-        let signature: String
-        let text: String
+    /// Remote-renderable overview output. Keeping this sum type narrow makes it
+    /// impossible to accidentally mirror transient sub-agent status, thinking,
+    /// tools, or metadata as a generic overview snapshot.
+    enum OverviewMirrorNotification: Sendable, Equatable {
+        case taskGraph(signature: String, markdown: String)
+        case subAgentResponse(SubAgentMarkdownResponse)
+    }
+
+    /// Epoch is transport fencing rather than overview content, so it remains
+    /// outside the typed notification payload.
+    struct OverviewMirrorQueueEntry: Sendable {
+        let notification: OverviewMirrorNotification
         let epoch: Int
     }
 

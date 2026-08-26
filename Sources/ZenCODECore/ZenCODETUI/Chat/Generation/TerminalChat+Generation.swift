@@ -94,7 +94,6 @@ extension TerminalChat {
                     case let .thought(message):
                         await transcriptTurn.appendThought(message)
                         await self.writeThought(message)
-                        await self.activeTelegramProgressReporter?.reportThought(message)
                     case let .modelLoaded(modelID):
                         await self.printModelIfNeeded(modelID)
                     case let .metrics(metrics):
@@ -109,16 +108,9 @@ extension TerminalChat {
                         }
                         await transcriptTurn.appendAssistantContent(delta)
                         await self.writeAssistantContent(delta)
-                        await self.activeTelegramProgressReporter?.reportAssistantContent(delta)
                     case let .toolCallStarted(toolCall):
                         await transcriptTurn.appendToolCallStarted(toolCall)
                         await self.writeToolCallStarted(toolCall)
-                        if let telegramProgressReporter = self.activeTelegramProgressReporter {
-                            await telegramProgressReporter.reportToolCall(
-                                toolCall,
-                                workingDirectory: self.configuration.workingDirectory
-                            )
-                        }
                         await self.publishSubAgentOverviewIfChanged(
                             relatedToolName: toolCall.name
                         )
@@ -128,10 +120,6 @@ extension TerminalChat {
                     case let .toolCallCompleted(toolCall, result):
                         await transcriptTurn.appendToolCallCompleted(toolCall, result: result)
                         await self.writeToolCallCompleted(toolCall, result: result)
-                        await self.activeTelegramProgressReporter?.reportToolResult(
-                            toolCall,
-                            result: result
-                        )
                         if !result.isFailure,
                            let update = Self.planPointUpdates(from: toolCall) {
                             switch attempt.purpose {
@@ -218,7 +206,6 @@ extension TerminalChat {
             let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
             await stopSubAgentOverviewRefresh()
             await renderCoordinator.waitForOverviewMirrorsToDrain()
-            await activeTelegramProgressReporter?.flush()
             if case .plan = attempt.purpose {
                 await writeAssistantContent(response.text)
             }
@@ -238,7 +225,6 @@ extension TerminalChat {
             let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
             await stopSubAgentOverviewRefresh()
             await renderCoordinator.waitForOverviewMirrorsToDrain()
-            await activeTelegramProgressReporter?.flush()
             throw TerminalChatGenerationRunError(
                 underlying: error,
                 fileChangeSummary: fileChangeSummary
@@ -337,13 +323,15 @@ extension TerminalChat {
             // for the next turn, and snapshot once more so mutations that
             // landed during the handoff window are not lost (no event replay).
             await quiesceTaskGraphObserverForTurnBoundary()
-            await finalizeTelegramTurnProgressReporting()
+            await finalizeTelegramTurnProgressReporting(
+                outcome: .agentResponse("*ZenCODE completed*\n\n\(String(completionText.prefix(3_600)))"),
+                fileChangeSummary: success.fileChangeSummary
+            )
             await startTaskGraphObserver()
             await publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
             if let summary = success.fileChangeSummary {
                 await writeFinalFileChangeSummary(summary)
             }
-            await sendTelegramCompletionIfLinked(completionText, origin: success.origin)
         case let .failure(failure):
             await finishStreamingOutput()
             let remoteFailureText: String
@@ -355,16 +343,15 @@ extension TerminalChat {
                 remoteFailureText = "ZenCODE failed: \(failure.message)"
             }
             await quiesceTaskGraphObserverForTurnBoundary()
-            await finalizeTelegramTurnProgressReporting()
+            await finalizeTelegramTurnProgressReporting(
+                outcome: .agentResponse(remoteFailureText),
+                fileChangeSummary: failure.fileChangeSummary
+            )
             await startTaskGraphObserver()
             await publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
             if let summary = failure.fileChangeSummary {
                 await writeFinalFileChangeSummary(summary)
             }
-            await sendTelegramSystemMessageIfLinked(
-                remoteFailureText,
-                origin: failure.origin
-            )
         }
     }
 }

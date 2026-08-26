@@ -1425,8 +1425,10 @@ struct TerminalChatRenderCoordinatorTests {
     func terminalOnlySubAgentOverviewDoesNotEnterMirrorQueue() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let recorder = OverviewMirrorRecorder()
-        await renderer.setOverviewMirroringHandler { kind, _, _, _ in
-            await recorder.record(kind)
+        await renderer.setOverviewMirroringHandler { notification, _ in
+            if case .taskGraph = notification {
+                await recorder.record(.taskGraph)
+            }
         }
 
         _ = await renderer.renderSubAgentOverview(
@@ -1438,6 +1440,61 @@ struct TerminalChatRenderCoordinatorTests {
         await renderer.waitForOverviewMirrorsToDrain()
 
         #expect(await recorder.recordedKinds().isEmpty)
+    }
+
+    @Test
+    func completedSubAgentResponsesMirrorOncePerTokenAndInSnapshotOrder() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: false)
+        let recorder = ResponseMirrorRecorder()
+        await renderer.setOverviewMirroringHandler { notification, _ in
+            if case let .subAgentResponse(response) = notification {
+                await recorder.record(response)
+            }
+        }
+        let first = TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
+            token: "worker\u{1F}1",
+            heading: "   ✅ Response from first:\n",
+            markdown: "Same answer"
+        )
+        let second = TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
+            token: "reviewer\u{1F}1",
+            heading: "   ✅ Response from second:\n",
+            markdown: "Second answer"
+        )
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:one",
+            text: "thinking: hidden\ntool: hidden\nmetadata: hidden\n",
+            responses: [first, second],
+            force: false,
+            rememberSignature: true
+        )
+        // A status/closure refresh with the same completion revisions must not
+        // publish either response again.
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:refresh",
+            text: "different overview only",
+            responses: [first, second],
+            force: false,
+            rememberSignature: true
+        )
+        // A new revision remains a new response even when its Markdown is the
+        // same as an earlier completion.
+        let revisedFirst = TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
+            token: "worker\u{1F}2",
+            heading: first.heading,
+            markdown: first.markdown
+        )
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:revision-two",
+            text: "overview only",
+            responses: [revisedFirst],
+            force: false,
+            rememberSignature: true
+        )
+        await renderer.waitForOverviewMirrorsToDrain()
+
+        #expect(await recorder.tokens() == ["worker\u{1F}1", "reviewer\u{1F}1", "worker\u{1F}2"])
     }
 
     @Test
@@ -1812,7 +1869,7 @@ struct TerminalChatRenderCoordinatorTests {
     func mirrorEpochStampsNotificationsAtEachTurnBoundary() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let epochs = EpochRecorder()
-        await renderer.setOverviewMirroringHandler { _, _, _, epoch in
+        await renderer.setOverviewMirroringHandler { _, epoch in
             await epochs.append(epoch)
         }
 
@@ -3277,6 +3334,18 @@ private actor OverviewMirrorRecorder {
 
     func recordedKinds() -> [TerminalChatRenderCoordinator.OverviewKind] {
         kinds
+    }
+}
+
+private actor ResponseMirrorRecorder {
+    private var responses: [TerminalChatRenderCoordinator.SubAgentMarkdownResponse] = []
+
+    func record(_ response: TerminalChatRenderCoordinator.SubAgentMarkdownResponse) {
+        responses.append(response)
+    }
+
+    func tokens() -> [String] {
+        responses.map(\.token)
     }
 }
 
