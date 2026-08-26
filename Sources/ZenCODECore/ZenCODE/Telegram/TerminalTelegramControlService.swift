@@ -42,6 +42,32 @@ public struct TerminalTelegramIncomingMessage: Equatable, Sendable {
     public let messageID: Int
     public let chatTitle: String?
     public let username: String?
+    /// Identifier of the message this one replies to, when the user used
+    /// Telegram's *Reply* action. It is the only durable link between a card the
+    /// bot sent and the answer typed for it.
+    public let replyToMessageID: Int?
+
+    /// Trailing default keeps existing call sites source-compatible while the
+    /// reply link is optional on the wire.
+    public init(
+        chatID: Int64,
+        userID: Int64,
+        text: String?,
+        voice: TerminalTelegramVoiceAttachment?,
+        messageID: Int,
+        chatTitle: String?,
+        username: String?,
+        replyToMessageID: Int? = nil
+    ) {
+        self.chatID = chatID
+        self.userID = userID
+        self.text = text
+        self.voice = voice
+        self.messageID = messageID
+        self.chatTitle = chatTitle
+        self.username = username
+        self.replyToMessageID = replyToMessageID
+    }
 }
 
 public struct TerminalTelegramVoiceAttachment: Equatable, Sendable {
@@ -321,6 +347,28 @@ public actor TerminalTelegramControlService {
         return state
     }
 
+    /// Sends a message as plain text and returns the Telegram receipt.
+    ///
+    /// Unlike ``sendMessage(_:to:)`` this never requests Markdown parsing: the
+    /// payload carries live agent-authored names and text, which are untrusted
+    /// content. Valid-but-unintended markup would silently change how the
+    /// message reads, and there is no fallback that could restore it.
+    public func sendPlainMessageWithReceipt(
+        _ text: String,
+        to chatID: Int64
+    ) async throws -> Int {
+        let settings = try telegramSettings()
+        let token = try telegramToken(from: settings)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw TerminalTelegramControlError.emptyMessage
+        }
+        let messageID = try await TerminalTelegramAPIClient(token: token)
+            .sendMessage(trimmed, to: chatID)
+        state.lastError = nil
+        return messageID
+    }
+
     public func downloadVoiceAudio(
         _ voice: TerminalTelegramVoiceAttachment
     ) async throws -> AgentVoiceAudioInput {
@@ -467,7 +515,8 @@ public actor TerminalTelegramControlService {
                 voice: voice,
                 messageID: message.messageID,
                 chatTitle: message.chat.displayTitle,
-                username: user.username
+                username: user.username,
+                replyToMessageID: message.replyToMessage?.messageID
             )
         )
         if case .dropped = yieldResult {

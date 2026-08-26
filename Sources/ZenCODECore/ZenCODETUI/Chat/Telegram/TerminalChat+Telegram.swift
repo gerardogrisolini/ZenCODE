@@ -139,6 +139,23 @@ extension TerminalChat {
         }
 
         if let voice = message.voice {
+            // A voice note that quotes an *answerable* card is ambiguous: the
+            // reply target cannot be carried through transcription and
+            // revalidated at completion, so direct replies are text-only by
+            // contract. Refusing is the only unambiguous option; silently
+            // transcribing it would turn a message meant for one participant
+            // into a root prompt.
+            //
+            // Quoting a card that routes nowhere (the operator's own mirrored
+            // traffic) is not a direct reply at all, so it must keep the
+            // ordinary voice-prompt path instead of being refused.
+            if await telegramDirectReplyTarget(for: message) != nil {
+                await sendTelegramSystemMessage(
+                    "ZenCODE message: replies to a live message must be text. Send your answer as text, or record a voice note without replying to run it as an ordinary prompt.",
+                    to: message.chatID
+                )
+                return
+            }
             await handleTelegramVoiceMessage(
                 voice,
                 chatID: message.chatID,
@@ -163,6 +180,18 @@ extension TerminalChat {
             return
         }
 
+        // A reply to a forwarded live-message card answers its sender directly.
+        // Remote commands and explicit `@mention` routing keep precedence, so
+        // quoting a card never changes what an explicitly addressed line means.
+        // Precedence is decided by the parsers that actually own those routes:
+        // any slash line stays reserved for commands exactly as in the
+        // submitted-line path, while a leading `@` only wins when the mention
+        // really resolves — `@nobody hi` is ordinary text and stays replyable.
+        if await telegramReplyRoutingHasPrecedence(over: text) == false,
+           await handleTelegramSharedChatReplyIfNeeded(text, message: message) {
+            return
+        }
+
         guard queuedPrompts.enqueue(
             TerminalQueuedPrompt(text: text, origin: .telegram(chatID: message.chatID))
         ) else {
@@ -172,6 +201,163 @@ extension TerminalChat {
             )
             return
         }
+    }
+
+    // MARK: - Live-message relay
+
+    /// Reports whether `text` is already claimed by a higher-precedence route, in
+    /// which case quoting a card must not change its meaning.
+    ///
+    /// The decision uses the real parsers: ``TerminalTelegramRemoteCommand`` for
+    /// remote commands, ``CoordinatorCommandParser`` for slash commands and the
+    /// actual ``parseSharedChatMention(from:readableHandles:)`` outcome for
+    /// mentions — including `missingText`, which is a recognised mention whose
+    /// diagnostic must not be replaced by a reply. A leading `@` that resolves to
+    /// nothing is not a mention, so it does not suppress the reply route.
+    func telegramReplyRoutingHasPrecedence(over text: String) async -> Bool {
+        if TerminalTelegramRemoteCommand(text: text) != nil {
+            return true
+        }
+        if CoordinatorCommandParser.isSlashCommand(text) {
+            return true
+        }
+        switch Self.parseSharedChatMention(
+            from: text,
+            readableHandles: await sessionRunner.sharedChatMentionHandles(
+                rootSessionID: sessionID
+            )
+        ) {
+        case .route, .missingText:
+            return true
+        case .none:
+            return false
+        }
+    }
+
+    /// Offers one shared-chat observer batch to the Telegram relay.
+    ///
+    /// The TUI's single observation stays the only subscriber; the relay owns its
+    /// own delivery ledger, so the terminal reader buffer (which is rebuilt on a
+    /// forced reattach) can never be mistaken for a "already sent" record.
+    func forwardSharedChatMessagesToTelegram(
+        _ messages: [AgentSharedChat.Message],
+        roomID: String
+    ) async {
+        guard telegramControlState.isActive, telegramLinkedChatID != nil else {
+            return
+        }
+        let roster = await sessionRunner.sharedChatMentionRoster(rootSessionID: roomID)
+        await telegramSharedChatRelay.forward(
+            messages,
+            roomID: roomID,
+            participants: roster.participants
+        )
+    }
+
+    /// Follows a room swap (`/new`, `/resume`, observation restart). A new room
+    /// invalidates the ledger and the receipt map: identifiers of a retired room
+    /// must never route a reply into the live one.
+    func rebindTelegramSharedChatRelay(roomID: String) async {
+        guard telegramControlState.isActive,
+              let chatID = telegramLinkedChatID else {
+            await telegramSharedChatRelay.deactivate()
+            return
+        }
+        await telegramSharedChatRelay.activate(
+            roomID: roomID,
+            chatID: chatID,
+            repliesEnabled: readsTelegramIngress
+        )
+    }
+
+    /// Delivers one relay card as plain text and returns its Telegram receipt.
+    ///
+    /// A failure is recorded on the control state but never written to the
+    /// terminal: cards are asynchronous notifications, and a transient Telegram
+    /// error must not inject noise into the operator's transcript.
+    func sendTelegramSharedChatCard(_ text: String, to chatID: Int64) async -> Int? {
+        guard telegramControlState.isActive,
+              telegramLinkedChatID == chatID else {
+            return nil
+        }
+        do {
+            return try await telegramControlService.sendPlainMessageWithReceipt(
+                text,
+                to: chatID
+            )
+        } catch {
+            telegramControlState.lastError = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Resolves the participant a Telegram reply addresses, or `nil` when the
+    /// quoted message is not an answerable card of the live room.
+    ///
+    /// Single source of truth for "this message is a direct reply": the text
+    /// route and the voice-note guard must agree, otherwise a message could be
+    /// refused as a reply on one path and treated as an ordinary prompt on the
+    /// other. A card whose sender has no live destination — the operator's own
+    /// mirrored traffic — is deliberately not one, so answering it by voice or by
+    /// text simply prompts the session as usual.
+    func telegramDirectReplyTarget(
+        for message: TerminalTelegramIncomingMessage
+    ) async -> TerminalTelegramSharedChatReplyTarget? {
+        guard let replyToMessageID = message.replyToMessageID,
+              let target = await telegramSharedChatRelay.replyTarget(
+                  forTelegramMessageID: replyToMessageID,
+                  chatID: message.chatID
+              ),
+              target.roomID == sessionID,
+              target.replyDestination != nil else {
+            return nil
+        }
+        return target
+    }
+
+    /// Routes a Telegram reply back to the participant that produced the quoted
+    /// card. Returns `true` when the message was consumed as a live reply.
+    ///
+    /// The destination comes only from the relay's local receipt map and the
+    /// stable sender id it recorded, never from the quoted text: Telegram echoes
+    /// user-controlled content in `reply_to_message`, which must not be able to
+    /// address an arbitrary participant. When the quoted card is unknown the
+    /// message falls through to the ordinary prompt path.
+    func handleTelegramSharedChatReplyIfNeeded(
+        _ text: String,
+        message: TerminalTelegramIncomingMessage
+    ) async -> Bool {
+        guard let target = await telegramDirectReplyTarget(for: message),
+              let destination = target.replyDestination else {
+            return false
+        }
+
+        // The sender may have finished since its card was delivered. Fail loudly
+        // instead of silently turning the reply into a root prompt: the operator
+        // explicitly addressed one participant.
+        guard await isCurrentSharedChatDirectDestination(destination) else {
+            await sendTelegramSystemMessage(
+                "ZenCODE message: that agent is no longer active, so the reply was not delivered.",
+                to: message.chatID
+            )
+            return true
+        }
+
+        do {
+            _ = try await sessionRunner.sendSharedChatMessage(
+                text: text,
+                destination: destination,
+                rootSessionID: target.roomID
+            )
+            await refreshSharedChatPanelSuggestions()
+        } catch {
+            let safeError = Self.sharedChatInlineTerminalSafeText(error.localizedDescription)
+            await sendTelegramSystemMessage(
+                "ZenCODE message: \(safeError)",
+                to: message.chatID
+            )
+        }
+        return true
     }
 
     func handleTelegramVoiceMessage(
@@ -262,6 +448,14 @@ extension TerminalChat {
             telegramLinkedChatID = linkedChatID
             telegramLinkedChatTitle = settings.linkedChatTitle
             telegramControlState = try await telegramControlService.start()
+            // Bind the shared-chat relay to the live room. Re-enabling Telegram
+            // for the same room and chat keeps the delivery ledger, so already
+            // forwarded messages are not sent again.
+            await telegramSharedChatRelay.activate(
+                roomID: sessionID,
+                chatID: linkedChatID,
+                repliesEnabled: readsTelegramIngress
+            )
             synchronizeTelegramTurnProgressReporting()
             let chatTitle = telegramLinkedChatTitle?.nilIfBlank ?? "chat \(linkedChatID)"
             await writeSystemMessage(
@@ -275,6 +469,15 @@ extension TerminalChat {
                 ? "ZenCODE remote control is active. Send a prompt or /help to begin."
                 : "ZenCODE remote control is active. The current ZenCODE request is now being mirrored."
             await sendTelegramSystemMessage(activationMessage, to: linkedChatID)
+            if !readsTelegramIngress {
+                // The blocking input fallback has no Telegram ingress consumer.
+                // Say so instead of leaving the operator waiting for an answer
+                // that this session will never read.
+                await sendTelegramSystemMessage(
+                    "ZenCODE message: this session runs the terminal fallback input loop and does not read Telegram messages. Live messages are still forwarded here, but prompts and replies must be typed in the terminal.",
+                    to: linkedChatID
+                )
+            }
         } catch {
             telegramControlState = await telegramControlService.currentState()
             telegramControlState.lastError = error.localizedDescription
@@ -288,6 +491,9 @@ extension TerminalChat {
         // events emitted while `stop()` is in flight cannot enqueue more output.
         telegramControlState.isActive = false
         synchronizeTelegramTurnProgressReporting()
+        // Unbind before stopping the transport so no card is queued for a chat
+        // that is about to be released. The ledger is retained on purpose.
+        await telegramSharedChatRelay.deactivate()
         telegramControlState = await telegramControlService.stop()
         telegramLinkedChatID = nil
         telegramLinkedChatTitle = nil
@@ -711,6 +917,8 @@ extension TerminalChat {
     private func telegramRemoteHelpText() -> String {
         """
         Send a message to prompt the current ZenCODE TUI session.
+        Live messages from agents are forwarded here; reply to one with text to answer its sender.
+        A voice note cannot be a direct reply: send text, or record without replying to run an ordinary prompt.
         Remote commands: /status, /changes, /help, /plan <goal> and its subcommands, /goal <goal>.
         While /plan is asking questions, ordinary replies continue that same runtime discussion.
         Permission replies: /allow ID, /always ID, /deny ID.

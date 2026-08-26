@@ -328,10 +328,19 @@ extension TerminalChat {
         promptGate: TerminalBlockingPromptGate
     ) async {
         switch event {
-        case .messages:
+        case let .messages(messages):
             // Shared-chat traffic is visible only in the reader panel. Never
             // append it to the main conversation transcript.
-            break
+            //
+            // `/telegram` is available in this fallback too, so cards must be
+            // forwarded here as well. The binding itself is refreshed at the
+            // room boundary below, not here: this only guards against a batch
+            // of a room that is no longer the live one.
+            guard observation.roomID == sessionID else { break }
+            await forwardSharedChatMessagesToTelegram(
+                messages,
+                roomID: observation.roomID
+            )
         case .participantsChanged:
             break
         case let .autoTrigger(trigger):
@@ -396,6 +405,10 @@ extension TerminalChat {
             )
         )
         await sharedChatObservations.start()
+        // Bind the relay to the initial room up front. Waiting for the first
+        // `.messages` batch would leave a `/telegram on` session unbound in a
+        // quiet room, so nothing addressed to the operator would be forwarded.
+        await rebindTelegramSharedChatRelay(roomID: sessionID)
 
         var shouldContinue = true
         while shouldContinue {
@@ -449,6 +462,12 @@ extension TerminalChat {
             }
 
             if shouldContinue {
+                // Fence and bind Telegram before attaching the next room's
+                // observer. Its replay may arrive as soon as `follow` suspends;
+                // binding afterward could drop that first batch or let a retired
+                // room keep sending during the attach. Re-activating an
+                // unchanged room is idempotent.
+                await rebindTelegramSharedChatRelay(roomID: sessionID)
                 // A stream that ended by itself was already repaired; this only
                 // follows a `/new` or `/resume` room swap.
                 await sharedChatObservations.follow(roomID: sessionID)
@@ -460,6 +479,10 @@ extension TerminalChat {
 
     func runInteractivePanelLoop() async throws {
         let eventQueue = TerminalChatEventQueue()
+        // This loop owns the only Telegram ingress consumer, so replies to a
+        // forwarded card can actually be delivered while it runs.
+        readsTelegramIngress = true
+        defer { readsTelegramIngress = false }
         // SIGWINCH is handled by the status-bar actor, but reader ownership
         // belongs to this one FIFO consumer. The handler only enqueues the
         // collapse notification, so it cannot form an actor callback cycle.
@@ -640,6 +663,9 @@ extension TerminalChat {
             readableSharedChatMentionHandles = await sessionRunner.sharedChatMentionHandles(
                 rootSessionID: sharedChatRoomID
             )
+            // A new room invalidates the Telegram receipt map: a reply to a card
+            // from the retired room must not be routed into this one.
+            await rebindTelegramSharedChatRelay(roomID: sharedChatRoomID)
             await synchronizeSharedChatConsumerBusyState()
         }
 
@@ -1019,6 +1045,13 @@ extension TerminalChat {
                 }
                 scheduleQueuedPromptIfNeeded()
             case let .sharedChatMessages(_, messages):
+                // Relay first: Telegram delivery is tracked by the relay's own
+                // ledger, not by the terminal reader buffer, which is rebuilt on
+                // a forced reattach and would resend the replayed transcript.
+                await forwardSharedChatMessagesToTelegram(
+                    messages,
+                    roomID: sharedChatRoomID
+                )
                 // The decision to start a turn belongs to the
                 // Core coordinator and arrives as a separate auto-trigger.
                 // Room binding was verified before entering this switch.

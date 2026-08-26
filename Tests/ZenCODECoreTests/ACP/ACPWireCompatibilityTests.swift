@@ -843,6 +843,30 @@ private extension ACPCompatibilityTests {
         #expect(content["text"]?.acpStringValue == "[\(name)] live update")
     }
 
+    /// The forwarded chunk carries no routing metadata, on purpose.
+    ///
+    /// ACP has no reply-to concept, and adding a sender/target field (or a new
+    /// `@chat:` prompt syntax) would either break standard clients or introduce
+    /// a headless "send without a turn" semantics that `session/prompt` cannot
+    /// express. An ACP host therefore answers the coordinator with an ordinary
+    /// prompt, which the coordinator relays on the live bus; the wire stays
+    /// exactly the ACP v1 chunk below.
+    @Test
+    func sharedChatChunkExposesNoAdditionalWireFields() throws {
+        let message = AgentSharedChat.Message(
+            roomID: "acp-session",
+            sender: AgentSharedChat.Participant(id: "worker-1", name: "Worker", kind: .agent),
+            recipientIDs: ["operator", "coordinator:root"],
+            text: "live update"
+        )
+
+        let object = try #require(ZenCODEACPBridge.sharedChatUpdate(for: message)?.objectValue)
+        let content = try #require(object["content"]?.objectValue)
+
+        #expect(Set(object.keys) == ["sessionUpdate", "content"])
+        #expect(Set(content.keys) == ["type", "text"])
+    }
+
     /// Operator traffic is already on the client's screen, so it is not
     /// forwarded: rendering it would duplicate the host's own input.
     @Test

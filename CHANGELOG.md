@@ -10,6 +10,64 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- All live shared-chat messages (`agent.message`) from the active room are now
+  forwarded to the linked Telegram chat, including operator-originated,
+  coordinator↔agent, agent↔agent, direct multi-recipient and broadcast traffic.
+  Each card shows a readable sender → recipient route; replying to a forwarded
+  non-operator card with **text** answers its sender directly. A relay actor reuses the terminal's single
+  shared-chat observation (no second observer) and owns its own delivery ledger,
+  so a forced reattach or `/telegram off` → `/telegram on` on the same room and
+  chat cannot resend a card that was already delivered. Delivery is at-most-once
+  per room, chat, and message identity for as long as that binding's ledger
+  lives: the ledger survives `/telegram off` → `/telegram on` and a forced
+  reattach of the same pair, and is cleared when the binding changes room or
+  chat, at teardown, or when its bounded history evicts the oldest entries. A
+  receipt that arrives while the relay is unbound (a send started before
+  `/telegram off` that answers during it) is parked in a bounded list and becomes
+  routable only if the very same room and chat are re-activated; any real binding
+  change or teardown discards it, so an `A → B → A` round trip cannot reopen a
+  retired context. The
+  Telegram Bot API offers no idempotency key for `sendMessage`, so an identity is
+  marked before the HTTP call and never retried automatically. Rebinding to
+  another room fences the previous binding: the outbound queue is retired and the
+  rebind only returns once no card of the retired room can still be in flight,
+  while re-activating the same room and chat is idempotent and keeps queued cards
+  and in-flight receipts. Cards are sent as plain text without a Markdown parse
+  mode and with control/bidi scalars removed, because sender names and message
+  bodies are agent-authored content, and the outbound wire bound is measured in
+  UTF-16 code units so hostile Unicode cannot exceed the Telegram limit or be cut
+  mid grapheme cluster. Incoming updates now decode `reply_to_message`
+  non-recursively, and the Telegram receipt of each card is kept in a bounded map
+  that routes an agent sender to its stable participant id and the coordinator to
+  its reserved destination. Routing never uses the quoted text Telegram echoes
+  back; remote commands, slash commands and a resolving `@mention` keep
+  precedence as decided by their own parsers, an unknown or retired card falls
+  back to the ordinary prompt path, and a reply to an agent that is no longer
+  active fails loudly instead of silently becoming a root prompt. Direct replies
+  are text-only: a voice note that quotes a card is refused with an explicit
+  message instead of being turned into a root prompt, because the reply target
+  cannot be revalidated across transcription. The terminal's blocking input
+  fallback forwards cards too, but it has no Telegram ingress consumer, so its
+  cards and its `/telegram on` notice state that answers must be typed in the
+  terminal; that fallback binds the relay when the loop starts and again at every
+  `/new` or `/resume` boundary, so a room that never emits shared-chat traffic
+  cannot leave the retired room bound. Forwarding is lossless: the outbound queue
+  stays bounded, but a full queue suspends the producer (bounded backpressure)
+  instead of discarding cards, capacity is granted in strict arrival order so
+  FIFO survives the wait, and a batch or replay far larger than the queue is
+  delivered completely and in order. Admission and deduplication commit in the
+  same actor step, so a producer whose wait is cancelled or whose binding is
+  retired marks nothing and the message stays replayable; a rebind, `/telegram
+  off` or teardown wakes every parked producer with a refusal, so backpressure
+  cannot deadlock the fence or deliver a stale card. A room swap (`/new`,
+  `/resume`) or teardown retires the ledger, the
+  receipt map and the bounded outbound worker. The ACP wire is unchanged:
+  shared-chat messages keep rendering as the standard ACP v1
+  `agent_message_chunk` with no added routing fields, and an ACP host answers
+  with an ordinary prompt to the coordinator.
+
 ### Changed
 
 - `/plan`, `/goal`, and `/review` are now routed consistently in the terminal TUI,

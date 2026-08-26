@@ -1154,7 +1154,278 @@ struct TelegramTUITests {
             }
     }
 
+    // MARK: - Live-message card replies
 
+    /// Cards forwarded by the terminal's own relay must resolve their sender:
+    /// an agent is answered on its stable id, the coordinator on its reserved
+    /// destination, and the operator's own traffic is carded too — it is
+    /// evidence of what the operator said — but never gets a reply target that
+    /// would address the Telegram user back to themselves.
+    @Test
+    func telegramCardRepliesResolveAgentAndCoordinatorSenders() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let receipts = TelegramCardReceiptRecorder()
+        // Injected sender: the routing map is exercised end-to-end through the
+        // terminal-owned relay without touching the Telegram transport.
+        terminal.telegramSharedChatRelayStorage = TerminalTelegramSharedChatRelay {
+            text, chatID in
+            await receipts.record(text, chatID: chatID)
+        }
+        let room = terminal.sessionID
+        let relay = terminal.telegramSharedChatRelay
+        await relay.activate(roomID: room, chatID: 42)
+
+        await relay.forward(
+            [
+                Self.sharedChatMessage(
+                    roomID: room,
+                    kind: .agent,
+                    senderID: "agent-7",
+                    name: "Worker",
+                    text: "need a decision"
+                ),
+                Self.sharedChatMessage(
+                    roomID: room,
+                    kind: .coordinator,
+                    senderID: "coordinator",
+                    name: "Coordinator",
+                    text: "which option?"
+                ),
+                Self.sharedChatMessage(
+                    roomID: room,
+                    kind: .operator,
+                    senderID: "operator",
+                    name: "operator",
+                    text: "echo of my own line"
+                )
+            ],
+            roomID: room
+        )
+        await relay.waitForPendingCards()
+
+        let cards = await receipts.cards
+        #expect(cards.count == 3)
+        let agentReceipt = try #require(
+            cards.first { $0.text.contains("need a decision") }?.receipt
+        )
+        let coordinatorReceipt = try #require(
+            cards.first { $0.text.contains("which option?") }?.receipt
+        )
+
+        let agentTarget = await relay.replyTarget(
+            forTelegramMessageID: agentReceipt,
+            chatID: 42
+        )
+        #expect(agentTarget?.replyDestination == .direct(["agent-7"]))
+        #expect(agentTarget?.roomID == room)
+
+        let coordinatorTarget = await relay.replyTarget(
+            forTelegramMessageID: coordinatorReceipt,
+            chatID: 42
+        )
+        #expect(coordinatorTarget?.replyDestination == .coordinator)
+        #expect(coordinatorTarget?.roomID == room)
+
+        // The operator card is visible, and deliberately not answerable: routing
+        // a Telegram reply back to the operator would loop the human onto
+        // themselves. No target is recorded for it at all.
+        let operatorReceipt = try #require(
+            cards.first { $0.text.contains("echo of my own line") }?.receipt
+        )
+        let operatorTarget = await relay.replyTarget(
+            forTelegramMessageID: operatorReceipt,
+            chatID: 42
+        )
+        #expect(operatorTarget == nil)
+    }
+
+    /// A voice note is refused only when it quotes a card that really routes
+    /// somewhere. Quoting the operator's own mirrored traffic is not a direct
+    /// reply, so it must keep the ordinary voice-prompt path instead of being
+    /// bounced with the "replies must be text" refusal.
+    @Test
+    func telegramVoiceReplyToAnOperatorCardKeepsTheOrdinaryPath() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let receipts = TelegramCardReceiptRecorder()
+        terminal.telegramSharedChatRelayStorage = TerminalTelegramSharedChatRelay {
+            text, chatID in
+            await receipts.record(text, chatID: chatID)
+        }
+        let room = terminal.sessionID
+        let relay = terminal.telegramSharedChatRelay
+        await relay.activate(roomID: room, chatID: 42)
+
+        await relay.forward(
+            [
+                Self.sharedChatMessage(
+                    roomID: room,
+                    kind: .operator,
+                    senderID: AgentSharedChat.operatorID(for: room),
+                    name: "operator",
+                    text: "echo of my own line"
+                ),
+                Self.sharedChatMessage(
+                    roomID: room,
+                    kind: .agent,
+                    senderID: "agent-7",
+                    name: "Worker",
+                    text: "need a decision"
+                )
+            ],
+            roomID: room
+        )
+        await relay.waitForPendingCards()
+
+        let cards = await receipts.cards
+        let operatorReceipt = try #require(
+            cards.first { $0.text.contains("echo of my own line") }?.receipt
+        )
+        let agentReceipt = try #require(
+            cards.first { $0.text.contains("need a decision") }?.receipt
+        )
+
+        // Same decision for voice and text: an operator card is not a direct
+        // reply target, an agent card is.
+        #expect(
+            await terminal.telegramDirectReplyTarget(
+                for: Self.incomingTelegramMessage(replyToMessageID: operatorReceipt)
+            ) == nil
+        )
+        #expect(
+            await terminal.handleTelegramSharedChatReplyIfNeeded(
+                "spoken answer",
+                message: Self.incomingTelegramMessage(replyToMessageID: operatorReceipt)
+            ) == false
+        )
+        let agentTarget = await terminal.telegramDirectReplyTarget(
+            for: Self.incomingTelegramMessage(replyToMessageID: agentReceipt)
+        )
+        #expect(agentTarget?.replyDestination == .direct(["agent-7"]))
+    }
+
+    /// A quoted message the relay never produced, or one of a retired room, is
+    /// not consumed as a live reply: it falls back to the ordinary prompt path
+    /// instead of being routed to an arbitrary participant.
+    @Test
+    func telegramReplyToUnknownOrRetiredCardFallsBackToThePromptPath() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let receipts = TelegramCardReceiptRecorder()
+        terminal.telegramSharedChatRelayStorage = TerminalTelegramSharedChatRelay {
+            text, chatID in
+            await receipts.record(text, chatID: chatID)
+        }
+        let relay = terminal.telegramSharedChatRelay
+        // Bound to a room that is not the live session: a card of that binding
+        // must never be routed into the current room.
+        await relay.activate(roomID: "retired-room", chatID: 42)
+        await relay.forward(
+            [
+                Self.sharedChatMessage(
+                    roomID: "retired-room",
+                    kind: .agent,
+                    senderID: "agent-9",
+                    name: "Worker",
+                    text: "stale card"
+                )
+            ],
+            roomID: "retired-room"
+        )
+        await relay.waitForPendingCards()
+        let staleReceipt = try #require(await receipts.cards.first?.receipt)
+
+        #expect(
+            await terminal.handleTelegramSharedChatReplyIfNeeded(
+                "answer",
+                message: Self.incomingTelegramMessage(replyToMessageID: staleReceipt)
+            ) == false
+        )
+        #expect(
+            await terminal.handleTelegramSharedChatReplyIfNeeded(
+                "answer",
+                message: Self.incomingTelegramMessage(replyToMessageID: staleReceipt + 1)
+            ) == false
+        )
+        #expect(
+            await terminal.handleTelegramSharedChatReplyIfNeeded(
+                "answer",
+                message: Self.incomingTelegramMessage(replyToMessageID: nil)
+            ) == false
+        )
+    }
+
+    /// Quoting a card must not change what an explicitly addressed line means:
+    /// remote commands, slash commands and resolving mentions keep precedence,
+    /// while ordinary text — including an `@` that resolves to nothing — stays
+    /// replyable.
+    @Test
+    func telegramReplyRoutingYieldsToCommandsAndResolvingMentions() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+
+        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "/help"))
+        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "/start 233B0EC4"))
+        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "/plan route it"))
+        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "@coordinator status"))
+        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "@all status"))
+        // A recognised mention without text keeps its own diagnostic.
+        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "@coordinator"))
+        // Not mentions, so a reply keeps its meaning.
+        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "@nobody hi") == false)
+        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "yes, ship it") == false)
+        #expect(
+            await terminal.telegramReplyRoutingHasPrecedence(
+                over: "answer with an email like a@b.com"
+            ) == false
+        )
+    }
+
+    private static func sharedChatMessage(
+        roomID: String,
+        kind: AgentSharedChat.ParticipantKind,
+        senderID: String,
+        name: String,
+        text: String
+    ) -> AgentSharedChat.Message {
+        AgentSharedChat.Message(
+            roomID: roomID,
+            sender: AgentSharedChat.Participant(id: senderID, name: name, kind: kind),
+            recipientIDs: [AgentSharedChat.operatorID(for: roomID)],
+            text: text
+        )
+    }
+
+    private static func incomingTelegramMessage(
+        replyToMessageID: Int?
+    ) -> TerminalTelegramIncomingMessage {
+        TerminalTelegramIncomingMessage(
+            chatID: 42,
+            userID: 7,
+            text: "answer",
+            voice: nil,
+            messageID: 1,
+            chatTitle: nil,
+            username: nil,
+            replyToMessageID: replyToMessageID
+        )
+    }
+}
+
+/// Hands the relay synthetic Telegram receipts so card routing can be asserted
+/// without a transport.
+private actor TelegramCardReceiptRecorder {
+    struct Card: Equatable {
+        let text: String
+        let chatID: Int64
+        let receipt: Int
+    }
+
+    private(set) var cards: [Card] = []
+    private var nextReceipt = 9_000
+
+    func record(_ text: String, chatID: Int64) -> Int {
+        nextReceipt += 1
+        cards.append(Card(text: text, chatID: chatID, receipt: nextReceipt))
+        return nextReceipt
+    }
 }
 
 private actor TelegramTestMessageCollector {

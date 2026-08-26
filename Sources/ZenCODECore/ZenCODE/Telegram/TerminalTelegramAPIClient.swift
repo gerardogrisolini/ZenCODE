@@ -48,6 +48,10 @@ struct NIOTelegramHTTPTransport: TelegramHTTPTransport {
 struct TerminalTelegramAPIClient: Sendable {
     static let maximumAudioFileBytes = 20 * 1_024 * 1_024
     static let audioDownloadTimeout: Duration = .seconds(30)
+    /// Telegram rejects a `sendMessage` whose text exceeds 4096 UTF-16 code
+    /// units. The budget is kept slightly below that ceiling so a truncation
+    /// marker still fits inside the wire limit.
+    static let maximumMessageUTF16Length = 4_000
     let token: String
     let transport: any TelegramHTTPTransport
 
@@ -81,20 +85,50 @@ struct TerminalTelegramAPIClient: Sendable {
         )
     }
 
+    /// Sends a message and returns the Telegram `message_id` of the delivered
+    /// message. The receipt is what lets a later `reply_to_message` be resolved
+    /// back to the shared-chat sender it was produced from; callers that do not
+    /// need it can keep ignoring the result.
+    @discardableResult
     func sendMessage(
         _ text: String,
         to chatID: Int64,
         parseMode: String? = nil
-    ) async throws {
+    ) async throws -> Int {
         let request = TerminalTelegramSendMessageRequest(
             chatID: chatID,
-            text: String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4_000)),
+            text: Self.boundedMessageText(text),
             parseMode: parseMode
         )
-        let _: TerminalTelegramMessage = try await self.request(
+        let message: TerminalTelegramMessage = try await self.request(
             method: "sendMessage",
             body: request
         )
+        return message.messageID
+    }
+
+    /// Trims and bounds one outbound message to the Telegram wire limit.
+    ///
+    /// The limit Telegram enforces counts UTF-16 code units, not Swift
+    /// `Character`s: a text made of emoji or other non-BMP scalars can be well
+    /// below 4000 grapheme clusters and still be rejected on the wire. The bound
+    /// is therefore measured in UTF-16 units, while truncation still happens on
+    /// grapheme-cluster boundaries so a cut can never split a combining sequence
+    /// or an emoji into unpaired surrogates.
+    static func boundedMessageText(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.utf16.count > maximumMessageUTF16Length else {
+            return trimmed
+        }
+        var bounded = ""
+        var length = 0
+        for character in trimmed {
+            let width = character.utf16.count
+            guard length + width <= maximumMessageUTF16Length else { break }
+            bounded.append(character)
+            length += width
+        }
+        return bounded
     }
 
     func downloadFile(fileID: String) async throws -> TerminalTelegramDownloadedFile {
@@ -254,6 +288,11 @@ struct TerminalTelegramMessage: Decodable {
     let chat: TerminalTelegramChat
     let text: String?
     let voice: TerminalTelegramVoice?
+    /// Present when the user used Telegram's *Reply* action. Only the referenced
+    /// identifier is decoded: `reply_to_message` is a full `Message` on the wire
+    /// and decoding it recursively would be unbounded work driven by remote
+    /// input for a value nothing else reads.
+    let replyToMessage: TerminalTelegramReferencedMessage?
 
     // Responses decode with the default strategy, so wire keys stay manual.
     enum CodingKeys: String, CodingKey {
@@ -262,6 +301,17 @@ struct TerminalTelegramMessage: Decodable {
         case chat
         case text
         case voice
+        case replyToMessage = "reply_to_message"
+    }
+}
+
+/// Non-recursive projection of a referenced Telegram message.
+struct TerminalTelegramReferencedMessage: Decodable {
+    let messageID: Int
+
+    // Responses decode with the default strategy, so wire keys stay manual.
+    enum CodingKeys: String, CodingKey {
+        case messageID = "message_id"
     }
 }
 

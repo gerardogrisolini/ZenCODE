@@ -140,6 +140,32 @@ public final class TerminalChat {
     var currentTelegramMirrorEpoch = 0
     var optionalCommandAvailability = TerminalOptionalCommandAvailability.load()
     var requestedRuntimeSetup = false
+    /// True only while the interactive panel loop, the single surface that
+    /// consumes Telegram ingress, is running. The blocking fallback still
+    /// forwards live messages, but nothing there reads what Telegram sends back,
+    /// so cards must not invite a reply that would be silently dropped.
+    var readsTelegramIngress = false
+    /// Backing storage for ``telegramSharedChatRelay``. The relay captures this
+    /// chat weakly to reach the Telegram transport, so it cannot be built in
+    /// `init` as a stored `let` without capturing a partially initialised self.
+    /// It stays module-internal so tests can install a relay with a stubbed
+    /// sender instead of reaching the network.
+    var telegramSharedChatRelayStorage: TerminalTelegramSharedChatRelay?
+
+    /// Forwards operator-directed shared-chat messages to the linked chat and
+    /// resolves Telegram replies back to their sender. Created on first use and
+    /// owned for the whole chat lifetime, so its ledger survives
+    /// `/telegram off` → `/telegram on`.
+    var telegramSharedChatRelay: TerminalTelegramSharedChatRelay {
+        if let relay = telegramSharedChatRelayStorage {
+            return relay
+        }
+        let relay = TerminalTelegramSharedChatRelay { [weak self] text, chatID in
+            await self?.sendTelegramSharedChatCard(text, to: chatID) ?? nil
+        }
+        telegramSharedChatRelayStorage = relay
+        return relay
+    }
 
     public let statusBar: TerminalStatusBar
 
@@ -354,6 +380,9 @@ public final class TerminalChat {
     }
 
     private func stopTerminalServices() async {
+        // Quiesce the relay before the transport it uses: its drain worker must
+        // not outlive the service it sends through.
+        await telegramSharedChatRelayStorage?.shutdown()
         _ = await telegramControlService.stop()
         await statusBar.stop()
     }

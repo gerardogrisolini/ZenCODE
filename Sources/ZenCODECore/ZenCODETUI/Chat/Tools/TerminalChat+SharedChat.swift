@@ -198,7 +198,7 @@ extension TerminalChat {
     /// The shared-chat actor accepts legacy display names as direct identifiers.
     /// The TUI must not use that ambiguous fallback: confirm that the decoded
     /// mention names one current active agent by ID before delivery.
-    private func isCurrentSharedChatDirectDestination(
+    func isCurrentSharedChatDirectDestination(
         _ destination: AgentSharedChat.Destination
     ) async -> Bool {
         guard case let .direct(identifiers) = destination,
@@ -365,7 +365,7 @@ extension TerminalChat {
         }
     }
 
-    private nonisolated static func sharedChatInlineTerminalSafeText(_ text: String) -> String {
+    nonisolated static func sharedChatInlineTerminalSafeText(_ text: String) -> String {
         let flattened = sharedChatTerminalSafeText(text)
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
