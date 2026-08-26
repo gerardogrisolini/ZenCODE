@@ -274,6 +274,7 @@ extension TerminalChat {
     func beginTelegramTurnProgressReporting(for origin: TerminalPromptOrigin) async {
         activeTelegramProgressReporter = nil
         activeTelegramTurnOrigin = origin
+        resetTelegramRootResponseBlock()
         resetMirroredOverviewSignatures()
         // Fence off any undelivered mirror notification from the previous
         // turn before the new turn's reporter exists: stale-epoch deliveries
@@ -283,23 +284,115 @@ extension TerminalChat {
     }
 
     /// Reconciles the current turn with the latest Telegram on/off state.
-    /// Existing reporters are retained for the same chat so buffered narration
-    /// and tool events keep their ordering across a repeated `/telegram on`.
+    /// Existing reporters are retained for the same chat so queued messages keep
+    /// their ordering across a repeated `/telegram on`.
+    ///
+    /// Turning Telegram off drops the reporter together with the root response
+    /// text it had aggregated; turning it back on starts a new, empty channel.
+    /// A response block that was already streaming across such a transition is
+    /// therefore suppressed, so the remote chat never receives a fragment whose
+    /// beginning it could not see, nor a replay of text produced while off.
     func synchronizeTelegramTurnProgressReporting() {
         guard let origin = activeTelegramTurnOrigin,
               let chatID = telegramOutgoingChatID(for: origin) else {
+            if activeTelegramProgressReporter != nil {
+                suppressTelegramRootResponseBlockIfStreaming()
+            }
             activeTelegramProgressReporter = nil
             return
         }
         guard activeTelegramProgressReporter?.chatID != chatID else {
             return
         }
+        suppressTelegramRootResponseBlockIfStreaming()
         activeTelegramProgressReporter = makeTelegramTurnProgressReporter(for: origin)
     }
 
     func endTelegramTurnProgressReporting() {
         activeTelegramProgressReporter = nil
         activeTelegramTurnOrigin = nil
+        resetTelegramRootResponseBlock()
+    }
+
+    // MARK: - Root response mirroring
+
+    /// Aggregates one visible root response delta for the linked chat.
+    ///
+    /// Deltas are buffered by the turn reporter and published as a single
+    /// message at the next tool boundary; nothing is sent while the response is
+    /// still streaming.
+    func appendTelegramRootResponseDelta(_ delta: String) async {
+        guard !delta.isEmpty else {
+            return
+        }
+        telegramRootResponseBlockHasContent = true
+        guard !telegramRootResponseBlockIsSuppressed,
+              let reporter = activeTelegramProgressReporter else {
+            return
+        }
+        await reporter.appendAgentResponseDelta(delta)
+    }
+
+    /// Publishes the aggregated root response at a tool-call boundary.
+    ///
+    /// The boundary proves the response complete: the model stopped writing and
+    /// started a tool. The overview barrier runs first so sub-agent and Task
+    /// sections already rendered enter the ordered channel ahead of this
+    /// response instead of being overtaken by it.
+    func publishTelegramRootResponseAtToolBoundary() async {
+        let wasSuppressed = telegramRootResponseBlockIsSuppressed
+        telegramRootResponseBlockHasContent = false
+        telegramRootResponseBlockIsSuppressed = false
+        guard let reporter = activeTelegramProgressReporter else {
+            return
+        }
+        guard !wasSuppressed else {
+            await reporter.discardPendingAgentResponse()
+            return
+        }
+        guard await reporter.hasPendingAgentResponse else {
+            return
+        }
+        await renderCoordinator.waitForOverviewMirrorsToDrain()
+        guard let current = activeTelegramProgressReporter,
+              current === reporter else {
+            // Telegram was turned off while the barrier was draining; the
+            // buffered text belongs to a channel that no longer exists.
+            return
+        }
+        if await current.publishPendingAgentResponseAtBoundary() {
+            telegramDidPublishIntermediateRootResponse = true
+        }
+    }
+
+    /// Returns the text to mirror as the turn's final response.
+    ///
+    /// A turn's response text accumulates every assistant block it produced,
+    /// including the intermediate responses already mirrored at their tool
+    /// boundaries. Mirroring it verbatim would repeat them, so once such a
+    /// response was published the trailing block aggregated since the last
+    /// boundary — the final response itself — is mirrored instead.
+    func telegramMirroredFinalResponseText(fallback: String) async -> String {
+        guard telegramDidPublishIntermediateRootResponse,
+              let reporter = activeTelegramProgressReporter else {
+            return fallback
+        }
+        let trailing = await reporter.pendingAgentResponseText()
+        return trailing.isEmpty ? fallback : trailing
+    }
+
+    /// Marks the streaming root response as unmirrorable, when one is in flight.
+    private func suppressTelegramRootResponseBlockIfStreaming() {
+        guard telegramRootResponseBlockHasContent else {
+            return
+        }
+        telegramRootResponseBlockIsSuppressed = true
+    }
+
+    private func resetTelegramRootResponseBlock() {
+        telegramRootResponseBlockHasContent = false
+        telegramRootResponseBlockIsSuppressed = false
+        telegramDidPublishIntermediateRootResponse = false
     }
 
     /// Returns the authorization handler for a turn whose progress is mirrored
@@ -500,6 +593,9 @@ extension TerminalChat {
         }
         if let reporter = activeTelegramProgressReporter, reporter.chatID == chatID {
             return await reporter.send(payload)
+        }
+        if let onDirectTelegramTurnMessage {
+            return await onDirectTelegramTurnMessage(payload, chatID)
         }
         return await sendTelegramSystemMessage(payload.text, to: chatID)
     }

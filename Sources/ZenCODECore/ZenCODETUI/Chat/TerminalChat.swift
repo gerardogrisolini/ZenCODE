@@ -108,6 +108,23 @@ public final class TerminalChat {
     /// turn's progress is mirrored to the linked chat. Permission dialogue is
     /// enqueued here so it cannot overtake the tool activity that raised it.
     var activeTelegramProgressReporter: TerminalTelegramTurnProgressReporter?
+    /// Test seam for direct turn-message delivery when no progress reporter owns
+    /// the linked chat. `nil` in production.
+    var onDirectTelegramTurnMessage: (@Sendable (TerminalTelegramTurnPayload, Int64) async -> Bool)?
+    /// `true` when the root response block currently streaming already produced
+    /// visible text. Used to detect that a Telegram on/off transition happened
+    /// in the middle of a response.
+    var telegramRootResponseBlockHasContent = false
+    /// `true` when the root response block currently streaming must not be
+    /// mirrored: part of it was produced while Telegram was off, so publishing
+    /// the remainder would send a partial suffix of a response the remote chat
+    /// never saw the beginning of. Cleared at the next boundary, where a new
+    /// block starts.
+    var telegramRootResponseBlockIsSuppressed = false
+    /// `true` when at least one intermediate root response was already mirrored
+    /// during the current turn, so the accumulated turn text must not be
+    /// mirrored again as the final response.
+    var telegramDidPublishIntermediateRootResponse = false
     /// Change signature of the task-graph overview already mirrored to Telegram
     /// during the current turn, so republished identical content does not spam
     /// the remote chat. Sub-agent overviews are terminal-only. Reset when a new

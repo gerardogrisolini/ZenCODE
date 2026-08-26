@@ -526,6 +526,320 @@ struct TelegramTUITests {
     }
 
     @Test
+    func telegramFinalizationDeliversOutcomeAndSummaryWithoutReporter() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let collector = TelegramTestMessageCollector()
+        terminal.activeTelegramTurnOrigin = .local
+        terminal.onDirectTelegramTurnMessage = { payload, chatID in
+            #expect(chatID == 42)
+            await collector.append(payload.text)
+            return true
+        }
+        let summary = TurnFileChangeSummary(entries: [
+            TurnFileChangeSummary.Entry(
+                path: "Sources/App.swift",
+                additions: 1,
+                deletions: 0,
+                status: .modified,
+                isBinary: false,
+                existedBefore: true,
+                beforeDataBase64: nil,
+                patch: nil
+            )
+        ])
+
+        await terminal.finalizeTelegramTurnProgressReporting(
+            outcome: .agentResponse("*ZenCODE completed*\n\nDone."),
+            fileChangeSummary: summary
+        )
+
+        let messages = await collector.allMessages()
+        #expect(messages.count == 2)
+        #expect(messages[0] == "*ZenCODE completed*\n\nDone.")
+        #expect(messages[1].hasPrefix("🪬 Summary:"))
+        #expect(terminal.activeTelegramProgressReporter == nil)
+        #expect(terminal.activeTelegramTurnOrigin == nil)
+    }
+
+    @Test
+    func telegramFinalizationDoesNotUseDirectFallbackWhenReporterExists() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let reporterCollector = TelegramTestMessageCollector()
+        let fallbackCollector = TelegramTestMessageCollector()
+        terminal.activeTelegramTurnOrigin = .local
+        terminal.activeTelegramProgressReporter = TerminalTelegramTurnProgressReporter(
+            chatID: 42
+        ) { message, _ in
+            await reporterCollector.append(message)
+            return true
+        }
+        terminal.onDirectTelegramTurnMessage = { payload, _ in
+            await fallbackCollector.append(payload.text)
+            return true
+        }
+
+        await terminal.finalizeTelegramTurnProgressReporting(
+            outcome: .agentResponse("Done.")
+        )
+
+        #expect((await reporterCollector.allMessages()) == ["Done."])
+        #expect((await fallbackCollector.allMessages()).isEmpty)
+    }
+
+    // MARK: - Root response mirroring
+
+    @Test
+    func telegramAggregatesRootResponseDeltasIntoOneMessageAtToolBoundary() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let collector = TelegramTestMessageCollector()
+        let reporter = Self.attachTestReporter(to: terminal, collector: collector)
+
+        await terminal.appendTelegramRootResponseDelta("Inspecting ")
+        await terminal.appendTelegramRootResponseDelta("the reporter")
+        await terminal.appendTelegramRootResponseDelta(" first.\n")
+        #expect((await collector.allMessages()).isEmpty)
+
+        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await reporter.flush()
+
+        #expect((await collector.allMessages()) == ["Inspecting the reporter first."])
+    }
+
+    @Test
+    func telegramPublishesEveryIntermediateRootResponseSeparately() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let collector = TelegramTestMessageCollector()
+        let reporter = Self.attachTestReporter(to: terminal, collector: collector)
+
+        await terminal.appendTelegramRootResponseDelta("First step.")
+        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await terminal.appendTelegramRootResponseDelta("Second step.")
+        await terminal.publishTelegramRootResponseAtToolBoundary()
+        // A boundary without any content in between publishes nothing.
+        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await reporter.flush()
+
+        #expect((await collector.allMessages()) == ["First step.", "Second step."])
+    }
+
+    @Test
+    func telegramDoesNotDuplicateTrailingRootResponseAsFinalOutcome() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let collector = TelegramTestMessageCollector()
+        terminal.activeTelegramTurnOrigin = .local
+        _ = Self.attachTestReporter(to: terminal, collector: collector)
+
+        await terminal.appendTelegramRootResponseDelta("Intermediate.")
+        await terminal.publishTelegramRootResponseAtToolBoundary()
+        // Trailing content that no tool call closes is the final response.
+        await terminal.appendTelegramRootResponseDelta("All done, ")
+        await terminal.appendTelegramRootResponseDelta("everything works.")
+
+        await terminal.finalizeTelegramTurnProgressReporting(
+            outcome: .agentResponse("All done, everything works.")
+        )
+
+        #expect(
+            (await collector.allMessages()) == [
+                "Intermediate.",
+                "All done, everything works."
+            ]
+        )
+        #expect(terminal.activeTelegramProgressReporter == nil)
+    }
+
+    @Test
+    func telegramMirrorsOnlyResponsesAndNeverThinkingOrToolDetails() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let collector = TelegramTestMessageCollector()
+        terminal.activeTelegramTurnOrigin = .local
+        let reporter = Self.attachTestReporter(to: terminal, collector: collector)
+
+        // A turn that reasons, answers, calls a tool, and answers again: only
+        // the visible responses have a mirroring hook, so reasoning and tool
+        // identity have no path to the remote chat.
+        await terminal.writeThought("Secret reasoning about local.delete.\n")
+        await terminal.appendTelegramRootResponseDelta("Reading the manifest.")
+        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await terminal.appendTelegramRootResponseDelta("Manifest looks fine.")
+        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await reporter.flush()
+
+        let messages = await collector.allMessages()
+        #expect(messages == ["Reading the manifest.", "Manifest looks fine."])
+        for message in messages {
+            #expect(!message.contains("Secret reasoning"))
+            #expect(!message.contains("thinking"))
+            #expect(!message.contains("local.delete"))
+            #expect(!message.contains("local.readFile"))
+        }
+    }
+
+    @Test
+    func telegramKeepsRootResponsesInOrderWithDelegatedAndAuthorizationPayloads() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let collector = TelegramTestMessageCollector()
+        terminal.activeTelegramTurnOrigin = .local
+        let reporter = Self.attachTestReporter(to: terminal, collector: collector)
+
+        await terminal.appendTelegramRootResponseDelta("Delegating the work.")
+        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await reporter.enqueue(.tasks("📋 Task graph\n\nstep 1"))
+        await reporter.enqueue(.subAgentResponse("🤖 worker\n\nDelegated answer."))
+        await terminal.sendTelegramTurnMessage(.authorization("Permission required"), to: 42)
+        await terminal.appendTelegramRootResponseDelta("Continuing after the tool.")
+        await terminal.publishTelegramRootResponseAtToolBoundary()
+
+        await terminal.finalizeTelegramTurnProgressReporting(
+            outcome: .agentResponse("Final answer.")
+        )
+
+        #expect(
+            (await collector.allMessages()) == [
+                "Delegating the work.",
+                "📋 Task graph\n\nstep 1",
+                "🤖 worker\n\nDelegated answer.",
+                "Permission required",
+                "Continuing after the tool.",
+                "Final answer."
+            ]
+        )
+    }
+
+    @Test
+    func telegramSuppressesRootResponseStartedWhileTelegramWasOff() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let firstCollector = TelegramTestMessageCollector()
+        terminal.activeTelegramTurnOrigin = .local
+        _ = Self.attachTestReporter(to: terminal, collector: firstCollector)
+
+        await terminal.appendTelegramRootResponseDelta("Visible beginning ")
+
+        // /telegram off in the middle of the response.
+        terminal.telegramControlState.isActive = false
+        terminal.synchronizeTelegramTurnProgressReporting()
+        #expect(terminal.activeTelegramProgressReporter == nil)
+        await terminal.appendTelegramRootResponseDelta("hidden middle ")
+
+        // /telegram on again, still inside the same response block.
+        terminal.telegramControlState.isActive = true
+        terminal.synchronizeTelegramTurnProgressReporting()
+        #expect(terminal.activeTelegramProgressReporter != nil)
+        let secondCollector = TelegramTestMessageCollector()
+        let secondReporter = Self.attachTestReporter(to: terminal, collector: secondCollector)
+        await terminal.appendTelegramRootResponseDelta("and the tail.")
+        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await secondReporter.flush()
+
+        // Neither a replay of the hidden text nor a partial suffix is sent.
+        #expect((await firstCollector.allMessages()).isEmpty)
+        #expect((await secondCollector.allMessages()).isEmpty)
+
+        // The next response block starts clean and is mirrored again.
+        await terminal.appendTelegramRootResponseDelta("Next response.")
+        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await secondReporter.flush()
+        #expect((await secondCollector.allMessages()) == ["Next response."])
+    }
+
+    @Test
+    func telegramReporterTruncatesAggregatedRootResponseToMessageLimit() async {
+        let collector = TelegramTestMessageCollector()
+        let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
+            await collector.append(message)
+            return true
+        }
+        let limit = TerminalTelegramTurnProgressReporter.maximumMessageLength
+
+        for _ in 0..<10 {
+            await reporter.appendAgentResponseDelta(String(repeating: "a", count: 1_000))
+        }
+        #expect(await reporter.hasPendingAgentResponse)
+        await reporter.publishPendingAgentResponseAtBoundary()
+        await reporter.flush()
+
+        let messages = await collector.allMessages()
+        #expect(messages.count == 1)
+        #expect(messages.first?.count == limit)
+    }
+
+    @Test
+    func telegramReporterDiscardsPendingRootResponseWithoutSending() async {
+        let collector = TelegramTestMessageCollector()
+        let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
+            await collector.append(message)
+            return true
+        }
+
+        await reporter.appendAgentResponseDelta("Trailing final text.")
+        await reporter.discardPendingAgentResponse()
+        #expect(await reporter.hasPendingAgentResponse == false)
+        #expect(await reporter.publishPendingAgentResponseAtBoundary() == false)
+        await reporter.flush()
+
+        #expect((await collector.allMessages()).isEmpty)
+    }
+
+    @Test
+    func telegramFinalResponseTextExcludesAlreadyMirroredIntermediateResponses() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let collector = TelegramTestMessageCollector()
+        terminal.activeTelegramTurnOrigin = .local
+        _ = Self.attachTestReporter(to: terminal, collector: collector)
+
+        await terminal.appendTelegramRootResponseDelta("Inspecting the manifest.")
+        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await terminal.appendTelegramRootResponseDelta("All done, everything works.")
+
+        // A turn's response text accumulates every block it produced.
+        let accumulated = "Inspecting the manifest.All done, everything works."
+        let mirrored = await terminal.telegramMirroredFinalResponseText(
+            fallback: accumulated
+        )
+        #expect(mirrored == "All done, everything works.")
+
+        await terminal.finalizeTelegramTurnProgressReporting(
+            outcome: .agentResponse("*ZenCODE completed*\n\n\(mirrored)")
+        )
+
+        let messages = await collector.allMessages()
+        #expect(
+            messages == [
+                "Inspecting the manifest.",
+                "*ZenCODE completed*\n\nAll done, everything works."
+            ]
+        )
+    }
+
+    @Test
+    func telegramFinalResponseTextKeepsFallbackWithoutMirroredIntermediateResponses() async throws {
+        let terminal = try Self.activeTelegramTerminal()
+        let collector = TelegramTestMessageCollector()
+        terminal.activeTelegramTurnOrigin = .local
+        _ = Self.attachTestReporter(to: terminal, collector: collector)
+
+        await terminal.appendTelegramRootResponseDelta("Only one response.")
+
+        #expect(
+            (await terminal.telegramMirroredFinalResponseText(fallback: "Only one response."))
+                == "Only one response."
+        )
+    }
+
+    @discardableResult
+    private static func attachTestReporter(
+        to terminal: TerminalChat,
+        collector: TelegramTestMessageCollector
+    ) -> TerminalTelegramTurnProgressReporter {
+        let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
+            await collector.append(message)
+            return true
+        }
+        terminal.activeTelegramProgressReporter = reporter
+        return reporter
+    }
+
+    @Test
     func telegramPairingCodeAcceptsPlainCodeAndStartPayload() {
         #expect(TerminalTelegramPairingService.pairingCode(in: " abcd1234 ") == "ABCD1234")
         #expect(TerminalTelegramPairingService.pairingCode(in: "/start abcd1234") == "ABCD1234")

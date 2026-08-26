@@ -31,9 +31,15 @@ enum TerminalTelegramTurnPayload: Sendable {
 
 /// Single FIFO outbound channel for one Telegram-mirrored turn.
 ///
-/// All remote turn output travels through this actor so task updates,
-/// authorization requests, the final response, and its change summary retain
-/// their production order. Bot control messages intentionally bypass it.
+/// All remote turn output travels through this actor so root responses, task
+/// updates, delegated responses, authorization requests, the final response,
+/// and its change summary retain their production order. Bot control messages
+/// intentionally bypass it.
+///
+/// Root responses are the only payload this actor buffers. Their deltas are
+/// aggregated as they stream and published as a single message at the boundary
+/// that proves the block complete (the next tool call). The buffer is text
+/// only: reasoning, tool identity, arguments, and results never reach it.
 actor TerminalTelegramTurnProgressReporter {
     /// Telegram rejects messages beyond ~4096 characters; stay below it.
     static let maximumMessageLength = 3_900
@@ -49,6 +55,8 @@ actor TerminalTelegramTurnProgressReporter {
     let sendMessage: @Sendable (String, Int64) async -> Bool
 
     private var queue: [QueuedMessage] = []
+    /// Root response text aggregated since the last boundary.
+    private var pendingAgentResponse = ""
     private var isDraining = false
     private var idleWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -63,6 +71,64 @@ actor TerminalTelegramTurnProgressReporter {
     /// Queues a permitted turn payload without waiting for delivery.
     func enqueue(_ payload: TerminalTelegramTurnPayload) {
         enqueue(payload.text, deliveryContinuation: nil)
+    }
+
+    // MARK: - Root response buffer
+
+    /// `true` when aggregated root response text is waiting for its boundary.
+    var hasPendingAgentResponse: Bool {
+        !pendingAgentResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Aggregates one visible root response delta.
+    ///
+    /// Nothing is queued here: a delta is not yet a response. The buffer is
+    /// bounded by the per-message limit so a long block cannot grow unbounded.
+    func appendAgentResponseDelta(_ delta: String) {
+        guard !delta.isEmpty else {
+            return
+        }
+        let remainingCount = Self.maximumMessageLength - pendingAgentResponse.count
+        guard remainingCount > 0 else {
+            return
+        }
+        pendingAgentResponse.append(contentsOf: delta.prefix(remainingCount))
+    }
+
+    /// Publishes the aggregated root response as one intermediate message.
+    ///
+    /// Called at the boundary that proves the block complete, so the remote
+    /// chat receives the same response the terminal rendered before the tool.
+    ///
+    /// - Returns: `true` when a message was queued.
+    @discardableResult
+    func publishPendingAgentResponseAtBoundary() -> Bool {
+        let text = pendingAgentResponse
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        pendingAgentResponse.removeAll(keepingCapacity: true)
+        guard !text.isEmpty else {
+            return false
+        }
+        enqueue(.agentResponse(text))
+        return true
+    }
+
+    /// Returns the aggregated trailing root response without queueing it.
+    ///
+    /// The finalization path reads it to mirror the turn's final response
+    /// alone, instead of the accumulated turn text that already contains every
+    /// intermediate response published at its own boundary.
+    func pendingAgentResponseText() -> String {
+        pendingAgentResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Drops the aggregated root response without publishing it.
+    ///
+    /// Trailing content that no tool call followed belongs to the turn's final
+    /// response, which is delivered once by the finalization path; discarding
+    /// it here is what keeps that response from being sent twice.
+    func discardPendingAgentResponse() {
+        pendingAgentResponse.removeAll(keepingCapacity: false)
     }
 
     /// Queues an authorization payload and waits for its delivery result.

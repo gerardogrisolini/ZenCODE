@@ -12,6 +12,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Telegram now mirrors every response a turn produces — each intermediate root
+  response that precedes a tool call, each completed sub-agent response, Task
+  updates, authorization requests, the final response, and the file-change
+  Summary — while still excluding reasoning and tool-call names, arguments, and
+  results. The final response is never duplicated, and the outcome and Summary
+  are delivered directly to the linked chat when progress reporting is
+  unavailable.
 - Long source lines in tool-rendered file changes now wrap within their existing
   single or side-by-side columns instead of being truncated, preserving line
   gutters, alignment, and colors, including when writing a new file.

@@ -108,9 +108,13 @@ extension TerminalChat {
                         }
                         await transcriptTurn.appendAssistantContent(delta)
                         await self.writeAssistantContent(delta)
+                        await self.appendTelegramRootResponseDelta(delta)
                     case let .toolCallStarted(toolCall):
                         await transcriptTurn.appendToolCallStarted(toolCall)
                         await self.writeToolCallStarted(toolCall)
+                        // The tool call closes the root response that preceded
+                        // it: publish that response, never the call itself.
+                        await self.publishTelegramRootResponseAtToolBoundary()
                         await self.publishSubAgentOverviewIfChanged(
                             relatedToolName: toolCall.name
                         )
@@ -323,8 +327,13 @@ extension TerminalChat {
             // for the next turn, and snapshot once more so mutations that
             // landed during the handoff window are not lost (no event replay).
             await quiesceTaskGraphObserverForTurnBoundary()
+            let mirroredCompletionText = await telegramMirroredFinalResponseText(
+                fallback: completionText
+            )
             await finalizeTelegramTurnProgressReporting(
-                outcome: .agentResponse("*ZenCODE completed*\n\n\(String(completionText.prefix(3_600)))"),
+                outcome: .agentResponse(
+                    "*ZenCODE completed*\n\n\(String(mirroredCompletionText.prefix(3_600)))"
+                ),
                 fileChangeSummary: success.fileChangeSummary
             )
             await startTaskGraphObserver()

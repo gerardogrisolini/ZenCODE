@@ -91,29 +91,52 @@ extension TerminalChat {
     }
 
     /// Retires the current turn's Telegram reporting: waits for every queued
-    /// overview mirror to be handed over, flushes the turn reporter so queued
-    /// remote messages are delivered, and only then ends the reporting. This
-    /// is the single retirement path for a turn, used both by the normal
-    /// completion flow and by loop teardown paths that bypass
-    /// `finishPromptResult` (end-of-input during generation, cancellation of
-    /// the interactive loop's task).
+    /// overview mirror to be handed over, drops the trailing root response text
+    /// that no tool call closed (it is the turn's final response, delivered here
+    /// once as `outcome`), flushes the turn reporter so queued remote messages
+    /// are delivered, and only then ends the reporting. This is the single
+    /// retirement path for a turn, used both by the normal completion flow and
+    /// by loop teardown paths that bypass `finishPromptResult` (end-of-input
+    /// during generation, cancellation of the interactive loop's task).
+    ///
+    /// When no reporter owns the linked chat — Telegram was enabled without a
+    /// mirrored reporter, or the turn produced no progress — the outcome and
+    /// Summary are still delivered directly to the linked chat.
     func finalizeTelegramTurnProgressReporting(
         outcome: TerminalTelegramTurnPayload? = nil,
         fileChangeSummary: TurnFileChangeSummary? = nil
     ) async {
         await renderCoordinator.waitForOverviewMirrorsToDrain()
-        if let outcome {
-            await activeTelegramProgressReporter?.enqueue(outcome)
-        }
+        let summaryPayload: TerminalTelegramTurnPayload?
         if let fileChangeSummary,
            !fileChangeSummary.entries.isEmpty {
             let summary = Self.renderFileChangeSummary(fileChangeSummary)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !summary.isEmpty {
-                await activeTelegramProgressReporter?.enqueue(.summary(summary))
+            summaryPayload = summary.isEmpty ? nil : .summary(summary)
+        } else {
+            summaryPayload = nil
+        }
+
+        if let reporter = activeTelegramProgressReporter {
+            // Trailing content never closed by a tool call is the final
+            // response: dropping it here is what keeps `outcome` from being
+            // mirrored twice.
+            await reporter.discardPendingAgentResponse()
+            if let outcome {
+                await reporter.enqueue(outcome)
+            }
+            if let summaryPayload {
+                await reporter.enqueue(summaryPayload)
+            }
+            await reporter.flush()
+        } else if let origin = activeTelegramTurnOrigin {
+            if let outcome {
+                await sendTelegramTurnMessageIfLinked(outcome, origin: origin)
+            }
+            if let summaryPayload {
+                await sendTelegramTurnMessageIfLinked(summaryPayload, origin: origin)
             }
         }
-        await activeTelegramProgressReporter?.flush()
         endTelegramTurnProgressReporting()
     }
 }
