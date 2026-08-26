@@ -85,11 +85,14 @@ from creation — even with no skills selected — so adding or removing a skill
 updates only the provider snapshot (via `updatePromptSkillSelection`) and never
 the system prompt, allowlist, cache key, history, or remote continuation. The
 model discovers the current selection at runtime through `skills.list` and loads
-guidance through `skills.read`; revocation is non-retroactive (it blocks future
-reads but cannot erase guidance already in the conversation without sacrificing
-the continuation). A session persisted with a legacy eager/lazy skill catalog is
-normalized to the static instruction on restore, which is a one-time full replay;
-subsequent selection changes are cache-stable.
+guidance through `skills.read`. `skills.read` also accepts an optional relative
+`resource` within the selected skill; the provider resolves it under that skill's
+boundary, never exposes absolute paths, and does not require a filesystem tool.
+Revocation is non-retroactive (it blocks future reads but cannot erase guidance
+already in the conversation without sacrificing the continuation). A session
+persisted with a legacy eager/lazy skill catalog is normalized to the static
+instruction on restore, which is a one-time full replay; subsequent selection
+changes are cache-stable.
 
 Remote generation has one cross-platform transport stack. HTTP/1.1, incremental
 SSE, and ChatGPT Responses WebSockets under `Remote/Generation`, the ChatGPT

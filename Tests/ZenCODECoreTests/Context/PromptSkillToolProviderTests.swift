@@ -270,13 +270,153 @@ struct PromptSkillToolProviderTests {
         #expect(!listB.contains("release-review"))
     }
 
-    private func skill(promptBody: String) -> PromptSkill {
+    @Test
+    func readWithoutResourceRemainsCompatibleAndDoesNotRevealSourcePath() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let provider = PromptSkillSessionProvider(skills: [
+            skill(promptBody: "LEGACY-GUIDANCE", sourceDirectoryPath: root.path)
+        ])
+
+        let output = try await read(provider, arguments: #"{"identifier":"release-review"}"#)
+
+        #expect(output.contains("LEGACY-GUIDANCE"))
+        #expect(!output.contains(root.path))
+    }
+
+    @Test
+    func readResourceReturnsUTF8Content() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let resource = root.appendingPathComponent("guides/italiano.txt")
+        try FileManager.default.createDirectory(at: resource.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "Caffè ☕ — risorsa UTF-8".write(to: resource, atomically: true, encoding: .utf8)
+        let provider = PromptSkillSessionProvider(skills: [
+            skill(promptBody: "unused", sourceDirectoryPath: root.path)
+        ])
+
+        let output = try await read(provider, arguments: #"{"identifier":"release-review","resource":"guides/italiano.txt"}"#)
+
+        #expect(output.contains("Caffè ☕ — risorsa UTF-8"))
+        #expect(output.contains("resource `guides/italiano.txt`"))
+        #expect(!output.contains(root.path))
+    }
+
+    @Test
+    func readResourcePaginatesWithIdentifierResourceAndNextOffset() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let resource = root.appendingPathComponent("large.txt")
+        try "abcdefTAIL".write(to: resource, atomically: true, encoding: .utf8)
+        let provider = PromptSkillSessionProvider(skills: [
+            skill(promptBody: "unused", sourceDirectoryPath: root.path)
+        ])
+
+        let first = try await read(provider, arguments: #"{"identifier":"release-review","resource":"large.txt","offset":0,"limit":6}"#)
+        let second = try await read(provider, arguments: #"{"identifier":"release-review","resource":"large.txt","offset":6,"limit":6}"#)
+
+        #expect(first.contains("abcdef"))
+        #expect(first.contains("identifier `release-review-hash` and the same resource `large.txt`"))
+        #expect(first.contains("offset 6"))
+        #expect(!first.contains("TAIL"))
+        #expect(second.contains("TAIL"))
+        #expect(second.contains("This is the final page."))
+    }
+
+    @Test(arguments: ["/etc/passwd", "../outside.txt", "nested/../../outside.txt"])
+    func readResourceRejectsAbsolutePathsAndTraversal(resource: String) async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let provider = PromptSkillSessionProvider(skills: [
+            skill(promptBody: "unused", sourceDirectoryPath: root.path)
+        ])
+
+        let argumentsData = try JSONSerialization.data(
+            withJSONObject: ["identifier": "release-review", "resource": resource]
+        )
+        let arguments = try #require(String(data: argumentsData, encoding: .utf8))
+        await #expect(throws: PromptSkillToolProviderError.self) {
+            _ = try await self.read(provider, arguments: arguments)
+        }
+    }
+
+    @Test
+    func readResourceRejectsDirectoriesAndMissingFiles() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("directory"), withIntermediateDirectories: false)
+        let provider = PromptSkillSessionProvider(skills: [
+            skill(promptBody: "unused", sourceDirectoryPath: root.path)
+        ])
+
+        do {
+            _ = try await read(provider, arguments: #"{"identifier":"release-review","resource":"directory"}"#)
+            Issue.record("A directory must not be readable as a skill resource.")
+        } catch let error as PromptSkillToolProviderError {
+            guard case .invalidResourceFile("directory") = error else {
+                Issue.record("Unexpected directory error: \(error.localizedDescription)")
+                return
+            }
+        }
+        do {
+            _ = try await read(provider, arguments: #"{"identifier":"release-review","resource":"missing.txt"}"#)
+            Issue.record("A missing resource must fail deterministically.")
+        } catch let error as PromptSkillToolProviderError {
+            guard case .unreadableResource("missing.txt") = error else {
+                Issue.record("Unexpected missing-file error: \(error.localizedDescription)")
+                return
+            }
+        }
+    }
+
+    @Test
+    func readResourceRejectsSymlinkResolvingOutsideSkillRoot() async throws {
+        let root = try makeTemporaryDirectory()
+        let outside = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        let outsideFile = outside.appendingPathComponent("secret.txt")
+        try "SECRET".write(to: outsideFile, atomically: true, encoding: .utf8)
+        let link = root.appendingPathComponent("outside-link.txt")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outsideFile)
+        let provider = PromptSkillSessionProvider(skills: [
+            skill(promptBody: "unused", sourceDirectoryPath: root.path)
+        ])
+
+        await #expect(throws: PromptSkillToolProviderError.self) {
+            _ = try await self.read(provider, arguments: #"{"identifier":"release-review","resource":"outside-link.txt"}"#)
+        }
+    }
+
+    private func read(_ provider: PromptSkillSessionProvider, arguments: String) async throws -> String {
+        try await provider.execute(
+            toolCall: AgentToolCall(
+                id: "read-resource",
+                name: PromptSkillToolProvider.toolName,
+                argumentsJSON: arguments
+            )
+        )
+    }
+
+    private func makeTemporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ZenCODE-PromptSkillTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        return url
+    }
+
+    private func skill(
+        promptBody: String,
+        sourceDirectoryPath: String = "/tmp/skills/release-review"
+    ) -> PromptSkill {
         PromptSkill(
             canonicalName: "release-review",
             title: "Release Review",
             summary: "Review release changes before publishing.",
             promptBody: promptBody,
-            sourceDirectoryPath: "/tmp/skills/release-review",
+            sourceDirectoryPath: sourceDirectoryPath,
             sourceHash: "release-review-hash"
         )
     }

@@ -16,6 +16,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   requests, and the final Summary; it no longer mirrors tool-call activity.
 - Sub-agent overviews now keep using the configured model binding's readable title
   after a provider reports a less-specific runtime model identifier.
+- `skills.read` now accepts an optional relative `resource` within the selected
+  prompt skill, resolving it without exposing absolute paths or requiring a
+  filesystem tool.
 
 ## [2.0.0] - 2026-08-26
 

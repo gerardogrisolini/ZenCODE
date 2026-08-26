@@ -39,8 +39,8 @@ public enum PromptSkillToolProvider {
 
     public static let readToolDescriptor = DirectToolDescriptor(
         name: toolName,
-        description: "Loads one page of complete guidance for a selected prompt skill. Use the id or canonical name returned by skills.list. The tool can read only skills selected for the current session; request the next page with its nextOffset when supplied.",
-        inputSchema: #"{"type":"object","properties":{"identifier":{"type":"string","description":"Selected skill id or canonical name from skills.list."},"offset":{"type":"integer","minimum":0,"description":"Zero-based character offset in the skill guidance body. Defaults to 0."},"limit":{"type":"integer","minimum":1,"maximum":8000,"description":"Maximum body characters to return. Defaults to 6000."}},"required":["identifier"],"additionalProperties":false}"#,
+        description: "Loads one page of complete guidance or a resource for a selected prompt skill. Use the id or canonical name returned by skills.list. To read a skill resource, provide its relative path in resource. The tool can read only skills selected for the current session; request the next page with its nextOffset when supplied.",
+        inputSchema: #"{"type":"object","properties":{"identifier":{"type":"string","description":"Selected skill id or canonical name from skills.list."},"resource":{"type":"string","description":"Optional relative path to a regular file within the selected skill."},"offset":{"type":"integer","minimum":0,"description":"Zero-based character offset in the selected guidance or resource. Defaults to 0."},"limit":{"type":"integer","minimum":1,"maximum":8000,"description":"Maximum characters to return. Defaults to 6000."}},"required":["identifier"],"additionalProperties":false}"#,
         presentation: .standard(
             title: "Prompt skill",
             action: "Read",
@@ -99,6 +99,22 @@ public enum PromptSkillToolProvider {
         offset: Int,
         limit: Int
     ) throws -> String {
+        try renderedContent(
+            skill: skill,
+            body: skill.promptBody,
+            resource: nil,
+            offset: offset,
+            limit: limit
+        )
+    }
+
+    fileprivate static func renderedContent(
+        skill: PromptSkill,
+        body: String,
+        resource: String?,
+        offset: Int,
+        limit: Int
+    ) throws -> String {
         guard offset >= 0 else {
             throw PromptSkillToolProviderError.invalidOffset(offset)
         }
@@ -106,7 +122,7 @@ public enum PromptSkillToolProvider {
             throw PromptSkillToolProviderError.invalidLimit(limit)
         }
 
-        let bodyCharacters = Array(skill.promptBody)
+        let bodyCharacters = Array(body)
         guard offset < bodyCharacters.count || (offset == 0 && bodyCharacters.isEmpty) else {
             throw PromptSkillToolProviderError.offsetOutOfRange(
                 offset: offset,
@@ -118,11 +134,20 @@ public enum PromptSkillToolProvider {
         let endOffset = min(offset + effectiveLimit, bodyCharacters.count)
         let pageBody = String(bodyCharacters[offset..<endOffset])
         let nextOffset = endOffset < bodyCharacters.count ? endOffset : nil
+        let contentDescription = resource.map { "resource `\($0)`" } ?? "guidance"
+        let continuation: String
+        if let resource {
+            continuation = " using identifier `\(skill.id)` and the same resource `\(resource)`"
+        } else {
+            continuation = " using identifier `\(skill.id)`"
+        }
         let pageMetadata: String
         if let nextOffset {
-            pageMetadata = "Skill guidance characters \(offset)..<\(endOffset) of \(bodyCharacters.count). Continue with `skills.read` using identifier `\(skill.id)` and offset \(nextOffset)."
+            pageMetadata = "Skill \(contentDescription) characters \(offset)..<\(endOffset) of \(bodyCharacters.count). Continue with `skills.read`\(continuation) and offset \(nextOffset)."
+        } else if let resource {
+            pageMetadata = "Skill \(contentDescription) characters \(offset)..<\(endOffset) of \(bodyCharacters.count). This is the final page. To read it again, call `skills.read` using identifier `\(skill.id)` and the same resource `\(resource)`."
         } else {
-            pageMetadata = "Skill guidance characters \(offset)..<\(endOffset) of \(bodyCharacters.count). This is the final page."
+            pageMetadata = "Skill \(contentDescription) characters \(offset)..<\(endOffset) of \(bodyCharacters.count). This is the final page."
         }
 
         return """
@@ -166,16 +191,51 @@ public enum PromptSkillToolProvider {
         throw PromptSkillToolProviderError.skillNotSelected(identifier)
     }
 
-    private static func renderedSkillHeader(for skill: PromptSkill) -> String {
+    fileprivate static func resourceBody(
+        named resource: String,
+        for skill: PromptSkill
+    ) throws -> String {
+        guard !resource.hasPrefix("/"),
+              !resource.split(separator: "/", omittingEmptySubsequences: false).contains("..") else {
+            throw PromptSkillToolProviderError.unsafeResource(resource)
+        }
         guard let sourceDirectoryPath = skill.sourceDirectoryPath?.nilIfBlank else {
-            return "Skill: \(skill.title)"
+            throw PromptSkillToolProviderError.resourceUnavailable(resource)
         }
 
-        return """
-        Skill: \(skill.title)
-        Skill root path: \(sourceDirectoryPath)
-        Any relative file paths mentioned in this skill are relative to the skill root above, not to the task working directory. If you need to open one of those files with a local tool, keep the `references/...` or similar subpath under that skill root, or pass the absolute skill file path directly.
-        """
+        let rootURL = URL(fileURLWithPath: sourceDirectoryPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        var rootIsDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: rootURL.path, isDirectory: &rootIsDirectory),
+              rootIsDirectory.boolValue else {
+            throw PromptSkillToolProviderError.resourceUnavailable(resource)
+        }
+
+        let candidateURL = rootURL
+            .appendingPathComponent(resource)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let rootPath = rootURL.path.hasSuffix("/") ? rootURL.path : rootURL.path + "/"
+        guard candidateURL.path.hasPrefix(rootPath) else {
+            throw PromptSkillToolProviderError.unsafeResource(resource)
+        }
+
+        do {
+            let values = try candidateURL.resourceValues(forKeys: [.isRegularFileKey])
+            guard values.isRegularFile == true else {
+                throw PromptSkillToolProviderError.invalidResourceFile(resource)
+            }
+            return try String(contentsOf: candidateURL, encoding: .utf8)
+        } catch let error as PromptSkillToolProviderError {
+            throw error
+        } catch {
+            throw PromptSkillToolProviderError.unreadableResource(resource)
+        }
+    }
+
+    private static func renderedSkillHeader(for skill: PromptSkill) -> String {
+        "Skill: \(skill.title)\nRead any referenced skill file by calling `skills.read` with this identifier and its relative path in resource."
     }
 
     fileprivate static func request(from argumentsJSON: String) throws -> Request {
@@ -188,6 +248,15 @@ public enum PromptSkillToolProvider {
         guard let identifier = (arguments["identifier"] as? String)?.nilIfBlank else {
             throw PromptSkillToolProviderError.missingIdentifier
         }
+        let resource: String?
+        if let value = arguments["resource"] {
+            guard let string = (value as? String)?.nilIfBlank else {
+                throw PromptSkillToolProviderError.invalidResource
+            }
+            resource = string
+        } else {
+            resource = nil
+        }
         let offset = try integer(named: "offset", in: arguments) ?? 0
         let requestedLimit = try integer(named: "limit", in: arguments)
             ?? defaultPageCharacterLimit
@@ -199,6 +268,7 @@ public enum PromptSkillToolProvider {
         }
         return Request(
             identifier: identifier,
+            resource: resource,
             offset: offset,
             limit: min(requestedLimit, maximumPageCharacterLimit)
         )
@@ -259,6 +329,7 @@ public enum PromptSkillToolProvider {
 
     fileprivate struct Request {
         let identifier: String
+        let resource: String?
         let offset: Int
         let limit: Int
     }
@@ -310,11 +381,16 @@ public actor PromptSkillSessionProvider: Sendable {
                 matching: request.identifier,
                 in: skills
             )
-            return try PromptSkillToolProvider.renderedGuidance(
-                for: skill,
-                offset: request.offset,
-                limit: request.limit
-            )
+            if let resource = request.resource {
+                return try PromptSkillToolProvider.renderedContent(
+                    skill: skill,
+                    body: PromptSkillToolProvider.resourceBody(named: resource, for: skill),
+                    resource: resource,
+                    offset: request.offset,
+                    limit: request.limit
+                )
+            }
+            return try PromptSkillToolProvider.renderedGuidance(for: skill, offset: request.offset, limit: request.limit)
         default:
             throw DirectToolError.unknownTool(toolCall.name)
         }
@@ -327,6 +403,11 @@ public enum PromptSkillToolProviderError: LocalizedError, Sendable {
     case invalidIntegerArgument(String)
     case invalidOffset(Int)
     case invalidLimit(Int)
+    case invalidResource
+    case resourceUnavailable(String)
+    case unsafeResource(String)
+    case invalidResourceFile(String)
+    case unreadableResource(String)
     case offsetOutOfRange(offset: Int, totalCharacters: Int)
     case skillNotSelected(String)
     case ambiguousIdentifier(String, matches: [String])
@@ -343,8 +424,18 @@ public enum PromptSkillToolProviderError: LocalizedError, Sendable {
             return "skills.read requires offset to be zero or greater, not \(offset)."
         case let .invalidLimit(limit):
             return "skills.read requires limit to be greater than zero, not \(limit)."
+        case .invalidResource:
+            return "skills.read requires resource to be a non-empty relative path."
+        case let .resourceUnavailable(resource):
+            return "The selected skill does not make resource '\(resource)' available."
+        case let .unsafeResource(resource):
+            return "skills.read refuses unsafe resource path '\(resource)'."
+        case let .invalidResourceFile(resource):
+            return "skills.read resource '\(resource)' must be a regular file."
+        case let .unreadableResource(resource):
+            return "Unable to read skills.read resource '\(resource)'."
         case let .offsetOutOfRange(offset, totalCharacters):
-            return "skills.read offset \(offset) is outside the skill body of \(totalCharacters) characters."
+            return "skills.read offset \(offset) is outside the selected content of \(totalCharacters) characters."
         case let .skillNotSelected(identifier):
             return "The skill '\(identifier)' is not selected for this session."
         case let .ambiguousIdentifier(identifier, matches):
