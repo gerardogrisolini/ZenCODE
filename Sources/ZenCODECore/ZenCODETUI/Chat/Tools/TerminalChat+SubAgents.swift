@@ -536,7 +536,8 @@ extension TerminalChat {
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
         modelTitleResolver: (String) -> String
     ) -> String? {
-        guard let modelID = snapshot.modelID?.nilIfBlank else {
+        guard let modelID = snapshot.configuredModelID?.nilIfBlank
+            ?? snapshot.modelID?.nilIfBlank else {
             return nil
         }
         return subAgentMetadataText(
@@ -1083,6 +1084,7 @@ extension TerminalChat {
                 snapshot.profileName?.nilIfBlank ?? "",
                 snapshot.status.rawValue,
                 snapshot.pending ? "pending" : "idle",
+                snapshot.configuredModelID?.nilIfBlank ?? "",
                 snapshot.modelID?.nilIfBlank ?? "",
                 // The kind participates in the signature: the same text can be
                 // rendered as reasoning or as a message, and a phase change

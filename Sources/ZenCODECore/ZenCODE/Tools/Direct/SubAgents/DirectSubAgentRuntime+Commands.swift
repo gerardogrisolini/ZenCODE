@@ -267,6 +267,7 @@ extension DirectSubAgentRuntime {
                     pendingPrompts: [],
                     latestOutput: nil,
                     latestError: nil,
+                    configuredModelID: backendContext.modelID,
                     modelID: backendContext.modelID,
                     runTask: nil
                 )

@@ -2236,6 +2236,37 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func subAgentOverviewKeepsConfiguredModelTitleAfterBackendReportsGenericID() {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_configured_model",
+            name: "developer",
+            role: "Developer",
+            status: .running,
+            pending: true,
+            configuredModelID: "binding:chatgpt:gpt-5.6-terra",
+            modelID: "gpt-5.6",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let resolver: (String) -> String = { id in
+            switch id {
+            case "binding:chatgpt:gpt-5.6-terra": "GPT-5.6 Terra"
+            case "gpt-5.6": "GPT-5.6"
+            default: id
+            }
+        }
+        let rendered = ansiStripped(
+            TerminalChat.renderSubAgentOverview([snapshot], modelTitleResolver: resolver)
+        )
+
+        #expect(rendered.contains("model: GPT-5.6 Terra"))
+        #expect(!rendered.contains("model: GPT-5.6\n"))
+    }
+
+    @Test
     func subAgentOverviewStripsRemoteAPIUUIDPrefixForUnresolvableModel() {
         let rawModelID = "remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5:glm-5.2"
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(

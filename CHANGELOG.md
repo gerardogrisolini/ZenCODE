@@ -14,6 +14,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 - Telegram now exposes only root and delegated responses, Task updates, authorization
   requests, and the final Summary; it no longer mirrors tool-call activity.
+- Sub-agent overviews now keep using the configured model binding's readable title
+  after a provider reports a less-specific runtime model identifier.
 
 ## [2.0.0] - 2026-08-26
 

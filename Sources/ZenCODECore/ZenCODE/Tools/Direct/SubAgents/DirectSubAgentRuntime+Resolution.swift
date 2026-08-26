@@ -176,6 +176,7 @@ extension DirectSubAgentRuntime {
             } ?? false,
             status: agent.status,
             pending: agent.hasWorkInFlight,
+            configuredModelID: agent.configuredModelID,
             modelID: agent.modelID,
             currentActivity: agent.currentActivity,
             currentActivityKind: agent.currentActivityKind,

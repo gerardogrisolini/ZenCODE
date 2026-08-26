@@ -118,6 +118,10 @@ public actor DirectSubAgentRuntime {
         public var latestOutputRevision: UInt64 = 0
         public var accumulatedOutput: String?
         public var latestError: String?
+        /// Stable configured model reference selected for this agent. Providers
+        /// may later report a less-specific runtime model identifier, so the TUI
+        /// uses this value to retain the binding's human-readable title.
+        public let configuredModelID: String?
         public var modelID: String? = nil
         public var currentActivity: String? = nil
         /// Typed provenance of `currentActivity`; nil when there is no activity.
@@ -205,6 +209,9 @@ public actor DirectSubAgentRuntime {
         public let isInCurrentOverviewWave: Bool
         public let status: Status
         public let pending: Bool
+        /// Stable configured model reference used for presentation. `modelID`
+        /// remains the actual identifier most recently reported by the backend.
+        public let configuredModelID: String?
         public let modelID: String?
         public let currentActivity: String?
         /// Typed provenance of `currentActivity`. Presentation must branch on
@@ -235,6 +242,7 @@ public actor DirectSubAgentRuntime {
             isInCurrentOverviewWave: Bool = false,
             status: Status,
             pending: Bool,
+            configuredModelID: String? = nil,
             modelID: String? = nil,
             currentActivity: String? = nil,
             currentActivityKind: ActivityKind? = nil,
@@ -262,6 +270,7 @@ public actor DirectSubAgentRuntime {
             self.isInCurrentOverviewWave = isInCurrentOverviewWave
             self.status = status
             self.pending = pending
+            self.configuredModelID = configuredModelID?.nilIfBlank
             self.modelID = modelID
             self.currentActivity = currentActivity
             self.currentActivityKind = currentActivityKind

@@ -875,7 +875,8 @@ struct DirectSubAgentRuntimeTests {
                 "name": .string("planning-pass"),
                 "role": .string("Planner"),
                 "profile": .string("Planner"),
-                "model": .string("planner-model")
+                "model": .string("planner-model"),
+                "prompt": .string("Create the plan")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
             parentAllowedToolNames: nil
@@ -887,10 +888,12 @@ struct DirectSubAgentRuntimeTests {
         #expect(context.thinkingSelection == .high)
         #expect(await backend.createdThinkingSelection() == .high)
 
+        await runtime.waitForDirectSubAgentTestWorkLoops()
         let snapshot = try #require(await runtime.snapshots().first)
         #expect(snapshot.profileID == planner.id)
         #expect(snapshot.profileName == planner.name)
-        #expect(snapshot.modelID?.hasSuffix(":planner-model") == true)
+        #expect(snapshot.configuredModelID == context.modelID)
+        #expect(snapshot.modelID == "test-model")
         #expect(output.contains("planner-model"))
     }
 
