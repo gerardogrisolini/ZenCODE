@@ -242,10 +242,6 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             title: URL(fileURLWithPath: cwd).lastPathComponent
         )
-        // Attach the shared-chat renderer last, once the session is fully
-        // announced: the observer replays the room transcript on attach, and
-        // that replay must never precede the reply the host is waiting for.
-        await startSharedChatForwarding(sessionID: sessionID, epoch: sessionEpoch)
     }
 
     public func resolvedAllowedToolNames(
@@ -593,10 +589,6 @@ extension ZenCODEACPBridge {
                 sessionID: sessionID,
                 title: URL(fileURLWithPath: session.cwd).lastPathComponent
             )
-            // Idempotent by session id and epoch: a second `session/load` for
-            // a session that already renders shared chat must not attach a
-            // second observer and replay the room transcript again.
-            await startSharedChatForwarding(sessionID: sessionID, epoch: session.epoch)
             return
         }
 
@@ -688,10 +680,6 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             title: workingDirectory.lastPathComponent
         )
-        // Strictly after the history replay and the reply: the attach replays
-        // the shared-chat transcript, which must not be interleaved with the
-        // conversation history the host is currently rebuilding.
-        await startSharedChatForwarding(sessionID: sessionID, epoch: restoredSessionEpoch)
     }
 
     public static func sessionID(from params: [String: Any]) -> String? {

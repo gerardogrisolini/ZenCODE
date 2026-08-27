@@ -287,25 +287,27 @@ Commands start with `/`:
 ### Live Agent Chat
 
 While sub-agents are active, the coordinator and the agent instances share a
-live, transient chat room. From the terminal, address it with a leading mention:
-`@coordinator` to message the live coordinator, `@all` to reach the coordinator
-and every active agent, or a readable `@agent-name` handle (derived from each
-instance's display name) to message it directly. Autocomplete lists every active
-agent by its readable handle; routing always resolves back to the stable agent
-id behind the alias. The LLM side uses the `agent.message` tool with the same
-destinations (`direct`, `operator`, `coordinator`, `peers`, `all`); `operator`
-addresses only the human terminal operator. Every message is available in the
-terminal's transient `Chat` reader; it is not rendered as a message box in the
-main transcript. A coordinator or delegated agent already working receives the
-message in the model-facing result of its next tool call, replies immediately,
-and resumes its current work. If no further tool call occurs, a
-synthetic coordinator turn or queued agent prompt is the fallback. A
-direct turn started by the human operator normally
-replies with `agent.message(to: "operator")`; if a provider instead completes
-with ordinary final output, the runtime delivers that output to `operator`
-without involving the coordinator or duplicating an explicit chat reply. The
-chat is in-memory and never persisted; a session reset drops it. See the
-[Chat reader states](#chat-reader-states) below and [agents.md](agents.md#messages).
+live, transient chat room. From the terminal **or linked Telegram chat**, address
+it with a leading mention: `@coordinator` to message the live coordinator, `@all`
+to reach the coordinator and every active agent, or a readable `@agent-name`
+handle (derived from each instance's display name) to message it directly.
+Autocomplete in the terminal lists every active agent by its readable handle;
+routing always resolves back to the stable agent id behind the alias. Telegram
+uses the same live-room routing for its linked session, including its native
+replies to forwarded chat cards. The LLM side uses the `agent.message` tool with
+the same destinations (`direct`, `operator`, `coordinator`, `peers`, `all`);
+`operator` addresses only the human terminal operator. Every message is
+available in the terminal's transient `Chat` reader; it is not rendered as a
+message box in the main transcript. A coordinator or delegated agent already
+working receives the message in the model-facing result of its next tool call,
+replies immediately, and resumes its current work. If no further tool call
+occurs, a synthetic coordinator turn or queued agent prompt is the fallback. A
+direct turn started by the human operator normally replies with
+`agent.message(to: "operator")`; if a provider instead completes with ordinary
+final output, the runtime delivers that output to `operator` without involving
+the coordinator or duplicating an explicit chat reply. The chat is in-memory and
+never persisted; a session reset drops it. See the [Chat reader
+states](#chat-reader-states) below and [agents.md](agents.md#messages).
 
 #### Chat reader states
 
@@ -535,7 +537,9 @@ across workspaces.
 zen --acp --working-directory /path/to/project
 ```
 
-stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions, and tool exposure. `--agent`, `--model`, `--working-directory`, `--skills`, and token environment variables still apply.
+stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions,
+and tool exposure. `--agent`, `--model`, `--working-directory`, `--skills`, and
+token environment variables still apply.
 
 ## Recommended Workflow
 

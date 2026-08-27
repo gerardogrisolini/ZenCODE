@@ -24,6 +24,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Telegram now mirrors every visible intermediate and final response from both
   the main agent and sub-agents, including sub-agent `💬` blocks emitted before
   tool calls.
+### Removed
+
+- **Breaking:** Removed the projection of the live shared chat onto ACP. The
+  ACP bridge no longer attaches a shared-chat observer on `session/new`,
+  `session/load` or `session/resume`, no longer tears one down on
+  `session/close`/`shutdown`, and no longer renders `agent.message` traffic as
+  `session/update` notifications. ACP stays an ordinary prompt/response
+  channel: it keeps streaming the selected profile's own reply as standard
+  `agent_message_chunk` updates, and ACP profile selection is unchanged. The
+  live shared chat remains a terminal and Telegram surface only; its core
+  infrastructure (rooms, mentions, delivery, observers) is untouched.
 - `/plan <goal>` now always starts with a mandatory Planner brainstorming turn,
   including for simple or apparently complete requests, so the user can confirm
   or refine scope, assumptions, behavior, or acceptance criteria before the
@@ -117,10 +128,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
   off` or teardown wakes every parked producer with a refusal, so backpressure
   cannot deadlock the fence or deliver a stale card. A room swap (`/new`,
   `/resume`) or teardown retires the ledger, the
-  receipt map and the bounded outbound worker. The ACP wire is unchanged:
-  shared-chat messages keep rendering as the standard ACP v1
-  `agent_message_chunk` with no added routing fields, and an ACP host answers
-  with an ordinary prompt to the coordinator.
+  receipt map and the bounded outbound worker.
 
 ### Changed
 

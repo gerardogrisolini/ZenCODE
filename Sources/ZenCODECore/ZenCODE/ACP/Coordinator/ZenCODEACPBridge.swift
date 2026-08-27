@@ -55,28 +55,6 @@ public actor ZenCODEACPBridge {
         public let modelID: String
     }
 
-    /// One ACP session's shared-chat renderer.
-    ///
-    /// It is held outside `SessionState` on purpose: that value is rebuilt from
-    /// scratch by a snapshot refresh, by `@agent` routing and by every
-    /// reconfiguration commit, so a handle stored inside it would be dropped —
-    /// leaking the observer and silently ending the rendering — by paths that
-    /// have no reason to know about shared chat.
-    struct SharedChatForwarder {
-        /// Incarnation this renderer belongs to. A reservation whose epoch no
-        /// longer matches is stale and is never published or reused.
-        let epoch: UInt64
-        /// `nil` while the attach is still suspended. The reservation is
-        /// published before that suspension, which is what makes a second
-        /// `start` for the same session a no-op instead of a second observer.
-        /// The task owns completion of the attach and detaches the observation
-        /// itself if teardown removed this reservation while it was suspended.
-        let attachTask: Task<Void, Never>
-        /// The published value also carries the room this renderer observes.
-        var observation: AgentSharedChatCoordinator.Observation?
-        var task: Task<Void, Never>?
-    }
-
     /// Identifies the session incarnation a lifecycle operation acts on, so a
     /// `session/close` can invalidate that operation without touching lifecycle
     /// work belonging to other sessions or to a newer incarnation.
@@ -90,13 +68,6 @@ public actor ZenCODEACPBridge {
     public let permissionBroker: ACPPermissionBroker
     public let sessionRunner: AgentCoreSessionRunner
     public var sessions: [String: SessionState] = [:]
-    /// Shared-chat renderers by session id, one per live incarnation. Keyed
-    /// separately from `sessions` so no session rebuild can drop a live
-    /// observer; the epoch inside each entry is what binds it to its session.
-    var sharedChatForwarders: [String: SharedChatForwarder] = [:]
-    /// Test seam that can park an attach after its reservation was published.
-    /// It is intentionally internal: production leaves it `nil`.
-    var sharedChatAttachBarrier: (@Sendable () async -> Void)?
     private var sessionSleepAssertion: ZenSleepAssertion?
     private var nextSessionEpochValue: UInt64 = 1
     /// Latches on `shutdown()` so late prompt completions and new requests
@@ -183,15 +154,6 @@ public actor ZenCODEACPBridge {
         for waiter in drainWaiters.flatMap(\.value) {
             waiter.continuation.resume()
         }
-        // Take the renderers and cancel them synchronously too. Awaiting their
-        // quiescence here would suspend *before* the writer fence below, which
-        // is exactly the window in which a late request still observes live
-        // sessions; the wait therefore happens after the transport is closed.
-        let forwarders = Array(sharedChatForwarders.values)
-        sharedChatForwarders.removeAll()
-        for forwarder in forwarders {
-            forwarder.task?.cancel()
-        }
         // No snapshot refresh here: the fence above already makes every
         // `refreshSessionStateIfAvailable` a no-op, and `sessions` is dropped
         // immediately below, so awaiting the runner would only widen the
@@ -205,12 +167,6 @@ public actor ZenCODEACPBridge {
         // shutdown" true regardless of where in-flight work was parked.
         await writer.close()
         await permissionBroker.removeAllCachedDecisions()
-        // Only now wait for the renderers to stop and release their observers.
-        // Every write they could still attempt is already fenced by the closed
-        // writer, so this await cannot widen the shutdown window.
-        for forwarder in forwarders {
-            await finishSharedChatForwarding(forwarder)
-        }
         await sessionRunner.shutdown()
     }
 

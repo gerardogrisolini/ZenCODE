@@ -129,22 +129,22 @@ Three participant kinds share the room:
 | `peers` | Every other active delegated agent, never the sender. |
 | `all` | The human terminal operator, coordinator, and every active delegated agent except the sender. |
 
-From the terminal the operator addresses the room with a leading mention:
-`@coordinator`, `@all`, or a readable `@agent-name` handle derived from each
-active instance's display name by an actor-isolated catalogue. The handle is a
-presentation alias: routing always resolves back to the stable participant id,
-so it survives duplicate or renamed agents. Aliases are never recycled within a
-session, and duplicate names are disambiguated with a numeric suffix
-(`@worker`, `@worker-2`). `@all` and `@coordinator` are reserved for the whole
-session, so an agent that collides with either name is offered as `@all-2` or
-`@coordinator-2` and routes to that agent — the bare broadcast spellings can
-never be captured. A name that yields no readable slug (Unicode-only, bidi-only
-or punctuation-only) falls back to the stable handle `@agent` (with numeric
-suffixes for further collisions); internal ids and UUIDs are never shown. The
-legacy `@agent-Base64` spelling remains accepted for backward compatibility but
-is never offered by the autocomplete list. A recognised mention without a
-message body is rejected as invalid input rather than queued behind a running
-generation.
+From the terminal or linked Telegram chat the operator addresses the live room
+with a leading mention: `@coordinator`, `@all`, or a readable `@agent-name`
+handle derived from each active instance's display name by an actor-isolated
+catalogue. The handle is a presentation alias: routing always resolves back to
+the stable participant id, so it survives duplicate or renamed agents. Aliases
+are never recycled within a session, and duplicate names are disambiguated with
+a numeric suffix (`@worker`, `@worker-2`). `@all` and `@coordinator` are
+reserved for the whole session, so an agent that collides with either name is
+offered as `@all-2` or `@coordinator-2` and routes to that agent — the bare
+broadcast spellings can never be captured. A name that yields no readable slug
+(Unicode-only, bidi-only or punctuation-only) falls back to the stable handle
+`@agent` (with numeric suffixes for further collisions); internal ids and UUIDs
+are never shown. The legacy `@agent-Base64` spelling remains accepted for
+backward compatibility but is never offered by the autocomplete list. A
+recognised mention without a message body is rejected as invalid input rather
+than queued behind a running generation.
 
 Replies travel back through the same chat. Any message injected into a
 coordinator or agent turn instructs the recipient to answer through

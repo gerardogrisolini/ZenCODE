@@ -574,10 +574,6 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             tokens: promptHandlersToDrain
         )
-        // Wait for the shared-chat renderer to go quiet before answering: after
-        // this returns no further `session/update` can be emitted for a session
-        // the host is closing.
-        await stopSharedChatForwarding(sessionID: sessionID)
         // `AgentCoreSessionRunner` currently keys its state by session id, not
         // ACP incarnation. If a `session/load` recreated this id while the old
         // prompt wrapper was draining, closing the runner now would cancel the
@@ -592,9 +588,6 @@ extension ZenCODEACPBridge {
            resurrected.epoch == closedSession?.epoch {
             sessions.removeValue(forKey: sessionID)
             updateSessionSleepAssertion()
-            // A renderer attached for that resurrected entry would outlive its
-            // session, so it is torn down with it.
-            await stopSharedChatForwarding(sessionID: sessionID)
         }
         // `closeSession` suspends: a shutdown landing there already failed all
         // pending requests, so do not write a late reply.
