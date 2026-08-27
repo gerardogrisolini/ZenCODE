@@ -96,6 +96,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Long source lines in tool-rendered file changes now wrap within their existing
   single or side-by-side columns instead of being truncated, preserving line
   gutters, alignment, and colors, including when writing a new file.
+- Wrapped side-by-side diff continuations now retain their code-area background
+  through the added-cell padding and to the physical row edge.
 - Telegram now exposes only root and delegated responses, Task updates, authorization
   requests, and the final Summary; it no longer mirrors tool-call activity.
 - Sub-agent overviews now keep using the configured model binding's readable title
@@ -181,6 +183,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- In app mode, the custom `_zencode/usage/subscription` notification of a
+  turn can no longer overtake content the same turn had already produced and
+  was still buffered: the buffer is drained first, and a buffered
+  `usage_update` is emitted only after any text produced before it, so the wire
+  order keeps matching the production order. This is an ordering guarantee for
+  already-produced content, not a promise that the reply always precedes every
+  notification. The wire format and API are unchanged.
 - `agent.wait` now redraws and continuously refreshes the live Sub-Agents section
   even when the agent snapshot is unchanged when the wait begins, instead of
   showing only the blocking tool row until completion.

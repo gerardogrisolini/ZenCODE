@@ -98,7 +98,7 @@ public final class TerminalChat {
     var onSubAgentOverviewTick: (@Sendable () async -> Void)?
     public var availableSkillsCache: [PromptSkill]?
     let renderCoordinator: TerminalChatRenderCoordinator
-    public let telegramControlService = TerminalTelegramControlService()
+    public let telegramControlService: TerminalTelegramControlService
     let telegramPermissionBroker = TerminalTelegramPermissionBroker()
     public var telegramControlState = TerminalTelegramControlState.inactive()
     public var telegramLinkedChatID: Int64?
@@ -169,12 +169,33 @@ public final class TerminalChat {
 
     public let statusBar: TerminalStatusBar
 
-    public init(
+    public convenience init(
         configuration: AgentConfiguration,
         stdinIsTerminal: Bool,
         sessionRunner: AgentCoreSessionRunner? = nil,
         permissionAuthorizer: LocalExecPermissionAuthorizer? = nil,
         runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot? = nil
+    ) {
+        self.init(
+            configuration: configuration,
+            stdinIsTerminal: stdinIsTerminal,
+            sessionRunner: sessionRunner,
+            permissionAuthorizer: permissionAuthorizer,
+            runtimeSetupResumeSnapshot: runtimeSetupResumeSnapshot,
+            telegramTransportFactory: nil
+        )
+    }
+
+    /// Internal seam: lets a test drive the production Telegram transport
+    /// stack (polling, filtering, sending) through a fake HTTP transport while
+    /// every other subsystem stays the real one.
+    init(
+        configuration: AgentConfiguration,
+        stdinIsTerminal: Bool,
+        sessionRunner: AgentCoreSessionRunner? = nil,
+        permissionAuthorizer: LocalExecPermissionAuthorizer? = nil,
+        runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot? = nil,
+        telegramTransportFactory: (@Sendable () -> any TelegramHTTPTransport)?
     ) {
         self.configuration = configuration
         self.stdinIsTerminal = stdinIsTerminal
@@ -195,6 +216,9 @@ public final class TerminalChat {
         )
         self.selectedAgent = configuration.selectedAgent
         self.manualModelIDOverride = configuration.modelID
+        self.telegramControlService = TerminalTelegramControlService(
+            transportFactory: telegramTransportFactory ?? { NIOTelegramHTTPTransport() }
+        )
     }
 
     deinit {

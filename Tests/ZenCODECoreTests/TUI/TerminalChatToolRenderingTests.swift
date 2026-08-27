@@ -151,6 +151,34 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
+    func wrappedSideBySideAddedCellKeepsCodeBackgroundThroughPadding() {
+        let comment = "// " + String(repeating: "added payload ", count: 12)
+        let rows = TerminalChat.safelyWrappedDetailedToolRows(
+            TerminalChat.numberedDiffSnippetRows(
+                old: "",
+                new: comment,
+                contentWidth: 80
+            ),
+            contentInsetWidth: 0,
+            columnWidth: 80,
+            codeLanguage: "swift"
+        )
+        let renderedContinuation = try! #require(
+            rows
+                .dropFirst(2)
+                .map { TerminalChat.renderDetailedToolRow($0, codeLanguage: "swift") }
+                .last { TerminalANSIText.stripANSI($0).contains("added payload") }
+        )
+
+        #expect(
+            renderedContinuation.contains(
+                "\u{1B}[0m\(TerminalChat.codeAreaBackgroundColor)\(TerminalChat.codeAreaBackgroundColor) "
+            )
+        )
+        #expect(renderedContinuation.hasSuffix("\(TerminalChat.codeAreaBackgroundColor)\u{1B}[K"))
+    }
+
+    @Test
     func newFileWriteWrapsLongSourceLinesWithoutTruncatingContent() {
         let content = String(repeating: "newFilePayload", count: 12)
         let toolCall = presentedToolCall(

@@ -721,8 +721,16 @@ extension TerminalChat {
             let newFragment = index < newFragments.count ? newFragments[index] : ""
             return .diff(DetailedToolDiffCells(
                 indentation: cells.indentation,
-                oldCell: paddedToColumnWidth(oldFragment, width: columnWidth),
-                newCell: paddedToColumnWidth(newFragment, width: columnWidth),
+                oldCell: paddedToColumnWidth(
+                    oldFragment,
+                    width: columnWidth,
+                    paddingStyle: codeLanguage == nil ? "" : codeAreaBackgroundColor
+                ),
+                newCell: paddedToColumnWidth(
+                    newFragment,
+                    width: columnWidth,
+                    paddingStyle: codeLanguage == nil ? "" : codeAreaBackgroundColor
+                ),
                 cellsArePreHighlighted: codeLanguage != nil
             ))
         }
@@ -773,9 +781,14 @@ extension TerminalChat {
 
     private nonisolated static func paddedToColumnWidth(
         _ text: String,
-        width: Int
+        width: Int,
+        paddingStyle: String = ""
     ) -> String {
-        text + String(repeating: " ", count: max(0, width - displayWidth(text)))
+        let padding = max(0, width - displayWidth(text))
+        guard padding > 0 else {
+            return text
+        }
+        return "\(text)\(paddingStyle)\(String(repeating: " ", count: padding))"
     }
 
     nonisolated static func compactToolInlineTarget(_ target: String) -> String {
@@ -978,7 +991,7 @@ extension TerminalChat {
             + renderDiffCellFragment(oldCell, language: language)
             + "\(codeAreaBackgroundColor)\(divider)"
             + renderDiffCellFragment(newCell, language: language)
-            + clearToEnd
+            + "\(codeAreaBackgroundColor)\(clearToEnd)"
     }
 
     /// Renders one stacked unified-diff line inside the same framed code area

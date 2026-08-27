@@ -1134,14 +1134,15 @@ extension TerminalChat {
                 )
                 await refreshSharedChatPanelSuggestions()
             case let .telegramMessage(message):
-                await handleTelegramMessage(
+                await handleTelegramRuntimeMessage(
                     message,
-                    queuedPrompts: &queuedPrompts,
                     eventQueue: eventQueue,
+                    queuedPrompts: &queuedPrompts,
                     transcriptions: remoteTranscriptions
-                )
-                await refreshQueuedPromptCount()
-                scheduleQueuedPromptIfNeeded()
+                ) {
+                    await refreshQueuedPromptCount()
+                    scheduleQueuedPromptIfNeeded()
+                }
             case let .voicePromptCompleted(result):
                 switch result.outcome {
                 case let .success(prompt):

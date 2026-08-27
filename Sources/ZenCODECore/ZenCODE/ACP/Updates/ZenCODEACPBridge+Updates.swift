@@ -95,8 +95,10 @@ extension ZenCODEACPBridge {
     /// Subscription telemetry data for the custom `_zencode/usage/subscription`
     /// notification. Unlike token context-window updates, subscription usage is
     /// not a schema-valid ACP `usage_update` (it has no `used`/`size` fields), so
-    /// it is sent as a namespaced custom notification that bypasses the prompt
-    /// update buffer entirely.
+    /// it is sent as a namespaced custom notification that is not routed through
+    /// the prompt update buffer. The prompt path enqueues a buffer flush ahead of
+    /// the notification in the same serialized pipeline, so the bypass cannot
+    /// reorder the notification ahead of content the turn already produced.
     public static func subscriptionUsageData(
         for status: DirectAgentSubscriptionUsageStatus
     ) -> [String: Any]? {

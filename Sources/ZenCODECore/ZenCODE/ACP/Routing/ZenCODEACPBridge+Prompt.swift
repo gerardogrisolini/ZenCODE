@@ -222,7 +222,18 @@ extension ZenCODEACPBridge {
 
         let writer = self.writer
         let appMode = configuration.appMode
-        let updateBuffer = appMode ? ACPPromptUpdateBuffer() : nil
+        // Single serialized exit point for app-mode prompt updates. Overlapping
+        // `@Sendable` callbacks must not interleave buffer drains with writer
+        // calls, or a later notification could overtake content an earlier
+        // callback had already claimed; the pipeline chains every unit so the
+        // wire order equals the enqueue order.
+        let updatePipeline = appMode
+            ? ACPPromptUpdatePipeline(
+                sessionID: sessionID,
+                writer: writer,
+                buffer: ACPPromptUpdateBuffer()
+            )
+            : nil
         let sessionRunner = self.sessionRunner
         // ACP locations must be absolute. Relative tool arguments are resolved
         // by the tools against the session workspace, not against the agent
@@ -230,13 +241,11 @@ extension ZenCODEACPBridge {
         let workspaceURL = URL(fileURLWithPath: session.cwd)
 
         @Sendable func sendPromptUpdate(_ update: JSONValue) async {
-            if let updateBuffer {
-                for bufferedUpdate in updateBuffer.consume(update) {
-                    await writer.sendSessionUpdate(
-                        sessionID: sessionID,
-                        update: bufferedUpdate
-                    )
-                }
+            if let updatePipeline {
+                // Awaiting the unit's own task preserves the producer's
+                // backpressure (the turn does not advance until the update has
+                // actually been written) while the chain fixes the wire order.
+                await updatePipeline.enqueue(.init(kind: .consume(update))).value
             } else {
                 await writer.sendSessionUpdate(
                     sessionID: sessionID,
@@ -245,16 +254,11 @@ extension ZenCODEACPBridge {
             }
         }
 
-        func flushPromptUpdates() async {
-            guard let updateBuffer else {
+        @Sendable func flushPromptUpdates() async {
+            guard let updatePipeline else {
                 return
             }
-            for update in updateBuffer.flushAll() {
-                await writer.sendSessionUpdate(
-                    sessionID: sessionID,
-                    update: update
-                )
-            }
+            await updatePipeline.enqueue(.init(kind: .flush)).value
         }
 
         // The session may have been closed, replaced, or shut down while the
@@ -313,13 +317,31 @@ extension ZenCODEACPBridge {
                         }
                     case let .subscriptionUsage(status):
                         if let subscriptionData = Self.subscriptionUsageJSONData(for: status) {
-                            await writer.sendCustomNotification(
-                                method: "_zencode/usage/subscription",
-                                params: .object([
-                                    "sessionId": .string(sessionID),
-                                    "subscription": subscriptionData
-                                ])
-                            )
+                            // The custom notification bypasses the buffer. In app
+                            // mode it must share the serialized exit point with
+                            // updates, as a flush-then-notify unit; outside app
+                            // mode there is no buffer and it goes straight out.
+                            if let updatePipeline {
+                                await updatePipeline.enqueue(
+                                    .init(
+                                        kind: .flushThenNotify(
+                                            method: "_zencode/usage/subscription",
+                                            params: .object([
+                                                "sessionId": .string(sessionID),
+                                                "subscription": subscriptionData
+                                            ])
+                                        )
+                                    )
+                                ).value
+                            } else {
+                                await writer.sendCustomNotification(
+                                    method: "_zencode/usage/subscription",
+                                    params: .object([
+                                        "sessionId": .string(sessionID),
+                                        "subscription": subscriptionData
+                                    ])
+                                )
+                            }
                         }
                     case let .content(content):
                         if !commandPurpose.suppressesCoordinatorContent {

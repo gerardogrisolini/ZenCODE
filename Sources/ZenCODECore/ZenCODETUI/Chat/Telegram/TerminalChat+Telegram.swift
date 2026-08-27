@@ -112,6 +112,39 @@ extension TerminalChat {
         }
     }
 
+    /// Single production entry point for one Telegram message that the runtime
+    /// loop dequeued. Interactive and non-interactive consumers dispatch
+    /// through this method so ingress filtering, prompt routing and queued
+    /// prompt admission are exercised identically by the TUI loop and by any
+    /// other runtime that consumes the same event queue.
+    ///
+    /// `onPromptQueued` runs when this message actually queued a prompt, while
+    /// the consumer's serialized context is still held: the interactive loop
+    /// refreshes its counter and schedules the queued-prompt event there, while
+    /// a non-interactive runtime can dequeue and start the turn directly.
+    /// The queued prompt itself is never removed here; admission of queued
+    /// prompts stays with the consumer, exactly as `startNextQueuedPrompt`
+    /// does for the interactive loop.
+    func handleTelegramRuntimeMessage(
+        _ message: TerminalTelegramIncomingMessage,
+        eventQueue: TerminalChatEventQueue,
+        queuedPrompts: inout TerminalQueuedPromptBuffer,
+        transcriptions: TerminalVoiceTranscriptionRegistry,
+        onPromptQueued: () async -> Void = {}
+    ) async {
+        let countBefore = queuedPrompts.count
+        await handleTelegramMessage(
+            message,
+            queuedPrompts: &queuedPrompts,
+            eventQueue: eventQueue,
+            transcriptions: transcriptions
+        )
+        guard queuedPrompts.count > countBefore else {
+            return
+        }
+        await onPromptQueued()
+    }
+
     func handleTelegramMessage(
         _ message: TerminalTelegramIncomingMessage,
         queuedPrompts: inout TerminalQueuedPromptBuffer,

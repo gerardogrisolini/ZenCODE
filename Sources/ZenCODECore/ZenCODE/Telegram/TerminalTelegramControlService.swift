@@ -134,7 +134,7 @@ public actor TerminalTelegramPairingService {
                 }
 
                 guard Self.pairingCode(in: text) == expectedCode else {
-                    try? await client.sendMessage(
+                    try await client.sendMessage(
                         "ZenCODE setup is waiting for the pairing code shown in the terminal.",
                         to: message.chat.id
                     )
@@ -142,14 +142,14 @@ public actor TerminalTelegramPairingService {
                 }
 
                 guard Self.allowsPairing(chatType: message.chat.type) else {
-                    try? await client.sendMessage(
+                    try await client.sendMessage(
                         "For security, ZenCODE can only be linked from a private Telegram chat.",
                         to: message.chat.id
                     )
                     continue
                 }
 
-                try? await client.sendMessage(
+                try await client.sendMessage(
                     "Telegram linked to ZenCODE.",
                     to: message.chat.id
                 )
@@ -197,6 +197,10 @@ public actor TerminalTelegramPairingService {
 
 public actor TerminalTelegramControlService {
     public static let incomingMessageBufferLimit = 64
+    /// Injectable transport factory so a test can drive the production polling,
+    /// filtering and sending path through a fake HTTP transport. Production
+    /// keeps the shared NIO engine.
+    let transportFactory: @Sendable () -> any TelegramHTTPTransport
     public nonisolated let incomingMessages: AsyncStream<TerminalTelegramIncomingMessage>
 
     private let incomingContinuation: AsyncStream<TerminalTelegramIncomingMessage>.Continuation
@@ -214,6 +218,11 @@ public actor TerminalTelegramControlService {
     private var pollingGeneration = 0
 
     public init() {
+        self.init(transportFactory: { NIOTelegramHTTPTransport() })
+    }
+
+    init(transportFactory: @escaping @Sendable () -> any TelegramHTTPTransport) {
+        self.transportFactory = transportFactory
         var continuation: AsyncStream<TerminalTelegramIncomingMessage>.Continuation!
         incomingMessages = AsyncStream(bufferingPolicy: .bufferingNewest(Self.incomingMessageBufferLimit)) {
             streamContinuation in
@@ -238,7 +247,10 @@ public actor TerminalTelegramControlService {
     public func start() async throws -> TerminalTelegramControlState {
         let settings = try telegramSettings()
         let token = try telegramToken(from: settings)
-        let client = TerminalTelegramAPIClient(token: token)
+        let client = TerminalTelegramAPIClient(
+            token: token,
+            transport: transportFactory()
+        )
 
         // Bump the generation to invalidate any previous start()/stop(): an
         // in-flight `start()` still suspended below will see the new generation
@@ -330,7 +342,10 @@ public actor TerminalTelegramControlService {
             throw TerminalTelegramControlError.emptyMessage
         }
 
-        let client = TerminalTelegramAPIClient(token: token)
+        let client = TerminalTelegramAPIClient(
+            token: token,
+            transport: transportFactory()
+        )
         do {
             try await client.sendMessage(trimmed, to: chatID, parseMode: "Markdown")
         } catch is CancellationError {
@@ -363,7 +378,10 @@ public actor TerminalTelegramControlService {
         guard !trimmed.isEmpty else {
             throw TerminalTelegramControlError.emptyMessage
         }
-        let messageID = try await TerminalTelegramAPIClient(token: token)
+        let messageID = try await TerminalTelegramAPIClient(
+            token: token,
+            transport: transportFactory()
+        )
             .sendMessage(trimmed, to: chatID)
         state.lastError = nil
         return messageID
@@ -380,7 +398,10 @@ public actor TerminalTelegramControlService {
         }
         let settings = try telegramSettings()
         let token = try telegramToken(from: settings)
-        let downloadedFile = try await TerminalTelegramAPIClient(token: token)
+        let downloadedFile = try await TerminalTelegramAPIClient(
+            token: token,
+            transport: transportFactory()
+        )
             .downloadFile(fileID: voice.fileID)
         let temporaryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ZenCODE-telegram-voice-\(UUID().uuidString)")
