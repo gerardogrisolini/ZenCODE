@@ -10,6 +10,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- The Git summary in the terminal statusbar now refreshes as soon as a delegated
+  sub-agent completes a file-mutation tool, instead of waiting for the whole
+  sub-agent run to finish.
+
 ### Added
 
 - All live shared-chat messages (`agent.message`) from the active room are now

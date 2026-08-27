@@ -951,6 +951,42 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func completedSubAgentFileMutationRequestsGitStatusRefresh() {
+        let mutation = DirectAgentToolCall(
+            id: "mutation",
+            name: "local.editFile",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        let read = DirectAgentToolCall(
+            id: "read",
+            name: "local.readFile",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        let result = DirectAgentToolResult(output: "Updated", summary: "Updated")
+
+        #expect(!TerminalChat.shouldRefreshGitStatus(for: DirectSubAgentToolEvent(
+            agentID: "worker",
+            agentName: "worker",
+            toolCall: mutation,
+            lifecycle: .started
+        )))
+        #expect(TerminalChat.shouldRefreshGitStatus(for: DirectSubAgentToolEvent(
+            agentID: "worker",
+            agentName: "worker",
+            toolCall: mutation,
+            lifecycle: .completed(result)
+        )))
+        #expect(!TerminalChat.shouldRefreshGitStatus(for: DirectSubAgentToolEvent(
+            agentID: "worker",
+            agentName: "worker",
+            toolCall: read,
+            lifecycle: .completed(result)
+        )))
+    }
+
+    @Test
     func statusBarVisibleCharacterCountIgnoresANSISequences() {
         let colored = "git \u{1B}[38;5;114m+12\u{1B}[0m \u{1B}[38;5;203m-4\u{1B}[0m"
 

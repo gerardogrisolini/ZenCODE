@@ -18,6 +18,15 @@ extension TerminalChat {
         await refreshStatusBarGitStatusSummary()
     }
 
+    nonisolated static func shouldRefreshGitStatus(
+        for event: DirectSubAgentToolEvent
+    ) -> Bool {
+        guard case .completed = event.lifecycle else {
+            return false
+        }
+        return isFileMutationTool(event.toolCall.name)
+    }
+
     /// Refreshes the statusbar git summary when a delegated sub-agent reaches a
     /// terminal state, so files modified by the sub-agent become visible without
     /// waiting for a coordinator-side file-mutation tool call. Each completion

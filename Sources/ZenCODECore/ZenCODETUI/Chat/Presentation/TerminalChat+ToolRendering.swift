@@ -242,6 +242,9 @@ extension TerminalChat {
 
     func writeSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
         await renderCoordinator.recordSubAgentToolEvent(event)
+        if Self.shouldRefreshGitStatus(for: event) {
+            await refreshStatusBarGitStatusSummaryForFileMutation()
+        }
         await renderSubAgentOverview(force: false)
     }
 
