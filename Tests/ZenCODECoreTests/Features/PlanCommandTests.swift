@@ -1208,6 +1208,12 @@ struct PlanCommandTests {
             planner: planner
         )
 
+        #expect(prompt.contains("The first Planner turn is always a brainstorming turn"))
+        #expect(prompt.contains("even when the request is simple"))
+        #expect(prompt.contains("at least one focused numbered question"))
+        #expect(prompt.contains("returns a final plan instead"))
+        #expect(prompt.contains("replace it with the mandatory focused question block"))
+        #expect(!prompt.contains("skips artificial questions"))
         #expect(prompt.contains("concise, self-contained functional analysis"))
         #expect(prompt.contains("only that plan and the workspace"))
         #expect(prompt.contains("self-contained as a specification"))

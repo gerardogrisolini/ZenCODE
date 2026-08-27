@@ -286,14 +286,16 @@ enum PlanningCommandKernel {
         must not edit files or run mutating commands.
         - Give that Planner the complete requested goal and every relevant constraint from the \
         conversation. Explicitly tell it that it, not the current coordinator, must inspect the \
-        workspace as needed before deciding whether clarification is necessary.
-        - The Planner must first analyze implications it can resolve from the conversation and \
-        workspace. It asks only for material decisions that cannot be derived reliably.
-        - If decisions are missing, the Planner returns one block headed exactly "Planner questions" \
-        with complete numbered questions. When useful it states impact and a recommended choice. \
-        It returns no plan in that turn, and you must not call todo.write.
-        - If the request is already sufficiently defined, the Planner skips artificial questions and \
-        immediately returns the final plan.
+        workspace as needed before formulating its mandatory initial brainstorming question.
+        - The first Planner turn is always a brainstorming turn, even when the request is simple, \
+        apparently complete, or already sufficiently defined. It must return exactly one block headed \
+        "Planner questions" with at least one focused numbered question that lets the user confirm or \
+        refine scope, assumptions, behavior, or acceptance criteria. It returns no plan in that turn, \
+        and you must not call todo.write.
+        - The Planner must first analyze implications it can resolve from the conversation and workspace, \
+        so its mandatory question is specific and useful rather than a generic request for more detail. \
+        After the user's first reply, it asks further questions only for material decisions that cannot \
+        be derived reliably.
         - A final plan starts with "Specifiche concordate" and includes pertinent scope, non-goals, \
         decisions, and acceptance criteria. It then contains an ordered, numbered \
         "Implementation plan" usable by an implementer who has only that plan and the workspace.
@@ -321,6 +323,9 @@ enum PlanningCommandKernel {
 
         After delegating:
         - Wait for the Planner with agent.wait.
+        - The initial turn is valid only when the Planner returns the mandatory "Planner questions" \
+        block. If it returns a final plan instead, use agent.message to require the same Planner to \
+        replace it with the mandatory focused question block, then wait again.
         - If output is failed, empty, or malformed, ask that same Planner to correct it with agent.message and wait again.
         - If the Planner reports questions, return its latest output verbatim and do not call todo.write.
         - If the Planner reports a final plan, call todo.write once with mode "upsert" and one pending item \

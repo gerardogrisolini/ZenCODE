@@ -12,6 +12,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- `/plan <goal>` now always starts with a mandatory Planner brainstorming turn,
+  including for simple or apparently complete requests, so the user can confirm
+  or refine scope, assumptions, behavior, or acceptance criteria before the
+  final plan is produced.
 - The Git summary in the terminal statusbar now refreshes as soon as a delegated
   sub-agent completes a file-mutation tool, instead of waiting for the whole
   sub-agent run to finish.
