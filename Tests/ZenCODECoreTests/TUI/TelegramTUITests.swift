@@ -303,7 +303,11 @@ struct TelegramTUITests {
             Issue.record("Telegram /goal should create a workflow and use its hidden prompt")
             return
         }
-        #expect(goalPurpose == .workflow(originalGoal: "implement parity"))
+        let goalGraphID = try #require(terminal.activeWorkflow?.graphID)
+        #expect(goalPurpose == .workflow(
+            originalGoal: "implement parity",
+            graphID: goalGraphID
+        ))
         #expect(goalPrompt.contains("Goal: implement parity"))
 
         guard case let .runHiddenPrompt(reviewPrompt, reviewPurpose) =
@@ -314,6 +318,64 @@ struct TelegramTUITests {
         #expect(reviewPurpose == .review)
         #expect(reviewPrompt.contains("Review focus requested by the user: focus on routing"))
         #expect(reviewPrompt.contains("role \"Reviewer\""))
+    }
+
+    @Test
+    func telegramRepliesContinueAnOpenWorkflowOnTheSameGraph() async throws {
+        let configuration = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: URL(
+                fileURLWithPath: "/tmp/ZenCODE-telegram-workflow",
+                isDirectory: true
+            )
+        )
+        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false)
+        terminal.selectedToolKeys.insert("sub-agents")
+
+        guard case .runHiddenPrompt = await terminal.submittedTelegramLineAction(
+            "/goal implement parity"
+        ) else {
+            Issue.record("Telegram /goal should create a workflow and use its hidden prompt")
+            return
+        }
+        let graphID = try #require(terminal.activeWorkflow?.graphID)
+
+        // Nothing is armed yet: an ordinary Telegram message stays ordinary.
+        guard case .runPrompt = await terminal.submittedTelegramLineAction("unrelated") else {
+            Issue.record("Telegram must not capture messages before the workflow asks")
+            return
+        }
+
+        await terminal.recordWorkflowTurnOutcome(
+            graphID: graphID,
+            coordinatorMessage: "Workflow question\nWhich surface should I cover first?"
+        )
+        #expect(terminal.activeWorkflow?.isAwaitingReply == true)
+
+        guard case let .runHiddenPrompt(prompt, purpose) =
+            await terminal.submittedTelegramLineAction("Start with Telegram") else {
+            Issue.record("a Telegram reply should continue the open workflow")
+            return
+        }
+        #expect(purpose == .workflow(originalGoal: "implement parity", graphID: graphID))
+        #expect(prompt.contains("Active workflow task graph: \(graphID)"))
+        #expect(prompt.contains("Start with Telegram"))
+        #expect(terminal.activeWorkflow?.isAwaitingReply == false)
+
+        // A slash command still takes precedence over the continuation.
+        await terminal.recordWorkflowTurnOutcome(
+            graphID: graphID,
+            coordinatorMessage: "Workflow question\nAnything else?"
+        )
+        guard case .continueChat = await terminal.submittedTelegramLineAction("/status") else {
+            Issue.record("Telegram commands must keep precedence over the workflow reply")
+            return
+        }
+        #expect(terminal.activeWorkflow?.isAwaitingReply == true)
+        #expect(terminal.telegramRemoteHelpText().contains(
+            "While /goal is waiting for an answer"
+        ))
     }
 
     @Test

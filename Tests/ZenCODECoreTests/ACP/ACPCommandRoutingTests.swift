@@ -116,6 +116,26 @@ private actor ScriptedACPCommandBackend: AgentRuntimeBackend {
     ) async throws -> DirectAgentResponse {
         turn += 1
         prompts.append(prompt)
+        // Workflow prompts are recognised by content, so `/goal` behaves the
+        // same regardless of how many planning turns preceded it.
+        if prompt.contains("Continue the delegated workflow") {
+            await onEvent(.content("WORKFLOW CONTINUED"))
+            return DirectAgentResponse(
+                text: "WORKFLOW CONTINUED",
+                stopReason: "end_turn",
+                modelID: "workflow-model"
+            )
+        }
+        if prompt.contains("You are the coordinator of a delegated workflow") {
+            // The `/goal` coordinator uses the explicit clarification protocol.
+            let workflowQuestion = "Workflow question\n1. Which surface should I cover first?"
+            await onEvent(.content(workflowQuestion))
+            return DirectAgentResponse(
+                text: workflowQuestion,
+                stopReason: "end_turn",
+                modelID: "workflow-model"
+            )
+        }
         switch turn {
         case 1:
             let question = "# Planner questions\n1. Keep the discussion only in runtime memory?"
@@ -484,6 +504,113 @@ struct ACPCommandRoutingTests {
             sessionID: fixture.sessionID
         ).brainstorming == nil)
         #expect(await fixture.backend.closedIDs() == ["acp-plan-author"])
+    }
+
+    @Test
+    func acpRepliesContinueAnOpenWorkflowOnTheSameGraphOnlyWhenItAsked() async throws {
+        let fixture = try await makeFixture(sessionID: "acp-workflow-continuation")
+        let bridge = fixture.bridge
+        let sessionID = fixture.sessionID
+
+        try await bridge.prompt(id: .number(1), params: [
+            "sessionId": sessionID,
+            "prompt": "/goal ship cross-surface parity",
+        ])
+        let graph = try #require(try await bridge.sessionRunner.taskGraphSnapshot(
+            sessionID: sessionID
+        ))
+        let armed = try #require(await bridge.workflowStateForTesting(sessionID: sessionID))
+        #expect(armed.graphID == graph.id)
+        #expect(armed.isAwaitingReply)
+
+        // A plain ACP message continues that same graph, exactly like the TUI.
+        try await bridge.prompt(id: .number(2), params: [
+            "sessionId": sessionID,
+            "prompt": "Start with ACP.",
+        ])
+        let continuationPrompt = try #require(await fixture.backend.recordedPrompts().last)
+        #expect(continuationPrompt.contains("Continue the delegated workflow"))
+        #expect(continuationPrompt.contains("Active workflow task graph: \(graph.id)"))
+        #expect(continuationPrompt.contains("Start with ACP."))
+        #expect(continuationPrompt.contains("Which surface should I cover first?"))
+
+        // That turn ended without the explicit question block, so the next plain
+        // message is an ordinary prompt again.
+        #expect(await bridge.workflowStateForTesting(sessionID: sessionID)?
+            .isAwaitingReply == false)
+        try await bridge.prompt(id: .number(3), params: [
+            "sessionId": sessionID,
+            "prompt": "unrelated question",
+        ])
+        #expect((await fixture.backend.recordedPrompts()).last == "unrelated question")
+
+        // A second /goal is refused with an actionable message, not graphNotMutable.
+        try await bridge.prompt(id: .number(4), params: [
+            "sessionId": sessionID,
+            "prompt": "/goal start another one",
+        ])
+        let refusal = try #require(fixture.wire.updateTexts(kind: "agent_message_chunk").last)
+        #expect(refusal.contains("a delegated workflow is already running"))
+        #expect(refusal.contains(graph.id))
+        #expect(!refusal.localizedCaseInsensitiveContains("graphNotMutable"))
+    }
+
+    @Test
+    func acpWorkflowSignalUsesOnlyTheFinalAssistantBlockAfterTools() async {
+        let questionThenSummary = ACPAssistantBlockCollector()
+        await questionThenSummary.append("Workflow question\nWhich surface?")
+        await questionThenSummary.finishBlock()
+        await questionThenSummary.append("Summary: task list refreshed.")
+
+        var state = WorkflowCommandRuntimeState(goal: "Ship it", graphID: "workflow_test")
+        #expect(!state.recordCoordinatorOutput(await questionThenSummary.lastBlock()))
+        #expect(!state.isAwaitingReply)
+
+        let progressThenQuestion = ACPAssistantBlockCollector()
+        await progressThenQuestion.append("Progress: task list refreshed.")
+        await progressThenQuestion.finishBlock()
+        await progressThenQuestion.append("Workflow question\nWhich surface?")
+        #expect(state.recordCoordinatorOutput(await progressThenQuestion.lastBlock()))
+        #expect(state.isAwaitingReply)
+    }
+
+    @Test
+    func acpFailedWorkflowTurnKeepsANonEmptyGraphAndArmsRecovery() async throws {
+        let fixture = try await makeFixture(sessionID: "acp-workflow-recovery")
+        let bridge = fixture.bridge
+        let sessionID = fixture.sessionID
+        let graphID = "workflow_recovery_case"
+        _ = try await bridge.sessionRunner.taskOrchestrator.createGraph(
+            sessionID: sessionID,
+            id: graphID,
+            source: .workflow,
+            state: .active,
+            tasks: [
+                TaskDefinition(
+                    id: "t1",
+                    title: "Delegated work",
+                    execution: TaskExecutionSpec(executor: .subAgent)
+                ),
+            ]
+        )
+
+        await bridge.handleFailedACPWorkflowTurn(
+            graphID: graphID,
+            reason: "the turn was cancelled",
+            sessionID: sessionID,
+            epoch: await bridge.sessionEpochForTesting(sessionID: sessionID),
+            promptID: UUID()
+        )
+
+        let graph = try #require(try await bridge.sessionRunner.taskGraphSnapshot(
+            sessionID: sessionID
+        ))
+        #expect(graph.id == graphID)
+        #expect(graph.tasks.count == 1)
+        let recovery = try #require(await bridge.workflowStateForTesting(sessionID: sessionID))
+        #expect(recovery.graphID == graphID)
+        #expect(recovery.isAwaitingReply)
+        #expect(recovery.pendingCoordinatorMessage?.contains("the turn was cancelled") == true)
     }
 
     private func makeFixture(

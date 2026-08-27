@@ -62,6 +62,12 @@ public final class TerminalChat {
     /// Ephemeral `/plan` clarification state. Never copy this into snapshots or
     /// persisted session models.
     var planBrainstorming: TerminalPlanBrainstormingState?
+    /// Ephemeral `/goal` workflow state used to continue the same workflow graph.
+    /// It captures the next message only when an explicit signal armed it: the
+    /// coordinator's `Workflow question` block, a graph resumed from a previous
+    /// session, or an interrupted turn whose non-empty graph was preserved.
+    /// Never copy this into snapshots or persisted session models.
+    var activeWorkflow: WorkflowCommandRuntimeState?
     public var taskGraphObserverTask: Task<Void, Never>?
     /// In-flight debounced task-graph render scheduled by the observer task.
     /// Tracked on the chat so a turn boundary can quiesce the debounce before

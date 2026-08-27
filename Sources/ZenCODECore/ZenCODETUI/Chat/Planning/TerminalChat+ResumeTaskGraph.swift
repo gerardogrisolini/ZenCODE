@@ -159,6 +159,22 @@ extension TerminalChat {
     }
 
     func writeResumedTaskGraphNotice(_ graph: ResumableTaskGraph) async {
+        // A resumed workflow graph keeps its `/goal` contract: arm the same
+        // continuation round-trip used after a clarification question so the
+        // next message resumes the coordinator on this exact graph instead of
+        // starting an unrelated turn.
+        if graph.source.requiresSubAgentExecution, !graph.state.isTerminal {
+            var workflow = WorkflowCommandRuntimeState(goal: "", graphID: graph.graphID)
+            workflow.armForResumedGraph()
+            activeWorkflow = workflow
+            await writeSystemMessage(
+                "Resumed workflow \"\(graph.graphID)\" from a previous session "
+                + "(\(graph.pendingTaskCount) task\(graph.pendingTaskCount == 1 ? "" : "s") pending). "
+                + "Your next message continues it on the same task graph; "
+                + "use /tasks to review or /tasks clear to stop it.\n"
+            )
+            return
+        }
         await writeSystemMessage(
             "Resumed task graph \"\(graph.graphID)\" from a previous session "
             + "(\(graph.pendingTaskCount) task\(graph.pendingTaskCount == 1 ? "" : "s") pending). "

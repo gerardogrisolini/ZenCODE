@@ -87,6 +87,13 @@ extension TerminalChat {
             return action
         }
 
+        // Same rule for `/goal`: a plain message continues the open workflow
+        // graph only while the coordinator is waiting for the user.
+        if Self.commandToken(from: prompt) == nil,
+           let action = await handleWorkflowContinuationReply(prompt) {
+            return action
+        }
+
         if case .slashCommand = Self.submittedLineRole(for: prompt) {
             if let unavailableMessage = unavailableLocalSlashCommandMessage(for: prompt) {
                 await writeFailureMessage(unavailableMessage)

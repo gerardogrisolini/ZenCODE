@@ -54,7 +54,10 @@ public enum TerminalChatRunOutcome: Sendable {
 enum TerminalPromptPurpose: Sendable, Equatable {
     case normal
     case plan(originalGoal: String)
-    case workflow(originalGoal: String)
+    /// A `/goal` turn. The graph ID travels with the purpose so the turn can
+    /// grant workflow tools, keep the clarification round-trip on the same
+    /// graph, and clean up an empty graph when the turn fails or is cancelled.
+    case workflow(originalGoal: String, graphID: String)
     case review
 }
 

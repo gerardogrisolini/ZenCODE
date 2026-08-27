@@ -47,10 +47,17 @@ public actor ZenCODEACPBridge {
         /// represented by ACP resume history or a task checkpoint.
         var activePlan: TerminalSessionPlan?
         var planBrainstorming: PlanningCommandRuntimeState?
+        /// Ephemeral `/goal` continuation state, armed only by the explicit
+        /// `Workflow question` block or by an interrupted turn that preserved a
+        /// non-empty graph. It is never persisted or replayed.
+        var workflowContinuation: WorkflowCommandRuntimeState?
     }
 
     public struct PromptCompletion: Sendable {
         public let text: String
+        /// Final assistant block delimited by tool calls, rather than the
+        /// runtime's aggregate response text.
+        public let finalAssistantBlock: String?
         public let stopReason: String
         public let modelID: String
     }

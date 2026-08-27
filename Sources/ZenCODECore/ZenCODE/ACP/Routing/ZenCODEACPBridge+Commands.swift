@@ -87,45 +87,57 @@ extension ZenCODEACPBridge {
 
         guard let command else {
             guard !hasAgentMention,
-                  !CoordinatorCommandParser.isSlashCommand(routedPromptText),
-                  var brainstorming = session.planBrainstorming,
-                  brainstorming.isAwaitingReply,
-                  brainstorming.recordReply(routedPromptText) else {
+                  !CoordinatorCommandParser.isSlashCommand(routedPromptText) else {
                 return .generate(prompt: routedPromptText, purpose: .normal)
             }
-            guard acpSubAgentsAreAvailable(
-                in: session,
-                requiresMessaging: true
-            ) else {
-                return .immediate(
-                    "ZenCODE: /plan requires the sub-agent tools in this ACP session."
+            if var brainstorming = session.planBrainstorming,
+               brainstorming.isAwaitingReply,
+               brainstorming.recordReply(routedPromptText) {
+                guard acpSubAgentsAreAvailable(
+                    in: session,
+                    requiresMessaging: true
+                ) else {
+                    return .immediate(
+                        "ZenCODE: /plan requires the sub-agent tools in this ACP session."
+                    )
+                }
+                let planner = try acpPlannerProfile()
+                let snapshots = await sessionRunner.subAgentSnapshots()
+                guard updateReservedPromptSession(
+                    sessionID: sessionID,
+                    epoch: epoch,
+                    promptID: promptID,
+                    { $0.planBrainstorming = brainstorming }
+                ) else {
+                    throw CancellationError()
+                }
+                let baseline = PlannerTurnBaseline(
+                    state: brainstorming,
+                    snapshots: snapshots,
+                    rootSessionID: sessionID
+                )
+                return .generate(
+                    prompt: PlanningCommandKernel.planContinuationPrompt(
+                        state: brainstorming,
+                        planner: planner
+                    ),
+                    purpose: .planning(
+                        collectionID: brainstorming.collectionID,
+                        baseline: baseline
+                    )
                 )
             }
-            let planner = try acpPlannerProfile()
-            let snapshots = await sessionRunner.subAgentSnapshots()
-            guard updateReservedPromptSession(
+            // Cross-surface parity with the TUI and Telegram: a plain message
+            // continues an open `/goal` workflow that is explicitly waiting.
+            if let workflowRoute = await routeACPWorkflowContinuation(
+                reply: routedPromptText,
                 sessionID: sessionID,
                 epoch: epoch,
-                promptID: promptID,
-                { $0.planBrainstorming = brainstorming }
-            ) else {
-                throw CancellationError()
+                promptID: promptID
+            ) {
+                return workflowRoute
             }
-            let baseline = PlannerTurnBaseline(
-                state: brainstorming,
-                snapshots: snapshots,
-                rootSessionID: sessionID
-            )
-            return .generate(
-                prompt: PlanningCommandKernel.planContinuationPrompt(
-                    state: brainstorming,
-                    planner: planner
-                ),
-                purpose: .planning(
-                    collectionID: brainstorming.collectionID,
-                    baseline: baseline
-                )
-            )
+            return .generate(prompt: routedPromptText, purpose: .normal)
         }
 
         switch command {
@@ -230,6 +242,22 @@ extension ZenCODEACPBridge {
                 "ZenCODE: /goal requires the sub-agent tools in this ACP session."
             )
         }
+        // Mirror the TUI guard: the orchestrator refuses to create a graph while
+        // the current one is an unfinished workflow graph, and the raw
+        // `graphNotMutable` error is not actionable for the user.
+        if let current = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID),
+           current.source.requiresSubAgentExecution,
+           !current.state.isTerminal {
+            let open = current.tasks.filter {
+                $0.status != .completed && $0.status != .cancelled
+            }.count
+            return .immediate(
+                "ZenCODE: a delegated workflow is already running (\(current.id), "
+                    + "\(open) task\(open == 1 ? "" : "s") still open). "
+                    + "Reply in this session to continue it when it is waiting for you, "
+                    + "or clear its task graph before starting another /goal."
+            )
+        }
 
         let graphID = "workflow_\(UUID().uuidString.lowercased())"
         do {
@@ -254,9 +282,82 @@ extension ZenCODEACPBridge {
             )
             throw CancellationError()
         }
+        // Track the workflow for the conversational continuation round-trip, the
+        // same way the TUI does. Nothing is armed yet: only an explicit
+        // clarification block (or an interrupted turn) arms it.
+        guard updateReservedPromptSession(
+            sessionID: sessionID,
+            epoch: epoch,
+            promptID: promptID,
+            {
+                $0.workflowContinuation = WorkflowCommandRuntimeState(
+                    goal: goal,
+                    graphID: graphID
+                )
+            }
+        ) else {
+            _ = try? await sessionRunner.removeTaskGraph(
+                id: graphID,
+                sessionID: sessionID
+            )
+            throw CancellationError()
+        }
         return .generate(
             prompt: PlanningCommandKernel.workflowPrompt(goal: goal, graphID: graphID),
             purpose: .workflow(graphID: graphID)
+        )
+    }
+
+    /// Routes a plain ACP message back into an open `/goal` workflow when that
+    /// workflow explicitly armed a continuation (clarification question or an
+    /// interrupted turn with a preserved graph). Returns `nil` when nothing is
+    /// armed, so the message stays an ordinary prompt.
+    func routeACPWorkflowContinuation(
+        reply: String,
+        sessionID: String,
+        epoch: UInt64,
+        promptID: UUID
+    ) async -> ACPCommandTurnRoute? {
+        guard let session = reservedPromptSession(
+            sessionID: sessionID,
+            epoch: epoch,
+            promptID: promptID
+        ), var workflow = session.workflowContinuation, workflow.isAwaitingReply else {
+            return nil
+        }
+        guard acpSubAgentsAreAvailable(in: session) else { return nil }
+        // Never resume a graph that is no longer the session's open workflow.
+        guard let graph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID),
+              graph.id == workflow.graphID,
+              graph.source.requiresSubAgentExecution,
+              !graph.state.isTerminal else {
+            _ = updateReservedPromptSession(
+                sessionID: sessionID,
+                epoch: epoch,
+                promptID: promptID,
+                { $0.workflowContinuation = nil }
+            )
+            return nil
+        }
+        guard workflow.recordReply(reply) else { return nil }
+        guard updateReservedPromptSession(
+            sessionID: sessionID,
+            epoch: epoch,
+            promptID: promptID,
+            { $0.workflowContinuation = workflow }
+        ) else {
+            return nil
+        }
+        let openCount = graph.tasks.filter {
+            $0.status != .completed && $0.status != .cancelled
+        }.count
+        return .generate(
+            prompt: PlanningCommandKernel.workflowContinuationPrompt(
+                state: workflow,
+                pendingTaskCount: openCount,
+                totalTaskCount: graph.tasks.count
+            ),
+            purpose: .workflow(graphID: workflow.graphID)
         )
     }
 
@@ -1062,6 +1163,7 @@ extension ZenCODEACPBridge {
 
         return PromptCompletion(
             text: plannerText,
+            finalAssistantBlock: parent.finalAssistantBlock,
             stopReason: parent.stopReason,
             modelID: plannerResult.response.modelID
         )

@@ -280,6 +280,13 @@ extension TerminalChat {
                     points: await planPointCollector.snapshot()
                 )
             }
+            if case let .workflow(_, graphID) = attempt.purpose,
+               sessionID == turnSessionID {
+                await recordWorkflowTurnOutcome(
+                    graphID: graphID,
+                    coordinatorMessage: await transcriptTurn.lastAssistantContent()
+                )
+            }
             return TerminalChatGenerationSuccess(
                 response: response,
                 origin: attempt.origin,
@@ -290,6 +297,15 @@ extension TerminalChat {
             if let planningCollectionID {
                 await abandonPlanBrainstorming(
                     expectedCollectionID: planningCollectionID
+                )
+            }
+            if case let .workflow(_, graphID) = attempt.purpose,
+               sessionID == turnSessionID {
+                await handleFailedWorkflowTurn(
+                    graphID: graphID,
+                    reason: error is CancellationError
+                        ? "the turn was cancelled"
+                        : error.localizedDescription
                 )
             }
             activeSessionTranscript.append(contentsOf: await transcriptTurn.messages())

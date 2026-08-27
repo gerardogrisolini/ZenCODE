@@ -521,7 +521,8 @@ extension ZenCODEACPBridge {
             selectedAgent: selectedAgent,
             epoch: epoch,
             activePlan: currentState.activePlan,
-            planBrainstorming: currentState.planBrainstorming
+            planBrainstorming: currentState.planBrainstorming,
+            workflowContinuation: currentState.workflowContinuation
         )
     }
 

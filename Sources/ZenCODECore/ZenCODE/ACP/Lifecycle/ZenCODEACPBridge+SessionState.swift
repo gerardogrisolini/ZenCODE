@@ -127,7 +127,8 @@ extension ZenCODEACPBridge {
         activePromptTask: Task<PromptCompletion, Error>? = nil,
         operationState: SessionOperationState = .idle,
         activePlan: TerminalSessionPlan? = nil,
-        planBrainstorming: PlanningCommandRuntimeState? = nil
+        planBrainstorming: PlanningCommandRuntimeState? = nil,
+        workflowContinuation: WorkflowCommandRuntimeState? = nil
     ) -> SessionState {
         SessionState(
             id: configuration.sessionID,
@@ -140,7 +141,8 @@ extension ZenCODEACPBridge {
             activePromptTask: activePromptTask,
             operationState: operationState,
             activePlan: activePlan,
-            planBrainstorming: planBrainstorming
+            planBrainstorming: planBrainstorming,
+            workflowContinuation: workflowContinuation
         )
     }
 
@@ -238,7 +240,8 @@ extension ZenCODEACPBridge {
             activePromptTask: session.activePromptTask,
             operationState: session.operationState,
             activePlan: session.activePlan,
-            planBrainstorming: session.planBrainstorming
+            planBrainstorming: session.planBrainstorming,
+            workflowContinuation: session.workflowContinuation
         )
     }
 

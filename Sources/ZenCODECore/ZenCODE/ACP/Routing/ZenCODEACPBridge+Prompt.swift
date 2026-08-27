@@ -117,7 +117,8 @@ extension ZenCODEACPBridge {
                 activePromptID: promptID,
                 operationState: .prompting(promptID),
                 activePlan: session.activePlan,
-                planBrainstorming: session.planBrainstorming
+                planBrainstorming: session.planBrainstorming,
+                workflowContinuation: session.workflowContinuation
             )
             guard updateLiveSession(id: sessionID, epoch: epoch, { liveSession in
                 liveSession = session
@@ -271,6 +272,7 @@ extension ZenCODEACPBridge {
         }
 
         let planPointCollector = PlanningPointCollector()
+        let assistantBlocks = ACPAssistantBlockCollector()
         let activePromptTask = Task(name: "ZenCODEACPBridge.prompt") {
             await sessionRunner.updatePromptSkillSelection(
                 selectedAgentSkills(for: session.selectedAgent),
@@ -344,12 +346,14 @@ extension ZenCODEACPBridge {
                             }
                         }
                     case let .content(content):
+                        await assistantBlocks.append(content)
                         if !commandPurpose.suppressesCoordinatorContent {
                             await sendPromptUpdate(
                                 Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: content)
                             )
                         }
                     case let .toolCallStarted(toolCall):
+                        await assistantBlocks.finishBlock()
                         await sendPromptUpdate(
                             Self.toolCallCreateJSONUpdate(
                                 for: toolCall,
@@ -389,6 +393,7 @@ extension ZenCODEACPBridge {
             )
             return PromptCompletion(
                 text: response.text,
+                finalAssistantBlock: await assistantBlocks.lastBlock(),
                 stopReason: Self.acpStopReason(response.stopReason),
                 modelID: response.modelID
             )
@@ -437,6 +442,15 @@ extension ZenCODEACPBridge {
                 expectedEpoch: epoch,
                 expectedPromptID: promptID
             )
+            if case let .workflow(graphID) = commandPurpose {
+                await armACPWorkflowContinuationIfNeeded(
+                    graphID: graphID,
+                    coordinatorMessage: completion.finalAssistantBlock,
+                    sessionID: sessionID,
+                    epoch: epoch,
+                    promptID: promptID
+                )
+            }
 
             await writer.sendResultIfRequest(
                 id: id,
@@ -451,9 +465,12 @@ extension ZenCODEACPBridge {
                     expectedCollectionID: collectionID
                 )
             } else if case let .workflow(graphID) = commandPurpose {
-                _ = try? await sessionRunner.removeTaskGraph(
-                    id: graphID,
-                    sessionID: sessionID
+                await handleFailedACPWorkflowTurn(
+                    graphID: graphID,
+                    reason: "the turn was cancelled",
+                    sessionID: sessionID,
+                    epoch: epoch,
+                    promptID: promptID
                 )
             }
             await flushPromptUpdates()
@@ -476,9 +493,12 @@ extension ZenCODEACPBridge {
                     expectedCollectionID: collectionID
                 )
             } else if case let .workflow(graphID) = commandPurpose {
-                _ = try? await sessionRunner.removeTaskGraph(
-                    id: graphID,
-                    sessionID: sessionID
+                await handleFailedACPWorkflowTurn(
+                    graphID: graphID,
+                    reason: error.localizedDescription,
+                    sessionID: sessionID,
+                    epoch: epoch,
+                    promptID: promptID
                 )
             }
             await flushPromptUpdates()
@@ -490,6 +510,68 @@ extension ZenCODEACPBridge {
             )
             releaseReservation()
             throw error
+        }
+    }
+
+    /// Arms the ACP `/goal` continuation round-trip only when the coordinator
+    /// used the explicit `Workflow question` protocol and its graph is still
+    /// open. Any other output disarms it, so an ordinary workflow turn never
+    /// captures the next ACP message.
+    func armACPWorkflowContinuationIfNeeded(
+        graphID: String,
+        coordinatorMessage: String?,
+        sessionID: String,
+        epoch: UInt64,
+        promptID: UUID
+    ) async {
+        let graph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID)
+        let graphIsOpen = graph?.id == graphID
+            && graph?.source.requiresSubAgentExecution == true
+            && graph?.state.isTerminal == false
+        _ = updateLiveSession(id: sessionID, epoch: epoch) { session in
+            guard var workflow = session.workflowContinuation,
+                  workflow.graphID == graphID else {
+                return
+            }
+            guard graphIsOpen else {
+                session.workflowContinuation = nil
+                return
+            }
+            workflow.recordCoordinatorOutput(coordinatorMessage)
+            session.workflowContinuation = workflow
+        }
+    }
+
+    /// Handles a failed or cancelled ACP `/goal` turn. An empty graph is
+    /// removed; a graph that already holds delegated tasks is preserved and its
+    /// continuation is armed for recovery, so the next message really can resume
+    /// or retry that same graph.
+    func handleFailedACPWorkflowTurn(
+        graphID: String,
+        reason: String,
+        sessionID: String,
+        epoch: UInt64,
+        promptID: UUID
+    ) async {
+        let graph = try? await sessionRunner.taskGraphSnapshot(
+            sessionID: sessionID,
+            graphID: graphID
+        )
+        guard let graph, !graph.tasks.isEmpty else {
+            _ = try? await sessionRunner.removeTaskGraph(id: graphID, sessionID: sessionID)
+            _ = updateLiveSession(id: sessionID, epoch: epoch) { session in
+                if session.workflowContinuation?.graphID == graphID {
+                    session.workflowContinuation = nil
+                }
+            }
+            return
+        }
+        _ = updateLiveSession(id: sessionID, epoch: epoch) { session in
+            var workflow = session.workflowContinuation?.graphID == graphID
+                ? session.workflowContinuation!
+                : WorkflowCommandRuntimeState(goal: "", graphID: graphID)
+            workflow.armForRecoverableFailure(reason: reason)
+            session.workflowContinuation = workflow
         }
     }
 
@@ -917,5 +999,29 @@ extension ZenCODEACPBridge {
             .map(String.init)
             .joined()
             .lowercased()
+    }
+}
+
+
+/// Keeps ACP content blocks separate across tool boundaries. A model response
+/// can contain a question before a tool and a normal summary afterwards; only
+/// the latter is the final assistant block of the turn.
+actor ACPAssistantBlockCollector {
+    private var completedBlocks: [String] = []
+    private var currentBlock = ""
+
+    func append(_ content: String) {
+        currentBlock.append(content)
+    }
+
+    func finishBlock() {
+        if currentBlock.nilIfBlank != nil {
+            completedBlocks.append(currentBlock)
+        }
+        currentBlock = ""
+    }
+
+    func lastBlock() -> String? {
+        currentBlock.nilIfBlank ?? completedBlocks.last?.nilIfBlank
     }
 }

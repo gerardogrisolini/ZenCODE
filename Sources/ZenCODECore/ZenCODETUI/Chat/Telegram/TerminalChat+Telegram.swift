@@ -94,6 +94,13 @@ extension TerminalChat {
                let action = handlePlanBrainstormingReply(prompt) {
                 return action
             }
+            // Same cross-surface rule as the TUI: a plain Telegram message
+            // continues the open `/goal` workflow while the coordinator is
+            // explicitly waiting for the user.
+            if !CoordinatorCommandParser.isSlashCommand(prompt),
+               let action = await handleWorkflowContinuationReply(prompt) {
+                return action
+            }
             return .runPrompt(prompt)
         }
     }
@@ -969,13 +976,14 @@ extension TerminalChat {
         return "\(title)  +\(summary.totalAdditions) -\(summary.totalDeletions)\n\(entries)"
     }
 
-    private func telegramRemoteHelpText() -> String {
+    func telegramRemoteHelpText() -> String {
         """
         Send a message to prompt the current ZenCODE TUI session.
         Live messages from agents are forwarded here; reply to one with text to answer its sender.
         A voice note cannot be a direct reply: send text, or record without replying to run an ordinary prompt.
         Remote commands: /status, /changes, /help, /plan <goal> and its subcommands, /goal <goal>, /review [focus].
         While /plan is asking questions, ordinary replies continue that same runtime discussion.
+        While /goal is waiting for an answer, ordinary replies continue that same workflow task graph.
         Permission replies: /allow ID, /always ID, /deny ID.
         Gated operations (shell commands, deletions, git push/restore) are asked here.
         Turn Telegram off from the TUI with /telegram off.

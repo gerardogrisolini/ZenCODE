@@ -10,8 +10,38 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- `/goal` workflows can now be continued in conversation across the TUI,
+  Telegram and ACP. When a coordinator turn ends with the explicit
+  `Workflow question` block mandated by the `/goal` contract, ZenCODE says so
+  and the next plain message resumes the *same* graph, re-injecting the graph
+  ID, the completion contract and the delegation rules instead of starting an
+  unrelated chat turn. Any other coordinator output (progress reports, final
+  summaries) leaves the round-trip disarmed, so ordinary messages are never
+  captured. Slash commands and live `@mentions` keep their precedence, and the
+  round-trip stops as soon as the graph is completed or cleared.
+- A workflow task graph resumed from a previous session (startup "Open tasks
+  from previous sessions" menu) is re-armed the same way: the notice now
+  explains that the next message continues the workflow on that graph.
+- A `/goal` turn that fails or is cancelled while its graph already holds
+  delegated tasks keeps that graph and arms the same round-trip for recovery,
+  so the announced retry path really exists: the next message resumes the graph
+  and the continuation prompt asks the coordinator to re-delegate or
+  `tasks.retry` the interrupted work.
+
 ### Fixed
 
+- Starting a second `/goal` while a workflow is still open now fails with an
+  actionable message naming the open graph, the number of open tasks, and how
+  to proceed (reply in chat, `/tasks`, or `/tasks clear`) instead of surfacing
+  the internal `graphNotMutable` runtime error. The same guard was added to the
+  ACP `/goal` route.
+- A `/goal` whose very first coordinator turn fails or is cancelled no longer
+  leaves an empty workflow graph behind, so the startup resume menu stops
+  offering "0 of 0 tasks pending" graphs. Conversely, neither the TUI nor ACP
+  deletes a workflow graph that already contains delegated tasks when a later
+  turn fails or is cancelled.
 - Expanded file-change diffs now render Markdown, plain-text, documentation and
   unknown file types entirely in white, including wrapped continuations, instead
   of letting the first fragment inherit the muted line-number gutter color.

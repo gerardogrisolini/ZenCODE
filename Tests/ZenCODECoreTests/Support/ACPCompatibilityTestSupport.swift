@@ -113,6 +113,16 @@ extension ZenCODEACPBridge {
     ) -> (activePlan: TerminalSessionPlan?, brainstorming: PlanningCommandRuntimeState?) {
         (sessions[sessionID]?.activePlan, sessions[sessionID]?.planBrainstorming)
     }
+
+    func workflowStateForTesting(
+        sessionID: String
+    ) -> WorkflowCommandRuntimeState? {
+        sessions[sessionID]?.workflowContinuation
+    }
+
+    func sessionEpochForTesting(sessionID: String) -> UInt64 {
+        sessions[sessionID]?.epoch ?? 0
+    }
 }
 
 actor CapturingACPBackend: AgentRuntimeBackend {

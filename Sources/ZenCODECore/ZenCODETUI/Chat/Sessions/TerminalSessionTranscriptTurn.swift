@@ -30,6 +30,18 @@ actor TerminalSessionTranscriptTurn {
         assistantContent.append(delta)
     }
 
+    /// The final assistant block in this turn. Tool calls deliberately split
+    /// assistant output into blocks, so callers must not infer its meaning from
+    /// the runtime's aggregated final response text.
+    func lastAssistantContent() -> String? {
+        if let content = assistantContent.nilIfBlank {
+            return content
+        }
+        return transcriptMessages.reversed().lazy.compactMap { message in
+            message.role == .assistant ? message.content.nilIfBlank : nil
+        }.first
+    }
+
     func appendToolCallStarted(_ toolCall: DirectAgentToolCall) {
         guard startedToolCallIDs.insert(toolCall.id).inserted else {
             return

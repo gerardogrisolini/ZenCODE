@@ -145,6 +145,119 @@ struct PlanningCommandRuntimeState: Sendable, Equatable {
     }
 }
 
+/// Runtime-only `/goal` workflow state. Like ``PlanningCommandRuntimeState``
+/// this type intentionally does not conform to `Codable`: saved sessions and
+/// task-graph checkpoints must never restore an unfinished clarification loop.
+/// A restarted session rebuilds it from the resumed workflow graph instead.
+struct WorkflowCommandRuntimeState: Sendable, Equatable {
+    struct Exchange: Sendable, Equatable {
+        let coordinatorMessage: String
+        let userReply: String
+    }
+
+    /// The only reasons a workflow may capture the next plain user message.
+    /// Every case is an explicit, testable signal: a workflow turn that simply
+    /// ended with prose arms nothing, exactly like a Planner turn that did not
+    /// emit its mandatory question heading.
+    enum ContinuationSignal: Sendable, Equatable {
+        /// The coordinator emitted the explicit `Workflow question` block
+        /// mandated by the `/goal` completion contract.
+        case clarification(String)
+        /// The workflow graph was restored from a previous session, so no
+        /// coordinator prose exists for it.
+        case resumedGraph
+        /// The last workflow turn failed or was cancelled while the graph still
+        /// held delegated tasks, so the graph was preserved for a retry.
+        case recoverableFailure(String)
+
+        /// Human-readable text recorded in the continuation transcript.
+        var transcriptMessage: String {
+            switch self {
+            case let .clarification(text):
+                return text
+            case .resumedGraph:
+                return PlanningCommandKernel.workflowResumeSignalMessage
+            case let .recoverableFailure(reason):
+                return PlanningCommandKernel.workflowRecoverySignalMessage(reason: reason)
+            }
+        }
+    }
+
+    /// The workflow graph this state belongs to. Every continuation turn must
+    /// re-inject it so the coordinator keeps working on the same graph.
+    let graphID: String
+    /// The original `/goal` argument. Empty when the workflow was rebuilt from a
+    /// checkpoint, whose graph does not persist the prose goal.
+    let goal: String
+    var exchanges: [Exchange]
+    /// The explicit signal that armed the continuation round-trip, if any. Only
+    /// its presence lets the next plain user message continue this workflow.
+    private(set) var pendingSignal: ContinuationSignal?
+
+    init(goal: String, graphID: String) {
+        self.graphID = graphID
+        self.goal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.exchanges = []
+        self.pendingSignal = nil
+    }
+
+    var isAwaitingReply: Bool {
+        pendingSignal != nil
+    }
+
+    /// The message shown to the coordinator as "what you asked last", derived
+    /// from the armed signal.
+    var pendingCoordinatorMessage: String? {
+        pendingSignal?.transcriptMessage
+    }
+
+    /// Arms the continuation round-trip only when the coordinator used the
+    /// explicit clarification protocol. Any other output disarms it, so an
+    /// ordinary workflow turn never captures the user's next message.
+    @discardableResult
+    mutating func recordCoordinatorOutput(_ text: String?) -> Bool {
+        guard let text = text?.nilIfBlank,
+              PlanningCommandKernel.isWorkflowClarificationResponse(text) else {
+            pendingSignal = nil
+            return false
+        }
+        pendingSignal = .clarification(text)
+        return true
+    }
+
+    /// Arms the round-trip for a graph restored from a previous session.
+    mutating func armForResumedGraph() {
+        pendingSignal = .resumedGraph
+    }
+
+    /// Arms the round-trip after a failed or cancelled turn that left a
+    /// non-empty graph behind, preserving a real retry path.
+    mutating func armForRecoverableFailure(reason: String) {
+        pendingSignal = .recoverableFailure(
+            reason.nilIfBlank ?? PlanningCommandKernel.workflowUnknownFailureReason
+        )
+    }
+
+    mutating func disarm() {
+        pendingSignal = nil
+    }
+
+    mutating func recordReply(_ reply: String) -> Bool {
+        guard let pendingSignal,
+              let normalizedReply = reply.nilIfBlank else {
+            return false
+        }
+        exchanges.append(
+            Exchange(
+                coordinatorMessage: pendingSignal.transcriptMessage,
+                userReply: normalizedReply
+            )
+        )
+        self.pendingSignal = nil
+        return true
+    }
+}
+
 struct PlannerTurnBaseline: Sendable, Equatable {
     let expectedAgentID: String?
     let expectedRevision: UInt64?
@@ -393,6 +506,123 @@ enum PlanningCommandKernel {
         """
     }
 
+    /// Explicit heading a `/goal` coordinator must use to request clarification,
+    /// mirroring the Planner's mandatory "Planner questions" block. Only this
+    /// signal arms the conversational continuation round-trip.
+    static let workflowClarificationHeading = "Workflow question"
+
+    /// Transcript text for a workflow armed without coordinator prose.
+    static let workflowResumeSignalMessage =
+        "(no coordinator message: this workflow was resumed from a previous session)"
+
+    static let workflowUnknownFailureReason = "the turn ended without a result"
+
+    /// Transcript text for a workflow armed after a failed or cancelled turn.
+    static func workflowRecoverySignalMessage(reason: String) -> String {
+        "(the previous workflow turn did not finish: \(reason). "
+            + "Its task graph was preserved so the workflow can be resumed or retried.)"
+    }
+
+    /// True when the coordinator used the explicit clarification protocol: a
+    /// first non-blank line exactly equal to "Workflow question". Mirrors
+    /// ``isPlannerQuestionResponse`` so both round-trips are recognised the same
+    /// deterministic, testable way.
+    static func isWorkflowClarificationResponse(_ text: String) -> Bool {
+        guard let firstLine = text
+            .split(whereSeparator: \Character.isNewline)
+            .map(String.init)
+            .first(where: { $0.nilIfBlank != nil }) else {
+            return false
+        }
+        return firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            == workflowClarificationHeading
+    }
+
+    /// The completion contract shared by the initial `/goal` prompt and every
+    /// continuation prompt. A clarification round-trip must not weaken it.
+    static let workflowCompletionContract = """
+        - Continue working until the stated goal is fully achieved and validated. Do not stop after \
+        planning, after a partial implementation, or merely because one task or agent attempt ended.
+        - Keep inspecting, delegating, validating, retrying failed work, and processing newly \
+        unblocked tasks until the goal and every acceptance criterion are satisfied.
+        - If any requirement, constraint, expected behavior, or necessary decision is unclear and \
+        cannot be resolved reliably from the workspace or existing context, ask the user a focused \
+        clarification question instead of guessing. Once clarified, resume this same goal graph.
+        - To ask for clarification you must end that turn with a message whose very first line is \
+        exactly "Workflow question", followed by the focused question(s). Only that explicit \
+        heading tells ZenCODE the workflow is waiting for the user, so the next user message is \
+        routed back into this same workflow graph. Never use that heading for progress reports, \
+        summaries, or blockers.
+        - Stop without achieving the goal only for a genuine blocker that cannot be resolved through \
+        clarification, another suitable sub-agent, retry, or available project evidence; explain the \
+        blocker precisely and state what is needed to continue.
+        """
+
+    /// The invariant delegation rules, shared by the initial and continuation
+    /// prompts so a resumed workflow cannot silently lose them.
+    static func workflowRules(graphID: String) -> String {
+        """
+        - Every workflow task is delegated through the canonical agent.create `agents` array \
+        with `taskID` inside its item; the task graph \
+        enforces sub-agent execution.
+        - Respect dependencies; never claim a task twice.
+        - A negative validation follows failure, tasks.retry, then a new canonical agent.create \
+        item containing `taskID`; never use agent.message to reopen a completed attempt.
+        - Use the active workflow graph \(graphID); do not recreate or replace it.
+        - Your final summary must follow the session response language from the system \
+        prompt. Do not answer in English merely because this internal prompt is in English.
+        """
+    }
+
+    /// Resumes an existing workflow graph after the user answered the
+    /// coordinator (clarification round-trip) or after a restart restored the
+    /// graph. The graph ID, the completion contract and the delegation rules are
+    /// re-injected verbatim so the continuation turn is not a plain chat turn.
+    static func workflowContinuationPrompt(
+        state: WorkflowCommandRuntimeState,
+        pendingTaskCount: Int,
+        totalTaskCount: Int
+    ) -> String {
+        let goalLine = state.goal.nilIfBlank.map { "Goal: \($0)" }
+            ?? "Goal: continue the workflow already recorded in this task graph."
+        let transcript = state.exchanges.suffix(3).map { exchange in
+            """
+            You asked:
+            \(exchange.coordinatorMessage)
+
+            The user answered:
+            \(exchange.userReply)
+            """
+        }.joined(separator: "\n\n").nilIfBlank
+            ?? "(no recorded exchange: continue from the state stored in the task graph.)"
+        return """
+        Continue the delegated workflow you are already coordinating. This is not a new goal \
+        and not a plain chat turn: keep using the same task graph, the same completion \
+        contract, and the same delegation rules.
+
+        \(goalLine)
+
+        Active workflow task graph: \(state.graphID)
+        Task graph state: \(pendingTaskCount) of \(totalTaskCount) tasks still open.
+
+        Latest exchange with the user:
+        \(transcript)
+
+        Apply the user's answer — or, when the exchange above says the previous turn did not \
+        finish, recover that interrupted work — then resume on this same graph. Start by calling \
+        tasks.list for \(state.graphID) to re-establish the current state before deciding \
+        what to plan, delegate, validate, or retry. Re-delegate or tasks.retry any task left \
+        incomplete by the interrupted turn. Add any newly required tasks to this \
+        graph with tasks.create; never create or replace another graph.
+
+        Completion contract:
+        \(workflowCompletionContract)
+
+        Rules:
+        \(workflowRules(graphID: state.graphID))
+        """
+    }
+
     static func workflowPrompt(goal: String, graphID: String) -> String {
         return """
         You are the coordinator of a delegated workflow. You plan the work, add tasks to \
@@ -406,16 +636,7 @@ enum PlanningCommandKernel {
         Active workflow task graph: \(graphID)
 
         Completion contract:
-        - Continue working until the stated goal is fully achieved and validated. Do not stop after \
-        planning, after a partial implementation, or merely because one task or agent attempt ended.
-        - Keep inspecting, delegating, validating, retrying failed work, and processing newly \
-        unblocked tasks until the goal and every acceptance criterion are satisfied.
-        - If any requirement, constraint, expected behavior, or necessary decision is unclear and \
-        cannot be resolved reliably from the workspace or existing context, ask the user a focused \
-        clarification question instead of guessing. Once clarified, resume this same goal graph.
-        - Stop without achieving the goal only for a genuine blocker that cannot be resolved through \
-        clarification, another suitable sub-agent, retry, or available project evidence; explain the \
-        blocker precisely and state what is needed to continue.
+        \(workflowCompletionContract)
 
         Phase 1 — Plan and define the task graph:
         - Inspect the workspace to understand scope, relevant files, constraints, and risks.
@@ -467,15 +688,7 @@ enum PlanningCommandKernel {
         acceptance criterion as a follow-up.
 
         Rules:
-        - Every workflow task is delegated through the canonical agent.create `agents` array \
-        with `taskID` inside its item; the task graph \
-        enforces sub-agent execution.
-        - Respect dependencies; never claim a task twice.
-        - A negative validation follows failure, tasks.retry, then a new canonical agent.create \
-        item containing `taskID`; never use agent.message to reopen a completed attempt.
-        - Use the active workflow graph \(graphID); do not recreate or replace it.
-        - Your final summary must follow the session response language from the system \
-        prompt. Do not answer in English merely because this internal prompt is in English.
+        \(workflowRules(graphID: graphID))
         """
     }
 
