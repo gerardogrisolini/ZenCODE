@@ -373,6 +373,34 @@ struct AgentCoreSessionRunnerTests {
     }
 
     @Test
+    func cancelPromptBySessionIDInterruptsDelegatedAgents() async throws {
+        let backend = CapturingAgentRuntimeBackend()
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in backend }
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: []
+        )
+
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "start delegated work",
+            attachments: []
+        ) { _ in }
+        await runner.cancelPrompt(sessionID: sessionID)
+
+        let interruptedRoots = await backend.interruptedRootSessionIDs()
+        #expect(interruptedRoots == [sessionID])
+    }
+
+    @Test
     func sendPromptWiresSessionLeaseBeforeStartingTheNextBackendTurn() async throws {
         let backend = BlockingAgentRuntimeBackend()
         let queued = RunnerLeaseQueueObserver()

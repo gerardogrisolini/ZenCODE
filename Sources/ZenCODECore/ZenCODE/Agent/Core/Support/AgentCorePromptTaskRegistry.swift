@@ -67,6 +67,10 @@ struct AgentCorePromptTaskRegistry {
         Array(tasks.values)
     }
 
+    var activeSessionIDs: [String] {
+        Array(taskIDsBySessionID.keys)
+    }
+
     /// Returns `true` when at least one prompt task is active for the session.
     func hasActiveTasks(for sessionID: String) -> Bool {
         taskIDsBySessionID[sessionID]?.isEmpty == false

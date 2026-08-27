@@ -315,11 +315,16 @@ extension AgentCoreSessionRunner {
     }
 
     public func cancelActivePrompt() async {
+        let sessionIDs = promptTaskRegistry.activeSessionIDs
         promptTaskRegistry.cancelAllTasks()
+        for sessionID in sessionIDs {
+            _ = await interruptSubAgents(rootSessionID: sessionID)
+        }
     }
 
     public func cancelPrompt(sessionID: String) async {
         promptTaskRegistry.cancelAll(for: sessionID)
+        _ = await interruptSubAgents(rootSessionID: sessionID)
     }
 
     /// Rebuilds transient model/session state while preserving the authoritative

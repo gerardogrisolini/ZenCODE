@@ -12,6 +12,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Pressing `Esc` during a terminal turn now interrupts delegated sub-agents for
+  that session as well as stopping the main agent.
 - Telegram now mirrors every visible intermediate and final response from both
   the main agent and sub-agents, including sub-agent `💬` blocks emitted before
   tool calls.

@@ -227,10 +227,15 @@ extension TerminalChat {
                         tasks.promptTask = promptTask
                     }
 
+                    let turnSessionID = self.sessionID
+                    let sessionRunner = self.sessionRunner
                     let stopMonitor = TerminalEscapeStopMonitor.startIfNeeded(
                         isEnabled: self.stdinIsTerminal
                     ) {
                         promptTask.cancel()
+                        Task(name: "ZenCODE.TUI.escape-stop-session") {
+                            await sessionRunner.cancelPrompt(sessionID: turnSessionID)
+                        }
                     }
                     tasks.withLock { tasks in
                         tasks.stopMonitor = stopMonitor
