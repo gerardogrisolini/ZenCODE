@@ -106,6 +106,44 @@ Release tags follow the strict `vX.Y.Z` contract described in
   prompt skill, resolving it without exposing absolute paths or requiring a
   filesystem tool.
 
+### Fixed
+
+- In app mode, the custom `_zencode/usage/subscription` notification of a
+  turn can no longer overtake content the same turn had already produced and
+  was still buffered: the buffer is drained first, and a buffered
+  `usage_update` is emitted only after any text produced before it, so the wire
+  order keeps matching the production order. This is an ordering guarantee for
+  already-produced content, not a promise that the reply always precedes every
+  notification. The wire format and API are unchanged.
+- `agent.wait` now redraws and continuously refreshes the live Sub-Agents section
+  even when the agent snapshot is unchanged when the wait begins, instead of
+  showing only the blocking tool row until completion.
+- Wrapped source lines in file-change tool output now preserve the syntax color
+  active at each line break instead of rendering continuation fragments in the
+  default foreground color.
+- File mutation tool completions now show every changed source line without
+  snippet limits; recognized code extensions use their matching syntax colors,
+  while text, documentation, and unknown file types remain unhighlighted.
+- Coordinator `agent.*` tool calls and the live Sub-Agents overview now transfer
+  their shared terminal rewrite anchor in both directions across repeated calls.
+  Starts, progress refreshes, and completions erase only their still-owned rows
+  instead of accumulating duplicate tool and Sub-Agents sections.
+
+- The hidden operational prompt of a Planner delegation turn is no longer
+  persisted into session history, snapshots, or resumed conversations; the
+  replay-required tool envelope of that turn is preserved while the visible
+  Planner output replaces the coordinator prose.
+- Telegram remote slash commands now accept the `@botname` suffix Telegram
+  adds in group chats, and a coordinator command that completes synchronously
+  (for example `/review` with nothing to review) now has its terminal output
+  delivered to the linked chat instead of being dropped.
+- The Telegram pairing offset can no longer regress when a long-poll batch
+  returns updates out of order, which would reprocess already-seen updates;
+  failures while sending advisory messages for rejected attempts also no longer
+  abort the active pairing wait.
+- A single grapheme cluster wider than the outbound UTF-16 budget is replaced
+  by a visible ellipsis instead of an empty message Telegram would reject.
+
 ## [2.0.0] - 2026-08-26
 
 > **Breaking release:** compared with v1.3.0, v2.0.0 removes public
@@ -183,26 +221,6 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
-- In app mode, the custom `_zencode/usage/subscription` notification of a
-  turn can no longer overtake content the same turn had already produced and
-  was still buffered: the buffer is drained first, and a buffered
-  `usage_update` is emitted only after any text produced before it, so the wire
-  order keeps matching the production order. This is an ordering guarantee for
-  already-produced content, not a promise that the reply always precedes every
-  notification. The wire format and API are unchanged.
-- `agent.wait` now redraws and continuously refreshes the live Sub-Agents section
-  even when the agent snapshot is unchanged when the wait begins, instead of
-  showing only the blocking tool row until completion.
-- Wrapped source lines in file-change tool output now preserve the syntax color
-  active at each line break instead of rendering continuation fragments in the
-  default foreground color.
-- File mutation tool completions now show every changed source line without
-  snippet limits; recognized code extensions use their matching syntax colors,
-  while text, documentation, and unknown file types remain unhighlighted.
-- Coordinator `agent.*` tool calls and the live Sub-Agents overview now transfer
-  their shared terminal rewrite anchor in both directions across repeated calls.
-  Starts, progress refreshes, and completions erase only their still-owned rows
-  instead of accumulating duplicate tool and Sub-Agents sections.
 - Nested Sub-Agent Markdown code blocks no longer add a spurious blank row, and
   nested tables and code blocks now reserve their indentation when fitting to
   the terminal width.

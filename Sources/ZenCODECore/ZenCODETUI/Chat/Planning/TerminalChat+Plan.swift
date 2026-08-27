@@ -179,7 +179,7 @@ extension TerminalChat {
             planBrainstorming = TerminalPlanBrainstormingState(goal: goal)
 
             return .runHiddenPrompt(
-                Self.planDelegationPrompt(
+                PlanningCommandKernel.planStartPrompt(
                     goal: goal,
                     planner: plannerProfile
                 ),
@@ -693,43 +693,11 @@ extension TerminalChat {
     /// Prefers a user-configured "Planner" profile from agents.json and falls
     /// back to the built-in default so the command works before any setup.
     func plannerProfileForDelegation() -> AgentProfile {
-        let configured = (try? availableAgents()) ?? []
-        if let match = configured.first(where: Self.isPlannerProfile) {
-            return match
-        }
-        if let fallback = AgentProfileStore.defaultProfiles().first(where: Self.isPlannerProfile) {
-            return fallback
-        }
-        return AgentProfileStore.defaultProfiles()[0]
-    }
-
-    nonisolated static func isPlannerProfile(_ agent: AgentProfile) -> Bool {
-        agent.id.caseInsensitiveCompare(AgentProfileStore.plannerAgentID.uuidString) == .orderedSame
-            || agent.name.caseInsensitiveCompare(AgentProfileStore.plannerAgentName) == .orderedSame
-    }
-
-    nonisolated static func planDelegationPrompt(
-        goal: String,
-        planner: AgentProfile
-    ) -> String {
-        PlanningCommandKernel.planStartPrompt(goal: goal, planner: planner)
-    }
-
-    nonisolated static func planContinuationDelegationPrompt(
-        goal: String,
-        exchanges: [TerminalPlanBrainstormingState.Exchange],
-        planner: AgentProfile
-    ) -> String {
-        var state = TerminalPlanBrainstormingState(goal: goal)
-        state.exchanges = exchanges
-        return PlanningCommandKernel.planContinuationPrompt(
-            state: state,
-            planner: planner
-        )
-    }
-
-    nonisolated static func isPlannerQuestionResponse(_ text: String) -> Bool {
-        PlanningCommandKernel.isPlannerQuestionResponse(text)
+        AgentProfileStore.roleProfile(
+            id: AgentProfileStore.plannerAgentID,
+            name: AgentProfileStore.plannerAgentName,
+            in: (try? availableAgents()) ?? []
+        ) ?? AgentProfileStore.defaultProfiles()[0]
     }
 
     nonisolated static func plannerAuthoredPlanResponse(
@@ -749,22 +717,6 @@ extension TerminalChat {
             baseline: baseline,
             rootSessionID: nil
         )?.response
-    }
-
-    nonisolated static func isPlannerSnapshotProfile(
-        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
-    ) -> Bool {
-        PlanningCommandKernel.isPlannerSnapshotProfile(snapshot)
-    }
-
-    nonisolated static func historyByReplacingPlanCoordinatorOutput(
-        _ history: [AgentRuntimeMessage],
-        with plannerOutput: String
-    ) -> [AgentRuntimeMessage] {
-        PlanningCommandKernel.historyByReplacingCoordinatorOutput(
-            history,
-            with: plannerOutput
-        )
     }
 }
 

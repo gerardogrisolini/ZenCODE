@@ -100,6 +100,16 @@ struct TerminalTelegramAPIClientTests {
         #expect(bounded.allSatisfy { String($0) == cluster })
     }
 
+    @Test
+    func oversizedFirstGraphemeUsesANonemptyWireSafeReplacement() {
+        let oversizedCluster = "a" + String(repeating: "\u{0301}", count: 4_100)
+        let bounded = TerminalTelegramAPIClient.boundedMessageText(oversizedCluster)
+
+        #expect(oversizedCluster.count == 1)
+        #expect(bounded == "…")
+        #expect(bounded.utf16.count <= TerminalTelegramAPIClient.maximumMessageUTF16Length)
+    }
+
     /// Ordinary text is only trimmed: the bound must not rewrite payloads that
     /// already fit.
     @Test

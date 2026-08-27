@@ -216,7 +216,7 @@ extension TerminalChat {
                 )
                 response = plannerResult.response
                 let plannerPoints: [TerminalSessionPlanPoint]
-                if Self.isPlannerQuestionResponse(response.text) {
+                if PlanningCommandKernel.isPlannerQuestionResponse(response.text) {
                     guard !(await planPointCollector.hasObservedTodoWrites()) else {
                         throw TerminalPlanGenerationError.unexpectedStructuredTasksForQuestions
                     }
@@ -232,7 +232,7 @@ extension TerminalChat {
                     plannerPoints = finalPoints
                 }
                 let historyBeforePlannerCorrection = activeSessionHistory
-                let correctedPlanningHistory = Self.historyByReplacingPlanCoordinatorOutput(
+                let correctedPlanningHistory = PlanningCommandKernel.historyByReplacingCoordinatorOutput(
                     activeSessionHistory,
                     with: response.text
                 )
@@ -255,7 +255,7 @@ extension TerminalChat {
                     throw CancellationError()
                 }
                 activeSessionHistory = correctedPlanningHistory
-                if Self.isPlannerQuestionResponse(response.text) {
+                if PlanningCommandKernel.isPlannerQuestionResponse(response.text) {
                     planBrainstorming = brainstorming
                 } else {
                     try await recordStructuredPlanIfNeeded(

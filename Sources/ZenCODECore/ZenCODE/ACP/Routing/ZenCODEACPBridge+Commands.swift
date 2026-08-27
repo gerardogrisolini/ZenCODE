@@ -374,46 +374,20 @@ extension ZenCODEACPBridge {
     }
 
     private func acpPlannerProfile() throws -> AgentProfile {
-        let agents = try availableACPAgentProfiles()
-        if let planner = agents.first(where: { agent in
-            agent.id.caseInsensitiveCompare(
-                AgentProfileStore.plannerAgentID.uuidString
-            ) == .orderedSame
-                || agent.name.caseInsensitiveCompare(
-                    AgentProfileStore.plannerAgentName
-                ) == .orderedSame
-        }) {
-            return planner
-        }
-        if let planner = AgentProfileStore.defaultProfiles().first(where: { agent in
-            agent.id.caseInsensitiveCompare(
-                AgentProfileStore.plannerAgentID.uuidString
-            ) == .orderedSame
-        }) {
-            return planner
-        }
+        if let planner = AgentProfileStore.roleProfile(
+            id: AgentProfileStore.plannerAgentID,
+            name: AgentProfileStore.plannerAgentName,
+            in: try availableACPAgentProfiles()
+        ) { return planner }
         throw ACPError.invalidParams("The Planner agent profile is unavailable.")
     }
 
     private func acpReviewerProfile() throws -> AgentProfile {
-        let agents = try availableACPAgentProfiles()
-        if let reviewer = agents.first(where: { agent in
-            agent.id.caseInsensitiveCompare(
-                AgentProfileStore.reviewerAgentID.uuidString
-            ) == .orderedSame
-                || agent.name.caseInsensitiveCompare(
-                    AgentProfileStore.reviewerAgentName
-                ) == .orderedSame
-        }) {
-            return reviewer
-        }
-        if let reviewer = AgentProfileStore.defaultProfiles().first(where: { agent in
-            agent.id.caseInsensitiveCompare(
-                AgentProfileStore.reviewerAgentID.uuidString
-            ) == .orderedSame
-        }) {
-            return reviewer
-        }
+        if let reviewer = AgentProfileStore.roleProfile(
+            id: AgentProfileStore.reviewerAgentID,
+            name: AgentProfileStore.reviewerAgentName,
+            in: try availableACPAgentProfiles()
+        ) { return reviewer }
         throw ACPError.invalidParams("The Reviewer agent profile is unavailable.")
     }
 
@@ -912,8 +886,14 @@ extension ZenCODEACPBridge {
                     : "No active plan or planning discussion to clear."
             )
         }
+        guard let runnerGeneration = await sessionRunner.currentSessionGeneration(
+            for: sessionID
+        ) else {
+            return .immediate("ZenCODE: the ACP session changed before /plan clear completed.")
+        }
+        var previousGraph: TaskGraphSnapshot?
         do {
-            let previousGraph = try await sessionRunner.taskGraphSnapshot(
+            previousGraph = try await sessionRunner.taskGraphSnapshot(
                 sessionID: sessionID,
                 graphID: plan.id
             )
@@ -932,6 +912,12 @@ extension ZenCODEACPBridge {
             promptID: promptID,
             { $0.activePlan = nil }
         ) else {
+            await rollbackACPTaskGraph(
+                previousGraph,
+                graphID: plan.id,
+                sessionID: sessionID,
+                expectedRunnerGeneration: runnerGeneration
+            )
             return .immediate("ZenCODE: the ACP session changed before /plan clear completed.")
         }
         return .immediate(
@@ -1064,6 +1050,15 @@ extension ZenCODEACPBridge {
                 liveSession.planBrainstorming = session.planBrainstorming
             }
         ) else {
+            if liveSession(id: sessionID, epoch: epoch) != nil,
+               let installed = await sessionRunner.snapshotSession(id: sessionID),
+               installed.history == correctedHistory {
+                _ = await sessionRunner.replaceSessionHistory(
+                    id: sessionID,
+                    history: currentHistory,
+                    expectedSessionGeneration: runnerGeneration
+                )
+            }
             throw CancellationError()
         }
 

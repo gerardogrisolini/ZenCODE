@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
@@ -193,6 +194,42 @@ struct TelegramTUITests {
         #expect(TerminalTelegramRemoteCommand(text: "/start@zencode_bot 233B0EC4") == .start)
         #expect(TerminalTelegramRemoteCommand(text: "/help") == .help)
         #expect(TerminalTelegramRemoteCommand(text: "ciao") == nil)
+        #expect(TerminalChat.telegramCommandWithoutBotMention("/review@zencode_bot routing") == "/review routing")
+        #expect(TerminalChat.telegramCommandWithoutBotMention("person@example.com") == "person@example.com")
+    }
+
+    @Test
+    func telegramReturnsImmediateCoordinatorCommandOutputAndBotAddressedHelp() async throws {
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: FileManager.default.temporaryDirectory
+            ),
+            stdinIsTerminal: false
+        )
+        terminal.selectedToolKeys.insert("sub-agents")
+        terminal.telegramLinkedChatID = 42
+        terminal.telegramControlState.isActive = true
+        let messages = Mutex<[String]>([])
+        terminal.onTelegramSystemMessage = { message, chatID in
+            #expect(chatID == 42)
+            messages.withLock { $0.append(message) }
+            return true
+        }
+
+        guard case .continueChat = await terminal.submittedTelegramLineAction("/review@zencode_bot routing") else {
+            Issue.record("Bot-addressed /review should be handled immediately when nothing is reviewable")
+            return
+        }
+        guard case .continueChat = await terminal.submittedTelegramLineAction("/help@zencode_bot") else {
+            Issue.record("Bot-addressed /help should remain a remote command")
+            return
+        }
+
+        let output = messages.withLock { $0 }
+        #expect(output.contains { $0.contains("No tracked session file changes to review") })
+        #expect(output.contains { $0.contains("/review [focus]") })
     }
 
     @Test

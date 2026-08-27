@@ -1162,7 +1162,7 @@ struct PlanCommandTests {
             tools: []
         )
 
-        let prompt = TerminalChat.planDelegationPrompt(
+        let prompt = PlanningCommandKernel.planStartPrompt(
             goal: "add a Planner command",
             planner: planner
         )
@@ -1203,7 +1203,7 @@ struct PlanCommandTests {
             tools: []
         )
 
-        let prompt = TerminalChat.planDelegationPrompt(
+        let prompt = PlanningCommandKernel.planStartPrompt(
             goal: "add a Planner command",
             planner: planner
         )
@@ -1404,12 +1404,13 @@ struct PlanCommandTests {
             ),
         ]
 
-        let corrected = TerminalChat.historyByReplacingPlanCoordinatorOutput(
+        let corrected = PlanningCommandKernel.historyByReplacingCoordinatorOutput(
             history,
             with: "Planner-authored final plan"
         )
 
-        #expect(corrected.prefix(3) == history.prefix(3))
+        #expect(corrected.prefix(2) == history.prefix(2))
+        #expect(!corrected.contains { $0.content.contains("Hidden planning prompt") })
         #expect(corrected.contains { $0.toolCalls == [toolCall] })
         #expect(corrected.contains { $0.role == .tool })
         #expect(!corrected.contains { $0.content.contains("coordinate") })

@@ -114,6 +114,11 @@ public final class TerminalChat {
     /// Test seam for direct turn-message delivery when no progress reporter owns
     /// the linked chat. `nil` in production.
     var onDirectTelegramTurnMessage: (@Sendable (TerminalTelegramTurnPayload, Int64) async -> Bool)?
+    /// Presentation emitted while a Telegram coordinator command is handled
+    /// synchronously. `nil` outside that narrow transport adapter scope.
+    var telegramImmediateCommandOutput: [String]?
+    /// Test seam for bot-control messages. Production sends through the service.
+    var onTelegramSystemMessage: (@Sendable (String, Int64) async -> Bool)?
     /// `true` when the root response block currently streaming already produced
     /// visible text. Used to detect that a Telegram on/off transition happened
     /// in the middle of a response.

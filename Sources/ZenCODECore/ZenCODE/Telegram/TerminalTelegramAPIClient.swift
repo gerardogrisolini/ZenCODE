@@ -128,7 +128,10 @@ struct TerminalTelegramAPIClient: Sendable {
             bounded.append(character)
             length += width
         }
-        return bounded
+        // A single extended grapheme can itself exceed the wire budget. It
+        // cannot be split safely, so send a small visible replacement instead
+        // of the empty payload rejected by Telegram.
+        return bounded.isEmpty ? "…" : bounded
     }
 
     func downloadFile(fileID: String) async throws -> TerminalTelegramDownloadedFile {

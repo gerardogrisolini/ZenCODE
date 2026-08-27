@@ -125,7 +125,7 @@ public actor TerminalTelegramPairingService {
                 timeout: 30
             )
             for update in updates {
-                lastUpdateID = update.updateID
+                lastUpdateID = max(lastUpdateID ?? update.updateID, update.updateID)
                 guard let message = update.message,
                       let text = message.text?.nilIfBlank,
                       let user = message.from,
@@ -134,7 +134,7 @@ public actor TerminalTelegramPairingService {
                 }
 
                 guard Self.pairingCode(in: text) == expectedCode else {
-                    try await client.sendMessage(
+                    try? await client.sendMessage(
                         "ZenCODE setup is waiting for the pairing code shown in the terminal.",
                         to: message.chat.id
                     )
@@ -142,7 +142,7 @@ public actor TerminalTelegramPairingService {
                 }
 
                 guard Self.allowsPairing(chatType: message.chat.type) else {
-                    try await client.sendMessage(
+                    try? await client.sendMessage(
                         "For security, ZenCODE can only be linked from a private Telegram chat.",
                         to: message.chat.id
                     )

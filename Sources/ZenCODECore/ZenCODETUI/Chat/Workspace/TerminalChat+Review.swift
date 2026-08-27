@@ -64,14 +64,11 @@ extension TerminalChat {
   /// Prefers a user-configured "Reviewer" profile from agents.json and falls
   /// back to the built-in default so the command works before any setup.
   func reviewerProfileForDelegation() -> AgentProfile {
-    let configured = (try? availableAgents()) ?? []
-    if let match = configured.first(where: Self.isReviewerProfile) {
-      return match
-    }
-    if let fallback = AgentProfileStore.defaultProfiles().first(where: Self.isReviewerProfile) {
-      return fallback
-    }
-    return AgentProfileStore.defaultProfiles()[0]
+    AgentProfileStore.roleProfile(
+      id: AgentProfileStore.reviewerAgentID,
+      name: AgentProfileStore.reviewerAgentName,
+      in: (try? availableAgents()) ?? []
+    ) ?? AgentProfileStore.defaultProfiles()[0]
   }
 
   nonisolated static func isReviewerProfile(_ agent: AgentProfile) -> Bool {

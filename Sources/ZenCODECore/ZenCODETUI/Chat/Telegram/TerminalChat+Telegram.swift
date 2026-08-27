@@ -33,6 +33,7 @@ extension TerminalChat {
     }
 
     func submittedTelegramLineAction(_ prompt: String) async -> TerminalSubmittedLineAction {
+        let prompt = Self.telegramCommandWithoutBotMention(prompt)
         switch TerminalTelegramRemoteCommand(text: prompt) {
         case .start:
             await sendTelegramSystemMessageIfLinked(
@@ -73,14 +74,21 @@ extension TerminalChat {
             }
 
             if let coordinatorCommand = CoordinatorCommandParser.parse(prompt) {
-                switch coordinatorCommand {
+                telegramImmediateCommandOutput = []
+                let action: TerminalSubmittedLineAction = switch coordinatorCommand {
                 case .plan:
-                    return await handlePlanCommand(prompt)
+                    await handlePlanCommand(prompt)
                 case .goal:
-                    return await handleWorkflowCommand(prompt)
+                    await handleWorkflowCommand(prompt)
                 case .review:
-                    return await handleReviewCommand(prompt)
+                    await handleReviewCommand(prompt)
                 }
+                let output = telegramImmediateCommandOutput?.joined(separator: "\n").nilIfBlank
+                telegramImmediateCommandOutput = nil
+                if case .continueChat = action, let output {
+                    await sendTelegramSystemMessageIfLinked(output)
+                }
+                return action
             }
             if !CoordinatorCommandParser.isSlashCommand(prompt),
                let action = handlePlanBrainstormingReply(prompt) {
@@ -88,6 +96,17 @@ extension TerminalChat {
             }
             return .runPrompt(prompt)
         }
+    }
+
+    nonisolated static func telegramCommandWithoutBotMention(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let separator = trimmed.firstIndex(where: \.isWhitespace) else {
+            guard trimmed.first == "/", let at = trimmed.firstIndex(of: "@") else { return trimmed }
+            return String(trimmed[..<at])
+        }
+        let token = trimmed[..<separator]
+        guard token.first == "/", let at = token.firstIndex(of: "@") else { return trimmed }
+        return String(token[..<at]) + trimmed[separator...]
     }
 
     /// Forwards incoming Telegram messages into the runtime queue.
@@ -902,6 +921,9 @@ extension TerminalChat {
     /// reached the chat must fail closed instead of holding the turn.
     @discardableResult
     func sendTelegramSystemMessage(_ message: String, to chatID: Int64) async -> Bool {
+        if let onTelegramSystemMessage {
+            return await onTelegramSystemMessage(message, chatID)
+        }
         do {
             telegramControlState = try await telegramControlService.sendMessage(message, to: chatID)
             return true
@@ -952,7 +974,7 @@ extension TerminalChat {
         Send a message to prompt the current ZenCODE TUI session.
         Live messages from agents are forwarded here; reply to one with text to answer its sender.
         A voice note cannot be a direct reply: send text, or record without replying to run an ordinary prompt.
-        Remote commands: /status, /changes, /help, /plan <goal> and its subcommands, /goal <goal>.
+        Remote commands: /status, /changes, /help, /plan <goal> and its subcommands, /goal <goal>, /review [focus].
         While /plan is asking questions, ordinary replies continue that same runtime discussion.
         Permission replies: /allow ID, /always ID, /deny ID.
         Gated operations (shell commands, deletions, git push/restore) are asked here.

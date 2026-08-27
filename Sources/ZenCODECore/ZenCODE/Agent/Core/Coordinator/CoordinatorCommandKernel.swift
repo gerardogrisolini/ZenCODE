@@ -489,7 +489,10 @@ enum PlanningCommandKernel {
         guard let turnStart = history.lastIndex(where: { $0.role == .user }) else {
             return history + [AgentRuntimeMessage(role: .assistant, content: plannerOutput)]
         }
-        var correctedHistory = Array(history[...turnStart])
+        // The last user message is the hidden operational prompt. Keep the
+        // replay-required tool envelope from its turn, but do not persist that
+        // implementation detail into snapshots or resumed conversations.
+        var correctedHistory = Array(history[..<turnStart])
         correctedHistory.append(contentsOf: history[history.index(after: turnStart)...].compactMap {
             message -> AgentRuntimeMessage? in
             guard message.role == .assistant else { return message }

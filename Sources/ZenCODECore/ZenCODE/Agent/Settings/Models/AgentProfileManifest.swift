@@ -635,6 +635,19 @@ public enum AgentProfileStore {
         return matches[0].element
     }
 
+    static func roleProfile(
+        id: UUID,
+        name: String,
+        in profiles: [AgentProfile]
+    ) -> AgentProfile? {
+        profiles.first {
+            $0.id.caseInsensitiveCompare(id.uuidString) == .orderedSame
+                || $0.name.caseInsensitiveCompare(name) == .orderedSame
+        } ?? defaultProfiles().first {
+            $0.id.caseInsensitiveCompare(id.uuidString) == .orderedSame
+        }
+    }
+
     public static func ambiguousProfileReferences(
         in agents: [AgentProfile]
     ) -> [String] {
