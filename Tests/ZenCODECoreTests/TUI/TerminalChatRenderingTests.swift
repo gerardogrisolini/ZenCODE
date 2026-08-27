@@ -551,6 +551,21 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func statusBarSubscriptionUsageMutesLabelsButNotValues() {
+        let usage = DirectAgentSubscriptionUsageStatus(
+            provider: "ChatGPT",
+            dailyUsedPercent: 10,
+            weeklyUsedPercent: 42
+        )
+
+        #expect(
+            TerminalStatusBar.styledSubscriptionUsageFragment(usage)
+                == "\(TerminalStyle.Text.muted)d:\(TerminalStyle.reset)10% "
+                    + "\(TerminalStyle.Text.muted)w:\(TerminalStyle.reset)42%"
+        )
+    }
+
+    @Test
     func statusBarSynchronizesFromCurrentRunnerAccessMode() async throws {
         let runner = AgentCoreSessionRunner()
         #expect(await runner.toggleLocalExecAccessMode() == .fullAccess)

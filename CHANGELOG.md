@@ -33,8 +33,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   same `·` divider already used between `task:` and `attempt:`, and renders the
   counters with muted `c:` / `p:` / `g:` labels and highlighted values matching
   the other metadata values.
-- The statusbar mutes the `c:` / `p:` / `g:` token-counter labels and shows the
-  `d:` / `w:` subscription-usage counters entirely muted.
+- The statusbar mutes the `c:` / `p:` / `g:` token-counter and `d:` / `w:`
+  subscription-usage labels while keeping their values in the default foreground.
 
 ### Added
 

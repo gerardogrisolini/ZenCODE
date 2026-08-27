@@ -150,15 +150,19 @@ extension TerminalStatusBar {
         return fragments.joined(separator: " ")
     }
 
-    /// Status-bar presentation of the subscription usage counters: labels and
-    /// values are both muted.
+    /// Status-bar presentation of the subscription usage counters: the `d:` /
+    /// `w:` labels are muted so their values keep the default foreground.
     static func styledSubscriptionUsageFragment(
         _ status: DirectAgentSubscriptionUsageStatus
     ) -> String? {
-        guard let fragment = subscriptionUsageFragment(status) else {
+        guard status.hasValues else {
             return nil
         }
-        return "\(TerminalStyle.Text.muted)\(fragment)\(TerminalStyle.reset)"
+        let fragments = [
+            status.dailyUsedPercent.map { mutedLabel("d:") + usagePercentText($0) },
+            status.weeklyUsedPercent.map { mutedLabel("w:") + usagePercentText($0) }
+        ].compactMap(\.self)
+        return fragments.joined(separator: " ")
     }
 
     private static func mutedLabel(_ label: String) -> String {
