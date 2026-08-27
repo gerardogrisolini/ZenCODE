@@ -497,13 +497,14 @@ struct TerminalTelegramOverviewMirroringTests {
         await terminal.beginTelegramTurnProgressReporting(for: .telegram(chatID: 42))
         let firstTurnRecorder = TelegramMessageRecorder()
         let gate = TelegramGate()
-        terminal.activeTelegramProgressReporter = TerminalTelegramTurnProgressReporter(
+        let firstTurnReporter = TerminalTelegramTurnProgressReporter(
             chatID: 42
         ) { message, _ in
             await gate.waitIfClosed()
             firstTurnRecorder.append(message)
             return true
         }
+        terminal.activeTelegramProgressReporter = firstTurnReporter
 
         // Section A enters delivery (blocked on the gate); section B queues
         // behind it and is not delivered yet.
@@ -534,6 +535,10 @@ struct TerminalTelegramOverviewMirroringTests {
 
         await gate.open()
         await drainMirrors(terminal)
+        // `drainMirrors` flushes the currently active turn-2 reporter. The
+        // delivery already captured by turn 1 has its own queue, so wait for
+        // that reporter explicitly before observing its recorder.
+        await firstTurnReporter.flush()
 
         // A was already in delivery for turn 1's reporter: it stays there.
         #expect(firstTurnRecorder.messages.count == 1)

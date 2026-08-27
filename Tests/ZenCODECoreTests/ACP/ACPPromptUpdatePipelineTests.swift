@@ -108,7 +108,7 @@ struct ACPPromptUpdatePipelineTests {
         let pipeline = ACPPromptUpdatePipeline(
             sessionID: "pipeline-order",
             writer: writer,
-            buffer: ACPPromptUpdateBuffer(),
+            buffer: ACPPromptUpdateBuffer(now: { Date(timeIntervalSince1970: 0) }),
             onTaskStart: { ordinal in await rawGate.park(ordinal) },
             onUnitStart: { ordinal in await trace.unitStarted(ordinal) }
         )
