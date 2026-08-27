@@ -25,9 +25,9 @@ extension TerminalChat {
     }
 
     /// Mirrors typed overview publications to the linked Telegram chat while
-    /// that turn's progress is mirrored. The live sub-agent overview remains
-    /// terminal-only; each completed model response is instead a distinct
-    /// remote message.
+    /// that turn's progress is mirrored. Transient sub-agent metadata remains
+    /// terminal-only; each visible 💬 answer block and each completed model
+    /// response is instead a distinct remote message.
     ///
     /// Task graphs are mirrored only when the content actually changed. Sends
     /// go through the turn reporter's ordered queue, so a section cannot
@@ -55,6 +55,14 @@ extension TerminalChat {
             await activeTelegramProgressReporter?.enqueue(
                 .tasks("📋 Task graph\n\n\(plainText)")
             )
+        case let .subAgentPartialResponse(response):
+            guard let payload = Self.telegramSubAgentResponsePayload(
+                heading: response.heading,
+                markdown: response.markdown
+            ) else {
+                return
+            }
+            await activeTelegramProgressReporter?.enqueue(payload)
         case let .subAgentResponse(response):
             guard let payload = Self.telegramSubAgentResponsePayload(
                 heading: response.heading,

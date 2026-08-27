@@ -34,6 +34,7 @@ struct TerminalOverviewArbitration<Kind: Hashable, Pending> {
     var publicationCounters: [Kind: Int] = [:]
     var isSuspended = false
     var consumedResponseTokens = Set<String>()
+    var consumedPartialResponseTokens = Set<String>()
 }
 
 /// Actor-confined FIFO mirror queue state. Keeping continuations beside the
@@ -51,6 +52,7 @@ extension TerminalChatRenderCoordinator {
     /// tools, or metadata as a generic overview snapshot.
     enum OverviewMirrorNotification: Sendable, Equatable {
         case taskGraph(signature: String, markdown: String)
+        case subAgentPartialResponse(SubAgentPartialResponse)
         case subAgentResponse(SubAgentMarkdownResponse)
     }
 
@@ -120,6 +122,7 @@ extension TerminalChatRenderCoordinator {
         case markdown(String)
         case subAgents(
             text: String,
+            partialResponses: [SubAgentPartialResponse],
             responses: [SubAgentMarkdownResponse],
             overviewBatchID: String?,
             maximumInPlaceRows: Int?

@@ -765,9 +765,14 @@ struct DirectSubAgentRuntimeTests {
 
         #expect(startedSnapshot.currentActivity == "I’ll inspect the matching files.")
         #expect(startedSnapshot.currentActivityKind == .content)
+        #expect(startedSnapshot.currentActivityRevision == 1)
         #expect(startedSnapshot.currentToolName == "search.grep")
         #expect(startedSnapshot.currentToolTarget == "needle")
         #expect(startedSignature != thinkingSignature)
+        let mirroredBlocks = TerminalChat.subAgentPartialResponses([startedSnapshot])
+        #expect(mirroredBlocks.count == 1)
+        #expect(mirroredBlocks.first?.markdown == "I’ll inspect the matching files.")
+        #expect(mirroredBlocks.first?.heading == "💬 Response from tool-worker:")
 
         await runtime.recordEvent(
             .toolCallCompleted(

@@ -126,6 +126,10 @@ public actor DirectSubAgentRuntime {
         public var currentActivity: String? = nil
         /// Typed provenance of `currentActivity`; nil when there is no activity.
         public var currentActivityKind: ActivityKind? = nil
+        /// Monotonic identity of assistant content promoted into
+        /// `currentActivity` at a tool boundary. It lets presentation mirrors
+        /// publish every visible 💬 block exactly once across overview refreshes.
+        public var currentActivityRevision: UInt64 = 0
         /// The incomplete thinking paragraph currently being streamed, kept in
         /// its raw stream form (a trailing CR is preserved so a CRLF split
         /// across deltas is not mistaken for a paragraph break). Completed
@@ -225,6 +229,7 @@ public actor DirectSubAgentRuntime {
         /// Typed provenance of `currentActivity`. Presentation must branch on
         /// this instead of inspecting the activity text.
         public let currentActivityKind: ActivityKind?
+        public let currentActivityRevision: UInt64
         public let currentToolName: String?
         public let currentToolTarget: String?
         /// Generation metrics of the latest turn, already merged by the
@@ -257,6 +262,7 @@ public actor DirectSubAgentRuntime {
             modelID: String? = nil,
             currentActivity: String? = nil,
             currentActivityKind: ActivityKind? = nil,
+            currentActivityRevision: UInt64 = 0,
             currentToolName: String? = nil,
             currentToolTarget: String? = nil,
             latestMetrics: DirectAgentGenerationMetrics? = nil,
@@ -286,6 +292,7 @@ public actor DirectSubAgentRuntime {
             self.modelID = modelID
             self.currentActivity = currentActivity
             self.currentActivityKind = currentActivityKind
+            self.currentActivityRevision = currentActivityRevision
             self.currentToolName = currentToolName
             self.currentToolTarget = currentToolTarget
             self.latestMetrics = latestMetrics

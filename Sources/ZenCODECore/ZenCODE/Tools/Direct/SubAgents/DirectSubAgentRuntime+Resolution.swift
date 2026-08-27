@@ -180,6 +180,7 @@ extension DirectSubAgentRuntime {
             modelID: agent.modelID,
             currentActivity: agent.currentActivity,
             currentActivityKind: agent.currentActivityKind,
+            currentActivityRevision: agent.currentActivityRevision,
             currentToolName: agent.currentToolName,
             currentToolTarget: agent.currentToolTarget,
             latestMetrics: agent.latestMetrics,

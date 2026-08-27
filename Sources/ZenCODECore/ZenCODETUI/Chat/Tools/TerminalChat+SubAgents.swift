@@ -172,10 +172,12 @@ extension TerminalChat {
                 forInPlaceRows: maximumInPlaceRows
             )
         ) + "\n"
+        let partialResponses = Self.subAgentPartialResponses(snapshots)
         let responses = Self.subAgentMarkdownResponses(snapshots)
         _ = await renderCoordinator.renderSubAgentOverview(
             signature: signature,
             text: overview,
+            partialResponses: partialResponses,
             responses: responses,
             revision: publicationRevision,
             force: force,
@@ -909,6 +911,30 @@ extension TerminalChat {
                 token: subAgentResponseToken(snapshot: snapshot, output: output),
                 heading: "   ✅ Response from \(inlineText(name)):\n",
                 markdown: output
+            )
+        }
+    }
+
+    /// Extracts the same completed assistant blocks shown as 💬 activity rows.
+    /// Content appears here only after the runtime reaches a tool boundary, so
+    /// Telegram receives semantic partial responses rather than token deltas.
+    nonisolated static func subAgentPartialResponses(
+        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
+    ) -> [TerminalChatRenderCoordinator.SubAgentPartialResponse] {
+        snapshots.compactMap { snapshot in
+            guard snapshot.currentActivityKind == .content,
+                  let content = snapshot.currentActivity?.nilIfBlank else {
+                return nil
+            }
+            let name = snapshot.name.nilIfBlank ?? snapshot.id
+            return TerminalChatRenderCoordinator.SubAgentPartialResponse(
+                token: [
+                    snapshot.id,
+                    "partial",
+                    String(snapshot.currentActivityRevision)
+                ].joined(separator: "\u{1F}"),
+                heading: "💬 Response from \(inlineText(name)):",
+                markdown: content
             )
         }
     }

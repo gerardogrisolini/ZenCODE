@@ -204,7 +204,7 @@ struct TerminalTelegramOverviewMirroringTests {
     }
 
     @Test
-    func renderedSubAgentOverviewStaysTerminalOnly() async throws {
+    func visibleSubAgentResponseBlocksAreMirroredOnceWithoutOverviewMetadata() async throws {
         let (root, support, working) = try makeTemp()
         defer { try? FileManager.default.removeItem(at: root) }
         let terminal = try makeTerminal(working: working, support: support)
@@ -218,15 +218,46 @@ struct TerminalTelegramOverviewMirroringTests {
             return true
         }
 
+        let first = TerminalChatRenderCoordinator.SubAgentPartialResponse(
+            token: "worker\u{1F}partial\u{1F}1",
+            heading: "💬 Response from worker:",
+            markdown: "I found the **first** clue."
+        )
         await terminal.renderCoordinator.renderSubAgentOverview(
             signature: "agents-v1",
-            text: "Sub-agents\n\u{1B}[36mreviewer — idle\u{1B}[0m\n",
+            text: "Sub-agents\nagent metadata\n💬 I found the first clue.\n",
+            partialResponses: [first],
+            force: true,
+            rememberSignature: true
+        )
+        // A forced redraw of the same live row must not duplicate the remote
+        // response. A later tool boundary has a new revision and is delivered.
+        await terminal.renderCoordinator.renderSubAgentOverview(
+            signature: "agents-v1-redraw",
+            text: "Sub-agents\nagent metadata\n💬 I found the first clue.\n",
+            partialResponses: [first],
+            force: true,
+            rememberSignature: true
+        )
+        let second = TerminalChatRenderCoordinator.SubAgentPartialResponse(
+            token: "worker\u{1F}partial\u{1F}2",
+            heading: "💬 Response from worker:",
+            markdown: "Now I have the complete intermediate result."
+        )
+        await terminal.renderCoordinator.renderSubAgentOverview(
+            signature: "agents-v2",
+            text: "Sub-agents\nagent metadata\n💬 complete intermediate result\n",
+            partialResponses: [second],
             force: true,
             rememberSignature: true
         )
         await drainMirrors(terminal)
 
-        #expect(recorder.messages.isEmpty)
+        #expect(recorder.messages == [
+            "💬 Response from worker:\n\nI found the **first** clue.",
+            "💬 Response from worker:\n\nNow I have the complete intermediate result."
+        ])
+        #expect(recorder.messages.allSatisfy { !$0.contains("agent metadata") })
         #expect(terminal.mirroredTaskGraphOverviewSignature == nil)
     }
 
@@ -350,8 +381,8 @@ struct TerminalTelegramOverviewMirroringTests {
             return true
         }
 
-        // A sub-agent section is terminal-only; task-graph revisions still
-        // reach Telegram in their exact local render order.
+        // A metadata-only sub-agent section has no remote payload; task-graph
+        // revisions still reach Telegram in their exact local render order.
         await terminal.renderCoordinator.renderSubAgentOverview(
             signature: "agents-v1",
             text: "Sub-agents\nfirst wave",

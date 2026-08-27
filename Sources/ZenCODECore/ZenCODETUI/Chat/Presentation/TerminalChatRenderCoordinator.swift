@@ -50,6 +50,15 @@ actor TerminalChatRenderCoordinator {
         let markdown: String
     }
 
+    /// One assistant block that a sub-agent completed before starting a tool.
+    /// The same block is shown as a 💬 row in the live overview and mirrored
+    /// once to remote chat even when later refreshes redraw that row.
+    struct SubAgentPartialResponse: Sendable, Equatable {
+        let token: String
+        let heading: String
+        let markdown: String
+    }
+
     struct Snapshot: Sendable, Equatable {
         let activeToolCallID: String?
         let activeToolRenderedRowCount: Int
@@ -118,9 +127,9 @@ actor TerminalChatRenderCoordinator {
     var overviewState = TerminalOverviewArbitration<OverviewKind, PendingOverview>()
 
     /// Optional mirror invoked after publishable overview content is actually
-    /// rendered locally. The typed notification deliberately excludes the live
-    /// sub-agent overview: only task graphs and completed model responses have
-    /// a remote audience.
+    /// rendered locally. The typed notification excludes transient status,
+    /// reasoning, tools, and metadata while including every model-authored 💬
+    /// block and completed response.
     /// Deferred overviews flow through here too, once they become renderable,
     /// so remote mirrors (e.g. Telegram) cannot miss a section that only
     /// rendered after streaming finished.

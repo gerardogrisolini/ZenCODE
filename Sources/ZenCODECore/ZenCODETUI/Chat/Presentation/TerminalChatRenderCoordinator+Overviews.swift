@@ -131,6 +131,7 @@ extension TerminalChatRenderCoordinator {
     func renderSubAgentOverview(
         signature: String,
         text: String,
+        partialResponses: [SubAgentPartialResponse] = [],
         responses: [SubAgentMarkdownResponse] = [],
         revision: Int? = nil,
         force: Bool,
@@ -159,6 +160,7 @@ extension TerminalChatRenderCoordinator {
             rememberSignature: rememberSignature,
             content: .subAgents(
                 text: text,
+                partialResponses: partialResponses,
                 responses: responses,
                 overviewBatchID: overviewBatchID,
                 maximumInPlaceRows: maximumInPlaceRows
@@ -211,7 +213,7 @@ extension TerminalChatRenderCoordinator {
            !assistantStreamingState.isStreaming,
            !thoughtStreamingState.isStreaming {
             let maximumInPlaceRows: Int?
-            if case let .subAgents(_, _, _, rows) = content {
+            if case let .subAgents(_, _, _, _, rows) = content {
                 maximumInPlaceRows = rows
             } else {
                 maximumInPlaceRows = nil
@@ -267,9 +269,16 @@ extension TerminalChatRenderCoordinator {
             enqueueMirrorNotification(
                 .taskGraph(signature: overview.signature, markdown: markdown)
             )
-        case let .subAgents(text, responses, overviewBatchID, maximumInPlaceRows):
+        case let .subAgents(
+            text,
+            partialResponses,
+            responses,
+            overviewBatchID,
+            maximumInPlaceRows
+        ):
             renderSubAgentOverviewContent(
                 text: text,
+                partialResponses: partialResponses,
                 responses: responses,
                 overviewBatchID: overviewBatchID,
                 maximumInPlaceRows: maximumInPlaceRows
@@ -285,12 +294,16 @@ extension TerminalChatRenderCoordinator {
     /// region: in those cases the update is appended, exactly as before.
     private func renderSubAgentOverviewContent(
         text: String,
+        partialResponses: [SubAgentPartialResponse],
         responses: [SubAgentMarkdownResponse],
         overviewBatchID: String?,
         maximumInPlaceRows: Int?
     ) {
         let pendingResponses = responses.filter { response in
             !overviewState.consumedResponseTokens.contains(response.token)
+        }
+        let pendingPartialResponses = partialResponses.filter { response in
+            !overviewState.consumedPartialResponseTokens.contains(response.token)
         }
         // Any buffered streaming bytes must reach the terminal before the
         // ownership check, otherwise they would be emitted between the check
@@ -319,6 +332,15 @@ extension TerminalChatRenderCoordinator {
         let cursorStateBeforeRender = currentCursorState(for: .standardError)
         let renderedText = writeChatMeasured(text, to: .standardError)
         activeSubAgentOverviewBlock = nil
+
+        // These model-authored blocks are already visible as 💬 rows inside the
+        // overview. Notify remote mirrors only after the local render succeeds,
+        // and consume their stable identities so in-place refreshes cannot resend
+        // the same answer.
+        for response in pendingPartialResponses {
+            overviewState.consumedPartialResponseTokens.insert(response.token)
+            enqueueMirrorNotification(.subAgentPartialResponse(response))
+        }
 
         guard pendingResponses.isEmpty else {
             // A completed response is model-authored transcript content: it is

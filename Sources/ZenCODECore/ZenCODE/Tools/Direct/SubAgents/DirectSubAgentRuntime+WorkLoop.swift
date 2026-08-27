@@ -237,6 +237,9 @@ extension DirectSubAgentRuntime {
                 from: &agent.pendingContentBuffer
             )
             agent.currentActivityKind = agent.currentActivity == nil ? nil : .content
+            if agent.currentActivity != nil {
+                agent.currentActivityRevision &+= 1
+            }
             agent.currentToolName = toolCall.name
             agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
             agent.latestContentPreview = nil
