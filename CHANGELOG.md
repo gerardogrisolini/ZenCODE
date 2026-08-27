@@ -12,6 +12,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Expanded file-change diffs now render Markdown, plain-text, documentation and
+  unknown file types entirely in white, including wrapped continuations, instead
+  of letting the first fragment inherit the muted line-number gutter color.
 - Opening, closing, or first showing the terminal Chat reader now preserves the
   live Sub-Agents rewrite region across ordinary dock transitions; real terminal
   resizes still invalidate unsafe geometry, preventing duplicated sections and

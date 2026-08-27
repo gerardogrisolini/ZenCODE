@@ -1026,7 +1026,10 @@ extension TerminalChat {
         language: String?
     ) -> String {
         guard let language else {
-            return line
+            // Documentation, plain-text and unknown file types deliberately skip
+            // syntax highlighting. Set their foreground explicitly so diff cells
+            // cannot inherit the muted gutter color, including after wrapping.
+            return "\(TerminalMarkdownPalette.dark.codeForeground)\(line)"
         }
         let reset = TerminalStyle.reset
         return TerminalCodeBlockRenderer

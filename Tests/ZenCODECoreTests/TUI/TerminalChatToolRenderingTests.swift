@@ -121,6 +121,32 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
+    func wrappedPlainTextDiffUsesWhiteForegroundForEveryFragment() {
+        let prose = String(repeating: "plain text payload ", count: 12)
+        let rows = TerminalChat.safelyWrappedDetailedToolRows(
+            TerminalChat.numberedDiffSnippetRows(
+                old: prose,
+                new: prose + "changed",
+                contentWidth: 80
+            ),
+            contentInsetWidth: 0,
+            columnWidth: 80,
+            codeLanguage: nil
+        )
+        let renderedPayloadRows = rows
+            .dropFirst()
+            .map { TerminalChat.renderDetailedToolRow($0, codeLanguage: nil) }
+            .filter { TerminalANSIText.stripANSI($0).contains("plain text payload") }
+
+        #expect(renderedPayloadRows.count > 1)
+        #expect(
+            renderedPayloadRows.allSatisfy {
+                $0.contains(TerminalMarkdownPalette.dark.codeForeground)
+            }
+        )
+    }
+
+    @Test
     func wrappedSideBySideDiffPreservesSwiftCommentColorOnContinuations() {
         let comment = "// " + String(repeating: "comment payload ", count: 12)
         let rows = TerminalChat.safelyWrappedDetailedToolRows(
@@ -350,6 +376,7 @@ extension TerminalChatRenderingTests {
         let neutral = TerminalChat.renderDetailedToolRow(row, codeLanguage: nil)
         #expect(highlighted.contains(TerminalMarkdownPalette.dark.syntaxKeyword))
         #expect(!neutral.contains(TerminalMarkdownPalette.dark.syntaxKeyword))
+        #expect(neutral.contains(TerminalMarkdownPalette.dark.codeForeground))
     }
 
     @Test
