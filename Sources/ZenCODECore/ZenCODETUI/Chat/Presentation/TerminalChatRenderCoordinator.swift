@@ -124,6 +124,9 @@ actor TerminalChatRenderCoordinator {
     var toolState = TerminalToolBlockAccounting<ActiveToolBlock>()
     var subAgentToolState = TerminalSubAgentToolPresentationState()
     var activeSubAgentOverviewBlock: ActiveOverviewBlock?
+    /// Fences periodic overview publications while the status bar changes the
+    /// transcript's scrolling region outside this coordinator.
+    var isBottomOverlayTransitionActive = false
     var overviewState = TerminalOverviewArbitration<OverviewKind, PendingOverview>()
 
     /// Optional mirror invoked after publishable overview content is actually

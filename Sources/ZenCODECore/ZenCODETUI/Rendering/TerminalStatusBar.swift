@@ -224,7 +224,8 @@ public actor TerminalStatusBar {
         unreadCount: Int,
         isExpanded: Bool,
         selection: TerminalSharedChatReaderDock.Selection = .preserve,
-        observationID: UUID? = nil
+        observationID: UUID? = nil,
+        availableTranscriptGapRows: Int = 0
     ) {
         withOutputBatch {
             let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
@@ -245,7 +246,14 @@ public actor TerminalStatusBar {
             guard state.isStarted else { return }
             let newReservedRows = reservedBottomRowsLocked(state: &state)
             if newReservedRows > oldReservedRows {
-                scrollOutputRegionUpLocked(state: &state, by: newReservedRows - oldReservedRows, reservedRows: oldReservedRows)
+                scrollOutputRegionUpLocked(
+                    state: &state,
+                    by: max(
+                        0,
+                        newReservedRows - oldReservedRows - availableTranscriptGapRows
+                    ),
+                    reservedRows: oldReservedRows
+                )
             }
             clearReservedRowsLocked(state: &state, count: max(oldReservedRows, newReservedRows))
             writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
@@ -331,7 +339,8 @@ public actor TerminalStatusBar {
         entries: [TerminalSharedChatReaderEntry],
         unreadCount: Int,
         selection: TerminalSharedChatReaderDock.Selection = .preserve,
-        observationID: UUID? = nil
+        observationID: UUID? = nil,
+        availableTranscriptGapRows: Int = 0
     ) -> Bool {
         withOutputBatch {
             let previousDock = state.sharedChatReaderDock
@@ -365,7 +374,10 @@ public actor TerminalStatusBar {
             if newReservedRows > oldReservedRows {
                 scrollOutputRegionUpLocked(
                     state: &state,
-                    by: newReservedRows - oldReservedRows,
+                    by: max(
+                        0,
+                        newReservedRows - oldReservedRows - availableTranscriptGapRows
+                    ),
                     reservedRows: oldReservedRows
                 )
             }

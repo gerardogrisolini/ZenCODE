@@ -1909,7 +1909,7 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func firstSharedChatMessageHeaderRelinquishesSubAgentOverviewOwnership() async {
+    func firstSharedChatMessageHeaderPreservesSubAgentOverviewOwnership() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
             columnWidthProvider: { 80 }
@@ -1934,9 +1934,10 @@ struct TerminalChatRenderCoordinatorTests {
         )
         #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
 
-        // This is the `.sharedChatMessages` transition: the status bar starts
-        // drawing its compact header outside the coordinator's write accounting.
-        await renderer.relinquishSubAgentOverviewOwnership()
+        // This is the `.sharedChatMessages` transition. Adding the header makes
+        // the terminal scroll the existing transcript block upward intact.
+        let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+        let availableTranscriptGapRows = await renderer.beginBottomOverlayTransition()
         await statusBar.setSharedChatReader(
             entries: [
                 TerminalSharedChatReaderEntry(
@@ -1946,11 +1947,16 @@ struct TerminalChatRenderCoordinatorTests {
                 )
             ],
             unreadCount: 1,
-            isExpanded: false
+            isExpanded: false,
+            availableTranscriptGapRows: availableTranscriptGapRows
+        )
+        await renderer.endBottomOverlayTransition(
+            previousOutputCapacity: previousOutputCapacity,
+            currentOutputCapacity: await statusBar.scrollableOutputRowCapacity()
         )
         #expect(await statusBar.state.sharedChatReaderDock?.entries.count == 1)
         #expect(await statusBar.reservedRowsForOverlay() == 7)
-        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
         let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
 
         _ = await renderer.renderSubAgentOverview(
@@ -1965,9 +1971,126 @@ struct TerminalChatRenderCoordinatorTests {
             .map(\.text)
             .joined()
 
-        #expect(!containsCursorUpSequence(refreshText))
-        #expect(!refreshText.contains("\u{1B}[2K"))
+        #expect(refreshText.hasPrefix("\u{1B}[3A\r"))
+        #expect(refreshText.contains("\u{1B}[2K"))
         #expect(TerminalANSIText.stripANSI(refreshText).contains("completed"))
+    }
+
+    @Test
+    func sharedChatCollapsePreservesAndRewritesOverviewAnchoredWhileReaderWasOpen() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let statusBar = TerminalStatusBar(isEnabled: true) { _ in }
+        await statusBar.configureForTesting(row: 14, columns: 80)
+        await statusBar.updateInputPanel(
+            text: "draft",
+            cursorIndex: 5,
+            modeText: "Chat",
+            helpText: "Enter"
+        )
+        let entry = TerminalSharedChatReaderEntry(
+            id: UUID(),
+            route: "worker",
+            text: "Ready"
+        )
+        await statusBar.setSharedChatReader(
+            entries: [entry],
+            unreadCount: 1,
+            isExpanded: true
+        )
+
+        // A refresh can establish a new rewrite anchor after the reader opened.
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:while-chat-open",
+            text: "\n👥 Sub-Agents:\n   running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave"
+        )
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
+
+        // This mirrors the input loop's close transaction. Collapsing grows the
+        // transcript region and leaves blank rows below the existing overview;
+        // retain that distance instead of abandoning and appending the block.
+        let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+        _ = await renderer.beginBottomOverlayTransition()
+        await statusBar.setSharedChatReader(
+            entries: [entry],
+            unreadCount: 1,
+            isExpanded: false
+        )
+        let currentOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+        await renderer.endBottomOverlayTransition(
+            previousOutputCapacity: previousOutputCapacity,
+            currentOutputCapacity: currentOutputCapacity
+        )
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:after-chat-close",
+            text: "\n👥 Sub-Agents:\n   completed\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave"
+        )
+        let refreshText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeRefresh)
+            .map(\.text)
+            .joined()
+
+        #expect(previousOutputCapacity != nil)
+        #expect(currentOutputCapacity != nil)
+        let gap = (currentOutputCapacity ?? 0) - (previousOutputCapacity ?? 0)
+        #expect(gap > 0)
+        #expect(refreshText.hasPrefix("\u{1B}[\(gap)A\r\u{1B}[3A\r"))
+        #expect(refreshText.contains("\u{1B}[2K"))
+        #expect(TerminalANSIText.stripANSI(refreshText).contains("completed"))
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
+    }
+
+    @Test
+    func sharedChatCloseOpenRoundTripDoesNotAccumulateOverviewCursorGap() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:before-toggle",
+            text: "\n👥 Sub-Agents:\n   running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave"
+        )
+
+        _ = await renderer.beginBottomOverlayTransition()
+        await renderer.endBottomOverlayTransition(
+            previousOutputCapacity: 6,
+            currentOutputCapacity: 11
+        )
+        let availableGap = await renderer.beginBottomOverlayTransition()
+        #expect(availableGap == 5)
+        await renderer.endBottomOverlayTransition(
+            previousOutputCapacity: 11,
+            currentOutputCapacity: 6
+        )
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:after-toggle",
+            text: "\n👥 Sub-Agents:\n   completed\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave"
+        )
+        let refreshText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeRefresh)
+            .map(\.text)
+            .joined()
+
+        #expect(refreshText.hasPrefix("\u{1B}[3A\r"))
+        #expect(!refreshText.hasPrefix("\u{1B}[5A\r"))
     }
 
     @Test

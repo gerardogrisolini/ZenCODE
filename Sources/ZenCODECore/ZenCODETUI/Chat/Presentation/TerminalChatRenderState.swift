@@ -112,6 +112,10 @@ extension TerminalChatRenderCoordinator {
 
     struct ActiveOverviewBlock: Sendable {
         let rows: Int
+        /// Blank transcript rows between the end of this block and the current
+        /// output cursor. Shrinking a bottom overlay moves the cursor down but
+        /// deliberately leaves existing transcript content in place.
+        var cursorGapRows: Int
         let columnWidth: Int
         let maximumInPlaceRows: Int?
         let cursorStateBeforeRender: CursorState

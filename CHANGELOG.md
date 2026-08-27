@@ -12,6 +12,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Opening, closing, or first showing the terminal Chat reader now preserves the
+  live Sub-Agents rewrite region across ordinary dock transitions; real terminal
+  resizes still invalidate unsafe geometry, preventing duplicated sections and
+  repeated full-block appends.
 - Pressing `Esc` during a terminal turn now interrupts delegated sub-agents for
   that session as well as stopping the main agent.
 - Telegram now mirrors every visible intermediate and final response from both

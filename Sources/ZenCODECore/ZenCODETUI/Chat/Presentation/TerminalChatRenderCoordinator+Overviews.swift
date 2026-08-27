@@ -235,6 +235,7 @@ extension TerminalChatRenderCoordinator {
 
     private var canRenderOverview: Bool {
         !overviewState.isSuspended
+            && !isBottomOverlayTransitionActive
             && toolState.activeBlock == nil
             && !assistantStreamingState.isStreaming
             && !thoughtStreamingState.isStreaming
@@ -321,6 +322,7 @@ extension TerminalChatRenderCoordinator {
         // the leading blank line normalizer would otherwise be suppressed after
         // the cursor moved back up.
         if let reusableBlock {
+            moveCursorAboveBottomOverlayGap(reusableBlock.cursorGapRows)
             clearOwnedRows(reusableBlock.rows)
             restoreCursorState(reusableBlock.cursorStateBeforeRender, for: .standardError)
         }
@@ -375,6 +377,7 @@ extension TerminalChatRenderCoordinator {
         }
         activeSubAgentOverviewBlock = ActiveOverviewBlock(
             rows: rows,
+            cursorGapRows: 0,
             columnWidth: columnWidth,
             maximumInPlaceRows: maximumInPlaceRows,
             cursorStateBeforeRender: cursorStateBeforeRender,
@@ -429,7 +432,7 @@ extension TerminalChatRenderCoordinator {
             block.maximumInPlaceRows ?? Int.max,
             maximumInPlaceRows ?? Int.max
         )
-        guard block.rows <= maximumSafeRows else {
+        guard block.rows + block.cursorGapRows <= maximumSafeRows else {
             return nil
         }
         return block
@@ -445,12 +448,40 @@ extension TerminalChatRenderCoordinator {
         return block.rows
     }
 
-    /// Gives up the in-place sub-agent overview slot when another TUI component
-    /// redraws a bottom overlay. That redraw does not pass through this
-    /// coordinator's write accounting, but it may reserve rows over the section
-    /// that the coordinator would otherwise cursor-up and erase.
+    /// Fences overview refreshes while the status bar changes its reserved rows.
+    /// The block remains visible and owned; a collapse only adds blank transcript
+    /// rows below it, which a later in-place replacement must step over.
+    func beginBottomOverlayTransition() -> Int {
+        isBottomOverlayTransitionActive = true
+        return activeSubAgentOverviewBlock?.cursorGapRows ?? 0
+    }
+
+    func endBottomOverlayTransition(
+        previousOutputCapacity: Int?,
+        currentOutputCapacity: Int?
+    ) {
+        if let previousOutputCapacity,
+           let currentOutputCapacity,
+           var block = activeSubAgentOverviewBlock {
+            block.cursorGapRows = max(
+                0,
+                block.cursorGapRows + currentOutputCapacity - previousOutputCapacity
+            )
+            activeSubAgentOverviewBlock = block
+        }
+        isBottomOverlayTransitionActive = false
+        renderPendingOverviewsIfIdle()
+    }
+
+    /// Gives up the slot only when geometry itself changed and the physical
+    /// position or wrapping of the old block can no longer be proven safe.
     func relinquishSubAgentOverviewOwnership() {
         activeSubAgentOverviewBlock = nil
+    }
+
+    private func moveCursorAboveBottomOverlayGap(_ rowCount: Int) {
+        guard rowCount > 0 else { return }
+        writeDirect("\u{1B}[\(rowCount)A\r", to: .standardError)
     }
 
     /// Removes a still-owned transient overview before a coordinator `agent.*`
@@ -479,9 +510,10 @@ extension TerminalChatRenderCoordinator {
         guard standardErrorIsTerminal,
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth,
-              block.rows <= maximumSafeRows else {
+              block.rows + block.cursorGapRows <= maximumSafeRows else {
             return
         }
+        moveCursorAboveBottomOverlayGap(block.cursorGapRows)
         clearOwnedRows(block.rows)
         restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
     }
@@ -506,9 +538,10 @@ extension TerminalChatRenderCoordinator {
         guard standardErrorIsTerminal,
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth,
-              block.rows <= (block.maximumInPlaceRows ?? Int.max) else {
+              block.rows + block.cursorGapRows <= (block.maximumInPlaceRows ?? Int.max) else {
             return
         }
+        moveCursorAboveBottomOverlayGap(block.cursorGapRows)
         clearOwnedRows(block.rows)
         restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
     }
