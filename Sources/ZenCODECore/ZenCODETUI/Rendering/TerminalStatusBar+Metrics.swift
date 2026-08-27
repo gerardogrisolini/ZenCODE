@@ -45,30 +45,15 @@ extension TerminalStatusBar {
             .map(String.init) ?? modelID
     }
     
+    /// Merges a metrics event into the status bar's running metrics.
+    ///
+    /// The semantics live on `DirectAgentGenerationMetrics` so the sub-agent
+    /// overview folds provider updates exactly the same way.
     nonisolated func mergedMetrics(
         current: DirectAgentGenerationMetrics?,
         update: DirectAgentGenerationMetrics
     ) -> DirectAgentGenerationMetrics {
-        guard let current, !update.replacesPreviousMetrics else {
-            return update
-        }
-        return DirectAgentGenerationMetrics(
-            promptTokenCount: update.clearsPromptMetrics
-            ? update.promptTokenCount
-            : update.promptTokenCount ?? current.promptTokenCount,
-            cachedPromptTokenCount: update.clearsPromptMetrics
-            ? update.cachedPromptTokenCount
-            : update.cachedPromptTokenCount ?? current.cachedPromptTokenCount,
-            promptTokensPerSecond: update.clearsPromptMetrics
-            ? update.promptTokensPerSecond
-            : update.promptTokensPerSecond ?? current.promptTokensPerSecond,
-            completionTokenCount: update.completionTokenCount ?? current.completionTokenCount,
-            completionTokensPerSecond: update.completionTokensPerSecond ?? current.completionTokensPerSecond,
-            responseDurationSeconds: update.responseDurationSeconds ?? current.responseDurationSeconds,
-            contextTokenCount: update.contextTokenCount ?? current.contextTokenCount,
-            clearsPromptMetrics: update.clearsPromptMetrics,
-            replacesPreviousMetrics: update.replacesPreviousMetrics
-        )
+        DirectAgentGenerationMetrics.merging(current: current, update: update)
     }
 
     static func tokenWindowText(

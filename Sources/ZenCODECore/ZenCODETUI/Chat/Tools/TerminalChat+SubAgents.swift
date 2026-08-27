@@ -381,7 +381,7 @@ extension TerminalChat {
                     }
                     lines.append(.regular(taskText, maxWrappedLines: 2))
                 }
-                if let model = renderSubAgentModel(
+                if let model = renderSubAgentModelLine(
                     snapshot,
                     modelTitleResolver: modelTitleResolver
                 ) {
@@ -455,7 +455,7 @@ extension TerminalChat {
             label: "agent:",
             value: inlineText(agent)
         )
-        guard let model = renderSubAgentModel(
+        guard let model = renderSubAgentModelLine(
             snapshot,
             modelTitleResolver: modelTitleResolver
         ) else {
@@ -530,6 +530,42 @@ extension TerminalChat {
         let marker = coloredStatusMarker(for: snapshot)
         let badge = statusBadge(for: snapshot)
         return "\(marker) \(boldText(name))  \(badge)"
+    }
+
+    /// The model row, extended in place with the agent's cache/prefill/generated
+    /// counters.
+    ///
+    /// The counters deliberately share the model row instead of claiming a row
+    /// of their own: the overview has a strict row budget and an extra row per
+    /// agent would push activity and responses out of view. If no model is
+    /// available, the row remains absent and the counters wait for a later
+    /// snapshot that can render them inline.
+    private nonisolated static func renderSubAgentModelLine(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        modelTitleResolver: (String) -> String
+    ) -> String? {
+        guard let model = renderSubAgentModel(
+            snapshot,
+            modelTitleResolver: modelTitleResolver
+        ) else {
+            return nil
+        }
+        guard let metrics = subAgentMetricsFragment(snapshot) else {
+            return model
+        }
+        return "\(model) \(metrics)"
+    }
+
+    /// Renders the `c:` cached / `p:` prefill / `g:` generated counters with the
+    /// same formatting and abbreviations the status bar uses.
+    nonisolated static func subAgentMetricsFragment(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
+    ) -> String? {
+        guard let metrics = snapshot.latestMetrics,
+              let fragment = TerminalStatusBar.generationTokenCountsFragment(metrics) else {
+            return nil
+        }
+        return dimText(fragment)
     }
 
     private nonisolated static func renderSubAgentModel(
@@ -1093,10 +1129,29 @@ extension TerminalChat {
                 snapshot.currentActivity?.nilIfBlank ?? "",
                 snapshot.currentToolName?.nilIfBlank ?? "",
                 snapshot.currentToolTarget?.nilIfBlank ?? "",
+                // The counters share the model row, so a metrics update alone
+                // changes the rendered overview and must invalidate it.
+                subAgentMetricsSignature(snapshot),
                 hasResponse ? "response" : "",
                 snapshot.latestError?.nilIfBlank ?? ""
             ].joined(separator: "\u{1F}")
         }
         .joined(separator: "\u{1E}")
+    }
+
+    /// Identity of the counters rendered on the model row, built from the raw
+    /// values so any reported change is detected even when the abbreviated
+    /// text happens to stay the same.
+    private nonisolated static func subAgentMetricsSignature(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
+    ) -> String {
+        guard let metrics = snapshot.latestMetrics else {
+            return ""
+        }
+        return [
+            metrics.cachedPromptTokenCount.map(String.init) ?? "",
+            metrics.promptTokenCount.map(String.init) ?? "",
+            metrics.completionTokenCount.map(String.init) ?? ""
+        ].joined(separator: "/")
     }
 }

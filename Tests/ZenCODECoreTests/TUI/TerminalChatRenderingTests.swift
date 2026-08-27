@@ -2205,6 +2205,262 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func subAgentOverviewRendersMetricsOnTheModelLineWithoutAddingARow() {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_metrics",
+            name: "planner",
+            role: "Planner",
+            status: .running,
+            pending: true,
+            modelID: "gpt-5",
+            latestMetrics: DirectAgentGenerationMetrics(
+                promptTokenCount: 1_200,
+                cachedPromptTokenCount: 800,
+                promptTokensPerSecond: nil,
+                completionTokenCount: 42,
+                completionTokensPerSecond: nil
+            ),
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        let withoutMetrics = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_metrics",
+            name: "planner",
+            role: "Planner",
+            status: .running,
+            pending: true,
+            modelID: "gpt-5",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rows = TerminalChat.renderSubAgentOverviewRowsForTesting(
+            [snapshot],
+            rowBudget: nil
+        ).map { TerminalANSIText.stripANSI($0) }
+        let baselineRows = TerminalChat.renderSubAgentOverviewRowsForTesting(
+            [withoutMetrics],
+            rowBudget: nil
+        )
+
+        // Same row, same row count.
+        #expect(rows.count == baselineRows.count)
+        let metricsRows = rows.filter { $0.contains("c:800") }
+        #expect(metricsRows.count == 1)
+        #expect(metricsRows.first?.contains("model: gpt-5") == true)
+        #expect(metricsRows.first?.contains("p:1.2k") == true)
+        #expect(metricsRows.first?.contains("g:42") == true)
+    }
+
+    @Test
+    func subAgentOverviewCompactRendersMetricsOnTheAgentAndModelRow() {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_compact_metrics",
+            name: "planner",
+            role: "Planner",
+            profileID: "developer-profile",
+            profileName: "Developer",
+            status: .running,
+            pending: true,
+            modelID: "gpt-5",
+            latestMetrics: DirectAgentGenerationMetrics(
+                promptTokenCount: 1_200,
+                cachedPromptTokenCount: 800,
+                promptTokensPerSecond: nil,
+                completionTokenCount: 42,
+                completionTokensPerSecond: nil
+            ),
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        // One row below the full presentation forces the compact variant.
+        let fullRowCount = TerminalChat.renderSubAgentOverviewRowsForTesting(
+            [snapshot],
+            rowBudget: nil
+        ).count
+        let rows = TerminalChat.renderSubAgentOverviewRowsForTesting(
+            [snapshot],
+            rowBudget: fullRowCount - 1
+        ).map { TerminalANSIText.stripANSI($0) }
+
+        let identityRows = rows.filter { $0.contains("agent: Developer") }
+        #expect(identityRows.count == 1)
+        let identityRow = identityRows.first
+        #expect(identityRow?.contains("model: gpt-5") == true)
+        #expect(identityRow?.contains("c:800") == true)
+        #expect(identityRow?.contains("p:1.2k") == true)
+        #expect(identityRow?.contains("g:42") == true)
+        // The counters never claim a row of their own.
+        #expect(rows.filter { $0.contains("c:800") }.count == 1)
+        #expect(!rows.contains { $0.contains("id: ") })
+    }
+
+    /// Counters never create a metadata row when the model is unavailable.
+    @Test
+    func subAgentOverviewOmitsMetricsUntilTheModelRowExists() {
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_metrics_no_model",
+            name: "planner",
+            role: "Planner",
+            status: .running,
+            pending: true,
+            latestMetrics: DirectAgentGenerationMetrics(
+                promptTokenCount: nil,
+                promptTokensPerSecond: nil,
+                completionTokenCount: 42,
+                completionTokensPerSecond: nil
+            ),
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        let withoutMetrics = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent_metrics_no_model",
+            name: "planner",
+            role: "Planner",
+            status: .running,
+            pending: true,
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        let rows = TerminalChat.renderSubAgentOverviewRowsForTesting(
+            [snapshot],
+            rowBudget: nil
+        ).map { TerminalANSIText.stripANSI($0) }
+        let baselineRows = TerminalChat.renderSubAgentOverviewRowsForTesting(
+            [withoutMetrics],
+            rowBudget: nil
+        )
+
+        #expect(rows.count == baselineRows.count)
+        #expect(!rows.contains { $0.contains("model:") })
+        #expect(!rows.contains { $0.contains("g:42") })
+    }
+
+    /// Dense and inline presentations stay one row per agent: the counters
+    /// live on a metadata row that those densities do not emit.
+    @Test
+    func subAgentOverviewMetricsDoNotAffectDenseOrInlineRowCounts() {
+        func snapshot(
+            id: String,
+            metrics: DirectAgentGenerationMetrics?
+        ) -> DirectSubAgentRuntime.AgentSnapshot {
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: id,
+                name: id,
+                role: "Worker",
+                status: .running,
+                pending: true,
+                modelID: "gpt-5",
+                latestMetrics: metrics,
+                latestOutput: nil,
+                latestError: nil,
+                createdAt: Date(timeIntervalSince1970: 0),
+                updatedAt: Date(timeIntervalSince1970: 0)
+            )
+        }
+        let metrics = DirectAgentGenerationMetrics(
+            promptTokenCount: 1_200,
+            cachedPromptTokenCount: 800,
+            promptTokensPerSecond: nil,
+            completionTokenCount: 42,
+            completionTokensPerSecond: nil
+        )
+        let ids = (0..<8).map { "agent-\($0)" }
+        let withMetrics = ids.map { snapshot(id: $0, metrics: metrics) }
+        let withoutMetrics = ids.map { snapshot(id: $0, metrics: nil) }
+
+        for rowBudget in [ids.count + 2, ids.count + 4] {
+            let rows = TerminalChat.renderSubAgentOverviewRowsForTesting(
+                withMetrics,
+                rowBudget: rowBudget
+            )
+            let baselineRows = TerminalChat.renderSubAgentOverviewRowsForTesting(
+                withoutMetrics,
+                rowBudget: rowBudget
+            )
+            #expect(rows.count == baselineRows.count)
+            #expect(rows.count <= rowBudget)
+            #expect(
+                rows.map { TerminalANSIText.stripANSI($0) }
+                    == baselineRows.map { TerminalANSIText.stripANSI($0) }
+            )
+        }
+    }
+
+    @Test
+    func subAgentOverviewSignatureTracksGenerationMetrics() {
+        func snapshot(
+            metrics: DirectAgentGenerationMetrics?
+        ) -> DirectSubAgentRuntime.AgentSnapshot {
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "agent_signature",
+                name: "planner",
+                role: "Planner",
+                status: .running,
+                pending: true,
+                modelID: "gpt-5",
+                latestMetrics: metrics,
+                latestOutput: nil,
+                latestError: nil,
+                createdAt: Date(timeIntervalSince1970: 0),
+                updatedAt: Date(timeIntervalSince1970: 0)
+            )
+        }
+
+        let none = TerminalChat.subAgentOverviewSignature([snapshot(metrics: nil)])
+        let first = TerminalChat.subAgentOverviewSignature([
+            snapshot(
+                metrics: DirectAgentGenerationMetrics(
+                    promptTokenCount: 1_200,
+                    cachedPromptTokenCount: 800,
+                    promptTokensPerSecond: nil,
+                    completionTokenCount: nil,
+                    completionTokensPerSecond: nil
+                )
+            )
+        ])
+        let second = TerminalChat.subAgentOverviewSignature([
+            snapshot(
+                metrics: DirectAgentGenerationMetrics(
+                    promptTokenCount: 1_200,
+                    cachedPromptTokenCount: 800,
+                    promptTokensPerSecond: nil,
+                    completionTokenCount: 42,
+                    completionTokensPerSecond: nil
+                )
+            )
+        ])
+        // Rates are not rendered, so they must not force a republish.
+        let sameCounts = TerminalChat.subAgentOverviewSignature([
+            snapshot(
+                metrics: DirectAgentGenerationMetrics(
+                    promptTokenCount: 1_200,
+                    cachedPromptTokenCount: 800,
+                    promptTokensPerSecond: 99,
+                    completionTokenCount: 42,
+                    completionTokensPerSecond: 12
+                )
+            )
+        ])
+
+        #expect(none != first)
+        #expect(first != second)
+        #expect(second == sameCounts)
+    }
+
+    @Test
     func subAgentMetadataUsesMutedLabelsAndTaskValueColor() {
         let rendered = TerminalChat.subAgentMetadataText(
             label: "role:",

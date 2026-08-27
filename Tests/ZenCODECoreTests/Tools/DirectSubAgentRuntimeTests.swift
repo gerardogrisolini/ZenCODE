@@ -586,6 +586,96 @@ struct DirectSubAgentRuntimeTests {
         await runtime.shutdown()
     }
 
+    /// Generation metrics accumulate within a turn and start over on the next
+    /// one, matching the status bar's semantics for the root session.
+    @Test
+    func generationMetricsMergeWithinTurnAndResetOnTheNextTurn() async throws {
+        let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("metrics-worker"),
+                "profile": .string("Developer"),
+                "prompt": .string("Investigate the issue")
+            ],
+            workingDirectory: URL(
+                fileURLWithPath: "/tmp/ZenCODE-sub-agent-metrics-tests"
+            ),
+            parentAllowedToolNames: nil
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+        await backend.waitUntilSentPromptCount(1)
+
+        let idleSnapshot = try #require(await runtime.snapshots().first)
+        #expect(idleSnapshot.latestMetrics == nil)
+        let idleSignature = TerminalChat.subAgentOverviewSignature([idleSnapshot])
+
+        // Prefill arrives first.
+        await runtime.recordEvent(
+            .metrics(
+                DirectAgentGenerationMetrics(
+                    promptTokenCount: 1_200,
+                    cachedPromptTokenCount: 800,
+                    promptTokensPerSecond: 90,
+                    completionTokenCount: nil,
+                    completionTokensPerSecond: nil
+                )
+            ),
+            agentID: agentID
+        )
+        // Generation follows and must not erase the prefill counters.
+        await runtime.recordEvent(
+            .metrics(
+                DirectAgentGenerationMetrics(
+                    promptTokenCount: nil,
+                    promptTokensPerSecond: nil,
+                    completionTokenCount: 42,
+                    completionTokensPerSecond: 12
+                )
+            ),
+            agentID: agentID
+        )
+
+        let mergedSnapshot = try #require(await runtime.snapshots().first)
+        let merged = try #require(mergedSnapshot.latestMetrics)
+        #expect(merged.cachedPromptTokenCount == 800)
+        #expect(merged.promptTokenCount == 1_200)
+        #expect(merged.completionTokenCount == 42)
+        let mergedSignature = TerminalChat.subAgentOverviewSignature([mergedSnapshot])
+        #expect(mergedSignature != idleSignature)
+
+        // A second turn starts. The previous counters stay visible until the
+        // new turn reports its own.
+        try await runtime.queuePrompt("Second turn", for: agentID)
+        _ = await runtime.startNextTurnForTesting(agentID: agentID)
+        let startedSnapshot = try #require(await runtime.snapshots().first)
+        #expect(startedSnapshot.latestMetrics?.completionTokenCount == 42)
+
+        await runtime.recordEvent(
+            .metrics(
+                DirectAgentGenerationMetrics(
+                    promptTokenCount: nil,
+                    promptTokensPerSecond: nil,
+                    completionTokenCount: 7,
+                    completionTokensPerSecond: nil
+                )
+            ),
+            agentID: agentID
+        )
+        let secondTurnSnapshot = try #require(await runtime.snapshots().first)
+        let secondTurn = try #require(secondTurnSnapshot.latestMetrics)
+        #expect(secondTurn.completionTokenCount == 7)
+        // Nothing is inherited across the turn boundary.
+        #expect(secondTurn.promptTokenCount == nil)
+        #expect(secondTurn.cachedPromptTokenCount == nil)
+
+        await runtime.shutdown()
+    }
+
     /// Assistant content that literally starts with the thinking marker is
     /// still a message: the typed kind, not the text, selects the affordance.
     @Test
@@ -4183,6 +4273,12 @@ private extension DirectSubAgentRuntime {
         for task in tasks {
             await task.value
         }
+    }
+
+    /// Starts the next queued turn on the actor itself, so the non-Sendable
+    /// `AgentWork` never crosses an isolation boundary.
+    func startNextTurnForTesting(agentID: String) {
+        _ = nextWork(for: agentID)
     }
 }
 

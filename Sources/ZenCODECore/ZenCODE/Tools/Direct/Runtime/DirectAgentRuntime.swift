@@ -190,6 +190,44 @@ public struct DirectAgentGenerationMetrics: Sendable {
         self.replacesPreviousMetrics = replacesPreviousMetrics
     }
 
+    /// Folds an incoming metrics event into the metrics observed so far during
+    /// the same turn.
+    ///
+    /// This is the single definition of the merge semantics shared by every
+    /// consumer (status bar and sub-agent overview), so both presentations
+    /// agree on how partial provider updates accumulate:
+    /// - a snapshot event (`replacesPreviousMetrics`) wins outright, and so
+    ///   does the first event of a turn, when `current` is nil;
+    /// - otherwise each unavailable field inherits the previous value, so a
+    ///   completion-only update does not erase the prefill counters;
+    /// - `clearsPromptMetrics` suppresses that inheritance for the prompt
+    ///   fields only, letting a provider retract stale prefill values.
+    public static func merging(
+        current: DirectAgentGenerationMetrics?,
+        update: DirectAgentGenerationMetrics
+    ) -> DirectAgentGenerationMetrics {
+        guard let current, !update.replacesPreviousMetrics else {
+            return update
+        }
+        return DirectAgentGenerationMetrics(
+            promptTokenCount: update.clearsPromptMetrics
+            ? update.promptTokenCount
+            : update.promptTokenCount ?? current.promptTokenCount,
+            cachedPromptTokenCount: update.clearsPromptMetrics
+            ? update.cachedPromptTokenCount
+            : update.cachedPromptTokenCount ?? current.cachedPromptTokenCount,
+            promptTokensPerSecond: update.clearsPromptMetrics
+            ? update.promptTokensPerSecond
+            : update.promptTokensPerSecond ?? current.promptTokensPerSecond,
+            completionTokenCount: update.completionTokenCount ?? current.completionTokenCount,
+            completionTokensPerSecond: update.completionTokensPerSecond ?? current.completionTokensPerSecond,
+            responseDurationSeconds: update.responseDurationSeconds ?? current.responseDurationSeconds,
+            contextTokenCount: update.contextTokenCount ?? current.contextTokenCount,
+            clearsPromptMetrics: update.clearsPromptMetrics,
+            replacesPreviousMetrics: update.replacesPreviousMetrics
+        )
+    }
+
     public var totalTokenCount: Int? {
         if let contextTokenCount {
             return contextTokenCount

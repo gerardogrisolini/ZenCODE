@@ -135,6 +135,14 @@ public actor DirectSubAgentRuntime {
         var pendingContentBuffer: String? = nil
         public var currentToolName: String? = nil
         public var currentToolTarget: String? = nil
+        /// Generation metrics accumulated for the turn in progress, folded with
+        /// the same semantics the status bar uses for the root session.
+        public var latestMetrics: DirectAgentGenerationMetrics? = nil
+        /// Set when a new turn starts. The previous turn's counters stay
+        /// visible until the first metrics event of the new turn arrives, which
+        /// then replaces them instead of accumulating across turns. This
+        /// mirrors `TerminalStatusBar.beginRequest()`.
+        var shouldReplaceMetricsOnNextUpdate = false
         public var latestContentPreview: String? = nil
         public var latestEventAt: Date? = nil
         public var runTask: Task<Void, Never>?
@@ -219,6 +227,9 @@ public actor DirectSubAgentRuntime {
         public let currentActivityKind: ActivityKind?
         public let currentToolName: String?
         public let currentToolTarget: String?
+        /// Generation metrics of the latest turn, already merged by the
+        /// runtime. Presentation renders them inline on the model row.
+        public let latestMetrics: DirectAgentGenerationMetrics?
         public let latestContentPreview: String?
         public let latestEventAt: Date?
         public let latestOutput: String?
@@ -248,6 +259,7 @@ public actor DirectSubAgentRuntime {
             currentActivityKind: ActivityKind? = nil,
             currentToolName: String? = nil,
             currentToolTarget: String? = nil,
+            latestMetrics: DirectAgentGenerationMetrics? = nil,
             latestContentPreview: String? = nil,
             latestEventAt: Date? = nil,
             latestOutput: String?,
@@ -276,6 +288,7 @@ public actor DirectSubAgentRuntime {
             self.currentActivityKind = currentActivityKind
             self.currentToolName = currentToolName
             self.currentToolTarget = currentToolTarget
+            self.latestMetrics = latestMetrics
             self.latestContentPreview = latestContentPreview
             self.latestEventAt = latestEventAt
             self.latestOutput = latestOutput

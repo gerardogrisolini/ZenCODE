@@ -182,6 +182,7 @@ extension DirectSubAgentRuntime {
             currentActivityKind: agent.currentActivityKind,
             currentToolName: agent.currentToolName,
             currentToolTarget: agent.currentToolTarget,
+            latestMetrics: agent.latestMetrics,
             latestContentPreview: agent.latestContentPreview,
             latestEventAt: agent.latestEventAt,
             latestOutput: agent.latestOutput,

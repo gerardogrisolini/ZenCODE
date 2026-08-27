@@ -18,6 +18,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- The sub-agent overview now shows each delegated agent's token counters
+  (`c:` cached, `p:` prefill, `g:` generated) inline on the model row — and on
+  the `agent: · model:` row in the compact presentation — so the section keeps
+  the same number of rows as before. The counters use the same formatting and
+  abbreviations as the statusbar; counters wait until a model row is available
+  rather than adding one, and the dense and inline presentations remain one
+  row per agent. Per-agent
+  metrics are merged in `DirectSubAgentRuntime` with the semantics already used
+  by the statusbar (partial provider updates accumulate within a turn, prompt
+  counters can be retracted, a snapshot event replaces everything) through a
+  single shared `DirectAgentGenerationMetrics.merging(current:update:)` helper,
+  and each new turn starts a fresh accumulation instead of carrying the
+  previous turn's totals forward.
 - All live shared-chat messages (`agent.message`) from the active room are now
   forwarded to the linked Telegram chat, including operator-originated,
   coordinator↔agent, agent↔agent, direct multi-recipient and broadcast traffic.

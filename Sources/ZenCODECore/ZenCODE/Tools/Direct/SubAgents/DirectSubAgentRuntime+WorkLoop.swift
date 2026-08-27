@@ -174,6 +174,9 @@ extension DirectSubAgentRuntime {
         agent.currentTurnSentOperatorMessage = false
         agent.status = .running
         agent.resetActivityState()
+        // Keep the previous turn's counters on screen until this turn reports
+        // its own, then replace them wholesale.
+        agent.shouldReplaceMetricsOnNextUpdate = true
         agent.latestContentPreview = nil
         agent.updatedAt = .now
         agents[agentID] = agent
@@ -257,8 +260,20 @@ extension DirectSubAgentRuntime {
             )
         case let .sessionSnapshot(snapshot):
             agent.modelID = snapshot.modelID?.nilIfBlank ?? agent.modelID
-        case .metrics,
-             .contextWindow,
+        case let .metrics(metrics):
+            // Providers emit partial updates (prefill first, generation later),
+            // so fold them with the shared semantics instead of overwriting.
+            // The first event of a new turn replaces the previous turn's
+            // counters rather than accumulating on top of them.
+            let current = agent.shouldReplaceMetricsOnNextUpdate
+                ? nil
+                : agent.latestMetrics
+            agent.shouldReplaceMetricsOnNextUpdate = false
+            agent.latestMetrics = DirectAgentGenerationMetrics.merging(
+                current: current,
+                update: metrics
+            )
+        case .contextWindow,
              .subscriptionUsage,
              .turnEnded:
             break
