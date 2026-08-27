@@ -134,7 +134,7 @@ public actor TerminalTelegramPairingService {
                 }
 
                 guard Self.pairingCode(in: text) == expectedCode else {
-                    try? await client.sendMessage(
+                    _ = try? await client.sendMessage(
                         "ZenCODE setup is waiting for the pairing code shown in the terminal.",
                         to: message.chat.id
                     )
@@ -142,7 +142,7 @@ public actor TerminalTelegramPairingService {
                 }
 
                 guard Self.allowsPairing(chatType: message.chat.type) else {
-                    try? await client.sendMessage(
+                    _ = try? await client.sendMessage(
                         "For security, ZenCODE can only be linked from a private Telegram chat.",
                         to: message.chat.id
                     )
