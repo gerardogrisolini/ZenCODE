@@ -520,8 +520,12 @@ extension TerminalChatRenderCoordinator {
 
     /// Tears down the live sub-agent section when the runtime transitions to an
     /// empty snapshot. Destructive clearing is performed only while this actor
-    /// still owns the exact rows; otherwise state is forgotten append-safely.
-    func clearSubAgentOverview(revision: Int? = nil) {
+    /// still owns the exact rows and they still fit the current scrolling
+    /// region; otherwise state is forgotten append-safely.
+    func clearSubAgentOverview(
+        revision: Int? = nil,
+        maximumInPlaceRows: Int? = nil
+    ) {
         if let revision {
             guard revision >= (overviewState.revisions[.subAgents] ?? Int.min) else {
                 return
@@ -538,7 +542,10 @@ extension TerminalChatRenderCoordinator {
         guard standardErrorIsTerminal,
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth,
-              block.rows + block.cursorGapRows <= (block.maximumInPlaceRows ?? Int.max) else {
+              block.rows + block.cursorGapRows <= min(
+                  block.maximumInPlaceRows ?? Int.max,
+                  maximumInPlaceRows ?? Int.max
+              ) else {
             return
         }
         moveCursorAboveBottomOverlayGap(block.cursorGapRows)

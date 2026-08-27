@@ -2121,6 +2121,37 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func emptySubAgentTransitionDoesNotClearRowsOutsideReducedOutputCapacity() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:before-chat-header",
+            text: "\n👥 Sub-Agents:\n   running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: 3
+        )
+        let eventCount = await renderer.capturedWriteEvents().count
+
+        // A dock appearing can shrink the output region below the existing
+        // overview height. Its old rows are no longer safe to clear in place.
+        await renderer.clearSubAgentOverview(maximumInPlaceRows: 2)
+
+        let teardown = (await renderer.capturedWriteEvents())
+            .dropFirst(eventCount)
+            .map(\.text)
+            .joined()
+        let snapshot = await renderer.snapshot()
+
+        #expect(teardown.isEmpty)
+        #expect(snapshot.activeSubAgentOverviewRowCount == 0)
+        #expect(snapshot.lastRenderedSubAgentOverviewSignature == nil)
+    }
+
+    @Test
     func subAgentOverviewWithoutAnchorIsAlwaysAppended() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,

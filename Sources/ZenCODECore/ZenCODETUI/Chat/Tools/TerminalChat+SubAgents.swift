@@ -146,9 +146,11 @@ extension TerminalChat {
         let snapshots = await sessionRunner.subAgentSnapshots()
         let toolPresentations = await renderCoordinator.subAgentToolPresentationSnapshot()
         await refreshStatusBarGitStatusSummaryForCompletedSubAgents(snapshots)
+        let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
         guard force || !snapshots.isEmpty else {
             await renderCoordinator.clearSubAgentOverview(
-                revision: publicationRevision
+                revision: publicationRevision,
+                maximumInPlaceRows: maximumInPlaceRows
             )
             return
         }
@@ -162,7 +164,6 @@ extension TerminalChat {
             .overviewBatchID?
             .uuidString
         let resolver = subAgentModelTitleResolver()
-        let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
         let overview = Self.renderSubAgentOverview(
             snapshots,
             modelTitleResolver: resolver,
