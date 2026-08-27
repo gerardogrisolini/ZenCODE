@@ -150,6 +150,9 @@ struct PlannerTurnBaseline: Sendable, Equatable {
     let expectedRevision: UInt64?
     let expectedAgentWasAvailable: Bool
     let revisionsByAgentID: [String: UInt64]
+    /// A newly started `/plan` discussion must receive the Planner's mandatory
+    /// question block before it can accept a final plan.
+    let requiresInitialQuestion: Bool
 
     init(
         state: PlanningCommandRuntimeState?,
@@ -158,6 +161,10 @@ struct PlannerTurnBaseline: Sendable, Equatable {
     ) {
         expectedAgentID = state?.plannerAgentID
         expectedRevision = state?.plannerOutputRevision
+        requiresInitialQuestion = state?.plannerAgentID == nil
+            && state?.plannerOutputRevision == nil
+            && state?.exchanges.isEmpty == true
+            && state?.pendingPlannerMessage == nil
         let plannerSnapshots = PlanningCommandKernel.plannerSnapshots(
             snapshots,
             rootSessionID: rootSessionID
@@ -234,6 +241,9 @@ enum PlanningCommandKernel {
             baseline: baseline,
             rootSessionID: rootSessionID
         ), let text = snapshot.latestOutput?.nilIfBlank else {
+            return nil
+        }
+        guard !baseline.requiresInitialQuestion || isPlannerQuestionResponse(text) else {
             return nil
         }
         return (

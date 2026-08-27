@@ -753,6 +753,91 @@ struct PlanCommandTests {
     }
 
     @Test
+    func initialPlanningTurnRequiresPlannerQuestionsBeforeAcceptingFinalPlan() {
+        func snapshot(revision: UInt64, output: String) -> DirectSubAgentRuntime.AgentSnapshot {
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "planner-initial",
+                rootSessionID: "planning-session",
+                name: PlanningCommandKernel.planAuthorAgentName,
+                role: AgentProfileStore.plannerAgentName,
+                profileID: AgentProfileStore.plannerAgentID.uuidString,
+                status: .idle,
+                pending: false,
+                latestOutput: output,
+                latestOutputRevision: revision,
+                latestError: nil,
+                createdAt: Date(timeIntervalSince1970: 1),
+                updatedAt: Date(timeIntervalSince1970: 2)
+            )
+        }
+
+        let initialBaseline = PlannerTurnBaseline(
+            state: PlanningCommandRuntimeState(goal: "harden plan routing"),
+            snapshots: [],
+            rootSessionID: "planning-session"
+        )
+        let parentResponse = DirectAgentResponse(
+            text: "Coordinator response must not be used.",
+            stopReason: "stop",
+            modelID: "coordinator"
+        )
+        let finalPlan = snapshot(
+            revision: 1,
+            output: "Specifiche concordate\n\nImplementation plan\n1. Implement"
+        )
+        #expect(PlanningCommandKernel.plannerResponse(
+            parentResponse: parentResponse,
+            snapshots: [finalPlan],
+            baseline: initialBaseline,
+            rootSessionID: "planning-session"
+        ) == nil)
+
+        let question = snapshot(
+            revision: 2,
+            output: "Planner questions\n1. Which compatibility behavior is required?"
+        )
+        #expect(PlanningCommandKernel.plannerResponse(
+            parentResponse: parentResponse,
+            snapshots: [question],
+            baseline: initialBaseline,
+            rootSessionID: "planning-session"
+        )?.snapshot.id == "planner-initial")
+
+        var followUpState = PlanningCommandRuntimeState(goal: "harden plan routing")
+        followUpState.recordPlannerOutput(
+            question.latestOutput!,
+            agentID: question.id,
+            revision: question.latestOutputRevision
+        )
+        let recordedReply = followUpState.recordReply("Keep existing clients compatible.")
+        #expect(recordedReply)
+        let followUpBaseline = PlannerTurnBaseline(
+            state: followUpState,
+            snapshots: [question],
+            rootSessionID: "planning-session"
+        )
+        #expect(PlanningCommandKernel.plannerResponse(
+            parentResponse: parentResponse,
+            snapshots: [snapshot(
+                revision: 3,
+                output: "Specifiche concordate\n\nImplementation plan\n1. Implement"
+            )],
+            baseline: followUpBaseline,
+            rootSessionID: "planning-session"
+        )?.response.text.hasPrefix("Specifiche concordate") == true)
+    }
+
+    @Test
+    func plannerBuiltinFallbackResolvesPlannerProfile() throws {
+        let planner = try #require(AgentProfileStore.defaultProfiles().first {
+            $0.id.caseInsensitiveCompare(AgentProfileStore.plannerAgentID.uuidString) == .orderedSame
+        })
+
+        #expect(planner.name == AgentProfileStore.plannerAgentName)
+        #expect(planner.readOnly)
+    }
+
+    @Test
     func sharedKernelRejectsTextTaskMismatchAndInvalidDependencyBootstrap() {
         let text = """
         Specifiche concordate
