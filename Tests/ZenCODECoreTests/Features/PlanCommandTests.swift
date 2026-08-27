@@ -1775,6 +1775,201 @@ struct PlanCommandTests {
             updatedAt: updatedAt
         )
     }
+
+    private static let structuredPlannerFinalText = """
+    Specifiche concordate
+    - Keep compatibility.
+
+    Implementation plan
+    1. Implement shared routing.
+       Dependencies: none
+    2. Validate every frontend.
+       Dependencies: 1
+    """
+
+    @Test
+    func derivedPlanPointsMirrorValidFinalPlannerText() {
+        let points = PlanningCommandKernel.planPoints(
+            derivedFromFinalText: Self.structuredPlannerFinalText,
+            identifierToken: "fallback"
+        )
+
+        #expect(points == [
+            TerminalSessionPlanPoint(
+                id: "plan-fallback-1",
+                text: "Implement shared routing.",
+                dependsOn: [],
+                hasExplicitDependencies: true
+            ),
+            TerminalSessionPlanPoint(
+                id: "plan-fallback-2",
+                text: "Validate every frontend.",
+                dependsOn: ["plan-fallback-1"],
+                hasExplicitDependencies: true
+            ),
+        ])
+        #expect(PlanningCommandKernel.planID(
+            from: points ?? []
+        ) == "plan-fallback")
+    }
+
+    @Test
+    func derivedPlanPointsRejectMalformedPlannerOutput() {
+        let malformedOutputs = [
+            // Missing the mandatory "Specifiche concordate" section.
+            """
+            Implementation plan
+            1. Implement shared routing.
+               Dependencies: none
+            """,
+            // Missing explicit dependencies for the second point.
+            """
+            Specifiche concordate
+            - Keep compatibility.
+
+            Implementation plan
+            1. Implement shared routing.
+               Dependencies: none
+            2. Validate every frontend.
+            """,
+            // Non sequential numbering.
+            """
+            Specifiche concordate
+            - Keep compatibility.
+
+            Implementation plan
+            1. Implement shared routing.
+               Dependencies: none
+            3. Validate every frontend.
+               Dependencies: 1
+            """,
+            // Self dependency.
+            """
+            Specifiche concordate
+            - Keep compatibility.
+
+            Implementation plan
+            1. Implement shared routing.
+               Dependencies: 1
+            """,
+            // Out of range dependency.
+            """
+            Specifiche concordate
+            - Keep compatibility.
+
+            Implementation plan
+            1. Implement shared routing.
+               Dependencies: none
+            2. Validate every frontend.
+               Dependencies: 3
+            """,
+            // Prose without an implementation plan at all.
+            "Ecco alcune idee sparse senza piano strutturato.",
+            // Mandatory first brainstorming turn must never become a plan.
+            """
+            Planner questions
+            1. Quale piattaforma va supportata?
+               Dependencies: none
+            """,
+        ]
+
+        for output in malformedOutputs {
+            #expect(PlanningCommandKernel.planPoints(
+                derivedFromFinalText: output,
+                identifierToken: "fallback"
+            ) == nil)
+        }
+    }
+
+    @Test
+    func collectorDerivesFinalPlanPointsWhenCoordinatorSkippedTodoWrite() async throws {
+        let collector = PlanningPointCollector()
+
+        #expect(await collector.validFinalPlanPoints() == nil)
+        let resolved = try #require(
+            await collector.finalPlanPoints(
+                forFinalText: Self.structuredPlannerFinalText
+            )
+        )
+        #expect(resolved.count == 2)
+        #expect(resolved.allSatisfy({ $0.hasExplicitDependencies }))
+        #expect(resolved.allSatisfy({ $0.status == .pending }))
+        #expect(resolved.last?.dependsOn == [resolved[0].id])
+        #expect(PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: Self.structuredPlannerFinalText,
+            points: resolved
+        ))
+        // The derived registration is stable and visible to later readers.
+        #expect(await collector.snapshot() == resolved)
+        #expect(await collector.finalPlanPoints(
+            forFinalText: Self.structuredPlannerFinalText
+        ) == resolved)
+    }
+
+    @Test
+    func collectorRejectsMalformedFinalTextWithoutTodoWrite() async {
+        let collector = PlanningPointCollector()
+
+        #expect(await collector.finalPlanPoints(
+            forFinalText: """
+            Specifiche concordate
+            - Keep compatibility.
+
+            Implementation plan
+            1. Implement shared routing.
+            """
+        ) == nil)
+        #expect(await collector.snapshot().isEmpty)
+    }
+
+    @Test
+    func collectorKeepsRegisteredPointsAndRefusesFallbackAfterInvalidTodoWrite() async {
+        let registered = [
+            TerminalSessionPlanPoint(
+                id: "plan-registered-1",
+                text: "Implement shared routing.",
+                dependsOn: [],
+                hasExplicitDependencies: true
+            ),
+            TerminalSessionPlanPoint(
+                id: "plan-registered-2",
+                text: "Validate every frontend.",
+                dependsOn: ["plan-registered-1"],
+                hasExplicitDependencies: true
+            ),
+        ]
+        let valid = PlanningPointCollector()
+        await valid.recordTodoWrite((points: registered, mode: .upsert))
+        #expect(await valid.finalPlanPoints(
+            forFinalText: Self.structuredPlannerFinalText
+        ) == registered)
+        // A registered plan that contradicts the final text is still rejected.
+        #expect(await valid.finalPlanPoints(
+            forFinalText: """
+            Specifiche concordate
+            - Keep compatibility.
+
+            Implementation plan
+            1. Publish a release instead.
+               Dependencies: none
+            """
+        ) == nil)
+
+        // A malformed todo.write is a hard failure: no text fallback kicks in.
+        let invalid = PlanningPointCollector()
+        await invalid.recordTodoWrite(nil)
+        #expect(await invalid.finalPlanPoints(
+            forFinalText: Self.structuredPlannerFinalText
+        ) == nil)
+
+        // Repeated todo.write calls keep failing as before.
+        let repeated = PlanningPointCollector()
+        await repeated.recordTodoWrite((points: registered, mode: .upsert))
+        await repeated.recordTodoWrite((points: registered, mode: .upsert))
+        #expect(await repeated.finalPlanPoints(
+            forFinalText: Self.structuredPlannerFinalText
+        ) == nil)
+    }
 }
 
 @TerminalChatActor

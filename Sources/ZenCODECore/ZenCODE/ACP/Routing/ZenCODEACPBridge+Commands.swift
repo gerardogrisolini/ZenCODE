@@ -985,11 +985,9 @@ extension ZenCODEACPBridge {
             }
             session.planBrainstorming = brainstorming
         } else {
-            guard let points = await collector.validFinalPlanPoints(),
-                  PlanningCommandKernel.structuredPlanOutputIsCoherent(
-                      text: plannerText,
-                      points: points
-                  ) else {
+            guard let points = await collector.finalPlanPoints(
+                forFinalText: plannerText
+            ) else {
                 throw ACPPlanningCommandError.structuredTasksUnavailable
             }
             session.activePlan = TerminalSessionPlan(

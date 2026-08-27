@@ -922,6 +922,54 @@ enum PlanningCommandKernel {
         }
     }
 
+    /// Derives ordered plan points **strictly** from a final Planner message.
+    ///
+    /// This is the shared fallback used when the coordinator produced a valid
+    /// final plan but never registered it through the expected `todo.write`
+    /// call. Nothing is relaxed: the text must still declare `Specifiche
+    /// concordate`, a numbered `Implementation plan` and an explicit
+    /// `Dependencies:` line for every point, and the derived points must pass
+    /// exactly the same coherence validation applied to registered points.
+    /// Any malformed or incoherent output yields `nil`.
+    static func planPoints(
+        derivedFromFinalText text: String,
+        identifierToken: String = UUID().uuidString.lowercased()
+    ) -> [TerminalSessionPlanPoint]? {
+        guard !isPlannerQuestionResponse(text) else { return nil }
+        let token = identifierToken.filter { $0.isLetter || $0.isNumber }
+        guard !token.isEmpty,
+              let described = implementationPoints(in: text),
+              !described.isEmpty else {
+            return nil
+        }
+        let ids = described.indices.map { "plan-\(token)-\($0 + 1)" }
+        var points: [TerminalSessionPlanPoint] = []
+        points.reserveCapacity(described.count)
+        for (index, item) in described.enumerated() {
+            let pointText = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !pointText.isEmpty,
+                  Set(item.dependencyOrdinals).count == item.dependencyOrdinals.count,
+                  item.dependencyOrdinals.allSatisfy({ ordinal in
+                      ordinal > 0 && ordinal <= described.count && ordinal != index + 1
+                  }) else {
+                return nil
+            }
+            points.append(
+                TerminalSessionPlanPoint(
+                    id: ids[index],
+                    text: pointText,
+                    status: .pending,
+                    dependsOn: item.dependencyOrdinals.map { ids[$0 - 1] },
+                    hasExplicitDependencies: true
+                )
+            )
+        }
+        guard structuredPlanOutputIsCoherent(text: text, points: points) else {
+            return nil
+        }
+        return points
+    }
+
     private struct DescribedImplementationPoint {
         let text: String
         let dependencyOrdinals: [Int]
@@ -1155,6 +1203,7 @@ actor PlanningPointCollector {
     private var completedPlan: TerminalSessionPlan?
     private var observedTodoWriteCount = 0
     private var hasInvalidTodoWrite = false
+    private var derivedFinalPoints: [TerminalSessionPlanPoint]?
 
     func recordTodoWrite(
         _ update: (
@@ -1181,6 +1230,43 @@ actor PlanningPointCollector {
             return nil
         }
         return points
+    }
+
+    /// Resolves the final structured plan points for a Planner turn, shared by
+    /// the terminal TUI and the ACP bridge so both surfaces behave identically.
+    ///
+    /// Registered points (a single valid `todo.write`) keep priority and are
+    /// still required to be coherent with the final text. When the coordinator
+    /// emitted **no** `todo.write` at all, the points are derived from the final
+    /// text itself, but only if that text is rigorously valid. A `todo.write`
+    /// that was malformed, in the wrong mode, or repeated remains a hard
+    /// failure: no fallback is attempted in that case.
+    func finalPlanPoints(forFinalText text: String) -> [TerminalSessionPlanPoint]? {
+        if observedTodoWriteCount > 0 {
+            guard let registered = validFinalPlanPoints(),
+                  PlanningCommandKernel.structuredPlanOutputIsCoherent(
+                      text: text,
+                      points: registered
+                  ) else {
+                return nil
+            }
+            return registered
+        }
+        if let derivedFinalPoints,
+           PlanningCommandKernel.structuredPlanOutputIsCoherent(
+               text: text,
+               points: derivedFinalPoints
+           ) {
+            return derivedFinalPoints
+        }
+        guard let derived = PlanningCommandKernel.planPoints(
+            derivedFromFinalText: text
+        ) else {
+            return nil
+        }
+        derivedFinalPoints = derived
+        points = derived
+        return derived
     }
 
     func apply(

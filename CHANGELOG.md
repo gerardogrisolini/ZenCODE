@@ -26,6 +26,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - The Git summary in the terminal statusbar now refreshes as soon as a delegated
   sub-agent completes a file-mutation tool, instead of waiting for the whole
   sub-agent run to finish.
+- `/plan` no longer fails with a missing structured task list when the Planner
+  produced a valid final plan but the coordinator skipped the expected task
+  registration. The ordered points are now derived from the final message
+  itself, in the terminal TUI and over ACP alike, and only when that message is
+  rigorously valid (agreed specifications, numbered implementation plan and
+  explicit dependencies for every point). Malformed plans, incoherent task
+  registrations and the mandatory initial Planner question turn keep being
+  rejected exactly as before.
 
 ### Changed
 

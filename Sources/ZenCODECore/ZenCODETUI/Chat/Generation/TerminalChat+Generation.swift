@@ -222,11 +222,9 @@ extension TerminalChat {
                     }
                     plannerPoints = []
                 } else {
-                    guard let finalPoints = await planPointCollector.validFinalPlanPoints(),
-                          PlanningCommandKernel.structuredPlanOutputIsCoherent(
-                              text: response.text,
-                              points: finalPoints
-                          ) else {
+                    guard let finalPoints = await planPointCollector.finalPlanPoints(
+                        forFinalText: response.text
+                    ) else {
                         throw TerminalPlanGenerationError.structuredTasksUnavailable
                     }
                     plannerPoints = finalPoints
