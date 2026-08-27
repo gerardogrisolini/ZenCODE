@@ -490,7 +490,7 @@ extension TerminalStatusBar {
             fragments.append(Self.durationText(duration))
         }
         if let latestMetrics = state.latestMetrics,
-           let tokenCountsText = Self.generationTokenCountsFragment(latestMetrics) {
+           let tokenCountsText = Self.styledGenerationTokenCountsFragment(latestMetrics) {
             fragments.append(tokenCountsText)
         }
         if let prefillRate = state.latestMetrics?.promptTokensPerSecond,
@@ -498,7 +498,7 @@ extension TerminalStatusBar {
             fragments.append("p:\(Self.rateText(prefillRate)) g:\(Self.rateText(generationRate)) tok/s")
         }
         if let latestSubscriptionUsage = state.latestSubscriptionUsage,
-           let usageText = Self.subscriptionUsageFragment(latestSubscriptionUsage) {
+           let usageText = Self.styledSubscriptionUsageFragment(latestSubscriptionUsage) {
             fragments.append(usageText)
         }
         if let latestGitStatusSummary = state.latestGitStatusSummary {

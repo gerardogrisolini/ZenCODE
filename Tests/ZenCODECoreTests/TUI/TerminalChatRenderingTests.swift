@@ -1137,7 +1137,7 @@ struct TerminalChatRenderingTests {
         )
 
         #expect(
-            statusBar.statusTextLocked(state: &state)
+            TerminalANSIText.stripANSI(statusBar.statusTextLocked(state: &state))
                 .contains("35.0k/-- · 0:00:12 · p:15k g:20k")
         )
     }

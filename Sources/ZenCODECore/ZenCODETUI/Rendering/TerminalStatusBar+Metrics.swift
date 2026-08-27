@@ -120,6 +120,23 @@ extension TerminalStatusBar {
         return fragments.joined(separator: " ")
     }
 
+    /// Status-bar presentation of the token counters: the `c:` / `p:` / `g:`
+    /// labels are muted so only their values keep the default foreground.
+    static func styledGenerationTokenCountsFragment(
+        _ metrics: DirectAgentGenerationMetrics
+    ) -> String? {
+        let fragments = [
+            metrics.cachedPromptTokenCount.map { mutedLabel("c:") + tokenCountText($0) },
+            metrics.promptTokenCount.map { mutedLabel("p:") + tokenCountText($0) },
+            metrics.completionTokenCount.map { mutedLabel("g:") + tokenCountText($0) }
+        ].compactMap(\.self)
+
+        guard !fragments.isEmpty else {
+            return nil
+        }
+        return fragments.joined(separator: " ")
+    }
+
     static func subscriptionUsageFragment(
         _ status: DirectAgentSubscriptionUsageStatus
     ) -> String? {
@@ -131,6 +148,21 @@ extension TerminalStatusBar {
             status.weeklyUsedPercent.map { "w:\(usagePercentText($0))" }
         ].compactMap(\.self)
         return fragments.joined(separator: " ")
+    }
+
+    /// Status-bar presentation of the subscription usage counters: labels and
+    /// values are both muted.
+    static func styledSubscriptionUsageFragment(
+        _ status: DirectAgentSubscriptionUsageStatus
+    ) -> String? {
+        guard let fragment = subscriptionUsageFragment(status) else {
+            return nil
+        }
+        return "\(TerminalStyle.Text.muted)\(fragment)\(TerminalStyle.reset)"
+    }
+
+    private static func mutedLabel(_ label: String) -> String {
+        "\(TerminalStyle.Text.muted)\(label)\(TerminalStyle.reset)"
     }
     
     static func usagePercentText(_ value: Double) -> String {

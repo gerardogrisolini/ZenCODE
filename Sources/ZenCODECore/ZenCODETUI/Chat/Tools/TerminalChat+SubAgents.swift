@@ -553,19 +553,34 @@ extension TerminalChat {
         guard let metrics = subAgentMetricsFragment(snapshot) else {
             return model
         }
-        return "\(model) \(metrics)"
+        return "\(model) \(dimText("·")) \(metrics)"
     }
 
     /// Renders the `c:` cached / `p:` prefill / `g:` generated counters with the
-    /// same formatting and abbreviations the status bar uses.
+    /// same abbreviations the status bar uses, keeping the labels muted and the
+    /// values on the metadata value color.
     nonisolated static func subAgentMetricsFragment(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> String? {
-        guard let metrics = snapshot.latestMetrics,
-              let fragment = TerminalStatusBar.generationTokenCountsFragment(metrics) else {
+        guard let metrics = snapshot.latestMetrics else {
             return nil
         }
-        return dimText(fragment)
+        let counters: [(String, Int)] = [
+            metrics.cachedPromptTokenCount.map { ("c:", $0) },
+            metrics.promptTokenCount.map { ("p:", $0) },
+            metrics.completionTokenCount.map { ("g:", $0) }
+        ].compactMap(\.self)
+        guard !counters.isEmpty else {
+            return nil
+        }
+        return counters
+            .map { label, value in
+                subAgentMetricText(
+                    label: label,
+                    value: TerminalStatusBar.tokenCountText(value)
+                )
+            }
+            .joined(separator: " ")
     }
 
     private nonisolated static func renderSubAgentModel(
@@ -950,6 +965,20 @@ extension TerminalChat {
             return "\(label) \(value)"
         }
         return "\(TerminalStyle.Text.muted)\(label)\(TerminalStyle.reset) "
+            + "\(TerminalMarkdownPalette.detected.inlineCodeForeground)\(value)\(TerminalStyle.reset)"
+    }
+
+    /// Same palette as `subAgentMetadataText`, but the counters keep their
+    /// compact `label:value` shape without a separating space.
+    nonisolated static func subAgentMetricText(
+        label: String,
+        value: String,
+        ansiEnabled: Bool = AgentOutput.standardErrorIsTerminal
+    ) -> String {
+        guard ansiEnabled else {
+            return "\(label)\(value)"
+        }
+        return "\(TerminalStyle.Text.muted)\(label)\(TerminalStyle.reset)"
             + "\(TerminalMarkdownPalette.detected.inlineCodeForeground)\(value)\(TerminalStyle.reset)"
     }
 
