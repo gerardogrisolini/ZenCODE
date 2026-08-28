@@ -149,8 +149,15 @@ extension TerminalStatusBar {
     /// (see `inputPanelRenderSequenceLocked`), which keeps the unread counter
     /// visible without shrinking the transcript region below its minimum or
     /// emitting a degenerate one-line scrolling region.
+    ///
+    /// A compact dock is only an unread notification: it reserves its row while
+    /// unread traffic exists and disappears entirely — reclaiming the row —
+    /// once every retained message has been read. The status bar reinstalls it
+    /// on the next unread arrival through the same `setSharedChatReader` path.
     func sharedChatReaderReservedRowsLocked(state: inout State) -> Int {
-        guard let dock = state.sharedChatReaderDock, state.inputPanelState != nil else { return 0 }
+        guard let dock = state.sharedChatReaderDock,
+              state.inputPanelState != nil,
+              dock.isExpanded || dock.unreadCount > 0 else { return 0 }
 
         let available = state.row
             - Self.minimumScrollableRows
@@ -174,7 +181,11 @@ extension TerminalStatusBar {
     /// row of its own, so the counter degrades instead of disappearing.
     func sharedChatReaderModeRowBadgeLocked(state: inout State) -> String? {
         guard let dock = state.sharedChatReaderDock,
-              sharedChatReaderReservedRowsLocked(state: &state) == 0 else {
+              sharedChatReaderReservedRowsLocked(state: &state) == 0,
+              // The badge is the same unread notification as the reserved
+              // compact header: a fully read compact reader must not degrade
+              // into a permanent "0 unread" fragment of the mode row.
+              dock.isExpanded || dock.unreadCount > 0 else {
             return nil
         }
         if dock.isExpanded, dock.entries.isEmpty {
@@ -203,8 +214,7 @@ extension TerminalStatusBar {
             headerText = "Chat · \(dock.selectedIndex + 1)/\(dock.entries.count) · \(dock.unreadCount) unread"
         }
         guard sharedChatReaderReservedRowsLocked(state: &state) > 0 else { return "" }
-        // Keep the collapsed reader visually identifiable as shared chat: its
-        // single reserved row is the same light-blue bordered header used by
+        // The collapsed reader keeps the same bordered compact header used by
         // the expanded reader, rather than unframed body-coloured text.
         let palette = TerminalStyle.SharedChat.palette(for: TerminalMarkdownPalette.detected.appearance)
         let boxWidth = statusBoxWidthLocked(state: &state)
@@ -214,8 +224,8 @@ extension TerminalStatusBar {
         guard dock.isExpanded else {
             return "\u{1B}7\u{1B}[\(top);\(start)H\u{1B}[2K\(header)\u{1B}8"
         }
-        // Use the dedicated light-blue shared-chat palette rather than the
-        // orange input chrome.
+        // Use the dedicated muted shared-chat palette rather than the orange
+        // input chrome.
         let footerText = Self.fit("↑/↓ scroll · ←/→ message · Home/End first/last", width: max(1, boxWidth - 5))
         let footerRule = String(repeating: "─", count: max(0, boxWidth - TerminalChat.displayWidth(footerText) - 5))
         let footer = "\(palette.border)╰─ \(palette.body)\(footerText)\(palette.border) \(footerRule)╯\(TerminalStyle.reset)"

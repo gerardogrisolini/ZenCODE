@@ -75,17 +75,19 @@ enum TerminalStyle {
             let body: String
         }
 
-        /// Light blue distinguishes transient agent-to-agent traffic from the
-        /// orange application chrome and ordinary system messages. `22` in the
-        /// border sequence explicitly disables the title's bold attribute.
+        /// A desaturated slate blue keeps the reader visually distinct from the
+        /// orange application chrome without competing for attention: transient
+        /// agent-to-agent traffic stays visible but quieter than system
+        /// messages. `22` in the border sequence explicitly disables the
+        /// title's bold attribute.
         static let darkPalette = Palette(
-            border: TerminalStyle.sequence(22, 38, 5, 75),
-            title: TerminalStyle.sequence(1, 38, 5, 81),
+            border: TerminalStyle.sequence(22, 38, 5, 60),
+            title: TerminalStyle.sequence(1, 38, 5, 66),
             body: Text.secondary
         )
         static let lightPalette = Palette(
-            border: TerminalStyle.sequence(22, 38, 5, 25),
-            title: TerminalStyle.sequence(1, 38, 5, 25),
+            border: TerminalStyle.sequence(22, 38, 5, 59),
+            title: TerminalStyle.sequence(1, 38, 5, 59),
             body: TerminalStyle.sequence(38, 5, 235)
         )
 

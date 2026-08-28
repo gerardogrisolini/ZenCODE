@@ -10,6 +10,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- The terminal Chat reader notification is now quieter and fully transient:
+  the compact header appears only while unread messages remain and disappears
+  completely once every message has been read, releasing its reserved row back
+  to the transcript until the next unread arrival makes it reappear. Its box
+  and header also switched from light blue to a desaturated slate blue so
+  transient agent-to-agent traffic stays distinguishable from the orange
+  application chrome without competing for attention.
+
 ## [2.0.1] - 2026-08-28
 
 ### Added

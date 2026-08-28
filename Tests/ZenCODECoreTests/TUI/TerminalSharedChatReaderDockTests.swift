@@ -904,4 +904,107 @@ struct TerminalSharedChatReaderDockTests {
         #expect(output.text.contains(String(repeating: "\n", count: newReservedRows - oldReservedRows)))
         #expect(output.text.contains("\u{1B}[1;\(16 - newReservedRows)r"))
     }
+
+    @Test
+    func readingTheLastCompactMessageHidesTheDockAndReclaimsItsRow() async {
+        let output = SharedChatCapturedOutput()
+        let statusBar = TerminalStatusBar(isEnabled: true) { output.append($0) }
+        await statusBar.configureForTesting(row: 9, columns: 80)
+        await statusBar.updateInputPanel(text: "draft", cursorIndex: 5, modeText: "Chat", helpText: "Enter")
+        await statusBar.setSharedChatReader(entries: [entry(1)], unreadCount: 1, isExpanded: false)
+        #expect(await statusBar.reservedRowsForOverlay() == 7)
+        output.clear()
+
+        // Reading the last message mirrors the input loop's close transaction:
+        // the compact reader stays installed but must render nothing.
+        await statusBar.setSharedChatReader(entries: [entry(1)], unreadCount: 0, isExpanded: false)
+
+        #expect(await statusBar.state.sharedChatReaderDock?.entries.count == 1)
+        #expect(await statusBar.state.sharedChatReaderDock?.unreadCount == 0)
+        #expect(await statusBar.state.sharedChatReaderDock?.isExpanded == false)
+        // The notification row is released back to the transcript…
+        #expect(await statusBar.reservedRowsForOverlay() == 6)
+        #expect(await statusBar.scrollableOutputRowCapacity() == TerminalStatusBar.minimumScrollableRows + 1)
+        // …and no residual compact header, indicator or dock box is drawn.
+        #expect(output.text.contains("\u{1B}[1;3r"))
+        #expect(!output.text.contains("Chat · 1 message · 0 unread"))
+        #expect(!output.text.contains("Chat: 0 unread"))
+        #expect(!output.text.contains("0 unread"))
+        #expect(!output.text.contains("╭─ "))
+        #expect(!output.text.contains(TerminalStyle.SharedChat.darkPalette.border))
+    }
+
+    @Test
+    func nextUnreadMessageAfterAHiddenCompactDockRestoresTheNotification() async {
+        let output = SharedChatCapturedOutput()
+        let statusBar = TerminalStatusBar(isEnabled: true) { output.append($0) }
+        await statusBar.configureForTesting(row: 9, columns: 80)
+        await statusBar.updateInputPanel(text: "draft", cursorIndex: 5, modeText: "Chat", helpText: "Enter")
+        // History was fully read, so the compact reader is hidden.
+        await statusBar.setSharedChatReader(entries: [entry(1)], unreadCount: 0, isExpanded: false)
+        #expect(await statusBar.reservedRowsForOverlay() == 6)
+        output.clear()
+
+        // A subsequent unread arrival must make the compact reader appear again.
+        await statusBar.setSharedChatReader(
+            entries: [entry(1), entry(2)],
+            unreadCount: 1,
+            isExpanded: false
+        )
+
+        #expect(await statusBar.state.sharedChatReaderDock?.unreadCount == 1)
+        #expect(await statusBar.reservedRowsForOverlay() == 7)
+        #expect(await statusBar.scrollableOutputRowCapacity() == TerminalStatusBar.minimumScrollableRows)
+        #expect(output.text.contains("Chat · 2 messages · 1 unread"))
+        #expect(output.text.contains("╭─ "))
+        #expect(output.text.contains("─╮"))
+    }
+
+    @Test
+    func fullyReadCompactDockLeavesNoResidualBadgeInDegradedMode() async {
+        let output = SharedChatCapturedOutput()
+        let statusBar = TerminalStatusBar(isEnabled: true) { output.append($0) }
+        // 8 rows is the smallest geometry `minimumRowsLocked` accepts with a
+        // panel, where the indicator degrades into the mode row instead of
+        // getting a reserved row of its own.
+        await statusBar.configureForTesting(row: 8, columns: 80)
+        await statusBar.updateInputPanel(text: "draft", cursorIndex: 5, modeText: "Chat", helpText: "Enter send")
+        await statusBar.setSharedChatReader(entries: [entry(1)], unreadCount: 1, isExpanded: false)
+        #expect(output.text.contains("Chat: 1 unread · Ctrl+Y read"))
+        output.clear()
+
+        await statusBar.setSharedChatReader(entries: [entry(1)], unreadCount: 0, isExpanded: false)
+
+        #expect(!output.text.contains("Chat: 0 unread"))
+        #expect(!output.text.contains("0 unread"))
+    }
+
+    @Test
+    func mutedSharedChatPaletteStaysDistinctFromOrangeChromeAndSystemBlue() async {
+        #expect(TerminalStyle.SharedChat.darkPalette.border.contains(";38;5;60m"))
+        #expect(TerminalStyle.SharedChat.darkPalette.title.contains(";38;5;66m"))
+        #expect(!TerminalStyle.SharedChat.darkPalette.border.contains(";38;5;75m"))
+        #expect(!TerminalStyle.SharedChat.darkPalette.title.contains(";38;5;81m"))
+        // A light terminal uses the matching darkened-slate palette.
+        #expect(TerminalStyle.SharedChat.lightPalette.border.contains(";38;5;59m"))
+        #expect(TerminalStyle.SharedChat.lightPalette.title.contains(";38;5;59m"))
+        // The reader still avoids the orange input chrome and ordinary system
+        // message colors.
+        #expect(TerminalStyle.SharedChat.darkPalette.border != TerminalStyle.Chrome.border)
+        #expect(TerminalStyle.SharedChat.darkPalette.title != TerminalStyle.Text.systemMessage)
+        #expect(TerminalStyle.SharedChat.darkPalette.title != TerminalStyle.Text.operationalMessage)
+        // The expanded reader draws with the same muted palette.
+        let output = SharedChatCapturedOutput()
+        let statusBar = TerminalStatusBar(isEnabled: true) { output.append($0) }
+        await statusBar.configureForTesting(row: 20, columns: 80)
+        await statusBar.updateInputPanel(text: "draft", cursorIndex: 5, modeText: "Chat", helpText: "Enter")
+        output.clear()
+        await statusBar.setSharedChatReader(
+            entries: [entry(1)],
+            unreadCount: 1,
+            isExpanded: true
+        )
+        #expect(output.text.contains(TerminalStyle.SharedChat.darkPalette.border))
+        #expect(output.text.contains(TerminalStyle.SharedChat.darkPalette.title))
+    }
 }
