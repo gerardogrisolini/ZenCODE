@@ -34,6 +34,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Receiving a Telegram prompt in the interactive TUI no longer aborts with a
+  Swift exclusivity violation while updating and scheduling the prompt queue.
+
 - Starting a second `/goal` while a workflow is still open now fails with an
   actionable message naming the open graph, the number of open tasks, and how
   to proceed (reply in chat, `/tasks`, or `/tasks clear`) instead of surfacing

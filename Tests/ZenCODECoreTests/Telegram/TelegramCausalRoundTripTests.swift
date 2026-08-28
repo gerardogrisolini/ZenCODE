@@ -299,15 +299,12 @@ struct TelegramCausalRoundTripTests {
                 guard case let .telegramMessage(message) = event else {
                     continue
                 }
-                didQueuePrompt = false
-                await terminal.handleTelegramRuntimeMessage(
+                didQueuePrompt = await terminal.handleTelegramRuntimeMessage(
                     message,
                     eventQueue: eventQueue,
                     queuedPrompts: &queuedPrompts,
                     transcriptions: transcriptions
-                ) {
-                    didQueuePrompt = true
-                }
+                )
                 guard didQueuePrompt, let next = queuedPrompts.dequeue() else {
                     continue
                 }

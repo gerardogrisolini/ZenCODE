@@ -144,10 +144,10 @@ extension TerminalChat {
     /// prompt admission are exercised identically by the TUI loop and by any
     /// other runtime that consumes the same event queue.
     ///
-    /// `onPromptQueued` runs when this message actually queued a prompt, while
-    /// the consumer's serialized context is still held: the interactive loop
-    /// refreshes its counter and schedules the queued-prompt event there, while
-    /// a non-interactive runtime can dequeue and start the turn directly.
+    /// Returns `true` when this message actually queued a prompt. The caller
+    /// reacts only after this method returns so the exclusive `inout` access to
+    /// `queuedPrompts` has ended; invoking a callback that reads the same buffer
+    /// from inside this method would trigger Swift's runtime exclusivity trap.
     /// The queued prompt itself is never removed here; admission of queued
     /// prompts stays with the consumer, exactly as `startNextQueuedPrompt`
     /// does for the interactive loop.
@@ -155,9 +155,8 @@ extension TerminalChat {
         _ message: TerminalTelegramIncomingMessage,
         eventQueue: TerminalChatEventQueue,
         queuedPrompts: inout TerminalQueuedPromptBuffer,
-        transcriptions: TerminalVoiceTranscriptionRegistry,
-        onPromptQueued: () async -> Void = {}
-    ) async {
+        transcriptions: TerminalVoiceTranscriptionRegistry
+    ) async -> Bool {
         let countBefore = queuedPrompts.count
         await handleTelegramMessage(
             message,
@@ -165,10 +164,7 @@ extension TerminalChat {
             eventQueue: eventQueue,
             transcriptions: transcriptions
         )
-        guard queuedPrompts.count > countBefore else {
-            return
-        }
-        await onPromptQueued()
+        return queuedPrompts.count > countBefore
     }
 
     func handleTelegramMessage(
