@@ -489,7 +489,6 @@ struct TerminalTelegramOverviewMirroringTests {
         let (root, support, working) = try makeTemp()
         defer { try? FileManager.default.removeItem(at: root) }
         let terminal = try makeTerminal(working: working, support: support)
-        await terminal.installOverviewMirroringHandler()
 
         // Turn 1: a reporter whose delivery blocks on a closed gate.
         terminal.telegramControlState.isActive = true
@@ -506,8 +505,23 @@ struct TerminalTelegramOverviewMirroringTests {
         }
         terminal.activeTelegramProgressReporter = firstTurnReporter
 
-        // Section A enters delivery (blocked on the gate); section B queues
-        // behind it and is not delivered yet.
+        // Keep the coordinator's FIFO drain inside A's handler after it has
+        // handed A to the reporter. A send-level gate alone does not do this:
+        // `enqueue` returns as soon as it admits A, allowing the drain to hand
+        // B to the old reporter before the turn boundary is advanced.
+        let mirrorDrainGate = TelegramGate()
+        await terminal.renderCoordinator.setOverviewMirroringHandler {
+            [weak terminal] notification, epoch in
+            await terminal?.mirrorRenderedOverviewToTelegram(
+                notification: notification,
+                epoch: epoch
+            )
+            await mirrorDrainGate.waitIfClosed()
+        }
+
+        // Section A enters delivery (blocked on the gate); the handler remains
+        // blocked in the coordinator drain, so section B queues behind it and
+        // has not yet been handed to the Telegram mirroring handler.
         await terminal.renderCoordinator.renderTaskGraphOverview(
             signature: "graph-turn1-a",
             markdown: "## Task graph\n\nTurn 1 section A.",
@@ -534,6 +548,7 @@ struct TerminalTelegramOverviewMirroringTests {
         }
 
         await gate.open()
+        await mirrorDrainGate.open()
         await drainMirrors(terminal)
         // `drainMirrors` flushes the currently active turn-2 reporter. The
         // delivery already captured by turn 1 has its own queue, so wait for
