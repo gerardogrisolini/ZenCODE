@@ -138,6 +138,33 @@ public enum AgentSettingsManifestStore {
         }
     }
 
+    /// Atomically replaces only Telegram routing state while preserving tokens,
+    /// provider credentials and every unrelated setting. Used by the session
+    /// router's commit-before-publish transaction.
+    public static func saveTelegramRoutes(
+        _ routes: [AgentTelegramRouteManifest],
+        groupsEnabled: Bool? = nil
+    ) throws {
+        try withManifestMutation {
+            let current = try loadRequiredUnlocked(from: settingsURL())
+            guard let telegram = current.telegram, telegram.isConfigured else {
+                throw AgentSettingsManifestStoreError.invalidFile(
+                    settingsURL(), TerminalTelegramControlError.missingConfiguration
+                )
+            }
+            let updated = AgentTelegramSettingsManifest(
+                enabled: telegram.enabled,
+                botToken: telegram.botToken,
+                linkedChatID: telegram.linkedChatID,
+                linkedChatTitle: telegram.linkedChatTitle,
+                routingVersion: AgentTelegramSettingsManifest.currentRoutingVersion,
+                groupsEnabled: groupsEnabled ?? telegram.groupsEnabled,
+                routes: routes
+            )
+            try saveUnlocked(applying(current, telegram: .some(updated)), to: settingsURL())
+        }
+    }
+
     public static func saveChatGPTSubscriptionCredentials(
         _ credentials: CodexAgentCredentials?
     ) throws {
@@ -166,6 +193,7 @@ public enum AgentSettingsManifestStore {
         _ current: AgentSettingsManifest,
         selectedModelID: String?? = nil,
         selectedThinkingSelection: AgentThinkingSelection?? = nil,
+        telegram: AgentTelegramSettingsManifest?? = nil,
         chatGPTSubscriptionCredentials: CodexAgentCredentials?? = nil,
         anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials?? = nil
     ) -> AgentSettingsManifest {
@@ -175,7 +203,7 @@ public enum AgentSettingsManifestStore {
             models: current.models,
             selectedModelID: selectedModelID ?? current.selectedModelID,
             selectedThinkingSelection: selectedThinkingSelection ?? current.selectedThinkingSelection,
-            telegram: current.telegram,
+            telegram: telegram ?? current.telegram,
             voice: current.voice,
             remoteAPIKeysByProviderID: current.remoteAPIKeysByProviderID,
             localExecAllowedCommands: current.localExecAllowedCommands,

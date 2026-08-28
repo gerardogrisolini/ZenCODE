@@ -34,28 +34,36 @@ extension TerminalChat {
 
     func submittedTelegramLineAction(
         _ prompt: String,
-        chatID: Int64? = nil
+        origin: TerminalPromptOrigin
     ) async -> TerminalSubmittedLineAction {
+        guard await validateTelegramOrigin(origin) else { return .continueChat }
         let prompt = Self.telegramCommandWithoutBotMention(prompt)
         switch TerminalTelegramRemoteCommand(text: prompt) {
         case .start:
             await sendTelegramSystemMessageIfLinked(
-                "Telegram is already linked to this ZenCODE session. Send a prompt or /help."
+                "Telegram is already linked to this ZenCODE session. Send a prompt or /help.",
+                origin: origin
             )
             return .continueChat
         case .help:
-            await sendTelegramSystemMessageIfLinked(telegramRemoteHelpText())
+            await sendTelegramSystemMessageIfLinked(telegramRemoteHelpText(), origin: origin)
             return .continueChat
         case .status:
-            await sendTelegramSystemMessageIfLinked(telegramRemoteStatusText())
+            await sendTelegramSystemMessageIfLinked(telegramRemoteStatusText(), origin: origin)
             return .continueChat
         case .changes:
-            await sendTelegramSystemMessageIfLinked(telegramRemoteChangesText())
+            await sendTelegramSystemMessageIfLinked(telegramRemoteChangesText(), origin: origin)
             return .continueChat
         case .undo:
             await sendTelegramSystemMessageIfLinked(
-                "Use /undo in the TUI to revert file changes."
+                "Use /undo in the TUI to revert file changes.", origin: origin
             )
+            return .continueChat
+        case .diff:
+            await handleTelegramDiffRequest(origin: origin)
+            return .continueChat
+        case .report:
+            await handleTelegramReportRequest(origin: origin)
             return .continueChat
         case .none:
             switch Self.parseSharedChatMention(
@@ -67,12 +75,12 @@ extension TerminalChat {
             case let .route(sharedChatRoute):
                 await sendSharedChatMention(
                     sharedChatRoute,
-                    telegramChatID: chatID
+                    telegramOrigin: origin
                 )
                 return .continueChat
             case .missingText:
                 await sendTelegramSystemMessageIfLinked(
-                    "ZenCODE message: add a message after the live mention."
+                    "ZenCODE message: add a message after the live mention.", origin: origin
                 )
                 return .continueChat
             case .none:
@@ -92,7 +100,7 @@ extension TerminalChat {
                 let output = telegramImmediateCommandOutput?.joined(separator: "\n").nilIfBlank
                 telegramImmediateCommandOutput = nil
                 if case .continueChat = action, let output {
-                    await sendTelegramSystemMessageIfLinked(output)
+                    await sendTelegramSystemMessageIfLinked(output, origin: origin)
                 }
                 return action
             }
@@ -173,36 +181,99 @@ extension TerminalChat {
         return queuedPrompts.count > countBefore
     }
 
+    /// Resolves the persisted route for this terminal instance. Authorization is
+    /// entirely ACL/lifecycle based; ephemeral client state is never consulted.
+    func telegramAuthorizedRoute(
+        for message: TerminalTelegramIncomingMessage
+    ) async -> TerminalTelegramRouteLease? {
+        guard let settings = AgentSettingsManifestStore.load()?.telegram,
+              settings.isConfigured else {
+            // Source-compatible injected/test activation. Production `start()`
+            // cannot reach an active state without persisted configuration.
+            guard message.chatKind == .privateChat,
+                  telegramLinkedChatID == message.chatID else { return nil }
+            let route = AgentTelegramRouteManifest(
+                chatID: message.chatID, ownerUserID: message.userID,
+                roomID: sessionID, chatKind: .privateChat
+            )
+            await telegramSessionRouter.refresh(routes: [route], groupsEnabled: false)
+            return try? await telegramSessionRouter.resolve(
+                chatID: message.chatID, userID: message.userID,
+                topicID: nil, chatKind: .privateChat
+            )
+        }
+        guard settings.isRoutingSupported else { return nil }
+        await telegramSessionRouter.refresh(
+            routes: settings.routes, groupsEnabled: settings.groupsEnabled
+        )
+        if settings.routes.isEmpty {
+            guard message.chatKind == .privateChat,
+                  settings.linkedChatID == message.chatID else { return nil }
+            return try? await telegramSessionRouter.claimLegacyPrivateRoute(
+                chatID: message.chatID, userID: message.userID, roomID: "default"
+            )
+        }
+        guard let lease = try? await telegramSessionRouter.resolve(
+            chatID: message.chatID, userID: message.userID,
+            topicID: message.topicID, chatKind: message.chatKind
+        ), lease.key.roomID == sessionID || lease.key.roomID == "default" else { return nil }
+        return lease
+    }
+
     func handleTelegramMessage(
         _ message: TerminalTelegramIncomingMessage,
         queuedPrompts: inout TerminalQueuedPromptBuffer,
         eventQueue: TerminalChatEventQueue,
         transcriptions: TerminalVoiceTranscriptionRegistry
     ) async {
+        // Stop-generation updates are consumed by the interactive runtime where
+        // the correlated generation Task is owned; never reinterpret them as a
+        // prompt in another consumer.
+        guard message.stoppedMessageGenerationDraftID == nil else { return }
         guard telegramControlState.isActive else {
             return
         }
 
-        guard telegramLinkedChatID != nil else {
-            await sendTelegramSystemMessage(
-                "Telegram is not paired. Run the /setup command in zen to pair this bot.",
-                to: message.chatID
-            )
+        guard let routeLease = await telegramAuthorizedRoute(for: message) else {
+            // Fail closed and stay silent: disclosing whether another room/user
+            // owns a route would itself leak cross-session state.
             return
         }
-
-        guard telegramLinkedChatID == message.chatID else {
-            await sendTelegramSystemMessage(
-                "This bot is already linked to another ZenCODE session.",
-                to: message.chatID
-            )
-            return
-        }
+        // The active terminal owns only its room (or the setup-created default
+        // route). This value is an egress compatibility projection; ACL decisions
+        // above never depend on it.
+        // Remember the authorized operator for outbound artifact consent binding.
+        telegramLinkedUserID = message.userID
+        telegramActiveRouteLease = routeLease
+        await telegramSharedChatRelay.activate(
+            roomID: routeLease.key.roomID,
+            chatID: routeLease.key.chatID,
+            lease: routeLease,
+            repliesEnabled: readsTelegramIngress
+        )
+        let routeOrigin = TerminalPromptOrigin.telegramLease(routeLease)
+        guard let ingressFence = telegramWireFence(for: routeOrigin) else { return }
 
         if let callbackQueryID = message.callbackQueryID,
            let callbackData = message.callbackData {
-            await telegramControlService.answerCallbackQuery(callbackQueryID)
-            await handleTelegramMentionPickerCallback(callbackData, chatID: message.chatID)
+            await telegramControlService.answerCallbackQuery(
+                callbackQueryID, chatID: message.chatID, fence: ingressFence
+            )
+            if await handleTelegramArtifactConsentCallback(
+                callbackData, message: message, origin: routeOrigin
+            ) {
+                return
+            }
+            await handleTelegramMentionPickerCallback(
+                callbackData, chatID: message.chatID, origin: routeOrigin
+            )
+            return
+        }
+
+        if let attachment = message.attachment {
+            await handleTelegramInboundAttachment(
+                attachment, message: message, origin: routeOrigin
+            )
             return
         }
 
@@ -218,15 +289,15 @@ extension TerminalChat {
             // traffic) is not a direct reply at all, so it must keep the
             // ordinary voice-prompt path instead of being refused.
             if await telegramDirectReplyTarget(for: message) != nil {
-                await sendTelegramSystemMessage(
+                await sendTelegramSystemMessageIfLinked(
                     "ZenCODE message: replies to a live message must be text. Send your answer as text, or record a voice note without replying to run it as an ordinary prompt.",
-                    to: message.chatID
+                    origin: routeOrigin
                 )
                 return
             }
             await handleTelegramVoiceMessage(
                 voice,
-                chatID: message.chatID,
+                origin: routeOrigin,
                 eventQueue: eventQueue,
                 transcriptions: transcriptions
             )
@@ -236,20 +307,22 @@ extension TerminalChat {
         let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else { return }
 
-        if await handleTelegramPermissionResponseIfNeeded(text, chatID: message.chatID) {
+        if await handleTelegramPermissionResponseIfNeeded(text, lease: routeLease) {
             return
         }
 
         if TerminalTelegramRemoteCommand(text: text) == .start {
-            await sendTelegramSystemMessage(
+            await sendTelegramSystemMessageIfLinked(
                 "Telegram is already linked to this ZenCODE session. Send a prompt or /help.",
-                to: message.chatID
+                origin: routeOrigin
             )
             return
         }
 
         if text == "@" {
-            await handleTelegramMentionPickerRequest(chatID: message.chatID)
+            await handleTelegramMentionPickerRequest(
+                chatID: message.chatID, origin: routeOrigin
+            )
             return
         }
 
@@ -261,19 +334,23 @@ extension TerminalChat {
         // submitted-line path, while a leading `@` only wins when the mention
         // really resolves — `@nobody hi` is ordinary text and stays replyable.
         if await telegramReplyRoutingHasPrecedence(over: text) == false,
-           await handleTelegramSharedChatReplyIfNeeded(text, message: message) {
+           await handleTelegramSharedChatReplyIfNeeded(
+            text, message: message, origin: routeOrigin
+           ) {
             return
         }
 
+        guard (try? await telegramSessionRouter.validate(routeLease)) != nil else { return }
         guard queuedPrompts.enqueue(
-            TerminalQueuedPrompt(text: text, origin: .telegram(chatID: message.chatID))
+            TerminalQueuedPrompt(text: text, origin: .telegramLease(routeLease))
         ) else {
-            await sendTelegramSystemMessage(
+            await sendTelegramSystemMessageIfLinked(
                 "ZenCODE is busy and the prompt queue is full. Your prompt was not queued; try again after a running prompt completes.",
-                to: message.chatID
+                origin: routeOrigin
             )
             return
         }
+        telegramRuntimeEventQueue = eventQueue
     }
 
     // MARK: - Mention picker
@@ -282,7 +359,9 @@ extension TerminalChat {
 
     /// The Telegram Bot API has no typing events. A standalone `@` is therefore
     /// the explicit, non-ambiguous trigger for the discoverable mention picker.
-    func handleTelegramMentionPickerRequest(chatID: Int64) async {
+    func handleTelegramMentionPickerRequest(
+        chatID: Int64, origin: TerminalPromptOrigin? = nil
+    ) async {
         let buttons = Self.telegramMentionPickerButtons(
             from: await sharedChatMentionSuggestions()
         )
@@ -291,7 +370,8 @@ extension TerminalChat {
         _ = await sendTelegramMentionPickerMessage(
             "Choose who to message. After selecting, reply to the next card with your message.",
             to: chatID,
-            replyMarkup: markup
+            replyMarkup: markup,
+            origin: origin
         )
     }
 
@@ -308,7 +388,12 @@ extension TerminalChat {
         }
     }
 
-    func handleTelegramMentionPickerCallback(_ data: String, chatID: Int64) async {
+    func handleTelegramMentionPickerCallback(
+        _ data: String, chatID: Int64, origin: TerminalPromptOrigin? = nil
+    ) async {
+        guard let lease = origin?.telegramLease,
+              lease.key.chatID == chatID,
+              (try? await telegramSessionRouter.validate(lease)) != nil else { return }
         guard data.hasPrefix(Self.telegramMentionPickerCallbackPrefix) else { return }
         let handle = String(data.dropFirst(Self.telegramMentionPickerCallbackPrefix.count))
         guard handle.utf8.count <= 48 else { return }
@@ -317,28 +402,42 @@ extension TerminalChat {
             from: "@\(handle) selected",
             readableHandles: roster.handleMap
         ), await isCurrentSharedChatDirectDestination(route.destination) else {
-            await sendTelegramSystemMessage("ZenCODE message: that agent is no longer active. Open `@` again.", to: chatID)
+            await sendTelegramSystemMessage(
+                "ZenCODE message: that agent is no longer active. Open `@` again.",
+                to: chatID,
+                origin: .telegramLease(lease)
+            )
             return
         }
         let receipt = await sendTelegramMentionPickerMessage(
             "Writing to @\(handle). Reply to this message with the content to send; it will not be treated as a normal prompt.",
             to: chatID,
-            replyMarkup: .forceReply
+            replyMarkup: .forceReply,
+            origin: origin
         )
         guard let receipt else { return }
         await telegramSharedChatRelay.registerReplyTarget(
             Self.telegramMentionPickerReplyTarget(
                 destination: route.destination, roomID: sessionID, chatID: chatID, handle: handle
             ),
-            forTelegramMessageID: receipt
+            forTelegramMessageID: receipt,
+            lease: lease
         )
     }
 
     private func sendTelegramMentionPickerMessage(
-        _ text: String, to chatID: Int64, replyMarkup: TerminalTelegramReplyMarkup
+        _ text: String, to chatID: Int64, replyMarkup: TerminalTelegramReplyMarkup,
+        origin: TerminalPromptOrigin? = nil
     ) async -> Int? {
         if let hook = onTelegramMentionPickerMessage { return await hook(text, chatID, replyMarkup) }
-        do { return try await telegramControlService.sendPlainMessageWithReceipt(text, to: chatID, replyMarkup: replyMarkup) }
+        guard let origin, let fence = telegramWireFence(for: origin) else { return nil }
+        do {
+            return try await telegramControlService.sendPlainMessageWithReceipt(
+                text, to: chatID,
+                topicID: origin.telegramLease?.effectiveMessageThreadID,
+                replyMarkup: replyMarkup, fence: fence
+            )
+        }
         catch { telegramControlState.lastError = error.localizedDescription; return nil }
     }
 
@@ -367,6 +466,373 @@ extension TerminalChat {
             roomID: roomID, chatID: chatID, sharedChatMessageID: UUID(),
             senderID: senderID, senderKind: senderKind, senderName: senderName
         )
+    }
+
+    // MARK: - Secure artifacts
+
+    /// Directories whose individually selected files may be exported to the
+    /// linked chat. Deliberately narrow: the temporary artifact staging
+    /// directory only. Nothing under the repository working directory is a
+    /// member, so `/diff` and `/report` materialize a bounded excerpt into
+    /// this staging area first and only that excerpt can ever be uploaded.
+    nonisolated static var telegramArtifactPolicy: TerminalTelegramArtifactPolicy {
+        TerminalTelegramArtifactPolicy(
+            allowedDirectories: [Self.telegramArtifactStagingDirectory]
+        )
+    }
+
+    /// Staging directory for outbound artifacts. Created 0700; excerpts are
+    /// written 0600 and removed right after the upload (or refusal).
+    nonisolated static var telegramArtifactStagingDirectory: URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ZenCODE-telegram-artifacts", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: url,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: NSNumber(value: 0o700)]
+        )
+        return url
+    }
+
+    /// `/diff` materializes the session diff into a bounded staging file and
+    /// asks for explicit consent. The repository itself is never uploaded:
+    /// only this excerpt, only after confirmation.
+    func handleTelegramDiffRequest(origin: TerminalPromptOrigin) async {
+        guard let chatID = origin.telegramChatID else { return }
+        guard let diffText = telegramSessionDiffText()?.nilIfBlank else {
+            await sendTelegramSystemMessage(
+                "ZenCODE message: no diff is available for this session yet.",
+                to: chatID,
+                origin: origin
+            )
+            return
+        }
+        guard diffText.utf8.count <= TerminalTelegramMultipartForm.maximumBodyBytes else {
+            await sendTelegramSystemMessage(
+                "ZenCODE message: the session diff exceeds the Telegram upload budget and cannot be sent.",
+                to: chatID,
+                origin: origin
+            )
+            return
+        }
+        let url = Self.telegramArtifactStagingDirectory
+            .appendingPathComponent("session-\(sessionID.prefix(8))-\(UUID().uuidString).diff")
+        do {
+            try Self.writePrivateArtifact(diffText, to: url)
+            await offerTelegramArtifact(
+                TerminalTelegramArtifact(
+                    fileURL: url,
+                    filename: url.lastPathComponent,
+                    contentType: "text/x-diff"
+                ),
+                chatID: chatID,
+                summary: "Send the session diff as a document?",
+                origin: origin
+            )
+        } catch {
+            await sendTelegramSystemMessage(
+                "ZenCODE message: the diff could not be prepared for upload.",
+                to: chatID,
+                origin: origin
+            )
+        }
+    }
+
+    /// `/report` offers the most recent report/log file found in the ZenCODE
+    /// application support tree, after the policy validates it. No file is
+    /// sent or read into memory before consent.
+    func handleTelegramReportRequest(origin: TerminalPromptOrigin) async {
+        guard let chatID = origin.telegramChatID else { return }
+        guard let candidate = Self.latestTelegramReportCandidate(),
+              let artifact = try? Self.telegramArtifactPolicy.validated(candidate) else {
+            await sendTelegramSystemMessage(
+                "ZenCODE message: no exportable report or log file was found.",
+                to: chatID,
+                origin: origin
+            )
+            return
+        }
+        await offerTelegramArtifact(
+            artifact,
+            chatID: chatID,
+            summary: "Send “\(artifact.filename)” as a document?",
+            origin: origin
+        )
+    }
+
+    /// Sends the consent request with the two-button keyboard. The upload
+    /// happens only through the explicit callback.
+    private func offerTelegramArtifact(
+        _ artifact: TerminalTelegramArtifact,
+        chatID: Int64,
+        summary: String,
+        origin: TerminalPromptOrigin
+    ) async {
+        guard let lease = origin.telegramLease else {
+            Self.removeStagedArtifact(at: artifact.fileURL)
+            return
+        }
+        do {
+            guard let offerID = try await telegramControlService.offerArtifactConsent(
+                artifact: artifact,
+                chatID: chatID,
+                userID: telegramLinkedUserID ?? 0,
+                routeLease: lease,
+                cleanupAfterUse: Self.isTelegramStagedArtifact(artifact.fileURL)
+            ) else {
+                Self.removeStagedArtifact(at: artifact.fileURL)
+                await sendTelegramSystemMessage(
+                    "ZenCODE message: too many pending file requests. Confirm or cancel one first.",
+                    to: chatID,
+                origin: origin
+                )
+                return
+            }
+            let receipt = await sendTelegramArtifactConsentMessage(
+                summary,
+                to: chatID,
+                replyMarkup: TerminalTelegramArtifactConsentKeyboard.markup(offerID: offerID),
+                origin: origin
+            )
+            if receipt == nil {
+                // The request never reached the chat: spend the offer so the
+                // consent cannot be used later without a visible prompt.
+                await telegramControlService.cancelArtifactConsent(
+                    offerID: offerID, chatID: chatID
+                )
+            }
+        } catch {
+            await sendTelegramSystemMessage(
+                "ZenCODE message: this file cannot be sent (\(error.localizedDescription)).",
+                to: chatID,
+                origin: origin
+            )
+        }
+    }
+
+    /// Handles the explicit Send/Cancel tap of an artifact consent offer.
+    /// Returns `true` when the callback belonged to the consent flow.
+    private func handleTelegramArtifactConsentCallback(
+        _ data: String,
+        message: TerminalTelegramIncomingMessage,
+        origin: TerminalPromptOrigin
+    ) async -> Bool {
+        guard let consent = TerminalTelegramArtifactConsentKeyboard
+            .action(fromCallbackData: data) else {
+            return false
+        }
+        let offerID = consent.offerID
+        guard let lease = origin.telegramLease,
+              let fence = telegramWireFence(for: origin) else { return true }
+        switch consent.action {
+        case .cancel:
+            await telegramControlService.cancelArtifactConsent(
+                offerID: offerID, chatID: message.chatID
+            )
+            await sendTelegramSystemMessage(
+                "ZenCODE message: file send cancelled.",
+                to: message.chatID,
+                origin: origin
+            )
+        case .send:
+            // Capture the artifact before the offer is spent, so the staged
+            // excerpt can be removed after the attempt either way.
+            let stagedURL = await telegramControlService.pendingConsentArtifact(
+                offerID: offerID, chatID: message.chatID
+            )?.fileURL
+            do {
+                guard let messageID = try await telegramControlService
+                    .sendArtifactWithConsent(
+                        offerID: offerID,
+                        chatID: message.chatID,
+                        userID: message.userID,
+                        routeLease: lease,
+                        policy: Self.telegramArtifactPolicy,
+                        topicID: lease.effectiveMessageThreadID,
+                        fence: fence
+                    ) else {
+                    Self.removeStagedArtifact(at: stagedURL)
+                    await sendTelegramSystemMessage(
+                        "ZenCODE message: that confirmation expired or no longer matches the file. Ask again with /diff or /report.",
+                        to: message.chatID,
+                        origin: origin
+                    )
+                    return true
+                }
+                _ = messageID
+                Self.removeStagedArtifact(at: stagedURL)
+                await sendTelegramSystemMessage(
+                    "ZenCODE message: file sent.",
+                    to: message.chatID,
+                    origin: origin
+                )
+            } catch {
+                Self.removeStagedArtifact(at: stagedURL)
+                await sendTelegramSystemMessage(
+                    "ZenCODE message: the file could not be sent (\(error.localizedDescription)).",
+                    to: message.chatID,
+                    origin: origin
+                )
+            }
+        }
+        return true
+    }
+
+    /// Removes a staged outbound excerpt after its upload attempt. Only files
+    /// inside the private staging directory are ever deleted: operator-owned
+    /// report/log files under application support stay untouched.
+    private nonisolated static func removeStagedArtifact(at url: URL?) {
+        guard let url else { return }
+        let staging = telegramArtifactStagingDirectory
+            .resolvingSymlinksInPath().standardizedFileURL.path
+        let target = url.resolvingSymlinksInPath().standardizedFileURL.path
+        guard target == staging || target.hasPrefix(staging + "/") else {
+            return
+        }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    private nonisolated static func isTelegramStagedArtifact(_ url: URL) -> Bool {
+        let staging = telegramArtifactStagingDirectory
+            .resolvingSymlinksInPath().standardizedFileURL.path
+        let target = url.resolvingSymlinksInPath().standardizedFileURL.path
+        return target.hasPrefix(staging + "/")
+    }
+
+    /// Selective ingress: an admitted attachment is downloaded into the
+    /// bounded 0600 store and acknowledged. The file is never opened by this
+    /// path — the operator asks the agent to read it explicitly afterwards.
+    private func handleTelegramInboundAttachment(
+        _ attachment: TerminalTelegramInboundAttachment,
+        message: TerminalTelegramIncomingMessage,
+        origin: TerminalPromptOrigin
+    ) async {
+        guard let fence = telegramWireFence(for: origin) else { return }
+        do {
+            let stored = try await telegramControlService.receiveInboundAttachment(
+                attachment, chatID: message.chatID, fence: fence
+            )
+            await sendTelegramSystemMessage(
+                "ZenCODE message: received “\(stored.filename)” (\(stored.mimeType)). Ask the agent to read it by path when needed; it will be removed automatically.",
+                to: message.chatID,
+                origin: origin
+            )
+        } catch TerminalTelegramControlError.attachmentStoreBusy {
+            await sendTelegramSystemMessage(
+                "ZenCODE message: too many attachments are being received. Try again shortly.",
+                to: message.chatID,
+                origin: origin
+            )
+        } catch TerminalTelegramControlError.fileTooLarge(let limit) {
+            await sendTelegramSystemMessage(
+                TerminalTelegramInboundAttachmentGate.Refusal
+                    .tooLarge(limit: limit).operatorMessage,
+                to: message.chatID,
+                origin: origin
+            )
+        } catch {
+            await sendTelegramSystemMessage(
+                "ZenCODE message: the attachment could not be received.",
+                to: message.chatID,
+                origin: origin
+            )
+        }
+    }
+
+    /// Bounded session diff text assembled from the per-file patches the
+    /// session already holds, or `nil` when none exists. The excerpt is
+    /// capped by the multipart budget so a giant working tree can never
+    /// produce an unbounded artifact.
+    private func telegramSessionDiffText() -> String? {
+        guard let summary = lastFileChangeSummary, !summary.entries.isEmpty else {
+            return nil
+        }
+        let budget = TerminalTelegramMultipartForm.maximumBodyBytes
+        var lines: [String] = []
+        var count = 0
+        for entry in summary.entries {
+            let patch = entry.patch?.nilIfBlank
+                ?? "\(entry.status.rawValue) \(entry.path) (+\(entry.additions) -\(entry.deletions))"
+            let block = patch.hasSuffix("\n") ? patch : patch + "\n"
+            count += block.utf8.count
+            if count > budget { break }
+            lines.append(block)
+        }
+        guard !lines.isEmpty else { return nil }
+        return lines.joined()
+    }
+
+    private nonisolated static func writePrivateArtifact(
+        _ text: String, to url: URL
+    ) throws {
+        let data = Data(text.utf8)
+        let succeeded = FileManager.default.createFile(
+            atPath: url.path,
+            contents: data,
+            attributes: [.posixPermissions: NSNumber(value: 0o600)]
+        )
+        guard succeeded else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+
+    /// Most recent exportable report/log candidate under application support.
+    private nonisolated static func latestTelegramReportCandidate() -> TerminalTelegramArtifact? {
+        let fileManager = FileManager.default
+        let roots = [
+            AppStorageDirectory.appSupportDirectoryURL(),
+            fileManager.temporaryDirectory,
+        ]
+        let allowed = Set(["log", "txt", "md", "json"])
+        var best: (url: URL, date: Date)?
+        for root in roots {
+            guard let enumerator = fileManager.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { continue }
+            for case let url as URL in enumerator {
+                guard let values = try? url.resourceValues(
+                    forKeys: [.contentModificationDateKey, .isRegularFileKey]
+                ), values.isRegularFile == true,
+                    allowed.contains(url.pathExtension.lowercased()) else {
+                    continue
+                }
+                let date = values.contentModificationDate ?? .distantPast
+                if best == nil || date > best!.date {
+                    best = (url, date)
+                }
+            }
+        }
+        guard let best else { return nil }
+        return TerminalTelegramArtifact(
+            fileURL: best.url,
+            filename: best.url.lastPathComponent
+        )
+    }
+
+    /// Plain-text send with a reply markup, returning the receipt, so consent
+    /// keyboards never inherit Markdown parsing from operator-typed names.
+    private func sendTelegramArtifactConsentMessage(
+        _ text: String,
+        to chatID: Int64,
+        replyMarkup: TerminalTelegramReplyMarkup,
+        origin: TerminalPromptOrigin
+    ) async -> Int? {
+        if let onTelegramSystemMessage {
+            _ = await onTelegramSystemMessage(text, chatID)
+            return nil
+        }
+        guard let fence = telegramWireFence(for: origin) else { return nil }
+        do {
+            return try await telegramControlService.sendPlainMessageWithReceipt(
+                text, to: chatID, topicID: origin.telegramLease?.effectiveMessageThreadID,
+                replyMarkup: replyMarkup, fence: fence
+            )
+        } catch {
+            telegramControlState.lastError = error.localizedDescription
+            return nil
+        }
     }
 
     // MARK: - Live-message relay
@@ -409,7 +875,8 @@ extension TerminalChat {
         _ messages: [AgentSharedChat.Message],
         roomID: String
     ) async {
-        guard telegramControlState.isActive, telegramLinkedChatID != nil else {
+        guard telegramControlState.isActive,
+              telegramActiveRouteLease != nil || telegramLinkedChatID != nil else {
             return
         }
         let roster = await sessionRunner.sharedChatMentionRoster(rootSessionID: roomID)
@@ -425,13 +892,16 @@ extension TerminalChat {
     /// must never route a reply into the live one.
     func rebindTelegramSharedChatRelay(roomID: String) async {
         guard telegramControlState.isActive,
-              let chatID = telegramLinkedChatID else {
+              let lease = telegramActiveRouteLease,
+              lease.key.roomID == roomID,
+              (try? await telegramSessionRouter.validate(lease)) != nil else {
             await telegramSharedChatRelay.deactivate()
             return
         }
         await telegramSharedChatRelay.activate(
             roomID: roomID,
-            chatID: chatID,
+            chatID: lease.key.chatID,
+            lease: lease,
             repliesEnabled: readsTelegramIngress
         )
     }
@@ -441,15 +911,29 @@ extension TerminalChat {
     /// A failure is recorded on the control state but never written to the
     /// terminal: cards are asynchronous notifications, and a transient Telegram
     /// error must not inject noise into the operator's transcript.
-    func sendTelegramSharedChatCard(_ text: String, to chatID: Int64) async -> Int? {
+    func sendTelegramSharedChatCard(
+        _ text: String, to chatID: Int64,
+        lease: TerminalTelegramRouteLease
+    ) async -> Int? {
         guard telegramControlState.isActive,
-              telegramLinkedChatID == chatID else {
+              let lifecycleEpoch = telegramControlState.wireLifecycleEpoch else {
             return nil
         }
+        guard lease.key.chatID == chatID,
+              (try? await telegramSessionRouter.validate(lease)) != nil else { return nil }
+        let fence = TerminalTelegramWireFence(
+            lease: lease,
+            lifecycleEpoch: lifecycleEpoch,
+            validateLease: { [telegramSessionRouter] lease in
+                try await telegramSessionRouter.validate(lease)
+            }
+        )
         do {
             return try await telegramControlService.sendPlainMessageWithReceipt(
                 text,
-                to: chatID
+                to: chatID,
+                topicID: lease.effectiveMessageThreadID,
+                fence: fence
             )
         } catch {
             telegramControlState.lastError = error.localizedDescription
@@ -470,9 +954,12 @@ extension TerminalChat {
         for message: TerminalTelegramIncomingMessage
     ) async -> TerminalTelegramSharedChatReplyTarget? {
         guard let replyToMessageID = message.replyToMessageID,
+              let lease = telegramActiveRouteLease,
+              lease.key.chatID == message.chatID,
               let target = await telegramSharedChatRelay.replyTarget(
                   forTelegramMessageID: replyToMessageID,
-                  chatID: message.chatID
+                  chatID: message.chatID,
+                  lease: lease
               ),
               target.roomID == sessionID,
               target.replyDestination != nil else {
@@ -491,7 +978,8 @@ extension TerminalChat {
     /// message falls through to the ordinary prompt path.
     func handleTelegramSharedChatReplyIfNeeded(
         _ text: String,
-        message: TerminalTelegramIncomingMessage
+        message: TerminalTelegramIncomingMessage,
+        origin: TerminalPromptOrigin
     ) async -> Bool {
         guard let target = await telegramDirectReplyTarget(for: message),
               let destination = target.replyDestination else {
@@ -504,7 +992,8 @@ extension TerminalChat {
         guard await isCurrentSharedChatDirectDestination(destination) else {
             await sendTelegramSystemMessage(
                 "ZenCODE message: that agent is no longer active, so the reply was not delivered.",
-                to: message.chatID
+                to: message.chatID,
+                origin: origin
             )
             return true
         }
@@ -520,7 +1009,8 @@ extension TerminalChat {
             let safeError = Self.sharedChatInlineTerminalSafeText(error.localizedDescription)
             await sendTelegramSystemMessage(
                 "ZenCODE message: \(safeError)",
-                to: message.chatID
+                to: message.chatID,
+                origin: origin
             )
         }
         return true
@@ -528,14 +1018,17 @@ extension TerminalChat {
 
     func handleTelegramVoiceMessage(
         _ voice: TerminalTelegramVoiceAttachment,
-        chatID: Int64,
+        origin: TerminalPromptOrigin,
         eventQueue: TerminalChatEventQueue,
         transcriptions: TerminalVoiceTranscriptionRegistry
     ) async {
+        guard let chatID = origin.telegramChatID,
+              let fence = telegramWireFence(for: origin) else { return }
         guard isVoiceConfigured() else {
             await sendTelegramSystemMessage(
                 "Voice-message transcription is not configured. Run the /setup command in zen and enable voice-message transcription.",
-                to: chatID
+                to: chatID,
+                origin: origin
             )
             return
         }
@@ -546,7 +1039,8 @@ extension TerminalChat {
         guard let slot = transcriptions.reserveSlot() else {
             await sendTelegramSystemMessage(
                 "Too many voice messages are being transcribed. Try again shortly.",
-                to: chatID
+                to: chatID,
+                origin: origin
             )
             return
         }
@@ -554,15 +1048,38 @@ extension TerminalChat {
         let task = Task(name: "ZenCODE.Telegram.voice-transcription") { [weak self] in
             defer { transcriptions.release(slot) }
             guard let self else { return }
+            // Presence for the transcription is scoped to its own lease: the
+            // typing indicator covers the download+transcribe wait, and the
+            // lease is released on every exit path (success, failure,
+            // cancellation) so a dead session never keeps "typing".
+            let presenceLease = await self.telegramControlService.acquirePresenceLease(
+                scope: .transcription(
+                    chatID: chatID,
+                    topicID: origin.telegramLease?.effectiveMessageThreadID
+                ),
+                fence: fence
+            )
+            defer {
+                if let presenceLease {
+                    Task(name: "ZenCODE.Telegram.presence-release") { [telegramControlService] in
+                        await telegramControlService.releasePresenceLease(presenceLease)
+                    }
+                }
+            }
             do {
-                let audio = try await self.telegramControlService.downloadVoiceAudio(voice)
+                let audio = try await self.telegramControlService.downloadVoiceAudio(
+                    voice, chatID: chatID, fence: fence
+                )
+                // Own cleanup immediately: cancellation can land after download
+                // returns but before `transcribe` installs its own defer.
+                defer { audio.cleanup() }
                 try Task.checkCancellation()
                 let transcript = try await AgentVoiceTranscriptionService()
                     .transcribe(audio)
                 guard await eventQueue.sendWithBackpressure(
                     .voicePromptCompleted(
                         TerminalVoicePromptResult(
-                            origin: .telegram(chatID: chatID),
+                            origin: origin,
                             outcome: .success(transcript)
                         )
                     )
@@ -577,7 +1094,7 @@ extension TerminalChat {
                 guard await eventQueue.sendWithBackpressure(
                     .voicePromptCompleted(
                         TerminalVoicePromptResult(
-                            origin: .telegram(chatID: chatID),
+                            origin: origin,
                             outcome: .failure(error.localizedDescription)
                         )
                     )
@@ -613,16 +1130,10 @@ extension TerminalChat {
         do {
             telegramLinkedChatID = linkedChatID
             telegramLinkedChatTitle = settings.linkedChatTitle
+            telegramLinkedUserID = nil
             telegramControlState = try await telegramControlService.start()
-            // Bind the shared-chat relay to the live room. Re-enabling Telegram
-            // for the same room and chat keeps the delivery ledger, so already
-            // forwarded messages are not sent again.
-            await telegramSharedChatRelay.activate(
-                roomID: sessionID,
-                chatID: linkedChatID,
-                repliesEnabled: readsTelegramIngress
-            )
-            synchronizeTelegramTurnProgressReporting()
+            telegramVoiceTranscriptions.resume()
+            await synchronizeTelegramTurnProgressReporting()
             let chatTitle = telegramLinkedChatTitle?.nilIfBlank ?? "chat \(linkedChatID)"
             await writeSystemMessage(
                 """
@@ -631,23 +1142,12 @@ extension TerminalChat {
 
                 """
             )
-            let activationMessage = activeTelegramTurnOrigin == nil
-                ? "ZenCODE remote control is active. Send a prompt or /help to begin."
-                : "ZenCODE remote control is active. The current ZenCODE request is now being mirrored."
-            await sendTelegramSystemMessage(activationMessage, to: linkedChatID)
-            if !readsTelegramIngress {
-                // The blocking input fallback has no Telegram ingress consumer.
-                // Say so instead of leaving the operator waiting for an answer
-                // that this session will never read.
-                await sendTelegramSystemMessage(
-                    "ZenCODE message: this session runs the terminal fallback input loop and does not read Telegram messages. Live messages are still forwarded here, but prompts and replies must be typed in the terminal.",
-                    to: linkedChatID
-                )
-            }
+            // Egress remains fail-closed until the first authorized ingress
+            // supplies a complete, router-validatable route lease.
         } catch {
             telegramControlState = await telegramControlService.currentState()
             telegramControlState.lastError = error.localizedDescription
-            synchronizeTelegramTurnProgressReporting()
+            await synchronizeTelegramTurnProgressReporting()
             await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
     }
@@ -656,13 +1156,32 @@ extension TerminalChat {
         // Disconnect the current turn before hopping to the service actor, so
         // events emitted while `stop()` is in flight cannot enqueue more output.
         telegramControlState.isActive = false
-        synchronizeTelegramTurnProgressReporting()
+        await telegramVoiceTranscriptions.cancelAllAndWait()
+        let validationTask = telegramRouteValidationTask
+        telegramRouteValidationTask = nil
+        validationTask?.cancel()
+        await validationTask?.value
+        let reporter = activeTelegramProgressReporter
+        activeTelegramProgressReporter = nil
+        if let reporter { await reporter.shutdown() }
+        if let presence = activeTelegramPresenceLease {
+            await telegramControlService.releasePresenceLease(presence)
+            activeTelegramPresenceLease = nil
+        }
+        if let lease = activeTelegramTurnOrigin?.telegramLease {
+            await telegramRouteRuntimeState.teardown(lease: lease)
+        }
         // Unbind before stopping the transport so no card is queued for a chat
         // that is about to be released. The ledger is retained on purpose.
         await telegramSharedChatRelay.deactivate()
         telegramControlState = await telegramControlService.stop()
+        telegramActiveRouteLease = nil
         telegramLinkedChatID = nil
         telegramLinkedChatTitle = nil
+        telegramLinkedUserID = nil
+        // Deterministic inbound-attachment teardown: every received temporary
+        // is deleted and every pending upload consent is dropped.
+        _ = await telegramControlService.cleanupInboundAttachments()
         await writeSystemMessage("Telegram remote control stopped.\n")
     }
 
@@ -676,6 +1195,11 @@ extension TerminalChat {
     /// local request; previously the reporter was a one-time snapshot created at
     /// turn start, so enabling Telegram mid-turn had no effect.
     func beginTelegramTurnProgressReporting(for origin: TerminalPromptOrigin) async {
+        let previousValidationTask = telegramRouteValidationTask
+        telegramRouteValidationTask = nil
+        previousValidationTask?.cancel()
+        await previousValidationTask?.value
+        await activeTelegramProgressReporter?.revokeAndWait()
         activeTelegramProgressReporter = nil
         activeTelegramTurnOrigin = origin
         resetTelegramRootResponseBlock()
@@ -684,7 +1208,44 @@ extension TerminalChat {
         // turn before the new turn's reporter exists: stale-epoch deliveries
         // are discarded instead of being adopted by the new reporter.
         currentTelegramMirrorEpoch = await renderCoordinator.advanceMirrorEpoch()
-        synchronizeTelegramTurnProgressReporting()
+        await synchronizeTelegramTurnProgressReporting()
+        await beginTelegramTurnPresenceIfNeeded()
+        if let lease = origin.telegramLease, let eventQueue = telegramRuntimeEventQueue {
+            let router = telegramSessionRouter
+            telegramRouteValidationTask = Task(name: "ZenCODE.Telegram.route-validation") {
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .milliseconds(100)) }
+                    catch { return }
+                    guard (try? await router.validate(lease)) != nil else {
+                        _ = await eventQueue.sendWithBackpressure(
+                            .telegramRouteInvalidated(lease)
+                        )
+                        return
+                    }
+                }
+            }
+        }
+    }
+
+    /// Takes the lifecycle-safe typing lease for a mirrored turn. Presence is
+    /// best-effort: a chat action that fails says nothing about the link or the
+    /// turn, so failures are silent. The lease is released in
+    /// `endTelegramTurnProgressReporting` and fenced by generation, so a
+    /// renewal that wakes after teardown exits without touching the wire.
+    private func beginTelegramTurnPresenceIfNeeded() async {
+        guard let origin = activeTelegramTurnOrigin,
+              await validateTelegramOrigin(origin),
+              let chatID = telegramOutgoingChatID(for: origin),
+              let fence = telegramWireFence(for: origin) else {
+            return
+        }
+        activeTelegramPresenceLease = await telegramControlService.acquirePresenceLease(
+            scope: .turn(
+                chatID: chatID,
+                topicID: origin.telegramLease?.effectiveMessageThreadID
+            ),
+            fence: fence
+        )
     }
 
     /// Reconciles the current turn with the latest Telegram on/off state.
@@ -696,12 +1257,14 @@ extension TerminalChat {
     /// A response block that was already streaming across such a transition is
     /// therefore suppressed, so the remote chat never receives a fragment whose
     /// beginning it could not see, nor a replay of text produced while off.
-    func synchronizeTelegramTurnProgressReporting() {
+    func synchronizeTelegramTurnProgressReporting() async {
         guard let origin = activeTelegramTurnOrigin,
               let chatID = telegramOutgoingChatID(for: origin) else {
             if activeTelegramProgressReporter != nil {
                 suppressTelegramRootResponseBlockIfStreaming()
             }
+            let retired = activeTelegramProgressReporter
+            if let retired { await retired.revokeAndWait() }
             activeTelegramProgressReporter = nil
             return
         }
@@ -712,7 +1275,17 @@ extension TerminalChat {
         activeTelegramProgressReporter = makeTelegramTurnProgressReporter(for: origin)
     }
 
-    func endTelegramTurnProgressReporting() {
+    func endTelegramTurnProgressReporting() async {
+        let validationTask = telegramRouteValidationTask
+        telegramRouteValidationTask = nil
+        validationTask?.cancel()
+        await validationTask?.value
+        let retiredReporter = activeTelegramProgressReporter
+        if let retiredReporter { await retiredReporter.revokeAndWait() }
+        if let lease = activeTelegramPresenceLease {
+            await telegramControlService.releasePresenceLease(lease)
+        }
+        activeTelegramPresenceLease = nil
         activeTelegramProgressReporter = nil
         activeTelegramTurnOrigin = nil
         resetTelegramRootResponseBlock()
@@ -827,7 +1400,8 @@ extension TerminalChat {
             return true
         }
 
-        guard let chatID = telegramOutgoingChatID(for: origin) else {
+        guard let lease = origin.telegramLease,
+              let chatID = telegramOutgoingChatID(for: origin) else {
             await writeFailureMessage(
                 "ZenCODE: Telegram cannot request permission for \(request.toolName); the operation was denied.\n"
             )
@@ -835,7 +1409,11 @@ extension TerminalChat {
         }
 
         let terminalAlreadyAuthorized = await permissionAuthorizer.isAlreadyAuthorized(request)
-        let telegramAlreadyAuthorized = await telegramPermissionBroker.isAlreadyAuthorized(request)
+        let telegramAlreadyAuthorized: Bool
+        guard (try? await telegramSessionRouter.validate(lease)) != nil else { return false }
+        telegramAlreadyAuthorized = await telegramPermissionBroker.isAlreadyAuthorized(
+            request, lease: lease
+        )
         if terminalAlreadyAuthorized || telegramAlreadyAuthorized {
             return true
         }
@@ -849,12 +1427,16 @@ extension TerminalChat {
                 .terminal(await permissionAuthorizer.authorizationOutcome(for: request))
             }
             group.addTask { [weak self, telegramPermissionBroker] in
-                let outcome = await telegramPermissionBroker.authorize(
-                    request,
-                    chatID: chatID
-                ) { [weak self] message in
-                    await self?.sendTelegramTurnMessage(.authorization(message), to: chatID) ?? false
+                let send: @Sendable (String) async -> Bool = { [weak self] message in
+                    guard let self, await self.validateTelegramOrigin(origin) else { return false }
+                    return await self.sendTelegramTurnMessage(
+                        .authorization(message), to: chatID, origin: origin
+                    )
                 }
+                let outcome: TerminalTelegramPermissionOutcome
+                outcome = await telegramPermissionBroker.authorize(
+                    request, lease: lease, sendMessage: send
+                )
                 return .telegram(outcome)
             }
 
@@ -890,13 +1472,11 @@ extension TerminalChat {
                         ? "✅ Permission granted in the terminal for \(request.toolName). Continuing."
                         : "⛔ Permission denied in the terminal for \(request.toolName)."
                 ),
-                to: chatID
+                to: chatID,
+                origin: origin
             )
             return approved
         case let .telegram(outcome):
-            if outcome == .allowedAlways {
-                await permissionAuthorizer.recordAlwaysAuthorization(for: request)
-            }
             await writeTelegramPermissionOutcome(outcome, request: request)
             return outcome.isApproved
         case nil:
@@ -949,36 +1529,35 @@ extension TerminalChat {
 
     func handleTelegramPermissionResponseIfNeeded(
         _ text: String,
-        chatID: Int64
+        lease: TerminalTelegramRouteLease
     ) async -> Bool {
-        let result = await telegramPermissionBroker.handleMessage(text, chatID: chatID)
+        guard (try? await telegramSessionRouter.validate(lease)) != nil else { return true }
+        let result = await telegramPermissionBroker.handleMessage(text, lease: lease)
         switch result {
         case .notHandled:
             return false
         case let .handled(reply):
             if let reply = reply?.nilIfBlank {
-                await sendTelegramTurnMessage(.authorization(reply), to: chatID)
+                await sendTelegramTurnMessage(
+                    .authorization(reply), to: lease.key.chatID,
+                    origin: .telegramLease(lease)
+                )
             }
             return true
         }
-    }
-
-    func sendTelegramSystemMessageIfLinked(_ message: String) async {
-        guard let chatID = telegramLinkedChatID,
-              telegramControlState.isActive else {
-            return
-        }
-        await sendTelegramSystemMessage(message, to: chatID)
     }
 
     func sendTelegramSystemMessageIfLinked(
         _ message: String,
         origin: TerminalPromptOrigin
     ) async {
-        guard let chatID = telegramOutgoingChatID(for: origin) else {
+        guard await validateTelegramOrigin(origin),
+              let chatID = telegramOutgoingChatID(for: origin) else {
             return
         }
-        await sendTelegramSystemMessage(message, to: chatID)
+        await sendTelegramSystemMessage(
+            message, to: chatID, origin: origin
+        )
     }
 
     /// Publishes an authorization message on the ordered Telegram channel.
@@ -989,10 +1568,10 @@ extension TerminalChat {
     @discardableResult
     func sendTelegramTurnMessage(
         _ payload: TerminalTelegramTurnPayload,
-        to chatID: Int64
+        to chatID: Int64,
+        origin: TerminalPromptOrigin
     ) async -> Bool {
-        guard telegramControlState.isActive,
-              telegramLinkedChatID == chatID else {
+        guard telegramControlState.isActive else {
             return false
         }
         if let reporter = activeTelegramProgressReporter, reporter.chatID == chatID {
@@ -1001,17 +1580,18 @@ extension TerminalChat {
         if let onDirectTelegramTurnMessage {
             return await onDirectTelegramTurnMessage(payload, chatID)
         }
-        return await sendTelegramSystemMessage(payload.text, to: chatID)
+        return await sendTelegramSystemMessage(payload.text, to: chatID, origin: origin)
     }
 
     func sendTelegramTurnMessageIfLinked(
         _ payload: TerminalTelegramTurnPayload,
         origin: TerminalPromptOrigin
     ) async {
-        guard let chatID = telegramOutgoingChatID(for: origin) else {
+        guard await validateTelegramOrigin(origin),
+              let chatID = telegramOutgoingChatID(for: origin) else {
             return
         }
-        await sendTelegramTurnMessage(payload, to: chatID)
+        await sendTelegramTurnMessage(payload, to: chatID, origin: origin)
     }
 
     /// Returns the linked chat to use for outgoing messages, when Telegram
@@ -1019,14 +1599,28 @@ extension TerminalChat {
     /// chat so the session keeps replying on Telegram after `/telegram on`,
     /// even without an incoming Telegram request.
     func telegramOutgoingChatID(for origin: TerminalPromptOrigin) -> Int64? {
-        guard telegramControlState.isActive,
-              let linkedChatID = telegramLinkedChatID else {
-            return nil
-        }
-        if let originChatID = origin.telegramChatID {
-            return originChatID == linkedChatID ? linkedChatID : nil
-        }
-        return linkedChatID
+        guard telegramControlState.isActive, let lease = origin.telegramLease else { return nil }
+        return lease.key.chatID
+    }
+
+    /// Queue/start/egress fence for a route-scoped turn. Local and legacy
+    /// origins retain their source-compatible behavior.
+    func validateTelegramOrigin(_ origin: TerminalPromptOrigin) async -> Bool {
+        guard let lease = origin.telegramLease else { return false }
+        guard telegramControlState.isActive else { return false }
+        return (try? await telegramSessionRouter.validate(lease)) != nil
+    }
+
+    func telegramWireFence(for origin: TerminalPromptOrigin) -> TerminalTelegramWireFence? {
+        guard let lease = origin.telegramLease,
+              let lifecycleEpoch = telegramControlState.wireLifecycleEpoch else { return nil }
+        return TerminalTelegramWireFence(
+            lease: lease,
+            lifecycleEpoch: lifecycleEpoch,
+            validateLease: { [telegramSessionRouter] lease in
+                try await telegramSessionRouter.validate(lease)
+            }
+        )
     }
 
     /// Sends a message to a Telegram chat, reporting whether it was delivered.
@@ -1034,12 +1628,33 @@ extension TerminalChat {
     /// Delivery status is part of the contract: a permission request that never
     /// reached the chat must fail closed instead of holding the turn.
     @discardableResult
-    func sendTelegramSystemMessage(_ message: String, to chatID: Int64) async -> Bool {
+    func sendTelegramSystemMessage(
+        _ message: String, to chatID: Int64, origin: TerminalPromptOrigin
+    ) async -> Bool {
+        guard let lease = origin.telegramLease,
+              lease.key.chatID == chatID,
+              let fence = telegramWireFence(for: origin),
+              await validateTelegramOrigin(origin) else { return false }
+        return await sendTelegramSystemMessage(
+            message, to: chatID, topicID: lease.effectiveMessageThreadID, fence: fence
+        )
+    }
+
+    @discardableResult
+    func sendTelegramSystemMessage(
+        _ message: String, to chatID: Int64, topicID: Int? = nil,
+        fence: TerminalTelegramWireFence
+    ) async -> Bool {
+        if let onTelegramRoutedSystemMessage {
+            return await onTelegramRoutedSystemMessage(message, chatID, topicID)
+        }
         if let onTelegramSystemMessage {
             return await onTelegramSystemMessage(message, chatID)
         }
         do {
-            telegramControlState = try await telegramControlService.sendMessage(message, to: chatID)
+            telegramControlState = try await telegramControlService.sendMessage(
+                message, to: chatID, topicID: topicID, fence: fence
+            )
             return true
         } catch {
             telegramControlState.lastError = error.localizedDescription
@@ -1088,7 +1703,9 @@ extension TerminalChat {
         Send a message to prompt the current ZenCODE TUI session.
         Live messages from agents are forwarded here; reply to one with text to answer its sender.
         A voice note cannot be a direct reply: send text, or record without replying to run an ordinary prompt.
-        Remote commands: /status, /changes, /help, /plan <goal> and its subcommands, /goal <goal>, /review [focus].
+        Remote commands: /status, /changes, /diff, /report, /help, /plan <goal> and its subcommands, /goal <goal>, /review [focus].
+        /diff and /report send a file only after you confirm it with an explicit button; nothing is uploaded automatically.
+        Documents and images you send are received selectively (text, markdown, csv, json, yaml, pdf, rtf, word, odt and images) and kept as private temporaries.
         While /plan is asking questions, ordinary replies continue that same runtime discussion.
         While /goal is waiting for an answer, ordinary replies continue that same workflow task graph.
         Permission replies: /allow ID, /always ID, /deny ID.
@@ -1098,24 +1715,110 @@ extension TerminalChat {
     }
 
     @discardableResult
-    private func sendTelegramProgressMessage(_ message: String, to chatID: Int64) async -> Bool {
-        guard telegramControlState.isActive,
-              telegramLinkedChatID == chatID else {
+    private func sendTelegramProgressMessage(
+        _ message: String, to chatID: Int64, topicID: Int? = nil,
+        fence: TerminalTelegramWireFence
+    ) async -> Bool {
+        guard telegramControlState.isActive else {
             return false
         }
-        return await sendTelegramSystemMessage(message, to: chatID)
+        do {
+            _ = try await telegramControlService.sendRichMessageWithFallback(
+                message, to: chatID, topicID: topicID, fence: fence
+            )
+            return true
+        } catch {
+            return false
+        }
     }
 
     func makeTelegramTurnProgressReporter(
         for origin: TerminalPromptOrigin
     ) -> TerminalTelegramTurnProgressReporter? {
-        guard let chatID = telegramOutgoingChatID(for: origin) else {
+        guard let lease = origin.telegramLease,
+              let chatID = telegramOutgoingChatID(for: origin),
+              let lifecycleEpoch = telegramControlState.wireLifecycleEpoch else {
             return nil
         }
 
-        return TerminalTelegramTurnProgressReporter(chatID: chatID) { [weak self] message, chatID in
-            await self?.sendTelegramProgressMessage(message, to: chatID) ?? false
+        let service = telegramControlService
+        let wireFence = TerminalTelegramWireFence(
+            lease: lease,
+            lifecycleEpoch: lifecycleEpoch,
+            validateLease: { [telegramSessionRouter] lease in
+                try await telegramSessionRouter.validate(lease)
+            }
+        )
+        let topicID = origin.telegramLease?.effectiveMessageThreadID
+            ?? origin.telegramRoute?.topicID
+        let routeAllowsPrivateDraft = origin.telegramRoute.map { key in
+            AgentSettingsManifestStore.load()?.telegram?.routes.first {
+                $0.chatID == key.chatID && $0.topicID == key.topicID && $0.roomID == key.roomID
+            }?.chatKind == .privateChat
+        } ?? true
+        let cards = TerminalTelegramProgressCardLedger(
+            chatID: chatID,
+            send: { [weak self] text, chatID in
+                guard let self, await self.validateTelegramOrigin(origin) else {
+                    throw CancellationError()
+                }
+                return try await service.sendPlainMessageWithReceipt(
+                    text, to: chatID, topicID: topicID, fence: wireFence
+                )
+            },
+            editText: { [weak self] text, chatID, messageID in
+                guard let self, await self.validateTelegramOrigin(origin) else {
+                    throw CancellationError()
+                }
+                try await service.editMessageText(
+                    text, chatID: chatID, messageID: messageID, fence: wireFence
+                )
+            },
+            editMarkup: { [weak self] markup, chatID, messageID in
+                guard let self, await self.validateTelegramOrigin(origin) else {
+                    throw CancellationError()
+                }
+                try await service.editMessageReplyMarkup(
+                    markup, chatID: chatID, messageID: messageID, fence: wireFence
+                )
+            },
+            delete: { [weak self] chatID, messageID in
+                guard let self, await self.validateTelegramOrigin(origin) else {
+                    throw CancellationError()
+                }
+                try await service.deleteMessage(
+                    chatID: chatID, messageID: messageID, fence: wireFence
+                )
+            }
+        )
+        let sendDraft: (@Sendable (String, Int64, Int) async throws -> Void)?
+        if routeAllowsPrivateDraft {
+            sendDraft = { [weak self] text, chatID, draftID in
+                guard let self, await self.validateTelegramOrigin(origin) else {
+                    throw CancellationError()
+                }
+                try await service.sendRichMessageDraftWithFallback(
+                    text, to: chatID, draftID: draftID, fence: wireFence
+                )
+            }
+        } else {
+            sendDraft = nil
         }
+        return TerminalTelegramTurnProgressReporter(
+            chatID: chatID,
+            sendMessage: { [weak self] message, chatID in
+                guard let self, await self.validateTelegramOrigin(origin) else { return false }
+                return await self.sendTelegramProgressMessage(
+                    message, to: chatID, topicID: topicID, fence: wireFence
+                )
+            },
+            sendDraft: sendDraft,
+            progressCards: cards,
+            wireFence: wireFence,
+            waitForWireQuiescence: { fence in
+                await service.waitForWireQuiescence(fence: fence)
+            }
+        )
     }
 
 }

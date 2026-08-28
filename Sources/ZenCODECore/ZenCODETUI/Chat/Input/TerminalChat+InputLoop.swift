@@ -493,7 +493,7 @@ extension TerminalChat {
         }
         var queuedPrompts = TerminalQueuedPromptBuffer()
         var generationTask: Task<Void, Never>?
-        let remoteTranscriptions = TerminalVoiceTranscriptionRegistry()
+        let remoteTranscriptions = telegramVoiceTranscriptions
         let telegramForwardingTask = startTelegramForwardingTask(eventQueue: eventQueue)
         // Mailbox monitoring, drain batching and the idle/busy decision belong
         // to the Core coordinator. This task only forwards its live events into
@@ -593,7 +593,7 @@ extension TerminalChat {
             generationTask?.cancel()
             telegramForwardingTask.cancel()
             sharedChatObservation.task.cancel()
-            remoteTranscriptions.cancelAll()
+            await remoteTranscriptions.cancelAllAndWait(shuttingDown: true)
             eventQueue.finish()
             // This loop owns exactly one subscriber. Session teardown performs
             // room-wide stop; detaching here must never end another TUI/ACP
@@ -1036,6 +1036,20 @@ extension TerminalChat {
                 // genuinely idle.
                 await synchronizeSharedChatConsumerBusyState()
                 scheduleQueuedPromptIfNeeded()
+            case let .telegramRouteInvalidated(lease):
+                guard activeTelegramTurnOrigin?.telegramLease == lease else { continue }
+                generationTask?.cancel()
+                generationTask = nil
+                isGenerating = false
+                await statusBar.setProcessing(false)
+                await interactiveReader.setPanelProcessing(false)
+                await endTelegramTurnProgressReporting()
+                await telegramRouteRuntimeState.teardown(lease: lease)
+                if telegramActiveRouteLease == lease {
+                    telegramActiveRouteLease = nil
+                    await telegramSharedChatRelay.deactivate()
+                }
+                scheduleQueuedPromptIfNeeded()
             case .startNextQueuedPrompt:
                 isQueuedPromptStartScheduled = false
                 guard !isGenerating, !queuedPrompts.isEmpty else {
@@ -1043,6 +1057,10 @@ extension TerminalChat {
                 }
                 let nextPrompt = queuedPrompts.dequeue()!
                 await refreshQueuedPromptCount()
+                guard await validateTelegramOrigin(nextPrompt.origin) else {
+                    scheduleQueuedPromptIfNeeded()
+                    continue
+                }
                 if nextPrompt.mode == .directPrompt {
                     await startDirectPrompt(nextPrompt.text, origin: nextPrompt.origin)
                     continue
@@ -1149,6 +1167,18 @@ extension TerminalChat {
                 )
                 await refreshSharedChatPanelSuggestions()
             case let .telegramMessage(message):
+                if let draftID = message.stoppedMessageGenerationDraftID {
+                    // Correlate the stop to the current reporter's native draft.
+                    // A delayed update for a retired/rebound turn is inert.
+                    if let origin = activeTelegramTurnOrigin,
+                       await validateTelegramOrigin(origin),
+                       origin.telegramLease?.effectiveMessageThreadID == message.topicID,
+                       let reporter = activeTelegramProgressReporter,
+                       await reporter.ownsStoppedDraft(chatID: message.chatID, draftID: draftID) {
+                        generationTask?.cancel()
+                    }
+                    continue
+                }
                 let didQueuePrompt = await handleTelegramRuntimeMessage(
                     message,
                     eventQueue: eventQueue,

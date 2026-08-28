@@ -47,6 +47,19 @@ retain only the generic bundled-feature identity, description, selection aliases
 and timeout required for catalog parity; they compile no Xcode implementation or
 compatibility shim.
 
+Presentation content crosses frontend boundaries through the transient,
+backend-neutral `PresentationDocument` tree under `ZenCODE/Presentation`.
+Domain presentation nodes contain only visible text, semantic blocks and opaque
+already-uploaded document references; they contain no Telegram types, local file
+paths, reasoning records or tool payloads. Transport adapters depend inward on
+that tree: the Telegram adapter renders the supported subset to Bot API 10.3
+`InputRichMessage` wire values, while the presentation layer never imports or
+names Telegram. Rich draft and final delivery share the Telegram outbound
+governor. An explicit 400/404 compatibility rejection may degrade to the tree's
+deterministic plain-text projection; ambiguous transport/server outcomes never
+trigger a second final send. The tree is not persisted, so settings, session,
+checkpoint and transcript formats remain unchanged.
+
 Optional feature packages are not executables distributed beside `zen`. The
 installer and `zen --install-features` copy a package to
 `~/.zencode/features/<id>/`, generate the same manifest shape used by a local
@@ -79,6 +92,20 @@ back their own history or task-graph mutation before a new incarnation may adopt
 it.
 
 The live messages (`AgentSharedChat`) is deliberately transient: the operator, coordinator, and active delegated agent instances share a bounded, in-memory room that is never written to a session snapshot or task checkpoint. The human operator is a trusted, unregistered sender that never occupies a room slot or mailbox, keeping it distinct from the coordinator LLM. The coordinator authorises at most one synthetic turn from the messages at a time, bound to the prompt it consumes, so a message can never open a second concurrent generation. Delivery is priority-based for every recipient with an active turn: its mailbox is reserved for that turn's direct-tool executor, which appends pending messages only to the model-facing result of the next tool call so the recipient replies immediately and then resumes its current work; visible tool output is unchanged. Idle and standby agents drain into their serial work loop normally. If an active turn ends before another tool boundary, the coordinator monitor or agent work-loop re-arm drains the mailbox and starts the ordinary synthetic/queued fallback turn. Every active observer receives each message from the bounded transcript replay (delivery is deduplicated by message id); the live room is surfaced by the terminal TUI and the linked Telegram chat; the terminal TUI routes these messages only to its transient `Chat` reader rather than the main transcript, and an observer that falls behind recovers from the transcript on the next poll rather than losing messages; shared-chat messages are never dropped from the terminal event queue. The reader is invisible when closed with no messages, compact with total and unread counts when closed with messages, compact for an empty open state, and expanded for an open state with messages. Readable `@mention` handles are derived from participant display names by an actor-isolated catalogue, routing always resolves back to the stable participant id, aliases are never recycled within a session, and the legacy `@agent-Base64` spelling remains accepted for backward compatibility. No shared-chat state is persisted or restored; `SessionTaskOrchestrator` remains the sole owner of any checkpointed graph state.
+
+Telegram uses one process-wide `TerminalTelegramBotDispatcher` per bot as the
+exclusive owner of long polling and offset persistence. It broadcasts raw
+updates to active control services before those services apply their room ACL,
+so no session can acknowledge and discard another session's traffic. Ingress is
+resolved only by `TerminalTelegramSessionRouter`; the resulting lease includes
+the ACL route generation and a separate effective forum topic. That lease is
+carried through queue admission, generation cancellation, route-scoped
+permission state, drafts/cards and final egress, with validation before every
+route-scoped turn side effect. Chat-wide fallback ACLs therefore do not collapse forum
+topics. Stop is an awaited barrier for poll subscription, presence, rate state,
+consents and temporary files. Outbound consent captures SHA-256 at offer time
+and the multipart encoder verifies the hash while reading the exact bytes that
+will be sent.
 
 ## Provider Boundary
 
@@ -530,6 +557,64 @@ supersede), and no `global` memory scope is implemented or advertised — only
 internally to the engine's scope (`.all`) for `memory.search` and the
 automatic recall pipeline, so the richer engine scopes never leak through the
 facade.
+
+## Telegram Multi-Session Routing and Persistence
+
+Telegram routing is an authorization boundary, not presentation state. The
+persisted authority is `settings.json` under `telegram.routes`; its current
+shape is:
+
+```json
+{
+  "telegram": {
+    "enabled": true,
+    "botToken": "…",
+    "linkedChatID": 42,
+    "linkedChatTitle": "…",
+    "routingVersion": 1,
+    "groupsEnabled": false,
+    "routes": [{
+      "chatID": 42,
+      "ownerUserID": 7,
+      "topicID": 12,
+      "roomID": "room-id",
+      "chatKind": "private",
+      "memberUserIDs": [],
+      "lifecycle": "active",
+      "generation": 1
+    }]
+  }
+}
+```
+
+`linkedChatID` and `linkedChatTitle` remain encoded for older readers. A legacy
+manifest containing only those fields decodes with `routes: []` and
+`groupsEnabled: false`. It is accepted only from the same Telegram `private`
+chat; the first actor-serialized sender claims ownership and an atomic settings
+read-modify-write emits the v1 route. Migration never opts a group in and never
+rewrites settings merely by loading them.
+
+`TerminalTelegramSessionRouter` serializes create, grant/revoke, close, delete
+and validation. A mutation persists its normalized draft before publishing it in
+memory. Its lease contains the full `(chatID,userID,topicID?,roomID)` key and the
+route generation; every ACL/lifecycle mutation advances the generation, so a
+suspended operation from the old binding fails rather than landing in a new
+session. A closed exact topic stays closed. A missing or deleted topic may use
+an explicitly configured active `topicID: null` fallback. Groups and
+supergroups require both `groupsEnabled: true` and a matching active route whose
+owner/member ACL contains the sender; unknown chat kinds are treated as groups
+and therefore fail closed.
+
+`TerminalTelegramRouteRuntimeState` partitions prompt queue, attempted-delivery
+ledger, draft ownership and reply receipts by the complete route key. Reply
+targets must name the same room. Text prompt origins retain that key through the
+TUI queue, and Bot API persistent sends carry the matching
+`message_thread_id`. Stop-generation updates contain no reliable user identity:
+they can only request cancellation of a locally owned `(route,draftID)` and are
+never authorization evidence. Native drafts are optional private-chat UX;
+group routes receive only persistent topic-addressed output. Teardown removes
+one route bucket, while generation validation prevents late work from recreating
+it. No Mini App or web deployment is part of this architecture.
 
 ## Consumer Migration Note
 

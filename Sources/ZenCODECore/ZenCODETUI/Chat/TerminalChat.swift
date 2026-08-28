@@ -105,10 +105,18 @@ public final class TerminalChat {
     public var availableSkillsCache: [PromptSkill]?
     let renderCoordinator: TerminalChatRenderCoordinator
     public let telegramControlService: TerminalTelegramControlService
+    let telegramSessionRouter: TerminalTelegramSessionRouter
+    let telegramRouteRuntimeState: TerminalTelegramRouteRuntimeState
     let telegramPermissionBroker = TerminalTelegramPermissionBroker()
     public var telegramControlState = TerminalTelegramControlState.inactive()
     public var telegramLinkedChatID: Int64?
     public var telegramLinkedChatTitle: String?
+    /// Telegram user id of the last linked-chat sender, used to bind outbound
+    /// artifact consent offers to the operator who will confirm them.
+    public var telegramLinkedUserID: Int64?
+    /// Last validated route binding. Shared-chat relay/receipts and synthetic
+    /// coordinator origins are fenced by this exact generation and topic.
+    var telegramActiveRouteLease: TerminalTelegramRouteLease?
     /// Origin of the turn currently generating. Unlike the reporter itself,
     /// this remains populated while Telegram is off so `/telegram on` can attach
     /// the in-flight turn without waiting for the next prompt.
@@ -117,6 +125,14 @@ public final class TerminalChat {
     /// turn's progress is mirrored to the linked chat. Permission dialogue is
     /// enqueued here so it cannot overtake the tool activity that raised it.
     var activeTelegramProgressReporter: TerminalTelegramTurnProgressReporter?
+    /// Lifecycle-safe typing lease held for the mirrored turn, if any. Replaced
+    /// atomically by the next turn's lease; released at turn end and fenced by
+    /// generation inside the lease manager.
+    var activeTelegramPresenceLease: TerminalTelegramPresenceLeaseManager.Lease?
+    /// Cancels an active Telegram-originated generation as soon as its route
+    /// generation is revoked/rebound/closed.
+    var telegramRouteValidationTask: Task<Void, Never>?
+    var telegramRuntimeEventQueue: TerminalChatEventQueue?
     /// Test seam for direct turn-message delivery when no progress reporter owns
     /// the linked chat. `nil` in production.
     var onDirectTelegramTurnMessage: (@Sendable (TerminalTelegramTurnPayload, Int64) async -> Bool)?
@@ -125,6 +141,9 @@ public final class TerminalChat {
     var telegramImmediateCommandOutput: [String]?
     /// Test seam for bot-control messages. Production sends through the service.
     var onTelegramSystemMessage: (@Sendable (String, Int64) async -> Bool)?
+    /// Route-aware test seam; production is nil. Kept alongside the legacy hook
+    /// so existing tests and embedders remain source-compatible.
+    var onTelegramRoutedSystemMessage: (@Sendable (String, Int64, Int?) async -> Bool)?
     /// Test seam for mention picker cards. Production uses the Telegram service.
     var onTelegramMentionPickerMessage: (@Sendable (String, Int64, TerminalTelegramReplyMarkup) async -> Int?)?
     /// `true` when the root response block currently streaming already produced
@@ -166,7 +185,7 @@ public final class TerminalChat {
     /// The bus transcript itself remains surface-neutral; this is deliberately
     /// TUI-local delivery metadata and is consumed when the matching trigger
     /// starts. Its bound matches the retained shared-chat transcript.
-    var telegramSharedChatMessageOrigins: [UUID: Int64] = [:]
+    var telegramSharedChatMessageOrigins: [UUID: TerminalPromptOrigin] = [:]
     /// FIFO order for the bounded Telegram shared-chat origin ledger.
     var telegramSharedChatMessageOriginOrder: [UUID] = []
     /// Backing storage for ``telegramSharedChatRelay``. The relay captures this
@@ -175,6 +194,8 @@ public final class TerminalChat {
     /// It stays module-internal so tests can install a relay with a stubbed
     /// sender instead of reaching the network.
     var telegramSharedChatRelayStorage: TerminalTelegramSharedChatRelay?
+    /// Owns all Telegram voice download/transcription tasks across control toggles.
+    let telegramVoiceTranscriptions = TerminalVoiceTranscriptionRegistry()
 
     /// Forwards operator-directed shared-chat messages to the linked chat and
     /// resolves Telegram replies back to their sender. Created on first use and
@@ -184,9 +205,15 @@ public final class TerminalChat {
         if let relay = telegramSharedChatRelayStorage {
             return relay
         }
-        let relay = TerminalTelegramSharedChatRelay { [weak self] text, chatID in
-            await self?.sendTelegramSharedChatCard(text, to: chatID) ?? nil
-        }
+        let relay = TerminalTelegramSharedChatRelay(
+            validateLease: { [weak self] lease in
+                guard let self else { return false }
+                return (try? await self.telegramSessionRouter.validate(lease)) != nil
+            },
+            send: { [weak self] text, chatID, lease in
+                await self?.sendTelegramSharedChatCard(text, to: chatID, lease: lease) ?? nil
+            }
+        )
         telegramSharedChatRelayStorage = relay
         return relay
     }
@@ -243,6 +270,16 @@ public final class TerminalChat {
         self.telegramControlService = TerminalTelegramControlService(
             transportFactory: telegramTransportFactory ?? { NIOTelegramHTTPTransport() }
         )
+        let telegramSettings = AgentSettingsManifestStore.load()?.telegram
+        let telegramRouter = TerminalTelegramSessionRouter(
+            routes: telegramSettings?.routes ?? [],
+            groupsEnabled: telegramSettings?.groupsEnabled ?? false,
+            persist: { routes in
+                try AgentSettingsManifestStore.saveTelegramRoutes(routes)
+            }
+        )
+        self.telegramSessionRouter = telegramRouter
+        self.telegramRouteRuntimeState = TerminalTelegramRouteRuntimeState(router: telegramRouter)
     }
 
     deinit {
@@ -428,6 +465,21 @@ public final class TerminalChat {
     }
 
     private func stopTerminalServices() async {
+        telegramControlState.isActive = false
+        let validationTask = telegramRouteValidationTask
+        telegramRouteValidationTask = nil
+        validationTask?.cancel()
+        await validationTask?.value
+        let reporter = activeTelegramProgressReporter
+        activeTelegramProgressReporter = nil
+        if let reporter { await reporter.shutdown() }
+        if let presence = activeTelegramPresenceLease {
+            activeTelegramPresenceLease = nil
+            await telegramControlService.releasePresenceLease(presence)
+        }
+        if let lease = activeTelegramTurnOrigin?.telegramLease {
+            await telegramRouteRuntimeState.teardown(lease: lease)
+        }
         // Quiesce the relay before the transport it uses: its drain worker must
         // not outlive the service it sends through.
         await telegramSharedChatRelayStorage?.shutdown()

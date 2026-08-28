@@ -137,6 +137,7 @@ extension TerminalChat {
                 await reporter.enqueue(summaryPayload)
             }
             await reporter.flush()
+            await reporter.retire()
         } else if let origin = activeTelegramTurnOrigin {
             if let outcome {
                 await sendTelegramTurnMessageIfLinked(outcome, origin: origin)
@@ -145,6 +146,6 @@ extension TerminalChat {
                 await sendTelegramTurnMessageIfLinked(summaryPayload, origin: origin)
             }
         }
-        endTelegramTurnProgressReporting()
+        await endTelegramTurnProgressReporting()
     }
 }

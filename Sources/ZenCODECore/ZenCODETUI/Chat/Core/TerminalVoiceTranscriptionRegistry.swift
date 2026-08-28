@@ -25,6 +25,7 @@ final class TerminalVoiceTranscriptionRegistry: Sendable {
 
     private struct State {
         var tasks: [UUID: Task<Void, Never>] = [:]
+        var isAccepting = true
         var isShutDown = false
     }
 
@@ -44,7 +45,7 @@ final class TerminalVoiceTranscriptionRegistry: Sendable {
     /// is shut down or already at capacity.
     func reserveSlot() -> UUID? {
         state.withLock { state -> UUID? in
-            guard !state.isShutDown,
+            guard state.isAccepting, !state.isShutDown,
                   state.tasks.count < Self.maximumConcurrentTranscriptions else {
                 return nil
             }
@@ -78,16 +79,43 @@ final class TerminalVoiceTranscriptionRegistry: Sendable {
         }
     }
 
-    /// Cancels every in-flight transcription and refuses further reservations.
-    func cancelAll() {
+    /// Cancels every in-flight transcription and waits for cleanup. Reservations
+    /// are refused before cancellation starts, closing the race where `/telegram
+    /// off` used to cancel a snapshot while a new voice task registered behind it.
+    func cancelAllAndWait(shuttingDown: Bool = false) async {
         let tasks = state.withLock { state -> [Task<Void, Never>] in
-            state.isShutDown = true
+            state.isAccepting = false
+            state.isShutDown = state.isShutDown || shuttingDown
             let tasks = Array(state.tasks.values)
             state.tasks.removeAll()
             return tasks
         }
         for task in tasks {
             task.cancel()
+        }
+        for task in tasks {
+            await task.value
+        }
+    }
+
+    /// Source-compatible synchronous cancellation request. Runtime teardown uses
+    /// `cancelAllAndWait` so it also observes task cleanup.
+    func cancelAll() {
+        let tasks = state.withLock { state -> [Task<Void, Never>] in
+            state.isAccepting = false
+            state.isShutDown = true
+            let tasks = Array(state.tasks.values)
+            state.tasks.removeAll()
+            return tasks
+        }
+        for task in tasks { task.cancel() }
+    }
+
+    /// Re-opens admission after `/telegram on`; teardown remains irreversible.
+    func resume() {
+        state.withLock { state in
+            guard !state.isShutDown else { return }
+            state.isAccepting = true
         }
     }
 }

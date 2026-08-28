@@ -38,7 +38,8 @@ struct TelegramChatRoundTripTests {
             statusText: "Active",
             botUsername: "zencode_bot",
             lastError: nil,
-            lastMessagePreview: nil
+            lastMessagePreview: nil,
+            wireLifecycleEpoch: UUID()
         )
         return terminal
     }
@@ -57,6 +58,19 @@ struct TelegramChatRoundTripTests {
             chatTitle: "Gerardo",
             username: "gerardo"
         )
+    }
+
+    private static func installRoute(on terminal: TerminalChat) async -> TerminalTelegramRouteLease {
+        let route = AgentTelegramRouteManifest(
+            chatID: 42, ownerUserID: 7, roomID: terminal.sessionID,
+            chatKind: .privateChat, generation: 1
+        )
+        await terminal.telegramSessionRouter.refresh(routes: [route], groupsEnabled: false)
+        let lease = TerminalTelegramRouteLease(
+            key: .init(chatID: 42, userID: 7, roomID: terminal.sessionID), generation: 1
+        )
+        terminal.telegramActiveRouteLease = lease
+        return lease
     }
 
     @Test
@@ -93,6 +107,7 @@ struct TelegramChatRoundTripTests {
     @Test
     func callbackCoordinatorCreatesForceReplyCardAndSafeReplyTarget() async throws {
         let terminal = try Self.makeTerminal(linkedChatID: 42)
+        _ = await Self.installRoute(on: terminal)
         await terminal.rebindTelegramSharedChatRelay(roomID: terminal.sessionID)
         let captured = Mutex<[TerminalTelegramReplyMarkup]>([])
         terminal.onTelegramMentionPickerMessage = { _, _, markup in
@@ -111,7 +126,8 @@ struct TelegramChatRoundTripTests {
         #expect(queuedPrompts.isEmpty)
         #expect(captured.withLock({ $0 }) == [.forceReply])
         let target = await terminal.telegramSharedChatRelay.replyTarget(
-            forTelegramMessageID: 91, chatID: 42
+            forTelegramMessageID: 91, chatID: 42,
+            lease: try #require(terminal.telegramActiveRouteLease)
         )
         #expect(target?.senderKind == .coordinator)
         #expect(target?.senderID == AgentSharedChat.coordinatorID(for: terminal.sessionID))
@@ -173,11 +189,12 @@ struct TelegramChatRoundTripTests {
     /// (`TelegramCausalRoundTripTests`) covers the full path for the linked
     /// chat, including generation and delivery through the control service.
     @Test
-    func repliesAreOnlyRoutedToTheLinkedChat() throws {
+    func repliesAreOnlyRoutedToTheLinkedChat() async throws {
         let terminal = try Self.makeTerminal(linkedChatID: 42)
+        let lease = await Self.installRoute(on: terminal)
 
         #expect(terminal.makeTelegramTurnProgressReporter(
-            for: .telegram(chatID: 42)
+            for: .telegramLease(lease)
         ) != nil)
         #expect(terminal.makeTelegramTurnProgressReporter(
             for: .telegram(chatID: 99)
@@ -188,8 +205,9 @@ struct TelegramChatRoundTripTests {
     /// Core coordinator's synthetic turn. That turn must keep the remote origin
     /// or its otherwise visible response is rendered only in the TUI.
     @Test
-    func telegramSharedChatTriggerRetainsTelegramResponseOrigin() throws {
+    func telegramSharedChatTriggerRetainsTelegramResponseOrigin() async throws {
         let terminal = try Self.makeTerminal(linkedChatID: 42)
+        let lease = await Self.installRoute(on: terminal)
         let message = AgentSharedChat.Message(
             roomID: terminal.sessionID,
             sender: AgentSharedChat.Participant(
@@ -201,10 +219,10 @@ struct TelegramChatRoundTripTests {
             text: "please respond"
         )
 
-        terminal.recordTelegramSharedChatMessageOrigin(message.id, chatID: 42)
+        terminal.recordTelegramSharedChatMessageOrigin(message.id, origin: .telegramLease(lease))
         let origin = terminal.takeTelegramSharedChatOrigin(for: [message])
 
-        #expect(origin == .telegram(chatID: 42))
+        #expect(origin == .telegramLease(lease))
         #expect(terminal.makeTelegramTurnProgressReporter(for: origin!) != nil)
         #expect(terminal.takeTelegramSharedChatOrigin(for: [message]) == nil)
     }

@@ -67,9 +67,14 @@ private enum TerminalTelegramPermissionResolution: Sendable, Equatable {
 actor TerminalTelegramPermissionBroker {
     static let defaultTimeoutNanoseconds: UInt64 = 600_000_000_000
 
+    private enum Scope: Hashable, Sendable {
+        case legacyChat(Int64)
+        case route(TerminalTelegramRouteLease)
+    }
+
     private struct PendingRequest {
         let id: String
-        let chatID: Int64
+        let scope: Scope
         let request: AgentToolAuthorizationRequest
         let continuation: CheckedContinuation<TerminalTelegramPermissionResolution, Never>
         let timeoutTask: Task<Void, Never>?
@@ -77,19 +82,34 @@ actor TerminalTelegramPermissionBroker {
 
     private var nextRequestCounter = 0
     private var pendingRequests: [String: PendingRequest] = [:]
-    private var pendingRequestIDsByChat: [Int64: [String]] = [:]
+    private var pendingRequestIDsByScope: [Scope: [String]] = [:]
     /// Session-scoped "always" decisions, keyed exactly like the terminal
     /// authorizer's cache so the same command approved remotely is not asked
     /// again through a different surface.
-    private var alwaysAllowedKeys = Set<String>()
+    private var alwaysAllowedKeysByScope: [Scope: Set<String>] = [:]
 
     /// Returns `true` when this request needs no remote dialogue: either the
     /// tool is not gated, or a previous decision already covers it.
     func isAlreadyAuthorized(_ request: AgentToolAuthorizationRequest) -> Bool {
+        isAlreadyAuthorized(request, scope: .legacyChat(0))
+    }
+
+    func isAlreadyAuthorized(
+        _ request: AgentToolAuthorizationRequest,
+        lease: TerminalTelegramRouteLease
+    ) -> Bool {
+        isAlreadyAuthorized(request, scope: .route(lease))
+    }
+
+    private func isAlreadyAuthorized(
+        _ request: AgentToolAuthorizationRequest,
+        scope: Scope
+    ) -> Bool {
         guard LocalExecPermissionAuthorizer.gatedToolNames.contains(request.toolName) else {
             return true
         }
-        if Self.permissionCacheKeys(for: request).allSatisfy(alwaysAllowedKeys.contains) {
+        let allowed = alwaysAllowedKeysByScope[scope] ?? []
+        if Self.permissionCacheKeys(for: request).allSatisfy(allowed.contains) {
             return true
         }
         return request.toolName == "local.exec"
@@ -107,7 +127,31 @@ actor TerminalTelegramPermissionBroker {
         timeoutNanoseconds: UInt64 = TerminalTelegramPermissionBroker.defaultTimeoutNanoseconds,
         sendMessage: @escaping @Sendable (String) async -> Bool
     ) async -> TerminalTelegramPermissionOutcome {
-        guard !isAlreadyAuthorized(request) else {
+        await authorize(
+            request, scope: .legacyChat(chatID), timeoutNanoseconds: timeoutNanoseconds,
+            sendMessage: sendMessage
+        )
+    }
+
+    func authorize(
+        _ request: AgentToolAuthorizationRequest,
+        lease: TerminalTelegramRouteLease,
+        timeoutNanoseconds: UInt64 = TerminalTelegramPermissionBroker.defaultTimeoutNanoseconds,
+        sendMessage: @escaping @Sendable (String) async -> Bool
+    ) async -> TerminalTelegramPermissionOutcome {
+        await authorize(
+            request, scope: .route(lease), timeoutNanoseconds: timeoutNanoseconds,
+            sendMessage: sendMessage
+        )
+    }
+
+    private func authorize(
+        _ request: AgentToolAuthorizationRequest,
+        scope: Scope,
+        timeoutNanoseconds: UInt64,
+        sendMessage: @escaping @Sendable (String) async -> Bool
+    ) async -> TerminalTelegramPermissionOutcome {
+        guard !isAlreadyAuthorized(request, scope: scope) else {
             return .notRequired
         }
         let cacheKeys = Self.permissionCacheKeys(for: request)
@@ -122,12 +166,12 @@ actor TerminalTelegramPermissionBroker {
                     )
                     pendingRequests[requestID] = PendingRequest(
                         id: requestID,
-                        chatID: chatID,
+                        scope: scope,
                         request: request,
                         continuation: continuation,
                         timeoutTask: timeoutTask
                     )
-                    pendingRequestIDsByChat[chatID, default: []].append(requestID)
+                    pendingRequestIDsByScope[scope, default: []].append(requestID)
 
                     let message = Self.permissionRequestMessage(
                         requestID: requestID,
@@ -158,8 +202,8 @@ actor TerminalTelegramPermissionBroker {
         case .decision(.allowOnce):
             return .allowedOnce
         case .decision(.allowAlways):
-            alwaysAllowedKeys.formUnion(cacheKeys)
-            if request.toolName == "local.exec" {
+            alwaysAllowedKeysByScope[scope, default: []].formUnion(cacheKeys)
+            if request.toolName == "local.exec", case .legacyChat = scope {
                 LocalExecPermissionAuthorizer.persistAllowedCommand(request.command)
             }
             return .allowedAlways
@@ -200,7 +244,21 @@ actor TerminalTelegramPermissionBroker {
         _ text: String,
         chatID: Int64
     ) -> TerminalTelegramPermissionMessageResult {
-        let pendingIDs = pendingRequestIDs(for: chatID)
+        handleMessage(text, scope: .legacyChat(chatID))
+    }
+
+    func handleMessage(
+        _ text: String,
+        lease: TerminalTelegramRouteLease
+    ) -> TerminalTelegramPermissionMessageResult {
+        handleMessage(text, scope: .route(lease))
+    }
+
+    private func handleMessage(
+        _ text: String,
+        scope: Scope
+    ) -> TerminalTelegramPermissionMessageResult {
+        let pendingIDs = pendingRequestIDs(for: scope)
         guard !pendingIDs.isEmpty else {
             guard Self.permissionCommand(from: text) != nil else {
                 return .notHandled
@@ -356,16 +414,16 @@ actor TerminalTelegramPermissionBroker {
             return false
         }
         pending.timeoutTask?.cancel()
-        pendingRequestIDsByChat[pending.chatID]?.removeAll { $0 == requestID }
-        if pendingRequestIDsByChat[pending.chatID]?.isEmpty == true {
-            pendingRequestIDsByChat.removeValue(forKey: pending.chatID)
+        pendingRequestIDsByScope[pending.scope]?.removeAll { $0 == requestID }
+        if pendingRequestIDsByScope[pending.scope]?.isEmpty == true {
+            pendingRequestIDsByScope.removeValue(forKey: pending.scope)
         }
         pending.continuation.resume(returning: resolution)
         return true
     }
 
-    private func pendingRequestIDs(for chatID: Int64) -> [String] {
-        pendingRequestIDsByChat[chatID] ?? []
+    private func pendingRequestIDs(for scope: Scope) -> [String] {
+        pendingRequestIDsByScope[scope] ?? []
     }
 
     private static func normalizedCommand(_ rawCommand: String) -> String {

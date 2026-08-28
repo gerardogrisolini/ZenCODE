@@ -87,6 +87,28 @@ struct TerminalVoiceTranscriptionRegistryTests {
     }
 
     @Test
+    func offCancellationWaitsForTaskCleanupAndCanResumeAdmission() async {
+        let registry = TerminalVoiceTranscriptionRegistry()
+        guard let slot = registry.reserveSlot() else {
+            Issue.record("Expected a free transcription slot")
+            return
+        }
+        let cleaned = Mutex(false)
+        let task = Task {
+            while !Task.isCancelled { await Task.yield() }
+            cleaned.withLock { $0 = true }
+            registry.release(slot)
+        }
+        registry.register(task, for: slot)
+
+        await registry.cancelAllAndWait()
+        #expect(cleaned.withLock { $0 })
+        #expect(registry.reserveSlot() == nil)
+        registry.resume()
+        #expect(registry.reserveSlot() != nil)
+    }
+
+    @Test
     func releasingAnUnknownSlotIsHarmless() {
         let registry = TerminalVoiceTranscriptionRegistry()
         registry.release(UUID())

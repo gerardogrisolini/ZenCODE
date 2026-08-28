@@ -352,6 +352,7 @@ struct TerminalTelegramOverviewMirroringTests {
         // makes beginTelegramTurnProgressReporting rebuild its own reporter,
         // which the test then replaces with the recording one.
         terminal.telegramControlState.isActive = true
+        terminal.telegramControlState.wireLifecycleEpoch = UUID()
         terminal.telegramLinkedChatID = 42
         await terminal.beginTelegramTurnProgressReporting(for: .telegram(chatID: 42))
         terminal.activeTelegramProgressReporter = makeRecorderReporter()
@@ -492,6 +493,7 @@ struct TerminalTelegramOverviewMirroringTests {
 
         // Turn 1: a reporter whose delivery blocks on a closed gate.
         terminal.telegramControlState.isActive = true
+        terminal.telegramControlState.wireLifecycleEpoch = UUID()
         terminal.telegramLinkedChatID = 42
         await terminal.beginTelegramTurnProgressReporting(for: .telegram(chatID: 42))
         let firstTurnRecorder = TelegramMessageRecorder()

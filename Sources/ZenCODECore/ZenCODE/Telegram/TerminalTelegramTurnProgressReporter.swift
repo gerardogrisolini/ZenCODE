@@ -47,29 +47,53 @@ actor TerminalTelegramTurnProgressReporter {
     private struct QueuedMessage {
         let text: String
         let deliveryContinuation: CheckedContinuation<Bool, Never>?
+        let isProgressCard: Bool
     }
 
     let chatID: Int64
     /// Returns `true` when the message reached Telegram. Delivery status is part
     /// of the authorization contract: an undeliverable request must fail closed.
     let sendMessage: @Sendable (String, Int64) async -> Bool
+    private let sendDraft: (@Sendable (String, Int64, Int) async throws -> Void)?
+    private var draftStreamer: TerminalTelegramDraftStreamer?
+    private let progressCards: TerminalTelegramProgressCardLedger?
+    private let wireFence: TerminalTelegramWireFence
+    private let waitForWireQuiescence: (@Sendable (TerminalTelegramWireFence) async -> Void)?
 
     private var queue: [QueuedMessage] = []
     /// Root response text aggregated since the last boundary.
     private var pendingAgentResponse = ""
     private var isDraining = false
+    private var drainTask: Task<Void, Never>?
+    private var isRetired = false
     private var idleWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(
         chatID: Int64,
-        sendMessage: @escaping @Sendable (String, Int64) async -> Bool
+        sendMessage: @escaping @Sendable (String, Int64) async -> Bool,
+        sendDraft: (@Sendable (String, Int64, Int) async throws -> Void)? = nil,
+        progressCards: TerminalTelegramProgressCardLedger? = nil,
+        wireFence: TerminalTelegramWireFence,
+        waitForWireQuiescence: (@Sendable (TerminalTelegramWireFence) async -> Void)? = nil
     ) {
         self.chatID = chatID
         self.sendMessage = sendMessage
+        self.sendDraft = sendDraft
+        self.progressCards = progressCards
+        self.wireFence = wireFence
+        self.waitForWireQuiescence = waitForWireQuiescence
+        if let sendDraft {
+            draftStreamer = TerminalTelegramDraftStreamer(chatID: chatID, sendDraft: sendDraft)
+        }
     }
 
     /// Queues a permitted turn payload without waiting for delivery.
     func enqueue(_ payload: TerminalTelegramTurnPayload) {
+        if case let .tasks(text) = payload, let progressCards {
+            _ = progressCards
+            enqueue(text, deliveryContinuation: nil, isProgressCard: true)
+            return
+        }
         enqueue(payload.text, deliveryContinuation: nil)
     }
 
@@ -84,7 +108,7 @@ actor TerminalTelegramTurnProgressReporter {
     ///
     /// Nothing is queued here: a delta is not yet a response. The buffer is
     /// bounded by the per-message limit so a long block cannot grow unbounded.
-    func appendAgentResponseDelta(_ delta: String) {
+    func appendAgentResponseDelta(_ delta: String) async {
         guard !delta.isEmpty else {
             return
         }
@@ -93,6 +117,7 @@ actor TerminalTelegramTurnProgressReporter {
             return
         }
         pendingAgentResponse.append(contentsOf: delta.prefix(remainingCount))
+        if let draftStreamer { await draftStreamer.append(delta) }
     }
 
     /// Publishes the aggregated root response as one intermediate message.
@@ -102,10 +127,11 @@ actor TerminalTelegramTurnProgressReporter {
     ///
     /// - Returns: `true` when a message was queued.
     @discardableResult
-    func publishPendingAgentResponseAtBoundary() -> Bool {
+    func publishPendingAgentResponseAtBoundary() async -> Bool {
         let text = pendingAgentResponse
             .trimmingCharacters(in: .whitespacesAndNewlines)
         pendingAgentResponse.removeAll(keepingCapacity: true)
+        await rotateDraftStreamer()
         guard !text.isEmpty else {
             return false
         }
@@ -127,8 +153,64 @@ actor TerminalTelegramTurnProgressReporter {
     /// Trailing content that no tool call followed belongs to the turn's final
     /// response, which is delivered once by the finalization path; discarding
     /// it here is what keeps that response from being sent twice.
-    func discardPendingAgentResponse() {
+    func discardPendingAgentResponse() async {
         pendingAgentResponse.removeAll(keepingCapacity: false)
+        await rotateDraftStreamer()
+    }
+
+    func ownsStoppedDraft(chatID: Int64, draftID: Int) async -> Bool {
+        await draftStreamer?.owns(chatID: chatID, draftID: draftID) == true
+    }
+
+    /// Internal observability for deterministic correlation tests.
+    func draftStreamerIDForTesting() async -> Int? {
+        draftStreamer?.draftID
+    }
+
+    /// Fences draft/card activity for finish, error, cancellation, rebind and
+    /// teardown. Progress cards are deleted; persistent turn messages remain.
+    func retire() async {
+        guard !isRetired else { return }
+        isRetired = true
+        // Synchronous epoch invalidation happens before any suspension in retire,
+        // so an already-extracted delayed send is fenced at service admission.
+        wireFence.invalidate()
+        pendingAgentResponse.removeAll()
+        let abandoned = queue
+        queue.removeAll()
+        for message in abandoned {
+            message.deliveryContinuation?.resume(returning: false)
+        }
+        let task = drainTask
+        task?.cancel()
+        await draftStreamer?.finish()
+        draftStreamer = nil
+        await progressCards?.retire(deleteMessage: true)
+    }
+
+    /// Replacement/invalidation barrier. Revocation happens synchronously in
+    /// `retire()`; this join is deliberately separate so ordinary completion can
+    /// retire without waiting on a stale producer, while a new turn cannot adopt
+    /// ownership until the old reporter has no send in flight.
+    func revokeAndWait() async {
+        await retire()
+        await waitForWireQuiescence?(wireFence)
+    }
+
+    /// Teardown barrier. Unlike turn-to-turn `retire()`, stop must not return
+    /// while a reporter send admitted by the retired lifecycle is still alive.
+    func shutdown() async {
+        await revokeAndWait()
+    }
+
+    private func rotateDraftStreamer() async {
+        let previous = draftStreamer
+        if let previous { await previous.finish() }
+        if let sendDraft {
+            draftStreamer = TerminalTelegramDraftStreamer(chatID: chatID, sendDraft: sendDraft)
+        } else {
+            draftStreamer = nil
+        }
     }
 
     /// Queues an authorization payload and waits for its delivery result.
@@ -156,8 +238,13 @@ actor TerminalTelegramTurnProgressReporter {
 
     private func enqueue(
         _ message: String,
-        deliveryContinuation: CheckedContinuation<Bool, Never>?
+        deliveryContinuation: CheckedContinuation<Bool, Never>?,
+        isProgressCard: Bool = false
     ) {
+        guard !isRetired else {
+            deliveryContinuation?.resume(returning: false)
+            return
+        }
         guard let text = message.nilIfBlank else {
             deliveryContinuation?.resume(returning: false)
             return
@@ -165,7 +252,8 @@ actor TerminalTelegramTurnProgressReporter {
         queue.append(
             QueuedMessage(
                 text: String(text.prefix(Self.maximumMessageLength)),
-                deliveryContinuation: deliveryContinuation
+                deliveryContinuation: deliveryContinuation,
+                isProgressCard: isProgressCard
             )
         )
         startDrainingIfNeeded()
@@ -176,14 +264,24 @@ actor TerminalTelegramTurnProgressReporter {
             return
         }
         isDraining = true
-        Task(name: "ZenCODE.Telegram.progress-drain") {
-            await drain()
+        drainTask = Task(name: "ZenCODE.Telegram.progress-drain") { [weak self] in
+            await self?.drain()
         }
     }
 
     private func drain() async {
         while let message = nextMessage() {
-            let delivered = await sendMessage(message.text, chatID)
+            guard !Task.isCancelled, !isRetired else {
+                message.deliveryContinuation?.resume(returning: false)
+                continue
+            }
+            let delivered: Bool
+            if message.isProgressCard, let progressCards {
+                await progressCards.update(text: message.text)
+                delivered = true
+            } else {
+                delivered = await sendMessage(message.text, chatID)
+            }
             message.deliveryContinuation?.resume(returning: delivered)
         }
     }
@@ -191,6 +289,7 @@ actor TerminalTelegramTurnProgressReporter {
     private func nextMessage() -> QueuedMessage? {
         guard !queue.isEmpty else {
             isDraining = false
+            drainTask = nil
             let waiters = idleWaiters
             idleWaiters.removeAll()
             for waiter in waiters {
@@ -221,37 +320,174 @@ enum TerminalTelegramCommandAction: Equatable {
         }
     }
 }
+/// One entry of the single Telegram command registry.
+///
+/// `name` is the bare word published to Telegram (`"help"`); the canonical
+/// slash form is derived as `"/\(name)"`. `aliases` are alternative lines the
+/// remote operator may type instead, including plain-language triggers, and
+/// are published nowhere: `setMyCommands` shows only the canonical name so the
+/// menu stays short while plain words keep working.
+public struct TerminalTelegramCommandSpecification: Sendable, Equatable {
+    public let command: TerminalTelegramRemoteCommand
+    public let name: String
+    public let description: String
+    public let aliases: [String]
 
-enum TerminalTelegramRemoteCommand: Equatable {
+    init(
+        command: TerminalTelegramRemoteCommand,
+        name: String,
+        description: String,
+        aliases: [String] = []
+    ) {
+        self.command = command
+        self.name = name
+        self.description = description
+        self.aliases = aliases
+    }
+
+    /// Every accepted spelling of this command (canonical slash form first).
+    public var allForms: [String] {
+        ["/\(name)"] + aliases
+    }
+}
+
+/// The single Telegram command registry.
+///
+/// Both consumers derive from this one table and nothing else:
+/// `TerminalTelegramRemoteCommand` resolution (the ingress parser) and
+/// `setMyCommands`/menu publishing, so a command can never be parseable but
+/// missing from the menu, or listed in the menu but not parseable.
+///
+/// `/start` is deliberately absent. Telegram delivers `/start <payload>` on
+/// every first contact (and on deep links), where the payload is the pairing
+/// grant, not a command argument. Registering it as a menu command would
+/// publish a "start" entry whose payload contract no remote answer needs.
+public enum TerminalTelegramCommandRegistry {
+    public static let commands: [TerminalTelegramCommandSpecification] = [
+        TerminalTelegramCommandSpecification(
+            command: .help,
+            name: "help",
+            description: "Show what ZenCODE can do from Telegram",
+            aliases: ["help"]
+        ),
+        TerminalTelegramCommandSpecification(
+            command: .status,
+            name: "status",
+            description: "Show session status and Telegram link state",
+            aliases: ["status", "stato"]
+        ),
+        TerminalTelegramCommandSpecification(
+            command: .changes,
+            name: "changes",
+            description: "List the file changes of this session",
+            aliases: ["changes", "modifiche"]
+        ),
+        TerminalTelegramCommandSpecification(
+            command: .undo,
+            name: "undo",
+            description: "How to undo the session's file changes",
+            aliases: ["undo", "undo changes", "annulla", "annulla modifiche"]
+        ),
+        TerminalTelegramCommandSpecification(
+            command: .diff,
+            name: "diff",
+            description: "Send this session's diff as a document (asks first)",
+            aliases: ["diff"]
+        ),
+        TerminalTelegramCommandSpecification(
+            command: .report,
+            name: "report",
+            description: "Send the latest report/log file (asks first)",
+            aliases: ["report", "log", "report file"]
+        ),
+    ]
+
+    /// Accepted exact spellings per command, canonical form first. Derived, so
+    /// adding a registry entry extends the parser automatically.
+    public static var recognizedFormsByCommand: [TerminalTelegramRemoteCommand: [String]] {
+        Dictionary(commands.map { ($0.command, $0.allForms) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Entries published to `setMyCommands` (and the local menu), in registry
+    /// order. Telegram caps `BotCommand.description` at 256 characters and the
+    /// command name at 32; these entries sit far below both.
+    public static var botCommands: [TerminalTelegramBotCommand] {
+        commands.map {
+            TerminalTelegramBotCommand(command: $0.name, description: $0.description)
+        }
+    }
+
+    /// Resolves one trimmed, lowercased line to a command, or `nil` for an
+    /// unknown line. Single entry point used by the ingress parser.
+    ///
+    /// `/start` stays recognised without being registered: a bare `/start`
+    /// keeps its "already linked" answer and `/start <payload>` is consumed by
+    /// the pairing grant flow.
+    public static func resolve(_ line: String) -> TerminalTelegramRemoteCommand? {
+        guard let first = commands.first(where: { specification in
+            specification.allForms.contains { matches($0, line: line) }
+        }) else {
+            return nil
+        }
+        return first.command
+    }
+
+    /// One registry spelling against one normalized line.
+    private static func matches(_ form: String, line: String) -> Bool {        guard form.first == "/" else {
+            // A plain-language alias matches the whole line only: "status" must
+            // not capture "status report please".
+            return line == form
+        }
+        // A slash form matches exactly, or with a @botname suffix such as
+        // "/help@zencode_bot".
+        return line == form || line.hasPrefix(form + "@")
+    }
+}
+/// Wire form of one `setMyCommands` entry (Bot API snake_case).
+public struct TerminalTelegramBotCommand: Codable, Sendable, Equatable {
+    public let command: String
+    public let description: String
+
+    public init(command: String, description: String) {
+        self.command = command
+        self.description = description
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case command
+        case description
+    }
+}
+
+public enum TerminalTelegramRemoteCommand: Equatable, Sendable {
     case start
     case help
     case status
     case changes
     case undo
+    case diff
+    case report
 
-    init?(text: String) {
+    public init?(text: String) {
         let normalized = text
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
+        // The registry is the single authority for command spellings.
+        if let resolved = TerminalTelegramCommandRegistry.resolve(normalized) {
+            self = resolved
+            return
+        }
+        // `/start` remains recognised without being registered (see the
+        // registry doc-comment): first contact and deep links carry a pairing
+        // payload, not command arguments.
         let command = normalized
             .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
             .first
             .map(String.init) ?? normalized
-        switch normalized {
-        case "/help", "help":
-            self = .help
-        case "/status", "status", "stato":
-            self = .status
-        case "/changes", "changes", "modifiche":
-            self = .changes
-        case "/undo", "undo", "undo changes", "annulla", "annulla modifiche":
-            self = .undo
-        default:
-            if command == "/start" || command.hasPrefix("/start@") {
-                self = .start
-                return
-            }
-            return nil
+        if command == "/start" || command.hasPrefix("/start@") {
+            self = .start
+            return
         }
+        return nil
     }
 }

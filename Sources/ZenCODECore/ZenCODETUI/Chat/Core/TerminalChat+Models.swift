@@ -122,6 +122,8 @@ struct TerminalChatGenerationRunError: Error, Sendable {
 enum TerminalPromptOrigin: Sendable, Equatable {
     case local
     case telegram(chatID: Int64)
+    case telegramRoute(TerminalTelegramRouteKey)
+    case telegramLease(TerminalTelegramRouteLease)
 
     var telegramChatID: Int64? {
         switch self {
@@ -129,7 +131,24 @@ enum TerminalPromptOrigin: Sendable, Equatable {
             return nil
         case let .telegram(chatID):
             return chatID
+        case let .telegramRoute(route):
+            return route.chatID
+        case let .telegramLease(lease):
+            return lease.key.chatID
         }
+    }
+
+    var telegramRoute: TerminalTelegramRouteKey? {
+        switch self {
+        case let .telegramRoute(route): return route
+        case let .telegramLease(lease): return lease.key
+        case .local, .telegram: return nil
+        }
+    }
+
+    var telegramLease: TerminalTelegramRouteLease? {
+        guard case let .telegramLease(lease) = self else { return nil }
+        return lease
     }
 }
 
@@ -174,6 +193,7 @@ enum TerminalChatRuntimeEvent: Sendable {
     case generationCompleted(TerminalChatGenerationResult)
     case startNextQueuedPrompt
     case telegramMessage(TerminalTelegramIncomingMessage)
+    case telegramRouteInvalidated(TerminalTelegramRouteLease)
     case voicePromptCompleted(TerminalVoicePromptResult)
     /// The originating room remains attached while the event waits in the
     /// terminal queue. A session command can rebind the live observation before
@@ -205,6 +225,7 @@ enum TerminalChatRuntimeEvent: Sendable {
              .generationCompleted,
              .startNextQueuedPrompt,
              .telegramMessage,
+             .telegramRouteInvalidated,
              .voicePromptCompleted,
              .sharedChatReaderCollapsed:
             nil

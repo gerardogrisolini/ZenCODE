@@ -12,6 +12,96 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- Telegram remote control now has persistent multi-session routing keyed by
+  `(chat_id, user_id, topic_id?, room_id)`. Each route carries an owner ACL,
+  explicit members, lifecycle and monotonic generation; revocation, close,
+  delete, rebind and teardown fence stale queue, delivery-ledger, draft and reply
+  operations. Forum topics resolve exactly before an explicit chat fallback,
+  persistent replies retain `message_thread_id`, and groups/supergroups remain
+  disabled unless both global opt-in and an active ACL route exist. Legacy
+  private-chat single-link settings migrate on first authorized use without
+  enabling groups. Native ephemeral drafts remain private-chat UX only and are
+  never treated as proof of authorization.
+- Telegram polling is process-wide per bot: one dispatcher owns `getUpdates`
+  and the durable offset, then broadcasts each update to every active session
+  before route-local filtering. Runtime prompts carry a generation-fenced route
+  lease through queue admission, generation, permission dialogue and egress;
+  fallback ACL topics retain the concrete `message_thread_id`, and revocation
+  cancels the correlated generation instead of merely suppressing its reply.
+
+- Telegram assistant output now uses Bot API 10.3 Rich Messages through a
+  backend-neutral presentation AST. Paragraphs, headings, inline/preformatted
+  code, ordered and unordered lists, expandable details, in-message buttons and
+  already-uploaded documents have dedicated wire serialization without leaking
+  Telegram types into the domain. Rich drafts retain the existing throttling,
+  coalescing, cancellation fencing and outbound governor; clients or API servers
+  that explicitly reject Rich Messages fall back to a deterministic plain-text
+  draft/final response, while ambiguous failures never risk a duplicate final
+  send. Invisible control/bidi characters and unsafe button/document references
+  are rejected or sanitized before serialization.
+- Telegram can send documents as `multipart/form-data` uploads. The encoder
+  is bounded: per-file and whole-form byte budgets are enforced before any
+  byte reaches the wire, the corpus is streamed from disk in chunks, and a
+  file that grows between the size check and the read aborts instead of
+  inflating the upload. Uploads share the outbound rate governor and retry
+  only on an explicit 429.
+- Outbound files are gated by an anti-exfiltration policy and explicit
+  consent. `/diff` materializes a bounded diff excerpt (or `/report` the
+  latest report/log) into a private staging area; the operator then confirms
+  with a Send/Cancel keyboard. The consent grant is single-use, chat- and
+  user-scoped, bound to the SHA-256 of the bytes captured when offered, and
+  expires, so a stale or replayed confirmation can never upload. Repository
+  working directories,
+  `.git`, secret files (`.env`, keys, tokens) and unapproved extensions are
+  rejected fail-closed wherever they live; nothing is ever uploaded
+  automatically.
+- Telegram ingress now accepts documents and photos selectively: only
+  allowlisted MIME types (text, markdown, csv, json, yaml, pdf, rtf, word,
+  odt; jpeg/png/webp/gif images) within the 20 MB download budget are
+  admitted, identifiers are bounded and filenames sanitized before any
+  network request. Received files land in a `0600` temporary under a `0700`
+  directory, are capped per chat and per concurrent download, and are removed
+  deterministically on discard, `/telegram off`, and teardown.
+- Telegram now streams visible plain-text assistant output through native
+  `sendMessageDraft` previews. Updates are throttled and coalesced behind the
+  outbound governor, while the completed answer is persisted exactly once with
+  `sendMessage`; unsupported or failed draft calls therefore degrade safely
+  without retrying ambiguous outcomes. Internal reasoning, tool names,
+  arguments, results, and secrets never enter the draft API.
+- Telegram's `stopped_message_generation` update now cancels the actual
+  in-flight ZenCODE generation only when its linked chat and non-zero `draft_id`
+  still belong to that turn. Late updates from finished or rebound turns are
+  fenced out.
+- Live task progress uses an owned editable card via `editMessageText`,
+  `editMessageReplyMarkup`, and `deleteMessage`. Its receipt ledger is separate
+  from shared-chat/reply routing, and finish, failure, cancellation, rebind,
+  disable, and teardown retire the card and all pending draft work.
+- Telegram remote control now shows a typing presence while a mirrored turn or
+  a voice-note transcription is running. The indicator is held by a
+  lifecycle-safe lease: renewals are fenced by a generation token, so a
+  renewal that wakes after the turn ends, after a replacement, or after
+  `/telegram off` exits without touching the wire, and a stopped session never
+  keeps "typing".
+- Telegram outbound sends are governed against the Bot API rate limits: one
+  send per second per chat and a global spacing budget, with cancellable waits
+  and an automatic retry only when Telegram answers with an explicit 429
+  envelope carrying `retry_after`. Any other failure — including ambiguous
+  outcomes such as transport errors — is surfaced to the operator instead of
+  being retried into a possible duplicate.
+  Reservations are actor-atomic and one logical send performs at most two
+  retries; a 429 without a valid `retry_after` is never retried.
+- Bot API errors are now decoded into a typed envelope (status, `error_code`,
+  `description`, `retry_after`) so callers no longer re-parse response bodies.
+- ZenCODE registers its Telegram command menu with `setMyCommands` when the
+  link becomes active. The menu is driven by a single command registry that
+  also feeds the ingress parser, so a command can never be parseable but
+  missing from the menu.
+- Telegram pairing now issues a single-use, 128-bit deep-link grant: the
+  terminal shows a `t.me/<bot>?start=<payload>` link plus a manual fallback
+  code. The grant expires in 10 minutes, is stored only as a SHA-256 digest,
+  and is consumed atomically, so a replayed or leaked code cannot link a chat.
+  A non-private chat is rejected before consumption, so it cannot burn a valid
+  grant intended for the private pairing flow.
 - Telegram operators can send a standalone `@` to open an inline keyboard of
   active agents. Selecting one opens a forced-reply composition card; its reply
   is delivered only to that selected live agent, rather than being queued as an

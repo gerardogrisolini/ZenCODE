@@ -214,7 +214,7 @@ extension TerminalChat {
 
     func sendSharedChatMention(
         _ route: SharedChatMentionRoute,
-        telegramChatID: Int64? = nil
+        telegramOrigin: TerminalPromptOrigin? = nil
     ) async {
         guard await isCurrentSharedChatDirectDestination(route.destination) else {
             await writeFailureMessage("ZenCODE message: selected agent is no longer active.\n")
@@ -228,10 +228,9 @@ extension TerminalChat {
                 destination: route.destination,
                 rootSessionID: sessionID
             )
-            if let telegramChatID {
+            if let telegramOrigin {
                 recordTelegramSharedChatMessageOrigin(
-                    delivery.message.id,
-                    chatID: telegramChatID
+                    delivery.message.id, origin: telegramOrigin
                 )
             }
             await refreshSharedChatPanelSuggestions()
@@ -245,11 +244,13 @@ extension TerminalChat {
     /// coordinator turn that will consume it. The shared-chat bus intentionally
     /// has no UI transport metadata, so this short-lived surface association
     /// preserves the Telegram response route without changing the bus protocol.
-    func recordTelegramSharedChatMessageOrigin(_ messageID: UUID, chatID: Int64) {
+    func recordTelegramSharedChatMessageOrigin(
+        _ messageID: UUID, origin: TerminalPromptOrigin
+    ) {
         if telegramSharedChatMessageOrigins[messageID] == nil {
             telegramSharedChatMessageOriginOrder.append(messageID)
         }
-        telegramSharedChatMessageOrigins[messageID] = chatID
+        telegramSharedChatMessageOrigins[messageID] = origin
         let maximumOrigins = AgentSharedChat.maximumRetainedMessagesPerRoom
         while telegramSharedChatMessageOriginOrder.count > maximumOrigins {
             let oldestMessageID = telegramSharedChatMessageOriginOrder.removeFirst()
@@ -262,15 +263,15 @@ extension TerminalChat {
     func takeTelegramSharedChatOrigin(
         for messages: [AgentSharedChat.Message]
     ) -> TerminalPromptOrigin? {
-        var chatID: Int64?
+        var origin: TerminalPromptOrigin?
         for message in messages {
-            if chatID == nil {
-                chatID = telegramSharedChatMessageOrigins[message.id]
+            if origin == nil {
+                origin = telegramSharedChatMessageOrigins[message.id]
             }
             telegramSharedChatMessageOrigins.removeValue(forKey: message.id)
             telegramSharedChatMessageOriginOrder.removeAll { $0 == message.id }
         }
-        return chatID.map(TerminalPromptOrigin.telegram)
+        return origin
     }
 
     /// Builds the route label shown for a reader entry from the message's

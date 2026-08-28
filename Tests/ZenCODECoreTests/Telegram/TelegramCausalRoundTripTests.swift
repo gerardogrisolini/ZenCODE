@@ -279,7 +279,8 @@ struct TelegramCausalRoundTripTests {
             statusText: "Active",
             botUsername: "zencode_bot",
             lastError: nil,
-            lastMessagePreview: nil
+            lastMessagePreview: nil,
+            wireLifecycleEpoch: activeState.wireLifecycleEpoch
         )
         terminal.readsTelegramIngress = true
 

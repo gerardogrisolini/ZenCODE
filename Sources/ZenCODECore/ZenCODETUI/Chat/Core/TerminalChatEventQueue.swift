@@ -274,6 +274,7 @@ private final class Storage: Sendable {
                  .generationCompleted,
                  .startNextQueuedPrompt,
                  .telegramMessage,
+                 .telegramRouteInvalidated,
                  .voicePromptCompleted,
                  .sharedChatMessages,
                  .sharedChatObservationEnded,

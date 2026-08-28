@@ -62,7 +62,7 @@ extension TerminalChat {
         if origin != .local {
             return await submittedTelegramLineAction(
                 prompt,
-                chatID: origin.telegramChatID
+                origin: origin
             )
         }
 

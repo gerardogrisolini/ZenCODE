@@ -4,8 +4,70 @@
 //
 
 import Foundation
+import Synchronization
 import Testing
 @testable import ZenCODECore
+
+// Test-only compatibility surface. Production has no nil-scoped relay API:
+// every operation below is translated to an explicit synthetic lease.
+extension TerminalTelegramSharedChatRelay {
+    init(_ sender: @escaping @Sendable (String, Int64) async -> Int?) {
+        self.init(
+            validateLease: { _ in true },
+            send: { text, chatID, _ in await sender(text, chatID) }
+        )
+    }
+
+    private static func testLease(roomID: String, chatID: Int64) -> TerminalTelegramRouteLease {
+        TerminalTelegramRouteLease(
+            key: .init(chatID: chatID, userID: 7, roomID: roomID), generation: 1
+        )
+    }
+
+    func activate(
+        roomID: String, chatID: Int64, repliesEnabled: Bool = true
+    ) async {
+        await activate(
+            roomID: roomID, chatID: chatID,
+            lease: Self.testLease(roomID: roomID, chatID: chatID),
+            repliesEnabled: repliesEnabled
+        )
+    }
+
+    func replyTarget(
+        forTelegramMessageID messageID: Int, chatID: Int64,
+        roomID: String = "terminal-room"
+    ) async -> TerminalTelegramSharedChatReplyTarget? {
+        await replyTarget(
+            forTelegramMessageID: messageID, chatID: chatID,
+            lease: Self.testLease(roomID: roomID, chatID: chatID)
+        )
+    }
+}
+
+extension TerminalTelegramTurnProgressReporter {
+    /// Unit-test fixture with an explicit lease/fence. Production has no
+    /// fence-less initializer.
+    init(
+        chatID: Int64,
+        sendMessage: @escaping @Sendable (String, Int64) async -> Bool,
+        sendDraft: (@Sendable (String, Int64, Int) async throws -> Void)? = nil,
+        progressCards: TerminalTelegramProgressCardLedger? = nil
+    ) {
+        let lease = TerminalTelegramRouteLease(
+            key: .init(chatID: chatID, userID: 7, roomID: "test-room"), generation: 1
+        )
+        self.init(
+            chatID: chatID,
+            sendMessage: sendMessage,
+            sendDraft: sendDraft,
+            progressCards: progressCards,
+            wireFence: TerminalTelegramWireFence(lease: lease, lifecycleEpoch: UUID()) { candidate in
+                guard candidate == lease else { throw CancellationError() }
+            }
+        )
+    }
+}
 
 /// Records the cards a relay delivered and hands back synthetic Telegram
 /// receipts, so delivery accounting can be asserted without a transport.
@@ -133,6 +195,72 @@ struct TerminalTelegramSharedChatRelayTests {
         TerminalTelegramSharedChatRelay { text, chatID in
             await recorder.send(text, to: chatID)
         }
+    }
+
+    @Test
+    func routeGenerationInvalidatesLedgerAndBlocksRetiredDelivery() async {
+        let recorder = TelegramCardRecorder()
+        let key = TerminalTelegramRouteKey(
+            chatID: Self.chatID, userID: 7, topicID: nil, roomID: Self.roomID
+        )
+        let retired = TerminalTelegramRouteLease(
+            key: key, generation: 1, effectiveMessageThreadID: 44
+        )
+        let current = TerminalTelegramRouteLease(
+            key: key, generation: 2, effectiveMessageThreadID: 44
+        )
+        let relay = TerminalTelegramSharedChatRelay(
+            validateLease: { $0.generation == 2 },
+            send: { text, chatID, _ in await recorder.send(text, to: chatID) }
+        )
+        let message = Self.message()
+        await relay.activate(
+            roomID: Self.roomID, chatID: Self.chatID, lease: retired
+        )
+        await relay.forward([message], roomID: Self.roomID)
+        await relay.waitForPendingCards()
+        #expect(await recorder.cards.isEmpty)
+
+        await relay.activate(
+            roomID: Self.roomID, chatID: Self.chatID, lease: current
+        )
+        await relay.forward([message], roomID: Self.roomID)
+        await relay.waitForPendingCards()
+        #expect(await recorder.cards.count == 1)
+    }
+
+    @Test
+    func revokedLeaseBlocksReplyRegistrationAndLookup() async {
+        let recorder = TelegramCardRecorder()
+        let valid = Mutex(true)
+        let lease = TerminalTelegramRouteLease(
+            key: .init(chatID: Self.chatID, userID: 7, roomID: Self.roomID), generation: 1
+        )
+        let relay = TerminalTelegramSharedChatRelay(
+            validateLease: { _ in valid.withLock { $0 } },
+            send: { text, chatID, _ in await recorder.send(text, to: chatID) }
+        )
+        await relay.activate(roomID: Self.roomID, chatID: Self.chatID, lease: lease)
+        await relay.forward([Self.message()], roomID: Self.roomID)
+        await relay.waitForPendingCards()
+        let receipt = await recorder.cards.first?.receipt ?? 0
+        valid.withLock { $0 = false }
+
+        #expect(await relay.replyTarget(
+            forTelegramMessageID: receipt, chatID: Self.chatID, lease: lease
+        ) == nil)
+        await relay.registerReplyTarget(
+            TerminalTelegramSharedChatReplyTarget(
+                roomID: Self.roomID, chatID: Self.chatID,
+                sharedChatMessageID: UUID(), senderID: "agent-2",
+                senderKind: .agent, senderName: "Agent"
+            ),
+            forTelegramMessageID: 9_999,
+            lease: lease
+        )
+        #expect(await relay.replyTarget(
+            forTelegramMessageID: 9_999, chatID: Self.chatID, lease: lease
+        ) == nil)
     }
 
     /// The observer replays its bounded transcript on reattach, so the same

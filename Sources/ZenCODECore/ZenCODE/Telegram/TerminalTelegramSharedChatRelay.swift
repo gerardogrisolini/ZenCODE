@@ -64,7 +64,10 @@ actor TerminalTelegramSharedChatRelay {
     /// Sends one card and returns the Telegram receipt, or `nil` when delivery
     /// failed. Injected so the actor never depends on the TUI or on a concrete
     /// transport.
-    typealias CardSender = @Sendable (_ text: String, _ chatID: Int64) async -> Int?
+    typealias CardSender = @Sendable (
+        _ text: String, _ chatID: Int64, _ lease: TerminalTelegramRouteLease
+    ) async -> Int?
+    typealias LeaseValidator = @Sendable (TerminalTelegramRouteLease) async -> Bool
 
     /// Bounded outbound FIFO. The bound limits memory, never delivery: when the
     /// queue is full the *producer* waits for a free slot (see
@@ -99,6 +102,7 @@ actor TerminalTelegramSharedChatRelay {
     private struct Context: Equatable {
         let roomID: String
         let chatID: Int64
+        let lease: TerminalTelegramRouteLease
     }
 
     /// A receipt observed while the relay was unbound, kept until the same
@@ -115,6 +119,7 @@ actor TerminalTelegramSharedChatRelay {
         /// reply mapping only while that same ledger is still live.
         let ledgerEpoch: Int
         let chatID: Int64
+        let lease: TerminalTelegramRouteLease
         let text: String
         let target: TerminalTelegramSharedChatReplyTarget
     }
@@ -135,6 +140,7 @@ actor TerminalTelegramSharedChatRelay {
     }
 
     private let send: CardSender
+    private let validateLease: LeaseValidator
     /// Non-nil only while Telegram is active and bound to a room.
     private var activeContext: Context?
     /// Context the ledger and receipt map belong to. Kept across `/telegram off`
@@ -193,7 +199,8 @@ actor TerminalTelegramSharedChatRelay {
     /// entered instead of inferring it from scheduling.
     private var capacityWaitObservers: [CapacityWaitObserver] = []
 
-    init(send: @escaping CardSender) {
+    init(validateLease: @escaping LeaseValidator, send: @escaping CardSender) {
+        self.validateLease = validateLease
         self.send = send
     }
 
@@ -212,14 +219,27 @@ actor TerminalTelegramSharedChatRelay {
     /// quoted Telegram text is never consulted for routing.
     func registerReplyTarget(
         _ target: TerminalTelegramSharedChatReplyTarget,
-        forTelegramMessageID receipt: Int
-    ) {
-        guard ledgerContext == Context(roomID: target.roomID, chatID: target.chatID) else { return }
+        forTelegramMessageID receipt: Int,
+        lease: TerminalTelegramRouteLease
+    ) async {
+        guard await validateLease(lease) else { return }
+        guard ledgerContext?.roomID == target.roomID,
+              ledgerContext?.chatID == target.chatID,
+              activeContext?.lease == lease else { return }
         recordReplyTarget(target, receipt: receipt)
     }
 
-    func activate(roomID: String, chatID: Int64, repliesEnabled: Bool = true) async {
-        let context = Context(roomID: roomID, chatID: chatID)
+    func activate(
+        roomID: String, chatID: Int64,
+        lease: TerminalTelegramRouteLease,
+        repliesEnabled: Bool = true
+    ) async {
+        guard lease.key.roomID == roomID, lease.key.chatID == chatID,
+              await validateLease(lease) else {
+            await deactivate()
+            return
+        }
+        let context = Context(roomID: roomID, chatID: chatID, lease: lease)
         guard activeContext != context else {
             // Idempotent: only the (purely cosmetic) reply affordance is refreshed.
             self.repliesEnabled = repliesEnabled
@@ -384,6 +404,7 @@ actor TerminalTelegramSharedChatRelay {
                     generation: entryGeneration,
                     ledgerEpoch: ledgerEpoch,
                     chatID: liveContext.chatID,
+                    lease: liveContext.lease,
                     text: Self.cardText(
                         for: message,
                         recipientNames: recipientNames,
@@ -413,10 +434,13 @@ actor TerminalTelegramSharedChatRelay {
     /// routes somewhere" are the same statement.
     func replyTarget(
         forTelegramMessageID messageID: Int,
-        chatID: Int64
-    ) -> TerminalTelegramSharedChatReplyTarget? {
+        chatID: Int64,
+        lease: TerminalTelegramRouteLease
+    ) async -> TerminalTelegramSharedChatReplyTarget? {
+        guard await validateLease(lease) else { return nil }
         guard let context = activeContext,
               context.chatID == chatID,
+              context.lease == lease,
               let target = replyTargets[messageID],
               target.replyDestination != nil,
               target.chatID == chatID,
@@ -683,7 +707,19 @@ actor TerminalTelegramSharedChatRelay {
             return
         }
         inFlightDeliveries += 1
-        let receipt = await send(card.text, card.chatID)
+        if await validateLease(card.lease) == false {
+            inFlightDeliveries -= 1
+            signalQuiescenceIfNeeded()
+            return
+        }
+        // Validation suspends, so the relay generation must be checked again
+        // before the wire call.
+        guard card.generation == generation, activeContext?.lease == card.lease else {
+            inFlightDeliveries -= 1
+            signalQuiescenceIfNeeded()
+            return
+        }
+        let receipt = await send(card.text, card.chatID, card.lease)
         inFlightDeliveries -= 1
         signalQuiescenceIfNeeded()
         guard let receipt else {
@@ -717,7 +753,9 @@ actor TerminalTelegramSharedChatRelay {
     /// and would divert an ordinary voice prompt into a refusal.
     private func recordReceipt(_ receipt: Int, for card: PendingCard) {
         guard card.target.replyDestination != nil else { return }
-        let cardContext = Context(roomID: card.target.roomID, chatID: card.chatID)
+        let cardContext = Context(
+            roomID: card.target.roomID, chatID: card.chatID, lease: card.lease
+        )
         guard ledgerContext == cardContext, card.ledgerEpoch == ledgerEpoch else {
             return
         }

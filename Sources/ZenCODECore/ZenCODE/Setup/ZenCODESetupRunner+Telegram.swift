@@ -82,29 +82,53 @@ extension ZenCODESetupRunner {
     static func pairTelegram(
         botToken: String
     ) async throws -> AgentTelegramSettingsManifest {
-        let pairingCode = newTelegramPairingCode()
         let pairingService = TerminalTelegramPairingService(botToken: botToken)
         let bot = try await pairingService.prepare()
         let botLabel = bot.username.map { "@\($0)" } ?? "your Telegram bot"
 
-        AgentOutput.standardError.writeString(
-            """
-            Telegram pairing:
-              Send this code to \(botLabel): \(pairingCode)
-              You can send the code alone or /start \(pairingCode).
-              Waiting for Telegram...
+        // Deep-link grant: 128 bits of entropy, single use, 10-minute TTL.
+        // Telegram delivers `/start <payload>` back to the bot, which consumes
+        // the grant atomically. The payload doubles as the manual fallback
+        // code for clients that cannot open links.
+        let payload = await pairingService.issuePairingGrant()
+        let deepLink = bot.username.map {
+            TerminalTelegramPairingGrantLink.deepLink(botUsername: $0, payload: payload)
+        }
 
-            """
-        )
+        var instructions = """
+        Telegram pairing:
+          Open this link to link your private chat:
+        """
+        if let deepLink {
+            instructions += "\n    \(deepLink)\n"
+        } else {
+            instructions += "\n    (bot username unavailable)\n"
+        }
+        instructions += """
+          Or send this code to \(botLabel) manually:
+            \(payload)
+          The code works once and expires in 10 minutes.
+          Waiting for Telegram...
 
-        let linkedChat = try await pairingService.waitForPairing(code: pairingCode)
+        """
+        AgentOutput.standardError.writeString(instructions)
+
+        let linkedChat = try await pairingService.waitForPairing(code: payload)
         let title = linkedChat.chatTitle?.nilIfBlank ?? "chat \(linkedChat.chatID)"
         AgentOutput.standardError.writeString("Telegram linked: \(title)\n")
         return AgentTelegramSettingsManifest(
             enabled: true,
             botToken: botToken,
             linkedChatID: linkedChat.chatID,
-            linkedChatTitle: linkedChat.chatTitle
+            linkedChatTitle: linkedChat.chatTitle,
+            routes: [
+                AgentTelegramRouteManifest(
+                    chatID: linkedChat.chatID,
+                    ownerUserID: linkedChat.userID,
+                    roomID: "default",
+                    chatKind: .privateChat
+                )
+            ]
         )
     }
 
