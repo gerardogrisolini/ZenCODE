@@ -80,7 +80,7 @@ struct TerminalTelegramAPIClient: Sendable {
             body: TerminalTelegramGetUpdatesRequest(
                 offset: offset,
                 timeout: timeout,
-                allowedUpdates: ["message"]
+                allowedUpdates: ["message", "callback_query"]
             )
         )
     }
@@ -93,18 +93,27 @@ struct TerminalTelegramAPIClient: Sendable {
     func sendMessage(
         _ text: String,
         to chatID: Int64,
-        parseMode: String? = nil
+        parseMode: String? = nil,
+        replyMarkup: TerminalTelegramReplyMarkup? = nil
     ) async throws -> Int {
         let request = TerminalTelegramSendMessageRequest(
             chatID: chatID,
             text: Self.boundedMessageText(text),
-            parseMode: parseMode
+            parseMode: parseMode,
+            replyMarkup: replyMarkup
         )
         let message: TerminalTelegramMessage = try await self.request(
             method: "sendMessage",
             body: request
         )
         return message.messageID
+    }
+
+    func answerCallbackQuery(_ callbackQueryID: String) async throws {
+        let _: Bool = try await request(
+            method: "answerCallbackQuery",
+            body: TerminalTelegramAnswerCallbackQueryRequest(callbackQueryID: callbackQueryID)
+        )
     }
 
     /// Trims and bounds one outbound message to the Telegram wire limit.
@@ -261,7 +270,33 @@ struct TerminalTelegramSendMessageRequest: Encodable {
     let chatID: Int64
     let text: String
     let parseMode: String?
+    let replyMarkup: TerminalTelegramReplyMarkup?
+}
 
+struct TerminalTelegramAnswerCallbackQueryRequest: Encodable {
+    let callbackQueryID: String
+}
+
+/// The two reply-markup forms used by ZenCODE. Callback data contains only a
+/// readable mention handle, never a stable participant identifier.
+enum TerminalTelegramReplyMarkup: Encodable, Sendable, Equatable {
+    case inlineKeyboard([[TerminalTelegramInlineKeyboardButton]])
+    case forceReply
+
+    enum CodingKeys: String, CodingKey { case inlineKeyboard, forceReply }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case let .inlineKeyboard(rows): try container.encode(rows, forKey: .inlineKeyboard)
+        case .forceReply: try container.encode(true, forKey: .forceReply)
+        }
+    }
+}
+
+struct TerminalTelegramInlineKeyboardButton: Encodable, Sendable, Equatable {
+    let text: String
+    let callbackData: String
 }
 
 struct TerminalTelegramGetFileRequest: Encodable {
@@ -277,12 +312,24 @@ struct TerminalTelegramDownloadedFile: Sendable {
 struct TerminalTelegramUpdate: Decodable {
     let updateID: Int
     let message: TerminalTelegramMessage?
+    let callbackQuery: TerminalTelegramCallbackQuery?
 
     // Responses decode with the default strategy, so wire keys stay manual.
     enum CodingKeys: String, CodingKey {
         case updateID = "update_id"
         case message
+        case callbackQuery = "callback_query"
     }
+}
+
+/// Bounded projection of a callback query. Only callback id, sender, opaque
+/// data and the originating message are needed; no user-controlled nested data
+/// is decoded.
+struct TerminalTelegramCallbackQuery: Decodable {
+    let id: String
+    let from: TerminalTelegramUser
+    let data: String?
+    let message: TerminalTelegramMessage?
 }
 
 struct TerminalTelegramMessage: Decodable {

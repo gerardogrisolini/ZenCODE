@@ -12,6 +12,7 @@
 //
 
 import Foundation
+import Synchronization
 import Testing
 @testable import ZenCODECore
 
@@ -56,6 +57,81 @@ struct TelegramChatRoundTripTests {
             chatTitle: "Gerardo",
             username: "gerardo"
         )
+    }
+
+    @Test
+    func standaloneMentionOpensPickerWithCoordinatorAndActiveAgentButtons() async throws {
+        let buttons = TerminalChat.telegramMentionPickerButtons(from: [
+            .init(command: "@coordinator ", summary: "message coordinator"),
+            .init(command: "@all ", summary: "broadcast"),
+            .init(command: "@developer ", summary: "message agent")
+        ])
+        #expect(buttons.map(\.text) == ["@coordinator", "@developer"])
+        #expect(buttons.map(\.callbackData) == [
+            "zencode:mention:coordinator", "zencode:mention:developer"
+        ])
+
+        let terminal = try Self.makeTerminal(linkedChatID: 42)
+        let captured = Mutex<[TerminalTelegramReplyMarkup]>([])
+        terminal.onTelegramMentionPickerMessage = { _, _, markup in
+            captured.withLock { $0.append(markup) }
+            return 90
+        }
+        var queuedPrompts = TerminalQueuedPromptBuffer()
+        await terminal.handleTelegramMessage(
+            Self.message("@"), queuedPrompts: &queuedPrompts,
+            eventQueue: TerminalChatEventQueue(), transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+        #expect(queuedPrompts.isEmpty)
+        guard case let .inlineKeyboard(rows) = captured.withLock({ $0.first }) else {
+            Issue.record("Expected an inline keyboard")
+            return
+        }
+        #expect(rows.flatMap { $0 }.map(\.text) == ["@coordinator"])
+    }
+
+    @Test
+    func callbackCoordinatorCreatesForceReplyCardAndSafeReplyTarget() async throws {
+        let terminal = try Self.makeTerminal(linkedChatID: 42)
+        await terminal.rebindTelegramSharedChatRelay(roomID: terminal.sessionID)
+        let captured = Mutex<[TerminalTelegramReplyMarkup]>([])
+        terminal.onTelegramMentionPickerMessage = { _, _, markup in
+            captured.withLock { $0.append(markup) }
+            return 91
+        }
+        var queuedPrompts = TerminalQueuedPromptBuffer()
+        await terminal.handleTelegramMessage(
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: nil, voice: nil, messageID: 90,
+                chatTitle: "Gerardo", username: "gerardo", callbackQueryID: "callback-1",
+                callbackData: "zencode:mention:coordinator"
+            ), queuedPrompts: &queuedPrompts, eventQueue: TerminalChatEventQueue(),
+            transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+        #expect(queuedPrompts.isEmpty)
+        #expect(captured.withLock({ $0 }) == [.forceReply])
+        let target = await terminal.telegramSharedChatRelay.replyTarget(
+            forTelegramMessageID: 91, chatID: 42
+        )
+        #expect(target?.senderKind == .coordinator)
+        #expect(target?.senderID == AgentSharedChat.coordinatorID(for: terminal.sessionID))
+        #expect(target?.replyDestination == .coordinator)
+    }
+
+    @Test
+    func pickerReplyTargetsPreserveCoordinatorAndAgentDestinations() {
+        let coordinator = TerminalChat.telegramMentionPickerReplyTarget(
+            destination: .coordinator, roomID: "room", chatID: 42, handle: "coordinator"
+        )
+        let agent = TerminalChat.telegramMentionPickerReplyTarget(
+            destination: .direct(["agent-9"]), roomID: "room", chatID: 42, handle: "developer"
+        )
+        #expect(coordinator.senderKind == .coordinator)
+        #expect(coordinator.senderID == AgentSharedChat.coordinatorID(for: "room"))
+        #expect(coordinator.replyDestination == .coordinator)
+        #expect(agent.senderKind == .agent)
+        #expect(agent.senderID == "agent-9")
+        #expect(agent.replyDestination == .direct(["agent-9"]))
     }
 
     /// Ingress is closed while Telegram is off: a message that arrives after the

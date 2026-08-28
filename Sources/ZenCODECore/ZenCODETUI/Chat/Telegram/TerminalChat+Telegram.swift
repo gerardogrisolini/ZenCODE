@@ -199,6 +199,13 @@ extension TerminalChat {
             return
         }
 
+        if let callbackQueryID = message.callbackQueryID,
+           let callbackData = message.callbackData {
+            await telegramControlService.answerCallbackQuery(callbackQueryID)
+            await handleTelegramMentionPickerCallback(callbackData, chatID: message.chatID)
+            return
+        }
+
         if let voice = message.voice {
             // A voice note that quotes an *answerable* card is ambiguous: the
             // reply target cannot be carried through transcription and
@@ -241,6 +248,11 @@ extension TerminalChat {
             return
         }
 
+        if text == "@" {
+            await handleTelegramMentionPickerRequest(chatID: message.chatID)
+            return
+        }
+
         // A reply to a forwarded live-message card answers its sender directly.
         // Remote commands and explicit `@mention` routing keep precedence, so
         // quoting a card never changes what an explicitly addressed line means.
@@ -262,6 +274,99 @@ extension TerminalChat {
             )
             return
         }
+    }
+
+    // MARK: - Mention picker
+
+    nonisolated static let telegramMentionPickerCallbackPrefix = "zencode:mention:"
+
+    /// The Telegram Bot API has no typing events. A standalone `@` is therefore
+    /// the explicit, non-ambiguous trigger for the discoverable mention picker.
+    func handleTelegramMentionPickerRequest(chatID: Int64) async {
+        let buttons = Self.telegramMentionPickerButtons(
+            from: await sharedChatMentionSuggestions()
+        )
+        guard !buttons.isEmpty else { return }
+        let markup = TerminalTelegramReplyMarkup.inlineKeyboard(buttons.map { [$0] })
+        _ = await sendTelegramMentionPickerMessage(
+            "Choose who to message. After selecting, reply to the next card with your message.",
+            to: chatID,
+            replyMarkup: markup
+        )
+    }
+
+    nonisolated static func telegramMentionPickerButtons(
+        from suggestions: [TerminalCommandSuggestion]
+    ) -> [TerminalTelegramInlineKeyboardButton] {
+        suggestions.compactMap { suggestion in
+            let handle = suggestion.command.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard handle.first == "@", handle != "@all", handle.utf8.count <= 48 else { return nil }
+            return TerminalTelegramInlineKeyboardButton(
+                text: handle,
+                callbackData: telegramMentionPickerCallbackPrefix + String(handle.dropFirst())
+            )
+        }
+    }
+
+    func handleTelegramMentionPickerCallback(_ data: String, chatID: Int64) async {
+        guard data.hasPrefix(Self.telegramMentionPickerCallbackPrefix) else { return }
+        let handle = String(data.dropFirst(Self.telegramMentionPickerCallbackPrefix.count))
+        guard handle.utf8.count <= 48 else { return }
+        let roster = await sessionRunner.sharedChatMentionRoster(rootSessionID: sessionID)
+        guard case let .route(route) = Self.parseSharedChatMention(
+            from: "@\(handle) selected",
+            readableHandles: roster.handleMap
+        ), await isCurrentSharedChatDirectDestination(route.destination) else {
+            await sendTelegramSystemMessage("ZenCODE message: that agent is no longer active. Open `@` again.", to: chatID)
+            return
+        }
+        let receipt = await sendTelegramMentionPickerMessage(
+            "Writing to @\(handle). Reply to this message with the content to send; it will not be treated as a normal prompt.",
+            to: chatID,
+            replyMarkup: .forceReply
+        )
+        guard let receipt else { return }
+        await telegramSharedChatRelay.registerReplyTarget(
+            Self.telegramMentionPickerReplyTarget(
+                destination: route.destination, roomID: sessionID, chatID: chatID, handle: handle
+            ),
+            forTelegramMessageID: receipt
+        )
+    }
+
+    private func sendTelegramMentionPickerMessage(
+        _ text: String, to chatID: Int64, replyMarkup: TerminalTelegramReplyMarkup
+    ) async -> Int? {
+        if let hook = onTelegramMentionPickerMessage { return await hook(text, chatID, replyMarkup) }
+        do { return try await telegramControlService.sendPlainMessageWithReceipt(text, to: chatID, replyMarkup: replyMarkup) }
+        catch { telegramControlState.lastError = error.localizedDescription; return nil }
+    }
+
+    nonisolated static func telegramMentionPickerReplyTarget(
+        destination: AgentSharedChat.Destination, roomID: String, chatID: Int64, handle: String
+    ) -> TerminalTelegramSharedChatReplyTarget {
+        let senderID: String
+        let senderKind: AgentSharedChat.ParticipantKind
+        let senderName: String
+        switch destination {
+        case let .direct(ids):
+            senderID = ids.first ?? ""
+            senderKind = .agent
+            senderName = handle
+        case .coordinator:
+            senderID = AgentSharedChat.coordinatorID(for: roomID)
+            senderKind = .coordinator
+            senderName = "coordinator"
+        case .all, .operator, .peers:
+            // These are excluded from the picker because force-reply is direct.
+            senderID = ""
+            senderKind = .operator
+            senderName = handle
+        }
+        return TerminalTelegramSharedChatReplyTarget(
+            roomID: roomID, chatID: chatID, sharedChatMessageID: UUID(),
+            senderID: senderID, senderKind: senderKind, senderName: senderName
+        )
     }
 
     // MARK: - Live-message relay

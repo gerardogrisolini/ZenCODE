@@ -125,6 +125,8 @@ public final class TerminalChat {
     var telegramImmediateCommandOutput: [String]?
     /// Test seam for bot-control messages. Production sends through the service.
     var onTelegramSystemMessage: (@Sendable (String, Int64) async -> Bool)?
+    /// Test seam for mention picker cards. Production uses the Telegram service.
+    var onTelegramMentionPickerMessage: (@Sendable (String, Int64, TerminalTelegramReplyMarkup) async -> Int?)?
     /// `true` when the root response block currently streaming already produced
     /// visible text. Used to detect that a Telegram on/off transition happened
     /// in the middle of a response.

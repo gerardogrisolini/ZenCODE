@@ -46,6 +46,10 @@ public struct TerminalTelegramIncomingMessage: Equatable, Sendable {
     /// Telegram's *Reply* action. It is the only durable link between a card the
     /// bot sent and the answer typed for it.
     public let replyToMessageID: Int?
+    /// Non-nil only for a Telegram inline-keyboard callback. Keeping callbacks
+    /// on the existing ingress stream preserves source compatibility.
+    public let callbackQueryID: String?
+    public let callbackData: String?
 
     /// Trailing default keeps existing call sites source-compatible while the
     /// reply link is optional on the wire.
@@ -57,7 +61,9 @@ public struct TerminalTelegramIncomingMessage: Equatable, Sendable {
         messageID: Int,
         chatTitle: String?,
         username: String?,
-        replyToMessageID: Int? = nil
+        replyToMessageID: Int? = nil,
+        callbackQueryID: String? = nil,
+        callbackData: String? = nil
     ) {
         self.chatID = chatID
         self.userID = userID
@@ -67,6 +73,8 @@ public struct TerminalTelegramIncomingMessage: Equatable, Sendable {
         self.chatTitle = chatTitle
         self.username = username
         self.replyToMessageID = replyToMessageID
+        self.callbackQueryID = callbackQueryID
+        self.callbackData = callbackData
     }
 }
 
@@ -368,9 +376,18 @@ public actor TerminalTelegramControlService {
     /// payload carries live agent-authored names and text, which are untrusted
     /// content. Valid-but-unintended markup would silently change how the
     /// message reads, and there is no fallback that could restore it.
+    /// Source-compatible plain-text receipt API for existing callers.
     public func sendPlainMessageWithReceipt(
         _ text: String,
         to chatID: Int64
+    ) async throws -> Int {
+        try await sendPlainMessageWithReceipt(text, to: chatID, replyMarkup: nil)
+    }
+
+    func sendPlainMessageWithReceipt(
+        _ text: String,
+        to chatID: Int64,
+        replyMarkup: TerminalTelegramReplyMarkup?
     ) async throws -> Int {
         let settings = try telegramSettings()
         let token = try telegramToken(from: settings)
@@ -382,9 +399,17 @@ public actor TerminalTelegramControlService {
             token: token,
             transport: transportFactory()
         )
-            .sendMessage(trimmed, to: chatID)
+            .sendMessage(trimmed, to: chatID, replyMarkup: replyMarkup)
         state.lastError = nil
         return messageID
+    }
+
+    public func answerCallbackQuery(_ callbackQueryID: String) async {
+        guard let settings = try? telegramSettings(),
+              let token = try? telegramToken(from: settings) else { return }
+        _ = try? await TerminalTelegramAPIClient(
+            token: token, transport: transportFactory()
+        ).answerCallbackQuery(callbackQueryID)
     }
 
     public func downloadVoiceAudio(
@@ -504,6 +529,10 @@ public actor TerminalTelegramControlService {
     }
 
     private func handle(_ update: TerminalTelegramUpdate) {
+        if let callback = update.callbackQuery {
+            handle(callback)
+            return
+        }
         guard state.isActive,
               let message = update.message,
               message.chat.id == linkedChatID,
@@ -541,6 +570,23 @@ public actor TerminalTelegramControlService {
             )
         )
         if case .dropped = yieldResult {
+            state.lastError = "Telegram ingress overloaded; the oldest buffered message was dropped."
+        }
+    }
+
+    private func handle(_ callback: TerminalTelegramCallbackQuery) {
+        guard state.isActive,
+              let message = callback.message,
+              message.chat.id == linkedChatID,
+              TerminalTelegramPairingService.allowsPairing(chatType: message.chat.type),
+              callback.from.isBot != true,
+              let data = callback.data?.nilIfBlank else { return }
+        let result = incomingContinuation.yield(TerminalTelegramIncomingMessage(
+            chatID: message.chat.id, userID: callback.from.id, text: nil, voice: nil,
+            messageID: message.messageID, chatTitle: message.chat.displayTitle,
+            username: callback.from.username, callbackQueryID: callback.id, callbackData: data
+        ))
+        if case .dropped = result {
             state.lastError = "Telegram ingress overloaded; the oldest buffered message was dropped."
         }
     }

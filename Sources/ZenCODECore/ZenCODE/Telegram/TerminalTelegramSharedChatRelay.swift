@@ -207,6 +207,17 @@ actor TerminalTelegramSharedChatRelay {
     /// lose in-flight work. Any other change fences the previous binding first
     /// (see ``fence()``) and then clears the ledger, because message identifiers
     /// of a retired room say nothing about what the new binding delivered.
+    /// Registers a bot-authored composition card as a safe reply target. Unlike
+    /// forwarded cards, the target is selected from the current live catalogue;
+    /// quoted Telegram text is never consulted for routing.
+    func registerReplyTarget(
+        _ target: TerminalTelegramSharedChatReplyTarget,
+        forTelegramMessageID receipt: Int
+    ) {
+        guard ledgerContext == Context(roomID: target.roomID, chatID: target.chatID) else { return }
+        recordReplyTarget(target, receipt: receipt)
+    }
+
     func activate(roomID: String, chatID: Int64, repliesEnabled: Bool = true) async {
         let context = Context(roomID: roomID, chatID: chatID)
         guard activeContext != context else {

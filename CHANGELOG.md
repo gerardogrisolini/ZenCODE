@@ -10,6 +10,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Telegram operators can send a standalone `@` to open an inline keyboard of
+  active agents. Selecting one opens a forced-reply composition card; its reply
+  is delivered only to that selected live agent, rather than being queued as an
+  ambiguous ordinary prompt.
+
 ### Changed
 
 - The terminal Chat reader notification is now quieter and fully transient:

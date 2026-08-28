@@ -68,6 +68,36 @@ struct TerminalTelegramAPIClientTests {
     }
 
     @Test
+    func callbackQueryAndReplyMarkupUseTelegramWireShapes() throws {
+        let update = try JSONDecoder().decode(
+            TerminalTelegramAPIResponse<[TerminalTelegramUpdate]>.self,
+            from: Data(#"""
+            {"ok":true,"result":[{"update_id":9,"callback_query":{"id":"cb-1","from":{"id":7,"is_bot":false},"data":"zencode:mention:dev","message":{"message_id":12,"chat":{"id":42,"type":"private"}}}}]}
+            """#.utf8)
+        )
+        #expect(update.result?.first?.callbackQuery?.id == "cb-1")
+        #expect(update.result?.first?.callbackQuery?.data == "zencode:mention:dev")
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let keyboard = try JSONSerialization.jsonObject(with: encoder.encode(
+            TerminalTelegramSendMessageRequest(
+                chatID: 42, text: "Choose", parseMode: nil,
+                replyMarkup: .inlineKeyboard([[
+                    TerminalTelegramInlineKeyboardButton(text: "@dev", callbackData: "zencode:mention:dev")
+                ]])
+            )
+        )) as? [String: Any]
+        let markup = try #require(keyboard?["reply_markup"] as? [String: Any])
+        #expect(((markup["inline_keyboard"] as? [[[String: Any]]])?.first?.first?["callback_data"] as? String) == "zencode:mention:dev")
+
+        let forceReply = try JSONSerialization.jsonObject(with: encoder.encode(
+            TerminalTelegramReplyMarkup.forceReply
+        )) as? [String: Any]
+        #expect(forceReply?["force_reply"] as? Bool == true)
+    }
+
+    @Test
     func telegramAudioBudgetIsExplicit() {
         #expect(TerminalTelegramAPIClient.maximumAudioFileBytes == 20 * 1_024 * 1_024)
         #expect(TerminalTelegramAPIClient.audioDownloadTimeout == .seconds(30))
@@ -190,7 +220,7 @@ struct TerminalTelegramAPIClientTests {
         let requests: [any Encodable] = [
             TerminalTelegramDeleteWebhookRequest(dropPendingUpdates: true),
             TerminalTelegramGetUpdatesRequest(offset: 1003, timeout: 30, allowedUpdates: ["message"]),
-            TerminalTelegramSendMessageRequest(chatID: 42, text: "hello", parseMode: "MarkdownV2"),
+            TerminalTelegramSendMessageRequest(chatID: 42, text: "hello", parseMode: "MarkdownV2", replyMarkup: nil),
             TerminalTelegramGetFileRequest(fileID: "download-file")
         ]
         let encoded = try requests.map { request in

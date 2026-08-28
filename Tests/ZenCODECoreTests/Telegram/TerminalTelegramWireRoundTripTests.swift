@@ -134,7 +134,7 @@ struct TerminalTelegramWireRoundTripTests {
         #expect(requests.allSatisfy { $0.method == "POST" })
         // The poll advances the offset so an update is never replayed.
         #expect(requests[0].jsonBody["offset"] as? Int == 500)
-        #expect(requests[0].jsonBody["allowed_updates"] as? [String] == ["message"])
+        #expect(requests[0].jsonBody["allowed_updates"] as? [String] == ["message", "callback_query"])
         #expect(requests[1].jsonBody["chat_id"] as? Int == 42)
         #expect(requests[1].jsonBody["text"] as? String == "risposta")
         #expect(requests[1].jsonBody["parse_mode"] as? String == "Markdown")
