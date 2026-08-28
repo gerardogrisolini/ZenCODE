@@ -107,4 +107,29 @@ struct TelegramChatRoundTripTests {
             for: .telegram(chatID: 99)
         ) == nil)
     }
+
+    /// A Telegram live mention enters the shared-chat bus before it causes the
+    /// Core coordinator's synthetic turn. That turn must keep the remote origin
+    /// or its otherwise visible response is rendered only in the TUI.
+    @Test
+    func telegramSharedChatTriggerRetainsTelegramResponseOrigin() throws {
+        let terminal = try Self.makeTerminal(linkedChatID: 42)
+        let message = AgentSharedChat.Message(
+            roomID: terminal.sessionID,
+            sender: AgentSharedChat.Participant(
+                id: AgentSharedChat.operatorID(for: terminal.sessionID),
+                name: "operator",
+                kind: .operator
+            ),
+            recipientIDs: [AgentSharedChat.coordinatorID(for: terminal.sessionID)],
+            text: "please respond"
+        )
+
+        terminal.recordTelegramSharedChatMessageOrigin(message.id, chatID: 42)
+        let origin = terminal.takeTelegramSharedChatOrigin(for: [message])
+
+        #expect(origin == .telegram(chatID: 42))
+        #expect(terminal.makeTelegramTurnProgressReporter(for: origin!) != nil)
+        #expect(terminal.takeTelegramSharedChatOrigin(for: [message]) == nil)
+    }
 }

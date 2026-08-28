@@ -20,6 +20,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   transient agent-to-agent traffic stays distinguishable from the orange
   application chrome without competing for attention.
 
+### Fixed
+
+- Telegram live mentions such as `@coordinator` now retain their Telegram
+  response destination when shared-chat coordination starts its synthetic
+  coordinator turn, so the coordinator reply is delivered back to Telegram
+  instead of appearing only in the terminal.
+
 ## [2.0.1] - 2026-08-28
 
 ### Added

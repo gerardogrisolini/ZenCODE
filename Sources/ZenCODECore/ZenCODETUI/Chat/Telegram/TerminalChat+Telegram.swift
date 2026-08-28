@@ -32,7 +32,10 @@ extension TerminalChat {
         }
     }
 
-    func submittedTelegramLineAction(_ prompt: String) async -> TerminalSubmittedLineAction {
+    func submittedTelegramLineAction(
+        _ prompt: String,
+        chatID: Int64? = nil
+    ) async -> TerminalSubmittedLineAction {
         let prompt = Self.telegramCommandWithoutBotMention(prompt)
         switch TerminalTelegramRemoteCommand(text: prompt) {
         case .start:
@@ -62,7 +65,10 @@ extension TerminalChat {
                 )
             ) {
             case let .route(sharedChatRoute):
-                await sendSharedChatMention(sharedChatRoute)
+                await sendSharedChatMention(
+                    sharedChatRoute,
+                    telegramChatID: chatID
+                )
                 return .continueChat
             case .missingText:
                 await sendTelegramSystemMessageIfLinked(

@@ -60,7 +60,10 @@ extension TerminalChat {
         }
 
         if origin != .local {
-            return await submittedTelegramLineAction(prompt)
+            return await submittedTelegramLineAction(
+                prompt,
+                chatID: origin.telegramChatID
+            )
         }
 
         switch Self.parseSharedChatMention(

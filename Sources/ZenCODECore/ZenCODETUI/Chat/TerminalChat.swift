@@ -156,6 +156,17 @@ public final class TerminalChat {
     /// forwards live messages, but nothing there reads what Telegram sends back,
     /// so cards must not invite a reply that would be silently dropped.
     var readsTelegramIngress = false
+    /// Telegram chat that originated a live shared-chat message, keyed by the
+    /// transient bus message identity. A coordinator auto-trigger carries the
+    /// same identities, allowing its synthetic turn to retain the remote
+    /// response destination instead of being treated as terminal-local work.
+    ///
+    /// The bus transcript itself remains surface-neutral; this is deliberately
+    /// TUI-local delivery metadata and is consumed when the matching trigger
+    /// starts. Its bound matches the retained shared-chat transcript.
+    var telegramSharedChatMessageOrigins: [UUID: Int64] = [:]
+    /// FIFO order for the bounded Telegram shared-chat origin ledger.
+    var telegramSharedChatMessageOriginOrder: [UUID] = []
     /// Backing storage for ``telegramSharedChatRelay``. The relay captures this
     /// chat weakly to reach the Telegram transport, so it cannot be built in
     /// `init` as a stored `let` without capturing a partially initialised self.

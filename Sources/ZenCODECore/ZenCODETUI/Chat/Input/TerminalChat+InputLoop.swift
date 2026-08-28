@@ -370,7 +370,7 @@ extension TerminalChat {
             await runPromptBlocking(
                 promptAttempt(
                     prompt: trigger.prompt,
-                    origin: .local,
+                    origin: takeTelegramSharedChatOrigin(for: trigger.messages) ?? .local,
                     isUserVisible: false
                 )
             )
@@ -1138,7 +1138,7 @@ extension TerminalChat {
                 await startGeneration(
                     attempt: promptAttempt(
                         prompt: trigger.prompt,
-                        origin: .local,
+                        origin: takeTelegramSharedChatOrigin(for: trigger.messages) ?? .local,
                         isUserVisible: false
                     )
                 )

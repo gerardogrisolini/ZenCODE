@@ -212,7 +212,10 @@ extension TerminalChat {
         }
     }
 
-    func sendSharedChatMention(_ route: SharedChatMentionRoute) async {
+    func sendSharedChatMention(
+        _ route: SharedChatMentionRoute,
+        telegramChatID: Int64? = nil
+    ) async {
         guard await isCurrentSharedChatDirectDestination(route.destination) else {
             await writeFailureMessage("ZenCODE message: selected agent is no longer active.\n")
             await refreshSharedChatPanelSuggestions()
@@ -220,16 +223,54 @@ extension TerminalChat {
         }
 
         do {
-            _ = try await sessionRunner.sendSharedChatMessage(
+            let delivery = try await sessionRunner.sendSharedChatMessage(
                 text: route.text,
                 destination: route.destination,
                 rootSessionID: sessionID
             )
+            if let telegramChatID {
+                recordTelegramSharedChatMessageOrigin(
+                    delivery.message.id,
+                    chatID: telegramChatID
+                )
+            }
             await refreshSharedChatPanelSuggestions()
         } catch {
             let safeError = Self.sharedChatInlineTerminalSafeText(error.localizedDescription)
             await writeFailureMessage("ZenCODE message: \(safeError)\n")
         }
+    }
+
+    /// Associates a Telegram-originated operator message with the synthetic
+    /// coordinator turn that will consume it. The shared-chat bus intentionally
+    /// has no UI transport metadata, so this short-lived surface association
+    /// preserves the Telegram response route without changing the bus protocol.
+    func recordTelegramSharedChatMessageOrigin(_ messageID: UUID, chatID: Int64) {
+        if telegramSharedChatMessageOrigins[messageID] == nil {
+            telegramSharedChatMessageOriginOrder.append(messageID)
+        }
+        telegramSharedChatMessageOrigins[messageID] = chatID
+        let maximumOrigins = AgentSharedChat.maximumRetainedMessagesPerRoom
+        while telegramSharedChatMessageOriginOrder.count > maximumOrigins {
+            let oldestMessageID = telegramSharedChatMessageOriginOrder.removeFirst()
+            telegramSharedChatMessageOrigins.removeValue(forKey: oldestMessageID)
+        }
+    }
+
+    /// Returns the Telegram origin of a trigger, consuming its batch mappings
+    /// so a replay cannot mirror an unrelated later coordinator response.
+    func takeTelegramSharedChatOrigin(
+        for messages: [AgentSharedChat.Message]
+    ) -> TerminalPromptOrigin? {
+        var chatID: Int64?
+        for message in messages {
+            if chatID == nil {
+                chatID = telegramSharedChatMessageOrigins[message.id]
+            }
+            telegramSharedChatMessageOrigins.removeValue(forKey: message.id)
+            telegramSharedChatMessageOriginOrder.removeAll { $0 == message.id }
+        }
+        return chatID.map(TerminalPromptOrigin.telegram)
     }
 
     /// Builds the route label shown for a reader entry from the message's
