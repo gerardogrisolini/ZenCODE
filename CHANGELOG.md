@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-08-28
+
 ### Added
 
 - `/goal` workflows can now be continued in conversation across the TUI,
