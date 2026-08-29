@@ -75,21 +75,33 @@ extension SessionTaskOrchestrator {
 
     /// Returns the incomplete task graphs persisted for a working directory,
     /// most recently updated first. A graph is resumable when it is not in a
-    /// terminal state and still has at least one non-terminal task. This is a
-    /// read-only disk scan and does not require a registered session.
+    /// terminal state and still has at least one non-terminal task. During the
+    /// scan, legacy ordinary checkpoints are compacted best-effort so terminal
+    /// graph history does not remain on disk. This does not require a
+    /// registered session.
     public func resumableTaskGraphCheckpoints(
         workingDirectory: URL
     ) -> [ResumableTaskGraph] {
         guard let store else { return [] }
         let checkpoints = store.loadCheckpoints(workingDirectory: workingDirectory)
-        let planLibrarySessionID = Self.savedPlanLibrarySessionID(
-            for: workingDirectory
-        )
         var resumable: [ResumableTaskGraph] = []
-        for checkpoint in checkpoints where checkpoint.sessionID != planLibrarySessionID {
-            for graph in checkpoint.graphs where !graph.state.isTerminal {
+        for checkpoint in checkpoints {
+            // The saved-plan library is durable user data, rather than a
+            // recovery checkpoint. Deliberately use the complete namespace:
+            // a project-key implementation change must not make older library
+            // files eligible for recovery pruning.
+            guard !checkpoint.sessionID.hasPrefix("saved-plans-") else {
+                continue
+            }
+            let graphs = resumableGraphs(in: checkpoint)
+            pruneLegacyCheckpoint(
+                checkpoint,
+                keeping: graphs,
+                workingDirectory: workingDirectory,
+                store: store
+            )
+            for graph in graphs {
                 let pendingCount = graph.tasks.lazy.filter { !$0.status.isTerminal }.count
-                guard pendingCount > 0 else { continue }
                 resumable.append(
                     ResumableTaskGraph(
                         sessionID: checkpoint.sessionID,
@@ -104,6 +116,56 @@ extension SessionTaskOrchestrator {
             }
         }
         return resumable.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Applies startup recovery retention to an already-loaded ordinary
+    /// checkpoint. The loaded value is the CAS precondition, so a concurrent
+    /// writer wins over this nonessential cleanup. Startup discovery must not
+    /// be interrupted by stale, unreadable, or otherwise failed cleanup.
+    func pruneLegacyCheckpoint(
+        _ checkpoint: SessionTaskGraphCheckpoint,
+        keeping graphs: [TaskGraphSnapshot],
+        workingDirectory: URL,
+        store: SessionTaskGraphStore
+    ) {
+        guard graphs != checkpoint.graphs else { return }
+        do {
+            guard !graphs.isEmpty else {
+                _ = try store.compareAndDelete(
+                    sessionID: checkpoint.sessionID,
+                    replacing: checkpoint,
+                    workingDirectory: workingDirectory
+                )
+                return
+            }
+            let graphIDs = Set(graphs.map(\.id))
+            try store.compareAndSwap(
+                SessionTaskGraphCheckpoint(
+                    sessionID: checkpoint.sessionID,
+                    currentGraphID: checkpoint.currentGraphID.flatMap {
+                        graphIDs.contains($0) ? $0 : nil
+                    },
+                    graphs: graphs,
+                    savedAt: Date()
+                ),
+                replacing: checkpoint,
+                workingDirectory: workingDirectory
+            )
+        } catch {
+            ZenLogger.warning(
+                .taskLifecycle,
+                "Skipping stale task graph checkpoint cleanup for \(checkpoint.sessionID): \(error.localizedDescription)"
+            )
+        }
+    }
+
+    func resumableGraphs(
+        in checkpoint: SessionTaskGraphCheckpoint
+    ) -> [TaskGraphSnapshot] {
+        checkpoint.graphs.filter { graph in
+            !graph.state.isTerminal
+                && graph.tasks.contains(where: { !$0.status.isTerminal })
+        }
     }
 
     /// Enumerates complete saved-plan payloads for a project, newest explicit

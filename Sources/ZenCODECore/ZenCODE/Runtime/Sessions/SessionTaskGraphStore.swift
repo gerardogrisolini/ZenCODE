@@ -110,6 +110,39 @@ public struct SessionTaskGraphStore: Sendable {
         }
     }
 
+    /// Atomically removes a checkpoint only when it still matches `expected`.
+    /// This is the deletion counterpart to ``compareAndSwap(_:replacing:workingDirectory:fileManager:)``:
+    /// it prevents an older orchestrator that has no resumable work left from
+    /// deleting a newer checkpoint written by another runtime instance.
+    @discardableResult
+    public func compareAndDelete(
+        sessionID: String,
+        replacing expected: SessionTaskGraphCheckpoint?,
+        workingDirectory: URL,
+        fileManager: FileManager = .default
+    ) throws -> Bool {
+        let fileURL = checkpointFileURL(
+            sessionID: sessionID,
+            workingDirectory: workingDirectory,
+            fileManager: fileManager
+        )
+        return try withLock(for: fileURL, exclusive: true, fileManager: fileManager) {
+            let current = try loadUnlocked(
+                from: fileURL,
+                sessionID: sessionID,
+                fileManager: fileManager
+            )
+            guard current == expected else {
+                throw SessionTaskGraphStoreError.staleCheckpoint(sessionID)
+            }
+            guard fileManager.fileExists(atPath: fileURL.path) else {
+                return false
+            }
+            try fileManager.removeItem(at: fileURL)
+            return true
+        }
+    }
+
     public func load(
         sessionID: String,
         workingDirectory: URL,

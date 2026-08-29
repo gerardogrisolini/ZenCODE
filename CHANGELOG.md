@@ -109,6 +109,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The terminal status bar now renders its previously white neutral metadata in
+  a readable light gray, while preserving the white input row and semantic
+  accent colors.
 - The terminal Chat reader notification is now quieter and fully transient:
   the compact header appears only while unread messages remain and disappears
   completely once every message has been read, releasing its reserved row back
@@ -119,6 +122,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Ordinary task-graph recovery checkpoints now retain only resumable work and
+  are removed once all graphs are terminal or archived, preventing completed
+  graph history from accumulating. Explicit `/plan save` library entries remain
+  durable, including completed saved plans.
 - Foreground tool and feature processes now retain at most 16 MiB from each of
   `stdout` and `stderr`; exceeding either bound terminates and reaps the producer
   instead of allowing an unbroken line or runaway diagnostics to exhaust system

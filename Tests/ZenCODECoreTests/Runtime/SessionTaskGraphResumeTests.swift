@@ -265,6 +265,212 @@ struct SessionTaskGraphResumeTests {
     }
 
     @Test
+    func resumeScanDeletesLegacyTerminalOnlyOrdinaryCheckpoint() async throws {
+        let (root, support, working) = try makeTemp()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SessionTaskGraphStore(supportDirectoryURL: support)
+        let terminal = TaskGraphSnapshot(
+            id: "terminal",
+            source: .manual,
+            state: .completed,
+            tasks: [TaskRecord(id: "done", title: "Done", order: 1, status: .completed)]
+        )
+        try store.save(
+            SessionTaskGraphCheckpoint(
+                sessionID: "legacy-terminal",
+                currentGraphID: terminal.id,
+                graphs: [terminal]
+            ),
+            workingDirectory: working
+        )
+
+        let reader = SessionTaskOrchestrator(store: store)
+        #expect(await reader.resumableTaskGraphCheckpoints(workingDirectory: working).isEmpty)
+        #expect(try store.load(sessionID: "legacy-terminal", workingDirectory: working) == nil)
+    }
+
+    @Test
+    func resumeScanCompactsLegacyMixedOrdinaryCheckpoint() async throws {
+        let (root, support, working) = try makeTemp()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SessionTaskGraphStore(supportDirectoryURL: support)
+        let terminal = TaskGraphSnapshot(
+            id: "terminal",
+            source: .manual,
+            state: .completed,
+            tasks: [TaskRecord(id: "done", title: "Done", order: 1, status: .completed)]
+        )
+        let resumable = TaskGraphSnapshot(
+            id: "resume",
+            source: .manual,
+            state: .active,
+            tasks: [TaskRecord(id: "pending", title: "Pending", order: 1)]
+        )
+        try store.save(
+            SessionTaskGraphCheckpoint(
+                sessionID: "legacy-mixed",
+                currentGraphID: terminal.id,
+                graphs: [terminal, resumable]
+            ),
+            workingDirectory: working
+        )
+
+        let reader = SessionTaskOrchestrator(store: store)
+        let discovered = await reader.resumableTaskGraphCheckpoints(workingDirectory: working)
+        #expect(discovered.map(\.graphID) == [resumable.id])
+        let compacted = try #require(
+            try store.load(sessionID: "legacy-mixed", workingDirectory: working)
+        )
+        #expect(compacted.graphs == [resumable])
+        #expect(compacted.currentGraphID == nil)
+    }
+
+    @Test
+    func resumeScanNeverPrunesSavedPlanNamespace() async throws {
+        let (root, support, working) = try makeTemp()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SessionTaskGraphStore(supportDirectoryURL: support)
+        let terminal = TaskGraphSnapshot(
+            id: "saved-terminal",
+            source: .manual,
+            state: .completed,
+            tasks: [TaskRecord(id: "done", title: "Done", order: 1, status: .completed)]
+        )
+        let checkpoint = SessionTaskGraphCheckpoint(
+            sessionID: "saved-plans-legacy-project-key",
+            currentGraphID: terminal.id,
+            graphs: [terminal],
+            savedAt: Date(timeIntervalSince1970: 123)
+        )
+        try store.save(checkpoint, workingDirectory: working)
+
+        let reader = SessionTaskOrchestrator(store: store)
+        #expect(await reader.resumableTaskGraphCheckpoints(workingDirectory: working).isEmpty)
+        #expect(
+            try store.load(
+                sessionID: checkpoint.sessionID,
+                workingDirectory: working
+            ) == checkpoint
+        )
+    }
+
+    @Test
+    func staleLegacyCleanupDoesNotOverwriteNewerWriterCheckpoint() async throws {
+        let (root, support, working) = try makeTemp()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SessionTaskGraphStore(supportDirectoryURL: support)
+        let terminal = TaskGraphSnapshot(
+            id: "terminal",
+            source: .manual,
+            state: .completed,
+            tasks: [TaskRecord(id: "done", title: "Done", order: 1, status: .completed)]
+        )
+        let stale = SessionTaskGraphCheckpoint(
+            sessionID: "race",
+            currentGraphID: terminal.id,
+            graphs: [terminal]
+        )
+        try store.save(stale, workingDirectory: working)
+        let newerGraph = TaskGraphSnapshot(
+            id: "new-work",
+            source: .manual,
+            state: .active,
+            tasks: [TaskRecord(id: "pending", title: "Pending", order: 1)]
+        )
+        let newer = SessionTaskGraphCheckpoint(
+            sessionID: stale.sessionID,
+            currentGraphID: newerGraph.id,
+            graphs: [newerGraph]
+        )
+        // Simulate another runtime publishing after the scanner loaded `stale`.
+        try store.save(newer, workingDirectory: working)
+
+        let reader = SessionTaskOrchestrator(store: store)
+        await reader.pruneLegacyCheckpoint(
+            stale,
+            keeping: [],
+            workingDirectory: working,
+            store: store
+        )
+        #expect(try store.load(sessionID: stale.sessionID, workingDirectory: working) == newer)
+    }
+
+    @Test
+    func ordinaryCheckpointPrunesTerminalGraphsAndDeletesWhenNothingIsResumable() async throws {
+        let (root, support, working) = try makeTemp()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SessionTaskGraphStore(supportDirectoryURL: support)
+        let orchestrator = SessionTaskOrchestrator(store: store)
+        try await orchestrator.registerSession(id: "session", workingDirectory: working)
+        _ = try await orchestrator.createGraph(
+            sessionID: "session",
+            id: "first",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "first-task", title: "First")]
+        )
+        _ = try await orchestrator.createGraph(
+            sessionID: "session",
+            id: "second",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "second-task", title: "Second")]
+        )
+
+        // Starting the second graph archives the first. Its terminal history
+        // stays in memory but cannot accumulate in the recovery checkpoint.
+        let checkpoint = try #require(
+            try store.load(sessionID: "session", workingDirectory: working)
+        )
+        #expect(checkpoint.graphs.map(\.id) == ["second"])
+        #expect(checkpoint.currentGraphID == "second")
+
+        _ = try await orchestrator.archiveGraph(id: "second", sessionID: "session")
+        // No graph can be restored, so remove the ordinary checkpoint entirely.
+        #expect(
+            try store.load(sessionID: "session", workingDirectory: working) == nil
+        )
+    }
+
+    @Test
+    func completingOrdinaryGraphDeletesItsRecoveryCheckpoint() async throws {
+        let (root, support, working) = try makeTemp()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SessionTaskGraphStore(supportDirectoryURL: support)
+        let orchestrator = SessionTaskOrchestrator(store: store)
+        try await orchestrator.registerSession(id: "session", workingDirectory: working)
+        _ = try await orchestrator.createGraph(
+            sessionID: "session",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "task", title: "Task")]
+        )
+        _ = try await orchestrator.updateTask(
+            sessionID: "session",
+            taskID: "task",
+            graphID: "graph",
+            update: TaskUpdate(status: .inProgress, output: "started")
+        )
+        _ = try await orchestrator.updateTask(
+            sessionID: "session",
+            taskID: "task",
+            graphID: "graph",
+            update: TaskUpdate(status: .completed, output: "done")
+        )
+
+        #expect(
+            try store.load(sessionID: "session", workingDirectory: working) == nil
+        )
+    }
+
+    @Test
     func storelessOrchestratorReturnsNoResumableGraphs() async {
         let orchestrator = SessionTaskOrchestrator(store: nil)
         let resumable = await orchestrator.resumableTaskGraphCheckpoints(

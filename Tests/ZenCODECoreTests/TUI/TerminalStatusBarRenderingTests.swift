@@ -52,6 +52,7 @@ private final class CapturedOutput: Sendable {
         #expect(frame.contains("╮"))
         #expect(frame.contains("╰"))
         #expect(frame.contains("╯"))
+        #expect(frame.contains("\(TerminalStyle.Text.secondary)test-model\(TerminalStyle.reset)"))
         #expect(!frame.contains("┌"))
         #expect(!frame.contains("┐"))
         #expect(!frame.contains("└"))

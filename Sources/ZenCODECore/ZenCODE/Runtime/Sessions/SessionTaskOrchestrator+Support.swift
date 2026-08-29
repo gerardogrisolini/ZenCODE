@@ -481,11 +481,53 @@ extension SessionTaskOrchestrator {
         )
     }
 
+    /// Ordinary session checkpoints are recovery records, not a graph history.
+    /// Keep only graphs that startup can actually offer for resumption. The
+    /// explicit saved-plan library deliberately bypasses this projection.
+    func resumableGraphs(in state: SessionState) -> [TaskGraphSnapshot] {
+        state.graphs.values.filter { graph in
+            !graph.state.isTerminal
+                && graph.tasks.contains(where: { !$0.status.isTerminal })
+        }
+    }
+
     func persist(sessionID: String, state: SessionState) throws {
         guard let store,
               let workingDirectory = workingDirectories[sessionID] else {
             return
         }
+        let librarySessionID = Self.savedPlanLibrarySessionID(
+            for: workingDirectory
+        )
+        guard sessionID == librarySessionID else {
+            let graphs = resumableGraphs(in: state)
+            guard !graphs.isEmpty else {
+                _ = try store.compareAndDelete(
+                    sessionID: sessionID,
+                    replacing: persistedCheckpoints[sessionID],
+                    workingDirectory: workingDirectory
+                )
+                persistedCheckpoints.removeValue(forKey: sessionID)
+                return
+            }
+            let resumableGraphIDs = Set(graphs.map(\.id))
+            let nextCheckpoint = SessionTaskGraphCheckpoint(
+                sessionID: sessionID,
+                currentGraphID: state.currentGraphID.flatMap {
+                    resumableGraphIDs.contains($0) ? $0 : nil
+                },
+                graphs: graphs.sorted(by: Self.graphSortOrder),
+                savedAt: Date()
+            )
+            try store.compareAndSwap(
+                nextCheckpoint,
+                replacing: persistedCheckpoints[sessionID],
+                workingDirectory: workingDirectory
+            )
+            persistedCheckpoints[sessionID] = nextCheckpoint
+            return
+        }
+
         let nextCheckpoint = checkpoint(sessionID: sessionID, state: state)
         try store.compareAndSwap(
             nextCheckpoint,

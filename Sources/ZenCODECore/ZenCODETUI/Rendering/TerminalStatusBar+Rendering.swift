@@ -370,9 +370,17 @@ extension TerminalStatusBar {
         let boxWidth = statusBoxWidthLocked(state: &state)
         let contentWidth = statusBoxContentWidthLocked(state: &state)
         let orange = TerminalStyle.Chrome.border
+        let lightText = TerminalStyle.Text.secondary
         let reset = TerminalStyle.reset
         let horizontalRule = String(repeating: "─", count: max(0, boxWidth - 2))
         let text = Self.fit(statusTextLocked(state: &state), width: contentWidth)
+        // Keep the status bar's neutral foreground quieter than terminal white.
+        // Semantic fragments retain their own colors; after each reset, restore
+        // the light-gray baseline instead of falling back to the terminal default.
+        let styledText = lightText + text.replacingOccurrences(
+            of: reset,
+            with: reset + lightText
+        )
         let padding = max(0, contentWidth - Self.visibleCharacterCount(text))
         let isAttachedToInputPanel = state.inputPanelState != nil
         var sequence = "\u{1B}7"
@@ -391,7 +399,8 @@ extension TerminalStatusBar {
         + "│"
         + reset
         + " "
-        + text
+        + styledText
+        + reset
         + String(repeating: " ", count: padding)
         + " "
         + orange
