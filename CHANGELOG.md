@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-29
+
 ### Added
 
 - Telegram remote control now has persistent multi-session routing keyed by
@@ -158,6 +160,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
   response destination when shared-chat coordination starts its synthetic
   coordinator turn, so the coordinator reply is delivered back to Telegram
   instead of appearing only in the terminal.
+- Receiving a Telegram prompt in the interactive TUI no longer aborts with a
+  Swift exclusivity violation while updating and scheduling the prompt queue.
+- The Telegram inbound mailbox now identifies the receiver it parks, like a
+  pending producer. A new receive resolves a suspended one with `nil` — no
+  element consumed, no silent continuation overwrite — task cancellation
+  removes only the receiver that task parked, and `finish()` resolves the
+  receiver currently suspended. Concurrent iterators or a close consumer
+  handoff can no longer strand one continuation while terminating another.
+  The bounded, FIFO, lossless backpressure and the source-compatible
+  `AsyncStream` ingress surface are unchanged.
 
 ## [2.0.1] - 2026-08-28
 
@@ -182,9 +194,6 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `tasks.retry` the interrupted work.
 
 ### Fixed
-
-- Receiving a Telegram prompt in the interactive TUI no longer aborts with a
-  Swift exclusivity violation while updating and scheduling the prompt queue.
 
 - Starting a second `/goal` while a workflow is still open now fails with an
   actionable message naming the open graph, the number of open tasks, and how
@@ -1281,7 +1290,9 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v2.0.1...v2.1.0
+[2.0.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.6...v1.3.0
 [1.2.6]: https://github.com/gerardogrisolini/ZenCODE/compare/v1.2.5...v1.2.6

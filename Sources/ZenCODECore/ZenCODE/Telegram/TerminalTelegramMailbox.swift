@@ -9,6 +9,14 @@ import Foundation
 /// element is either handed directly to a consumer or retained in the bounded
 /// buffer. Saturation suspends that producer; it never drops or allocates an
 /// unbounded overflow queue.
+///
+/// The mailbox parks at most one suspended receiver, identified like a pending
+/// producer. A new receive supersedes a suspended one by resolving it with
+/// `nil` — no element is consumed — instead of silently overwriting (and so
+/// leaking) its continuation. Task cancellation removes only the receiver that
+/// task parked, and `finish()` resolves the receiver currently suspended, so
+/// concurrent iterators or a handoff between consumers can never strand one
+/// continuation while terminating another.
 public struct TerminalTelegramMailbox<Element: Sendable>: AsyncSequence, Sendable {
     public typealias AsyncIterator = Iterator
 
@@ -27,10 +35,15 @@ public struct TerminalTelegramMailbox<Element: Sendable>: AsyncSequence, Sendabl
             let continuation: CheckedContinuation<Bool, Never>
         }
 
+        struct PendingReceive {
+            let id: UUID
+            let continuation: CheckedContinuation<Element?, Never>
+        }
+
         let capacity: Int
         var buffer: [Element] = []
         var pendingSend: PendingSend?
-        var receiver: CheckedContinuation<Element?, Never>?
+        var receiver: PendingReceive?
         var finished = false
 
         init(capacity: Int) {
@@ -42,7 +55,7 @@ public struct TerminalTelegramMailbox<Element: Sendable>: AsyncSequence, Sendabl
             guard !finished, !Task.isCancelled else { return false }
             if let receiver {
                 self.receiver = nil
-                receiver.resume(returning: element)
+                receiver.continuation.resume(returning: element)
                 return true
             }
             if buffer.count < capacity {
@@ -76,12 +89,22 @@ public struct TerminalTelegramMailbox<Element: Sendable>: AsyncSequence, Sendabl
                 return pendingSend.element
             }
             guard !finished, !Task.isCancelled else { return nil }
+            // The receiver is identified so a late cancellation can never
+            // remove a receiver another consumer owns.
+            let id = UUID()
             return await withTaskCancellationHandler {
                 await withCheckedContinuation { continuation in
-                    receiver = continuation
+                    // At most one suspended receiver: a new receive resolves
+                    // the previous one with nil instead of overwriting — and
+                    // so leaking — its continuation. No element is consumed.
+                    if let previous = receiver {
+                        receiver = nil
+                        previous.continuation.resume(returning: nil)
+                    }
+                    receiver = PendingReceive(id: id, continuation: continuation)
                 }
             } onCancel: {
-                Task { await self.cancelReceiver() }
+                Task { await self.cancelReceiver(id: id) }
             }
         }
 
@@ -94,7 +117,7 @@ public struct TerminalTelegramMailbox<Element: Sendable>: AsyncSequence, Sendabl
             }
             if buffer.isEmpty, let receiver {
                 self.receiver = nil
-                receiver.resume(returning: nil)
+                receiver.continuation.resume(returning: nil)
             }
         }
 
@@ -112,10 +135,10 @@ public struct TerminalTelegramMailbox<Element: Sendable>: AsyncSequence, Sendabl
             continuation?.resume(returning: false)
         }
 
-        private func cancelReceiver() {
-            guard let receiver else { return }
+        private func cancelReceiver(id: UUID) {
+            guard let receiver, receiver.id == id else { return }
             self.receiver = nil
-            receiver.resume(returning: nil)
+            receiver.continuation.resume(returning: nil)
         }
     }
 
@@ -133,6 +156,13 @@ public struct TerminalTelegramMailbox<Element: Sendable>: AsyncSequence, Sendabl
         await storage.send(element)
     }
 
+    /// Pulls the next element without materializing an iterator. Used by the
+    /// source-compatible `AsyncStream` façade, which must stay demand-driven so
+    /// the mailbox keeps its bound and its producer backpressure.
+    func nextElement() async -> Element? {
+        await storage.next()
+    }
+
     func finish() async {
         await storage.finish()
     }
@@ -143,5 +173,9 @@ public struct TerminalTelegramMailbox<Element: Sendable>: AsyncSequence, Sendabl
 
     var hasBackpressuredProducerForTesting: Bool {
         get async { await storage.pendingSend != nil }
+    }
+
+    var hasSuspendedReceiverForTesting: Bool {
+        get async { await storage.receiver != nil }
     }
 }

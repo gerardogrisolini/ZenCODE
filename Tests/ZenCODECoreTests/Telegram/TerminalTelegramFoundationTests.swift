@@ -709,4 +709,168 @@ struct TerminalTelegramReleaseFenceTests {
         #expect(await iterator.next() == 2)
         await mailbox.finish()
     }
+
+    // MARK: - Suspended receiver identity
+
+    /// Polls an async condition with cooperative yields: event-driven
+    /// observation of actor state, never wall-clock sleeps.
+    private static func waitUntil(_ condition: () async -> Bool) async {
+        for _ in 0..<1_000 {
+            if await condition() { return }
+            await Task.yield()
+        }
+        Issue.record("mailbox condition was never observed within 1,000 yields")
+    }
+
+    /// Starts a consumer on an empty mailbox and returns it only once its
+    /// receiver is actually parked in the actor.
+    private static func parkConsumer(
+        on mailbox: TerminalTelegramMailbox<Int>
+    ) async -> Task<Int?, Never> {
+        let consumer = Task { await mailbox.nextElement() }
+        await waitUntil { await mailbox.hasSuspendedReceiverForTesting }
+        return consumer
+    }
+
+    /// Cancelling the consumer that parked a receiver vacates only that
+    /// receiver: the slot frees up and a later element is retained in the
+    /// bounded buffer instead of vanishing into the dead continuation.
+    @Test
+    func cancellingConsumerVacatesOnlyItsOwnReceiver() async {
+        let mailbox = TerminalTelegramMailbox<Int>(capacity: 1)
+        let consumer = await Self.parkConsumer(on: mailbox)
+
+        consumer.cancel()
+        #expect(await consumer.value == nil)
+        await Self.waitUntil { await !mailbox.hasSuspendedReceiverForTesting }
+
+        #expect(await mailbox.send(1))
+        #expect(await mailbox.bufferedCountForTesting == 1)
+        #expect(await mailbox.nextElement() == 1)
+        await mailbox.finish()
+    }
+
+    /// A second receive while one is suspended resolves the first with `nil`
+    /// — never a silent overwrite of its continuation — and consumes no
+    /// element: the next send is handed to the receiver that is actually
+    /// waiting.
+    @Test
+    func newerReceiveSupersedesSuspendedReceiverWithoutConsuming() async {
+        let mailbox = TerminalTelegramMailbox<Int>(capacity: 2)
+        let first = await Self.parkConsumer(on: mailbox)
+
+        let second = Task { await mailbox.nextElement() }
+        // Only `second` parking can resolve `first`, and it must be with nil.
+        #expect(await first.value == nil)
+        await Self.waitUntil { await mailbox.hasSuspendedReceiverForTesting }
+
+        #expect(await mailbox.send(7))
+        #expect(await second.value == 7)
+        #expect(await mailbox.bufferedCountForTesting == 0)
+        await mailbox.finish()
+    }
+
+    /// The handoff race the receiver identity exists for: the cancellation
+    /// handler of a superseded consumer may run after a replacement receiver
+    /// has parked. It must leave that replacement alone, whichever order the
+    /// two events interleave in.
+    @Test
+    func lateCancellationLeavesTheReplacementReceiverIntact() async {
+        let mailbox = TerminalTelegramMailbox<Int>(capacity: 1)
+        let first = await Self.parkConsumer(on: mailbox)
+
+        // Cancel, then hand off before the cancellation handler can run.
+        first.cancel()
+        let second = Task { await mailbox.nextElement() }
+        #expect(await first.value == nil)
+        await Self.waitUntil { await mailbox.hasSuspendedReceiverForTesting }
+        // Give any in-flight cancellation handler the chance to wrongly
+        // vacate the replacement receiver.
+        for _ in 0..<64 { await Task.yield() }
+        #expect(await mailbox.hasSuspendedReceiverForTesting)
+
+        #expect(await mailbox.send(9))
+        #expect(await second.value == 9)
+        await mailbox.finish()
+    }
+
+    /// `finish()` resolves the receiver that is currently suspended, so a
+    /// consumer parked on an empty mailbox is released with `nil` instead of
+    /// waiting forever.
+    @Test
+    func finishResolvesTheSuspendedReceiver() async {
+        let mailbox = TerminalTelegramMailbox<Int>(capacity: 1)
+        let consumer = await Self.parkConsumer(on: mailbox)
+
+        await mailbox.finish()
+        #expect(await consumer.value == nil)
+        #expect(await mailbox.hasSuspendedReceiverForTesting == false)
+    }
+
+    // MARK: - v2.0.1 public ingress surface
+
+    private static func probeMessage(id: Int) -> TerminalTelegramIncomingMessage {
+        TerminalTelegramIncomingMessage(
+            chatID: 42, userID: 7, text: "m\(id)", voice: nil,
+            messageID: id, chatTitle: nil, username: nil
+        )
+    }
+
+    private static func makeControlService() -> TerminalTelegramControlService {
+        TerminalTelegramControlService(
+            transportFactory: { StubTelegramHTTPTransport(status: 200, body: Data()) }
+        )
+    }
+
+    /// Source compatibility with 2.0.1: the public ingress surface is still an
+    /// `AsyncStream<TerminalTelegramIncomingMessage>` plus the public buffer
+    /// limit constant, even though the bounded mailbox now owns the RAM bound.
+    @Test
+    func publicIngressSurfaceStaysSourceCompatibleWithV201() async throws {
+        let service = Self.makeControlService()
+        let stream: AsyncStream<TerminalTelegramIncomingMessage> = service.incomingMessages
+        let limit: Int = TerminalTelegramControlService.incomingMessageBufferLimit
+        #expect(limit == 64)
+
+        #expect(await service.incomingMailbox.send(Self.probeMessage(id: 1)))
+        var iterator = stream.makeAsyncIterator()
+        #expect(await iterator.next()?.messageID == 1)
+        await service.incomingMailbox.finish()
+    }
+
+    /// The `AsyncStream` façade is only a demand-driven view of the mailbox: it
+    /// adds no buffer of its own, so the ingress stays bounded to
+    /// `incomingMessageBufferLimit`, backpressures the extra producer and loses
+    /// no message while draining through the public API.
+    @Test
+    func publicIngressStreamStaysBoundedLosslessAndBackpressured() async throws {
+        let service = Self.makeControlService()
+        let mailbox = service.incomingMailbox
+        let limit = TerminalTelegramControlService.incomingMessageBufferLimit
+
+        for id in 1...limit {
+            #expect(await mailbox.send(Self.probeMessage(id: id)))
+        }
+        let overflow = Task { await mailbox.send(Self.probeMessage(id: limit + 1)) }
+
+        var observedBackpressure = false
+        for _ in 0..<1_000 {
+            if await mailbox.hasBackpressuredProducerForTesting {
+                observedBackpressure = true
+                break
+            }
+            await Task.yield()
+        }
+        #expect(observedBackpressure)
+        // The façade holds nothing: everything retained is the bounded mailbox.
+        #expect(await mailbox.bufferedCountForTesting == limit)
+
+        var iterator = service.incomingMessages.makeAsyncIterator()
+        for id in 1...limit {
+            #expect(await iterator.next()?.messageID == id)
+        }
+        #expect(await overflow.value)
+        #expect(await iterator.next()?.messageID == limit + 1)
+        await mailbox.finish()
+    }
 }

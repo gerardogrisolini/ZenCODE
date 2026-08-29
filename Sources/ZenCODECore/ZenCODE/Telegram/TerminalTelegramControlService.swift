@@ -324,7 +324,16 @@ public actor TerminalTelegramControlService {
     /// filtering and sending path through a fake HTTP transport. Production
     /// keeps the shared NIO engine.
     let transportFactory: @Sendable () -> any TelegramHTTPTransport
-    public nonisolated let incomingMessages: TerminalTelegramMailbox<TerminalTelegramIncomingMessage>
+    /// Capacity of the bounded inbound mailbox. Kept public and source-compatible
+    /// with 2.0.1.
+    public static let incomingMessageBufferLimit = 64
+    /// Bounded, lossless inbound queue: the actual RAM bound and the producer
+    /// backpressure live here.
+    nonisolated let incomingMailbox: TerminalTelegramMailbox<TerminalTelegramIncomingMessage>
+    /// Source-compatible 2.0.1 façade over ``incomingMailbox``. The stream is
+    /// demand-driven (`unfolding`), so it pulls exactly one element per consumer
+    /// request and adds no buffer of its own.
+    public nonisolated let incomingMessages: AsyncStream<TerminalTelegramIncomingMessage>
     private var state: TerminalTelegramControlState
     private var pollingTask: Task<Void, Never>?
     private var commandMenuTask: Task<Void, Never>?
@@ -363,8 +372,11 @@ public actor TerminalTelegramControlService {
         self.dispatcher = dispatcher
         let lifecycleGate = TerminalTelegramLifecycleGate()
         self.lifecycleGate = lifecycleGate
-        let mailbox = TerminalTelegramMailbox<TerminalTelegramIncomingMessage>(capacity: 64)
-        incomingMessages = mailbox
+        let mailbox = TerminalTelegramMailbox<TerminalTelegramIncomingMessage>(
+            capacity: Self.incomingMessageBufferLimit
+        )
+        incomingMailbox = mailbox
+        incomingMessages = AsyncStream(unfolding: { await mailbox.nextElement() })
         state = TerminalTelegramControlState.inactive()
     }
 
@@ -387,7 +399,7 @@ public actor TerminalTelegramControlService {
         // Terminate the stream so any `for await` consumer of `incomingMessages`
         // (e.g. the Telegram forwarding task) resumes and unwinds instead of
         // staying suspended after the service is deallocated.
-        let mailbox = incomingMessages
+        let mailbox = incomingMailbox
         Task { await mailbox.finish() }
     }
     public func currentState() -> TerminalTelegramControlState {
@@ -1126,7 +1138,7 @@ public actor TerminalTelegramControlService {
     private func handle(_ update: TerminalTelegramUpdate) async {
         if let stopped = update.stoppedMessageGeneration,
            state.isActive {
-            let admitted = await incomingMessages.send(
+            let admitted = await incomingMailbox.send(
                 TerminalTelegramIncomingMessage(
                     chatID: stopped.chat.id,
                     userID: 0,
@@ -1177,7 +1189,7 @@ public actor TerminalTelegramControlService {
         }
 
         state.lastMessagePreview = text ?? voice.map { _ in "voice message" } ?? "attachment"
-        let admitted = await incomingMessages.send(
+        let admitted = await incomingMailbox.send(
             TerminalTelegramIncomingMessage(
                 chatID: message.chat.id,
                 userID: user.id,
@@ -1202,7 +1214,7 @@ public actor TerminalTelegramControlService {
               let message = callback.message,
               callback.from.isBot != true,
               let data = callback.data?.nilIfBlank else { return }
-        let admitted = await incomingMessages.send(TerminalTelegramIncomingMessage(
+        let admitted = await incomingMailbox.send(TerminalTelegramIncomingMessage(
             chatID: message.chat.id, userID: callback.from.id,
             topicID: message.messageThreadID,
             chatKind: TerminalTelegramChatKind(wireValue: message.chat.type), text: nil, voice: nil,
