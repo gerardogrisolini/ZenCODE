@@ -593,7 +593,10 @@ extension TerminalChat {
             generationTask?.cancel()
             telegramForwardingTask.cancel()
             sharedChatObservation.task.cancel()
-            await remoteTranscriptions.cancelAllAndWait(shuttingDown: true)
+            // `defer` cannot suspend. This synchronous fallback closes admission
+            // and cancels any transcription if a future early-exit path is added;
+            // the current exits await cleanup explicitly below.
+            remoteTranscriptions.cancelAll()
             eventQueue.finish()
             // This loop owns exactly one subscriber. Session teardown performs
             // room-wide stop; detaching here must never end another TUI/ACP
@@ -764,6 +767,7 @@ extension TerminalChat {
         await installSharedChatMentionSuggestionsProvider()
 
         guard await startPanelInput() else {
+            await remoteTranscriptions.cancelAllAndWait(shuttingDown: true)
             await statusBar.stop()
             throw TerminalChatError.interactivePromptUnavailable
         }
@@ -1246,6 +1250,7 @@ extension TerminalChat {
         // render can run during or after the turn retirement below.
         await stopTaskGraphObserver()
         await finalizeTelegramTurnProgressReporting()
+        await remoteTranscriptions.cancelAllAndWait(shuttingDown: true)
 
         await stopPanelInput()
     }
