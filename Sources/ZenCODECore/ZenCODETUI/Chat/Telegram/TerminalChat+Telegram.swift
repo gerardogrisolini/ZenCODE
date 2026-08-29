@@ -1132,6 +1132,18 @@ extension TerminalChat {
             telegramLinkedChatTitle = settings.linkedChatTitle
             telegramLinkedUserID = nil
             telegramControlState = try await telegramControlService.start()
+            telegramActiveRouteLease = await telegramEgressRouteLease(
+                settings: settings,
+                linkedChatID: linkedChatID
+            )
+            if let lease = telegramActiveRouteLease {
+                telegramLinkedUserID = lease.key.userID
+                // A local turn that was already running while Telegram was off
+                // must use the same validated lease as the next local turn.
+                if activeTelegramTurnOrigin == .local {
+                    activeTelegramTurnOrigin = .telegramLease(lease)
+                }
+            }
             telegramVoiceTranscriptions.resume()
             await synchronizeTelegramTurnProgressReporting()
             let chatTitle = telegramLinkedChatTitle?.nilIfBlank ?? "chat \(linkedChatID)"
@@ -1142,14 +1154,44 @@ extension TerminalChat {
 
                 """
             )
-            // Egress remains fail-closed until the first authorized ingress
-            // supplies a complete, router-validatable route lease.
+            // Legacy settings without an owner-bearing route remain fail-closed
+            // until the first authorized ingress migrates their private binding.
         } catch {
             telegramControlState = await telegramControlService.currentState()
             telegramControlState.lastError = error.localizedDescription
             await synchronizeTelegramTurnProgressReporting()
             await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
         }
+    }
+
+    /// Restores the owner-bearing route persisted by setup so `/telegram on`
+    /// enables egress immediately, without requiring a fresh Telegram message.
+    ///
+    /// The route is resolved through the ACL authority rather than synthesized
+    /// from `linkedChatID`; every later wire operation therefore retains the
+    /// generation and lifecycle validation introduced by multi-session routing.
+    func telegramEgressRouteLease(
+        settings: AgentTelegramSettingsManifest,
+        linkedChatID: Int64
+    ) async -> TerminalTelegramRouteLease? {
+        guard settings.isRoutingSupported else { return nil }
+        await telegramSessionRouter.refresh(
+            routes: settings.routes,
+            groupsEnabled: settings.groupsEnabled
+        )
+        let candidates = settings.routes.filter {
+            $0.chatID == linkedChatID
+                && $0.topicID == nil
+                && $0.lifecycle == .active
+                && ($0.roomID == sessionID || $0.roomID == "default")
+        }
+        guard candidates.count == 1, let route = candidates.first else { return nil }
+        return try? await telegramSessionRouter.resolve(
+            chatID: route.chatID,
+            userID: route.ownerUserID,
+            topicID: nil,
+            chatKind: route.chatKind
+        )
     }
 
     func stopTelegramControl() async {

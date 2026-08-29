@@ -12,6 +12,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- `/telegram on` now restores the persisted, generation-fenced route lease and
+  uses it for terminal-originated turns, including a turn already running when
+  Telegram is enabled. The multi-session routing migration had left real local
+  prompts as `.local`, while every outbound path required `origin.telegramLease`;
+  the command therefore reported an active link but silently created no Telegram
+  reporter until a fresh authorized Telegram message happened to arrive.
+
 - Telegram ingress no longer dies silently after the first consumer teardown.
   `TerminalTelegramControlService.incomingMessages` stored a single
   `AsyncStream(unfolding:)`, which is one-shot: the first `nil` — a cancelled

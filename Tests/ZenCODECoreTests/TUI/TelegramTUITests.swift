@@ -485,6 +485,71 @@ struct TelegramTUITests {
     }
 
     @Test
+    func telegramOnRestoresPersistedRouteForLocalEgress() async throws {
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: FileManager.default.temporaryDirectory
+            ),
+            stdinIsTerminal: false
+        )
+        let route = AgentTelegramRouteManifest(
+            chatID: 42,
+            ownerUserID: 7,
+            roomID: "default",
+            chatKind: .privateChat,
+            generation: 3
+        )
+        let settings = AgentTelegramSettingsManifest(
+            enabled: true,
+            botToken: "123456:ABCDEF",
+            linkedChatID: 42,
+            routes: [route]
+        )
+
+        let lease = try #require(await terminal.telegramEgressRouteLease(
+            settings: settings,
+            linkedChatID: 42
+        ))
+        terminal.telegramActiveRouteLease = lease
+        terminal.telegramControlState.isActive = true
+        terminal.telegramControlState.wireLifecycleEpoch = UUID()
+
+        let attempt = terminal.promptAttempt(prompt: "local prompt")
+        #expect(attempt.origin == .telegramLease(lease))
+        #expect(terminal.telegramOutgoingChatID(for: attempt.origin) == 42)
+        #expect(try await terminal.telegramSessionRouter.validate(lease) == ())
+    }
+
+    @Test
+    func telegramEgressRestoreRejectsAmbiguousOrForeignRoomRoutes() async throws {
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: FileManager.default.temporaryDirectory
+            ),
+            stdinIsTerminal: false
+        )
+        let settings = AgentTelegramSettingsManifest(
+            enabled: true,
+            botToken: "123456:ABCDEF",
+            linkedChatID: 42,
+            routes: [
+                AgentTelegramRouteManifest(
+                    chatID: 42, ownerUserID: 7, roomID: "another-session"
+                )
+            ]
+        )
+
+        #expect(await terminal.telegramEgressRouteLease(
+            settings: settings,
+            linkedChatID: 42
+        ) == nil)
+    }
+
+    @Test
     func telegramTurnProgressReportingFollowsOnOffDuringLocalRequest() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let lease = try #require(terminal.telegramActiveRouteLease)

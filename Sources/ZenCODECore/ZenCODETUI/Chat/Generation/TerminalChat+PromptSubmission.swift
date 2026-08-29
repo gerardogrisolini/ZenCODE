@@ -213,10 +213,22 @@ extension TerminalChat {
         isUserVisible: Bool = true,
         purpose: TerminalPromptPurpose = .normal
     ) -> TerminalPromptAttempt {
-        TerminalPromptAttempt(
+        // `/telegram on` mirrors terminal-originated turns through the currently
+        // validated route lease. Keep attachment ownership based on the original
+        // local origin: promoting the routing origin must not leave locally
+        // selected attachments pending for the following prompt.
+        let routedOrigin: TerminalPromptOrigin
+        if origin == .local,
+           telegramControlState.isActive,
+           let lease = telegramActiveRouteLease {
+            routedOrigin = .telegramLease(lease)
+        } else {
+            routedOrigin = origin
+        }
+        return TerminalPromptAttempt(
             prompt: prompt,
             attachments: origin == .local && isUserVisible ? consumePendingAttachmentsForPrompt() : [],
-            origin: origin,
+            origin: routedOrigin,
             locksResponseLanguage: isUserVisible,
             purpose: purpose
         )
