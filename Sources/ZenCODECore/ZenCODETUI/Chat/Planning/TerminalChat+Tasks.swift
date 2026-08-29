@@ -339,10 +339,43 @@ extension TerminalChat {
                       view.task.status != .completed {
                 suffix.append(reason)
             }
-            let metadata = suffix.isEmpty ? "" : " — " + suffix.joined(separator: " · ")
-            lines.append("\(marker) `\(view.task.id)`  \(escapedTaskMarkdown(view.task.title))\(metadata)")
+            let metadata = suffix.joined(separator: " · ")
+            lines.append("\(marker) `\(view.task.id)`  \(escapedTaskMarkdown(view.task.title))")
+            lines.append(contentsOf: taskGraphDetailLines(metadata, ansiEnabled: ansiEnabled))
         }
         return lines.joined(separator: "\n   ") + "\n\n"
+    }
+
+    /// Renders task metadata as indented detail lines under the task's header
+    /// line. Long descriptive content wraps to hanging-indent continuation
+    /// lines, so verbose reasons stay readable inside the vertical task block.
+    /// Returned rows carry only the detail-relative indent: the section join
+    /// adds the shared three-space task indent on top of every row.
+    private nonisolated static func taskGraphDetailLines(
+        _ metadata: String,
+        ansiEnabled: Bool = AgentOutput.standardErrorIsTerminal
+    ) -> [String] {
+        guard !metadata.isEmpty else {
+            return []
+        }
+        let detailPrefix = taskSummarySegment(
+            "· ",
+            color: TerminalStyle.Status.inactive,
+            ansiEnabled: ansiEnabled
+        )
+        let wrapWidth = max(40, TerminalChat.terminalColumnCount() - 20)
+        // Word-wrapping (`wrap`) collapses repeated internal spaces past the
+        // wrap threshold and leaves single tokens wider than `width` intact.
+        // Reflow at visible cell boundaries instead: internal spacing and
+        // content are preserved exactly, and over-long tokens are split at the
+        // column limit so no detail row exceeds the wrap width.
+        return TerminalANSIText.wrapPreservingWhitespace(
+            detailPrefix + metadata,
+            width: wrapWidth,
+            hangingIndent: "    "
+        )
+            .enumerated()
+            .map { index, row in index == 0 ? "  " + row : row }
     }
 
     nonisolated static func taskSummarySegment(

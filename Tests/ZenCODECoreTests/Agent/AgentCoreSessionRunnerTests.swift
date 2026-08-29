@@ -217,6 +217,7 @@ struct AgentCoreSessionRunnerTests {
             ))
         }
 
+        await clearGate.waitUntilEntered(2)
         await clearGate.open()
         #expect(!(await replacementTask.value))
         try await recreationTask.value
@@ -1477,24 +1478,36 @@ private actor AuthorizationInvokingBackend: AgentRuntimeBackend {
 }
 
 private actor SessionRunnerTestGate {
+    private struct EnteredWaiter {
+        let requiredEntryCount: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
     private var isOpen = false
-    private var entered = false
-    private var enteredWaiters: [CheckedContinuation<Void, Never>] = []
+    private var entryCount = 0
+    private var enteredWaiters: [EnteredWaiter] = []
     private var openWaiters: [CheckedContinuation<Void, Never>] = []
 
-    func waitUntilEntered() async {
-        guard !entered else { return }
+    func waitUntilEntered(_ requiredEntryCount: Int = 1) async {
+        guard entryCount < requiredEntryCount else { return }
         await withCheckedContinuation { continuation in
-            enteredWaiters.append(continuation)
+            enteredWaiters.append(EnteredWaiter(
+                requiredEntryCount: requiredEntryCount,
+                continuation: continuation
+            ))
         }
     }
 
     func waitIfClosed() async {
-        entered = true
-        let waiters = enteredWaiters
-        enteredWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
+        entryCount += 1
+        let readyWaiters = enteredWaiters.filter {
+            $0.requiredEntryCount <= entryCount
+        }
+        enteredWaiters.removeAll {
+            $0.requiredEntryCount <= entryCount
+        }
+        for waiter in readyWaiters {
+            waiter.continuation.resume()
         }
         guard !isOpen else { return }
         await withCheckedContinuation { continuation in

@@ -114,6 +114,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The terminal task-graph overview (`/tasks`, live graph updates) now renders
+  each task vertically: one header row with the status marker, task ID and
+  title, and the complexity/agent/waits metadata on an indented detail row
+  directly below it. Long descriptive content such as blocked reasons wraps
+  onto hanging-indent continuation lines so multi-line metadata stays
+  readable; status symbols, graph identity and summary counts are unchanged.
 - The terminal status bar now renders its previously white neutral metadata in
   a readable light gray, while preserving the white input row and semantic
   accent colors.
