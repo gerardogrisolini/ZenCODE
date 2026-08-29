@@ -184,41 +184,15 @@ extension TerminalChat {
     }
 
     /// Resolves the persisted route for this terminal instance. Authorization is
-    /// entirely ACL/lifecycle based; ephemeral client state is never consulted.
+    /// entirely owner/lifecycle based; ephemeral client state is never consulted.
     func telegramAuthorizedRoute(
         for message: TerminalTelegramIncomingMessage
     ) async -> TerminalTelegramRouteLease? {
-        guard let settings = AgentSettingsManifestStore.load()?.telegram,
-              settings.isConfigured else {
-            // Source-compatible injected/test activation. Production `start()`
-            // cannot reach an active state without persisted configuration.
-            guard message.chatKind == .privateChat,
-                  telegramLinkedChatID == message.chatID else { return nil }
-            let route = AgentTelegramRouteManifest(
-                chatID: message.chatID, ownerUserID: message.userID,
-                roomID: sessionID, chatKind: .privateChat
-            )
-            await telegramSessionRouter.refresh(routes: [route], groupsEnabled: false)
-            return try? await telegramSessionRouter.resolve(
-                chatID: message.chatID, userID: message.userID,
-                topicID: nil, chatKind: .privateChat
-            )
-        }
-        guard settings.isRoutingSupported else { return nil }
-        await telegramSessionRouter.refresh(
-            routes: settings.routes, groupsEnabled: settings.groupsEnabled
-        )
-        if settings.routes.isEmpty {
-            guard message.chatKind == .privateChat,
-                  settings.linkedChatID == message.chatID else { return nil }
-            return try? await telegramSessionRouter.claimLegacyPrivateRoute(
-                chatID: message.chatID, userID: message.userID, roomID: "default"
-            )
-        }
-        guard let lease = try? await telegramSessionRouter.resolve(
-            chatID: message.chatID, userID: message.userID,
-            topicID: message.topicID, chatKind: message.chatKind
-        ), lease.key.roomID == sessionID || lease.key.roomID == "default" else { return nil }
+        guard message.chatKind == .privateChat,
+              let lease = try? await telegramSessionRouter.resolve(
+                  chatID: message.chatID, userID: message.userID,
+                  topicID: message.topicID
+              ), lease.key.roomID == sessionID || lease.key.roomID == "default" else { return nil }
         return lease
     }
 
@@ -243,7 +217,7 @@ extension TerminalChat {
             return
         }
         // The active terminal owns only its room (or the setup-created default
-        // route). This value is an egress compatibility projection; ACL decisions
+        // route). This value is an egress compatibility projection; owner checks
         // above never depend on it.
         // Remember the authorized operator for outbound artifact consent binding.
         telegramLinkedUserID = message.userID
@@ -278,7 +252,7 @@ extension TerminalChat {
         }
 
         // The runtime loop owns the generation Task and passes its serialized,
-        // session-local state here. Keep ACL resolution, lease capture and the
+        // session-local state here. Keep owner resolution, lease capture and the
         // wire fence above the gate, then reject before attachment downloads,
         // voice transcription, command parsing or shared-chat publication.
         // Permission replies remain live because an active turn may be blocked
@@ -288,6 +262,14 @@ extension TerminalChat {
            !text.isEmpty,
            TerminalTelegramPermissionBroker.permissionCommand(from: text) != nil,
            await handleTelegramPermissionResponseIfNeeded(text, lease: routeLease) {
+            return
+        }
+        if isSessionGenerating,
+           let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+           TerminalTelegramRemoteCommand(text: text) == .status {
+            await sendTelegramSystemMessageIfLinked(
+                telegramRemoteStatusText(), origin: routeOrigin
+            )
             return
         }
         guard !isSessionGenerating else {
@@ -1162,21 +1144,24 @@ extension TerminalChat {
         }
 
         do {
-            telegramLinkedChatID = linkedChatID
-            telegramLinkedChatTitle = settings.linkedChatTitle
-            telegramLinkedUserID = nil
-            telegramControlState = try await telegramControlService.start()
-            telegramActiveRouteLease = await telegramEgressRouteLease(
+            guard let lease = await telegramEgressRouteLease(
                 settings: settings,
                 linkedChatID: linkedChatID
-            )
-            if let lease = telegramActiveRouteLease {
-                telegramLinkedUserID = lease.key.userID
-                // A local turn that was already running while Telegram was off
-                // must use the same validated lease as the next local turn.
-                if activeTelegramTurnOrigin == .local {
-                    activeTelegramTurnOrigin = .telegramLease(lease)
-                }
+            ) else {
+                await writeFailureMessage(
+                    "ZenCODE: Telegram configuration is invalid. Run /setup to pair Telegram again.\n"
+                )
+                return
+            }
+            telegramLinkedChatID = linkedChatID
+            telegramLinkedChatTitle = settings.linkedChatTitle
+            telegramLinkedUserID = lease.key.userID
+            telegramActiveRouteLease = lease
+            telegramControlState = try await telegramControlService.start()
+            // A local turn that was already running while Telegram was off
+            // must use the same validated lease as the next local turn.
+            if activeTelegramTurnOrigin == .local {
+                activeTelegramTurnOrigin = .telegramLease(lease)
             }
             telegramVoiceTranscriptions.resume()
             await synchronizeTelegramTurnProgressReporting()
@@ -1188,8 +1173,8 @@ extension TerminalChat {
 
                 """
             )
-            // Legacy settings without an owner-bearing route remain fail-closed
-            // until the first authorized ingress migrates their private binding.
+            // Unsupported, ownerless or incoherent settings remain fail-closed
+            // until setup creates a complete schema-2 owner route.
         } catch {
             telegramControlState = await telegramControlService.currentState()
             telegramControlState.lastError = error.localizedDescription
@@ -1201,7 +1186,7 @@ extension TerminalChat {
     /// Restores the owner-bearing route persisted by setup so `/telegram on`
     /// enables egress immediately, without requiring a fresh Telegram message.
     ///
-    /// The route is resolved through the ACL authority rather than synthesized
+    /// The route is resolved through the owner authority rather than synthesized
     /// from `linkedChatID`; every later wire operation therefore retains the
     /// generation and lifecycle validation introduced by multi-session routing.
     func telegramEgressRouteLease(
@@ -1210,21 +1195,21 @@ extension TerminalChat {
     ) async -> TerminalTelegramRouteLease? {
         guard settings.isRoutingSupported else { return nil }
         await telegramSessionRouter.refresh(
-            routes: settings.routes,
-            groupsEnabled: settings.groupsEnabled
+            linkedChatID: settings.linkedChatID,
+            ownerUserID: settings.ownerUserID,
+            routes: settings.routes
         )
         let candidates = settings.routes.filter {
-            $0.chatID == linkedChatID
-                && $0.topicID == nil
+            $0.topicID == nil
                 && $0.lifecycle == .active
                 && ($0.roomID == sessionID || $0.roomID == "default")
         }
-        guard candidates.count == 1, let route = candidates.first else { return nil }
+        guard candidates.count == 1, settings.linkedChatID == linkedChatID,
+              let ownerUserID = settings.ownerUserID else { return nil }
         return try? await telegramSessionRouter.resolve(
-            chatID: route.chatID,
-            userID: route.ownerUserID,
-            topicID: nil,
-            chatKind: route.chatKind
+            chatID: linkedChatID,
+            userID: ownerUserID,
+            topicID: nil
         )
     }
 
@@ -1827,11 +1812,6 @@ extension TerminalChat {
         )
         let topicID = origin.telegramLease?.effectiveMessageThreadID
             ?? origin.telegramRoute?.topicID
-        let routeAllowsPrivateDraft = origin.telegramRoute.map { key in
-            AgentSettingsManifestStore.load()?.telegram?.routes.first {
-                $0.chatID == key.chatID && $0.topicID == key.topicID && $0.roomID == key.roomID
-            }?.chatKind == .privateChat
-        } ?? true
         let cards = TerminalTelegramProgressCardLedger(
             chatID: chatID,
             send: { [weak self] text, chatID in
@@ -1867,19 +1847,6 @@ extension TerminalChat {
                 )
             }
         )
-        let sendDraft: (@Sendable (String, Int64, Int) async throws -> Void)?
-        if routeAllowsPrivateDraft {
-            sendDraft = { [weak self] text, chatID, draftID in
-                guard let self, await self.validateTelegramOrigin(origin) else {
-                    throw CancellationError()
-                }
-                try await service.sendRichMessageDraftWithFallback(
-                    text, to: chatID, draftID: draftID, fence: wireFence
-                )
-            }
-        } else {
-            sendDraft = nil
-        }
         return TerminalTelegramTurnProgressReporter(
             chatID: chatID,
             sendMessage: { [weak self] message, chatID in
@@ -1888,7 +1855,14 @@ extension TerminalChat {
                     message, to: chatID, topicID: topicID, fence: wireFence
                 )
             },
-            sendDraft: sendDraft,
+            sendDraft: { [weak self] text, chatID, draftID in
+                guard let self, await self.validateTelegramOrigin(origin) else {
+                    throw CancellationError()
+                }
+                try await service.sendRichMessageDraftWithFallback(
+                    text, to: chatID, draftID: draftID, fence: wireFence
+                )
+            },
             progressCards: cards,
             wireFence: wireFence,
             waitForWireQuiescence: { fence in

@@ -395,34 +395,39 @@ struct TerminalTelegramFoundationTests {
         #expect(TerminalTelegramRemoteCommand(text: "stato") == .status)
     }
 
-    /// Every registered command appears in botCommands with the canonical
-    /// name, and `/start` is not published.
+    /// Every remote command and every coordinator workflow appears in the
+    /// published menu. Workflow discovery comes from the coordinator parser.
     @Test
     func botCommandsMirrorRegistryAndExcludeStart() {
         let published = TerminalTelegramCommandRegistry.botCommands
-        #expect(published.count == TerminalTelegramCommandRegistry.commands.count)
-        for (specification, entry) in zip(TerminalTelegramCommandRegistry.commands, published) {
-            #expect(entry.command == specification.name)
-            #expect(!entry.command.isEmpty)
+        let publishedNames = Set(published.map(\.command))
+        for specification in TerminalTelegramCommandRegistry.commands {
+            #expect(publishedNames.contains(specification.name))
         }
+        for family in CoordinatorCommandFamily.allCases {
+            #expect(publishedNames.contains(family.rawValue))
+            #expect(CoordinatorCommandParser.parse("/\(family.rawValue) test") != nil)
+        }
+        #expect(publishedNames.count == published.count)
         #expect(!published.contains { $0.command == "start" })
     }
 
-    /// setMyCommands wire shape: {"commands":[{"command":...,"description":...}]}.
+    /// The production API client emits a valid all-private-chats Bot API scope
+    /// and omits the chat id that is illegal for that scope.
     @Test
-    func setMyCommandsRequestEncodesWireShape() throws {
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        let request = TerminalTelegramSetMyCommandsRequest(
-            commands: TerminalTelegramCommandRegistry.botCommands,
-            scope: nil,
-            languageCode: nil
-        )
-        let json = try JSONSerialization.jsonObject(with: encoder.encode(request)) as? [String: Any]
+    func setMyCommandsAPIClientEmitsValidPrivateChatScope() async throws {
+        let transport = RecordingTelegramHTTPTransport()
+        let client = TerminalTelegramAPIClient(token: "token", transport: transport)
+        _ = try await client.setMyCommands(TerminalTelegramCommandRegistry.botCommands)
+        let body = try #require(await transport.lastBody)
+        let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
         let commands = try #require(json?["commands"] as? [[String: Any]])
         let first = try #require(commands.first)
+        let scope = try #require(json?["scope"] as? [String: Any])
         #expect(first["command"] as? String == "help")
         #expect(first["description"] as? String != nil)
+        #expect(scope["type"] as? String == "all_private_chats")
+        #expect(scope["chat_id"] == nil)
     }
 
     /// sendChatAction wire shape.
@@ -492,6 +497,40 @@ struct TerminalTelegramFoundationTests {
         )))
         #expect(await service.consumePairingGrant(payload: grant, chatType: "private"))
         #expect(!(await service.consumePairingGrant(payload: grant, chatType: "private")))
+    }
+
+    @Test
+    func pairingWaitStopsAtExpiredDeadlineAndInvitesSetupRetry() async throws {
+        let service = TerminalTelegramPairingService(botToken: "token")
+        do {
+            _ = try await service.waitForPairing(
+                code: "ABCD", deadline: Date(timeIntervalSince1970: 0)
+            )
+            Issue.record("expected an expired pairing wait")
+        } catch let error as TerminalTelegramPairingError {
+            #expect(error == .expired)
+            #expect(error.localizedDescription.contains("/setup"))
+        }
+    }
+
+    @Test
+    func pairingDeadlineCancelsInFlightGetUpdates() async throws {
+        let transport = BlockingPairingTelegramHTTPTransport()
+        let service = TerminalTelegramPairingService(botToken: "token", transport: transport)
+        let wait = Task {
+            try await service.waitForPairing(
+                code: "ABCD",
+                deadline: Date().addingTimeInterval(0.2)
+            )
+        }
+        await transport.waitUntilPollStarted()
+        do {
+            _ = try await wait.value
+            Issue.record("expected pairing deadline")
+        } catch let error as TerminalTelegramPairingError {
+            #expect(error == .expired)
+        }
+        #expect(await transport.pollWasCancelled)
     }
 
     /// Grants expire after the TTL and can no longer be consumed.
@@ -567,6 +606,57 @@ struct TerminalTelegramFoundationTests {
             throw CocoaError(.userActivityConnectionUnavailable)
         } catch let error as TerminalTelegramControlError {
             return error
+        }
+    }
+}
+
+private actor RecordingTelegramHTTPTransport: TelegramHTTPTransport {
+    private(set) var lastBody: Data?
+
+    func send(
+        url: URL,
+        method: String,
+        headers: [RemoteHTTPHeader],
+        body: Data?,
+        timeout: Duration?
+    ) async throws -> (status: Int, body: Data) {
+        lastBody = body
+        return (200, Data(#"{"ok":true,"result":true}"#.utf8))
+    }
+}
+
+private actor BlockingPairingTelegramHTTPTransport: TelegramHTTPTransport {
+    private var pollStarted = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var pollWasCancelled = false
+
+    func send(
+        url: URL,
+        method: String,
+        headers: [RemoteHTTPHeader],
+        body: Data?,
+        timeout: Duration?
+    ) async throws -> (status: Int, body: Data) {
+        guard url.lastPathComponent == "getUpdates" else {
+            return (200, Data(#"{"ok":true,"result":true}"#.utf8))
+        }
+        pollStarted = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        do {
+            try await Task.sleep(for: .seconds(60))
+            return (200, Data(#"{"ok":true,"result":[]}"#.utf8))
+        } catch {
+            pollWasCancelled = true
+            throw error
+        }
+    }
+
+    func waitUntilPollStarted() async {
+        guard !pollStarted else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
         }
     }
 }

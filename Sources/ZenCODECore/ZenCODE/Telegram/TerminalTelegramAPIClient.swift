@@ -406,7 +406,10 @@ struct TerminalTelegramAPIClient: Sendable {
             method: "setMyCommands",
             body: TerminalTelegramSetMyCommandsRequest(
                 commands: commands,
-                scope: TerminalTelegramBotCommandScope(type: "bot_command_scope_chat", chatID: nil),
+                scope: TerminalTelegramBotCommandScope(
+                    type: "all_private_chats",
+                    chatID: nil
+                ),
                 languageCode: languageCode
             )
         )
@@ -773,8 +776,8 @@ struct TerminalTelegramSetMyCommandsRequest: Encodable {
     let languageCode: String?
 }
 
-/// `BotCommandScope` projection; `chat` scope carries the chat id the commands
-/// belong to.
+/// `BotCommandScope` projection. Only chat-specific scopes carry `chat_id`;
+/// all-private-chats and default scopes omit it.
 struct TerminalTelegramBotCommandScope: Encodable, Sendable, Equatable {
     let type: String
     let chatID: Int64?

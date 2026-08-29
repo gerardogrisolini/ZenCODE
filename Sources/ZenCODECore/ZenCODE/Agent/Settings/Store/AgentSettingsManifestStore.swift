@@ -143,7 +143,7 @@ public enum AgentSettingsManifestStore {
     /// router's commit-before-publish transaction.
     public static func saveTelegramRoutes(
         _ routes: [AgentTelegramRouteManifest],
-        groupsEnabled: Bool? = nil
+        ownerUserID: Int64
     ) throws {
         try withManifestMutation {
             let current = try loadRequiredUnlocked(from: settingsURL())
@@ -157,8 +157,8 @@ public enum AgentSettingsManifestStore {
                 botToken: telegram.botToken,
                 linkedChatID: telegram.linkedChatID,
                 linkedChatTitle: telegram.linkedChatTitle,
+                ownerUserID: ownerUserID,
                 routingVersion: AgentTelegramSettingsManifest.currentRoutingVersion,
-                groupsEnabled: groupsEnabled ?? telegram.groupsEnabled,
                 routes: routes
             )
             try saveUnlocked(applying(current, telegram: .some(updated)), to: settingsURL())

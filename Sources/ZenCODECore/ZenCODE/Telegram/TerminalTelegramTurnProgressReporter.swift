@@ -412,9 +412,16 @@ public enum TerminalTelegramCommandRegistry {
     /// order. Telegram caps `BotCommand.description` at 256 characters and the
     /// command name at 32; these entries sit far below both.
     public static var botCommands: [TerminalTelegramBotCommand] {
-        commands.map {
+        let remoteCommands = commands.map {
             TerminalTelegramBotCommand(command: $0.name, description: $0.description)
         }
+        let workflowCommands = CoordinatorCommandFamily.allCases.map { family in
+            TerminalTelegramBotCommand(
+                command: family.rawValue,
+                description: family.menuDescription
+            )
+        }
+        return remoteCommands + workflowCommands
     }
 
     /// Resolves one trimmed, lowercased line to a command, or `nil` for an

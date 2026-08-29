@@ -142,7 +142,23 @@ public struct TerminalTelegramLinkedChat: Equatable, Sendable {
     public let chatTitle: String?
 }
 
+public enum TerminalTelegramPairingError: LocalizedError, Equatable {
+    case expired
+
+    public var errorDescription: String? {
+        switch self {
+        case .expired:
+            "Telegram pairing expired. Run /setup again to generate a new pairing link."
+        }
+    }
+}
+
 public actor TerminalTelegramPairingService {
+    private enum PollResult: Sendable {
+        case updates([TerminalTelegramUpdate])
+        case expired
+    }
+
     private let client: TerminalTelegramAPIClient
     private var lastUpdateID: Int?
     /// Single-flight guard for `waitForPairing`. Without it two overlapping
@@ -155,6 +171,10 @@ public actor TerminalTelegramPairingService {
 
     public init(botToken: String) {
         client = TerminalTelegramAPIClient(token: botToken)
+    }
+
+    init(botToken: String, transport: any TelegramHTTPTransport) {
+        client = TerminalTelegramAPIClient(token: botToken, transport: transport)
     }
 
     public func prepare() async throws -> TerminalTelegramBotIdentity {
@@ -198,7 +218,10 @@ public actor TerminalTelegramPairingService {
         return await grantStore.consume(payload: payload)
     }
 
-    public func waitForPairing(code: String) async throws -> TerminalTelegramLinkedChat {
+    public func waitForPairing(
+        code: String,
+        deadline: Date? = nil
+    ) async throws -> TerminalTelegramLinkedChat {
         // Single-flight: reject a second concurrent pairing wait. Two
         // overlapping waits would share `lastUpdateID` and a late write from one
         // could regress the offset seen by the other, reprocessing updates and
@@ -211,10 +234,18 @@ public actor TerminalTelegramPairingService {
         defer { pairingInProgress = false }
 
         let expectedCode = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let deadline = deadline ?? Date().addingTimeInterval(
+            TerminalTelegramPairingGrant.timeToLive
+        )
         while !Task.isCancelled {
-            let updates = try await client.getUpdates(
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else {
+                throw TerminalTelegramPairingError.expired
+            }
+            let updates = try await updatesBeforeDeadline(
                 offset: lastUpdateID.map { $0 + 1 },
-                timeout: 30
+                timeout: min(30, max(1, Int(remaining.rounded(.up)))),
+                remaining: remaining
             )
             for update in updates {
                 lastUpdateID = max(lastUpdateID ?? update.updateID, update.updateID)
@@ -284,6 +315,37 @@ public actor TerminalTelegramPairingService {
             }
         }
         throw CancellationError()
+    }
+
+    /// Races each long poll against the local grant deadline. Structured
+    /// cancellation makes the deadline cancel and await the in-flight transport
+    /// before the actor accepts another pairing wait.
+    private func updatesBeforeDeadline(
+        offset: Int?,
+        timeout: Int,
+        remaining: TimeInterval
+    ) async throws -> [TerminalTelegramUpdate] {
+        let client = client
+        let nanoseconds = Int64(min(remaining * 1_000_000_000, Double(Int64.max)))
+        return try await withThrowingTaskGroup(of: PollResult.self) { group in
+            group.addTask {
+                .updates(try await client.getUpdates(offset: offset, timeout: timeout))
+            }
+            group.addTask {
+                try await Task.sleep(for: .nanoseconds(max(1, nanoseconds)))
+                return .expired
+            }
+            guard let first = try await group.next() else {
+                throw CancellationError()
+            }
+            group.cancelAll()
+            switch first {
+            case .updates(let updates):
+                return updates
+            case .expired:
+                throw TerminalTelegramPairingError.expired
+            }
+        }
     }
 
     public nonisolated static func pairingCode(in text: String) -> String? {
@@ -461,7 +523,7 @@ public actor TerminalTelegramControlService {
         // of resurrecting polling.
         try ensureCurrentGeneration(generation)
 
-        guard let configuredChatID = settings.linkedChatID ?? settings.routes.first?.chatID else {
+        guard let configuredChatID = settings.linkedChatID else {
             throw TerminalTelegramControlError.missingConfiguration
         }
         linkedChatID = configuredChatID

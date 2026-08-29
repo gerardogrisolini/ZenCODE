@@ -24,11 +24,10 @@ struct TelegramTUITests {
         on terminal: TerminalChat, roomID: String? = nil
     ) async -> TerminalTelegramRouteLease {
         let roomID = roomID ?? terminal.sessionID
-        let route = AgentTelegramRouteManifest(
-            chatID: 42, ownerUserID: 7, roomID: roomID,
-            chatKind: .privateChat, generation: 1
+        let route = AgentTelegramRouteManifest(roomID: roomID, generation: 1)
+        await terminal.telegramSessionRouter.refresh(
+            linkedChatID: 42, ownerUserID: 7, routes: [route]
         )
-        await terminal.telegramSessionRouter.refresh(routes: [route], groupsEnabled: false)
         let lease = TerminalTelegramRouteLease(
             key: .init(chatID: 42, userID: 7, roomID: roomID), generation: 1
         )
@@ -45,7 +44,9 @@ struct TelegramTUITests {
             enabled: true,
             botToken: " 123456:ABCDEF ",
             linkedChatID: 42,
-            linkedChatTitle: "Gerardo"
+            linkedChatTitle: "Gerardo",
+            ownerUserID: 7,
+            routes: [.init(roomID: "default")]
         )
         let missingTokenSettings = AgentTelegramSettingsManifest(
             enabled: true,
@@ -70,6 +71,24 @@ struct TelegramTUITests {
     }
 
     @Test
+    func telegramSettingsFailClosedUnlessSchema2OwnerAndRoutesAreComplete() throws {
+        let fixtures: [(String, Bool)] = [
+            (#"{"enabled":true,"botToken":"123456:ABCDEF","linkedChatID":42,"ownerUserID":7,"routingVersion":1,"routes":[{"roomID":"default","lifecycle":"active","generation":1}]}"#, false),
+            (#"{"enabled":true,"botToken":"123456:ABCDEF","linkedChatID":42,"ownerUserID":7,"routingVersion":3,"routes":[{"roomID":"default","lifecycle":"active","generation":1}]}"#, false),
+            (#"{"enabled":true,"botToken":"123456:ABCDEF","linkedChatID":42,"routingVersion":2,"routes":[{"roomID":"default","lifecycle":"active","generation":1}]}"#, false),
+            (#"{"enabled":true,"botToken":"123456:ABCDEF","linkedChatID":42,"ownerUserID":7,"routingVersion":2,"routes":[{"roomID":"one","lifecycle":"active","generation":1},{"roomID":"two","lifecycle":"active","generation":1}]}"#, false),
+            (#"{"enabled":true,"botToken":"123456:ABCDEF","linkedChatID":42,"ownerUserID":7,"routingVersion":2,"routes":[{"roomID":"default","lifecycle":"active","generation":1}]}"#, true)
+        ]
+
+        for (json, expectedEnabled) in fixtures {
+            let settings = try JSONDecoder().decode(
+                AgentTelegramSettingsManifest.self, from: Data(json.utf8)
+            )
+            #expect(settings.isEnabled == expectedEnabled)
+        }
+    }
+
+    @Test
     func settingsManifestRoundTripsEnabledTelegramConfiguration() throws {
         let manifest = AgentSettingsManifest(
             models: [],
@@ -77,7 +96,9 @@ struct TelegramTUITests {
                 enabled: true,
                 botToken: "123456:ABCDEF",
                 linkedChatID: 42,
-                linkedChatTitle: "Gerardo"
+                linkedChatTitle: "Gerardo",
+                ownerUserID: 7,
+                routes: [.init(roomID: "default")]
             )
         )
 
@@ -271,13 +292,12 @@ struct TelegramTUITests {
             ),
             stdinIsTerminal: false
         )
-        let route = AgentTelegramRouteManifest(
-            chatID: -100, ownerUserID: 7, roomID: terminal.sessionID,
-            chatKind: .supergroup
+        let route = AgentTelegramRouteManifest(roomID: terminal.sessionID)
+        await terminal.telegramSessionRouter.refresh(
+            linkedChatID: 42, ownerUserID: 7, routes: [route]
         )
-        await terminal.telegramSessionRouter.refresh(routes: [route], groupsEnabled: true)
         let lease = try await terminal.telegramSessionRouter.resolve(
-            chatID: -100, userID: 7, topicID: 44, chatKind: .supergroup
+            chatID: 42, userID: 7, topicID: 44
         )
         terminal.telegramControlState.isActive = true
         terminal.telegramControlState.wireLifecycleEpoch = UUID()
@@ -293,7 +313,7 @@ struct TelegramTUITests {
             return
         }
         let destination = try #require(routed.withLock { $0 })
-        #expect(destination.0 == -100)
+        #expect(destination.0 == 42)
         #expect(destination.1 == 44)
     }
 
@@ -495,16 +515,14 @@ struct TelegramTUITests {
             stdinIsTerminal: false
         )
         let route = AgentTelegramRouteManifest(
-            chatID: 42,
-            ownerUserID: 7,
             roomID: "default",
-            chatKind: .privateChat,
             generation: 3
         )
         let settings = AgentTelegramSettingsManifest(
             enabled: true,
             botToken: "123456:ABCDEF",
             linkedChatID: 42,
+            ownerUserID: 7,
             routes: [route]
         )
 
@@ -536,10 +554,9 @@ struct TelegramTUITests {
             enabled: true,
             botToken: "123456:ABCDEF",
             linkedChatID: 42,
+            ownerUserID: 7,
             routes: [
-                AgentTelegramRouteManifest(
-                    chatID: 42, ownerUserID: 7, roomID: "another-session"
-                )
+                AgentTelegramRouteManifest(roomID: "another-session")
             ]
         )
 
@@ -547,6 +564,50 @@ struct TelegramTUITests {
             settings: settings,
             linkedChatID: 42
         ) == nil)
+    }
+
+    @Test
+    nonisolated func telegramOnFailsPreflightForForeignPersistedRouteWithoutTransportRequests() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "zencode-telegram-preflight-\(UUID().uuidString)", isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recorder = TelegramTransportRequestRecorder()
+
+        try await AppStorageDirectory.withSupportDirectoryURL(directory) {
+            try AgentSettingsManifestStore.save(AgentSettingsManifest(
+                models: [],
+                telegram: AgentTelegramSettingsManifest(
+                    enabled: true,
+                    botToken: "123456:ABCDEF",
+                    linkedChatID: 42,
+                    ownerUserID: 7,
+                    routes: [.init(roomID: "foreign-session", generation: 1)]
+                )
+            ))
+            let result = try await Task { @TerminalChatActor in
+                let terminal = TerminalChat(
+                    configuration: try AgentConfiguration(
+                        hostedModelID: "remote-community/test",
+                        availableAgents: AgentProfileStore.defaultProfiles(),
+                        workingDirectory: directory
+                    ),
+                    stdinIsTerminal: true,
+                    telegramTransportFactory: { TelegramRecordingTransport(recorder: recorder) }
+                )
+
+                terminal.telegramImmediateCommandOutput = []
+                await terminal.startTelegramControl()
+                return (
+                    !terminal.telegramControlState.isActive,
+                    terminal.telegramImmediateCommandOutput?.joined() ?? ""
+                )
+            }.value
+
+            #expect(recorder.requestCount() == 0)
+            #expect(result.0)
+            #expect(result.1.contains("pair Telegram again"))
+        }
     }
 
     @Test
@@ -792,7 +853,8 @@ struct TelegramTUITests {
         let terminal = TerminalChat(
             configuration: configuration,
             stdinIsTerminal: false,
-            permissionAuthorizer: permissionAuthorizer
+            permissionAuthorizer: permissionAuthorizer,
+            telegramTransportFactory: nil
         )
         terminal.telegramLinkedChatID = 42
         terminal.telegramControlState = TerminalTelegramControlState(
@@ -1295,6 +1357,7 @@ struct TelegramTUITests {
     @Test
     func telegramPermissionBrokerWaitsForRemoteReply() async throws {
         let broker = TerminalTelegramPermissionBroker()
+        let lease = Self.telegramPermissionTestLease()
         let collector = TelegramTestMessageCollector()
         let command = "remote-telegram-permission-test-\(UUID().uuidString)"
         let request = Self.localExecAuthorizationRequest(command: "\(command) --flag")
@@ -1302,7 +1365,7 @@ struct TelegramTUITests {
         let authorization = Task {
             await broker.authorize(
                 request,
-                chatID: 42,
+                lease: lease,
                 timeoutNanoseconds: 5_000_000_000
             ) { message in
                 await collector.append(message)
@@ -1315,13 +1378,13 @@ struct TelegramTUITests {
         #expect(message.contains(command))
         let requestID = try #require(Self.telegramPermissionRequestID(in: message))
 
-        let reminder = await broker.handleMessage("queue another prompt", chatID: 42)
+        let reminder = await broker.handleMessage("queue another prompt", lease: lease)
         #expect(reminder.isHandled)
         if case let .handled(reply) = reminder {
             #expect(reply?.contains("Permission request pending") == true)
         }
 
-        let reply = await broker.handleMessage("/allow \(requestID)", chatID: 42)
+        let reply = await broker.handleMessage("/allow \(requestID)", lease: lease)
         #expect(reply.isHandled)
         if case let .handled(replyText) = reply {
             #expect(replyText?.contains("allowed once") == true)
@@ -1334,6 +1397,7 @@ struct TelegramTUITests {
     @Test
     func telegramPermissionBrokerAsksForDestructiveTools() async throws {
         let broker = TerminalTelegramPermissionBroker()
+        let lease = Self.telegramPermissionTestLease()
         let collector = TelegramTestMessageCollector()
         let request = Self.authorizationRequest(
             toolName: "local.delete",
@@ -1342,12 +1406,12 @@ struct TelegramTUITests {
             command: "delete Sources/Old.swift"
         )
 
-        #expect(!(await broker.isAlreadyAuthorized(request)))
+        #expect(!(await broker.isAlreadyAuthorized(request, lease: lease)))
 
         let authorization = Task {
             await broker.authorize(
                 request,
-                chatID: 42,
+                lease: lease,
                 timeoutNanoseconds: 5_000_000_000
             ) { message in
                 await collector.append(message)
@@ -1361,7 +1425,7 @@ struct TelegramTUITests {
         #expect(message.contains("Delete Sources/Old.swift"))
         let requestID = try #require(Self.telegramPermissionRequestID(in: message))
 
-        _ = await broker.handleMessage("/deny \(requestID)", chatID: 42)
+        _ = await broker.handleMessage("/deny \(requestID)", lease: lease)
         #expect(await authorization.value == .denied)
     }
 
@@ -1370,13 +1434,14 @@ struct TelegramTUITests {
     @Test
     func telegramPermissionBrokerFailsClosedWhenRequestCannotBeDelivered() async {
         let broker = TerminalTelegramPermissionBroker()
+        let lease = Self.telegramPermissionTestLease()
         let request = Self.localExecAuthorizationRequest(
             command: "undeliverable-\(UUID().uuidString) --flag"
         )
 
         let outcome = await broker.authorize(
             request,
-            chatID: 42,
+            lease: lease,
             timeoutNanoseconds: 600_000_000_000
         ) { _ in
             false
@@ -1390,6 +1455,7 @@ struct TelegramTUITests {
     @Test
     func telegramPermissionBrokerSkipsUngatedTools() async {
         let broker = TerminalTelegramPermissionBroker()
+        let lease = Self.telegramPermissionTestLease()
         let request = Self.authorizationRequest(
             toolName: "local.readFile",
             title: "Read Sources/Main.swift",
@@ -1397,8 +1463,8 @@ struct TelegramTUITests {
             command: "read Sources/Main.swift"
         )
 
-        #expect(await broker.isAlreadyAuthorized(request))
-        let outcome = await broker.authorize(request, chatID: 42) { _ in
+        #expect(await broker.isAlreadyAuthorized(request, lease: lease))
+        let outcome = await broker.authorize(request, lease: lease) { _ in
             Issue.record("An ungated tool must not raise a permission request.")
             return true
         }
@@ -1409,14 +1475,22 @@ struct TelegramTUITests {
     @Test
     func telegramPermissionBrokerHandlesStrayPermissionRepliesWithoutPrompting() async {
         let broker = TerminalTelegramPermissionBroker()
-        let permissionReply = await broker.handleMessage("/allow ABC123", chatID: 42)
-        let regularPrompt = await broker.handleMessage("please continue", chatID: 42)
+        let lease = Self.telegramPermissionTestLease()
+        let permissionReply = await broker.handleMessage("/allow ABC123", lease: lease)
+        let regularPrompt = await broker.handleMessage("please continue", lease: lease)
 
         #expect(permissionReply.isHandled)
         if case let .handled(reply) = permissionReply {
             #expect(reply == "No permission request is pending.")
         }
         #expect(regularPrompt == .notHandled)
+    }
+
+    private static func telegramPermissionTestLease() -> TerminalTelegramRouteLease {
+        TerminalTelegramRouteLease(
+            key: .init(chatID: 42, userID: 7, roomID: "terminal-test"),
+            generation: 1
+        )
     }
 
     private static func localExecAuthorizationRequest(command: String) -> AgentToolAuthorizationRequest {
@@ -1724,12 +1798,13 @@ struct TelegramTUITests {
     func routeRevocationPublishesGenerationCancellationEvent() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let route = AgentTelegramRouteManifest(
-            chatID: 42, ownerUserID: 7, roomID: terminal.sessionID,
-            chatKind: .privateChat, generation: 1
+            roomID: terminal.sessionID, generation: 1
         )
-        await terminal.telegramSessionRouter.refresh(routes: [route], groupsEnabled: false)
+        await terminal.telegramSessionRouter.refresh(
+            linkedChatID: 42, ownerUserID: 7, routes: [route]
+        )
         let lease = try await terminal.telegramSessionRouter.resolve(
-            chatID: 42, userID: 7, topicID: nil, chatKind: .privateChat
+            chatID: 42, userID: 7, topicID: nil
         )
         let queue = TerminalChatEventQueue()
         terminal.telegramRuntimeEventQueue = queue
@@ -1743,10 +1818,11 @@ struct TelegramTUITests {
         }
         await terminal.beginTelegramTurnProgressReporting(for: .telegramLease(lease))
         let rebound = AgentTelegramRouteManifest(
-            chatID: 42, ownerUserID: 7, roomID: terminal.sessionID,
-            chatKind: .privateChat, generation: 2
+            roomID: terminal.sessionID, generation: 2
         )
-        await terminal.telegramSessionRouter.refresh(routes: [rebound], groupsEnabled: false)
+        await terminal.telegramSessionRouter.refresh(
+            linkedChatID: 42, ownerUserID: 7, routes: [rebound]
+        )
         #expect(await observed.value)
         await terminal.endTelegramTurnProgressReporting()
         queue.finish()
@@ -1769,6 +1845,35 @@ private actor TelegramCardReceiptRecorder {
         nextReceipt += 1
         cards.append(Card(text: text, chatID: chatID, receipt: nextReceipt))
         return nextReceipt
+    }
+}
+
+/// Records every invocation at the HTTP boundary, so a failed local preflight
+/// can prove that control startup did not reach Telegram at all.
+private final class TelegramTransportRequestRecorder: Sendable {
+    private let count = Mutex(0)
+
+    func recordRequest() {
+        count.withLock { $0 += 1 }
+    }
+
+    func requestCount() -> Int {
+        count.withLock { $0 }
+    }
+}
+
+private struct TelegramRecordingTransport: TelegramHTTPTransport {
+    let recorder: TelegramTransportRequestRecorder
+
+    func send(
+        url _: URL,
+        method _: String,
+        headers _: [RemoteHTTPHeader],
+        body _: Data?,
+        timeout _: Duration?
+    ) async throws -> (status: Int, body: Data) {
+        recorder.recordRequest()
+        return (500, Data())
     }
 }
 

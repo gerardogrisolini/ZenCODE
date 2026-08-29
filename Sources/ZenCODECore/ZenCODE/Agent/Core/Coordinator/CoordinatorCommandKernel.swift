@@ -26,6 +26,21 @@ enum CoordinatorCommand: Sendable, Equatable {
     case review(String)
 }
 
+/// Canonical coordinator command families shared by parsing and frontend menus.
+enum CoordinatorCommandFamily: String, CaseIterable, Sendable {
+    case plan
+    case goal
+    case review
+
+    var menuDescription: String {
+        switch self {
+        case .plan: "Plan work and continue planning questions"
+        case .goal: "Run a delegated goal workflow"
+        case .review: "Review the current changes"
+        }
+    }
+}
+
 /// Parses the command families that must behave identically in every frontend.
 /// It deliberately does not treat unrelated slash commands or `@mentions` as
 /// planning replies; those remain owned by their transport-specific routers.
@@ -48,15 +63,16 @@ enum CoordinatorCommandParser {
         let argument = String(trimmed[tokenEnd...])
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        switch token {
-        case "/goal":
-            return .goal(argument)
-        case "/plan":
-            return .plan(planAction(argument))
-        case "/review":
-            return .review(argument)
-        default:
+        guard let family = CoordinatorCommandFamily(rawValue: String(token.dropFirst())) else {
             return nil
+        }
+        switch family {
+        case .goal:
+            return .goal(argument)
+        case .plan:
+            return .plan(planAction(argument))
+        case .review:
+            return .review(argument)
         }
     }
 

@@ -222,7 +222,9 @@ struct TelegramCausalRoundTripTests {
                     enabled: true,
                     botToken: "123456:ABCDEF",
                     linkedChatID: Self.linkedChatID,
-                    linkedChatTitle: "Gerardo"
+                    linkedChatTitle: "Gerardo",
+                    ownerUserID: 7,
+                    routes: [.init(roomID: "default")]
                 )
             ),
             to: supportDirectory.appendingPathComponent(AgentSettingsManifestStore.settingsFilename)

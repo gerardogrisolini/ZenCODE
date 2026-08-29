@@ -10,6 +10,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Telegram routing now uses schema 2 with one global owner in one private chat.
+  Personal routes retain private topics, multi-session rooms, lifecycle,
+  generation, leases and wire fences, while group/supergroup routing, member
+  lists and per-route ACL APIs are removed. Voice notes, attachments, permission
+  replies and artifact consent continue through the same fenced owner route.
+  Schema-1, ownerless and incoherent configurations are no longer migrated or
+  claimed at runtime: they stay inactive until Telegram is paired again.
+
 ### Added
 
 - `zen -p PROMPT` (also `--prompt`) runs one headless text-only turn. It accepts
@@ -144,6 +154,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   link becomes active. The menu is driven by a single command registry that
   also feeds the ingress parser, so a command can never be parseable but
   missing from the menu.
+- Telegram pairing now stops polling when its advertised 10-minute grant
+  expires and asks the operator to rerun `/setup`. Enabling Telegram also
+  rolls the service back unless the paired session has a valid egress route.
+- The Telegram menu now discovers `/plan`, `/goal`, and `/review` from the
+  coordinator command parser. While a response is running, `/status` remains
+  available alongside pending permission replies; all work stays rejected.
 - Telegram pairing now issues a single-use, 128-bit deep-link grant: the
   terminal shows a `t.me/<bot>?start=<payload>` link plus a manual fallback
   code. The grant expires in 10 minutes, is stored only as a SHA-256 digest,

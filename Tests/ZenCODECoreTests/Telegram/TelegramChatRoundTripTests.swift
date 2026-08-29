@@ -62,10 +62,11 @@ struct TelegramChatRoundTripTests {
 
     private static func installRoute(on terminal: TerminalChat) async -> TerminalTelegramRouteLease {
         let route = AgentTelegramRouteManifest(
-            chatID: 42, ownerUserID: 7, roomID: terminal.sessionID,
-            chatKind: .privateChat, generation: 1
+            roomID: terminal.sessionID, generation: 1
         )
-        await terminal.telegramSessionRouter.refresh(routes: [route], groupsEnabled: false)
+        await terminal.telegramSessionRouter.refresh(
+            linkedChatID: 42, ownerUserID: 7, routes: [route]
+        )
         let lease = TerminalTelegramRouteLease(
             key: .init(chatID: 42, userID: 7, roomID: terminal.sessionID), generation: 1
         )
@@ -86,6 +87,7 @@ struct TelegramChatRoundTripTests {
         ])
 
         let terminal = try Self.makeTerminal(linkedChatID: 42)
+        _ = await Self.installRoute(on: terminal)
         let captured = Mutex<[TerminalTelegramReplyMarkup]>([])
         terminal.onTelegramMentionPickerMessage = { _, _, markup in
             captured.withLock { $0.append(markup) }
@@ -243,9 +245,12 @@ struct TelegramChatRoundTripTests {
         #expect(pickerCards.withLock { $0 } == 0)
         let delivered = notices.withLock { $0 }
         #expect(delivered.count == work.count)
-        #expect(delivered.allSatisfy {
+        #expect(delivered.filter {
             $0.contains("busy generating a response in this session")
                 && $0.contains("was not queued")
+        }.count == work.count - 1)
+        #expect(delivered.contains {
+            $0.contains("Session active.") && !$0.contains("was not queued")
         })
     }
 
@@ -542,11 +547,11 @@ struct TelegramChatRoundTripTests {
         // Advancing the route generation retires the origin captured above. A
         // replayed/stale synthetic response must not escape to Telegram.
         await terminal.telegramSessionRouter.refresh(
+            linkedChatID: 42,
+            ownerUserID: 7,
             routes: [AgentTelegramRouteManifest(
-                chatID: 42, ownerUserID: 7, roomID: sessionID,
-                chatKind: .privateChat, generation: 2
-            )],
-            groupsEnabled: false
+                roomID: sessionID, generation: 2
+            )]
         )
         terminal.activeTelegramTurnOrigin = origin
         await terminal.finalizeTelegramTurnProgressReporting(
@@ -667,11 +672,11 @@ struct TelegramChatRoundTripTests {
         }
         await backend.waitUntilSharedChatSendStarted()
         await terminal.telegramSessionRouter.refresh(
+            linkedChatID: 42,
+            ownerUserID: 7,
             routes: [AgentTelegramRouteManifest(
-                chatID: 42, ownerUserID: 7, roomID: sessionID,
-                chatKind: .privateChat, generation: 2
-            )],
-            groupsEnabled: false
+                roomID: sessionID, generation: 2
+            )]
         )
         await backend.releaseSharedChatSend()
         _ = await submission.value

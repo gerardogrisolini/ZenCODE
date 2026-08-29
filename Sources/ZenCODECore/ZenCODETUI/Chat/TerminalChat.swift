@@ -290,10 +290,11 @@ public final class TerminalChat {
         )
         let telegramSettings = AgentSettingsManifestStore.load()?.telegram
         let telegramRouter = TerminalTelegramSessionRouter(
+            linkedChatID: telegramSettings?.linkedChatID,
+            ownerUserID: telegramSettings?.ownerUserID,
             routes: telegramSettings?.routes ?? [],
-            groupsEnabled: telegramSettings?.groupsEnabled ?? false,
-            persist: { routes in
-                try AgentSettingsManifestStore.saveTelegramRoutes(routes)
+            persist: { ownerUserID, routes in
+                try AgentSettingsManifestStore.saveTelegramRoutes(routes, ownerUserID: ownerUserID)
             }
         )
         self.telegramSessionRouter = telegramRouter

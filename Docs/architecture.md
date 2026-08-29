@@ -558,11 +558,11 @@ internally to the engine's scope (`.all`) for `memory.search` and the
 automatic recall pipeline, so the richer engine scopes never leak through the
 facade.
 
-## Telegram Multi-Session Routing and Persistence
+## Telegram Single-Owner Routing and Persistence
 
-Telegram routing is an authorization boundary, not presentation state. The
-persisted authority is `settings.json` under `telegram.routes`; its current
-shape is:
+Telegram routing is an authorization boundary, not presentation state. Schema 2
+persists one global private-chat identity in `settings.json`; routes describe only
+the owner's terminal sessions and optional private topics:
 
 ```json
 {
@@ -571,15 +571,11 @@ shape is:
     "botToken": "…",
     "linkedChatID": 42,
     "linkedChatTitle": "…",
-    "routingVersion": 1,
-    "groupsEnabled": false,
+    "ownerUserID": 7,
+    "routingVersion": 2,
     "routes": [{
-      "chatID": 42,
-      "ownerUserID": 7,
       "topicID": 12,
       "roomID": "room-id",
-      "chatKind": "private",
-      "memberUserIDs": [],
       "lifecycle": "active",
       "generation": 1
     }]
@@ -587,23 +583,18 @@ shape is:
 }
 ```
 
-`linkedChatID` and `linkedChatTitle` remain encoded for older readers. A legacy
-manifest containing only those fields decodes with `routes: []` and
-`groupsEnabled: false`. It is accepted only from the same Telegram `private`
-chat; the first actor-serialized sender claims ownership and an atomic settings
-read-modify-write emits the v1 route. Migration never opts a group in and never
-rewrites settings merely by loading them.
+`TerminalTelegramSessionRouter` accepts ingress only when both the private chat
+and sender match `(linkedChatID, ownerUserID)`. It serializes route create,
+close, delete, resolution and validation; each mutation persists its normalized
+draft before publishing it in memory. A lease retains the complete
+`(chatID,userID,topicID?,roomID)` key and route generation, so suspended work
+cannot cross an owner, session, lifecycle or generation change. A closed exact
+topic stays closed. A missing or deleted topic may use the unique active
+`topicID: null` fallback. Groups, supergroups, member lists and per-route ACLs
+are unsupported and fail closed.
 
-`TerminalTelegramSessionRouter` serializes create, grant/revoke, close, delete
-and validation. A mutation persists its normalized draft before publishing it in
-memory. Its lease contains the full `(chatID,userID,topicID?,roomID)` key and the
-route generation; every ACL/lifecycle mutation advances the generation, so a
-suspended operation from the old binding fails rather than landing in a new
-session. A closed exact topic stays closed. A missing or deleted topic may use
-an explicitly configured active `topicID: null` fallback. Groups and
-supergroups require both `groupsEnabled: true` and a matching active route whose
-owner/member ACL contains the sender; unknown chat kinds are treated as groups
-and therefore fail closed.
+There is no schema-1 compatibility or runtime owner claim. Any non-schema-2,
+ownerless or incoherent configuration is inactive and must be paired again.
 
 `TerminalTelegramRouteRuntimeState` partitions prompt queue, attempted-delivery
 ledger, draft ownership and reply receipts by the complete route key. Reply
@@ -611,10 +602,10 @@ targets must name the same room. Text prompt origins retain that key through the
 TUI queue, and Bot API persistent sends carry the matching
 `message_thread_id`. Stop-generation updates contain no reliable user identity:
 they can only request cancellation of a locally owned `(route,draftID)` and are
-never authorization evidence. Native drafts are optional private-chat UX;
-group routes receive only persistent topic-addressed output. Teardown removes
-one route bucket, while generation validation prevents late work from recreating
-it. No Mini App or web deployment is part of this architecture.
+never authorization evidence. Native drafts are optional private-chat UX.
+Teardown removes one route bucket, while generation validation prevents late
+work from recreating it. No Mini App or web deployment is part of this
+architecture.
 
 ## Consumer Migration Note
 

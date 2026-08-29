@@ -229,7 +229,9 @@ struct TerminalTelegramRichMessageTests {
             AgentSettingsManifest(
                 models: [],
                 telegram: AgentTelegramSettingsManifest(
-                    enabled: true, botToken: "123456:ABCDEF", linkedChatID: 42, linkedChatTitle: "Test"
+                    enabled: true, botToken: "123456:ABCDEF", linkedChatID: 42,
+                    linkedChatTitle: "Test", ownerUserID: 7,
+                    routes: [.init(roomID: "default")]
                 )
             ),
             to: url.appendingPathComponent(AgentSettingsManifestStore.settingsFilename)

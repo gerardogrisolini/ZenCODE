@@ -352,6 +352,14 @@ implementation task rather than guessing a task breakdown from prose.
 **Optional integrations:**
 - `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup). Available even while a prompt is running.
 
+Telegram pairs exactly one global owner through a private chat. That owner may route
+multiple terminal sessions through a default private route or distinct private
+`message_thread_id` topics; every route retains lifecycle, generation, lease and
+wire-fence checks, including authorization prompts, voice notes and attachments.
+Groups, shared members and per-route ACLs are not supported. Persisted routing uses
+`routingVersion: 2`. Schema-1, ownerless or incoherent configurations remain
+inactive and require a new pairing.
+
 **Tool execution logs:** every direct tool call emits a secret-redacted structured
 record through the platform system logger. Records include agent ID/name, model,
 session, tool arguments, status, optional execution duration, and detailed typed

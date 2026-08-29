@@ -90,6 +90,9 @@ extension ZenCODESetupRunner {
         // Telegram delivers `/start <payload>` back to the bot, which consumes
         // the grant atomically. The payload doubles as the manual fallback
         // code for clients that cannot open links.
+        let pairingDeadline = Date().addingTimeInterval(
+            TerminalTelegramPairingGrant.timeToLive
+        )
         let payload = await pairingService.issuePairingGrant()
         let deepLink = bot.username.map {
             TerminalTelegramPairingGrantLink.deepLink(botUsername: $0, payload: payload)
@@ -113,7 +116,9 @@ extension ZenCODESetupRunner {
         """
         AgentOutput.standardError.writeString(instructions)
 
-        let linkedChat = try await pairingService.waitForPairing(code: payload)
+        let linkedChat = try await pairingService.waitForPairing(
+            code: payload, deadline: pairingDeadline
+        )
         let title = linkedChat.chatTitle?.nilIfBlank ?? "chat \(linkedChat.chatID)"
         AgentOutput.standardError.writeString("Telegram linked: \(title)\n")
         return AgentTelegramSettingsManifest(
@@ -121,13 +126,9 @@ extension ZenCODESetupRunner {
             botToken: botToken,
             linkedChatID: linkedChat.chatID,
             linkedChatTitle: linkedChat.chatTitle,
+            ownerUserID: linkedChat.userID,
             routes: [
-                AgentTelegramRouteManifest(
-                    chatID: linkedChat.chatID,
-                    ownerUserID: linkedChat.userID,
-                    roomID: "default",
-                    chatKind: .privateChat
-                )
+                AgentTelegramRouteManifest(roomID: "default")
             ]
         )
     }
