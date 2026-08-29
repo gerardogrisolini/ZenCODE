@@ -333,7 +333,20 @@ public actor TerminalTelegramControlService {
     /// Source-compatible 2.0.1 façade over ``incomingMailbox``. The stream is
     /// demand-driven (`unfolding`), so it pulls exactly one element per consumer
     /// request and adds no buffer of its own.
-    public nonisolated let incomingMessages: AsyncStream<TerminalTelegramIncomingMessage>
+    ///
+    /// A **fresh** stream is vended per access on purpose. `AsyncStream(unfolding:)`
+    /// is one-shot: the first `nil` — a superseded receiver during a consumer
+    /// handoff, a cancelled forwarding task, or a restarted panel loop — marks it
+    /// terminated forever, and every later iterator of that same stored value
+    /// then completes immediately. Storing it in a `let` therefore silently and
+    /// permanently killed Telegram ingress for the rest of the process while
+    /// `/telegram on` still reported success. The mailbox itself stays the single
+    /// shared, bounded, backpressured queue, so re-vending adds no buffering and
+    /// cannot duplicate or drop an element.
+    public nonisolated var incomingMessages: AsyncStream<TerminalTelegramIncomingMessage> {
+        let mailbox = incomingMailbox
+        return AsyncStream(unfolding: { await mailbox.nextElement() })
+    }
     private var state: TerminalTelegramControlState
     private var pollingTask: Task<Void, Never>?
     private var commandMenuTask: Task<Void, Never>?
@@ -376,7 +389,6 @@ public actor TerminalTelegramControlService {
             capacity: Self.incomingMessageBufferLimit
         )
         incomingMailbox = mailbox
-        incomingMessages = AsyncStream(unfolding: { await mailbox.nextElement() })
         state = TerminalTelegramControlState.inactive()
     }
 

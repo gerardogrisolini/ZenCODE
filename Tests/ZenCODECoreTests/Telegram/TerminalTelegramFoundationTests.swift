@@ -873,4 +873,60 @@ struct TerminalTelegramReleaseFenceTests {
         #expect(await iterator.next()?.messageID == limit + 1)
         await mailbox.finish()
     }
+
+    /// Regression: `/telegram on` reported success but no Telegram message was
+    /// ever delivered again once an ingress consumer had gone away.
+    ///
+    /// `AsyncStream(unfolding:)` is one-shot. When the façade was stored in a
+    /// `let`, the first `nil` — a cancelled forwarding task, a consumer handoff
+    /// or a restarted panel loop — terminated that single shared stream forever,
+    /// so every later consumer completed immediately while the mailbox happily
+    /// kept buffering. The service must vend a live stream to the next consumer.
+    @Test
+    func ingressSurvivesACancelledConsumerAndStillFeedsTheNextOne() async throws {
+        let service = Self.makeControlService()
+        let mailbox = service.incomingMailbox
+
+        // A forwarding task parks on the ingress and is then torn down.
+        let first = Task { for await _ in service.incomingMessages {} }
+        var parked = false
+        for _ in 0..<1_000 {
+            if await mailbox.hasSuspendedReceiverForTesting {
+                parked = true
+                break
+            }
+            await Task.yield()
+        }
+        #expect(parked)
+        first.cancel()
+        await first.value
+
+        // `/telegram on` starts a fresh forwarding task: ingress must still work.
+        let second = Task { () -> Int? in
+            for await message in service.incomingMessages { return message.messageID }
+            return nil
+        }
+        #expect(await mailbox.send(Self.probeMessage(id: 7)))
+        #expect(await second.value == 7)
+        await mailbox.finish()
+    }
+
+    /// Re-vending the façade must not add buffering or duplicate elements: the
+    /// bounded mailbox stays the single shared queue behind every stream.
+    @Test
+    func ingressVendsIndependentStreamsOverTheOneSharedMailbox() async throws {
+        let service = Self.makeControlService()
+        let mailbox = service.incomingMailbox
+
+        var first = service.incomingMessages.makeAsyncIterator()
+        var second = service.incomingMessages.makeAsyncIterator()
+
+        #expect(await mailbox.send(Self.probeMessage(id: 1)))
+        #expect(await first.next()?.messageID == 1)
+        // Delivered once only: the element is not replayed to the other stream.
+        #expect(await mailbox.send(Self.probeMessage(id: 2)))
+        #expect(await second.next()?.messageID == 2)
+        #expect(await mailbox.bufferedCountForTesting == 0)
+        await mailbox.finish()
+    }
 }

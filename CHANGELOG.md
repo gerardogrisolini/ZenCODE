@@ -10,6 +10,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Telegram ingress no longer dies silently after the first consumer teardown.
+  `TerminalTelegramControlService.incomingMessages` stored a single
+  `AsyncStream(unfolding:)`, which is one-shot: the first `nil` — a cancelled
+  forwarding task, a consumer handoff, or a restarted interactive panel loop —
+  terminated that shared stream permanently, so every later consumer completed
+  immediately. `/telegram on` still reported success and the bounded mailbox kept
+  buffering updates, but no Telegram message was ever delivered again. The façade
+  is now vended per access over the same shared, bounded, backpressured mailbox,
+  so a new forwarding task always gets a live stream without extra buffering or
+  duplicated elements.
+
 ## [2.1.0] - 2026-08-29
 
 ### Added
