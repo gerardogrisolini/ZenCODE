@@ -272,6 +272,10 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
         await toolExecutor.interruptSubAgents(rootSessionID: rootSessionID)
     }
 
+    public func interruptBackgroundJobs() async -> Int {
+        await toolExecutor.interruptBackgroundJobs()
+    }
+
     public func sharedChatParticipants(rootSessionID: String) async -> [AgentSharedChat.Participant] {
         await toolExecutor.sharedChatParticipants(rootSessionID: rootSessionID)
     }

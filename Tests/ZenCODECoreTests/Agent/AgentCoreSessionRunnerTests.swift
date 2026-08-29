@@ -400,6 +400,39 @@ struct AgentCoreSessionRunnerTests {
         #expect(interruptedRoots == [sessionID])
     }
 
+    /// ESC stop must terminate `local.exec` background jobs too: the backend
+    /// contract is `cancelPrompt` -> cancel prompt tasks, then interrupt the
+    /// turn's background jobs, then interrupt delegated agents.
+    @Test
+    func cancelPromptBySessionIDInterruptsBackgroundJobs() async throws {
+        let backend = CapturingAgentRuntimeBackend(backgroundJobInterruptCount: 1)
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in backend }
+        )
+        let sessionID = "session-\(UUID().uuidString)"
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: []
+        )
+
+        _ = try await runner.sendPrompt(
+            configuration: configuration,
+            prompt: "start background work",
+            attachments: []
+        ) { _ in }
+        await runner.cancelPrompt(sessionID: sessionID)
+
+        let counts = await backend.backgroundJobInterruptCounts()
+        #expect(counts == [1])
+        let interruptedRoots = await backend.interruptedRootSessionIDs()
+        #expect(interruptedRoots == [sessionID])
+    }
+
     @Test
     func sendPromptWiresSessionLeaseBeforeStartingTheNextBackendTurn() async throws {
         let backend = BlockingAgentRuntimeBackend()
@@ -1485,19 +1518,23 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
     private var sessions: [String: AgentRuntimeSessionSnapshot] = [:]
     private var createdHistories: [[AgentRuntimeMessage]] = []
     private var interruptedRoots: [String] = []
+    private var interruptedBackgroundJobCounts: [Int] = []
     private var subAgentToolEventHandler: DirectSubAgentToolEventHandler?
     private let promptEvents: [DirectAgentEvent]
     private let sendPromptError: Error?
     private let closeSessionGate: SessionRunnerTestGate?
+    private let backgroundJobInterruptCount: Int
 
     init(
         promptEvents: [DirectAgentEvent] = [],
         sendPromptError: Error? = nil,
-        closeSessionGate: SessionRunnerTestGate? = nil
+        closeSessionGate: SessionRunnerTestGate? = nil,
+        backgroundJobInterruptCount: Int = 0
     ) {
         self.promptEvents = promptEvents
         self.sendPromptError = sendPromptError
         self.closeSessionGate = closeSessionGate
+        self.backgroundJobInterruptCount = backgroundJobInterruptCount
     }
 
     func createSession(
@@ -1603,6 +1640,11 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
         return 0
     }
 
+    func interruptBackgroundJobs() async -> Int {
+        interruptedBackgroundJobCounts.append(backgroundJobInterruptCount)
+        return backgroundJobInterruptCount
+    }
+
     func sendPrompt(
         sessionID _: String,
         prompt _: String,
@@ -1636,6 +1678,10 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
 
     func interruptedRootSessionIDs() -> [String] {
         interruptedRoots
+    }
+
+    func backgroundJobInterruptCounts() -> [Int] {
+        interruptedBackgroundJobCounts
     }
 }
 

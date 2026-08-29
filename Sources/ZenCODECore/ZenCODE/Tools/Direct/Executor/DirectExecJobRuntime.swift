@@ -443,6 +443,22 @@ public actor DirectExecJobRuntime {
         }
     }
 
+    /// Queues process-group termination (SIGTERM with a bounded SIGKILL
+    /// fallback) for every running job and returns how many were still running,
+    /// without waiting for them to exit. User-initiated interrupts use this so
+    /// a stopped turn cannot leave approved background jobs running; the exit
+    /// monitor still reaps each process and records `.killed`.
+    @discardableResult
+    public func interruptRunningJobs(reason: String = "interrupted by user") -> Int {
+        let runningIDs = jobsByID.values
+            .filter { $0.status == .running }
+            .map(\.id)
+        for jobID in runningIDs {
+            terminate(jobID: jobID, reason: reason)
+        }
+        return runningIDs.count
+    }
+
     // MARK: - Internal state transitions
 
     /// Delivers `signal` to a running job, targeting the whole process group
@@ -582,5 +598,11 @@ public actor DirectExecJobRuntime {
     }
 
     public func shutdown() async {}
+
+    @discardableResult
+    public func interruptRunningJobs(reason: String = "interrupted by user") -> Int {
+        _ = reason
+        return 0
+    }
 #endif
 }

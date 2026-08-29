@@ -62,6 +62,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   network request. Received files land in a `0600` temporary under a `0700`
   directory, are capped per chat and per concurrent download, and are removed
   deterministically on discard, `/telegram off`, and teardown.
+- Pressing ESC to stop a running turn now also terminates every active
+  `local.exec` background job the turn started, using the same
+  process-group TERM-then-KILL escalation as `exec.job` kill and session
+  shutdown. Final output of each stopped job remains readable through
+  `exec.job` poll, and jobs that already finished are left untouched.
 - Telegram now streams visible plain-text assistant output through native
   `sendMessageDraft` previews. Updates are throttled and coalesced behind the
   outbound governor, while the completed answer is persisted exactly once with

@@ -320,6 +320,11 @@ public actor AgentCoreBackend {
         return await activeBackend.interruptSubAgents(rootSessionID: rootSessionID)
     }
 
+    public func interruptBackgroundJobs() async -> Int {
+        guard let activeBackend else { return 0 }
+        return await activeBackend.interruptBackgroundJobs()
+    }
+
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
         if let backend = activeBackend {
             return await backend.subAgentSnapshots()

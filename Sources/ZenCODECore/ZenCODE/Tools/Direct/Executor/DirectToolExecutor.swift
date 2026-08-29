@@ -311,6 +311,13 @@ public actor DirectToolExecutor {
         await subAgentRuntime.interruptAgents(rootSessionID: rootSessionID)
     }
 
+    /// Terminates every running `local.exec` background job owned by this
+    /// executor, without waiting for them to exit. The exit monitor reaps each
+    /// process; final transcripts stay pollable.
+    public func interruptBackgroundJobs() async -> Int {
+        await execJobRuntime.interruptRunningJobs()
+    }
+
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
         await subAgentRuntime.overviewSnapshots()
     }

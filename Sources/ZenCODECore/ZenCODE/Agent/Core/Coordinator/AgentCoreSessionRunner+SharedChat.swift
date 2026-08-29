@@ -19,6 +19,14 @@ extension AgentCoreSessionRunner {
         return await backend.interruptSubAgents(rootSessionID: rootSessionID)
     }
 
+    /// Terminates every running `local.exec` background job owned by the
+    /// active backend's direct-tool executor. User-initiated interrupts use
+    /// this so a stopped turn cannot leave approved background jobs running.
+    public func interruptBackgroundJobs() async -> Int {
+        guard let backend else { return 0 }
+        return await backend.interruptBackgroundJobs()
+    }
+
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
         guard let backend else {
             return []

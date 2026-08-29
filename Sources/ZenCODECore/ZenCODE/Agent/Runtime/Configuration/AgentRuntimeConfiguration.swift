@@ -667,6 +667,11 @@ public protocol AgentRuntimeBackend: Actor {
 
     func interruptSubAgents(rootSessionID: String) async -> Int
 
+    /// Terminates every running `local.exec` background job owned by this
+    /// backend without waiting for exit. Returns how many jobs were still
+    /// running. Backends without a direct-tool executor may ignore it.
+    func interruptBackgroundJobs() async -> Int
+
     func updateBorrowedSubAgentToolExecutor(
         _ executor: AgentBorrowedToolExecutor?
     ) async
@@ -749,6 +754,10 @@ extension AgentRuntimeBackend {
     }
 
     public func interruptSubAgents(rootSessionID: String) async -> Int {
+        0
+    }
+
+    public func interruptBackgroundJobs() async -> Int {
         0
     }
 

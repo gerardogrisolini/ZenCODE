@@ -87,6 +87,53 @@ struct DirectExecJobRuntimeTests {
         #expect(finalPoll.contains("job job-1: killed"))
     }
 
+    /// An interrupt must reach the whole process tree. The child survives its
+    /// parent shell via `exec sleep` and is only reaped if the runtime signals
+    /// the isolated process group rather than the shell PID alone.
+    @Test
+    func interruptRunningJobsTerminatesJobAndReachesDescendants() async throws {
+        let runtime = DirectExecJobRuntime()
+        _ = try await runtime.startBackgroundJob(
+            command: "sleep 30",
+            shellPath: "/bin/sh",
+            workingDirectory: FileManager.default.temporaryDirectory
+        )
+
+        let interruptedCount = await runtime.interruptRunningJobs()
+        #expect(interruptedCount == 1)
+
+        let finalPoll = try await pollUntil(runtime: runtime, jobID: "job-1") {
+            $0.contains("killed")
+        }
+        #expect(finalPoll.contains("job job-1: killed"))
+        #expect(finalPoll.contains("interrupted by user"))
+        #expect(!finalPoll.contains("Job is still running"))
+    }
+
+    @Test
+    func interruptRunningJobsSkipsFinishedJobs() async throws {
+        let runtime = DirectExecJobRuntime()
+
+        let idleCount = await runtime.interruptRunningJobs()
+        #expect(idleCount == 0)
+
+        _ = try await runtime.startBackgroundJob(
+            command: "sleep 30",
+            shellPath: "/bin/sh",
+            workingDirectory: FileManager.default.temporaryDirectory
+        )
+        let interruptedCount = await runtime.interruptRunningJobs()
+        #expect(interruptedCount == 1)
+
+        // Once the job reaches its terminal state a later interrupt no longer
+        // sees it, so finished jobs are left untouched.
+        _ = try await pollUntil(runtime: runtime, jobID: "job-1") {
+            $0.contains("killed")
+        }
+        let afterExitCount = await runtime.interruptRunningJobs()
+        #expect(afterExitCount == 0)
+    }
+
     @Test
     func shutdownEscalatesAndWaitsForTermIgnoringJob() async throws {
         let runtime = DirectExecJobRuntime()
@@ -186,8 +233,7 @@ struct DirectExecJobRuntimeTests {
     }
 
     @Test
-    func execJobIsRejectedWhenNotAllowed() async throws {
-        let executor = DirectToolExecutor(
+    func execJobIsRejectedWhenNotAllowed() async throws {        let executor = DirectToolExecutor(
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
             subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
         )
@@ -203,6 +249,39 @@ struct DirectExecJobRuntimeTests {
             allowedToolNames: ["local.readFile"]
         )
         #expect(result.status != .completed)
+    }
+
+    /// The full ESC path: the session runner's interrupt flows through the
+    /// backend's `DirectToolExecutor` into the job runtime, so a running job
+    /// ends up `.killed` with its transcript still pollable.
+    @Test
+    func executorInterruptBackgroundJobsTerminatesRunningJob() async throws {
+        let executor = DirectToolExecutor(
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+        )
+        _ = await executor.execute(
+            sessionID: "exec-job-tests",
+            toolCall: DirectAgentToolCall(
+                id: "call-interrupt",
+                name: "local.exec",
+                argumentsObject: [
+                    "command": "sleep 30",
+                    "background": true
+                ],
+                argumentsJSON: #"{"command":"sleep 30","background":true}"#
+            ),
+            workingDirectory: FileManager.default.temporaryDirectory,
+            allowedToolNames: ["local.exec", "exec.job"]
+        )
+
+        let interruptedCount = await executor.interruptBackgroundJobs()
+        #expect(interruptedCount == 1)
+
+        let finalPoll = try await pollUntil(runtime: executor.execJobRuntime, jobID: "job-1") {
+            $0.contains("killed")
+        }
+        #expect(finalPoll.contains("job job-1: killed"))
     }
 
     private func pollUntil(

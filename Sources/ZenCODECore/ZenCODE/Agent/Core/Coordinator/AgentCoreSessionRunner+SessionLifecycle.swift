@@ -317,6 +317,10 @@ extension AgentCoreSessionRunner {
     public func cancelActivePrompt() async {
         let sessionIDs = promptTaskRegistry.activeSessionIDs
         promptTaskRegistry.cancelAllTasks()
+        // Terminating background jobs happens after cancelling prompt tasks so
+        // the cancelled turn can no longer start new ones. This is bounded: it
+        // only queues signals and returns without waiting for job exits.
+        _ = await interruptBackgroundJobs()
         for sessionID in sessionIDs {
             _ = await interruptSubAgents(rootSessionID: sessionID)
         }
@@ -324,6 +328,9 @@ extension AgentCoreSessionRunner {
 
     public func cancelPrompt(sessionID: String) async {
         promptTaskRegistry.cancelAll(for: sessionID)
+        // Same ordering as `cancelActivePrompt`: prompt tasks first, then the
+        // approved background jobs the turn may have started.
+        _ = await interruptBackgroundJobs()
         _ = await interruptSubAgents(rootSessionID: sessionID)
     }
 
