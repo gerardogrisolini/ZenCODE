@@ -19,6 +19,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Telegram ingress now rejects new prompts, commands, live-chat mentions,
+  attachments and voice notes while that TUI session is generating, instead of
+  queueing or starting work in the background. The authorized route receives a
+  generation-fenced busy notice; stop-generation, pending authorization replies
+  and consent callbacks remain operational, and the gate runs in the serialized
+  runtime loop before downloads or transcription.
+
 - Telegram `@coordinator` shared-chat mentions now retain their authorized,
   generation-fenced route through the synthetic coordinator turn, so a response
   shown in the TUI is also delivered back to the originating Telegram chat. The

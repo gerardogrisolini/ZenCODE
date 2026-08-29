@@ -137,6 +137,20 @@ public final class TerminalChat {
     /// generation is revoked/rebound/closed.
     var telegramRouteValidationTask: Task<Void, Never>?
     var telegramRuntimeEventQueue: TerminalChatEventQueue?
+    /// Test-only runtime seams. Production leaves these nil/false; they let a
+    /// deterministic harness drive the real serialized panel FIFO without raw
+    /// terminal I/O or a live model.
+    var interactiveRuntimeEventQueueForTesting: TerminalChatEventQueue?
+    var bypassInteractivePanelInputForTesting = false
+    var onGenerateResponseForTesting: (@Sendable (TerminalPromptAttempt) async throws -> TerminalChatGenerationSuccess)?
+    var onInteractiveGenerationStateForTesting: (@Sendable (Bool) -> Void)?
+    enum TelegramWorkEffectForTesting: Sendable {
+        case attachmentDownload
+        case voiceTranscription
+        case sharedChatPublication
+    }
+    /// Returning true records and consumes the effect before external I/O.
+    var onTelegramWorkEffectForTesting: (@Sendable (TelegramWorkEffectForTesting) -> Bool)?
     /// Test seam for direct turn-message delivery when no progress reporter owns
     /// the linked chat. `nil` in production.
     var onDirectTelegramTurnMessage: (@Sendable (TerminalTelegramTurnPayload, Int64) async -> Bool)?

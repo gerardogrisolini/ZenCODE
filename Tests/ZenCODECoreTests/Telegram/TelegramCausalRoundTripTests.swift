@@ -331,6 +331,25 @@ struct TelegramCausalRoundTripTests {
         // production control service and the fake transport.
         let completion = await transport.nextSendMessage()
 
+        // Busy egress is fenced inside the real control service, not merely by
+        // a pre-transport hook. A stale wire lifecycle must produce no additional
+        // HTTP send even though ingress ACL resolution still succeeds.
+        let sendCountBeforeStaleBusy = transport.requests(forMethod: "sendMessage").count
+        terminal.telegramControlState.wireLifecycleEpoch = UUID()
+        var staleBusyQueue = TerminalQueuedPromptBuffer()
+        _ = await terminal.handleTelegramRuntimeMessage(
+            TerminalTelegramIncomingMessage(
+                chatID: Self.linkedChatID, userID: 7, text: "busy stale egress",
+                voice: nil, messageID: 502, chatTitle: nil, username: nil
+            ),
+            eventQueue: eventQueue,
+            queuedPrompts: &staleBusyQueue,
+            transcriptions: transcriptions,
+            isSessionGenerating: true
+        )
+        #expect(staleBusyQueue.isEmpty)
+        #expect(transport.requests(forMethod: "sendMessage").count == sendCountBeforeStaleBusy)
+
         generationTask.cancel()
         eventQueue.finish()
         _ = await terminal.telegramControlService.stop()

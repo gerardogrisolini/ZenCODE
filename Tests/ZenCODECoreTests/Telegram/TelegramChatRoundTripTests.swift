@@ -184,6 +184,221 @@ struct TelegramChatRoundTripTests {
         #expect(queuedPrompts.isEmpty)
     }
 
+    /// Busy admission is decided by the serialized TUI runtime, not by a global
+    /// bot flag. Every work-producing Telegram shape is rejected on its own
+    /// authorized route before it can enqueue, download, transcribe or publish.
+    @Test
+    func busySessionRejectsTelegramWorkBeforeDispatch() async throws {
+        let terminal = try Self.makeTerminal(linkedChatID: 42)
+        _ = await Self.installRoute(on: terminal)
+        let notices = Mutex<[String]>([])
+        let pickerCards = Mutex<Int>(0)
+        terminal.onTelegramSystemMessage = { text, chatID in
+            #expect(chatID == 42)
+            notices.withLock { $0.append(text) }
+            return true
+        }
+        terminal.onTelegramMentionPickerMessage = { _, _, _ in
+            pickerCards.withLock { $0 += 1 }
+            return 91
+        }
+        let attachment = TerminalTelegramInboundAttachment(
+            fileID: "must-not-download", fileUniqueID: nil, kind: .document,
+            mimeType: "text/plain", fileSize: 4, fileName: "note.txt", messageID: 3
+        )
+        let work: [TerminalTelegramIncomingMessage] = [
+            Self.message("ordinary prompt", messageID: 1),
+            Self.message("/status", messageID: 2),
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: nil, voice: nil, messageID: 3,
+                chatTitle: "Gerardo", username: "gerardo", attachment: attachment
+            ),
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: nil,
+                voice: TerminalTelegramVoiceAttachment(
+                    fileID: "must-not-transcribe", fileUniqueID: nil,
+                    duration: 1, mimeType: "audio/ogg", fileSize: 4
+                ),
+                messageID: 4, chatTitle: "Gerardo", username: "gerardo"
+            ),
+            Self.message("@coordinator do work", messageID: 5),
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: nil, voice: nil, messageID: 6,
+                chatTitle: "Gerardo", username: "gerardo",
+                callbackQueryID: "callback-1", callbackData: "zencode:mention:coordinator"
+            ),
+        ]
+        var queuedPrompts = TerminalQueuedPromptBuffer()
+        for message in work {
+            let didQueue = await terminal.handleTelegramRuntimeMessage(
+                message, eventQueue: TerminalChatEventQueue(),
+                queuedPrompts: &queuedPrompts,
+                transcriptions: TerminalVoiceTranscriptionRegistry(),
+                isSessionGenerating: true
+            )
+            #expect(!didQueue)
+        }
+
+        #expect(queuedPrompts.isEmpty)
+        #expect(pickerCards.withLock { $0 } == 0)
+        let delivered = notices.withLock { $0 }
+        #expect(delivered.count == work.count)
+        #expect(delivered.allSatisfy {
+            $0.contains("busy generating a response in this session")
+                && $0.contains("was not queued")
+        })
+    }
+
+    /// Drives the production panel FIFO: a local turn enters generation, three
+    /// Telegram work shapes arrive while that state is live, and cancellation
+    /// completion clears the gate. The same call-site spies are then exercised
+    /// positively, proving that the busy assertions are not disconnected mocks.
+    @Test
+    func interactiveRuntimeRejectsTelegramEffectsUntilGenerationCompletes() async throws {
+        let terminal = try Self.makeTerminal(linkedChatID: 42)
+        _ = await Self.installRoute(on: terminal)
+        let queue = TerminalChatEventQueue()
+        terminal.interactiveRuntimeEventQueueForTesting = queue
+        terminal.bypassInteractivePanelInputForTesting = true
+
+        let generationGate = TelegramRuntimeTestGate()
+        terminal.onGenerateResponseForTesting = { _ in
+            await generationGate.enterAndWait()
+            throw CancellationError()
+        }
+        let (states, stateContinuation) = AsyncStream.makeStream(of: Bool.self)
+        terminal.onInteractiveGenerationStateForTesting = { state in
+            stateContinuation.yield(state)
+        }
+        let (notices, noticeContinuation) = AsyncStream.makeStream(of: String.self)
+        terminal.onTelegramSystemMessage = { message, _ in
+            noticeContinuation.yield(message)
+            return true
+        }
+        let effects = Mutex<[TerminalChat.TelegramWorkEffectForTesting]>([])
+        let (effectEvents, effectContinuation) = AsyncStream.makeStream(
+            of: TerminalChat.TelegramWorkEffectForTesting.self
+        )
+        terminal.onTelegramWorkEffectForTesting = { effect in
+            effects.withLock { $0.append(effect) }
+            effectContinuation.yield(effect)
+            return true
+        }
+
+        let loop = Task { try await terminal.runInteractivePanelLoop() }
+        var stateIterator = states.makeAsyncIterator()
+        var noticeIterator = notices.makeAsyncIterator()
+        var effectIterator = effectEvents.makeAsyncIterator()
+        queue.send(.input(.submitted("hold generation open")))
+        #expect(await stateIterator.next() == true)
+        await generationGate.waitUntilEntered()
+
+        let attachment = TerminalTelegramInboundAttachment(
+            fileID: "busy-download", fileUniqueID: nil, kind: .document,
+            mimeType: "text/plain", fileSize: 4, fileName: "busy.txt", messageID: 31
+        )
+        let busyWork: [TerminalTelegramIncomingMessage] = [
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: nil, voice: nil, messageID: 31,
+                chatTitle: nil, username: nil, attachment: attachment
+            ),
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: nil,
+                voice: TerminalTelegramVoiceAttachment(
+                    fileID: "busy-voice", fileUniqueID: nil, duration: 1,
+                    mimeType: "audio/ogg", fileSize: 4
+                ),
+                messageID: 32, chatTitle: nil, username: nil
+            ),
+            Self.message("@coordinator busy publication", messageID: 33),
+        ]
+        for message in busyWork { queue.send(.telegramMessage(message)) }
+        for _ in busyWork {
+            #expect(await noticeIterator.next()?.contains("was not queued") == true)
+        }
+        #expect(effects.withLock { $0 }.isEmpty)
+
+        await generationGate.release()
+        #expect(await stateIterator.next() == false)
+        for message in busyWork { queue.send(.telegramMessage(message)) }
+        var observedEffects: [TerminalChat.TelegramWorkEffectForTesting] = []
+        for _ in busyWork {
+            if let effect = await effectIterator.next() { observedEffects.append(effect) }
+        }
+        #expect(observedEffects.count == 3)
+        #expect(effects.withLock { $0 }.count == 3)
+
+        queue.send(.input(.endOfInput))
+        try await loop.value
+        stateContinuation.finish()
+        noticeContinuation.finish()
+        effectContinuation.finish()
+    }
+
+    @Test
+    func busyNoticeDoesNotLeakAcrossUnauthorizedRoutes() async throws {
+        let terminal = try Self.makeTerminal(linkedChatID: 42)
+        _ = await Self.installRoute(on: terminal)
+        let notices = Mutex<[String]>([])
+        terminal.onTelegramSystemMessage = { text, _ in
+            notices.withLock { $0.append(text) }
+            return true
+        }
+        var queuedPrompts = TerminalQueuedPromptBuffer()
+
+        _ = await terminal.handleTelegramRuntimeMessage(
+            Self.message("foreign", chatID: 99), eventQueue: TerminalChatEventQueue(),
+            queuedPrompts: &queuedPrompts,
+            transcriptions: TerminalVoiceTranscriptionRegistry(),
+            isSessionGenerating: true
+        )
+
+        #expect(queuedPrompts.isEmpty)
+        #expect(notices.withLock { $0 }.isEmpty)
+    }
+
+    @Test
+    func busySessionStillAcceptsArtifactConsentCancellation() async throws {
+        let terminal = try Self.makeTerminal(linkedChatID: 42)
+        let lease = await Self.installRoute(on: terminal)
+        let artifactURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("busy-consent-\(UUID().uuidString).txt")
+        try Data("fixture".utf8).write(to: artifactURL)
+        defer { try? FileManager.default.removeItem(at: artifactURL) }
+        let offerID = try #require(
+            await terminal.telegramControlService.offerArtifactConsent(
+                artifact: TerminalTelegramArtifact(
+                    fileURL: artifactURL, filename: artifactURL.lastPathComponent
+                ),
+                chatID: 42, userID: 7, routeLease: lease
+            )
+        )
+        let notices = Mutex<[String]>([])
+        terminal.onTelegramSystemMessage = { text, _ in
+            notices.withLock { $0.append(text) }
+            return true
+        }
+        var queuedPrompts = TerminalQueuedPromptBuffer()
+
+        let didQueue = await terminal.handleTelegramRuntimeMessage(
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: nil, voice: nil, messageID: 7,
+                chatTitle: nil, username: nil, callbackQueryID: "callback-consent",
+                callbackData: "zencode:artifact:cancel:\(offerID)"
+            ),
+            eventQueue: TerminalChatEventQueue(), queuedPrompts: &queuedPrompts,
+            transcriptions: TerminalVoiceTranscriptionRegistry(),
+            isSessionGenerating: true
+        )
+
+        #expect(!didQueue)
+        #expect(queuedPrompts.isEmpty)
+        #expect(await terminal.telegramControlService.pendingConsentArtifact(
+            offerID: offerID, chatID: 42
+        ) == nil)
+        #expect(notices.withLock { $0 } == ["ZenCODE message: file send cancelled."])
+    }
+
     /// The outbound channel is bound to the chat that asked: a reply must never
     /// be routed to a chat other than the linked one. The causal round-trip
     /// (`TelegramCausalRoundTripTests`) covers the full path for the linked
@@ -462,5 +677,31 @@ struct TelegramChatRoundTripTests {
         _ = await submission.value
 
         #expect(routedErrors.withLock { $0 }.isEmpty)
+    }
+}
+
+private actor TelegramRuntimeTestGate {
+    private var entered = false
+    private var released = false
+    private var entryWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func enterAndWait() async {
+        entered = true
+        entryWaiters.forEach { $0.resume() }
+        entryWaiters.removeAll()
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitUntilEntered() async {
+        guard !entered else { return }
+        await withCheckedContinuation { entryWaiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        releaseWaiters.forEach { $0.resume() }
+        releaseWaiters.removeAll()
     }
 }

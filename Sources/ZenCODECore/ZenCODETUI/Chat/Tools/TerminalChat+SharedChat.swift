@@ -216,6 +216,7 @@ extension TerminalChat {
         _ route: SharedChatMentionRoute,
         telegramOrigin: TerminalPromptOrigin? = nil
     ) async {
+        if onTelegramWorkEffectForTesting?(.sharedChatPublication) == true { return }
         guard await isCurrentSharedChatDirectDestination(route.destination) else {
             await writeFailureMessage("ZenCODE message: selected agent is no longer active.\n")
             await refreshSharedChatPanelSuggestions()

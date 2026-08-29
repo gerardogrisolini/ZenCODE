@@ -169,14 +169,16 @@ extension TerminalChat {
         _ message: TerminalTelegramIncomingMessage,
         eventQueue: TerminalChatEventQueue,
         queuedPrompts: inout TerminalQueuedPromptBuffer,
-        transcriptions: TerminalVoiceTranscriptionRegistry
+        transcriptions: TerminalVoiceTranscriptionRegistry,
+        isSessionGenerating: Bool = false
     ) async -> Bool {
         let countBefore = queuedPrompts.count
         await handleTelegramMessage(
             message,
             queuedPrompts: &queuedPrompts,
             eventQueue: eventQueue,
-            transcriptions: transcriptions
+            transcriptions: transcriptions,
+            isSessionGenerating: isSessionGenerating
         )
         return queuedPrompts.count > countBefore
     }
@@ -224,7 +226,8 @@ extension TerminalChat {
         _ message: TerminalTelegramIncomingMessage,
         queuedPrompts: inout TerminalQueuedPromptBuffer,
         eventQueue: TerminalChatEventQueue,
-        transcriptions: TerminalVoiceTranscriptionRegistry
+        transcriptions: TerminalVoiceTranscriptionRegistry,
+        isSessionGenerating: Bool = false
     ) async {
         // Stop-generation updates are consumed by the interactive runtime where
         // the correlated generation Task is owned; never reinterpret them as a
@@ -264,9 +267,31 @@ extension TerminalChat {
             ) {
                 return
             }
+            guard !isSessionGenerating else {
+                await sendTelegramBusyMessage(origin: routeOrigin)
+                return
+            }
             await handleTelegramMentionPickerCallback(
                 callbackData, chatID: message.chatID, origin: routeOrigin
             )
+            return
+        }
+
+        // The runtime loop owns the generation Task and passes its serialized,
+        // session-local state here. Keep ACL resolution, lease capture and the
+        // wire fence above the gate, then reject before attachment downloads,
+        // voice transcription, command parsing or shared-chat publication.
+        // Permission replies remain live because an active turn may be blocked
+        // waiting for exactly this operator decision.
+        if isSessionGenerating,
+           let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty,
+           TerminalTelegramPermissionBroker.permissionCommand(from: text) != nil,
+           await handleTelegramPermissionResponseIfNeeded(text, lease: routeLease) {
+            return
+        }
+        guard !isSessionGenerating else {
+            await sendTelegramBusyMessage(origin: routeOrigin)
             return
         }
 
@@ -351,6 +376,13 @@ extension TerminalChat {
             return
         }
         telegramRuntimeEventQueue = eventQueue
+    }
+
+    private func sendTelegramBusyMessage(origin: TerminalPromptOrigin) async {
+        await sendTelegramSystemMessageIfLinked(
+            "ZenCODE is busy generating a response in this session. This Telegram request was not queued; wait for the current response to finish and send it again.",
+            origin: origin
+        )
     }
 
     // MARK: - Mention picker
@@ -707,6 +739,7 @@ extension TerminalChat {
         message: TerminalTelegramIncomingMessage,
         origin: TerminalPromptOrigin
     ) async {
+        if onTelegramWorkEffectForTesting?(.attachmentDownload) == true { return }
         guard let fence = telegramWireFence(for: origin) else { return }
         do {
             let stored = try await telegramControlService.receiveInboundAttachment(
@@ -1022,6 +1055,7 @@ extension TerminalChat {
         eventQueue: TerminalChatEventQueue,
         transcriptions: TerminalVoiceTranscriptionRegistry
     ) async {
+        if onTelegramWorkEffectForTesting?(.voiceTranscription) == true { return }
         guard let chatID = origin.telegramChatID,
               let fence = telegramWireFence(for: origin) else { return }
         guard isVoiceConfigured() else {

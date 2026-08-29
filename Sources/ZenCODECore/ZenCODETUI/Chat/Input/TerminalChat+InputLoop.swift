@@ -478,7 +478,7 @@ extension TerminalChat {
     }
 
     func runInteractivePanelLoop() async throws {
-        let eventQueue = TerminalChatEventQueue()
+        let eventQueue = interactiveRuntimeEventQueueForTesting ?? TerminalChatEventQueue()
         // This loop owns the only Telegram ingress consumer, so replies to a
         // forwarded card can actually be delivered while it runs.
         readsTelegramIngress = true
@@ -679,6 +679,9 @@ extension TerminalChat {
 
         @discardableResult
         func startPanelInput() async -> Bool {
+            if bypassInteractivePanelInputForTesting {
+                return true
+            }
             let didStart = await interactiveReader.startPanelInput(
                 statusBar: statusBar,
                 commandSuggestions: await panelSuggestionsForCurrentAgent()
@@ -700,6 +703,7 @@ extension TerminalChat {
 
         func startGeneration(attempt: TerminalPromptAttempt) async {
             isGenerating = true
+            onInteractiveGenerationStateForTesting?(true)
             didRefreshGitStatusDuringCurrentPrompt = false
             // Declare the busy state before the first suspension so the Core
             // cannot authorise a synthetic turn in the window between this
@@ -715,7 +719,11 @@ extension TerminalChat {
             generationTask = Task(name: "ZenCODE.TUI.queued-prompt-generation") {
                 let result: TerminalChatGenerationResult
                 do {
-                    result = .success(try await self.generateResponse(attempt: attempt))
+                    if let onGenerateResponseForTesting = self.onGenerateResponseForTesting {
+                        result = .success(try await onGenerateResponseForTesting(attempt))
+                    } else {
+                        result = .success(try await self.generateResponse(attempt: attempt))
+                    }
                 } catch is CancellationError {
                     result = .failure(
                         TerminalChatGenerationFailure(
@@ -1027,6 +1035,7 @@ extension TerminalChat {
             case let .generationCompleted(result):
                 generationTask = nil
                 isGenerating = false
+                onInteractiveGenerationStateForTesting?(false)
                 await statusBar.setProcessing(false)
                 await interactiveReader.setPanelProcessing(false)
                 // The prompt consumed whatever was staged, so the indicator must
@@ -1187,7 +1196,8 @@ extension TerminalChat {
                     message,
                     eventQueue: eventQueue,
                     queuedPrompts: &queuedPrompts,
-                    transcriptions: remoteTranscriptions
+                    transcriptions: remoteTranscriptions,
+                    isSessionGenerating: isGenerating
                 )
                 if didQueuePrompt {
                     await refreshQueuedPromptCount()

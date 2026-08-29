@@ -723,6 +723,64 @@ struct TelegramTUITests {
         #expect(await authorization.value)
     }
 
+    /// A generating session can be blocked on remote tool consent, so the busy
+    /// gate must let that correlated reply reach the permission broker.
+    @Test
+    func busyTelegramSessionStillAcceptsAuthorizationReply() async throws {
+        let terminal = try await Self.activeTelegramTerminal()
+        let lease = try #require(terminal.telegramActiveRouteLease)
+        let collector = TelegramTestMessageCollector()
+        let request = Self.authorizationRequest(
+            toolName: "local.delete",
+            title: "Delete Sources/Busy.swift",
+            kind: "destructive",
+            command: "delete Sources/Busy.swift"
+        )
+        let authorization = Task {
+            await terminal.telegramPermissionBroker.authorize(
+                request, lease: lease
+            ) { message in
+                await collector.append(message)
+                return true
+            }
+        }
+        let requestMessage = await collector.firstMessage()
+        let requestID = try #require(Self.telegramPermissionRequestID(in: requestMessage))
+        let busyNotices = Mutex<[String]>([])
+        terminal.onTelegramSystemMessage = { text, _ in
+            busyNotices.withLock { $0.append(text) }
+            return true
+        }
+        var queuedPrompts = TerminalQueuedPromptBuffer()
+
+        _ = await terminal.handleTelegramRuntimeMessage(
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: "unrelated prompt", voice: nil,
+                messageID: 98, chatTitle: nil, username: nil
+            ),
+            eventQueue: TerminalChatEventQueue(), queuedPrompts: &queuedPrompts,
+            transcriptions: TerminalVoiceTranscriptionRegistry(),
+            isSessionGenerating: true
+        )
+
+        let didQueue = await terminal.handleTelegramRuntimeMessage(
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: "/deny \(requestID)", voice: nil,
+                messageID: 99, chatTitle: nil, username: nil
+            ),
+            eventQueue: TerminalChatEventQueue(), queuedPrompts: &queuedPrompts,
+            transcriptions: TerminalVoiceTranscriptionRegistry(),
+            isSessionGenerating: true
+        )
+
+        #expect(!didQueue)
+        #expect(queuedPrompts.isEmpty)
+        #expect(busyNotices.withLock { messages in
+            messages.filter { $0.contains("was not queued") }.count
+        } == 1)
+        #expect(await authorization.value == .denied)
+    }
+
     private static func activeTelegramTerminal(
         permissionAuthorizer: LocalExecPermissionAuthorizer? = nil
     ) async throws -> TerminalChat {
