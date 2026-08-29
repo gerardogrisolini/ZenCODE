@@ -2939,6 +2939,42 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func remoteBackendLegacySharedChatRequirementDispatchesThroughExistential() async throws {
+        let chat = AgentSharedChat()
+        _ = try await chat.registerCoordinator(roomID: "root")
+        let concreteBackend = RemoteGenerationClient(
+            configuration: AgentRuntimeConfiguration(
+                modelID: "test-model",
+                workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
+                maxToolRounds: 1,
+                toolAuthorizationHandler: nil
+            ),
+            provider: AgentRemoteProvider(
+                name: "Test",
+                baseURL: "https://unit.test/v1",
+                modelID: "test-model",
+                chatEndpoint: .chatCompletions,
+                providerProfileID: .openAI,
+                protocolProfileID: .openAIChatCompletions,
+                authPolicy: .apiKeyOptional
+            ),
+            apiKey: nil,
+            sharedChat: chat,
+            sharedChatRootSessionID: "root"
+        )
+        let backend: any AgentRuntimeBackend = concreteBackend
+
+        let delivery = try await backend.sendSharedChatMessage(
+            text: "Legacy existential delivery",
+            destination: .coordinator,
+            rootSessionID: "root"
+        )
+
+        #expect(delivery.message.text == "Legacy existential delivery")
+        #expect(delivery.message.sender.kind == .operator)
+    }
+
+    @Test
     func agentReplyToOperatorDoesNotEnterCoordinatorMailbox() async throws {
         let chat = AgentSharedChat()
         _ = try await chat.registerCoordinator(roomID: "root")

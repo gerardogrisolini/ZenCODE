@@ -51,13 +51,15 @@ extension AgentCoreSessionRunner {
     public func sendSharedChatMessage(
         text: String,
         destination: AgentSharedChat.Destination,
-        rootSessionID: String
+        rootSessionID: String,
+        messageID: UUID = UUID()
     ) async throws -> AgentSharedChat.Delivery {
         guard let backend else { throw AgentSharedChat.Error.unavailable }
         return try await backend.sendSharedChatMessage(
             text: text,
             destination: destination,
-            rootSessionID: rootSessionID
+            rootSessionID: rootSessionID,
+            messageID: messageID
         )
     }
 

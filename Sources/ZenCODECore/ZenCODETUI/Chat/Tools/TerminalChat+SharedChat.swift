@@ -222,21 +222,36 @@ extension TerminalChat {
             return
         }
 
+        let messageID = UUID()
+        if let telegramOrigin {
+            // Record before crossing an actor boundary. The backend publishes and
+            // wakes the coordinator while this actor is suspended, so recording
+            // only after `sendSharedChatMessage` returns races the auto-trigger.
+            recordTelegramSharedChatMessageOrigin(messageID, origin: telegramOrigin)
+        }
         do {
             let delivery = try await sessionRunner.sendSharedChatMessage(
                 text: route.text,
                 destination: route.destination,
-                rootSessionID: sessionID
+                rootSessionID: sessionID,
+                messageID: messageID
             )
-            if let telegramOrigin {
-                recordTelegramSharedChatMessageOrigin(
-                    delivery.message.id, origin: telegramOrigin
-                )
-            }
+            assert(delivery.message.id == messageID)
             await refreshSharedChatPanelSuggestions()
         } catch {
+            discardTelegramSharedChatMessageOrigin(messageID)
             let safeError = Self.sharedChatInlineTerminalSafeText(error.localizedDescription)
-            await writeFailureMessage("ZenCODE message: \(safeError)\n")
+            let failureMessage = "ZenCODE message: \(safeError)"
+            await writeFailureMessage(failureMessage + "\n")
+            if let telegramOrigin {
+                // Use the same generation-fenced route that admitted the mention.
+                // A revoked/stale lease therefore produces no network egress, and
+                // transport details are never reflected to another chat.
+                await sendTelegramSystemMessageIfLinked(
+                    failureMessage,
+                    origin: telegramOrigin
+                )
+            }
         }
     }
 
@@ -256,6 +271,11 @@ extension TerminalChat {
             let oldestMessageID = telegramSharedChatMessageOriginOrder.removeFirst()
             telegramSharedChatMessageOrigins.removeValue(forKey: oldestMessageID)
         }
+    }
+
+    func discardTelegramSharedChatMessageOrigin(_ messageID: UUID) {
+        telegramSharedChatMessageOrigins.removeValue(forKey: messageID)
+        telegramSharedChatMessageOriginOrder.removeAll { $0 == messageID }
     }
 
     /// Returns the Telegram origin of a trigger, consuming its batch mappings

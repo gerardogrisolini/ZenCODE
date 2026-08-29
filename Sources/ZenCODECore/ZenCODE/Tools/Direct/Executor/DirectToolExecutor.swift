@@ -331,12 +331,14 @@ public actor DirectToolExecutor {
     public func sendSharedChatMessage(
         text: String,
         destination: AgentSharedChat.Destination,
-        rootSessionID: String
+        rootSessionID: String,
+        messageID: UUID = UUID()
     ) async throws -> AgentSharedChat.Delivery {
         try await subAgentRuntime.sendSharedChatMessage(
             text: text,
             destination: destination,
-            rootSessionID: rootSessionID
+            rootSessionID: rootSessionID,
+            messageID: messageID
         )
     }
 

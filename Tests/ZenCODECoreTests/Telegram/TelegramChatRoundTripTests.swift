@@ -226,4 +226,241 @@ struct TelegramChatRoundTripTests {
         #expect(terminal.makeTelegramTurnProgressReporter(for: origin!) != nil)
         #expect(terminal.takeTelegramSharedChatOrigin(for: [message]) == nil)
     }
+
+    /// Regression for the production ordering: publishing the operator message
+    /// wakes the shared-chat coordinator while `TerminalChatActor` is suspended.
+    /// The Telegram lease must already be correlated with the bus UUID when that
+    /// trigger arrives, and the resulting synthetic response must use the same
+    /// fenced outbound channel.
+    @Test
+    func telegramMentionRoundTripsThroughSharedChatTriggerAndEgress() async throws {
+        let sessionID = "telegram-shared-chat-\(UUID().uuidString)"
+        let backend = SharedChatRuntimeBackend(blocksSharedChatSend: true)
+        let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
+        let coreConfiguration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: []
+        )
+        try await runner.createSession(configuration: coreConfiguration)
+        _ = try await runner.preloadModel(configuration: coreConfiguration, onEvent: { _ in })
+
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: FileManager.default.temporaryDirectory
+            ),
+            stdinIsTerminal: false,
+            sessionRunner: runner
+        )
+        terminal.sessionID = sessionID
+        terminal.telegramLinkedChatID = 42
+        terminal.telegramControlState = TerminalTelegramControlState(
+            isConfigured: true,
+            isActive: true,
+            statusText: "Active",
+            botUsername: "zencode_bot",
+            lastError: nil,
+            lastMessagePreview: nil,
+            wireLifecycleEpoch: UUID()
+        )
+        let lease = await Self.installRoute(on: terminal)
+        let subscription = await runner.attachSharedChatObservation(rootSessionID: sessionID)
+        var events = subscription.events.makeAsyncIterator()
+
+        let submitFinished = Mutex(false)
+        let submission = Task { @TerminalChatActor in
+            let action = await terminal.submittedTelegramLineAction(
+                "@coordinator answer on Telegram",
+                origin: .telegramLease(lease)
+            )
+            submitFinished.withLock { $0 = true }
+            return action
+        }
+
+        var trigger: AgentSharedChatAutoTrigger?
+        while trigger == nil, let event = await events.next() {
+            if case let .autoTrigger(candidate) = event {
+                trigger = candidate
+            }
+        }
+        let resolvedTrigger = try #require(trigger)
+        let origin = try #require(
+            terminal.takeTelegramSharedChatOrigin(for: resolvedTrigger.messages)
+        )
+        #expect(origin == .telegramLease(lease))
+        #expect(!submitFinished.withLock { $0 })
+
+        // Only now may the production send call return to the TerminalChat actor.
+        // Recording the correlation after that return makes the assertion above
+        // fail because the real wake-up has already delivered the trigger.
+        await backend.releaseSharedChatSend()
+        guard case .continueChat = await submission.value else {
+            Issue.record("Expected the mention to be routed without a root prompt")
+            return
+        }
+
+        let delivered = Mutex<[String]>([])
+        terminal.onDirectTelegramTurnMessage = { payload, chatID in
+            #expect(chatID == 42)
+            if case let .agentResponse(text) = payload {
+                delivered.withLock { $0.append(text) }
+            }
+            return true
+        }
+        #expect(terminal.makeTelegramTurnProgressReporter(for: origin) != nil)
+        // Exercise the direct final-egress fallback with the same origin. The
+        // reporter's network closure is covered separately; this seam observes
+        // the payload without touching Telegram's public network.
+        terminal.activeTelegramTurnOrigin = origin
+        await terminal.finalizeTelegramTurnProgressReporting(
+            outcome: .agentResponse("coordinator reply")
+        )
+        #expect(delivered.withLock { $0 } == ["coordinator reply"])
+        #expect(try await terminal.telegramSessionRouter.validate(lease) == ())
+
+        // Advancing the route generation retires the origin captured above. A
+        // replayed/stale synthetic response must not escape to Telegram.
+        await terminal.telegramSessionRouter.refresh(
+            routes: [AgentTelegramRouteManifest(
+                chatID: 42, ownerUserID: 7, roomID: sessionID,
+                chatKind: .privateChat, generation: 2
+            )],
+            groupsEnabled: false
+        )
+        terminal.activeTelegramTurnOrigin = origin
+        await terminal.finalizeTelegramTurnProgressReporting(
+            outcome: .agentResponse("stale coordinator reply")
+        )
+        #expect(delivered.withLock { $0 } == ["coordinator reply"])
+
+        await runner.detachSharedChatObservation(subscription)
+    }
+
+    @Test
+    func failedTelegramMentionReportsOnceOnItsValidatedRouteAndClearsCorrelation() async throws {
+        let sessionID = "telegram-shared-chat-failure-\(UUID().uuidString)"
+        let backend = SharedChatRuntimeBackend(failsSharedChatSend: true)
+        let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID, modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil, cacheKey: nil, history: [], allowedToolNames: []
+        )
+        try await runner.createSession(configuration: configuration)
+        _ = try await runner.preloadModel(configuration: configuration, onEvent: { _ in })
+
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: FileManager.default.temporaryDirectory
+            ),
+            stdinIsTerminal: false,
+            sessionRunner: runner
+        )
+        terminal.telegramLinkedChatID = 42
+        terminal.telegramControlState = TerminalTelegramControlState(
+            isConfigured: true, isActive: true, statusText: "Active",
+            botUsername: "zencode_bot", lastError: nil, lastMessagePreview: nil,
+            wireLifecycleEpoch: UUID()
+        )
+        terminal.sessionID = sessionID
+        let lease = await Self.installRoute(on: terminal)
+        let routedErrors = Mutex<[(String, Int64, Int?)]>([])
+        terminal.onTelegramRoutedSystemMessage = { message, chatID, topicID in
+            routedErrors.withLock { $0.append((message, chatID, topicID)) }
+            return true
+        }
+
+        let action = await terminal.submittedTelegramLineAction(
+            "@coordinator this delivery fails",
+            origin: .telegramLease(lease)
+        )
+        guard case .continueChat = action else {
+            Issue.record("Expected failed mention delivery to be handled inline")
+            return
+        }
+        let errors = routedErrors.withLock { $0 }
+        #expect(errors.count == 1)
+        #expect(errors.first?.0.hasPrefix("ZenCODE message: ") == true)
+        #expect(errors.first?.1 == 42)
+        #expect(errors.first?.2 == nil)
+
+        let messageID = try #require(await backend.recordedSharedChatMessageID())
+        let failedMessage = AgentSharedChat.Message(
+            id: messageID,
+            roomID: sessionID,
+            sender: .init(
+                id: AgentSharedChat.operatorID(for: sessionID),
+                name: "operator", kind: .operator
+            ),
+            recipientIDs: [AgentSharedChat.coordinatorID(for: sessionID)],
+            text: "this delivery fails"
+        )
+        #expect(terminal.takeTelegramSharedChatOrigin(for: [failedMessage]) == nil)
+    }
+
+    @Test
+    func failedTelegramMentionDoesNotReportThroughAStaleGeneration() async throws {
+        let sessionID = "telegram-shared-chat-stale-failure-\(UUID().uuidString)"
+        let backend = SharedChatRuntimeBackend(
+            blocksSharedChatSend: true,
+            failsSharedChatSend: true
+        )
+        let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: sessionID, modelID: "test-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil, cacheKey: nil, history: [], allowedToolNames: []
+        )
+        try await runner.createSession(configuration: configuration)
+        _ = try await runner.preloadModel(configuration: configuration, onEvent: { _ in })
+
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: FileManager.default.temporaryDirectory
+            ),
+            stdinIsTerminal: false,
+            sessionRunner: runner
+        )
+        terminal.telegramLinkedChatID = 42
+        terminal.telegramControlState = TerminalTelegramControlState(
+            isConfigured: true, isActive: true, statusText: "Active",
+            botUsername: "zencode_bot", lastError: nil, lastMessagePreview: nil,
+            wireLifecycleEpoch: UUID()
+        )
+        terminal.sessionID = sessionID
+        let staleLease = await Self.installRoute(on: terminal)
+        let routedErrors = Mutex<[String]>([])
+        terminal.onTelegramRoutedSystemMessage = { message, _, _ in
+            routedErrors.withLock { $0.append(message) }
+            return true
+        }
+        let submission = Task { @TerminalChatActor in
+            await terminal.submittedTelegramLineAction(
+                "@coordinator this route will be retired",
+                origin: .telegramLease(staleLease)
+            )
+        }
+        await backend.waitUntilSharedChatSendStarted()
+        await terminal.telegramSessionRouter.refresh(
+            routes: [AgentTelegramRouteManifest(
+                chatID: 42, ownerUserID: 7, roomID: sessionID,
+                chatKind: .privateChat, generation: 2
+            )],
+            groupsEnabled: false
+        )
+        await backend.releaseSharedChatSend()
+        _ = await submission.value
+
+        #expect(routedErrors.withLock { $0 }.isEmpty)
+    }
 }

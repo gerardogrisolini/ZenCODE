@@ -342,7 +342,8 @@ public actor AgentCoreBackend {
     public func sendSharedChatMessage(
         text: String,
         destination: AgentSharedChat.Destination,
-        rootSessionID: String
+        rootSessionID: String,
+        messageID: UUID = UUID()
     ) async throws -> AgentSharedChat.Delivery {
         guard let activeBackend else {
             throw AgentSharedChat.Error.unavailable
@@ -350,7 +351,8 @@ public actor AgentCoreBackend {
         return try await activeBackend.sendSharedChatMessage(
             text: text,
             destination: destination,
-            rootSessionID: rootSessionID
+            rootSessionID: rootSessionID,
+            messageID: messageID
         )
     }
 

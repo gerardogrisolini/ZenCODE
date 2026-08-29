@@ -92,12 +92,13 @@ public actor AgentSharedChat {
         public let sentAt: Date
 
         init(
+            id: UUID = UUID(),
             roomID: String,
             sender: Participant,
             recipientIDs: [String],
             text: String
         ) {
-            id = UUID()
+            self.id = id
             self.roomID = roomID
             self.sender = sender
             self.recipientIDs = recipientIDs
@@ -324,7 +325,8 @@ public actor AgentSharedChat {
     func sendFromOperator(
         roomID rawRoomID: String,
         destination: Destination,
-        text rawText: String
+        text rawText: String,
+        messageID: UUID = UUID()
     ) throws -> Delivery {
         let roomID = normalizedRoomID(rawRoomID)
         guard rooms[roomID] != nil else {
@@ -338,7 +340,8 @@ public actor AgentSharedChat {
                 kind: .operator
             ),
             destination: destination,
-            rawText: rawText
+            rawText: rawText,
+            messageID: messageID
         )
     }
 
@@ -972,7 +975,8 @@ public actor AgentSharedChat {
         roomID: String,
         sender: Participant,
         destination: Destination,
-        rawText: String
+        rawText: String,
+        messageID: UUID = UUID()
     ) throws -> Delivery {
         let text = Self.boundedMessageText(rawText)
         guard !text.isEmpty else {
@@ -990,6 +994,7 @@ public actor AgentSharedChat {
         )
         let recipientIDs = resolved.map(\.id)
         let message = Message(
+            id: messageID,
             roomID: roomID,
             sender: sender,
             recipientIDs: recipientIDs,

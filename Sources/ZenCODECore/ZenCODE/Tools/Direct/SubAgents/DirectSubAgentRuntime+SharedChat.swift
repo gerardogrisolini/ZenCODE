@@ -79,14 +79,16 @@ extension DirectSubAgentRuntime {
     public func sendSharedChatMessage(
         text: String,
         destination: AgentSharedChat.Destination,
-        rootSessionID: String
+        rootSessionID: String,
+        messageID: UUID = UUID()
     ) async throws -> AgentSharedChat.Delivery {
         let roomID = sharedChatRootSessionID ?? rootSessionID.nilIfBlank ?? "default"
         _ = try await sharedChat.registerCoordinator(roomID: roomID)
         let delivery = try await sharedChat.sendFromOperator(
             roomID: roomID,
             destination: destination,
-            text: text
+            text: text,
+            messageID: messageID
         )
         // Operator-originated terminal messages use the same room-wide wake-up
         // as agent.message deliveries. Without it the transcript can render in

@@ -716,6 +716,12 @@ public protocol AgentRuntimeBackend: Actor {
         destination: AgentSharedChat.Destination,
         rootSessionID: String
     ) async throws -> AgentSharedChat.Delivery
+    func sendSharedChatMessage(
+        text: String,
+        destination: AgentSharedChat.Destination,
+        rootSessionID: String,
+        messageID: UUID
+    ) async throws -> AgentSharedChat.Delivery
     func drainCoordinatorSharedChatMessages(
         rootSessionID: String
     ) async -> [AgentSharedChat.Message]
@@ -790,6 +796,20 @@ extension AgentRuntimeBackend {
         text _: String,
         destination _: AgentSharedChat.Destination,
         rootSessionID _: String
+    ) async throws -> AgentSharedChat.Delivery {
+        throw AgentSharedChat.Error.unavailable
+    }
+
+    /// Fail-closed compatibility bridge for backends that predate surface
+    /// correlation. Legacy calls remain source-compatible through the overload
+    /// above, but a correlated caller must never publish a different UUID and
+    /// silently lose its response route. Backends that support correlated
+    /// delivery must implement this requirement explicitly.
+    public func sendSharedChatMessage(
+        text _: String,
+        destination _: AgentSharedChat.Destination,
+        rootSessionID _: String,
+        messageID _: UUID
     ) async throws -> AgentSharedChat.Delivery {
         throw AgentSharedChat.Error.unavailable
     }

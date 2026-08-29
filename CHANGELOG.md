@@ -19,6 +19,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Telegram `@coordinator` shared-chat mentions now retain their authorized,
+  generation-fenced route through the synthetic coordinator turn, so a response
+  shown in the TUI is also delivered back to the originating Telegram chat. The
+  surface correlation is registered before publishing wakes the shared-chat
+  coordinator, closing an actor-reentrancy race without adding transport data to
+  the shared bus or weakening route ACL validation.
+
 - `/telegram on` now restores the persisted, generation-fenced route lease and
   uses it for terminal-originated turns, including a turn already running when
   Telegram is enabled. The multi-session routing migration had left real local

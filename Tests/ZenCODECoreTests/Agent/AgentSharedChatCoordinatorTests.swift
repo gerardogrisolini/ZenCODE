@@ -1807,18 +1807,32 @@ private actor Observation {
 
 /// Minimal runtime backend that owns a live shared-chat bus, so the Core API can
 /// be exercised end to end without a model provider.
-private actor SharedChatRuntimeBackend: AgentRuntimeBackend {
+actor SharedChatRuntimeBackend: AgentRuntimeBackend {
     private let chat = AgentSharedChat()
     private var sessions: [String: AgentRuntimeSessionSnapshot] = [:]
     private var prompts: [String] = []
     private let blocksPrompt: Bool
+    private let blocksSharedChatSend: Bool
+    private let failsSharedChatSend: Bool
     private var didStartPrompt = false
+    private var sharedChatMessageAvailableHandler: (@Sendable (String) -> Void)?
+    private var didStartSharedChatSend = false
+    private var sharedChatSendStartContinuations: [CheckedContinuation<Void, Never>] = []
+    private var sharedChatSendReleaseContinuations: [CheckedContinuation<Void, Never>] = []
+    private var isSharedChatSendReleased = false
+    private var lastSharedChatMessageID: UUID?
     private var startContinuations: [CheckedContinuation<Void, Never>] = []
     private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
     private var isReleased = false
 
-    init(blocksPrompt: Bool = false) {
+    init(
+        blocksPrompt: Bool = false,
+        blocksSharedChatSend: Bool = false,
+        failsSharedChatSend: Bool = false
+    ) {
         self.blocksPrompt = blocksPrompt
+        self.blocksSharedChatSend = blocksSharedChatSend
+        self.failsSharedChatSend = failsSharedChatSend
     }
 
     func enqueueCoordinatorMessage(text: String, roomID: String) async {
@@ -1834,6 +1848,29 @@ private actor SharedChatRuntimeBackend: AgentRuntimeBackend {
 
     func promptCount() -> Int { prompts.count }
     func lastPrompt() -> String? { prompts.last }
+    func recordedSharedChatMessageID() -> UUID? { lastSharedChatMessageID }
+
+    func waitUntilSharedChatSendStarted() async {
+        guard !didStartSharedChatSend else { return }
+        await withCheckedContinuation { continuation in
+            sharedChatSendStartContinuations.append(continuation)
+        }
+    }
+
+    func releaseSharedChatSend() {
+        isSharedChatSendReleased = true
+        for continuation in sharedChatSendReleaseContinuations {
+            continuation.resume()
+        }
+        sharedChatSendReleaseContinuations.removeAll()
+    }
+
+    private func waitForSharedChatSendRelease() async {
+        guard !isSharedChatSendReleased else { return }
+        await withCheckedContinuation { continuation in
+            sharedChatSendReleaseContinuations.append(continuation)
+        }
+    }
 
     func waitUntilPromptStarted() async {
         guard !didStartPrompt else { return }
@@ -1926,6 +1963,12 @@ private actor SharedChatRuntimeBackend: AgentRuntimeBackend {
 
     func activeToolDescriptors() async -> [DirectToolDescriptor] { [] }
 
+    func updateSharedChatMessageAvailableHandler(
+        _ handler: (@Sendable (String) -> Void)?
+    ) {
+        sharedChatMessageAvailableHandler = handler
+    }
+
     func sharedChatParticipants(rootSessionID: String) async -> [AgentSharedChat.Participant] {
         await chat.participants(roomID: rootSessionID)
     }
@@ -1933,15 +1976,38 @@ private actor SharedChatRuntimeBackend: AgentRuntimeBackend {
     func sendSharedChatMessage(
         text: String,
         destination: AgentSharedChat.Destination,
-        rootSessionID: String
+        rootSessionID: String,
+        messageID: UUID
     ) async throws -> AgentSharedChat.Delivery {
+        lastSharedChatMessageID = messageID
+        if failsSharedChatSend {
+            if blocksSharedChatSend {
+                didStartSharedChatSend = true
+                for continuation in sharedChatSendStartContinuations {
+                    continuation.resume()
+                }
+                sharedChatSendStartContinuations.removeAll()
+                await waitForSharedChatSendRelease()
+            }
+            throw AgentSharedChat.Error.unavailable
+        }
         _ = try await chat.registerCoordinator(roomID: rootSessionID)
-        return try await chat.send(
+        let delivery = try await chat.sendFromOperator(
             roomID: rootSessionID,
-            senderID: AgentSharedChat.coordinatorID(for: rootSessionID),
             destination: destination,
-            text: text
+            text: text,
+            messageID: messageID
         )
+        sharedChatMessageAvailableHandler?(rootSessionID)
+        if blocksSharedChatSend {
+            didStartSharedChatSend = true
+            for continuation in sharedChatSendStartContinuations {
+                continuation.resume()
+            }
+            sharedChatSendStartContinuations.removeAll()
+            await waitForSharedChatSendRelease()
+        }
+        return delivery
     }
 
     func drainCoordinatorSharedChatMessages(

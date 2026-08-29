@@ -122,10 +122,25 @@ public actor AnthropicSubscriptionGenerationClient: AgentRuntimeBackend {
         destination: AgentSharedChat.Destination,
         rootSessionID: String
     ) async throws -> AgentSharedChat.Delivery {
+        try await sendSharedChatMessage(
+            text: text,
+            destination: destination,
+            rootSessionID: rootSessionID,
+            messageID: UUID()
+        )
+    }
+
+    public func sendSharedChatMessage(
+        text: String,
+        destination: AgentSharedChat.Destination,
+        rootSessionID: String,
+        messageID: UUID
+    ) async throws -> AgentSharedChat.Delivery {
         try await toolExecutor.sendSharedChatMessage(
             text: text,
             destination: destination,
-            rootSessionID: rootSessionID
+            rootSessionID: rootSessionID,
+            messageID: messageID
         )
     }
 

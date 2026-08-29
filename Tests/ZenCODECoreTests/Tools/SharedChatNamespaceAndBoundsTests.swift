@@ -432,7 +432,8 @@ private actor SharedChatBoundsTestBackend: AgentRuntimeBackend {
     func sendSharedChatMessage(
         text: String,
         destination: AgentSharedChat.Destination,
-        rootSessionID: String
+        rootSessionID: String,
+        messageID: UUID
     ) async throws -> AgentSharedChat.Delivery {
         throw DirectSubAgentBackendFactoryError.unavailable
     }
