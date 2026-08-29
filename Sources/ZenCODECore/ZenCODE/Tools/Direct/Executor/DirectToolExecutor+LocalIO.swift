@@ -132,12 +132,15 @@ extension DirectToolExecutor {
                 stdoutLineLimit: Self.processStdoutLineLimit
             )
             let stdout = result.stdoutWasTruncated
-                ? result.stdout + "\n[stdout truncated after \(Self.processStdoutLineLimit) lines; the command was terminated. Narrow its output or redirect it to a file.]"
+                ? "[stdout exceeded its safety limit; output was truncated and the producer was stopped if still running.]\n" + result.stdout
                 : result.stdout
+            let stderr = result.stderrWasTruncated
+                ? "[stderr exceeded its safety limit; output was truncated and the producer was stopped if still running.]\n" + result.stderr
+                : result.stderr
             return ProcessResult(
                 status: result.exitCode,
                 stdout: stdout,
-                stderr: result.stderr,
+                stderr: stderr,
                 timedOut: result.timedOut
             )
         } catch {

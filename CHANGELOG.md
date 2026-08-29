@@ -119,6 +119,23 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Foreground tool and feature processes now retain at most 16 MiB from each of
+  `stdout` and `stderr`; exceeding either bound terminates and reaps the producer
+  instead of allowing an unbroken line or runaway diagnostics to exhaust system
+  memory. Remote SSE responses now also have a 64 MiB whole-stream ceiling in
+  addition to their existing per-line and per-event limits.
+- The detailed TUI/session-save transcript is now limited to 128 MiB, retaining a
+  contiguous recent suffix and a truncation marker while leaving the separately
+  compacted runtime conversation untouched.
+- Terminal task-bound sub-agent failures now release their backend, shared-chat
+  registration, recall state, and task execution scope immediately (taskless
+  conversational failures remain retryable). Closed/terminal inspection history
+  retains only the 32 newest records, with at most 256 KiB of report text each,
+  instead of keeping every backend and accumulated report for the entire session.
+- OpenAI-compatible reasoning streams no longer rescan and copy the complete
+  accumulated reasoning output for every token. Cross-delta closing-marker
+  detection now retains only a bounded marker prefix, preventing quadratic work
+  during long thinking responses.
 - Telegram live mentions such as `@coordinator` now retain their Telegram
   response destination when shared-chat coordination starts its synthetic
   coordinator turn, so the coordinator reply is delivered back to Telegram

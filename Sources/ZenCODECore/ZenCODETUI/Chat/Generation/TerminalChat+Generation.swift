@@ -265,7 +265,7 @@ extension TerminalChat {
                 }
                 await transcriptTurn.appendAssistantContent(response.text)
             }
-            activeSessionTranscript.append(
+            appendActiveSessionTranscript(
                 contentsOf: await transcriptTurn.messages(finalResponseText: response.text)
             )
             let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
@@ -308,7 +308,7 @@ extension TerminalChat {
                         : error.localizedDescription
                 )
             }
-            activeSessionTranscript.append(contentsOf: await transcriptTurn.messages())
+            appendActiveSessionTranscript(contentsOf: await transcriptTurn.messages())
             let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
             await stopSubAgentOverviewRefresh()
             await renderCoordinator.waitForOverviewMirrorsToDrain()

@@ -28,6 +28,11 @@ public enum DirectSubAgentBackendFactoryError: LocalizedError {
 
 public actor DirectSubAgentRuntime {
     public static let maximumAgentsPerCreate = 8
+    /// Terminal agents are historical inspection records, not live runtime
+    /// state. Keeping every closed/failed backend and report for the lifetime of
+    /// a long session makes that history an unbounded cache.
+    static let maximumRetainedTerminalAgents = 32
+    static let maximumRetainedTerminalOutputBytes = 262_144
 
     /// Upper bound for shared-chat-derived prompts queued for one agent. It
     /// matches twice the bus mailbox capacity, so a fast producer cannot grow
@@ -194,6 +199,18 @@ public actor DirectSubAgentRuntime {
             pendingContentBuffer = nil
             currentToolName = nil
             currentToolTarget = nil
+        }
+
+        /// Drops heavyweight report prefixes before this inactive record enters
+        /// the bounded terminal-history cache. The latest tail is retained because
+        /// it contains the final answer and validation summary callers need most.
+        mutating func prepareForTerminalRetention() {
+            latestOutput = DirectSubAgentRuntime.boundedTerminalOutput(latestOutput)
+            accumulatedOutput = DirectSubAgentRuntime.boundedTerminalOutput(accumulatedOutput)
+            latestContentPreview = DirectSubAgentRuntime.boundedTerminalOutput(
+                latestContentPreview
+            )
+            resetActivityState()
         }
     }
 

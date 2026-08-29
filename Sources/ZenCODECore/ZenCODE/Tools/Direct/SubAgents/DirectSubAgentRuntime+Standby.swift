@@ -337,7 +337,7 @@ extension DirectSubAgentRuntime {
         agent.pendingReleaseReason = nil
         agent.status = .closed
         agent.latestError = reason
-        agent.resetActivityState()
+        agent.prepareForTerminalRetention()
         agent.updatedAt = .now
         agents[id] = agent
 
@@ -355,6 +355,7 @@ extension DirectSubAgentRuntime {
         await MemoryTurnCoordinator.shared.discard(sessionID: agent.sessionID)
         await agent.backend.updateBorrowedSubAgentToolExecutor(nil)
         await agent.backend.shutdown()
+        pruneTerminalAgentRecords()
     }
 
     // MARK: - Graph completion observer

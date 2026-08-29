@@ -467,9 +467,9 @@ extension RemoteSessionSnapshotTests {
     @Test
     func streamChatCompletionsPromotesReasoningContentAfterThinkCloseToContent() async throws {
         let response = """
-        data: {"choices":[{"delta":{"reasoning_content":"Analisi.</think>"}}]}
+        data: {"choices":[{"delta":{"reasoning_content":"Analisi.</thi"}}]}
 
-        data: {"choices":[{"delta":{"reasoning_content":"Risposta visibile."},"finish_reason":"stop"}]}
+        data: {"choices":[{"delta":{"reasoning_content":"nk>Risposta visibile."},"finish_reason":"stop"}]}
 
         data: [DONE]
 
@@ -507,6 +507,61 @@ extension RemoteSessionSnapshotTests {
         #expect(result.text == "Risposta visibile.")
         #expect(capturedEvents.thoughtText() == "Analisi.</think>")
         #expect(capturedEvents.contentText() == "Risposta visibile.")
+    }
+
+    @Test
+    func remoteStreamAccumulatorKeepsCrossDeltaReasoningStateBounded() async throws {
+        let deltaCount = 50_000
+        var accumulator = RemoteStreamAccumulator()
+
+        for _ in 0..<deltaCount {
+            try await accumulator.ingest(.reasoning("x")) { _ in }
+        }
+        #expect(accumulator.reasoningClosingMarkerLookbehindByteCount == 0)
+
+        try await accumulator.ingest(.reasoning("</thi")) { _ in }
+        #expect(accumulator.reasoningClosingMarkerLookbehindByteCount == 5)
+        #expect(
+            accumulator.reasoningClosingMarkerLookbehindByteCount
+                <= RemoteStreamAccumulator.maximumReasoningClosingMarkerLookbehindByteCount
+        )
+
+        try await accumulator.ingest(.reasoning("nk>visible")) { _ in }
+        #expect(accumulator.reasoningClosingMarkerLookbehindByteCount == 0)
+
+        let result = try accumulator.result(requestStartedAt: Date())
+        #expect(result.reasoningText.count == deltaCount + "</think>".count)
+        #expect(result.reasoningText.hasSuffix("</think>"))
+        #expect(result.text == "visible")
+    }
+
+    @Test
+    func remoteStreamAccumulatorRecognizesEveryClosingMarkerAcrossEverySplit() async throws {
+        let markers = ["</think>", "</thinking>", "<channel|>"]
+
+        for marker in markers {
+            for splitOffset in 0...marker.count {
+                let splitIndex = marker.index(
+                    marker.startIndex,
+                    offsetBy: splitOffset
+                )
+                let firstDelta = "pensiero🙂" + String(marker[..<splitIndex])
+                let secondDelta = String(marker[splitIndex...]) + "risposta✅"
+                var accumulator = RemoteStreamAccumulator()
+
+                try await accumulator.ingest(.reasoning(firstDelta)) { _ in }
+                try await accumulator.ingest(.reasoning(secondDelta)) { _ in }
+
+                let result = try accumulator.result(requestStartedAt: Date())
+                #expect(result.reasoningText == "pensiero🙂" + marker)
+                #expect(result.text == "risposta✅")
+                #expect(
+                    accumulator.reasoningClosingMarkerLookbehindByteCount
+                        <= RemoteStreamAccumulator
+                            .maximumReasoningClosingMarkerLookbehindByteCount
+                )
+            }
+        }
     }
 
     @Test

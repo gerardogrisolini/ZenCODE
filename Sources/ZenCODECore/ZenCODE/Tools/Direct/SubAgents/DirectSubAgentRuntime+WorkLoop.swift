@@ -523,7 +523,13 @@ extension DirectSubAgentRuntime {
         if agent.status != .closed {
             agent.status = .failed
             agent.latestError = error.localizedDescription
-            agent.resetActivityState()
+            if agent.taskID == nil {
+                // Taskless conversational agents are intentionally retryable via
+                // `agent.message`; keep their backend session available.
+                agent.resetActivityState()
+            } else {
+                agent.prepareForTerminalRetention()
+            }
         }
         agent.updatedAt = .now
         let releasedReservation = takeTasklessDelegationReservation(from: &agent)
@@ -544,8 +550,20 @@ extension DirectSubAgentRuntime {
                 agent.updatedAt = .now
                 agents[agentID] = agent
             }
+            await taskOrchestrator.unregisterExecutionScope(
+                executionSessionID: agent.sessionID
+            )
         }
         await releaseTasklessDelegationReservation(releasedReservation)
+        if agent.taskID != nil {
+            // A failed task attempt cannot be resumed on this agent. Release its
+            // heavyweight runtime while retaining a bounded inspection record.
+            await sharedChat.unregisterParticipant(id: agent.id, roomID: agent.rootSessionID)
+            await MemoryTurnCoordinator.shared.discard(sessionID: agent.sessionID)
+            await agent.backend.updateBorrowedSubAgentToolExecutor(nil)
+            await agent.backend.shutdown()
+            pruneTerminalAgentRecords()
+        }
     }
 
     public func recordCancellation(agentID: String) async {
@@ -558,7 +576,7 @@ extension DirectSubAgentRuntime {
         if agent.status != .closed {
             agent.status = .closed
             agent.latestError = "Cancelled."
-            agent.resetActivityState()
+            agent.prepareForTerminalRetention()
         }
         agent.updatedAt = .now
         let releasedReservation = takeTasklessDelegationReservation(from: &agent)
@@ -578,7 +596,15 @@ extension DirectSubAgentRuntime {
                 agent.updatedAt = .now
                 agents[agentID] = agent
             }
+            await taskOrchestrator.unregisterExecutionScope(
+                executionSessionID: agent.sessionID
+            )
         }
         await releaseTasklessDelegationReservation(releasedReservation)
+        await sharedChat.unregisterParticipant(id: agent.id, roomID: agent.rootSessionID)
+        await MemoryTurnCoordinator.shared.discard(sessionID: agent.sessionID)
+        await agent.backend.updateBorrowedSubAgentToolExecutor(nil)
+        await agent.backend.shutdown()
+        pruneTerminalAgentRecords()
     }
 }

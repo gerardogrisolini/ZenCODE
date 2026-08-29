@@ -22,6 +22,27 @@ public struct RemoteStreamAccumulator {
     private var reasoningContentClosed = false
     private var reasoningItems: [[String: Any]] = []
     private var reasoningItemIndexByID: [String: Int] = [:]
+    /// Only a proper prefix of a closing marker can matter across two deltas.
+    /// Retaining the complete accumulated reasoning here would make every token
+    /// rescan and copy all prior output, producing quadratic allocator growth.
+    private var reasoningClosingMarkerPrefix = ""
+
+    private static let reasoningClosingMarkers = [
+        "</think>", "</thinking>", "<channel|>"
+    ]
+    private static let reasoningClosingMarkerBytes = reasoningClosingMarkers.map {
+        Array($0.utf8)
+    }
+    static let maximumReasoningClosingMarkerLookbehindByteCount = max(
+        0,
+        (reasoningClosingMarkerBytes.map(\.count).max() ?? 1) - 1
+    )
+
+    /// Internal diagnostic used by the regression test to keep the cross-delta
+    /// boundary state independent of the total reasoning response size.
+    var reasoningClosingMarkerLookbehindByteCount: Int {
+        reasoningClosingMarkerPrefix.utf8.count
+    }
 
     public init() {}
 
@@ -137,16 +158,41 @@ public struct RemoteStreamAccumulator {
             return
         }
 
-        let previousReasoning = accumulatedReasoningText
-        let combinedReasoning = previousReasoning + delta
-        if let closingMarker = Self.firstReasoningClosingMarker(in: combinedReasoning) {
-            let deltaStart = combinedReasoning.index(
-                combinedReasoning.startIndex,
-                offsetBy: previousReasoning.count
+        let lookbehind = reasoningClosingMarkerPrefix
+        let boundaryText = lookbehind + delta
+        if let closingMarker = Self.firstReasoningClosingMarker(in: boundaryText) {
+            reasoningClosingMarkerPrefix = ""
+            let boundaryUTF8 = boundaryText.utf8
+            guard let markerEnd = closingMarker.range.upperBound.samePosition(
+                in: boundaryUTF8
+            ) else {
+                // Closing markers are ASCII, so their end is always a UTF-8
+                // boundary. Keep a defensive linear fallback if that invariant
+                // is ever changed by a future marker.
+                await appendThoughtDelta(delta, onEvent: onEvent)
+                return
+            }
+            let markerEndByteOffset = boundaryUTF8.distance(
+                from: boundaryUTF8.startIndex,
+                to: markerEnd
             )
-            let thoughtEnd = max(deltaStart, closingMarker.range.upperBound)
-            let thoughtDelta = String(combinedReasoning[deltaStart..<thoughtEnd])
-            let contentDelta = String(combinedReasoning[thoughtEnd...])
+            let deltaUTF8 = delta.utf8
+            let thoughtByteCount = min(
+                max(markerEndByteOffset - lookbehind.utf8.count, 0),
+                deltaUTF8.count
+            )
+            let splitIndex = deltaUTF8.index(
+                deltaUTF8.startIndex,
+                offsetBy: thoughtByteCount
+            )
+            let thoughtDelta = String(
+                decoding: deltaUTF8[..<splitIndex],
+                as: UTF8.self
+            )
+            let contentDelta = String(
+                decoding: deltaUTF8[splitIndex...],
+                as: UTF8.self
+            )
 
             await appendThoughtDelta(thoughtDelta, onEvent: onEvent)
             reasoningContentClosed = true
@@ -154,6 +200,9 @@ public struct RemoteStreamAccumulator {
             return
         }
 
+        reasoningClosingMarkerPrefix = Self.trailingReasoningClosingMarkerPrefix(
+            in: boundaryText
+        )
         await appendThoughtDelta(delta, onEvent: onEvent)
     }
 
@@ -244,7 +293,7 @@ public struct RemoteStreamAccumulator {
     public static func firstReasoningClosingMarker(
         in text: String
     ) -> (range: Range<String.Index>, text: String)? {
-        ["</think>", "</thinking>", "<channel|>"]
+        reasoningClosingMarkers
             .compactMap { marker in
                 text.range(of: marker).map { range in
                     (range: range, text: marker)
@@ -253,5 +302,34 @@ public struct RemoteStreamAccumulator {
             .min { lhs, rhs in
                 lhs.range.lowerBound < rhs.range.lowerBound
             }
+    }
+
+    /// Returns the longest suffix that could become a closing marker when the
+    /// next delta arrives. Marker bytes are ASCII, so a matching suffix can be
+    /// decoded independently even when adjacent model text contains composed
+    /// Unicode graphemes.
+    private static func trailingReasoningClosingMarkerPrefix(
+        in text: String
+    ) -> String {
+        let maximumLength = min(
+            text.utf8.count,
+            maximumReasoningClosingMarkerLookbehindByteCount
+        )
+        guard maximumLength > 0 else {
+            return ""
+        }
+
+        let suffix = Array(text.utf8.suffix(maximumLength))
+        for length in stride(from: maximumLength, through: 1, by: -1) {
+            let candidate = suffix.suffix(length)
+            let canCompleteMarker = reasoningClosingMarkerBytes.contains { marker in
+                marker.count > length
+                    && marker.prefix(length).elementsEqual(candidate)
+            }
+            if canCompleteMarker {
+                return String(decoding: candidate, as: UTF8.self)
+            }
+        }
+        return ""
     }
 }

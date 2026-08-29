@@ -28,6 +28,7 @@ extension DirectSubAgentRuntime {
                 "A task-bound delegated sub-agent cannot create nested sub-agents."
             )
         }
+        pruneTerminalAgentRecords()
         // Sub-agents created while an earlier batch is still working join that
         // batch, so sequential `agent.create` calls stay visible together in the
         // transient overview instead of replacing each other.
@@ -601,7 +602,7 @@ extension DirectSubAgentRuntime {
         guard agents[id] != nil else { return false }
         do {
             _ = try await closeAgent(arguments: ["id": .string(id)])
-            return agents[id]?.status == .closed
+            return true
         } catch {
             if var agent = agents[id] {
                 agent.latestError = "Unable to close delegated task attempt: \(error.localizedDescription)"
@@ -649,8 +650,7 @@ extension DirectSubAgentRuntime {
             agent.pendingReleaseReason = nil
             agent.status = .closed
             agent.latestError = "Delegated execution interrupted with its root session."
-            agent.resetActivityState()
-            agent.latestContentPreview = nil
+            agent.prepareForTerminalRetention()
             agent.updatedAt = .now
             let releasedReservation = takeTasklessDelegationReservation(from: &agent)
             agents[id] = agent
@@ -689,6 +689,7 @@ extension DirectSubAgentRuntime {
             await releaseTasklessDelegationReservation(releasedReservation)
         }
         stopStandbyReaperIfIdle()
+        pruneTerminalAgentRecords()
         return targetIDs.count
     }
 
@@ -697,6 +698,7 @@ extension DirectSubAgentRuntime {
               var agent = agents[id] else {
             throw DirectSubAgentRuntimeError.missingArgument("id")
         }
+        defer { pruneTerminalAgentRecords() }
 
         let task = agent.runTask
         agent.runTask = nil
@@ -706,7 +708,7 @@ extension DirectSubAgentRuntime {
         agent.pendingReleaseReason = nil
         agent.status = .closed
         agent.latestError = nil
-        agent.resetActivityState()
+        agent.prepareForTerminalRetention()
         agent.updatedAt = .now
         let releasedReservation = takeTasklessDelegationReservation(from: &agent)
         agents[id] = agent

@@ -35,7 +35,11 @@ public final class TerminalChat {
     public var sessionID = TerminalChat.newTerminalSessionID()
     public var activeSessionCacheKey: String?
     public var activeSessionHistory: [AgentRuntimeMessage] = []
-    public var activeSessionTranscript: [AgentRuntimeMessage] = []
+    public var activeSessionTranscript: [AgentRuntimeMessage] = [] {
+        didSet { activeSessionTranscriptCountedMessageCount = -1 }
+    }
+    var activeSessionTranscriptRetainedByteCount = 0
+    var activeSessionTranscriptCountedMessageCount = 0
     public var activeSessionSystemPromptOverride: String?
     public var activeSessionDynamicContextOverride: String?
     public var activeResponseLanguageName: String?

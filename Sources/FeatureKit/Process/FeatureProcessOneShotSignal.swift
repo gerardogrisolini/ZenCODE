@@ -147,6 +147,7 @@ typealias FeatureProcessExitSignal = FeatureProcessOneShotSignal<Int32>
 /// its own. Typed so a truncation is never confused with a timeout.
 enum FeatureProcessTerminationReason: Sendable {
     case stdoutLineLimit
+    case outputByteLimit
 }
 
 /// One-shot termination request raised by an output reader and consumed by the

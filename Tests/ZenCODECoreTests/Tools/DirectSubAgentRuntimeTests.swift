@@ -940,6 +940,127 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func terminalAgentOutputRetentionKeepsOnlyABoundedFinalTail() throws {
+        let endMarker = "TERMINAL_AGENT_OUTPUT_END"
+        let output = String(
+            repeating: "x",
+            count: DirectSubAgentRuntime.maximumRetainedTerminalOutputBytes + 10_000
+        ) + endMarker
+
+        let retained = try #require(DirectSubAgentRuntime.boundedTerminalOutput(output))
+
+        #expect(
+            retained.utf8.count
+                == DirectSubAgentRuntime.maximumRetainedTerminalOutputBytes
+        )
+        #expect(retained.hasPrefix("[Earlier delegated output discarded to bound memory.]"))
+        #expect(retained.hasSuffix(endMarker))
+
+        let unicodeOutput = String(
+            repeating: "🙂",
+            count: DirectSubAgentRuntime.maximumRetainedTerminalOutputBytes
+        ) + endMarker
+        let unicodeTail = try #require(
+            DirectSubAgentRuntime.boundedTerminalOutput(unicodeOutput)
+        )
+        #expect(
+            unicodeTail.utf8.count
+                <= DirectSubAgentRuntime.maximumRetainedTerminalOutputBytes
+        )
+        #expect(unicodeTail.hasSuffix(endMarker))
+    }
+
+    @Test
+    func tasklessFailedAgentRemainsRetryable() async throws {
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        let rootSessionID = "failed-agent-cleanup"
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("failure-fixture"),
+                "profile": .string("Developer"),
+                "prompt": .string("initial"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: rootSessionID
+        )
+        await runtime.waitForDirectSubAgentTestWorkLoops()
+        let agentID = try #require(await runtime.snapshots().first?.id)
+
+        await runtime.recordFailure(
+            DirectSubAgentRuntimeError.agentNotFound("intentional failure"),
+            agentID: agentID
+        )
+
+        #expect(await runtime.snapshots().first { $0.id == agentID }?.status == .failed)
+        #expect(await backend.shutdownCount() == 0)
+        #expect(
+            (await runtime.sharedChat.participants(
+                roomID: rootSessionID,
+                includingInactive: true
+            )).contains { $0.id == agentID }
+        )
+
+        try await runtime.queuePrompt("retry", for: agentID)
+        await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agentID)
+        #expect(await runtime.snapshots().first { $0.id == agentID }?.status == .idle)
+        #expect(await backend.sentPromptCount() == 2)
+        await runtime.shutdown()
+    }
+
+    @Test
+    func terminalTaskBoundFailureReleasesItsBackendAndSharedChatSlot() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "task-failure-cleanup",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "work", title: "Fail intentionally")]
+        )
+        let backend = CapturingSubAgentRuntimeBackend(failsPrompts: true)
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        await runtime.installTaskOrchestrator(orchestrator)
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("failure-fixture"),
+                "profile": .string("Developer"),
+                "prompt": .string("fail"),
+                "taskID": .string("work"),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil,
+            rootSessionID: "task-failure-cleanup"
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+
+        await backend.waitUntilShutdownCount(1)
+
+        #expect(await runtime.snapshots().first { $0.id == agentID }?.status == .failed)
+        #expect(await backend.shutdownCount() == 1)
+        #expect(
+            !((await runtime.sharedChat.participants(
+                roomID: "task-failure-cleanup",
+                includingInactive: true
+            )).contains { $0.id == agentID })
+        )
+        #expect(
+            try await orchestrator.task(
+                sessionID: "task-failure-cleanup",
+                taskID: "work"
+            ).task.status == .failed
+        )
+        await runtime.shutdown()
+    }
+
+    @Test
     func createAgentsUsesExplicitProfileModel() async throws {
         let planner = AgentProfile(
             id: "planner-profile",
@@ -3113,6 +3234,15 @@ struct DirectSubAgentRuntimeTests {
             #expect(await runtime.closeAgent(id: agentID))
         }
 
+        let retainedTerminalSnapshots = await runtime.snapshots().filter {
+            $0.status == .closed || $0.status == .failed
+        }
+        #expect(
+            retainedTerminalSnapshots.count
+                == DirectSubAgentRuntime.maximumRetainedTerminalAgents
+        )
+        #expect(!retainedTerminalSnapshots.contains { $0.id == firstID })
+
         let transcript = await chat.messages(roomID: rootSessionID)
         #expect(transcript.map(\.text) == ["keep this historical sender"])
         #expect(transcript.first?.sender.id == firstID)
@@ -4299,6 +4429,7 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     private var sessions: [CreatedSession] = []
     private let responseText: String
     private let blocksPrompts: Bool
+    private let failsPrompts: Bool
     private let borrowedToolCallOnPrompt: AgentBorrowedToolCall?
     private var sentPrompts: [String] = []
     private var sentPromptCountWaiters: [SentPromptCountWaiter] = []
@@ -4327,10 +4458,12 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     init(
         responseText: String = "done",
         blocksPrompts: Bool = false,
+        failsPrompts: Bool = false,
         borrowedToolCallOnPrompt: AgentBorrowedToolCall? = nil
     ) {
         self.responseText = responseText
         self.blocksPrompts = blocksPrompts
+        self.failsPrompts = failsPrompts
         self.borrowedToolCallOnPrompt = borrowedToolCallOnPrompt
     }
 
@@ -4457,6 +4590,9 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
                 }
             }
             try Task.checkCancellation()
+        }
+        if failsPrompts {
+            throw DirectSubAgentRuntimeError.agentNotFound("intentional failure")
         }
         return DirectAgentResponse(
             text: responseText,

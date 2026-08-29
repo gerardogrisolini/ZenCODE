@@ -333,7 +333,7 @@ extension TerminalChat {
         }
 
         activeSessionHistory = replacementHistory
-        activeSessionTranscript.append(contextMessage)
+        appendActiveSessionTranscript(contextMessage)
         activePlan = plan
         await writeMarkdownMessage(
             "Loaded saved plan `\(plan.id)` as an unapproved active plan.\n\n"

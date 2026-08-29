@@ -62,7 +62,7 @@ extension TerminalChat {
             sessionID = Self.newTerminalSessionID()
             activeSessionCacheKey = nil
             activeSessionHistory = []
-            activeSessionTranscript = []
+            replaceActiveSessionTranscript(with: [])
             activeSessionSystemPromptOverride = nil
             activeSessionDynamicContextOverride = nil
             resetResponseLanguageLock()
@@ -332,7 +332,7 @@ extension TerminalChat {
         sessionID = savedSession.sessionID
         activeSessionCacheKey = savedSession.cacheKey
         activeSessionHistory = restoredMessages
-        activeSessionTranscript = restoredTranscript
+        replaceActiveSessionTranscript(with: restoredTranscript)
         activeSessionSystemPromptOverride = savedSession.systemPrompt
         activeSessionDynamicContextOverride = savedSession.dynamicContext
         activePlan = savedSession.activePlan

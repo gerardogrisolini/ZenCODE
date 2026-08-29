@@ -26,7 +26,7 @@ extension TerminalChat {
         sessionID = snapshot.sessionID
         activeSessionCacheKey = snapshot.cacheKey
         activeSessionHistory = snapshot.history
-        activeSessionTranscript = snapshot.transcriptHistory
+        replaceActiveSessionTranscript(with: snapshot.transcriptHistory)
         activePlan = snapshot.activePlan
         // A setup restart restores persisted session data only, never an
         // unfinished conversational planning exchange.

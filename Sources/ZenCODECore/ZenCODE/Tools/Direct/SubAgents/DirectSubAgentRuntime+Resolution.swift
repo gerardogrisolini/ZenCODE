@@ -8,6 +8,47 @@
 import Foundation
 
 extension DirectSubAgentRuntime {
+    static func boundedTerminalOutput(_ output: String?) -> String? {
+        guard let output else { return nil }
+        let limit = maximumRetainedTerminalOutputBytes
+        guard output.utf8.count > limit else { return output }
+        let notice = "[Earlier delegated output discarded to bound memory.]\n"
+        let retainedByteCount = max(1, limit - notice.utf8.count)
+        let bytes = output.utf8
+        var start = bytes.index(
+            bytes.endIndex,
+            offsetBy: -retainedByteCount
+        )
+        // Move off a UTF-8 continuation byte so the retained tail starts at a
+        // scalar boundary and never needs to keep the original large storage.
+        while start < bytes.endIndex,
+              (bytes[start] & 0b1100_0000) == 0b1000_0000 {
+            start = bytes.index(after: start)
+        }
+        return notice + String(decoding: bytes[start...], as: UTF8.self)
+    }
+
+    /// Keeps only the newest terminal tombstones. Live/idle/standby agents are
+    /// never evicted here; their lifecycle remains controlled by normal commands
+    /// and the standby reaper.
+    func pruneTerminalAgentRecords() {
+        let terminal = agents.values
+            .filter {
+                $0.status == .closed
+                    || ($0.status == .failed && $0.taskID != nil)
+            }
+            .sorted { lhs, rhs in
+                if lhs.updatedAt != rhs.updatedAt {
+                    return lhs.updatedAt > rhs.updatedAt
+                }
+                return lhs.id > rhs.id
+            }
+        guard terminal.count > Self.maximumRetainedTerminalAgents else { return }
+        for record in terminal.dropFirst(Self.maximumRetainedTerminalAgents) {
+            agents.removeValue(forKey: record.id)
+        }
+    }
+
     public func resolveInspectableAgents(arguments: [String: JSONValue]) -> [AgentSnapshot] {
         let identifiers = Self.requestedAgentIdentifiers(from: arguments)
         guard !identifiers.isEmpty else {

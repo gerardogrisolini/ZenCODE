@@ -128,8 +128,8 @@ struct RemoteTransportCoreTests {
         #expect(try await events.next() == nil)
     }
 
-    @Test("SSE rejects oversized lines and events with bounded parser errors")
-    func sseRejectsOversizedLinesAndEvents() async throws {
+    @Test("SSE rejects oversized lines, events, and complete streams")
+    func sseRejectsOversizedLinesEventsAndStreams() async throws {
         let server = try await LocalHTTPTestServer.start { context, request in
             context.write(
                 LocalHTTPResponseHandler.wrapOutboundOut(
@@ -137,9 +137,14 @@ struct RemoteTransportCoreTests {
                 ),
                 promise: nil
             )
-            let payload = request.uri.contains("line")
-                ? "data: 123456789\n\n"
-                : "data: 12345\ndata: 67890\n\n"
+            let payload: String
+            if request.uri.contains("line") {
+                payload = "data: 123456789\n\n"
+            } else if request.uri.contains("event") {
+                payload = "data: 12345\ndata: 67890\n\n"
+            } else {
+                payload = "data: one\n\ndata: two\n\n"
+            }
             var body = context.channel.allocator.buffer(capacity: payload.utf8.count)
             body.writeString(payload)
             context.write(
@@ -181,6 +186,19 @@ struct RemoteTransportCoreTests {
         ).makeAsyncIterator()
         await #expect(throws: RemoteSSEParsingError.eventLimitExceeded(maximumBytes: 10)) {
             _ = try await eventEvents.next()
+        }
+
+        let streamResponse = try await transport.openHTTPStream(
+            RemoteHTTPStreamingRequest(url: server.url(path: "/stream"))
+        )
+        var streamEvents = RemoteSSEEventStream(
+            body: streamResponse.body,
+            maximumLineBytes: 64,
+            maximumEventBytes: 64,
+            maximumStreamBytes: 12
+        ).makeAsyncIterator()
+        await #expect(throws: RemoteSSEStreamLimitError(maximumBytes: 12)) {
+            _ = try await streamEvents.next()
         }
     }
 

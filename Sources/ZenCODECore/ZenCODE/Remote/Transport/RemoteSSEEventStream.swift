@@ -64,6 +64,21 @@ public enum RemoteSSEParsingError: Error, Sendable, Equatable, LocalizedError {
     }
 }
 
+/// The complete SSE response exceeded its absolute body budget. Kept separate
+/// from per-line/event parser errors because an unlimited sequence of individually
+/// valid events is a stream-lifetime failure, not malformed SSE syntax.
+public struct RemoteSSEStreamLimitError: Error, Sendable, Equatable, LocalizedError {
+    public let maximumBytes: Int
+
+    public init(maximumBytes: Int) {
+        self.maximumBytes = maximumBytes
+    }
+
+    public var errorDescription: String? {
+        "SSE stream exceeds the \(maximumBytes)-byte limit."
+    }
+}
+
 /// A unicast SSE sequence layered over `RemoteHTTPBody`.
 public struct RemoteSSEEventStream: AsyncSequence, Sendable {
     public typealias Element = RemoteSSEEvent
@@ -79,11 +94,15 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
     public static let defaultIdleTimeoutNanoseconds: UInt64 = 300 * 1_000_000_000
     public static let defaultMaximumLineBytes = 1 * 1_024 * 1_024
     public static let defaultMaximumEventBytes = 8 * 1_024 * 1_024
+    /// Absolute response-body budget. Per-line and per-event limits do not stop
+    /// an endless provider from sending an unlimited number of small deltas.
+    public static let defaultMaximumStreamBytes = 64 * 1_024 * 1_024
 
     private let body: RemoteHTTPBody
     private let idleTimeoutNanoseconds: UInt64?
     private let maximumLineBytes: Int
     private let maximumEventBytes: Int
+    private let maximumStreamBytes: Int
 
     /// Creates an SSE decoder over the unicast body. The idle watchdog is
     /// enabled by default with `defaultIdleTimeoutNanoseconds`; `nil` or a
@@ -93,7 +112,8 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
         body: RemoteHTTPBody,
         idleTimeoutNanoseconds: UInt64? = defaultIdleTimeoutNanoseconds,
         maximumLineBytes: Int = defaultMaximumLineBytes,
-        maximumEventBytes: Int = defaultMaximumEventBytes
+        maximumEventBytes: Int = defaultMaximumEventBytes,
+        maximumStreamBytes: Int = defaultMaximumStreamBytes
     ) {
         self.body = body
         self.idleTimeoutNanoseconds = (idleTimeoutNanoseconds ?? 0) > 0
@@ -101,6 +121,7 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
             : nil
         self.maximumLineBytes = Swift.max(1, maximumLineBytes)
         self.maximumEventBytes = Swift.max(1, maximumEventBytes)
+        self.maximumStreamBytes = Swift.max(1, maximumStreamBytes)
     }
 
     public func makeAsyncIterator() -> AsyncIterator {
@@ -108,7 +129,8 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
             body: body,
             idleTimeoutNanoseconds: idleTimeoutNanoseconds,
             maximumLineBytes: maximumLineBytes,
-            maximumEventBytes: maximumEventBytes
+            maximumEventBytes: maximumEventBytes,
+            maximumStreamBytes: maximumStreamBytes
         )
     }
 
@@ -122,17 +144,21 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
         private var previousByteWasCR = false
         private let maximumLineBytes: Int
         private let maximumEventBytes: Int
+        private let maximumStreamBytes: Int
+        private var consumedStreamBytes = 0
 
         fileprivate init(
             body: RemoteHTTPBody,
             idleTimeoutNanoseconds: UInt64?,
             maximumLineBytes: Int,
-            maximumEventBytes: Int
+            maximumEventBytes: Int,
+            maximumStreamBytes: Int
         ) {
             bodyIterator = body.makeAsyncIterator()
             self.idleTimeoutNanoseconds = idleTimeoutNanoseconds
             self.maximumLineBytes = maximumLineBytes
             self.maximumEventBytes = maximumEventBytes
+            self.maximumStreamBytes = maximumStreamBytes
         }
 
         public mutating func next() async throws -> RemoteSSEEvent? {
@@ -146,6 +172,12 @@ public struct RemoteSSEEventStream: AsyncSequence, Sendable {
             while let chunk = try await bodyIterator.next(
                 idleTimeoutNanoseconds: idleTimeoutNanoseconds
             ) {
+                guard chunk.count <= maximumStreamBytes - consumedStreamBytes else {
+                    throw RemoteSSEStreamLimitError(
+                        maximumBytes: maximumStreamBytes
+                    )
+                }
+                consumedStreamBytes += chunk.count
                 try consume(chunk)
                 if !pendingEvents.isEmpty {
                     return pendingEvents.removeFirst()

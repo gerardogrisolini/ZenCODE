@@ -14,6 +14,7 @@ public struct AsyncProcessResult: Sendable {
     public let stderrData: Data
     public let timedOut: Bool
     public let stdoutWasTruncated: Bool
+    public let stderrWasTruncated: Bool
 
     public var stdout: String {
         String(decoding: stdoutData, as: UTF8.self)
@@ -36,7 +37,8 @@ public enum AsyncProcessRunner {
         environment: [String: String]? = nil,
         stdinData: Data? = nil,
         timeout: TimeInterval? = nil,
-        stdoutLineLimit: Int? = nil
+        stdoutLineLimit: Int? = nil,
+        maximumOutputBytesPerStream: Int = FeatureProcessRunner.defaultMaximumOutputBytesPerStream
     ) async throws -> AsyncProcessResult {
         #if os(macOS) || os(Linux)
         let result = try await FeatureProcessRunner.run(
@@ -46,14 +48,16 @@ public enum AsyncProcessRunner {
             environment: environment,
             stdinData: stdinData,
             timeout: timeout,
-            stdoutLineLimit: stdoutLineLimit
+            stdoutLineLimit: stdoutLineLimit,
+            maximumOutputBytesPerStream: maximumOutputBytesPerStream
         )
         return AsyncProcessResult(
             exitCode: result.exitCode,
             stdoutData: result.stdoutData,
             stderrData: result.stderrData,
             timedOut: result.timedOut,
-            stdoutWasTruncated: result.stdoutWasTruncated
+            stdoutWasTruncated: result.stdoutWasTruncated,
+            stderrWasTruncated: result.stderrWasTruncated
         )
         #else
         _ = executableURL
@@ -63,6 +67,7 @@ public enum AsyncProcessRunner {
         _ = stdinData
         _ = timeout
         _ = stdoutLineLimit
+        _ = maximumOutputBytesPerStream
         throw AsyncProcessRunnerError.unsupportedPlatform
         #endif
     }

@@ -11,6 +11,11 @@ import Glibc
 #endif
 
 public enum FeatureProcessRunner {
+    /// Hard per-pipe retention bound for one-shot child processes. A line-count
+    /// guard alone is insufficient: minified JSON, base64 output, and stderr can
+    /// grow for hours without ever producing a stdout newline.
+    public static let defaultMaximumOutputBytesPerStream = 16 * 1_024 * 1_024
+
     public static func run(
         executableURL: URL,
         arguments: [String],
@@ -19,6 +24,7 @@ public enum FeatureProcessRunner {
         stdinData: Data? = nil,
         timeout: TimeInterval? = nil,
         stdoutLineLimit: Int? = nil,
+        maximumOutputBytesPerStream: Int = defaultMaximumOutputBytesPerStream
     ) async throws -> FeatureProcessResult {
         #if os(macOS) || os(Linux)
         try Task.checkCancellation()
@@ -71,11 +77,12 @@ public enum FeatureProcessRunner {
         }
 
         // One-shot signal bridging the output readers and the exit supervisor.
-        // When a reader exceeds its line budget it requests termination here; the
-        // supervisor treats that as a first-class escalation trigger on the same
-        // footing as timeout/cancellation, so a child that ignores SIGTERM is
-        // still guaranteed to reach SIGKILL and be reaped.
+        // When a reader exceeds its line or byte budget it requests termination
+        // here; the supervisor treats that as a first-class escalation trigger on
+        // the same footing as timeout/cancellation, so a child that ignores SIGTERM
+        // is still guaranteed to reach SIGKILL and be reaped.
         let terminationRequest = FeatureProcessTerminationSignal()
+        let outputByteLimit = max(1, maximumOutputBytesPerStream)
 
         // Drain stdout/stderr while writing stdin. Starting all three streams as
         // structured `async let` children guarantees the pipes are drained
@@ -86,12 +93,14 @@ public enum FeatureProcessRunner {
             stdoutPipe.fileHandleForReading,
             exitObserver: exitObserver,
             lineLimit: stdoutLineLimit,
+            byteLimit: outputByteLimit,
             terminationRequest: terminationRequest
         )
         async let stderrOutcome = drainPipe(
             stderrPipe.fileHandleForReading,
             exitObserver: exitObserver,
             lineLimit: nil,
+            byteLimit: outputByteLimit,
             terminationRequest: terminationRequest
         )
         async let stdinOutcome = writeStdin(
@@ -110,7 +119,7 @@ public enum FeatureProcessRunner {
         process.terminationHandler = nil
 
         let stdoutResult = await stdoutOutcome
-        let stderr = await stderrOutcome.0
+        let stderrResult = await stderrOutcome
         // Awaited (not fire-and-forget) so the write completes and the pipe is
         // closed before we report a result. The outcome is captured rather than
         // swallowed by `try?`; we intentionally do not throw here to preserve the
@@ -122,9 +131,10 @@ public enum FeatureProcessRunner {
         return FeatureProcessResult(
             exitCode: exitObserver.exitCode ?? -1,
             stdoutData: stdoutResult.0,
-            stderrData: stderr,
+            stderrData: stderrResult.0,
             timedOut: timedOut,
-            stdoutWasTruncated: stdoutResult.1
+            stdoutWasTruncated: stdoutResult.1,
+            stderrWasTruncated: stderrResult.1
         )
         #else
         _ = executableURL
@@ -134,6 +144,7 @@ public enum FeatureProcessRunner {
         _ = stdinData
         _ = timeout
         _ = stdoutLineLimit
+        _ = maximumOutputBytesPerStream
         throw FeatureProcessRunnerError.unsupportedPlatform
         #endif
     }
@@ -148,6 +159,7 @@ public enum FeatureProcessRunner {
         _ handle: FileHandle,
         exitObserver: FeatureProcessExitSignal,
         lineLimit: Int?,
+        byteLimit: Int,
         terminationRequest: FeatureProcessTerminationSignal
     ) async -> (Data, Bool) {
         let descriptor = handle.fileDescriptor
@@ -163,7 +175,18 @@ public enum FeatureProcessRunner {
             }
 
             if bytesRead > 0 {
-                output.append(contentsOf: scratch[0 ..< bytesRead])
+                let retainedByteCount = min(bytesRead, max(0, byteLimit - output.count))
+                if retainedByteCount > 0 {
+                    output.append(contentsOf: scratch[0 ..< retainedByteCount])
+                }
+                guard retainedByteCount == bytesRead else {
+                    wasTruncated = true
+                    // Stop reading before the `Data` can exceed its hard bound;
+                    // the supervisor drains lifecycle ownership by terminating
+                    // and reaping the producer.
+                    terminationRequest.resolve(.outputByteLimit)
+                    break
+                }
                 if let lineLimit, lineLimit > 0 {
                     for index in 0 ..< bytesRead where scratch[index] == UInt8(ascii: "\n") {
                         observedLineCount += 1
@@ -286,7 +309,7 @@ public enum FeatureProcessRunner {
 
     /// Supervises process termination, applying the same `SIGTERM -> grace ->
     /// SIGKILL` escalation to an optional timeout, cooperative cancellation, and
-    /// a line-limit truncation request. The natural-exit waiter is cancellation-
+    /// an output-limit truncation request. The natural-exit waiter is cancellation-
     /// aware, so any trigger can always tear it down and reach the SIGKILL
     /// fallback: a process that ignores SIGTERM can no longer hang the runner.
     /// A line-limit truncation escalates like the others but is reported as
@@ -313,12 +336,12 @@ public enum FeatureProcessRunner {
                 return .timeoutOrCancellation
             }
 
-            // Line-limit trigger: an output reader that exceeded its line budget
-            // requested termination. This fires without an external timeout and
-            // must still escalate to SIGKILL for a child that ignores SIGTERM.
-            group.addTask(name: "Feature process stdout truncation") {
+            // Output-limit trigger: a reader exceeded either its stdout line
+            // budget or its per-pipe byte budget. This fires without an external
+            // timeout and still escalates for a child that ignores SIGTERM.
+            group.addTask(name: "Feature process output truncation") {
                 await terminationRequest.wait()
-                return .stdoutTruncated
+                return .outputTruncated
             }
 
             // As soon as one condition fires, stop waiting and tear the other
@@ -353,7 +376,7 @@ public enum FeatureProcessRunner {
 private enum FeatureProcessExitOutcome: Sendable {
     case exited
     case timeoutOrCancellation
-    case stdoutTruncated
+    case outputTruncated
 }
 #endif
 
