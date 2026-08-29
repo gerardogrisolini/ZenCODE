@@ -47,7 +47,7 @@ struct ZenCODEMain {
             Foundation.exit(1)
         }
 
-        if requiresInteractiveSetup() {
+        if requiresInteractiveSetup(), !runsHeadless(arguments) {
             do {
                 guard try await runInteractiveSetup() else {
                     Foundation.exit(0)
@@ -72,6 +72,13 @@ struct ZenCODEMain {
                 )
             }
         )
+    }
+
+    private static func runsHeadless(_ arguments: [String]) -> Bool {
+        arguments.dropFirst().contains(where: { $0 == "-p" || $0 == "--prompt" })
+            || ProcessInfo.processInfo.environment["ZENCODE_AGENT_MODE"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() == AgentRunMode.headless.rawValue
     }
 
     private static func requiresInteractiveSetup() -> Bool {
@@ -109,8 +116,9 @@ struct ZenCODEMain {
 
 private enum ZenCODEStandaloneHelp {
     static var text: String {
-        let usage = "zen [--doctor] [--install-features [id,id,...]] [--acp]"
+        let usage = "zen [--doctor] [--install-features [id,id,...]] [-p PROMPT] [--acp]"
         let options = """
+          -p, --prompt PROMPT    Run one headless text prompt.
           --acp                  ACP JSON-RPC over stdio for compatible clients.
           --doctor               Print a redacted diagnostic report (environment, configuration, permissions) and exit. Non-interactive; never starts setup or reveals secrets.
           --install-features [id,id,...]
@@ -121,11 +129,11 @@ private enum ZenCODEStandaloneHelp {
 
         return AgentConfiguration.helpText
             .replacingOccurrences(
-                of: "zen [--acp]",
+                of: "zen [-p PROMPT] [--acp]",
                 with: usage
             )
             .replacingOccurrences(
-                of: "  --acp                  ACP JSON-RPC over stdio for compatible clients.",
+                of: "  -p, --prompt PROMPT    Run one headless text prompt.\n  --acp                  ACP JSON-RPC over stdio for compatible clients.",
                 with: options
             )
     }

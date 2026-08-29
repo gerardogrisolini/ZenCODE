@@ -772,7 +772,7 @@ struct DirectSubAgentRuntimeTests {
         let mirroredBlocks = TerminalChat.subAgentPartialResponses([startedSnapshot])
         #expect(mirroredBlocks.count == 1)
         #expect(mirroredBlocks.first?.markdown == "I’ll inspect the matching files.")
-        #expect(mirroredBlocks.first?.heading == "💬 Response from tool-worker:")
+        #expect(mirroredBlocks.first?.heading == "💬 tool-worker:")
 
         await runtime.recordEvent(
             .toolCallCompleted(

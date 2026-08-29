@@ -58,12 +58,28 @@ public enum ZenCODECommandLineRunner {
                 return
             }
 
+            // Chat may use `/dev/tty` when stdin is redirected, but headless
+            // context input must be classified from stdin itself.
+            let stdinIsTerminal = isatty(STDIN_FILENO) == 1
             let interactiveInputAvailable = TerminalRawInput.supportsInteractiveInput()
             let resolvedRunMode = configuration.resolvedRunMode(
                 stdinIsTerminal: interactiveInputAvailable
             )
 
             switch resolvedRunMode {
+            case .headless:
+                AgentOutput.silenceInheritedProcessOutput()
+                let prompt = try ZenCODEHeadlessRunner.prompt(
+                    inlinePrompt: configuration.headlessPrompt,
+                    stdinIsTerminal: stdinIsTerminal
+                )
+                let permissionAuthorizer = LocalExecPermissionAuthorizer()
+                try await AgentRuntimeLauncher.runHeadless(
+                    configuration: configuration,
+                    prompt: prompt,
+                    permissionAuthorizer: permissionAuthorizer,
+                    backendFactory: backendFactory
+                )
             case .chat:
                 AgentOutput.silenceInheritedProcessOutput()
                 let permissionAuthorizer = LocalExecPermissionAuthorizer()
@@ -110,13 +126,11 @@ public enum ZenCODECommandLineRunner {
                 }
             case .acp:
                 AgentOutput.silenceInheritedProcessError()
-                break
+                await AgentRuntimeLauncher.runACP(
+                    configuration: configuration,
+                    backendFactory: backendFactory
+                )
             }
-
-            await AgentRuntimeLauncher.runACP(
-                configuration: configuration,
-                backendFactory: backendFactory
-            )
         } catch {
             AgentOutput.standardError.writeString(
                 "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"
@@ -163,6 +177,8 @@ public enum ZenCODECommandLineRunner {
             || argument == "--model"
             || argument == "--agent"
             || argument == "--acp"
+            || argument == "-p"
+            || argument == "--prompt"
             || argument == "--working-directory"
             || argument == "--skills"
             || argument == "--max-tool-rounds"

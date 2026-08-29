@@ -220,7 +220,7 @@ struct TerminalTelegramOverviewMirroringTests {
 
         let first = TerminalChatRenderCoordinator.SubAgentPartialResponse(
             token: "worker\u{1F}partial\u{1F}1",
-            heading: "💬 Response from worker:",
+            heading: "💬 worker:",
             markdown: "I found the **first** clue."
         )
         await terminal.renderCoordinator.renderSubAgentOverview(
@@ -241,7 +241,7 @@ struct TerminalTelegramOverviewMirroringTests {
         )
         let second = TerminalChatRenderCoordinator.SubAgentPartialResponse(
             token: "worker\u{1F}partial\u{1F}2",
-            heading: "💬 Response from worker:",
+            heading: "💬 worker:",
             markdown: "Now I have the complete intermediate result."
         )
         await terminal.renderCoordinator.renderSubAgentOverview(
@@ -254,8 +254,8 @@ struct TerminalTelegramOverviewMirroringTests {
         await drainMirrors(terminal)
 
         #expect(recorder.messages == [
-            "💬 Response from worker:\n\nI found the **first** clue.",
-            "💬 Response from worker:\n\nNow I have the complete intermediate result."
+            "💬 worker:\n\nI found the **first** clue.",
+            "💬 worker:\n\nNow I have the complete intermediate result."
         ])
         #expect(recorder.messages.allSatisfy { !$0.contains("agent metadata") })
         #expect(terminal.mirroredTaskGraphOverviewSignature == nil)

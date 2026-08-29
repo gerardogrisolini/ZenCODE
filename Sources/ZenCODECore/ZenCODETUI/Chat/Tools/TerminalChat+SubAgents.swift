@@ -934,7 +934,7 @@ extension TerminalChat {
                     "partial",
                     String(snapshot.currentActivityRevision)
                 ].joined(separator: "\u{1F}"),
-                heading: "💬 Response from \(inlineText(name)):",
+                heading: "💬 \(inlineText(name)):",
                 markdown: content
             )
         }

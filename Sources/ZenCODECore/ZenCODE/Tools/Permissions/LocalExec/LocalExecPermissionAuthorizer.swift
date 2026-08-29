@@ -88,6 +88,29 @@ public actor LocalExecPermissionAuthorizer {
         await authorizationOutcome(for: request).isApproved
     }
 
+    /// Authorizes a request without ever attempting to acquire terminal input.
+    ///
+    /// This is intentionally separate from `authorize(_:)`: headless callers
+    /// must retain persisted approvals and pre-approved tools, but a new gated
+    /// request has no operator available to answer a consent dialog. Such a
+    /// request is therefore denied with an actionable diagnostic rather than
+    /// falling through to `/dev/tty`.
+    public func authorizeNonInteractively(_ request: AgentToolAuthorizationRequest) -> Bool {
+        guard Self.gatedToolNames.contains(request.toolName) else {
+            return true
+        }
+
+        loadPersistedAllowedCommandsIfNeeded()
+        let cacheKeys = permissionCacheKeys(for: request)
+        guard cacheKeys.allSatisfy(alwaysAllowedKeys.contains) else {
+            AgentOutput.standardError.writeString(
+                Self.nonInteractiveConsentMessage(for: request)
+            )
+            return false
+        }
+        return true
+    }
+
     func authorizationOutcome(
         for request: AgentToolAuthorizationRequest
     ) async -> AuthorizationOutcome {

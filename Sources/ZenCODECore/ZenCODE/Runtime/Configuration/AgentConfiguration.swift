@@ -19,11 +19,13 @@ public enum AgentRunMode: String, Sendable {
     case automatic
     case acp
     case chat
+    case headless
 }
 
 public enum AgentResolvedRunMode: Sendable {
     case acp
     case chat
+    case headless
 }
 
 public struct AgentConfiguration: Sendable {
@@ -33,10 +35,11 @@ public struct AgentConfiguration: Sendable {
     Autonomous ZenCODE CLI and ACP agent.
 
     Usage:
-      zen [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
+      zen [-p PROMPT] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
 
     Modes:
       default                Human terminal chat.
+      -p, --prompt PROMPT    Run one headless text prompt.
       --acp                  ACP JSON-RPC over stdio for compatible clients.
 
     Agent runtime:
@@ -61,13 +64,14 @@ public struct AgentConfiguration: Sendable {
       Figma MCP tools are added when the local Figma desktop MCP server exposes tools.
 
     Environment:
-      ZENCODE_AGENT_MODE           chat, acp, or auto. Auto resolves to chat.
+      ZENCODE_AGENT_MODE           chat, acp, headless, or auto. Auto resolves to chat.
       ZENCODE_AGENT_NAME           Agent profile from ~/.zencode/agents.json. Default is used when omitted.
       ZENCODE_AGENT_MODEL          Model id, remoteapimodel:<uuid>, or remoteapi:<uuid>. Overrides the agent-selected model for this run.
       ZENCODE_AGENT_CWD            Working directory for local tools.
       ZENCODE_AGENT_SKILLS         Initial chat skill selection by name/number, all, or none.
 
-    In ACP mode stdout contains only ACP JSON-RPC messages. In chat mode stdout contains only assistant text.
+    With an inline headless prompt, piped stdin is supplied as additional context.
+    In ACP mode stdout contains only ACP JSON-RPC messages. In headless mode stdout contains only the final assistant text.
     """
 
     public let modelID: String?
@@ -75,6 +79,8 @@ public struct AgentConfiguration: Sendable {
     public let selectedAgent: AgentProfile?
     public let effectiveModelID: String?
     public let runMode: AgentRunMode
+    /// Inline prompt supplied by `-p`; nil is invalid for a headless turn.
+    public let headlessPrompt: String?
     public let workingDirectory: URL
     public let initialSkillSelection: String?
     public let maxToolRounds: Int
@@ -124,6 +130,7 @@ public struct AgentConfiguration: Sendable {
             ?? agentEnvironmentValue("AGENT")
         var rawModelID = agentEnvironmentValue("MODEL")
         var rawRunMode = agentEnvironmentValue("MODE") ?? "automatic"
+        var rawHeadlessPrompt: String?
         let environmentWorkingDirectory = agentEnvironmentValue("CWD")?.nilIfBlank
         var hasExplicitWorkingDirectory = environmentWorkingDirectory != nil
         var rawWorkingDirectory = environmentWorkingDirectory
@@ -135,6 +142,8 @@ public struct AgentConfiguration: Sendable {
         var shouldPrintHelp = false
         var shouldPrintVersion = false
         var shouldPrintDoctor = false
+        var explicitlyRequestedACP = false
+        var explicitlyRequestedHeadless = false
 
         var index = 1
         while index < arguments.count {
@@ -159,7 +168,32 @@ public struct AgentConfiguration: Sendable {
                 }
                 rawAgentName = arguments[index]
             case "--acp":
+                guard !explicitlyRequestedHeadless else {
+                    throw AgentConfigurationError.conflictingOptions("--acp", "-p/--prompt")
+                }
+                explicitlyRequestedACP = true
                 rawRunMode = AgentRunMode.acp.rawValue
+            case "-p", "--prompt":
+                guard !explicitlyRequestedACP else {
+                    throw AgentConfigurationError.conflictingOptions("--acp", "-p/--prompt")
+                }
+                guard !explicitlyRequestedHeadless else {
+                    throw AgentConfigurationError.conflictingOptions(argument, "-p/--prompt")
+                }
+                explicitlyRequestedHeadless = true
+                rawRunMode = AgentRunMode.headless.rawValue
+                index += 1
+                guard index < arguments.count else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                let prompt = arguments[index]
+                guard prompt != "-" else {
+                    throw AgentConfigurationError.invalidValue(argument, prompt)
+                }
+                guard !prompt.hasPrefix("-") else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                rawHeadlessPrompt = prompt
             case "--working-directory":
                 index += 1
                 guard index < arguments.count else {
@@ -238,6 +272,7 @@ public struct AgentConfiguration: Sendable {
         self.selectedAgent = selectedAgent
         self.effectiveModelID = effectiveModelID
         self.runMode = runMode
+        self.headlessPrompt = rawHeadlessPrompt
         self.workingDirectory = workingDirectory
         self.initialSkillSelection = rawInitialSkillSelection?.nilIfBlank
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
@@ -286,6 +321,7 @@ public struct AgentConfiguration: Sendable {
         self.selectedAgent = selectedAgent
         self.effectiveModelID = effectiveModelID
         self.runMode = runMode
+        self.headlessPrompt = nil
         self.workingDirectory = workingDirectory
         self.initialSkillSelection = initialSkillSelection?.nilIfBlank
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
@@ -304,6 +340,8 @@ public struct AgentConfiguration: Sendable {
             return .acp
         case .chat:
             return .chat
+        case .headless:
+            return .headless
         case .automatic:
             return appMode ? .acp : .chat
         }
@@ -417,6 +455,7 @@ public struct AgentConfiguration: Sendable {
 }
 
 public enum AgentConfigurationError: LocalizedError {
+    case conflictingOptions(String, String)
     case invalidValue(String, String)
     case missingValue(String)
     case unknownAgent(String, [String])
@@ -424,6 +463,8 @@ public enum AgentConfigurationError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
+        case let .conflictingOptions(first, second):
+            return "Options \(first) and \(second) cannot be combined."
         case let .invalidValue(argument, value):
             return "Invalid value for \(argument): \(value)"
         case let .missingValue(argument):

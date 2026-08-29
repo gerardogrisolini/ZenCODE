@@ -10,6 +10,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- `zen -p PROMPT` (also `--prompt`) runs one headless text-only turn. It accepts
+  an inline prompt with optional piped stdin context, prints only the final
+  assistant text to stdout, and fails without
+  launching interactive setup when configuration, input, or generation is unavailable.
+
 ### Fixed
 
 - `/telegram on` now restores the persisted, generation-fenced route lease and

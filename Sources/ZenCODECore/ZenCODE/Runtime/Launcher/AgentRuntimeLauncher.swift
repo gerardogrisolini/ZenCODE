@@ -7,6 +7,22 @@ import Foundation
 
 /// Shared entry points for launching ZenCODE terminal and ACP runtimes.
 public enum AgentRuntimeLauncher {
+    /// Runs one non-interactive turn and writes only its final assistant text.
+    @TerminalChatActor
+    public static func runHeadless(
+        configuration: AgentConfiguration,
+        prompt: String,
+        permissionAuthorizer: LocalExecPermissionAuthorizer,
+        backendFactory: AgentRuntimeBackendFactory? = nil
+    ) async throws {
+        try await ZenCODEHeadlessRunner.run(
+            configuration: configuration,
+            prompt: prompt,
+            permissionAuthorizer: permissionAuthorizer,
+            backendFactory: backendFactory
+        )
+    }
+
     /// Runs one terminal-chat lifecycle. The caller owns the supplied runner so
     /// it can preserve the task orchestrator while rebuilding the chat after
     /// `/setup`.

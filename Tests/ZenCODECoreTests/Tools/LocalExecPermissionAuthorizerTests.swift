@@ -407,6 +407,47 @@ struct LocalExecPermissionAuthorizerTests {
     }
 
     @Test
+    func nonInteractiveAuthorizationAllowsUngatedToolsWithoutConsent() async {
+        let authorizer = LocalExecPermissionAuthorizer()
+        let reader = FakeConsentReader(answers: ["c"])
+        await authorizer.setConsentReader({ prompt in await reader.next(prompt: prompt) })
+        let request = AgentToolAuthorizationRequest(
+            sessionID: "headless",
+            toolCallID: "read",
+            toolName: "local.read",
+            title: "Read file",
+            kind: "read",
+            command: "README.md",
+            workingDirectory: "/tmp/project"
+        )
+
+        #expect(await authorizer.authorizeNonInteractively(request))
+        #expect(await reader.recordedPrompts().isEmpty)
+    }
+
+    @Test
+    func nonInteractiveAuthorizationDeniesNewGatedRequestWithoutReadingConsent() async {
+        let authorizer = LocalExecPermissionAuthorizer()
+        let reader = FakeConsentReader(answers: ["a"])
+        await authorizer.setConsentReader({ prompt in await reader.next(prompt: prompt) })
+
+        #expect(!(await authorizer.authorizeNonInteractively(Self.consentRequest())))
+        #expect(await reader.recordedPrompts().isEmpty)
+    }
+
+    @Test
+    func nonInteractiveAuthorizationHonorsExistingAlwaysAuthorization() async {
+        let authorizer = LocalExecPermissionAuthorizer()
+        let request = Self.destructiveConsentRequest(
+            toolCallID: "headless-always",
+            command: "delete headless-always"
+        )
+        await authorizer.recordAlwaysAuthorization(for: request)
+
+        #expect(await authorizer.authorizeNonInteractively(request))
+    }
+
+    @Test
     func presentDialogRetriesUntilRecognizedKeyThenDecides() async {
         let authorizer = LocalExecPermissionAuthorizer()
         let recorder = FakeConsentReader(answers: ["x", "a"])

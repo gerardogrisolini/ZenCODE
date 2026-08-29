@@ -86,7 +86,7 @@ extension TerminalChat {
         switch configuration.resolvedRunMode(stdinIsTerminal: stdinIsTerminal) {
         case .chat:
             return true
-        case .acp:
+        case .acp, .headless:
             return false
         }
     }
