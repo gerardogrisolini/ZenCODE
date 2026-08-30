@@ -67,8 +67,8 @@ actor TerminalChatRenderCoordinator {
         let lastRenderedTaskGraphOverviewSignature: String?
         let lastRenderedSubAgentOverviewSignature: String?
         let isStreamingThoughtOutput: Bool
-        /// Physical rows currently owned by the sub-agent overview, or `0` when
-        /// no section can be rewritten in place.
+        /// Kept for diagnostic compatibility. Live Sub-Agents rows are owned by
+        /// `TerminalStatusBar`, so the coordinator always reports zero.
         let activeSubAgentOverviewRowCount: Int
     }
 
@@ -121,12 +121,8 @@ actor TerminalChatRenderCoordinator {
     /// unadorned; every later one receives exactly one visual turn separator.
     var hasWrittenSubmittedPrompt = false
 
-    var toolState = TerminalToolBlockAccounting<ActiveToolBlock>()
+    var toolState = TerminalToolTimingState()
     var subAgentToolState = TerminalSubAgentToolPresentationState()
-    var activeSubAgentOverviewBlock: ActiveOverviewBlock?
-    /// Fences periodic overview publications while the status bar changes the
-    /// transcript's scrolling region outside this coordinator.
-    var isBottomOverlayTransitionActive = false
     var overviewState = TerminalOverviewArbitration<OverviewKind, PendingOverview>()
 
     /// Optional mirror invoked after publishable overview content is actually

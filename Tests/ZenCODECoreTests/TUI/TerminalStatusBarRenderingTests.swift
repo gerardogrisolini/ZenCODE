@@ -104,6 +104,212 @@ private final class CapturedOutput: Sendable {
         #expect(await bar.scrollableOutputRowCapacity() == 18)
     }
 
+    @Test
+    func liveSubAgentsWaitChatAndInputShareOneBottomLayout() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 24, columns: 100, modelID: "test-model")
+        await bar.updateInputPanel(
+            text: "Prompt",
+            cursorIndex: 6,
+            modeText: "Prompt",
+            helpText: "Enter to send"
+        )
+        _ = await bar.setSubAgentActivity(
+            text: "Sub-Agents\n   1 total\n   ▸ worker",
+            revision: 1
+        )
+        _ = await bar.setPendingTool(id: "wait-1", name: "agent.wait", text: "agent.wait ⏳ worker")
+        await bar.setSharedChatReader(
+            entries: [],
+            unreadCount: 0,
+            isExpanded: true
+        )
+
+        captured.clear()
+        await bar.renderOverlay()
+        let frame = TerminalANSIText.stripANSI(captured.combined)
+        #expect(frame.contains("Sub-Agents"))
+        #expect(frame.contains("agent.wait ⏳ worker"))
+        #expect(frame.contains("Chat · 0 messages"))
+        #expect(frame.contains("Prompt"))
+        #expect((await bar.scrollableOutputRowCapacity() ?? 0) >= TerminalStatusBar.minimumScrollableRows)
+    }
+
+    @Test
+    func pendingToolRemovalIsIdentitySafeAcrossResize() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 18, columns: 80, modelID: "test-model")
+        _ = await bar.setPendingTool(id: "older", name: "local.exec", text: "local.exec ⏳ older")
+        _ = await bar.setPendingTool(id: "newer", name: "agent.wait", text: "agent.wait ⏳ newer")
+
+        await bar.removePendingTool(id: "older")
+        await bar.configureForTesting(row: 12, columns: 60, modelID: "test-model")
+        captured.clear()
+        await bar.renderOverlay()
+
+        let frame = TerminalANSIText.stripANSI(captured.combined)
+        #expect(!frame.contains("local.exec ⏳ older"))
+        #expect(frame.contains("agent.wait ⏳ newer"))
+        #expect(await bar.state.liveActivity.pendingToolOrder == ["newer"])
+    }
+
+    @Test
+    func allPendingToolsShareOverlayAndConcurrentCompletionUsesCallIdentity() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 18, columns: 80)
+        _ = await bar.setPendingTool(id: "search", name: "search.grep", text: "search.grep ⏳ needle")
+        _ = await bar.setPendingTool(id: "edit", name: "local.editFile", text: "local.editFile ⏳ File.swift")
+
+        await bar.removePendingTool(id: "search")
+        captured.clear()
+        await bar.renderOverlay()
+
+        let frame = TerminalANSIText.stripANSI(captured.combined)
+        #expect(!frame.contains("search.grep ⏳ needle"))
+        #expect(frame.contains("local.editFile ⏳ File.swift"))
+        #expect(await bar.state.liveActivity.pendingToolOrder == ["edit"])
+    }
+
+    @Test
+    func standaloneOverlayReservesLiveRowsAndPromotesWaitWhenConstrained() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 6, columns: 80)
+        _ = await bar.setPendingTool(id: "first", name: "local.exec", text: "local.exec ⏳ first")
+        _ = await bar.setPendingTool(id: "wait", name: "agent.wait", text: "agent.wait ⏳ workers")
+
+        captured.clear()
+        await bar.renderOverlay()
+        let frame = TerminalANSIText.stripANSI(captured.combined)
+
+        #expect(await bar.reservedRowsForOverlay() == 4)
+        #expect(frame.contains("agent.wait ⏳ workers"))
+        #expect(!frame.contains("local.exec ⏳ first"))
+    }
+
+    @Test
+    func fiveRowStandaloneStatusUsesWaitBadgeWithoutTakingTranscriptRows() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 5, columns: 80, modelID: "test-model")
+        _ = await bar.setPendingTool(id: "other", name: "local.exec", text: "local.exec ⏳ other")
+        _ = await bar.setPendingTool(id: "wait", name: "agent.wait", text: "agent.wait ⏳ workers")
+
+        captured.clear()
+        await bar.renderOverlay()
+        let frame = TerminalANSIText.stripANSI(captured.combined)
+
+        #expect(await bar.reservedRowsForOverlay() == 3)
+        #expect(await bar.scrollableOutputRowCapacity() == 2)
+        #expect(frame.contains("agent.wait ⏳ workers"))
+        #expect(!frame.contains("local.exec ⏳ other"))
+    }
+
+    @Test
+    func scheduledResizeDefersPendingToolPhysicalWritesUntilCommit() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 18, columns: 80)
+
+        await bar.scheduleTerminalResize()
+        captured.clear()
+        _ = await bar.setPendingTool(id: "remove", name: "local.exec", text: "local.exec ⏳ remove")
+        _ = await bar.setPendingTool(id: "keep", name: "agent.wait", text: "agent.wait ⏳ keep")
+        await bar.removePendingTool(id: "remove")
+
+        #expect(captured.combined.isEmpty)
+        #expect(await bar.state.liveActivity.pendingToolOrder == ["keep"])
+
+        // Deterministically model the debounced geometry commit: the next full
+        // render must compose the latest logical state, not the removed tool.
+        await bar.configureForTesting(row: 12, columns: 60, isResizePending: false)
+        await bar.renderOverlay()
+        let frame = TerminalANSIText.stripANSI(captured.combined)
+        #expect(frame.contains("agent.wait ⏳ keep"))
+        #expect(!frame.contains("local.exec ⏳ remove"))
+        await bar.stop()
+    }
+
+    @Test
+    func lifecycleCleanupClearsToolsAndSubAgents() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 18, columns: 80)
+        _ = await bar.setPendingTool(id: "tool", name: "local.exec", text: "local.exec ⏳")
+        _ = await bar.setSubAgentActivity(text: "Sub-Agents\n   worker", revision: 1)
+
+        await bar.setProcessing(true)
+        await bar.setProcessing(false)
+
+        #expect(await bar.state.liveActivity.lines.isEmpty)
+        #expect(await bar.scrollableOutputRowCapacity() == 15)
+    }
+
+    @Test
+    func resetAndStopCannotRetainLiveActivity() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 18, columns: 80)
+        _ = await bar.setPendingTool(id: "reset-tool", name: "local.exec", text: "local.exec ⏳")
+        _ = await bar.setSubAgentActivity(text: "Sub-Agents\n   current", revision: 5)
+
+        // Revision 6 represents a snapshot reserved before the reset and
+        // completing afterward. Cleanup retains its floor but revokes publishability.
+        await bar.reserveSubAgentActivity(revision: 6)
+        await bar.reset()
+        #expect(await bar.state.liveActivity.lines.isEmpty)
+        let resetSnapshotHandled = await bar.setSubAgentActivity(
+            text: "Sub-Agents\n   stale-after-reset",
+            revision: 6
+        )
+        #expect(resetSnapshotHandled)
+        #expect(await bar.state.liveActivity.lines.isEmpty)
+
+        _ = await bar.setPendingTool(id: "stop-tool", name: "search.grep", text: "search.grep ⏳")
+        _ = await bar.setSubAgentActivity(text: "Sub-Agents\n   stop-worker", revision: 7)
+        await bar.reserveSubAgentActivity(revision: 8)
+        await bar.stop()
+        #expect(await bar.state.liveActivity.lines.isEmpty)
+        let stoppedSnapshotHandled = await bar.setSubAgentActivity(
+            text: "Sub-Agents\n   stale-after-stop",
+            revision: 8
+        )
+        #expect(stoppedSnapshotHandled)
+        #expect(await bar.state.liveActivity.lines.isEmpty)
+
+        // Restarting the visual owner cannot lower the acceptance floor.
+        await bar.configureForTesting(row: 18, columns: 80)
+        let restartedSnapshotHandled = await bar.setSubAgentActivity(
+            text: "Sub-Agents\n   stale-after-restart",
+            revision: 8
+        )
+        #expect(restartedSnapshotHandled)
+        #expect(await bar.state.liveActivity.lines.isEmpty)
+    }
+
+    @Test
+    func staleSubAgentRevisionCannotReplaceNewerLiveRows() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 16, columns: 80)
+        _ = await bar.setSubAgentActivity(text: "Sub-Agents\n   newest", revision: 2)
+
+        let stillPresentedLive = await bar.setSubAgentActivity(
+            text: "Sub-Agents\n   stale",
+            revision: 1
+        )
+        captured.clear()
+        await bar.renderOverlay()
+
+        let frame = TerminalANSIText.stripANSI(captured.combined)
+        #expect(stillPresentedLive)
+        #expect(frame.contains("newest"))
+        #expect(!frame.contains("stale"))
+    }
+
     // MARK: - Render cache
 
     @Test

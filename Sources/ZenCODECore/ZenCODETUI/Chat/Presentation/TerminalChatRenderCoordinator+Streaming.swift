@@ -27,7 +27,6 @@ extension TerminalChatRenderCoordinator {
             return
         }
 
-        interruptActiveToolForInterleavedOutputIfNeeded()
         finishAssistantContentFormatting()
         if !thoughtStreamingState.isStreaming {
             thoughtStreamingState.isStreaming = true
@@ -44,7 +43,6 @@ extension TerminalChatRenderCoordinator {
         guard !delta.isEmpty else {
             return
         }
-        interruptActiveToolForInterleavedOutputIfNeeded()
         finishThoughtOutputIfNeeded()
         assistantStreamingState.isStreaming = true
         let normalizedDelta = TerminalChatTextFormatting.normalizedBoldSectionBreak(

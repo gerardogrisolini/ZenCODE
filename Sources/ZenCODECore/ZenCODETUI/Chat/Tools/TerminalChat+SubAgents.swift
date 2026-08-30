@@ -143,15 +143,14 @@ extension TerminalChat {
         // Reserve before awaiting the runtime snapshot: a later callback must
         // fence this publication if this snapshot returns after it.
         let publicationRevision = await renderCoordinator.beginOverviewPublication(.subAgents)
+        await statusBar.reserveSubAgentActivity(revision: publicationRevision)
         let snapshots = await sessionRunner.subAgentSnapshots()
         let toolPresentations = await renderCoordinator.subAgentToolPresentationSnapshot()
         await refreshStatusBarGitStatusSummaryForCompletedSubAgents(snapshots)
-        let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
+        let liveActivityRows = await statusBar.liveActivityRowCapacity()
         guard force || !snapshots.isEmpty else {
-            await renderCoordinator.clearSubAgentOverview(
-                revision: publicationRevision,
-                maximumInPlaceRows: maximumInPlaceRows
-            )
+            await statusBar.clearSubAgentActivity(revision: publicationRevision)
+            await renderCoordinator.clearSubAgentOverview(revision: publicationRevision)
             return
         }
         let signature = Self.subAgentOverviewSignature(snapshots)
@@ -170,21 +169,27 @@ extension TerminalChat {
             includesFinalResponses: false,
             toolPresentationsByAgentID: toolPresentations.presentationsByAgentID,
             rowBudget: Self.subAgentOverviewRowBudget(
-                forInPlaceRows: maximumInPlaceRows
+                forInPlaceRows: liveActivityRows
             )
         ) + "\n"
         let partialResponses = Self.subAgentPartialResponses(snapshots)
         let responses = Self.subAgentMarkdownResponses(snapshots)
+        let isPresentedLive = await statusBar.setSubAgentActivity(
+            text: overview,
+            revision: publicationRevision
+        )
         _ = await renderCoordinator.renderSubAgentOverview(
             signature: signature,
-            text: overview,
+            // A disabled/non-TTY status bar retains the historical append-only
+            // presentation; a live status bar owns and redraws these rows.
+            text: isPresentedLive ? "" : overview,
             partialResponses: partialResponses,
             responses: responses,
             revision: publicationRevision,
             force: force,
             rememberSignature: rememberSignature,
             overviewBatchID: overviewBatchID,
-            maximumInPlaceRows: maximumInPlaceRows
+            maximumInPlaceRows: nil
         )
     }
 

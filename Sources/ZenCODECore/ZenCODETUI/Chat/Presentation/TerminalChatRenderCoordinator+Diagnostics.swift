@@ -10,18 +10,15 @@ extension TerminalChatRenderCoordinator {
     // MARK: - Test and diagnostics snapshots
 
     func snapshot() -> Snapshot {
-        let active = toolState.activeBlock.map { block in
-            (block.id, block.rows)
-        } ?? (nil, 0)
         return Snapshot(
-            activeToolCallID: active.0,
-            activeToolRenderedRowCount: active.1,
+            activeToolCallID: nil,
+            activeToolRenderedRowCount: 0,
             deferredTaskGraphOverviewRender: overviewState.pending[.taskGraph] != nil,
             deferredSubAgentOverviewRender: overviewState.pending[.subAgents] != nil,
             lastRenderedTaskGraphOverviewSignature: overviewState.signatures[.taskGraph],
             lastRenderedSubAgentOverviewSignature: overviewState.signatures[.subAgents],
             isStreamingThoughtOutput: thoughtStreamingState.isStreaming,
-            activeSubAgentOverviewRowCount: ownedSubAgentOverviewRowCount
+            activeSubAgentOverviewRowCount: 0
         )
     }
 

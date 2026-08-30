@@ -5,13 +5,10 @@
 
 import Foundation
 
-/// Actor-confined bookkeeping for tool-row ownership and lifecycle timing.
-/// The coordinator remains the sole mutator; this value only groups invariants
-/// that must advance together when ownership transfers between tool calls.
-struct TerminalToolBlockAccounting<ActiveBlock> {
-    var activeBlock: ActiveBlock?
+/// Actor-confined lifecycle timing for coordinator tool calls. Live pending
+/// presentation belongs exclusively to `TerminalStatusBar`.
+struct TerminalToolTimingState {
     var startInstants: [String: ContinuousClock.Instant] = [:]
-    var activeBlockIsSubAgentTool = false
 }
 
 /// Actor-confined latest-tool projection for the live sub-agent overview.
@@ -96,30 +93,9 @@ extension TerminalChatRenderCoordinator {
         let presentationsByAgentID: [String: SubAgentToolPresentation]
     }
 
-    struct ActiveToolBlock: Sendable {
-        let id: String
-        let rows: Int
-        let columnWidth: Int
-        let maximumInPlaceRows: Int?
-        let cursorStateBeforeRender: CursorState
-        let writeSequence: UInt64
-    }
-
     struct CursorState: Sendable {
         var spacing = TerminalChatTextFormatting.ChatSpacingState()
         var lineInset = TerminalChatTextFormatting.ChatLineInsetState()
-    }
-
-    struct ActiveOverviewBlock: Sendable {
-        let rows: Int
-        /// Blank transcript rows between the end of this block and the current
-        /// output cursor. Shrinking a bottom overlay moves the cursor down but
-        /// deliberately leaves existing transcript content in place.
-        var cursorGapRows: Int
-        let columnWidth: Int
-        let maximumInPlaceRows: Int?
-        let cursorStateBeforeRender: CursorState
-        let writeSequence: UInt64
     }
 
     enum OverviewContent: Sendable {

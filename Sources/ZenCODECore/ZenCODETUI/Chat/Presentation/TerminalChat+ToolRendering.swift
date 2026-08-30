@@ -226,12 +226,31 @@ extension TerminalChat {
             toolCall,
             maximumInPlaceRows: maximumInPlaceRows
         )
+        let rows = Self.toolPresentationRows(
+            for: toolCall,
+            result: nil,
+            statusDetail: nil,
+            contentInsetWidth: 0,
+            columnWidth: Self.terminalColumnCount(),
+            includesSourceChanges: false
+        ).compactRows.map(\.plainText)
+        let isPresentedLive = await statusBar.setPendingTool(
+            id: toolCall.id,
+            name: toolCall.name,
+            text: rows.joined(separator: " ")
+        )
+        if !isPresentedLive {
+            await renderCoordinator.writeToolCallStartedFallback(toolCall)
+        }
     }
 
     public func writeToolCallCompleted(
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) async {
+        // Install the final scroll region before appending the permanent
+        // completion. Removal is ID-safe across concurrent calls.
+        await statusBar.removePendingTool(id: toolCall.id)
         let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
         await renderCoordinator.writeToolCallCompleted(
             toolCall,

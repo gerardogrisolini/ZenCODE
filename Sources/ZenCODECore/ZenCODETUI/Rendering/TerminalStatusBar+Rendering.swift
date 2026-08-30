@@ -111,8 +111,56 @@ extension TerminalStatusBar {
         // status cache to the sequence just written. Subsequent status-only
         // renders with identical content will be suppressed.
         state.lastStatusRender = statusSequence
-        let sequence = "\u{1B}[?25l" + sharedChatReaderRenderSequenceLocked(state: &state) + inputPanelRenderSequenceLocked(state: &state) + statusSequence
+        let sequence = "\u{1B}[?25l" + liveActivityRenderSequenceLocked(state: &state) + sharedChatReaderRenderSequenceLocked(state: &state) + inputPanelRenderSequenceLocked(state: &state) + statusSequence
         writeLocked(sequence)
+    }
+
+    func liveActivityRowCapacityLocked(state: inout State) -> Int {
+        let fixedRows: Int
+        if let input = state.inputPanelState {
+            fixedRows = sharedChatReaderReservedRowsLocked(state: &state)
+                + Self.inputPanelChromeRows
+                + inputPanelDisplayLineCountLocked(
+                    state: &state,
+                    text: input.text,
+                    cursorIndex: input.cursorIndex
+                )
+                + inputPanelSuggestionRowCountLocked(state: &state)
+                + Self.attachedStatusRows
+        } else {
+            fixedRows = Self.standaloneStatusRows
+        }
+        return max(0, state.row - Self.minimumScrollableRows - fixedRows)
+    }
+
+    func liveActivityReservedRowsLocked(state: inout State) -> Int {
+        min(state.liveActivity.lines.count, liveActivityRowCapacityLocked(state: &state))
+    }
+
+    func liveActivityRenderSequenceLocked(state: inout State) -> String {
+        let count = liveActivityReservedRowsLocked(state: &state)
+        guard count > 0 else { return "" }
+        let top = max(1, state.row - reservedBottomRowsLocked(state: &state) + 1)
+        let start = statusBoxStartColumnLocked(state: &state)
+        let width = statusBoxWidthLocked(state: &state)
+        var sequence = "\u{1B}7"
+        for (offset, line) in state.liveActivity.visibleLines(limit: count).enumerated() {
+            sequence += "\u{1B}[\(top + offset);\(start)H\u{1B}[2K"
+                + Self.fit(line, width: width)
+        }
+        sequence += "\u{1B}8"
+        return sequence
+    }
+
+    func liveActivityModeRowBadgeLocked(state: inout State) -> String? {
+        guard !state.liveActivity.lines.isEmpty,
+              liveActivityReservedRowsLocked(state: &state) == 0 else { return nil }
+        let prioritizedToolID = state.liveActivity.pendingToolOrder.first { id in
+            state.liveActivity.pendingToolsByID[id]?.isAgentWait == true
+        } ?? state.liveActivity.pendingToolOrder.last
+        let tool = prioritizedToolID
+            .flatMap { state.liveActivity.pendingToolsByID[$0]?.text }
+        return tool.map { TerminalANSIText.stripANSI($0) } ?? "Sub-Agents active"
     }
 
     /// Status-only invalidation used by spinner and metrics updates. The input
@@ -201,6 +249,7 @@ extension TerminalStatusBar {
         dock.clamp(viewportRows: viewport, width: width)
         state.sharedChatReaderDock = dock
         let top = max(1, state.row - reservedBottomRowsLocked(state: &state) + 1)
+            + liveActivityReservedRowsLocked(state: &state)
         let start = statusBoxStartColumnLocked(state: &state)
         let rows = dock.rows(width: width)
         let visible = Array(rows.enumerated().dropFirst(dock.scrollOffset).prefix(viewport))
@@ -249,7 +298,9 @@ extension TerminalStatusBar {
         }
         
         let reservedRows = reservedBottomRowsLocked(state: &state)
-        let topRow = max(1, state.row - reservedRows + 1) + sharedChatReaderReservedRowsLocked(state: &state)
+        let topRow = max(1, state.row - reservedRows + 1)
+            + liveActivityReservedRowsLocked(state: &state)
+            + sharedChatReaderReservedRowsLocked(state: &state)
         let startColumn = statusBoxStartColumnLocked(state: &state)
         let boxWidth = statusBoxWidthLocked(state: &state)
         let orange = TerminalStyle.Chrome.border
@@ -266,12 +317,16 @@ extension TerminalStatusBar {
             state: &state,
             lines: inputPanelState.suggestionLines
         )
+        let overlayBadges = [
+            liveActivityModeRowBadgeLocked(state: &state),
+            sharedChatReaderModeRowBadgeLocked(state: &state)
+        ].compactMap { $0 }.joined(separator: " · ")
         let modeLine = Self.padded(
             Self.inputPanelModeLineText(
                 modeText: inputPanelState.modeText,
                 helpText: inputPanelState.helpText,
                 compactHelpText: inputPanelState.compactHelpText,
-                sharedChatBadge: sharedChatReaderModeRowBadgeLocked(state: &state),
+                sharedChatBadge: overlayBadges.isEmpty ? nil : overlayBadges,
                 width: contentWidth
             ),
             width: contentWidth
@@ -373,7 +428,14 @@ extension TerminalStatusBar {
         let lightText = TerminalStyle.Text.secondary
         let reset = TerminalStyle.reset
         let horizontalRule = String(repeating: "─", count: max(0, boxWidth - 2))
-        let text = Self.fit(statusTextLocked(state: &state), width: contentWidth)
+        let standaloneLiveBadge = state.inputPanelState == nil
+            ? liveActivityModeRowBadgeLocked(state: &state)
+            : nil
+        let statusText = statusTextLocked(state: &state)
+        let composedStatusText = [standaloneLiveBadge, statusText.isEmpty ? nil : statusText]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+        let text = Self.fit(composedStatusText, width: contentWidth)
         // Keep the status bar's neutral foreground quieter than terminal white.
         // Semantic fragments retain their own colors; after each reset, restore
         // the light-gray baseline instead of falling back to the terminal default.
@@ -445,9 +507,11 @@ extension TerminalStatusBar {
     
     func reservedBottomRowsLocked(state: inout State) -> Int {
         guard let inputPanelState = state.inputPanelState else {
-            return Self.standaloneStatusRows
+            return liveActivityReservedRowsLocked(state: &state)
+                + Self.standaloneStatusRows
         }
-        return sharedChatReaderReservedRowsLocked(state: &state)
+        return liveActivityReservedRowsLocked(state: &state)
+        + sharedChatReaderReservedRowsLocked(state: &state)
         + Self.inputPanelChromeRows
         + inputPanelDisplayLineCountLocked(
             state: &state,
