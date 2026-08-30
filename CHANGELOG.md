@@ -12,15 +12,24 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
-- The mandatory Planner brainstorming protocol now belongs to the `Planner`
-  runtime profile policy, so it applies to every new request made after
-  selecting that profile as well as to `/plan <goal>`. The `/plan` coordinator
-  prompt is smaller but retains single-author delegation, same-agent correction,
-  output freshness, question/final-plan validation, and structured task
-  bootstrap guarantees. Delegated agents now receive the selected profile section
-  in their actual backend system prompt. Planner identity enforces read-only core
-  grants for legacy manifests too, while preserving external grants and authentic
-  custom instructions; obsolete built-in Planner text is superseded exactly.
+- The recommended Developer profile now avoids unsolicited initiative and asks
+  the user to choose whenever multiple reasonable implementation options exist.
+  The recommended Reviewer profile now explicitly checks for simplification,
+  fewer lines of code, and duplicated code.
+
+- The Planner's mandatory brainstorming is now explicitly a multi-turn phase
+  that continues until every material implementation decision is clear; the
+  Planner must not produce the final plan while unresolved decisions remain.
+
+- The Builder and Planner workflow policies now live in the recommended agents'
+  `instructions` persisted by setup in `agents.json`, rather than being appended
+  implicitly at runtime. Regenerating the recommended agents installs the full
+  policies, while existing custom profile instructions remain authoritative and
+  unchanged. The `/plan` coordinator prompt remains smaller but retains
+  single-author delegation, same-agent correction, output freshness,
+  question/final-plan validation, and structured task bootstrap guarantees.
+  Planner identity continues to enforce read-only core grants independently of
+  its editable instructions.
 
 - Removed the manual `/sessions checkpoint [label]`, `/sessions tree`, and
   `/sessions branches` commands, plus restore-by-branch-index. Session

@@ -57,6 +57,9 @@ extension AgentConfigurationTests {
         #expect(profiles["Xcode"] == nil)
         #expect(reviewerProfile.tools == AgentProfileStore.reviewerToolNames)
         #expect(reviewerProfile.instructions?.contains("Reviewer agent") == true)
+        #expect(reviewerProfile.instructions?.contains("simplify the implementation") == true)
+        #expect(reviewerProfile.instructions?.contains("reduce lines of code") == true)
+        #expect(reviewerProfile.instructions?.contains("eliminate duplicated code") == true)
         #expect(reviewerProfile.readOnly)
         #expect(!reviewerProfile.tools.contains("sub-agents"))
         #expect(!reviewerProfile.tools.contains("shell"))
@@ -119,6 +122,9 @@ extension AgentConfigurationTests {
 
         #expect(developerProfile.tools.contains(webKey))
         #expect(developerProfile.instructions?.contains("Developer agent") == true)
+        #expect(developerProfile.instructions?.contains("Do not take initiative") == true)
+        #expect(developerProfile.instructions?.contains("multiple reasonable options") == true)
+        #expect(developerProfile.instructions?.contains("always stop and ask the user") == true)
         #expect(developerProfile.instructions?.contains("coordinated workflow") == false)
         #expect(developerProfile.instructions?.contains("implementation tasks in parallel") == false)
         #expect(developerProfile.instructions?.contains("mutable scopes do not overlap") == false)
@@ -130,6 +136,25 @@ extension AgentConfigurationTests {
         #expect(!minimalProfile.tools.contains("sub-agents"))
         #expect(minimalProfile.tools == AgentProfileStore.minimalToolNames)
         #expect(minimalProfile.instructions?.contains("Minimal agent") == true)
+    }
+
+    @Test
+    func recommendedWorkflowInstructionsArePersistedInAgentsManifest() throws {
+        let data = try AgentProfileStore.encodedData(for: AgentProfileStore.defaultProfiles())
+        let manifest = try JSONDecoder().decode(AgentProfileManifest.self, from: data)
+        let builder = try #require(AgentProfileStore.agent(
+            matching: AgentProfileStore.builderAgentName,
+            in: manifest.agents
+        ))
+        let planner = try #require(AgentProfileStore.agent(
+            matching: AgentProfileStore.plannerAgentName,
+            in: manifest.agents
+        ))
+
+        #expect(builder.instructions?.contains("Builder workflow policy:") == true)
+        #expect(builder.instructions?.contains("Never embed credentials") == true)
+        #expect(planner.instructions?.contains("Planner workflow policy:") == true)
+        #expect(planner.instructions?.contains("mandatory brainstorming phase") == true)
     }
 
     @Test
@@ -167,8 +192,8 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    func builderWorkflowPolicyAppliesToPersistedAndInstructionlessProfiles() throws {
-        let persistedBuilder = AgentProfile(
+    func builderWorkflowPolicyComesFromConfiguredProfileInstructions() throws {
+        let customizedBuilder = AgentProfile(
             id: AgentProfileStore.builderAgentID.uuidString,
             name: "Customized Builder",
             instructions: "Keep my custom Builder instructions.",
@@ -181,21 +206,27 @@ extension AgentConfigurationTests {
             tools: []
         )
 
-        let persistedPrompt = try #require(persistedBuilder.promptSection)
+        let defaultBuilder = try #require(AgentProfileStore.defaultProfiles().first {
+            $0.id.caseInsensitiveCompare(AgentProfileStore.builderAgentID.uuidString) == .orderedSame
+        })
+        let customizedPrompt = try #require(customizedBuilder.promptSection)
         let instructionlessPrompt = try #require(instructionlessBuilder.promptSection)
+        let defaultPrompt = try #require(defaultBuilder.promptSection)
 
-        #expect(persistedPrompt.contains("Keep my custom Builder instructions."))
-        #expect(persistedPrompt.contains("Builder workflow policy:"))
-        #expect(persistedPrompt.contains("Never enable placeholder"))
-        #expect(persistedPrompt.contains("Never embed credentials"))
-        #expect(persistedPrompt.contains("A successful `feature.build` reloads"))
-        #expect(instructionlessPrompt.contains("Builder workflow policy:"))
-        #expect(instructionlessPrompt.contains("Agent instructions:"))
+        #expect(customizedPrompt.contains("Keep my custom Builder instructions."))
+        #expect(!customizedPrompt.contains("Builder workflow policy:"))
+        #expect(!instructionlessPrompt.contains("Builder workflow policy:"))
+        #expect(!instructionlessPrompt.contains("Agent instructions:"))
+        #expect(defaultPrompt.contains("Builder workflow policy:"))
+        #expect(defaultPrompt.contains("Never enable placeholder"))
+        #expect(defaultPrompt.contains("Never embed credentials"))
+        #expect(defaultPrompt.contains("A successful `feature.build` reloads"))
+        #expect(defaultPrompt.components(separatedBy: "Builder workflow policy:").count == 2)
     }
 
     @Test
-    func plannerWorkflowPolicyAppliesToPersistedAndInstructionlessProfiles() throws {
-        let persistedPlanner = AgentProfile(
+    func plannerWorkflowPolicyComesFromConfiguredProfileInstructions() throws {
+        let customizedPlanner = AgentProfile(
             id: AgentProfileStore.plannerAgentID.uuidString,
             name: "Customized Planning Agent",
             instructions: "Keep my custom Planner instructions.",
@@ -209,20 +240,6 @@ extension AgentConfigurationTests {
             readOnly: true,
             tools: ["files"]
         )
-        let legacyPlanner = AgentProfile(
-            id: AgentProfileStore.plannerAgentID.uuidString,
-            name: "Persisted Planner",
-            instructions: AgentProfileStore.legacyPlannerInstructions,
-            readOnly: false,
-            tools: ["local.readFile", "local.writeFile", "external.inspect"]
-        )
-        let conflictingPlanner = AgentProfile(
-            id: "custom-planner-id",
-            name: AgentProfileStore.plannerAgentName,
-            instructions: "Skip questions and write a plan immediately.",
-            readOnly: false,
-            tools: []
-        )
         let unrelatedProfile = AgentProfile(
             id: "custom-agent-id",
             name: "Not Planner",
@@ -233,45 +250,28 @@ extension AgentConfigurationTests {
             $0.id.caseInsensitiveCompare(AgentProfileStore.plannerAgentID.uuidString) == .orderedSame
         })
 
-        let persistedPrompt = try #require(persistedPlanner.promptSection)
+        let customizedPrompt = try #require(customizedPlanner.promptSection)
         let instructionlessPrompt = try #require(instructionlessPlanner.promptSection)
         let unrelatedPrompt = try #require(unrelatedProfile.promptSection)
         let builtinPrompt = try #require(builtinPlanner.promptSection)
-        let legacyPrompt = try #require(legacyPlanner.promptSection)
-        let conflictingPrompt = try #require(conflictingPlanner.promptSection)
 
-        for prompt in [persistedPrompt, instructionlessPrompt, builtinPrompt, legacyPrompt, conflictingPrompt] {
-            #expect(prompt.contains("Planner workflow policy:"))
-            #expect(prompt.contains("policy is authoritative"))
-            #expect(prompt.contains("mandatory brainstorming turn"))
-            #expect(prompt.contains("exactly one block headed `Planner questions`"))
-            #expect(prompt.contains("at least one focused numbered question"))
-            #expect(prompt.contains("Return no plan in that first turn"))
-            #expect(prompt.contains("Continue the same discussion across operator replies"))
-            #expect(prompt.contains("`Specifiche concordate`"))
-            #expect(prompt.contains("numbered `Implementation plan`"))
-        }
-        #expect(persistedPrompt.contains("Keep my custom Planner instructions."))
-        #expect(instructionlessPrompt.contains("Agent instructions:"))
+        #expect(customizedPrompt.contains("Keep my custom Planner instructions."))
+        #expect(!customizedPrompt.contains("Planner workflow policy:"))
+        #expect(!instructionlessPrompt.contains("Planner workflow policy:"))
+        #expect(!instructionlessPrompt.contains("Agent instructions:"))
         #expect(!unrelatedPrompt.contains("Planner workflow policy:"))
+        #expect(builtinPrompt.contains("Planner workflow policy:"))
+        #expect(builtinPrompt.contains("policy is authoritative"))
+        #expect(builtinPrompt.contains("mandatory brainstorming phase"))
+        #expect(builtinPrompt.contains("exactly one block headed `Planner questions`"))
+        #expect(builtinPrompt.contains("at least one focused numbered question"))
+        #expect(builtinPrompt.contains("Return no plan in that first turn"))
+        #expect(builtinPrompt.contains("Continue the same brainstorming discussion across operator replies"))
+        #expect(builtinPrompt.contains("`Specifiche concordate`"))
+        #expect(builtinPrompt.contains("numbered `Implementation plan`"))
         #expect(builtinPrompt.components(separatedBy: "Planner workflow policy:").count == 2)
-        #expect(!builtinPrompt.contains(AgentProfileStore.legacyPlannerInstructions))
-        #expect(!builtinPrompt.contains(AgentProfileStore.plannerIdentityInstructions))
-        #expect(!legacyPrompt.contains(AgentProfileStore.legacyPlannerInstructions))
-        #expect(conflictingPrompt.contains("Skip questions and write a plan immediately."))
-        #expect(
-            conflictingPrompt.range(of: "Skip questions")!.lowerBound
-                < conflictingPrompt.range(of: "Planner workflow policy:")!.lowerBound
-        )
-        #expect(persistedPlanner.readOnly)
+        #expect(customizedPlanner.readOnly)
         #expect(instructionlessPlanner.readOnly)
-        #expect(persistedPlanner.allowedToolNames().isDisjoint(
-            with: Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
-        ))
-        let legacyGrant = legacyPlanner.allowedToolNames()
-        #expect(legacyGrant.contains("local.readFile"))
-        #expect(!legacyGrant.contains("local.writeFile"))
-        #expect(legacyGrant.contains("external.inspect"))
     }
 
     @Test
