@@ -27,6 +27,7 @@ extension TerminalStatusBar {
         
         state.row = geometry.rows
         state.columns = geometry.columns
+        advanceOutputGeometryLocked(state: &state, startsNewEpoch: true)
         writeScrollRegionLocked(state: &state, moveCursorToPrompt: moveCursorToPrompt)
         return true
     }
@@ -51,6 +52,7 @@ extension TerminalStatusBar {
         let oldReservedRows = reservedBottomRowsLocked(state: &state)
         state.row = geometry.rows
         state.columns = geometry.columns
+        advanceOutputGeometryLocked(state: &state, startsNewEpoch: true)
         // Geometry changed: invalidate the status cache so the next render is not suppressed.
         state.lastStatusRender = nil
         let newReservedRows = reservedBottomRowsLocked(state: &state)
@@ -69,6 +71,7 @@ extension TerminalStatusBar {
     }
 
     func invalidateTerminalGeometryLocked(state: inout State) {
+        advanceOutputGeometryLocked(state: &state, startsNewEpoch: true)
         state.row = 0
         state.columns = 0
         state.lastStatusRender = nil
@@ -94,6 +97,7 @@ extension TerminalStatusBar {
         let scrollBottom = max(1, state.row - reservedRows)
         let scrollTop = 1
         let newlines = String(repeating: "\n", count: count)
+        state.cumulativeTranscriptScrollRows &+= UInt64(count)
         writeLocked(
             "\u{1B}[\(scrollTop);\(scrollBottom)r"
             + "\u{1B}[\(scrollBottom);1H"

@@ -29,6 +29,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Sub-Agent progress sections now retain a verified terminal-region anchor across
+  input-panel and Shared Chat dock geometry changes. Prompt submission followed
+  by its first chat echo no longer duplicates or erases transcript rows, and a
+  refresh carrying a stale row budget falls back to append-only rendering.
+
 - Telegram ingress now rejects new prompts, commands, live-chat mentions,
   attachments and voice notes while that TUI session is generating, instead of
   queueing or starting work in the background. The authorized route receives a

@@ -221,10 +221,11 @@ extension TerminalChat {
     }
 
     public func writeToolCallStarted(_ toolCall: DirectAgentToolCall) async {
-        let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
+        let outputGeometry = await statusBar.outputRegionGeometry()
         await renderCoordinator.writeToolCallStarted(
             toolCall,
-            maximumInPlaceRows: maximumInPlaceRows
+            maximumInPlaceRows: outputGeometry?.capacity,
+            outputGeometry: outputGeometry
         )
     }
 
@@ -232,11 +233,12 @@ extension TerminalChat {
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) async {
-        let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
+        let outputGeometry = await statusBar.outputRegionGeometry()
         await renderCoordinator.writeToolCallCompleted(
             toolCall,
             result: result,
-            maximumInPlaceRows: maximumInPlaceRows
+            maximumInPlaceRows: outputGeometry?.capacity,
+            outputGeometry: outputGeometry
         )
     }
 

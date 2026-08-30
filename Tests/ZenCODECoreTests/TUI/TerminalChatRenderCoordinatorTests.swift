@@ -1909,7 +1909,7 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func firstSharedChatMessageHeaderPreservesSubAgentOverviewOwnership() async {
+    func firstSharedChatMessageHeaderDropsOverviewTooTallForNewGeometry() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
             columnWidthProvider: { 80 }
@@ -1925,19 +1925,23 @@ struct TerminalChatRenderCoordinatorTests {
 
         // An attached room has no compact dock until its first message arrives.
         await statusBar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: false)
+        let initialGeometry = await statusBar.outputRegionGeometry()
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:before-first-chat-message",
             text: "\n👥 Sub-Agents:\n   running\n",
             force: false,
             rememberSignature: true,
-            overviewBatchID: "wave"
+            overviewBatchID: "wave",
+            maximumInPlaceRows: initialGeometry?.capacity,
+            outputGeometry: initialGeometry
         )
         #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
 
         // This is the `.sharedChatMessages` transition. Adding the header makes
         // the terminal scroll the existing transcript block upward intact.
-        let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
-        let availableTranscriptGapRows = await renderer.beginBottomOverlayTransition()
+        let availableTranscriptGapRows = await renderer.beginBottomOverlayTransition(
+            currentOutputGeometry: await statusBar.outputRegionGeometry()
+        )
         await statusBar.setSharedChatReader(
             entries: [
                 TerminalSharedChatReaderEntry(
@@ -1951,29 +1955,246 @@ struct TerminalChatRenderCoordinatorTests {
             availableTranscriptGapRows: availableTranscriptGapRows
         )
         await renderer.endBottomOverlayTransition(
-            previousOutputCapacity: previousOutputCapacity,
-            currentOutputCapacity: await statusBar.scrollableOutputRowCapacity()
+            currentOutputGeometry: await statusBar.outputRegionGeometry()
         )
         #expect(await statusBar.state.sharedChatReaderDock?.entries.count == 1)
         #expect(await statusBar.reservedRowsForOverlay() == 7)
-        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
         let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
 
+        let currentGeometry = await statusBar.outputRegionGeometry()
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:after-first-chat-message",
             text: "\n👥 Sub-Agents:\n   completed\n",
             force: false,
             rememberSignature: true,
-            overviewBatchID: "wave"
+            overviewBatchID: "wave",
+            maximumInPlaceRows: currentGeometry?.capacity,
+            outputGeometry: currentGeometry
         )
         let refreshText = (await renderer.capturedWriteEvents())
             .dropFirst(eventsBeforeRefresh)
             .map(\.text)
             .joined()
 
-        #expect(refreshText.hasPrefix("\u{1B}[3A\r"))
+        #expect(!containsCursorUpSequence(refreshText))
+        #expect(!refreshText.contains("\u{1B}[2K"))
+        #expect(TerminalANSIText.stripANSI(refreshText).contains("completed"))
+    }
+
+    @Test
+    func submittedPanelShrinkIsReconciledBeforeFirstSharedChatEcho() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let statusBar = TerminalStatusBar(isEnabled: true) { _ in }
+        await statusBar.configureForTesting(row: 16, columns: 80)
+        await statusBar.updateInputPanel(
+            text: "@worker please inspect this request",
+            cursorIndex: 35,
+            modeText: "Chat",
+            helpText: "Enter",
+            suggestionLines: ["worker", "reviewer"]
+        )
+        let initialGeometry = await statusBar.outputRegionGeometry()
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:before-submit",
+            text: "\n👥 Sub-Agents:\n   running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: initialGeometry?.capacity,
+            outputGeometry: initialGeometry
+        )
+
+        // submitCurrentBuffer clears the mention/suggestion panel before the
+        // shared-chat echo reaches the runtime event loop.
+        await statusBar.updateInputPanel(
+            text: "",
+            cursorIndex: 0,
+            modeText: "Chat",
+            helpText: "Enter"
+        )
+        let geometryAfterSubmit = await statusBar.outputRegionGeometry()
+        #expect((geometryAfterSubmit?.capacity ?? 0) > (initialGeometry?.capacity ?? 0))
+
+        let gap = await renderer.beginBottomOverlayTransition(
+            currentOutputGeometry: geometryAfterSubmit
+        )
+        #expect(gap > 0)
+        await statusBar.setSharedChatReader(
+            entries: [
+                TerminalSharedChatReaderEntry(
+                    id: UUID(),
+                    route: "worker",
+                    text: "Echo"
+                )
+            ],
+            unreadCount: 1,
+            isExpanded: false,
+            availableTranscriptGapRows: gap
+        )
+        await renderer.endBottomOverlayTransition(
+            currentOutputGeometry: await statusBar.outputRegionGeometry()
+        )
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+        let finalGeometry = await statusBar.outputRegionGeometry()
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:after-echo",
+            text: "\n👥 Sub-Agents:\n   completed\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: finalGeometry?.capacity,
+            outputGeometry: finalGeometry
+        )
+        let refreshText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeRefresh)
+            .map(\.text)
+            .joined()
+
+        #expect(refreshText.hasPrefix("\u{1B}[1A\r\u{1B}[3A\r"))
         #expect(refreshText.contains("\u{1B}[2K"))
         #expect(TerminalANSIText.stripANSI(refreshText).contains("completed"))
+    }
+
+    @Test
+    func pendingOverviewWithStaleCapacityFallsBackToAppendAfterDockGrowth() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let statusBar = TerminalStatusBar(isEnabled: true) { _ in }
+        await statusBar.configureForTesting(row: 9, columns: 80)
+        await statusBar.updateInputPanel(
+            text: "draft",
+            cursorIndex: 5,
+            modeText: "Chat",
+            helpText: "Enter"
+        )
+        let oldGeometry = await statusBar.outputRegionGeometry()
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:before-pending",
+            text: "\n👥 Sub-Agents:\n   running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: oldGeometry?.capacity,
+            outputGeometry: oldGeometry
+        )
+        _ = await renderer.beginBottomOverlayTransition(
+            currentOutputGeometry: oldGeometry
+        )
+        let deferred = await renderer.renderSubAgentOverview(
+            signature: "agents:stale-pending",
+            text: "\n👥 Sub-Agents:\n   completed\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: oldGeometry?.capacity,
+            outputGeometry: oldGeometry
+        )
+        #expect(deferred == .deferred)
+        await statusBar.setSharedChatReader(
+            entries: [
+                TerminalSharedChatReaderEntry(id: UUID(), route: "worker", text: "Ready")
+            ],
+            unreadCount: 1,
+            isExpanded: false
+        )
+        let eventsBeforeDrain = await renderer.capturedWriteEvents().count
+        await renderer.endBottomOverlayTransition(
+            currentOutputGeometry: await statusBar.outputRegionGeometry()
+        )
+        let drainText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeDrain)
+            .map(\.text)
+            .joined()
+
+        #expect(!containsCursorUpSequence(drainText))
+        #expect(!drainText.contains("\u{1B}[2K"))
+        #expect(TerminalANSIText.stripANSI(drainText).contains("completed"))
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+    }
+
+    @Test
+    func pendingVerticalResizeInvalidatesGeometryBeforeDebounceAndAppendsSafely() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let statusBar = TerminalStatusBar(isEnabled: true) { _ in }
+        await statusBar.configureForTesting(row: 14, columns: 80)
+        await statusBar.updateInputPanel(
+            text: "draft",
+            cursorIndex: 5,
+            modeText: "Chat",
+            helpText: "Enter"
+        )
+        let geometryBeforeResize = await statusBar.outputRegionGeometry()
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:before-resize",
+            text: "\n👥 Sub-Agents:\n   running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: geometryBeforeResize?.capacity,
+            outputGeometry: geometryBeforeResize
+        )
+
+        // SIGWINCH is already physical even while the 80 ms refresh is debounced.
+        // Keep the width unchanged to cover the height-only resize blind spot.
+        await statusBar.scheduleTerminalResize()
+        let pendingGeometry = await statusBar.outputRegionGeometry()
+        #expect(pendingGeometry?.epoch != geometryBeforeResize?.epoch)
+        #expect(pendingGeometry?.ownsPhysicalRegion == false)
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:during-resize",
+            text: "\n👥 Sub-Agents:\n   completed\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: pendingGeometry?.capacity,
+            outputGeometry: pendingGeometry
+        )
+        let refreshText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeRefresh)
+            .map(\.text)
+            .joined()
+
+        #expect(!containsCursorUpSequence(refreshText))
+        #expect(!refreshText.contains("\u{1B}[2K"))
+        #expect(TerminalANSIText.stripANSI(refreshText).contains("completed"))
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+
+        // Neither an older snapshot nor nil may recover the pre-resize cache or
+        // establish a legacy anchor that a later refresh could erase in place.
+        for (signature, geometry) in [
+            ("agents:stale-after-resize", geometryBeforeResize),
+            ("agents:nil-after-resize", nil),
+        ] {
+            let eventsBeforeFallback = await renderer.capturedWriteEvents().count
+            _ = await renderer.renderSubAgentOverview(
+                signature: signature,
+                text: "\n👥 Sub-Agents:\n   fallback\n",
+                force: false,
+                rememberSignature: true,
+                overviewBatchID: "wave",
+                maximumInPlaceRows: geometry?.capacity,
+                outputGeometry: geometry
+            )
+            let fallbackText = (await renderer.capturedWriteEvents())
+                .dropFirst(eventsBeforeFallback)
+                .map(\.text)
+                .joined()
+            #expect(!containsCursorUpSequence(fallbackText))
+            #expect(!fallbackText.contains("\u{1B}[2K"))
+            #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+        }
     }
 
     @Test
@@ -2056,33 +2277,70 @@ struct TerminalChatRenderCoordinatorTests {
             standardErrorIsTerminal: true,
             columnWidthProvider: { 80 }
         )
+        let statusBar = TerminalStatusBar(isEnabled: true) { _ in }
+        await statusBar.configureForTesting(row: 14, columns: 80)
+        await statusBar.updateInputPanel(
+            text: "draft",
+            cursorIndex: 5,
+            modeText: "Chat",
+            helpText: "Enter"
+        )
+        let entry = TerminalSharedChatReaderEntry(
+            id: UUID(),
+            route: "worker",
+            text: "Ready"
+        )
+        await statusBar.setSharedChatReader(
+            entries: [entry],
+            unreadCount: 1,
+            isExpanded: true
+        )
+        let initialGeometry = await statusBar.outputRegionGeometry()
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:before-toggle",
             text: "\n👥 Sub-Agents:\n   running\n",
             force: false,
             rememberSignature: true,
-            overviewBatchID: "wave"
+            overviewBatchID: "wave",
+            maximumInPlaceRows: initialGeometry?.capacity,
+            outputGeometry: initialGeometry
         )
 
-        _ = await renderer.beginBottomOverlayTransition()
-        await renderer.endBottomOverlayTransition(
-            previousOutputCapacity: 6,
-            currentOutputCapacity: 11
+        _ = await renderer.beginBottomOverlayTransition(
+            currentOutputGeometry: await statusBar.outputRegionGeometry()
         )
-        let availableGap = await renderer.beginBottomOverlayTransition()
-        #expect(availableGap == 5)
+        await statusBar.setSharedChatReader(
+            entries: [entry],
+            unreadCount: 1,
+            isExpanded: false
+        )
         await renderer.endBottomOverlayTransition(
-            previousOutputCapacity: 11,
-            currentOutputCapacity: 6
+            currentOutputGeometry: await statusBar.outputRegionGeometry()
+        )
+        let availableGap = await renderer.beginBottomOverlayTransition(
+            currentOutputGeometry: await statusBar.outputRegionGeometry()
+        )
+        #expect(availableGap > 0)
+        await statusBar.setSharedChatReader(
+            entries: [entry],
+            unreadCount: 1,
+            isExpanded: true,
+            availableTranscriptGapRows: availableGap
+        )
+        await renderer.endBottomOverlayTransition(
+            currentOutputGeometry: await statusBar.outputRegionGeometry()
         )
         let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+        let finalGeometry = await statusBar.outputRegionGeometry()
 
         _ = await renderer.renderSubAgentOverview(
             signature: "agents:after-toggle",
             text: "\n👥 Sub-Agents:\n   completed\n",
             force: false,
             rememberSignature: true,
-            overviewBatchID: "wave"
+            overviewBatchID: "wave",
+            maximumInPlaceRows: finalGeometry?.capacity,
+            outputGeometry: finalGeometry
         )
         let refreshText = (await renderer.capturedWriteEvents())
             .dropFirst(eventsBeforeRefresh)
