@@ -449,26 +449,22 @@ extension TerminalChatRenderCoordinator {
     }
 
     /// Fences overview refreshes while the status bar changes its reserved rows.
-    /// The block remains visible and owned; a collapse only adds blank transcript
-    /// rows below it, which a later in-place replacement must step over.
-    func beginBottomOverlayTransition() -> Int {
+    ///
+    /// The status bar writes outside this coordinator and may place the cursor at
+    /// the new scroll boundary even when the visible overlay height is unchanged.
+    /// Capacity deltas therefore cannot prove that a relative cursor anchor is
+    /// still valid. Remove a verifiably owned block before that external write;
+    /// otherwise forget it append-safely. The caller republishes the current
+    /// snapshot after the transition, establishing a fresh physical anchor.
+    func beginBottomOverlayTransition(maximumInPlaceRows: Int?) {
         isBottomOverlayTransitionActive = true
-        return activeSubAgentOverviewBlock?.cursorGapRows ?? 0
+        guard activeSubAgentOverviewBlock != nil else { return }
+        clearOwnedSubAgentOverviewBeforeInterleavedOutput(
+            maximumInPlaceRows: maximumInPlaceRows
+        )
     }
 
-    func endBottomOverlayTransition(
-        previousOutputCapacity: Int?,
-        currentOutputCapacity: Int?
-    ) {
-        if let previousOutputCapacity,
-           let currentOutputCapacity,
-           var block = activeSubAgentOverviewBlock {
-            block.cursorGapRows = max(
-                0,
-                block.cursorGapRows + currentOutputCapacity - previousOutputCapacity
-            )
-            activeSubAgentOverviewBlock = block
-        }
+    func endBottomOverlayTransition() {
         isBottomOverlayTransitionActive = false
         renderPendingOverviewsIfIdle()
     }

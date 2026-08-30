@@ -1934,10 +1934,14 @@ struct TerminalChatRenderCoordinatorTests {
         )
         #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
 
-        // This is the `.sharedChatMessages` transition. Adding the header makes
-        // the terminal scroll the existing transcript block upward intact.
+        // This is the `.sharedChatMessages` transition. The status bar writes
+        // outside the coordinator and moves the cursor while installing the
+        // header, so first retire the old relative anchor.
         let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
-        let availableTranscriptGapRows = await renderer.beginBottomOverlayTransition()
+        let eventsBeforeTransition = await renderer.capturedWriteEvents().count
+        await renderer.beginBottomOverlayTransition(
+            maximumInPlaceRows: previousOutputCapacity
+        )
         await statusBar.setSharedChatReader(
             entries: [
                 TerminalSharedChatReaderEntry(
@@ -1947,16 +1951,12 @@ struct TerminalChatRenderCoordinatorTests {
                 )
             ],
             unreadCount: 1,
-            isExpanded: false,
-            availableTranscriptGapRows: availableTranscriptGapRows
+            isExpanded: false
         )
-        await renderer.endBottomOverlayTransition(
-            previousOutputCapacity: previousOutputCapacity,
-            currentOutputCapacity: await statusBar.scrollableOutputRowCapacity()
-        )
+        await renderer.endBottomOverlayTransition()
         #expect(await statusBar.state.sharedChatReaderDock?.entries.count == 1)
         #expect(await statusBar.reservedRowsForOverlay() == 7)
-        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
         let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
 
         _ = await renderer.renderSubAgentOverview(
@@ -1966,14 +1966,21 @@ struct TerminalChatRenderCoordinatorTests {
             rememberSignature: true,
             overviewBatchID: "wave"
         )
+        let transitionText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeTransition)
+            .prefix(eventsBeforeRefresh - eventsBeforeTransition)
+            .map(\.text)
+            .joined()
         let refreshText = (await renderer.capturedWriteEvents())
             .dropFirst(eventsBeforeRefresh)
             .map(\.text)
             .joined()
 
-        #expect(refreshText.hasPrefix("\u{1B}[3A\r"))
-        #expect(refreshText.contains("\u{1B}[2K"))
+        #expect(transitionText.hasPrefix("\u{1B}[3A\r"))
+        #expect(transitionText.contains("\u{1B}[2K"))
+        #expect(!containsCursorUpSequence(refreshText))
         #expect(TerminalANSIText.stripANSI(refreshText).contains("completed"))
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
     }
 
     @Test
@@ -2011,21 +2018,20 @@ struct TerminalChatRenderCoordinatorTests {
         )
         #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
 
-        // This mirrors the input loop's close transaction. Collapsing grows the
-        // transcript region and leaves blank rows below the existing overview;
-        // retain that distance instead of abandoning and appending the block.
+        // This mirrors the input loop's close transaction. The old section is
+        // erased while its anchor is still verified, before the status bar moves
+        // the cursor to the enlarged transcript boundary.
         let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
-        _ = await renderer.beginBottomOverlayTransition()
+        await renderer.beginBottomOverlayTransition(
+            maximumInPlaceRows: previousOutputCapacity
+        )
         await statusBar.setSharedChatReader(
             entries: [entry],
             unreadCount: 1,
             isExpanded: false
         )
+        await renderer.endBottomOverlayTransition()
         let currentOutputCapacity = await statusBar.scrollableOutputRowCapacity()
-        await renderer.endBottomOverlayTransition(
-            previousOutputCapacity: previousOutputCapacity,
-            currentOutputCapacity: currentOutputCapacity
-        )
         let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
 
         _ = await renderer.renderSubAgentOverview(
@@ -2042,55 +2048,55 @@ struct TerminalChatRenderCoordinatorTests {
 
         #expect(previousOutputCapacity != nil)
         #expect(currentOutputCapacity != nil)
-        let gap = (currentOutputCapacity ?? 0) - (previousOutputCapacity ?? 0)
-        #expect(gap > 0)
-        #expect(refreshText.hasPrefix("\u{1B}[\(gap)A\r\u{1B}[3A\r"))
-        #expect(refreshText.contains("\u{1B}[2K"))
+        #expect((currentOutputCapacity ?? 0) > (previousOutputCapacity ?? 0))
+        #expect(!containsCursorUpSequence(refreshText))
         #expect(TerminalANSIText.stripANSI(refreshText).contains("completed"))
         #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
     }
 
     @Test
-    func sharedChatCloseOpenRoundTripDoesNotAccumulateOverviewCursorGap() async {
+    func hiddenSharedChatDockReanchorsOverviewEvenWhenCapacityDoesNotChange() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
             columnWidthProvider: { 80 }
         )
         _ = await renderer.renderSubAgentOverview(
-            signature: "agents:before-toggle",
+            signature: "agents:before-hidden-chat",
             text: "\n👥 Sub-Agents:\n   running\n",
             force: false,
             rememberSignature: true,
             overviewBatchID: "wave"
         )
+        let eventsBeforeTransition = await renderer.capturedWriteEvents().count
 
-        _ = await renderer.beginBottomOverlayTransition()
-        await renderer.endBottomOverlayTransition(
-            previousOutputCapacity: 6,
-            currentOutputCapacity: 11
-        )
-        let availableGap = await renderer.beginBottomOverlayTransition()
-        #expect(availableGap == 5)
-        await renderer.endBottomOverlayTransition(
-            previousOutputCapacity: 11,
-            currentOutputCapacity: 6
-        )
+        // A compact Chat dock can be folded into existing chrome. Its capacity
+        // delta is zero, but the status bar still emits an absolute cursor move.
+        await renderer.beginBottomOverlayTransition(maximumInPlaceRows: 6)
+        await renderer.endBottomOverlayTransition()
         let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
 
         _ = await renderer.renderSubAgentOverview(
-            signature: "agents:after-toggle",
+            signature: "agents:after-hidden-chat",
             text: "\n👥 Sub-Agents:\n   completed\n",
             force: false,
             rememberSignature: true,
-            overviewBatchID: "wave"
+            overviewBatchID: "wave",
+            maximumInPlaceRows: 6
         )
+        let transitionText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeTransition)
+            .prefix(eventsBeforeRefresh - eventsBeforeTransition)
+            .map(\.text)
+            .joined()
         let refreshText = (await renderer.capturedWriteEvents())
             .dropFirst(eventsBeforeRefresh)
             .map(\.text)
             .joined()
 
-        #expect(refreshText.hasPrefix("\u{1B}[3A\r"))
-        #expect(!refreshText.hasPrefix("\u{1B}[5A\r"))
+        #expect(transitionText.hasPrefix("\u{1B}[3A\r"))
+        #expect(!containsCursorUpSequence(refreshText))
+        #expect(TerminalANSIText.stripANSI(refreshText).contains("completed"))
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
     }
 
     @Test

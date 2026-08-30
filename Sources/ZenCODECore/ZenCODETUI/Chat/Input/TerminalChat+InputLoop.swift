@@ -949,17 +949,17 @@ extension TerminalChat {
                     guard !isSharedChatReaderOpen else {
                         sharedChatReadingBuffer.closeReader()
                         let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
-                        _ = await renderCoordinator.beginBottomOverlayTransition()
+                        await renderCoordinator.beginBottomOverlayTransition(
+                            maximumInPlaceRows: previousOutputCapacity
+                        )
                         await statusBar.setSharedChatReader(
                             entries: entries,
                             unreadCount: sharedChatReadingBuffer.unreadCount,
                             isExpanded: false,
                             observationID: sharedChatObservation.observation.id
                         )
-                        await renderCoordinator.endBottomOverlayTransition(
-                            previousOutputCapacity: previousOutputCapacity,
-                            currentOutputCapacity: await statusBar.scrollableOutputRowCapacity()
-                        )
+                        await renderCoordinator.endBottomOverlayTransition()
+                        await renderSubAgentOverview(force: false)
                         isSharedChatReaderOpen = false
                         interactiveReader.setSharedChatReaderOpen(false)
                         continue
@@ -971,18 +971,17 @@ extension TerminalChat {
                     // committed as a reader action, so its selection/read
                     // state is applied after a visible payload is guaranteed.
                     let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
-                    let availableTranscriptGapRows = await renderCoordinator.beginBottomOverlayTransition()
+                    await renderCoordinator.beginBottomOverlayTransition(
+                        maximumInPlaceRows: previousOutputCapacity
+                    )
                     let didExpand = await statusBar.expandSharedChatReader(
                         entries: entries,
                         unreadCount: sharedChatReadingBuffer.readerOpeningUnreadCount,
                         selection: .message(sharedChatReadingBuffer.readerOpeningMessageID),
-                        observationID: sharedChatObservation.observation.id,
-                        availableTranscriptGapRows: availableTranscriptGapRows
+                        observationID: sharedChatObservation.observation.id
                     )
-                    await renderCoordinator.endBottomOverlayTransition(
-                        previousOutputCapacity: previousOutputCapacity,
-                        currentOutputCapacity: await statusBar.scrollableOutputRowCapacity()
-                    )
+                    await renderCoordinator.endBottomOverlayTransition()
+                    await renderSubAgentOverview(force: false)
                     guard didExpand else {
                         // Nothing was committed: the compact dock keeps
                         // advertising the unread traffic instead of hiding it.
@@ -1102,22 +1101,21 @@ extension TerminalChat {
                 let newMessages = sharedChatReadingBuffer.append(messages)
                 guard !newMessages.isEmpty else { continue }
                 let entries = await sharedChatReaderEntries()
-                // The first message can add the compact header. Fence periodic
-                // refreshes while the scroll region moves, but keep the live
-                // overview ownership: the terminal shifts that block intact.
+                // A Chat update can repaint the status region even when the dock
+                // receives no visible row. Retire the old relative overview
+                // anchor before that external cursor move, then republish it.
                 let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
-                let availableTranscriptGapRows = await renderCoordinator.beginBottomOverlayTransition()
+                await renderCoordinator.beginBottomOverlayTransition(
+                    maximumInPlaceRows: previousOutputCapacity
+                )
                 await statusBar.setSharedChatReader(
                     entries: entries,
                     unreadCount: sharedChatReadingBuffer.unreadCount,
                     isExpanded: isSharedChatReaderOpen,
-                    observationID: sharedChatObservation.observation.id,
-                    availableTranscriptGapRows: availableTranscriptGapRows
+                    observationID: sharedChatObservation.observation.id
                 )
-                await renderCoordinator.endBottomOverlayTransition(
-                    previousOutputCapacity: previousOutputCapacity,
-                    currentOutputCapacity: await statusBar.scrollableOutputRowCapacity()
-                )
+                await renderCoordinator.endBottomOverlayTransition()
+                await renderSubAgentOverview(force: false)
                 await refreshSharedChatPanelSuggestions()
             case let .sharedChatObservationEnded(_, observationID):
                 // Ignore a delayed completion from an observation we already

@@ -270,11 +270,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   unknown file types entirely in white, including wrapped continuations, instead
   of letting the first fragment inherit the muted line-number gutter color.
 - Opening, closing, or first showing the terminal Chat reader now preserves the
-  live Sub-Agents rewrite region across ordinary dock transitions; teardown also
-  rechecks the dock's current output capacity before clearing, so a newly reduced
-  region cannot erase Chat-owned rows. Real terminal resizes still invalidate
-  unsafe geometry, preventing misplaced redraws, duplicated sections, and
-  repeated full-block appends.
+  live Sub-Agents section across ordinary dock transitions by safely removing
+  its verified old region before the status bar moves the terminal cursor and
+  republishing it against the resulting layout. This also covers incoming Chat
+  messages whose dock cannot be displayed; unsafe old regions are abandoned
+  append-only rather than being erased from an inferred cursor position. Real
+  terminal resizes still invalidate unsafe geometry.
 - Pressing `Esc` during a terminal turn now interrupts delegated sub-agents for
   that session as well as stopping the main agent.
 - Telegram now mirrors every visible intermediate and final response from both
