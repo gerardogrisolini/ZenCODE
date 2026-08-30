@@ -106,6 +106,44 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func resolvedPlannerProfileIsComposedIntoCreatedBackendSystemPrompt() async throws {
+        let planner = AgentProfile(
+            id: AgentProfileStore.plannerAgentID.uuidString,
+            name: "Customized Planning Agent",
+            instructions: "Preserve this authentic Planner customization.",
+            readOnly: false,
+            tools: ["local.readFile", "local.writeFile", "external.inspect"]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in planner }
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string(PlanningCommandKernel.planAuthorAgentName),
+                "role": .string(AgentProfileStore.plannerAgentName),
+                "profile": .string(planner.id),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-planner-prompt-tests"),
+            parentAllowedToolNames: ["local.writeFile"]
+        )
+
+        let session = try #require(await backend.createdSessions().first)
+        let systemPrompt = try #require(session.systemPrompt)
+        let allowedToolNames = try #require(session.allowedToolNames)
+        #expect(systemPrompt.contains("Selected agent: Customized Planning Agent"))
+        #expect(systemPrompt.contains("Preserve this authentic Planner customization."))
+        #expect(systemPrompt.contains("Planner workflow policy:"))
+        #expect(systemPrompt.components(separatedBy: "Planner workflow policy:").count == 2)
+        #expect(allowedToolNames.contains("local.readFile"))
+        #expect(!allowedToolNames.contains("local.writeFile"))
+        #expect(allowedToolNames.contains("external.inspect"))
+        await runtime.shutdown()
+    }
+
+    @Test
     func agentCreateRejectsToolOverrides() async throws {
         let developer = AgentProfile(
             id: "developer-profile",
@@ -4458,6 +4496,7 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
         let id: String
         let cacheKey: String?
         let historyCount: Int
+        let systemPrompt: String?
         let allowedToolNames: Set<String>?
     }
 
@@ -4538,7 +4577,7 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     func createSession(
         id: String,
         cwd _: String,
-        systemPrompt _: String?,
+        systemPrompt: String?,
         history: [AgentRuntimeMessage],
         cacheKey: String?,
         allowedToolNames: Set<String>?,
@@ -4550,6 +4589,7 @@ private actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
                 id: id,
                 cacheKey: cacheKey,
                 historyCount: history.count,
+                systemPrompt: systemPrompt,
                 allowedToolNames: allowedToolNames
             )
         )

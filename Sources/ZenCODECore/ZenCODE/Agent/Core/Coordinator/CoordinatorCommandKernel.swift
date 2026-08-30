@@ -408,17 +408,50 @@ enum PlanningCommandKernel {
     }
 
     static func isPlannerQuestionResponse(_ text: String) -> Bool {
-        guard let firstLine = text
-            .split(whereSeparator: \Character.isNewline)
-            .map(String.init)
-            .first(where: { $0.nilIfBlank != nil }) else {
+        let lines = text.components(separatedBy: .newlines)
+        guard let firstContentIndex = lines.firstIndex(where: { $0.nilIfBlank != nil }),
+              isPlannerQuestionsHeading(lines[firstContentIndex]) else {
             return false
         }
-        let heading = firstLine
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .drop(while: { $0 == "#" || $0.isWhitespace })
-            .lowercased()
+        guard lines.filter({ isPlannerQuestionsHeadingLike($0) }).count == 1 else {
+            return false
+        }
+        guard !lines.contains(where: { isPlannerPlanHeading($0) }) else {
+            return false
+        }
+        return lines[(firstContentIndex + 1)...].contains(where: { line in
+            line.trimmingCharacters(in: .whitespacesAndNewlines).range(
+                of: #"^\d+[.)]\s+\S"#,
+                options: .regularExpression
+            ) != nil
+        })
+    }
+
+    private static func normalizedPlannerHeading(_ line: String) -> String {
+        String(
+            line.trimmingCharacters(in: .whitespacesAndNewlines)
+                .drop(while: { $0 == "#" || $0.isWhitespace })
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    }
+
+    private static func isPlannerQuestionsHeading(_ line: String) -> Bool {
+        let heading = normalizedPlannerHeading(line)
+        return heading == "planner questions" || heading == "planner questions:"
+    }
+
+    private static func isPlannerQuestionsHeadingLike(_ line: String) -> Bool {
+        let heading = normalizedPlannerHeading(line)
         return heading == "planner questions" || heading.hasPrefix("planner questions:")
+    }
+
+    private static func isPlannerPlanHeading(_ line: String) -> Bool {
+        let heading = normalizedPlannerHeading(line)
+        return heading == "specifiche concordate"
+            || heading == "specifiche concordate:"
+            || heading == "implementation plan"
+            || heading == "implementation plan:"
     }
 
     static func planStartPrompt(goal: String, planner: AgentProfile) -> String {
@@ -430,52 +463,15 @@ enum PlanningCommandKernel {
         Planning goal requested by the user: \(goal)
         Plan only this requested activity unless the conversation clearly provides required constraints.
 
-        Planner protocol:
+        Delegate and coordinate:
         - Create exactly one sub-agent with agent.create. Use name \
-        "\(planAuthorAgentName)", role "Planner", and profile "\(planner.id)". The Planner \
-        must not edit files or run mutating commands.
+        "\(planAuthorAgentName)", role "Planner", and profile "\(planner.id)".
         - Give that Planner the complete requested goal and every relevant constraint from the \
-        conversation. Explicitly tell it that it, not the current coordinator, must inspect the \
-        workspace as needed before formulating its mandatory initial brainstorming question.
-        - The first Planner turn is always a brainstorming turn, even when the request is simple, \
-        apparently complete, or already sufficiently defined. It must return exactly one block headed \
-        "Planner questions" with at least one focused numbered question that lets the user confirm or \
-        refine scope, assumptions, behavior, or acceptance criteria. It returns no plan in that turn, \
-        and you must not call todo.write.
-        - The Planner must first analyze implications it can resolve from the conversation and workspace, \
-        so its mandatory question is specific and useful rather than a generic request for more detail. \
-        After the user's first reply, it asks further questions only for material decisions that cannot \
-        be derived reliably.
-        - A final plan starts with "Specifiche concordate" and includes pertinent scope, non-goals, \
-        decisions, and acceptance criteria. It then contains an ordered, numbered \
-        "Implementation plan" usable by an implementer who has only that plan and the workspace.
-        - Require the final response to be a concise, self-contained functional analysis. Every numbered \
-        item must be self-contained as a specification and implementable after its declared dependencies: \
-        state the concrete observable behavior and relevant flow, verified components/files/symbols, \
-        applicable constraints and edge cases, concrete validation, and an explicit "Dependencies" \
-        entry naming prerequisite item numbers or "none".
-        - Do not include context summaries, generic background, non-pertinent sections, or detail that does not \
-        change implementation. Use the fewest points and words that preserve implementation certainty. \
-        Resolve needed decisions from the workspace and conversation; if a decision is genuinely blocking, \
-        ask one focused question rather than guessing. Include persistence, compatibility, security, concurrency, \
-        risks, and open questions only when pertinent to the requested work.
-        - Dependencies form a DAG with the minimum safe edges. Expose useful independent branches; \
-        add an edge only for a real prerequisite, validation ordering, or overlapping mutable state. The Planner \
-        must not chain items merely because they are numbered. When translating tasks, never add an edge merely \
-        because one point appears earlier; use sequential dependencies only when parallelism has no useful benefit \
-        or overlapping mutable work makes concurrency unsafe.
-        - Prohibit generic formulations, placeholders, repetition, alternatives, and decisions left \
-        to the implementer. Include persistence, compatibility, security, concurrency, risks, and open \
-        questions only when pertinent.
-        - Require the Planner to support /plan <goal> -> /plan approve, which automatically starts implementation, \
-        followed by /review and corrections. It must not tell the user to send another implementation prompt.
-        - The final response follows the session response language from the system prompt.
-
-        After delegating:
+        conversation. Its runtime profile policy owns the brainstorming and plan-authoring protocol.
         - Wait for the Planner with agent.wait.
-        - The initial turn is valid only when the Planner returns the mandatory "Planner questions" \
+        - The initial turn is valid only when the Planner returns the required "Planner questions" \
         block. If it returns a final plan instead, use agent.message to require the same Planner to \
-        replace it with the mandatory focused question block, then wait again.
+        replace it with its required focused question block, then wait again.
         - If output is failed, empty, or malformed, ask that same Planner to correct it with agent.message and wait again.
         - If the Planner reports questions, return its latest output verbatim and do not call todo.write.
         - If the Planner reports a final plan, call todo.write once with mode "upsert" and one pending item \

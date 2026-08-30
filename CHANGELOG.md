@@ -12,6 +12,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The mandatory Planner brainstorming protocol now belongs to the `Planner`
+  runtime profile policy, so it applies to every new request made after
+  selecting that profile as well as to `/plan <goal>`. The `/plan` coordinator
+  prompt is smaller but retains single-author delegation, same-agent correction,
+  output freshness, question/final-plan validation, and structured task
+  bootstrap guarantees. Delegated agents now receive the selected profile section
+  in their actual backend system prompt. Planner identity enforces read-only core
+  grants for legacy manifests too, while preserving external grants and authentic
+  custom instructions; obsolete built-in Planner text is superseded exactly.
+
 - Removed the manual `/sessions checkpoint [label]`, `/sessions tree`, and
   `/sessions branches` commands, plus restore-by-branch-index. Session
   checkpoint trees continue to record ordinary messages automatically; restore

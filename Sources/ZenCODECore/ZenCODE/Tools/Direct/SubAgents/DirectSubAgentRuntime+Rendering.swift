@@ -14,7 +14,8 @@ extension DirectSubAgentRuntime {
         role: String,
         taskID: String? = nil,
         taskAttemptID: String? = nil,
-        allowedToolNames: Set<String>? = nil
+        allowedToolNames: Set<String>? = nil,
+        selectedProfile: AgentProfile? = nil
     ) -> String {
         var lines = [
             "You are ZenCODE delegated sub-agent \(name).",
@@ -36,6 +37,11 @@ extension DirectSubAgentRuntime {
             allowedToolNames: allowedToolNames
         ) {
             lines.append(taskWorkflowSection)
+        }
+        if let profileSection = selectedProfile?.promptSection(
+            memoryToolEnabled: AgentSessionComposition.memoryToolEnabled(allowedToolNames)
+        ), !lines.contains(profileSection) {
+            lines.append(profileSection)
         }
         return lines.joined(separator: "\n")
     }

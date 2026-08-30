@@ -229,7 +229,8 @@ extension DirectSubAgentRuntime {
                         role: payload.role,
                         taskID: payload.taskID,
                         taskAttemptID: receipt?.attemptID,
-                        allowedToolNames: childAllowedToolNames
+                        allowedToolNames: childAllowedToolNames,
+                        selectedProfile: item.profile
                     ),
                     history: [],
                     cacheKey: nil,

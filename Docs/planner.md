@@ -4,9 +4,14 @@ The `Planner` profile is the read-only planning profile. It authors delegated pl
 
 ## What Planner Does
 
-The Planner inspects only the context needed to make a plan concrete. Its final
-response is a concise, self-contained functional analysis that an implementer
-can use with only the plan and the workspace. It provides an ordered,
+Every new request addressed to the `Planner` profile begins with a mandatory
+brainstorming turn, including when it is sent directly after selecting that
+profile rather than through `/plan`. The Planner inspects only the context
+needed to make the request concrete, then returns one focused numbered
+`Planner questions` block; it does not produce a plan in that first turn. Its
+final response, after the discussion is complete, is a concise, self-contained
+functional analysis that an implementer can use with only the plan and the
+workspace. It provides an ordered,
 numbered implementation plan whose every point is self-contained as a
 specification and implementable from the plan and workspace after its declared
 dependencies.
@@ -59,10 +64,14 @@ while ACP keeps the client's original command visible and sends only the hidden
 operational prompt to the model. ACP resolves an optional leading `@agent` mention
 before command routing.
 
-Before finalizing, the Planner may emit one numbered `Planner questions` block
-per turn when material decisions remain unknown. Ordinary follow-up messages
-answer that block and return to the same Planner; further question blocks are
-allowed until the specification is complete. Slash commands and live-chat
+Before finalizing, the first Planner turn always emits one numbered `Planner
+questions` block, even when the request appears fully specified. It first
+resolves what it can from the workspace and conversation so that question is
+specific and useful. Ordinary follow-up messages answer that block and return
+to the same Planner; it may emit one further question block per turn only when
+a material decision remains unknown. This profile policy also applies to direct
+Planner requests; `/plan` additionally supplies the managed continuation,
+validation, and task-bootstrap workflow. Slash commands and live-chat
 mentions retain their normal meanings. A new `/plan <goal>` closes the previous
 Planner and replaces the unfinished discussion, while `/plan clear` cancels it.
 The clarification control state and Planner ownership are runtime-only: neither is
@@ -76,11 +85,14 @@ remain available.
 
 ## Profile Tools
 
-`/plan` selects the `Planner` profile explicitly. The delegated Planner receives
-exactly the tools configured on that profile, plus runtime-intrinsic tools;
+`/plan` selects the `Planner` profile explicitly. Selecting `Planner` directly
+uses the same runtime brainstorming and plan-authoring policy. The delegated
+Planner receives exactly the tools configured on that profile, plus runtime-intrinsic tools;
 `agent.create` does not construct a separate tool list. The built-in profile has
-`readOnly: true`, which centrally removes mutable catalog-owned core tools even
-after `/tools`, app, ACP, or task-bound runtime grants are resolved. Optional
+`readOnly: true`; Planner identity also enforces that core read-only policy for
+older manifests where the flag is absent or false. The filter runs after
+`/tools`, app, ACP, or task-bound runtime grants are resolved, removes mutable
+catalog-owned core tools, and preserves external or custom non-core grants. Optional
 feature, MCP, and other external grants remain outside that classification.
 
 ## How Delegation Works

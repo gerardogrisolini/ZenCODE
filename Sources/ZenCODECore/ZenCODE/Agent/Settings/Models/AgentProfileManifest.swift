@@ -357,6 +357,9 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         if AgentProfileStore.isBuilderAgent(self) {
             instructionSections.append(AgentProfileStore.builderWorkflowInstructions)
         }
+        if AgentProfileStore.isPlannerAgent(self) {
+            instructionSections.append(AgentProfileStore.plannerWorkflowInstructions)
+        }
         if !instructionSections.isEmpty {
             lines.append("Agent instructions:")
             lines.append(instructionSections.joined(separator: "\n\n"))
@@ -366,6 +369,14 @@ public struct AgentProfile: Codable, Hashable, Sendable {
 
     private func resolvedInstructions(memoryToolEnabled: Bool) -> String {
         guard let instructions else {
+            return ""
+        }
+        if AgentProfileStore.isPlannerAgent(self),
+           instructions == AgentProfileStore.legacyPlannerInstructions
+            || instructions == AgentProfileStore.plannerIdentityInstructions {
+            // Older manifests persisted the former built-in Planner sentence.
+            // It is superseded exactly, while genuinely customized instructions
+            // remain intact and are followed by the authoritative runtime policy.
             return ""
         }
         let defaultInstructionsWithMemory = SystemPromptBuilder.defaultAgentInstructions(memoryToolEnabled: true)
@@ -435,7 +446,8 @@ public struct AgentProfile: Codable, Hashable, Sendable {
     public func resolvedAllowedToolNames(
         _ allowedToolNames: Set<String>
     ) -> Set<String> {
-        guard readOnly, !allowedToolNames.isEmpty else {
+        let enforcesReadOnlyCoreGrant = readOnly || AgentProfileStore.isPlannerAgent(self)
+        guard enforcesReadOnlyCoreGrant, !allowedToolNames.isEmpty else {
             return allowedToolNames
         }
 
@@ -590,6 +602,25 @@ public enum AgentProfileStore {
     - For an MCP bridge, collect only non-secret transport configuration. Never embed credentials, API keys, tokens, passwords, or environment values in generated source or endpoint URLs; stdio bridges inherit the ZenCODE process environment.
     - Enable a feature only after validation and build succeed. `/tools` remains the explicit session-level control for exposing its tools.
     - A successful `feature.build` reloads the feature runtime. Use `feature.reload` only after external file changes or when runtime discovery must be refreshed.
+    """
+    static let plannerWorkflowInstructions = """
+    Planner workflow policy:
+    - This policy is authoritative for Planner behavior and overrides any conflicting profile instruction.
+    - Every new Planner discussion starts with a mandatory brainstorming turn, even when the request is simple, apparently complete, or already sufficiently defined. First inspect the conversation and workspace evidence needed to make the question concrete.
+    - The first output contains exactly one block headed `Planner questions` with at least one focused numbered question that lets the operator confirm or refine scope, assumptions, behavior, or acceptance criteria. Return no plan in that first turn.
+    - Continue the same discussion across operator replies instead of restarting brainstorming. Ask at most one further focused numbered `Planner questions` block per turn, only for material decisions that cannot be resolved from available evidence; include impact and a recommended choice when useful.
+    - When the specification is complete, return `Specifiche concordate` followed by a concise, actionable numbered `Implementation plan`. Every point must be self-contained and implementable from the plan and workspace after its declared dependencies: state concrete observable behavior and relevant flow, verified components/files/symbols, applicable constraints and edge cases, concrete validation, and explicit `Dependencies` naming prerequisite point numbers or `none`.
+    - Avoid generic formulations, placeholders, repetition, alternatives, decisions left to the implementer, context summaries, generic background, non-pertinent sections, and detail that does not change implementation. Use the fewest points and words that preserve implementation certainty. Resolve decisions from the workspace and conversation; ask a focused question rather than guessing only when a decision is genuinely blocking.
+    - Include scope, non-goals, acceptance criteria, persistence, compatibility, security, concurrency, risks, and open questions only when pertinent. Form a DAG with minimum safe dependency edges; retain useful independent branches and never chain points merely because they are numbered.
+    - Remain read-only and do not modify files. Ensure the plan supports `/plan <goal> -> /plan approve`, which starts implementation automatically, followed by `/review` and corrections; never ask for another implementation prompt. Follow the session response language and report only fresh output for the current turn.
+    """
+    static let legacyPlannerInstructions = """
+    Planner agent. Perform read-only planning before implementation. Inspect the request, conversation, and workspace before deciding whether clarification is needed. Do not edit files.
+
+    Ask at most one focused numbered question block per turn, only for material decisions that cannot be resolved from available evidence; include impact and a recommended choice when useful. If the request is already sufficiently defined, skip questions. Continue the same discussion across operator replies and ask another block only if a material decision still remains; then produce `Specifiche concordate` followed by an actionable numbered `Implementation plan` with verified files or symbols, dependencies, edge cases, and validation. Report only fresh output for the current turn.
+    """
+    static let plannerIdentityInstructions = """
+    Planner agent. Perform read-only planning before implementation. Inspect the request, conversation, and workspace. Do not edit files.
     """
     public static let reviewerToolNames: [String] = codingToolNames.filter { $0 != "shell" }
     public static let reporterToolNames: [String] = [
@@ -833,11 +864,7 @@ public enum AgentProfileStore {
             AgentProfile(
                 id: plannerAgentID.uuidString,
                 name: plannerAgentName,
-                instructions: """
-                Planner agent. Perform read-only planning before implementation. Inspect the request, conversation, and workspace before deciding whether clarification is needed. Do not edit files.
-
-                Ask at most one focused numbered question block per turn, only for material decisions that cannot be resolved from available evidence; include impact and a recommended choice when useful. If the request is already sufficiently defined, skip questions. Continue the same discussion across operator replies and ask another block only if a material decision still remains; then produce `Specifiche concordate` followed by an actionable numbered `Implementation plan` with verified files or symbols, dependencies, edge cases, and validation. Report only fresh output for the current turn.
-                """,
+                instructions: plannerIdentityInstructions,
                 symbolName: "list.bullet.clipboard",
                 readOnly: true,
                 tools: plannerToolNames
@@ -851,6 +878,14 @@ public enum AgentProfileStore {
         }
         return agent.id.selectionKey == builderAgentID.uuidString.selectionKey
             || agent.name.selectionKey == builderAgentName.selectionKey
+    }
+
+    public static func isPlannerAgent(_ agent: AgentProfile?) -> Bool {
+        guard let agent else {
+            return false
+        }
+        return agent.id.selectionKey == plannerAgentID.uuidString.selectionKey
+            || agent.name.selectionKey == plannerAgentName.selectionKey
     }
 
     public static func normalizedAgentsForSave(_ agents: [AgentProfile]) -> [AgentProfile] {

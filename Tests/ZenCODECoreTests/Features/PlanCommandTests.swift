@@ -596,11 +596,11 @@ struct PlanCommandTests {
         case let .runHiddenPrompt(prompt, purpose):
             #expect(prompt.contains("Planning goal requested by the user: fix the planner command"))
             #expect(prompt.contains("agent.create"))
-            #expect(prompt.contains("\"Dependencies\" entry"))
-            #expect(prompt.contains("DAG with the minimum safe edges"))
-            #expect(prompt.contains("must not chain items merely because"))
-            #expect(prompt.contains("never add an edge merely"))
-            #expect(prompt.contains("parallelism has no useful benefit"))
+            #expect(prompt.contains("runtime profile policy owns the brainstorming and plan-authoring protocol"))
+            #expect(prompt.contains("translate every explicit dependency to those IDs"))
+            #expect(prompt.contains("empty arrays for independent items"))
+            #expect(!prompt.contains("\"Dependencies\" entry"))
+            #expect(!prompt.contains("DAG with the minimum safe edges"))
             #expect(purpose == .plan(originalGoal: "fix the planner command"))
         case .runPrompt(_):
             Issue.record("/plan <goal> should keep the generated delegation prompt hidden")
@@ -803,6 +803,29 @@ struct PlanCommandTests {
             rootSessionID: "planning-session"
         )?.snapshot.id == "planner-initial")
 
+        let invalidInitialOutputs = [
+            "Planner questions",
+            "Planner questions\nWhich compatibility behavior is required?",
+            "Planner questions: choose a behavior\n1. Which one?",
+            "Intro\nPlanner questions\n1. Which one?",
+            "Planner questions\n1. Which one?\n\nPlanner questions:\n2. Another?",
+            "Planner questions\n1. Which one?\n\nPlanner questions: duplicate\n2. Another?",
+            "Planner questions\n1. Which one?\n\nSpecifiche concordate\nImplementation plan\n1. Implement",
+            "Planner questions\n1. Which one?\n\n## Implementation plan:\n1. Implement",
+        ]
+        for (offset, output) in invalidInitialOutputs.enumerated() {
+            #expect(!PlanningCommandKernel.isPlannerQuestionResponse(output))
+            #expect(PlanningCommandKernel.plannerResponse(
+                parentResponse: parentResponse,
+                snapshots: [snapshot(revision: UInt64(offset + 10), output: output)],
+                baseline: initialBaseline,
+                rootSessionID: "planning-session"
+            ) == nil)
+        }
+        #expect(PlanningCommandKernel.isPlannerQuestionResponse(
+            "\n# Planner questions:\n1) Which compatibility behavior is required?"
+        ))
+
         var followUpState = PlanningCommandRuntimeState(goal: "harden plan routing")
         followUpState.recordPlannerOutput(
             question.latestOutput!,
@@ -835,6 +858,26 @@ struct PlanCommandTests {
 
         #expect(planner.name == AgentProfileStore.plannerAgentName)
         #expect(planner.readOnly)
+    }
+
+    @Test
+    func plannerRuntimePolicyRequiresBrainstormingForEveryNewDiscussion() throws {
+        let planner = try #require(AgentProfileStore.defaultProfiles().first {
+            $0.id.caseInsensitiveCompare(AgentProfileStore.plannerAgentID.uuidString) == .orderedSame
+        })
+        let policy = try #require(planner.promptSection)
+
+        #expect(policy.contains("Every new Planner discussion starts with a mandatory brainstorming turn"))
+        #expect(policy.contains("even when the request is simple"))
+        #expect(policy.contains("exactly one block headed `Planner questions`"))
+        #expect(policy.contains("at least one focused numbered question"))
+        #expect(policy.contains("Return no plan in that first turn"))
+        #expect(policy.contains("Continue the same discussion across operator replies"))
+        #expect(policy.contains("`Specifiche concordate`"))
+        #expect(policy.contains("actionable numbered `Implementation plan`"))
+        #expect(policy.contains("concrete validation"))
+        #expect(policy.contains("explicit `Dependencies`"))
+        #expect(policy.components(separatedBy: "Planner workflow policy:").count == 2)
     }
 
     @Test
@@ -1258,15 +1301,16 @@ struct PlanCommandTests {
         #expect(prompt.contains("name \"plan-author\""))
         #expect(prompt.contains("role \"Planner\""))
         #expect(prompt.contains("profile \"\(planner.id)\""))
-        #expect(prompt.contains("The Planner must not edit files or run mutating commands"))
+        #expect(!prompt.contains("The Planner must not edit files or run mutating commands"))
         #expect(!prompt.contains("toolNames"))
         #expect(prompt.contains("agent.wait"))
         #expect(prompt.contains("same Planner to correct it with agent.message"))
         #expect(prompt.contains("call todo.write once with mode \"upsert\""))
         #expect(prompt.contains("stable IDs \"plan-<token>-1\""))
-        #expect(prompt.contains("/plan <goal> -> /plan approve"))
-        #expect(prompt.contains("automatically starts implementation"))
-        #expect(prompt.contains("must not tell the user to send another implementation prompt"))
+        #expect(prompt.contains("runtime profile policy owns the brainstorming and plan-authoring protocol"))
+        #expect(!prompt.contains("/plan <goal> -> /plan approve"))
+        #expect(!prompt.contains("automatically starts implementation"))
+        #expect(!prompt.contains("must not tell the user to send another implementation prompt"))
         #expect(prompt.contains("Planner agent is the sole author of the final plan"))
         #expect(prompt.contains("exactly the Planner's latest output, verbatim"))
         #expect(prompt.contains("do not author, draft, consolidate, rewrite, or improve"))
@@ -1281,7 +1325,7 @@ struct PlanCommandTests {
     }
 
     @Test
-    func planDelegationPromptRequiresSelfContainedFunctionalItems() {
+    func planDelegationPromptKeepsCoordinationAndValidationInTheCommand() {
         let planner = AgentProfile(
             id: AgentProfileStore.plannerAgentID.uuidString,
             name: AgentProfileStore.plannerAgentName,
@@ -1293,29 +1337,16 @@ struct PlanCommandTests {
             planner: planner
         )
 
-        #expect(prompt.contains("The first Planner turn is always a brainstorming turn"))
-        #expect(prompt.contains("even when the request is simple"))
-        #expect(prompt.contains("at least one focused numbered question"))
-        #expect(prompt.contains("returns a final plan instead"))
-        #expect(prompt.contains("replace it with the mandatory focused question block"))
-        #expect(!prompt.contains("skips artificial questions"))
-        #expect(prompt.contains("concise, self-contained functional analysis"))
-        #expect(prompt.contains("only that plan and the workspace"))
-        #expect(prompt.contains("self-contained as a specification"))
-        #expect(prompt.contains("after its declared dependencies"))
-        #expect(prompt.contains("concrete observable behavior and relevant flow"))
-        #expect(prompt.contains("verified components/files/symbols"))
-        #expect(prompt.contains("applicable constraints and edge cases"))
-        #expect(prompt.contains("concrete validation"))
-        #expect(prompt.contains("Prohibit generic formulations, placeholders, repetition, alternatives"))
-        #expect(prompt.contains("decisions left to the implementer"))
-        #expect(prompt.contains("Do not include context summaries, generic background"))
-        #expect(prompt.contains("non-pertinent sections, or detail that does not"))
-        #expect(prompt.contains("Use the fewest points and words that preserve implementation certainty"))
-        #expect(prompt.contains("Resolve needed decisions from the workspace and conversation"))
-        #expect(prompt.contains("ask one focused question rather than guessing"))
-        #expect(prompt.contains("only when pertinent to the requested work"))
-        #expect(!prompt.contains("plus likely files/areas to touch"))
+        #expect(prompt.contains("runtime profile policy owns the brainstorming and plan-authoring protocol"))
+        #expect(prompt.contains("initial turn is valid only when the Planner returns the required \"Planner questions\" block"))
+        #expect(prompt.contains("replace it with its required focused question block"))
+        #expect(prompt.contains("If output is failed, empty, or malformed"))
+        #expect(prompt.contains("call todo.write once with mode \"upsert\""))
+        #expect(prompt.contains("valid todo.write task for every point"))
+        #expect(!prompt.contains("The first Planner turn is always a brainstorming turn"))
+        #expect(!prompt.contains("concise, self-contained functional analysis"))
+        #expect(!prompt.contains("verified components/files/symbols"))
+        #expect(!prompt.contains("Prohibit generic formulations, placeholders"))
     }
 
     @Test

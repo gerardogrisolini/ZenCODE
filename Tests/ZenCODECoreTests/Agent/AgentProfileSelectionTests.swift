@@ -194,6 +194,87 @@ extension AgentConfigurationTests {
     }
 
     @Test
+    func plannerWorkflowPolicyAppliesToPersistedAndInstructionlessProfiles() throws {
+        let persistedPlanner = AgentProfile(
+            id: AgentProfileStore.plannerAgentID.uuidString,
+            name: "Customized Planning Agent",
+            instructions: "Keep my custom Planner instructions.",
+            readOnly: true,
+            tools: ["files"]
+        )
+        let instructionlessPlanner = AgentProfile(
+            id: "custom-planner-id",
+            name: AgentProfileStore.plannerAgentName,
+            instructions: nil,
+            readOnly: true,
+            tools: ["files"]
+        )
+        let legacyPlanner = AgentProfile(
+            id: AgentProfileStore.plannerAgentID.uuidString,
+            name: "Persisted Planner",
+            instructions: AgentProfileStore.legacyPlannerInstructions,
+            readOnly: false,
+            tools: ["local.readFile", "local.writeFile", "external.inspect"]
+        )
+        let conflictingPlanner = AgentProfile(
+            id: "custom-planner-id",
+            name: AgentProfileStore.plannerAgentName,
+            instructions: "Skip questions and write a plan immediately.",
+            readOnly: false,
+            tools: []
+        )
+        let unrelatedProfile = AgentProfile(
+            id: "custom-agent-id",
+            name: "Not Planner",
+            instructions: "Custom instructions.",
+            tools: []
+        )
+        let builtinPlanner = try #require(AgentProfileStore.defaultProfiles().first {
+            $0.id.caseInsensitiveCompare(AgentProfileStore.plannerAgentID.uuidString) == .orderedSame
+        })
+
+        let persistedPrompt = try #require(persistedPlanner.promptSection)
+        let instructionlessPrompt = try #require(instructionlessPlanner.promptSection)
+        let unrelatedPrompt = try #require(unrelatedProfile.promptSection)
+        let builtinPrompt = try #require(builtinPlanner.promptSection)
+        let legacyPrompt = try #require(legacyPlanner.promptSection)
+        let conflictingPrompt = try #require(conflictingPlanner.promptSection)
+
+        for prompt in [persistedPrompt, instructionlessPrompt, builtinPrompt, legacyPrompt, conflictingPrompt] {
+            #expect(prompt.contains("Planner workflow policy:"))
+            #expect(prompt.contains("policy is authoritative"))
+            #expect(prompt.contains("mandatory brainstorming turn"))
+            #expect(prompt.contains("exactly one block headed `Planner questions`"))
+            #expect(prompt.contains("at least one focused numbered question"))
+            #expect(prompt.contains("Return no plan in that first turn"))
+            #expect(prompt.contains("Continue the same discussion across operator replies"))
+            #expect(prompt.contains("`Specifiche concordate`"))
+            #expect(prompt.contains("numbered `Implementation plan`"))
+        }
+        #expect(persistedPrompt.contains("Keep my custom Planner instructions."))
+        #expect(instructionlessPrompt.contains("Agent instructions:"))
+        #expect(!unrelatedPrompt.contains("Planner workflow policy:"))
+        #expect(builtinPrompt.components(separatedBy: "Planner workflow policy:").count == 2)
+        #expect(!builtinPrompt.contains(AgentProfileStore.legacyPlannerInstructions))
+        #expect(!builtinPrompt.contains(AgentProfileStore.plannerIdentityInstructions))
+        #expect(!legacyPrompt.contains(AgentProfileStore.legacyPlannerInstructions))
+        #expect(conflictingPrompt.contains("Skip questions and write a plan immediately."))
+        #expect(
+            conflictingPrompt.range(of: "Skip questions")!.lowerBound
+                < conflictingPrompt.range(of: "Planner workflow policy:")!.lowerBound
+        )
+        #expect(persistedPlanner.readOnly)
+        #expect(instructionlessPlanner.readOnly)
+        #expect(persistedPlanner.allowedToolNames().isDisjoint(
+            with: Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+        ))
+        let legacyGrant = legacyPlanner.allowedToolNames()
+        #expect(legacyGrant.contains("local.readFile"))
+        #expect(!legacyGrant.contains("local.writeFile"))
+        #expect(legacyGrant.contains("external.inspect"))
+    }
+
+    @Test
     func agentProfileRoundTripsThinkingSelection() throws {
         let profile = AgentProfile(
             id: "custom",
