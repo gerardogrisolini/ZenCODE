@@ -75,7 +75,7 @@ struct TelegramChatRoundTripTests {
     }
 
     @Test
-    func standaloneMentionOpensPickerWithCoordinatorAndActiveAgentButtons() async throws {
+    func chatCommandOpensPickerDuringGenerationWithCoordinatorAndActiveAgentButtons() async throws {
         let buttons = TerminalChat.telegramMentionPickerButtons(from: [
             .init(command: "@coordinator ", summary: "message coordinator"),
             .init(command: "@all ", summary: "broadcast"),
@@ -95,8 +95,9 @@ struct TelegramChatRoundTripTests {
         }
         var queuedPrompts = TerminalQueuedPromptBuffer()
         await terminal.handleTelegramMessage(
-            Self.message("@"), queuedPrompts: &queuedPrompts,
-            eventQueue: TerminalChatEventQueue(), transcriptions: TerminalVoiceTranscriptionRegistry()
+            Self.message("/chat"), queuedPrompts: &queuedPrompts,
+            eventQueue: TerminalChatEventQueue(), transcriptions: TerminalVoiceTranscriptionRegistry(),
+            isSessionGenerating: true
         )
         #expect(queuedPrompts.isEmpty)
         guard case let .inlineKeyboard(rows) = captured.withLock({ $0.first }) else {
@@ -104,6 +105,26 @@ struct TelegramChatRoundTripTests {
             return
         }
         #expect(rows.flatMap { $0 }.map(\.text) == ["@coordinator"])
+    }
+
+    @Test
+    func standaloneAtSignIsNoLongerATelegramPickerTrigger() async throws {
+        let terminal = try Self.makeTerminal(linkedChatID: 42)
+        _ = await Self.installRoute(on: terminal)
+        let captured = Mutex<[TerminalTelegramReplyMarkup]>([])
+        terminal.onTelegramMentionPickerMessage = { _, _, markup in
+            captured.withLock { $0.append(markup) }
+            return 90
+        }
+        var queuedPrompts = TerminalQueuedPromptBuffer()
+
+        await terminal.handleTelegramMessage(
+            Self.message("@"), queuedPrompts: &queuedPrompts,
+            eventQueue: TerminalChatEventQueue(), transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+
+        #expect(captured.withLock { $0.isEmpty })
+        #expect(queuedPrompts.dequeue()?.text == "@")
     }
 
     @Test
@@ -123,7 +144,7 @@ struct TelegramChatRoundTripTests {
                 chatTitle: "Gerardo", username: "gerardo", callbackQueryID: "callback-1",
                 callbackData: "zencode:mention:coordinator"
             ), queuedPrompts: &queuedPrompts, eventQueue: TerminalChatEventQueue(),
-            transcriptions: TerminalVoiceTranscriptionRegistry()
+            transcriptions: TerminalVoiceTranscriptionRegistry(), isSessionGenerating: true
         )
         #expect(queuedPrompts.isEmpty)
         #expect(captured.withLock({ $0 }) == [.forceReply])
@@ -315,8 +336,9 @@ struct TelegramChatRoundTripTests {
     }
 
     /// Busy admission is decided by the serialized TUI runtime, not by a global
-    /// bot flag. Every work-producing Telegram shape is rejected on its own
-    /// authorized route before it can enqueue, download, transcribe or publish.
+    /// bot flag. Work-producing Telegram shapes are rejected on their own
+    /// authorized route before they can enqueue, download, transcribe or publish.
+    /// Read-only `/status` and recipient-selection callbacks remain allowed.
     @Test
     func busySessionRejectsTelegramWorkBeforeDispatch() async throws {
         let terminal = try Self.makeTerminal(linkedChatID: 42)
@@ -370,13 +392,13 @@ struct TelegramChatRoundTripTests {
         }
 
         #expect(queuedPrompts.isEmpty)
-        #expect(pickerCards.withLock { $0 } == 0)
+        #expect(pickerCards.withLock { $0 } == 1)
         let delivered = notices.withLock { $0 }
-        #expect(delivered.count == work.count)
+        #expect(delivered.count == work.count - 1)
         #expect(delivered.filter {
             $0.contains("busy generating a response in this session")
                 && $0.contains("was not queued")
-        }.count == work.count - 1)
+        }.count == work.count - 2)
         #expect(delivered.contains {
             $0.contains("Session active.") && !$0.contains("was not queued")
         })

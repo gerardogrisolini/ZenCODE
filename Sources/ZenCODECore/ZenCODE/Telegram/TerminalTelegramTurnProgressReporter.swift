@@ -377,6 +377,11 @@ public enum TerminalTelegramCommandRegistry {
             aliases: ["status", "stato"]
         ),
         TerminalTelegramCommandSpecification(
+            command: .chat,
+            name: "chat",
+            description: "Choose an active participant to message"
+        ),
+        TerminalTelegramCommandSpecification(
             command: .changes,
             name: "changes",
             description: "List the file changes of this session",
@@ -470,6 +475,7 @@ public enum TerminalTelegramRemoteCommand: Equatable, Sendable {
     case start
     case help
     case status
+    case chat
     case changes
     case undo
     case diff

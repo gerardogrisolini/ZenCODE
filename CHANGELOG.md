@@ -31,6 +31,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- Telegram now exposes `/chat` in its command menu to choose a live-chat
+  recipient. It replaces the standalone `@` picker trigger and remains
+  available while ZenCODE is generating a response.
+
 - `zen -p PROMPT` (also `--prompt`) runs one headless text-only turn. It accepts
   an inline prompt with optional piped stdin context, prints only the final
   assistant text to stdout, and fails without

@@ -51,6 +51,10 @@ extension TerminalChat {
         case .status:
             await sendTelegramSystemMessageIfLinked(telegramRemoteStatusText(), origin: origin)
             return .continueChat
+        case .chat:
+            guard let chatID = origin.telegramLease?.key.chatID else { return .continueChat }
+            await handleTelegramMentionPickerRequest(chatID: chatID, origin: origin)
+            return .continueChat
         case .changes:
             await sendTelegramSystemMessageIfLinked(telegramRemoteChangesText(), origin: origin)
             return .continueChat
@@ -241,7 +245,8 @@ extension TerminalChat {
             ) {
                 return
             }
-            guard !isSessionGenerating else {
+            guard !isSessionGenerating
+                || callbackData.hasPrefix(Self.telegramMentionPickerCallbackPrefix) else {
                 await sendTelegramBusyMessage(origin: routeOrigin)
                 return
             }
@@ -269,6 +274,14 @@ extension TerminalChat {
            TerminalTelegramRemoteCommand(text: text) == .status {
             await sendTelegramSystemMessageIfLinked(
                 telegramRemoteStatusText(), origin: routeOrigin
+            )
+            return
+        }
+        if isSessionGenerating,
+           let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+           TerminalTelegramRemoteCommand(text: text) == .chat {
+            await handleTelegramMentionPickerRequest(
+                chatID: message.chatID, origin: routeOrigin
             )
             return
         }
@@ -326,6 +339,13 @@ extension TerminalChat {
             return
         }
 
+        if TerminalTelegramRemoteCommand(text: text) == .chat {
+            await handleTelegramMentionPickerRequest(
+                chatID: message.chatID, origin: routeOrigin
+            )
+            return
+        }
+
         if let coordinatorCommand = CoordinatorCommandParser.parse(text),
            coordinatorCommand.requiresArgument {
             let command = Self.telegramCommandWithoutBotMention(text)
@@ -348,13 +368,6 @@ extension TerminalChat {
                 return
             }
             telegramRuntimeEventQueue = eventQueue
-            return
-        }
-
-        if text == "@" {
-            await handleTelegramMentionPickerRequest(
-                chatID: message.chatID, origin: routeOrigin
-            )
             return
         }
 
@@ -439,8 +452,9 @@ extension TerminalChat {
 
     nonisolated static let telegramMentionPickerCallbackPrefix = "zencode:mention:"
 
-    /// The Telegram Bot API has no typing events. A standalone `@` is therefore
-    /// the explicit, non-ambiguous trigger for the discoverable mention picker.
+    /// `/chat` opens the explicit, non-ambiguous picker for Telegram, whose Bot
+    /// API has no typing events. It is intentionally available while a turn is
+    /// generating: choosing a recipient does not enqueue or start work.
     func handleTelegramMentionPickerRequest(
         chatID: Int64, origin: TerminalPromptOrigin? = nil
     ) async {
@@ -485,7 +499,7 @@ extension TerminalChat {
             readableHandles: roster.handleMap
         ), await isCurrentSharedChatDirectDestination(route.destination) else {
             await sendTelegramSystemMessage(
-                "ZenCODE message: that agent is no longer active. Open `@` again.",
+                "ZenCODE message: that agent is no longer active. Run /chat again.",
                 to: chatID,
                 origin: .telegramLease(lease)
             )
