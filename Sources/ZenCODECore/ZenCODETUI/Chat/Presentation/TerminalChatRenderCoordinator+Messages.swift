@@ -21,6 +21,7 @@ extension TerminalChatRenderCoordinator {
     }
 
     func writeSubmittedPrompt(_ prompt: String) {
+        interruptActiveToolForInterleavedOutputIfNeeded()
         // A new submitted prompt is a hard transcript boundary. Finalize any
         // preceding streams first so a coalesced assistant tail cannot be lost
         // behind the next turn's prompt or separator.
@@ -99,6 +100,7 @@ extension TerminalChatRenderCoordinator {
     }
 
     func writeMarkdownMessage(_ markdown: String) {
+        interruptActiveToolForInterleavedOutputIfNeeded()
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         renderMarkdownMessage(markdown)
@@ -120,6 +122,7 @@ extension TerminalChatRenderCoordinator {
     /// does not render deferred overviews after the summary: the summary is the
     /// terminal section which closes a completed prompt.
     func writeFinalFileChangeSummaryMessage(_ text: String) {
+        interruptActiveToolForInterleavedOutputIfNeeded()
         renderPendingOverviewsIfIdle()
         writeChat(
             TerminalChatTextFormatting.fileChangeSummaryColorApplied(
@@ -141,19 +144,23 @@ extension TerminalChatRenderCoordinator {
     }
 
     private func writeInterleavedMessage(_ write: () -> Void) {
+        interruptActiveToolForInterleavedOutputIfNeeded()
         write()
         renderPendingOverviewsIfIdle()
     }
 
     // MARK: - External terminal prompts
 
-    /// Suspends coordinator-owned permanent overview output while an interactive
-    /// authorization prompt writes directly to the shared terminal. Pending tool
-    /// activity remains independently owned by `TerminalStatusBar`.
+    /// Suspends coordinator-owned overview output before an interactive prompt
+    /// writes directly to the shared terminal. The external rows move the cursor
+    /// beyond any active tool block, so that block must relinquish its in-place
+    /// rewrite slot; otherwise its completion would cursor-up through the prompt
+    /// and erase the authorization card's footer and bottom border.
     func beginExternalTerminalPrompt() {
         overviewState.isSuspended = true
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
+        finishActiveToolOutputBeforeInterleavedMessage()
     }
 
     /// Releases the external prompt guard and publishes any overview deferred

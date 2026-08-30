@@ -712,7 +712,7 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func taskOverviewRendersWhileToolCompletionRemainsAppendOnly() async throws {
+    func taskOverviewWaitsForCompactToolCompletion() async throws {
         let runner = AgentCoreSessionRunner(taskGraphStore: nil)
         let terminal = try makeTerminalForToolInterleavingTest(sessionRunner: runner)
         let orchestrator = await runner.taskOrchestrator
@@ -737,17 +737,19 @@ struct TerminalChatRenderingTests {
         await terminal.publishTaskGraphOverviewIfChanged(
             observedSessionID: terminal.sessionID
         )
-        let liveSnapshot = await terminal.renderCoordinator.snapshot()
+        let deferredSnapshot = await terminal.renderCoordinator.snapshot()
 
-        #expect(liveSnapshot.lastRenderedTaskGraphOverviewSignature != nil)
-        #expect(liveSnapshot.activeToolCallID == nil)
-        #expect(liveSnapshot.activeToolRenderedRowCount == 0)
-        #expect(!liveSnapshot.deferredTaskGraphOverviewRender)
+        #expect(deferredSnapshot.lastRenderedTaskGraphOverviewSignature == nil)
+        #expect(deferredSnapshot.activeToolCallID == toolCall.id)
+        #expect(deferredSnapshot.activeToolRenderedRowCount > 0)
+        #expect(deferredSnapshot.deferredTaskGraphOverviewRender)
+        #expect(!(await terminal.shouldPublishDeferredTaskGraphOverview()))
 
         await terminal.writeToolCallCompleted(
             toolCall,
             result: DirectAgentToolResult(output: "Done", summary: "Done")
         )
+        #expect(await terminal.shouldPublishDeferredTaskGraphOverview())
         await terminal.publishTaskGraphOverviewIfChanged(
             observedSessionID: terminal.sessionID
         )
@@ -760,7 +762,7 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func subAgentOverviewRendersDuringAnyPendingTool() async throws {
+    func subAgentOverviewDeferredDuringNonAgentToolBlock() async throws {
         let terminal = try makeTerminalForToolInterleavingTest(
             sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
         )
@@ -773,11 +775,14 @@ struct TerminalChatRenderingTests {
         await terminal.writeToolCallStarted(toolCall)
 
         await terminal.renderSubAgentOverview(force: true)
-        let liveSnapshot = await terminal.renderCoordinator.snapshot()
+        let deferredSnapshot = await terminal.renderCoordinator.snapshot()
 
-        #expect(liveSnapshot.lastRenderedSubAgentOverviewSignature != nil)
-        #expect(liveSnapshot.activeToolCallID == nil)
-        #expect(liveSnapshot.activeToolRenderedRowCount == 0)
+        // The overview stays deferred because a non-agent tool block must not
+        // be interleaved — its in-place rewrite (clearOwnedToolRows) would be
+        // corrupted by the interleaved output.
+        #expect(deferredSnapshot.lastRenderedSubAgentOverviewSignature == nil)
+        #expect(deferredSnapshot.activeToolCallID == toolCall.id)
+        #expect(deferredSnapshot.activeToolRenderedRowCount > 0)
 
         await terminal.writeToolCallCompleted(
             toolCall,

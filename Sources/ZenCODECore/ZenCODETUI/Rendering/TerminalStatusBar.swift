@@ -41,35 +41,6 @@ public struct TerminalGitStatusSummary: Equatable, Sendable {
 
 /// Owns the terminal overlay state and serializes every redraw through actor isolation.
 public actor TerminalStatusBar {
-    struct LiveActivityState: Equatable, Sendable {
-        struct PendingTool: Equatable, Sendable {
-            let text: String
-            let isAgentWait: Bool
-        }
-
-        var subAgentLines: [String] = []
-        var pendingToolsByID: [String: PendingTool] = [:]
-        var pendingToolOrder: [String] = []
-
-        var lines: [String] {
-            pendingToolOrder.compactMap { pendingToolsByID[$0]?.text }
-                + subAgentLines
-        }
-
-        func visibleLines(limit: Int) -> [String] {
-            guard limit > 0 else { return [] }
-            let pending = pendingToolOrder.compactMap { id in
-                pendingToolsByID[id].map { (id, $0) }
-            }
-            guard lines.count > limit else { return lines }
-            // Preserve call order normally. Only a constrained terminal promotes
-            // agent.wait so a blocking orchestration call cannot disappear behind
-            // concurrent, shorter-lived tools.
-            let prioritized = pending.filter(\.1.isAgentWait) + pending.filter { !$0.1.isAgentWait }
-            return Array((prioritized.map(\.1.text) + subAgentLines).prefix(limit))
-        }
-    }
-
     struct InputPanelState: Equatable, Sendable {
         let text: String
         let cursorIndex: Int
@@ -108,13 +79,6 @@ public actor TerminalStatusBar {
         var inputPanelRevision: UInt64 = 0
         var inputPanelState: InputPanelState?
         var sharedChatReaderDock: TerminalSharedChatReaderDock?
-        var liveActivity = LiveActivityState()
-        /// Monotonic acceptance fence kept outside the visual state so lifecycle
-        /// cleanup cannot let an already-reserved async snapshot become current.
-        var subAgentRevisionFloor = 0
-        /// The newest reserved publication may complete exactly once. Cleanup
-        /// clears this permission while retaining the monotonic floor.
-        var publishableSubAgentRevision: Int?
         /// Identity of the observation that installed the dock. A completion
         /// from a retired stream may clear only its own overlay.
         var sharedChatReaderObservationID: UUID?
@@ -191,14 +155,12 @@ public actor TerminalStatusBar {
     public func stop() {
         withOutputBatch {
             guard state.isStarted else {
-                clearLiveActivityStateLocked(state: &state)
                 return
             }
             stopSpinnerTaskLocked(state: &state)
             stopResizeSignalSourceLocked(state: &state)
             clearLocked(state: &state)
             writeLocked("\u{1B}[r\u{1B}[?25h")
-            clearLiveActivityStateLocked(state: &state)
             state.lastStatusRender = nil
             state.isStarted = false
         }
@@ -255,124 +217,6 @@ public actor TerminalStatusBar {
         }
     }
 
-    /// Maximum number of dedicated rows currently available to live activity.
-    /// The value excludes transcript, Shared Chat, input and status rows, so the
-    /// producer can select its semantic density without owning terminal geometry.
-    func liveActivityRowCapacity() -> Int? {
-        guard state.isStarted, state.row > 0 else { return nil }
-        return liveActivityRowCapacityLocked(state: &state)
-    }
-
-    /// Reserves the revision before its async snapshot begins. A lifecycle
-    /// cleanup can then invalidate that exact publication without inventing a
-    /// second counter or letting the status-bar fence outrun the coordinator.
-    func reserveSubAgentActivity(revision: Int) {
-        guard revision > state.subAgentRevisionFloor else { return }
-        state.subAgentRevisionFloor = revision
-        state.publishableSubAgentRevision = revision
-    }
-
-    /// Publishes the live Sub-Agents section. Revisions fence async snapshots:
-    /// an older snapshot that completes late cannot replace a newer section.
-    @discardableResult
-    func setSubAgentActivity(text: String, revision: Int) -> Bool {
-        withOutputBatch {
-            if revision > state.subAgentRevisionFloor {
-                state.subAgentRevisionFloor = revision
-                state.publishableSubAgentRevision = revision
-            }
-            guard revision == state.publishableSubAgentRevision else {
-                // A rejected snapshot is already handled even while stopped: it
-                // must never fall back into the permanent transcript.
-                return true
-            }
-            let lines = text.components(separatedBy: "\n").filter { !$0.isEmpty }
-            guard lines != state.liveActivity.subAgentLines else {
-                state.publishableSubAgentRevision = nil
-                return state.isStarted
-            }
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
-            state.publishableSubAgentRevision = nil
-            state.liveActivity.subAgentLines = lines
-            reconcileLiveActivityMutationLocked(oldReservedRows: oldReservedRows, state: &state)
-            return state.isStarted
-        }
-    }
-
-    func clearSubAgentActivity(revision: Int) {
-        withOutputBatch {
-            if revision > state.subAgentRevisionFloor {
-                state.subAgentRevisionFloor = revision
-                state.publishableSubAgentRevision = revision
-            }
-            guard revision == state.publishableSubAgentRevision else { return }
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
-            state.publishableSubAgentRevision = nil
-            state.liveActivity.subAgentLines = []
-            reconcileLiveActivityMutationLocked(oldReservedRows: oldReservedRows, state: &state)
-        }
-    }
-
-    /// Pending calls are keyed by stable tool-call identity. Completing one call
-    /// therefore cannot remove any concurrent call, including a newer wait.
-    @discardableResult
-    func setPendingTool(id: String, name: String, text: String) -> Bool {
-        withOutputBatch {
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
-            if state.liveActivity.pendingToolsByID[id] == nil {
-                state.liveActivity.pendingToolOrder.append(id)
-            }
-            state.liveActivity.pendingToolsByID[id] = LiveActivityState.PendingTool(
-                text: text,
-                isAgentWait: name == "agent.wait"
-            )
-            reconcileLiveActivityMutationLocked(oldReservedRows: oldReservedRows, state: &state)
-            return state.isStarted
-        }
-    }
-
-    func removePendingTool(id: String) {
-        withOutputBatch {
-            guard state.liveActivity.pendingToolsByID[id] != nil else { return }
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
-            state.liveActivity.pendingToolsByID.removeValue(forKey: id)
-            state.liveActivity.pendingToolOrder.removeAll { $0 == id }
-            reconcileLiveActivityMutationLocked(oldReservedRows: oldReservedRows, state: &state)
-        }
-    }
-
-    /// Clears every transient bottom-overlay row at a lifecycle boundary.
-    func clearLiveActivity() {
-        withOutputBatch {
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
-            clearLiveActivityStateLocked(state: &state)
-            reconcileLiveActivityMutationLocked(oldReservedRows: oldReservedRows, state: &state)
-        }
-    }
-
-    private func clearLiveActivityStateLocked(state: inout State) {
-        state.publishableSubAgentRevision = nil
-        state.liveActivity = LiveActivityState()
-    }
-
-    private func reconcileLiveActivityMutationLocked(oldReservedRows: Int, state: inout State) {
-        guard state.isStarted,
-              !state.isResizePending,
-              state.row > 0,
-              state.columns > 0 else { return }
-        let newReservedRows = reservedBottomRowsLocked(state: &state)
-        if newReservedRows > oldReservedRows {
-            scrollOutputRegionUpLocked(
-                state: &state,
-                by: newReservedRows - oldReservedRows,
-                reservedRows: oldReservedRows
-            )
-        }
-        clearReservedRowsLocked(state: &state, count: max(oldReservedRows, newReservedRows))
-        writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
-        renderLocked(state: &state)
-    }
-
     /// Shows or refreshes the shared-chat reader inside the existing bottom panel.
     /// No raw-input loop, terminal ownership, or alternate screen is involved.
     func setSharedChatReader(
@@ -380,7 +224,8 @@ public actor TerminalStatusBar {
         unreadCount: Int,
         isExpanded: Bool,
         selection: TerminalSharedChatReaderDock.Selection = .preserve,
-        observationID: UUID? = nil
+        observationID: UUID? = nil,
+        availableTranscriptGapRows: Int = 0
     ) {
         withOutputBatch {
             let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
@@ -403,7 +248,10 @@ public actor TerminalStatusBar {
             if newReservedRows > oldReservedRows {
                 scrollOutputRegionUpLocked(
                     state: &state,
-                    by: newReservedRows - oldReservedRows,
+                    by: max(
+                        0,
+                        newReservedRows - oldReservedRows - availableTranscriptGapRows
+                    ),
                     reservedRows: oldReservedRows
                 )
             }
@@ -491,7 +339,8 @@ public actor TerminalStatusBar {
         entries: [TerminalSharedChatReaderEntry],
         unreadCount: Int,
         selection: TerminalSharedChatReaderDock.Selection = .preserve,
-        observationID: UUID? = nil
+        observationID: UUID? = nil,
+        availableTranscriptGapRows: Int = 0
     ) -> Bool {
         withOutputBatch {
             let previousDock = state.sharedChatReaderDock
@@ -525,7 +374,10 @@ public actor TerminalStatusBar {
             if newReservedRows > oldReservedRows {
                 scrollOutputRegionUpLocked(
                     state: &state,
-                    by: newReservedRows - oldReservedRows,
+                    by: max(
+                        0,
+                        newReservedRows - oldReservedRows - availableTranscriptGapRows
+                    ),
                     reservedRows: oldReservedRows
                 )
             }
@@ -600,8 +452,6 @@ public actor TerminalStatusBar {
     }
 
     public func reset() {
-        let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
-        clearLiveActivityStateLocked(state: &state)
         state.latestMetrics = nil
         state.shouldReplaceMetricsOnNextUpdate = false
         state.latestContextWindow = nil
@@ -614,17 +464,11 @@ public actor TerminalStatusBar {
         guard state.isStarted else {
             return
         }
-        reconcileLiveActivityMutationLocked(oldReservedRows: oldReservedRows, state: &state)
+        renderStatusLocked(state: &state)
     }
 
     public func setProcessing(_ isProcessing: Bool) {
         guard state.isProcessing != isProcessing else {
-            // Error/cancellation teardown can be idempotent. Even when the
-            // processing flag was already lowered, it remains an authoritative
-            // turn boundary for transient tool and Sub-Agent activity.
-            if !isProcessing {
-                clearLiveActivity()
-            }
             return
         }
         state.isProcessing = isProcessing
@@ -635,12 +479,6 @@ public actor TerminalStatusBar {
         } else {
             state.processingStartInstant = nil
             stopSpinnerTaskLocked(state: &state)
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
-            clearLiveActivityStateLocked(state: &state)
-            if state.isStarted {
-                reconcileLiveActivityMutationLocked(oldReservedRows: oldReservedRows, state: &state)
-                return
-            }
         }
         guard state.isStarted else {
             return

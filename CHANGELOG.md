@@ -12,13 +12,6 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
-- The terminal bottom overlay now has a single owner for live Sub-Agents and
-  every pending tool (with `agent.wait` prioritized on constrained terminals)
-  alongside Shared Chat, input and status. Tool completions, source appendices
-  and agent responses remain permanent append-only transcript output; async
-  overview revisions and tool-call IDs fence stale publication/removal across
-  concurrent calls, chat changes and terminal resize.
-
 - `swift.test` now accepts additional SwiftPM argv such as `--no-parallel`,
   passes them directly without shell interpretation, and always reports the
   process exit code plus timeout/truncation state in its bounded summary.
