@@ -352,6 +352,11 @@ public enum FeatureProcessRunner {
             return result
         }
 
+        // Preserve the race winner even if process exit becomes observable just
+        // afterward. Once the deadline waiter wins, timedOut must not be cleared
+        // by a subsequent hasExited read.
+        let timedOut = outcome == .timeoutOrCancellation
+
         // If the process already terminated, no escalation is needed. Otherwise
         // the trigger (timeout, cancellation, or line limit) won and we must
         // escalate to reach a guaranteed kill, even for a process that ignores
@@ -364,9 +369,9 @@ public enum FeatureProcessRunner {
             )
             // A line-limit truncation triggers escalation so the run always
             // returns, but it is not a timeout: preserve timedOut == false.
-            return outcome == .timeoutOrCancellation
+            return timedOut
         }
-        return false
+        return timedOut
     }
     #endif
 }

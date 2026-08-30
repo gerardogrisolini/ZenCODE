@@ -12,6 +12,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- `swift.test` now accepts additional SwiftPM argv such as `--no-parallel`,
+  passes them directly without shell interpretation, and always reports the
+  process exit code plus timeout/truncation state in its bounded summary.
+
 - Telegram routing now uses schema 2 with one global owner in one private chat.
   Personal routes retain private topics, multi-session rooms, lifecycle,
   generation, leases and wire fences, while group/supergroup routing, member

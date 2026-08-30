@@ -63,16 +63,22 @@ struct SwiftTestTool: FeatureTool {
         let filter: String?
         let target: String?
         let configuration: String?
+        let arguments: [String]?
+        let args: [String]?
         let timeoutSeconds: Int?
         let timeout: Int?
     }
 
     static let name = "swift.test"
-    static let description = "Runs SwiftPM tests with `swift test` and returns a structured summary of failing tests and build errors instead of raw output. Prefer this over local.exec for SwiftPM tests; pass filter for targeted tests and timeoutSeconds for long suites."
+    static let description = "Runs SwiftPM tests with `swift test` and returns a bounded structured summary of failures, diagnostics, exit code, timeout, and truncation state. Pass additional argv such as --no-parallel in arguments."
     static let inputSchema = buildInputSchema(
         CommonSchemaProperties.workingDirectory
             + CommonSchemaProperties.filter
             + CommonSchemaProperties.configuration
+            + [
+                .array("arguments", description: "Additional SwiftPM arguments passed as argv without shell interpretation, for example [\"--no-parallel\"]."),
+                .array("args", description: "Alias for arguments."),
+            ]
             + CommonSchemaProperties.timeout
     )
 
@@ -86,6 +92,7 @@ struct SwiftTestTool: FeatureTool {
         } else if let target = input.target?.nilIfBlank {
             args.append(contentsOf: ["--filter", target])
         }
+        args.append(contentsOf: SwiftToolsSupport.additionalArguments(input.arguments ?? input.args))
         let timeout = TimeInterval(max(30, min(input.timeoutSeconds ?? input.timeout ?? 1200, 3600)))
         let workingDirectory = SwiftToolsSupport.workingDirectory(
             path: input.path,
@@ -98,7 +105,10 @@ struct SwiftTestTool: FeatureTool {
             environment: context.environment,
             timeout: timeout
         )
-        return SwiftToolsSupport.renderTestResult(result, command: "swift " + args.joined(separator: " "))
+        return SwiftToolsSupport.renderTestResult(
+            result,
+            command: SwiftToolsSupport.renderCommand(["swift"] + args)
+        )
     }
 }
 
@@ -237,7 +247,7 @@ struct SwiftToolsFeatureMain {
     }
 }
 
-private enum SwiftToolsSupport {
+enum SwiftToolsSupport {
     struct OutlineEntry {
         let line: Int
         let depth: Int
@@ -279,6 +289,20 @@ private enum SwiftToolsSupport {
             environment: environment,
             timeout: timeout
         )
+    }
+
+    static func additionalArguments(_ arguments: [String]?) -> [String] {
+        (arguments ?? []).filter { !$0.isEmpty }
+    }
+
+    static func renderCommand(_ arguments: [String]) -> String {
+        arguments.map { argument in
+            guard !argument.isEmpty,
+                  argument.allSatisfy({ $0.isLetter || $0.isNumber || "-_./:=+".contains($0) }) else {
+                return "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"
+            }
+            return argument
+        }.joined(separator: " ")
     }
 
     static func renderSwiftOutline(fileURL: URL, maxSymbols: Int?) throws -> String {
@@ -580,6 +604,10 @@ private enum SwiftToolsSupport {
         } else {
             lines.append("status: \(result.exitCode == 0 ? "passed" : "failed") (exit \(result.exitCode))")
         }
+        lines.append("exit_code: \(result.exitCode)")
+        lines.append("timed_out: \(result.timedOut)")
+        lines.append("stdout_truncated: \(result.stdoutWasTruncated)")
+        lines.append("stderr_truncated: \(result.stderrWasTruncated)")
         if let aggregate = aggregateTestSummary(summaries) {
             lines.append("summary: \(aggregate)")
             lines.append(contentsOf: summaries.map { "  " + $0 })
