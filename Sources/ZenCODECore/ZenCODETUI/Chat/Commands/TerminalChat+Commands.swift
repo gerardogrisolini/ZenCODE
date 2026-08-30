@@ -235,10 +235,7 @@ extension TerminalChat {
             /sessions new                Start a new session
             /sessions compact            Compact context
             /sessions delete             Delete a session
-            /sessions tree               Show the checkpoint tree
-            /sessions branches           List branches (leaves)
-            /sessions checkpoint [label] Create a checkpoint (run /sessions save after)
-            /sessions restore [id|index]  Restore in-place from a checkpoint (interactive picker when omitted)
+            /sessions restore [entry-id] Restore in-place from a checkpoint (interactive picker when omitted)
             """
         ),
         TerminalChatCommandDescriptor(

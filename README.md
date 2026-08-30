@@ -159,9 +159,9 @@ swift build -c release --product zen
 ```
 
 `/sessions` also handles snapshots and checkpoint trees
-(`save`, `new`, `compact`, `delete`, `tree`, `branches`, `checkpoint`,
-`restore`). See the [ZenCODE guide](Docs/zen.md#terminal-tui-commands) for the
-complete command reference.
+(`save`, `new`, `compact`, `delete`, `restore`). See the
+[ZenCODE guide](Docs/zen.md#terminal-tui-commands) for the complete command
+reference.
 
 `/plan save` writes the active plan — or the latest non-empty assistant response
 when no plan is active — to the current project's reusable plan library. In a

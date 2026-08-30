@@ -8,7 +8,7 @@
 import Foundation
 
 extension TerminalChat {
-    /// `/sessions restore [entry-id|branch-index]` — restores the active
+    /// `/sessions restore [entry-id]` — restores the active
     /// session in-place from a checkpoint entry, branching from that point.
     /// When the entry specifier is omitted, an interactive picker over the
     /// checkpoint tree lets the user choose the restore point.
@@ -44,7 +44,7 @@ extension TerminalChat {
                 entryID = resolveEntryID(specifier: entrySpecifier, in: tree)
                 guard entryID != nil else {
                     await writeFailureMessage(
-                        "Entry '\(entrySpecifier)' not found. Use /sessions tree or /sessions branches to see available entry IDs and indices.\n"
+                        "Entry '\(entrySpecifier)' not found. Use /sessions restore to choose an entry.\n"
                     )
                     return
                 }
@@ -81,23 +81,11 @@ extension TerminalChat {
         )
     }
 
-    /// Resolves an entry specifier (8-char hex ID or 1-based branch index) to
-    /// an entry ID in the tree.
+    /// Resolves an entry ID in the tree.
     private func resolveEntryID(
         specifier: String,
         in tree: SessionCheckpointTree
     ) -> String? {
-        // Direct ID match
-        if tree.entry(id: specifier) != nil {
-            return specifier
-        }
-        // Branch index (1-based)
-        if let index = Int(specifier), index >= 1 {
-            let branches = tree.branches
-            if index <= branches.count {
-                return branches[index - 1].leafID
-            }
-        }
-        return nil
+        tree.entry(id: specifier).map { _ in specifier }
     }
 }

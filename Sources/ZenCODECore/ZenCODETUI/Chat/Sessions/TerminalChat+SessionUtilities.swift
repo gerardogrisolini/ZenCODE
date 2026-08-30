@@ -35,12 +35,6 @@ extension TerminalChat {
             return .saveActive
         case "compact":
             return .compact
-        case "tree":
-            return .tree
-        case "branches":
-            return .branches
-        case "checkpoint":
-            return .checkpoint(label: remainder.nilIfBlank)
         case "restore":
             return .restore(entryID: remainder)
         default:

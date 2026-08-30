@@ -39,8 +39,6 @@ public struct SessionCheckpointEntry: Codable, Equatable, Sendable, Identifiable
     public enum Kind: Codable, Equatable, Sendable {
         /// A conversation message (user, assistant, tool, system).
         case message(AgentRuntimeMessage)
-        /// A user-defined bookmark or an auto-generated checkpoint.
-        case checkpoint(label: String?)
         /// Summary of an abandoned branch, attached at the branch point.
         case branchSummary(summary: String, fromEntryID: String)
         /// Records a model switch that took effect from this entry onward.
@@ -58,7 +56,7 @@ public struct SessionCheckpointEntry: Codable, Equatable, Sendable, Identifiable
         switch kind {
         case .message, .branchSummary:
             return true
-        case .checkpoint, .modelChange:
+        case .modelChange:
             return false
         }
     }
@@ -159,7 +157,7 @@ public struct SessionCheckpointTree: Codable, Equatable, Sendable {
                 return msg
             case let .branchSummary(summary, _):
                 return AgentRuntimeMessage(role: .assistant, content: summary)
-            case .checkpoint, .modelChange:
+            case .modelChange:
                 return nil
             }
         }
@@ -304,75 +302,11 @@ public struct SessionCheckpointTree: Codable, Equatable, Sendable {
         )
     }
 
-    // MARK: - Tree visualization
-
-    /// A compact indented description of the tree topology for debugging / TUI.
-    public func treeDescription(maxDepth: Int = 50) -> String {
-        guard let root = rootEntry else { return "(empty tree)" }
-        var lines: [String] = []
-        appendTreeLines(
-            entry: root,
-            linePrefix: "",
-            continuationPrefix: "",
-            depth: 0,
-            maxDepth: maxDepth,
-            into: &lines
-        )
-        return lines.joined(separator: "\n")
-    }
-
-    /// Renders a chain of single-child entries at the same indentation level
-    /// and only indents when the tree actually branches, so long linear
-    /// histories stay readable.  `depth` counts branch points, not entries.
-    private func appendTreeLines(
-        entry: SessionCheckpointEntry,
-        linePrefix: String,
-        continuationPrefix: String,
-        depth: Int,
-        maxDepth: Int,
-        into lines: inout [String]
-    ) {
-        guard depth <= maxDepth else {
-            lines.append("\(continuationPrefix)…")
-            return
-        }
-        var current = entry
-        var isFirstLine = true
-        while true {
-            let prefix = isFirstLine ? linePrefix : continuationPrefix
-            let marker = current.id == activeLeafID ? " ← active" : ""
-            lines.append("\(prefix)\(current.id) \(entryLabel(current))\(marker)")
-            isFirstLine = false
-            let kids = children(of: current.id)
-            switch kids.count {
-            case 0:
-                return
-            case 1:
-                current = kids[0]
-            default:
-                for (index, child) in kids.enumerated() {
-                    let isLast = index == kids.count - 1
-                    appendTreeLines(
-                        entry: child,
-                        linePrefix: continuationPrefix + (isLast ? "└─ " : "├─ "),
-                        continuationPrefix: continuationPrefix + (isLast ? "   " : "│  "),
-                        depth: depth + 1,
-                        maxDepth: maxDepth,
-                        into: &lines
-                    )
-                }
-                return
-            }
-        }
-    }
-
     /// A one-line human-readable label for a tree entry (kind + preview).
     public func entryLabel(_ entry: SessionCheckpointEntry) -> String {
         switch entry.kind {
         case let .message(msg):
             return "[\(msg.role.rawValue)] \(Self.entryPreview(msg.content, limit: 60))"
-        case let .checkpoint(label):
-            return "[checkpoint] \(label ?? "unnamed")"
         case let .branchSummary(summary, _):
             return "[branch-summary] \(Self.entryPreview(summary, limit: 40))…"
         case let .modelChange(modelID):
@@ -447,60 +381,5 @@ public struct SessionCheckpointTree: Codable, Equatable, Sendable {
                 currentID = entriesByID[id]?.parentID
             }
         }
-    }
-}
-
-// MARK: - SessionCheckpointBranch
-
-/// Describes a branch (path from root to a leaf) for listing and selection.
-public struct SessionCheckpointBranch: Equatable, Sendable {
-    public let leafID: String
-    public let label: String?
-    public let messageCount: Int
-    public let lastTimestamp: Date
-    public let preview: String
-
-    public init(
-        leafID: String,
-        label: String?,
-        messageCount: Int,
-        lastTimestamp: Date,
-        preview: String
-    ) {
-        self.leafID = leafID
-        self.label = label
-        self.messageCount = messageCount
-        self.lastTimestamp = lastTimestamp
-        self.preview = preview
-    }
-}
-
-extension SessionCheckpointTree {
-    /// Enumerates all leaf entries (nodes with no children) as branches.
-    public var branches: [SessionCheckpointBranch] {
-        entries
-            .filter { !hasChildren($0.id) }
-            .map { leaf in
-                let path = self.path(from: leaf.id)
-                let messages = path.compactMap(\.message)
-                let label = path
-                    .compactMap { entry -> String? in
-                        if case let .checkpoint(label) = entry.kind { return label }
-                        return nil
-                    }
-                    .last
-                let preview = messages
-                    .first { $0.role == .user }?
-                    .content
-                    .prefix(60)
-                    .replacingOccurrences(of: "\n", with: " ") ?? "(no user message)"
-                return SessionCheckpointBranch(
-                    leafID: leaf.id,
-                    label: label,
-                    messageCount: messages.filter { $0.role != .system }.count,
-                    lastTimestamp: leaf.timestamp,
-                    preview: preview
-                )
-            }
     }
 }

@@ -98,7 +98,7 @@ struct SessionCheckpointTreeTests {
             AgentRuntimeMessage(role: .user, content: "Branch 2")
         ))
 
-        #expect(tree.branches.count == 2)
+        #expect(tree.children(of: rootID).count == 2)
     }
 
     // MARK: - Navigation
@@ -167,24 +167,7 @@ struct SessionCheckpointTreeTests {
         #expect(active[1].content == "Alternate path")
 
         // The old "Second" entry should still exist as a separate branch
-        #expect(tree.branches.count == 2)
-    }
-
-    // MARK: - Checkpoint entries
-
-    @Test
-    func checkpointEntryDoesNotParticipateInContext() {
-        var tree = SessionCheckpointTree.fromLinearHistory(
-            [AgentRuntimeMessage(role: .user, content: "Hello")],
-            sessionID: "test"
-        )
-        let checkpoint = tree.append(.checkpoint(label: "my-checkpoint"))
-
-        #expect(checkpoint.kind == .checkpoint(label: "my-checkpoint"))
-        #expect(checkpoint.participatesInContext == false)
-
-        // Messages should not include the checkpoint
-        #expect(tree.activeMessages.count == 1)
+        #expect(tree.children(of: rootID).count == 2)
     }
 
     // MARK: - Branch summary
@@ -242,80 +225,6 @@ struct SessionCheckpointTreeTests {
         #expect(merged.entries.count == tree.entries.count)
     }
 
-    // MARK: - Tree visualization
-
-    @Test
-    func treeDescriptionContainsEntryLabels() {
-        let messages = [
-            AgentRuntimeMessage(role: .user, content: "Hello world"),
-            AgentRuntimeMessage(role: .assistant, content: "Hi there"),
-        ]
-        let tree = SessionCheckpointTree.fromLinearHistory(messages, sessionID: "test")
-
-        let description = tree.treeDescription()
-        #expect(description.contains("[user] Hello world"))
-        #expect(description.contains("[assistant] Hi there"))
-        #expect(description.contains("← active"))
-        // Entry IDs should be visible for restore
-        let firstEntry = tree.entries[0]
-        #expect(description.contains(firstEntry.id))
-    }
-
-    @Test
-    func treeDescriptionKeepsLinearChainsFlat() {
-        let messages = (0..<20).map { index in
-            AgentRuntimeMessage(role: .user, content: "Message \(index)")
-        }
-        let tree = SessionCheckpointTree.fromLinearHistory(messages, sessionID: "test")
-
-        let lines = tree.treeDescription().components(separatedBy: "\n")
-        #expect(lines.count == messages.count)
-        // Linear history must not indent: every line starts with the entry ID.
-        for line in lines {
-            #expect(!line.hasPrefix(" "))
-            #expect(!line.contains("└─"))
-        }
-    }
-
-    @Test
-    func treeDescriptionIndentsOnlyAtBranchPoints() {
-        var tree = SessionCheckpointTree.fromLinearHistory(
-            [AgentRuntimeMessage(role: .user, content: "Root")],
-            sessionID: "test"
-        )
-        let rootID = tree.entries[0].id
-        let branchA = tree.branch(
-            from: rootID,
-            kind: .message(AgentRuntimeMessage(role: .assistant, content: "Branch A"))
-        )
-        _ = tree.branch(
-            from: branchA.id,
-            kind: .message(AgentRuntimeMessage(role: .assistant, content: "A follow-up"))
-        )
-        _ = tree.branch(
-            from: rootID,
-            kind: .message(AgentRuntimeMessage(role: .assistant, content: "Branch B"))
-        )
-
-        let lines = tree.treeDescription().components(separatedBy: "\n")
-        #expect(lines.count == 4)
-        #expect(lines[0].hasPrefix(rootID))
-        #expect(lines[1].hasPrefix("├─ "))
-        // The follow-up continues branch A at the same indentation level.
-        #expect(lines[2].hasPrefix("│  ") && !lines[2].contains("─"))
-        #expect(lines[3].hasPrefix("└─ "))
-    }
-
-    @Test
-    func treeDescriptionCollapsesWhitespaceInPreviews() {
-        let messages = [
-            AgentRuntimeMessage(role: .user, content: "line one\n\tline\t\ttwo   spaced"),
-        ]
-        let tree = SessionCheckpointTree.fromLinearHistory(messages, sessionID: "test")
-
-        let description = tree.treeDescription()
-        #expect(description.contains("[user] line one line two spaced"))
-    }
 
     // MARK: - Entry ID generation
 
@@ -356,8 +265,7 @@ struct SessionCheckpointTreeTests {
             AgentRuntimeMessage(role: .user, content: "Hello"),
             AgentRuntimeMessage(role: .assistant, content: "Hi!"),
         ]
-        var tree = SessionCheckpointTree.fromLinearHistory(messages, sessionID: "test-123")
-        _ = tree.append(.checkpoint(label: "test-checkpoint"))
+        let tree = SessionCheckpointTree.fromLinearHistory(messages, sessionID: "test-123")
 
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary

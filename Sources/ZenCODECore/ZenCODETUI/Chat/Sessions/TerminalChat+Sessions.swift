@@ -14,9 +14,6 @@ enum TerminalSavedSessionCommandAction: Equatable, Sendable {
     case newSession
     case saveActive
     case compact
-    case tree
-    case branches
-    case checkpoint(label: String?)
     case restore(entryID: String)
     case saveNamed(String)
 }
@@ -39,12 +36,6 @@ extension TerminalChat {
             await saveActiveSession()
         case .compact:
             await compactCurrentSession()
-        case .tree:
-            await displayCheckpointTree()
-        case .branches:
-            await listBranches()
-        case let .checkpoint(label):
-            await createCheckpoint(label: label)
         case let .restore(entryID):
             await handleRestoreCommand(entryID)
         case let .saveNamed(name):
@@ -683,58 +674,12 @@ extension TerminalChat {
                /sessions new                Start a new session
                /sessions compact            Compact context
                /sessions delete             Delete a session
-               /sessions tree               Show the checkpoint tree
-               /sessions branches           List branches (leaves)
-               /sessions checkpoint [label] Create a checkpoint
-               /sessions restore [id|index] Restore in-place from a checkpoint
+               /sessions restore [entry-id] Restore in-place from a checkpoint
                                             (interactive picker when omitted)
         """
     }
 
     // MARK: - Checkpoint tree operations
-
-    /// Renders the checkpoint tree of the active (or given) saved session as
-    /// an indented text outline for display in the TUI.
-    public func renderCheckpointTree(
-        for savedSession: TerminalSavedSession? = nil
-    ) -> String {
-        let tree: SessionCheckpointTree
-        if let savedSession {
-            tree = savedSession.checkpointTree
-        } else if let activeCheckpointTree {
-            tree = activeCheckpointTree
-        } else {
-            return "No checkpoint tree available. Save the session first with /sessions save."
-        }
-        let header = "Session checkpoint tree (\(tree.branches.count) branch(es), \(tree.entries.count) entries):\n"
-        return header + tree.treeDescription()
-    }
-
-    /// Displays the checkpoint tree in the terminal.
-    public func displayCheckpointTree(
-        for savedSession: TerminalSavedSession? = nil
-    ) async {
-        let output = renderCheckpointTree(for: savedSession)
-        await writeSystemMessage("\n\(output)\n")
-    }
-
-    /// Creates a manual checkpoint at the current position in the active
-    /// session's tree.
-    public func createCheckpoint(label: String?) async {
-        if activeCheckpointTree == nil {
-            activeCheckpointTree = SessionCheckpointTree.fromLinearHistory(
-                activeSessionTranscript,
-                sessionID: sessionID
-            )
-        }
-        guard var tree = activeCheckpointTree else { return }
-        let entry = tree.append(.checkpoint(label: label?.nilIfBlank))
-        activeCheckpointTree = tree
-        let labelDisplay = label?.nilIfBlank ?? "unnamed"
-        await writeSystemMessage(
-            "Checkpoint created: \(labelDisplay) (id: \(entry.id)).\n"
-        )
-    }
 
     /// Restores the session from a specific checkpoint entry, branching from
     /// that point.  Subsequent messages will form a new branch in the tree.
@@ -754,31 +699,6 @@ extension TerminalChat {
         await writeSystemMessage(
             "Restored from checkpoint \(entryID) (\(messageCount) messages on this branch).\n"
         )
-    }
-
-    /// Lists all branches (leaves) in the active or given session's tree.
-    public func listBranches(
-        for savedSession: TerminalSavedSession? = nil
-    ) async {
-        let tree: SessionCheckpointTree
-        if let savedSession {
-            tree = savedSession.checkpointTree
-        } else if let activeCheckpointTree {
-            tree = activeCheckpointTree
-        } else {
-            await writeSystemMessage("No checkpoint tree available.\n")
-            return
-        }
-        let branches = tree.branches
-        await writeSystemMessage("\nBranches (\(branches.count)):\n")
-        for (offset, branch) in branches.enumerated() {
-            let active = branch.leafID == tree.activeLeafID ? " *" : ""
-            let labelPart = branch.label.map { " [\($0)]" } ?? ""
-            await writeSystemMessage(
-                "  \(offset + 1).\(active)\(labelPart) \(branch.messageCount) msgs — \(branch.preview)\n"
-            )
-        }
-        await writeSystemMessage("\n")
     }
 
 }

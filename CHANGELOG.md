@@ -12,6 +12,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Removed the manual `/sessions checkpoint [label]`, `/sessions tree`, and
+  `/sessions branches` commands, plus restore-by-branch-index. Session
+  checkpoint trees continue to record ordinary messages automatically; restore
+  remains available through its interactive picker and entry IDs.
+
 - `swift.test` now accepts additional SwiftPM argv such as `--no-parallel`,
   passes them directly without shell interpretation, and always reports the
   process exit code plus timeout/truncation state in its bounded summary.

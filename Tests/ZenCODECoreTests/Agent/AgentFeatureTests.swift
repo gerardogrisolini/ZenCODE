@@ -135,14 +135,11 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    func savedSessionCommandParsesCheckpointSubcommands() {
-        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "tree") == .tree)
-        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "branches") == .branches)
-        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "checkpoint") == .checkpoint(label: nil))
-        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "checkpoint stable") == .checkpoint(label: "stable"))
+    func savedSessionCommandParsesRestoreByEntryIDOnly() {
+        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "tree") == .saveNamed("tree"))
+        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "branches") == .saveNamed("branches"))
         #expect(TerminalChat.savedSessionCommandAction(rawArguments: "restore a1b2c3d4") == .restore(entryID: "a1b2c3d4"))
         #expect(TerminalChat.savedSessionCommandAction(rawArguments: "restore") == .restore(entryID: ""))
-        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "restore a1b2c3d4") == .restore(entryID: "a1b2c3d4"))
         #expect(TerminalChat.savedSessionCommandAction(rawArguments: "restore 2") == .restore(entryID: "2"))
     }
 
