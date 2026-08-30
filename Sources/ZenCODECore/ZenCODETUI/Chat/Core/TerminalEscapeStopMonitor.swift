@@ -23,15 +23,28 @@ enum TerminalEscapeStopMonitor {
     /// restores the terminal instead of holding raw mode.
     static func startIfNeeded(
         isEnabled: Bool,
-        onStop: @escaping @Sendable () -> Void
+        rawInput: TerminalRawInput = TerminalRawInput(),
+        managesRawMode: Bool = true,
+        onStop: @escaping @Sendable () async -> Void
     ) -> Task<Void, Never>? {
         guard isEnabled else {
             return nil
         }
 
         return Task(name: "ZenCODE.TUI.escape-stop-monitor") {
-            _ = await TerminalBlockingRead.run { token in
-                watchForEscape(token: token, onStop: onStop)
+            let didStop = await TerminalBlockingRead.run { token in
+                watchForEscape(
+                    token: token,
+                    rawInput: rawInput,
+                    managesRawMode: managesRawMode,
+                    onStop: {}
+                )
+            }
+            // Keep propagation inside the monitor task. The prompt lifecycle
+            // awaits this task during teardown, so delegated agents are stopped
+            // before the terminal turn is allowed to finish.
+            if didStop == true {
+                await onStop()
             }
         }
     }

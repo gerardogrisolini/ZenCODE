@@ -405,6 +405,37 @@ struct TerminalInputLifecycleTests {
     }
 
     @Test
+    func escapeStopMonitorAwaitsAsynchronousStopPropagation() async {
+        let pipe = Pipe()
+        defer {
+            pipe.fileHandleForWriting.closeFile()
+            pipe.fileHandleForReading.closeFile()
+        }
+        let propagationStarted = TerminalTestSignal()
+        let propagationGate = TerminalEscapePropagationGate()
+        let propagationFinished = TerminalTestFlag()
+        let monitor = TerminalEscapeStopMonitor.startIfNeeded(
+            isEnabled: true,
+            rawInput: TerminalRawInput(
+                fileDescriptor: pipe.fileHandleForReading.fileDescriptor
+            ),
+            managesRawMode: false
+        ) {
+            propagationStarted.signal()
+            await propagationGate.wait()
+            propagationFinished.set(true)
+        }
+
+        pipe.fileHandleForWriting.write(Data([0x1B]))
+        await propagationStarted.wait()
+        #expect(!propagationFinished.value)
+
+        await propagationGate.open()
+        await monitor?.value
+        #expect(propagationFinished.value)
+    }
+
+    @Test
     func foregroundRecoveryTargetsOnlyAStaleDifferentOwner() {
         #expect(
             !TerminalRawInput.shouldReclaimForegroundTerminal(
@@ -434,5 +465,23 @@ struct TerminalInputLifecycleTests {
         #expect(
             TerminalEscapeStopMonitor.startIfNeeded(isEnabled: false, onStop: {}) == nil
         )
+    }
+}
+
+private actor TerminalEscapePropagationGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func open() {
+        isOpen = true
+        continuation?.resume()
+        continuation = nil
     }
 }
