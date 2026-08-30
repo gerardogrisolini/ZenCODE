@@ -11,16 +11,14 @@ extension TerminalChatRenderCoordinator {
 
     func writeToolCallStarted(
         _ toolCall: DirectAgentToolCall,
-        maximumInPlaceRows: Int? = nil,
-        outputGeometry: TerminalOutputRegionGeometry? = nil
+        maximumInPlaceRows: Int? = nil
     ) {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
         if isSubAgentTool {
             clearOwnedSubAgentOverviewBeforeInterleavedOutput(
-                maximumInPlaceRows: maximumInPlaceRows,
-                outputGeometry: outputGeometry
+                maximumInPlaceRows: maximumInPlaceRows
             )
         }
         prepareForToolOutput()
@@ -36,15 +34,13 @@ extension TerminalChatRenderCoordinator {
     func writeToolCallCompleted(
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult,
-        maximumInPlaceRows: Int? = nil,
-        outputGeometry: TerminalOutputRegionGeometry? = nil
+        maximumInPlaceRows: Int? = nil
     ) {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
             clearOwnedSubAgentOverviewBeforeInterleavedOutput(
-                maximumInPlaceRows: maximumInPlaceRows,
-                outputGeometry: outputGeometry
+                maximumInPlaceRows: maximumInPlaceRows
             )
         }
         let elapsed = toolState.startInstants.removeValue(forKey: toolCall.id)

@@ -118,7 +118,6 @@ extension TerminalChatRenderCoordinator {
         var cursorGapRows: Int
         let columnWidth: Int
         let maximumInPlaceRows: Int?
-        var outputGeometry: TerminalOutputRegionGeometry?
         let cursorStateBeforeRender: CursorState
         let writeSequence: UInt64
     }
@@ -130,8 +129,7 @@ extension TerminalChatRenderCoordinator {
             partialResponses: [SubAgentPartialResponse],
             responses: [SubAgentMarkdownResponse],
             overviewBatchID: String?,
-            maximumInPlaceRows: Int?,
-            outputGeometry: TerminalOutputRegionGeometry?
+            maximumInPlaceRows: Int?
         )
     }
 

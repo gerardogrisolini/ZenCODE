@@ -39,17 +39,6 @@ public struct TerminalGitStatusSummary: Equatable, Sendable {
     }
 }
 
-/// Monotonic evidence for the physical transcript region owned by the status bar.
-/// Consumers must not infer cursor ownership from capacity alone: panel changes
-/// can move the region while writes bypass the chat render coordinator.
-struct TerminalOutputRegionGeometry: Equatable, Sendable {
-    let revision: UInt64
-    let epoch: UInt64
-    let capacity: Int
-    let cumulativeTranscriptScrollRows: UInt64
-    let ownsPhysicalRegion: Bool
-}
-
 /// Owns the terminal overlay state and serializes every redraw through actor isolation.
 public actor TerminalStatusBar {
     struct InputPanelState: Equatable, Sendable {
@@ -88,9 +77,6 @@ public actor TerminalStatusBar {
         var resizeGeneration = 0
         var isResizePending = false
         var inputPanelRevision: UInt64 = 0
-        var outputGeometryRevision: UInt64 = 0
-        var outputGeometryEpoch: UInt64 = 0
-        var cumulativeTranscriptScrollRows: UInt64 = 0
         var inputPanelState: InputPanelState?
         var sharedChatReaderDock: TerminalSharedChatReaderDock?
         /// Identity of the observation that installed the dock. A completion
@@ -214,7 +200,6 @@ public actor TerminalStatusBar {
             }
             let newReservedRows = reservedBottomRowsLocked(state: &state)
             if !hadInputPanel || oldReservedRows != newReservedRows {
-                advanceOutputGeometryLocked(state: &state)
                 if hadInputPanel, newReservedRows > oldReservedRows {
                     scrollOutputRegionUpLocked(
                         state: &state,
@@ -260,9 +245,6 @@ public actor TerminalStatusBar {
             }
             guard state.isStarted else { return }
             let newReservedRows = reservedBottomRowsLocked(state: &state)
-            if oldReservedRows != newReservedRows {
-                advanceOutputGeometryLocked(state: &state)
-            }
             if newReservedRows > oldReservedRows {
                 scrollOutputRegionUpLocked(
                     state: &state,
@@ -299,9 +281,6 @@ public actor TerminalStatusBar {
             state.sharedChatReaderDock = nil
             state.sharedChatReaderObservationID = nil
             guard state.isStarted else { return }
-            if oldReservedRows != reservedBottomRowsLocked(state: &state) {
-                advanceOutputGeometryLocked(state: &state)
-            }
             clearReservedRowsLocked(state: &state, count: oldReservedRows)
             writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
             renderLocked(state: &state)
@@ -328,9 +307,6 @@ public actor TerminalStatusBar {
             state.sharedChatReaderDock = dock
             guard state.isStarted else { return }
             let newReservedRows = reservedBottomRowsLocked(state: &state)
-            if oldReservedRows != newReservedRows {
-                advanceOutputGeometryLocked(state: &state)
-            }
             clearReservedRowsLocked(state: &state, count: max(oldReservedRows, newReservedRows))
             writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
             renderLocked(state: &state)
@@ -395,9 +371,6 @@ public actor TerminalStatusBar {
                 return false
             }
             let newReservedRows = reservedBottomRowsLocked(state: &state)
-            if oldReservedRows != newReservedRows {
-                advanceOutputGeometryLocked(state: &state)
-            }
             if newReservedRows > oldReservedRows {
                 scrollOutputRegionUpLocked(
                     state: &state,
@@ -427,9 +400,6 @@ public actor TerminalStatusBar {
             state.sharedChatReaderDock = dock
             guard state.isStarted else { return }
             let newReservedRows = reservedBottomRowsLocked(state: &state)
-            if oldReservedRows != newReservedRows {
-                advanceOutputGeometryLocked(state: &state)
-            }
             if newReservedRows > oldReservedRows {
                 scrollOutputRegionUpLocked(
                     state: &state,
@@ -456,7 +426,6 @@ public actor TerminalStatusBar {
             guard state.isStarted else {
                 return
             }
-            advanceOutputGeometryLocked(state: &state)
             clearReservedRowsLocked(state: &state, count: oldReservedRows)
             writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
             renderLocked(state: &state)
@@ -656,26 +625,6 @@ public actor TerminalStatusBar {
         return max(0, state.row - reservedBottomRowsLocked(state: &state))
     }
 
-    func outputRegionGeometry() -> TerminalOutputRegionGeometry? {
-        guard state.isStarted, state.row > 0, state.columns > 0 else {
-            return nil
-        }
-        return TerminalOutputRegionGeometry(
-            revision: state.outputGeometryRevision,
-            epoch: state.outputGeometryEpoch,
-            capacity: max(0, state.row - reservedBottomRowsLocked(state: &state)),
-            cumulativeTranscriptScrollRows: state.cumulativeTranscriptScrollRows,
-            ownsPhysicalRegion: !state.isResizePending
-        )
-    }
-
-    func advanceOutputGeometryLocked(state: inout State, startsNewEpoch: Bool = false) {
-        state.outputGeometryRevision &+= 1
-        if startsNewEpoch {
-            state.outputGeometryEpoch &+= 1
-        }
-    }
-
     // MARK: - Test support
 
     /// Configures terminal geometry and optional status fields without rendering,
@@ -688,7 +637,6 @@ public actor TerminalStatusBar {
         isResizePending: Bool = false
     ) {
         state.isStarted = true
-        advanceOutputGeometryLocked(state: &state, startsNewEpoch: true)
         state.row = row
         state.columns = columns
         state.latestModelID = modelID

@@ -948,10 +948,8 @@ extension TerminalChat {
                     // reserved rows; generation and the normal input loop keep running.
                     guard !isSharedChatReaderOpen else {
                         sharedChatReadingBuffer.closeReader()
-                        let outputGeometry = await statusBar.outputRegionGeometry()
-                        _ = await renderCoordinator.beginBottomOverlayTransition(
-                            currentOutputGeometry: outputGeometry
-                        )
+                        let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+                        _ = await renderCoordinator.beginBottomOverlayTransition()
                         await statusBar.setSharedChatReader(
                             entries: entries,
                             unreadCount: sharedChatReadingBuffer.unreadCount,
@@ -959,7 +957,8 @@ extension TerminalChat {
                             observationID: sharedChatObservation.observation.id
                         )
                         await renderCoordinator.endBottomOverlayTransition(
-                            currentOutputGeometry: await statusBar.outputRegionGeometry()
+                            previousOutputCapacity: previousOutputCapacity,
+                            currentOutputCapacity: await statusBar.scrollableOutputRowCapacity()
                         )
                         isSharedChatReaderOpen = false
                         interactiveReader.setSharedChatReaderOpen(false)
@@ -971,10 +970,8 @@ extension TerminalChat {
                     // payload row was actually shown. Only then is opening
                     // committed as a reader action, so its selection/read
                     // state is applied after a visible payload is guaranteed.
-                    let outputGeometry = await statusBar.outputRegionGeometry()
-                    let availableTranscriptGapRows = await renderCoordinator.beginBottomOverlayTransition(
-                        currentOutputGeometry: outputGeometry
-                    )
+                    let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+                    let availableTranscriptGapRows = await renderCoordinator.beginBottomOverlayTransition()
                     let didExpand = await statusBar.expandSharedChatReader(
                         entries: entries,
                         unreadCount: sharedChatReadingBuffer.readerOpeningUnreadCount,
@@ -983,7 +980,8 @@ extension TerminalChat {
                         availableTranscriptGapRows: availableTranscriptGapRows
                     )
                     await renderCoordinator.endBottomOverlayTransition(
-                        currentOutputGeometry: await statusBar.outputRegionGeometry()
+                        previousOutputCapacity: previousOutputCapacity,
+                        currentOutputCapacity: await statusBar.scrollableOutputRowCapacity()
                     )
                     guard didExpand else {
                         // Nothing was committed: the compact dock keeps
@@ -1107,10 +1105,8 @@ extension TerminalChat {
                 // The first message can add the compact header. Fence periodic
                 // refreshes while the scroll region moves, but keep the live
                 // overview ownership: the terminal shifts that block intact.
-                let outputGeometry = await statusBar.outputRegionGeometry()
-                let availableTranscriptGapRows = await renderCoordinator.beginBottomOverlayTransition(
-                    currentOutputGeometry: outputGeometry
-                )
+                let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+                let availableTranscriptGapRows = await renderCoordinator.beginBottomOverlayTransition()
                 await statusBar.setSharedChatReader(
                     entries: entries,
                     unreadCount: sharedChatReadingBuffer.unreadCount,
@@ -1119,7 +1115,8 @@ extension TerminalChat {
                     availableTranscriptGapRows: availableTranscriptGapRows
                 )
                 await renderCoordinator.endBottomOverlayTransition(
-                    currentOutputGeometry: await statusBar.outputRegionGeometry()
+                    previousOutputCapacity: previousOutputCapacity,
+                    currentOutputCapacity: await statusBar.scrollableOutputRowCapacity()
                 )
                 await refreshSharedChatPanelSuggestions()
             case let .sharedChatObservationEnded(_, observationID):

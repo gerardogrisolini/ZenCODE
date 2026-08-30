@@ -137,8 +137,7 @@ extension TerminalChatRenderCoordinator {
         force: Bool,
         rememberSignature: Bool,
         overviewBatchID: String? = nil,
-        maximumInPlaceRows: Int? = nil,
-        outputGeometry: TerminalOutputRegionGeometry? = nil
+        maximumInPlaceRows: Int? = nil
     ) -> OverviewRenderResult {
         let pendingResponseTokens = responses.compactMap { response in
             overviewState.consumedResponseTokens.contains(response.token)
@@ -164,8 +163,7 @@ extension TerminalChatRenderCoordinator {
                 partialResponses: partialResponses,
                 responses: responses,
                 overviewBatchID: overviewBatchID,
-                maximumInPlaceRows: maximumInPlaceRows,
-                outputGeometry: outputGeometry
+                maximumInPlaceRows: maximumInPlaceRows
             )
         )
     }
@@ -215,7 +213,7 @@ extension TerminalChatRenderCoordinator {
            !assistantStreamingState.isStreaming,
            !thoughtStreamingState.isStreaming {
             let maximumInPlaceRows: Int?
-            if case let .subAgents(_, _, _, _, rows, _) = content {
+            if case let .subAgents(_, _, _, _, rows) = content {
                 maximumInPlaceRows = rows
             } else {
                 maximumInPlaceRows = nil
@@ -277,16 +275,14 @@ extension TerminalChatRenderCoordinator {
             partialResponses,
             responses,
             overviewBatchID,
-            maximumInPlaceRows,
-            outputGeometry
+            maximumInPlaceRows
         ):
             renderSubAgentOverviewContent(
                 text: text,
                 partialResponses: partialResponses,
                 responses: responses,
                 overviewBatchID: overviewBatchID,
-                maximumInPlaceRows: maximumInPlaceRows,
-                outputGeometry: outputGeometry
+                maximumInPlaceRows: maximumInPlaceRows
             )
         }
     }
@@ -302,8 +298,7 @@ extension TerminalChatRenderCoordinator {
         partialResponses: [SubAgentPartialResponse],
         responses: [SubAgentMarkdownResponse],
         overviewBatchID: String?,
-        maximumInPlaceRows: Int?,
-        outputGeometry: TerminalOutputRegionGeometry?
+        maximumInPlaceRows: Int?
     ) {
         let pendingResponses = responses.filter { response in
             !overviewState.consumedResponseTokens.contains(response.token)
@@ -316,13 +311,10 @@ extension TerminalChatRenderCoordinator {
         // and the erase and shift the rows this section believes it owns.
         flushChatOutput()
         let columnWidth = freshColumnWidthProvider()
-        let currentGeometry = observeOutputGeometry(outputGeometry)
-        let currentMaximumInPlaceRows = currentGeometry?.capacity ?? maximumInPlaceRows
         let reusableBlock = reusableSubAgentOverviewBlock(
             anchorID: overviewBatchID,
             columnWidth: columnWidth,
-            maximumInPlaceRows: currentMaximumInPlaceRows,
-            outputGeometry: currentGeometry
+            maximumInPlaceRows: maximumInPlaceRows
         )
 
         // Restoring the spacing state recorded before the previous section was
@@ -379,17 +371,15 @@ extension TerminalChatRenderCoordinator {
         guard standardErrorIsTerminal,
               overviewBatchID != nil,
               startsAtLineStart,
-              (!requiresOutputRegionGeometry || currentGeometry?.ownsPhysicalRegion == true),
               let rows = ownedRowCount(of: renderedText, columnWidth: columnWidth),
-              rows <= (currentMaximumInPlaceRows ?? Int.max) else {
+              rows <= (maximumInPlaceRows ?? Int.max) else {
             return
         }
         activeSubAgentOverviewBlock = ActiveOverviewBlock(
             rows: rows,
             cursorGapRows: 0,
             columnWidth: columnWidth,
-            maximumInPlaceRows: currentMaximumInPlaceRows,
-            outputGeometry: currentGeometry,
+            maximumInPlaceRows: maximumInPlaceRows,
             cursorStateBeforeRender: cursorStateBeforeRender,
             writeSequence: emittedWriteCount
         )
@@ -426,89 +416,26 @@ extension TerminalChatRenderCoordinator {
     private func reusableSubAgentOverviewBlock(
         anchorID: String?,
         columnWidth: Int,
-        maximumInPlaceRows: Int?,
-        outputGeometry: TerminalOutputRegionGeometry?
+        maximumInPlaceRows: Int?
     ) -> ActiveOverviewBlock? {
         guard standardErrorIsTerminal,
               anchorID != nil,
               let block = activeSubAgentOverviewBlock,
               block.writeSequence == emittedWriteCount,
-              block.columnWidth == columnWidth,
-              let reconciledBlock = reconciledOverviewBlock(block, with: outputGeometry) else {
+              block.columnWidth == columnWidth else {
             return nil
         }
         // A section taller than the scrolling region has already lost its
         // earliest rows to scrollback, so cursor-up would descend through the
         // reserved overlay instead of its own rows.
         let maximumSafeRows = min(
-            reconciledBlock.maximumInPlaceRows ?? Int.max,
+            block.maximumInPlaceRows ?? Int.max,
             maximumInPlaceRows ?? Int.max
         )
-        guard reconciledBlock.rows + reconciledBlock.cursorGapRows <= maximumSafeRows else {
+        guard block.rows + block.cursorGapRows <= maximumSafeRows else {
             return nil
         }
-        return reconciledBlock
-    }
-
-    /// Advances a block's cursor gap using only status-bar evidence. Geometry is
-    /// optional for legacy/non-overlay callers, but once a block was established
-    /// with geometry a missing or discontinuous snapshot invalidates ownership.
-    private func reconciledOverviewBlock(
-        _ original: ActiveOverviewBlock,
-        with geometry: TerminalOutputRegionGeometry?
-    ) -> ActiveOverviewBlock? {
-        if requiresOutputRegionGeometry,
-           (original.outputGeometry == nil || geometry == nil) {
-            return nil
-        }
-        guard original.outputGeometry != nil || geometry != nil else {
-            return original
-        }
-        guard let previous = original.outputGeometry,
-              let geometry,
-              geometry.ownsPhysicalRegion,
-              geometry.epoch == previous.epoch,
-              geometry.revision >= previous.revision,
-              geometry.cumulativeTranscriptScrollRows >= previous.cumulativeTranscriptScrollRows else {
-            return nil
-        }
-        let scrollDelta = geometry.cumulativeTranscriptScrollRows
-            - previous.cumulativeTranscriptScrollRows
-        guard scrollDelta <= UInt64(Int.max) else { return nil }
-        let (capacityAdjustedGap, capacityOverflow) = original.cursorGapRows
-            .addingReportingOverflow(geometry.capacity - previous.capacity)
-        let (gap, scrollOverflow) = capacityAdjustedGap
-            .addingReportingOverflow(Int(scrollDelta))
-        guard !capacityOverflow,
-              !scrollOverflow,
-              gap >= 0,
-              original.rows <= geometry.capacity,
-              gap <= geometry.capacity - original.rows else {
-            return nil
-        }
-        var block = original
-        block.cursorGapRows = gap
-        block.outputGeometry = geometry
         return block
-    }
-
-    private func observeOutputGeometry(
-        _ geometry: TerminalOutputRegionGeometry?
-    ) -> TerminalOutputRegionGeometry? {
-        if geometry != nil {
-            requiresOutputRegionGeometry = true
-        }
-        guard let geometry else {
-            latestOutputRegionGeometry = nil
-            return nil
-        }
-        if let latestOutputRegionGeometry,
-           geometry.revision < latestOutputRegionGeometry.revision {
-            self.latestOutputRegionGeometry = nil
-            return nil
-        }
-        latestOutputRegionGeometry = geometry
-        return geometry
     }
 
     /// Rows the sub-agent section still owns at the current cursor position.
@@ -524,31 +451,9 @@ extension TerminalChatRenderCoordinator {
     /// Fences overview refreshes while the status bar changes its reserved rows.
     /// The block remains visible and owned; a collapse only adds blank transcript
     /// rows below it, which a later in-place replacement must step over.
-    func beginBottomOverlayTransition(
-        currentOutputGeometry: TerminalOutputRegionGeometry? = nil
-    ) -> Int {
+    func beginBottomOverlayTransition() -> Int {
         isBottomOverlayTransitionActive = true
-        let geometry = observeOutputGeometry(currentOutputGeometry)
-        guard let block = activeSubAgentOverviewBlock,
-              let reconciled = reconciledOverviewBlock(block, with: geometry) else {
-            if currentOutputGeometry != nil {
-                activeSubAgentOverviewBlock = nil
-            }
-            return 0
-        }
-        activeSubAgentOverviewBlock = reconciled
-        return reconciled.cursorGapRows
-    }
-
-    func endBottomOverlayTransition(
-        currentOutputGeometry: TerminalOutputRegionGeometry?
-    ) {
-        let geometry = observeOutputGeometry(currentOutputGeometry)
-        if let block = activeSubAgentOverviewBlock {
-            activeSubAgentOverviewBlock = reconciledOverviewBlock(block, with: geometry)
-        }
-        isBottomOverlayTransitionActive = false
-        renderPendingOverviewsIfIdle()
+        return activeSubAgentOverviewBlock?.cursorGapRows ?? 0
     }
 
     func endBottomOverlayTransition(
@@ -584,8 +489,7 @@ extension TerminalChatRenderCoordinator {
     /// overview in the one shared rewrite slot; otherwise every subsequent
     /// coordinator call would strand the prior section in the transcript.
     func clearOwnedSubAgentOverviewBeforeInterleavedOutput(
-        maximumInPlaceRows: Int?,
-        outputGeometry: TerminalOutputRegionGeometry? = nil
+        maximumInPlaceRows: Int?
     ) {
         flushChatOutput()
         // The lifecycle block removes the live overview from the terminal's
@@ -596,13 +500,9 @@ extension TerminalChatRenderCoordinator {
         // (or the wait completes), because every periodic refresh is incorrectly
         // deduplicated against a section that is no longer on screen.
         overviewState.signatures.removeValue(forKey: .subAgents)
-        guard let originalBlock = activeSubAgentOverviewBlock else { return }
+        guard let block = activeSubAgentOverviewBlock else { return }
         activeSubAgentOverviewBlock = nil
         let columnWidth = freshColumnWidthProvider()
-        let geometry = observeOutputGeometry(outputGeometry)
-        guard let block = reconciledOverviewBlock(originalBlock, with: geometry) else {
-            return
-        }
         let maximumSafeRows = min(
             block.maximumInPlaceRows ?? Int.max,
             maximumInPlaceRows ?? Int.max
@@ -624,8 +524,7 @@ extension TerminalChatRenderCoordinator {
     /// region; otherwise state is forgotten append-safely.
     func clearSubAgentOverview(
         revision: Int? = nil,
-        maximumInPlaceRows: Int? = nil,
-        outputGeometry: TerminalOutputRegionGeometry? = nil
+        maximumInPlaceRows: Int? = nil
     ) {
         if let revision {
             guard revision >= (overviewState.revisions[.subAgents] ?? Int.min) else {
@@ -637,13 +536,9 @@ extension TerminalChatRenderCoordinator {
         overviewState.signatures.removeValue(forKey: .subAgents)
 
         flushChatOutput()
-        guard let originalBlock = activeSubAgentOverviewBlock else { return }
+        guard let block = activeSubAgentOverviewBlock else { return }
         activeSubAgentOverviewBlock = nil
         let columnWidth = freshColumnWidthProvider()
-        let geometry = observeOutputGeometry(outputGeometry)
-        guard let block = reconciledOverviewBlock(originalBlock, with: geometry) else {
-            return
-        }
         guard standardErrorIsTerminal,
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth,

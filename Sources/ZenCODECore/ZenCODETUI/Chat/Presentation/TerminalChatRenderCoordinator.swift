@@ -124,12 +124,6 @@ actor TerminalChatRenderCoordinator {
     var toolState = TerminalToolBlockAccounting<ActiveToolBlock>()
     var subAgentToolState = TerminalSubAgentToolPresentationState()
     var activeSubAgentOverviewBlock: ActiveOverviewBlock?
-    /// Newest status-bar geometry observed by this actor. A deferred overview may
-    /// carry an older row budget and must never roll this authority backward.
-    var latestOutputRegionGeometry: TerminalOutputRegionGeometry?
-    /// Once production geometry has been supplied, missing or rejected evidence
-    /// must not silently downgrade this coordinator to legacy capacity-only mode.
-    var requiresOutputRegionGeometry = false
     /// Fences periodic overview publications while the status bar changes the
     /// transcript's scrolling region outside this coordinator.
     var isBottomOverlayTransitionActive = false

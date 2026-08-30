@@ -88,10 +88,6 @@ extension TerminalStatusBar {
         }
         state.resizeGeneration += 1
         state.isResizePending = true
-        // SIGWINCH means the terminal has already changed. Fence ownership now,
-        // rather than after the debounce, including height-only resizes where a
-        // fresh column-width check cannot detect the stale physical region.
-        advanceOutputGeometryLocked(state: &state, startsNewEpoch: true)
         let generation = state.resizeGeneration
         state.resizeTask?.cancel()
         state.resizeTask = Task(name: "ZenCODE.TUI.terminal-resize") { [weak self] in

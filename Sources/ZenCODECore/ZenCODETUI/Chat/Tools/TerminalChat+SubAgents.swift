@@ -146,13 +146,11 @@ extension TerminalChat {
         let snapshots = await sessionRunner.subAgentSnapshots()
         let toolPresentations = await renderCoordinator.subAgentToolPresentationSnapshot()
         await refreshStatusBarGitStatusSummaryForCompletedSubAgents(snapshots)
-        let outputGeometry = await statusBar.outputRegionGeometry()
-        let maximumInPlaceRows = outputGeometry?.capacity
+        let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
         guard force || !snapshots.isEmpty else {
             await renderCoordinator.clearSubAgentOverview(
                 revision: publicationRevision,
-                maximumInPlaceRows: maximumInPlaceRows,
-                outputGeometry: outputGeometry
+                maximumInPlaceRows: maximumInPlaceRows
             )
             return
         }
@@ -186,8 +184,7 @@ extension TerminalChat {
             force: force,
             rememberSignature: rememberSignature,
             overviewBatchID: overviewBatchID,
-            maximumInPlaceRows: maximumInPlaceRows,
-            outputGeometry: outputGeometry
+            maximumInPlaceRows: maximumInPlaceRows
         )
     }
 
