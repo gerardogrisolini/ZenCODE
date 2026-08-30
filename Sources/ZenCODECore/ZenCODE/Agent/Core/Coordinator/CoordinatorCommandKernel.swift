@@ -24,6 +24,17 @@ enum CoordinatorCommand: Sendable, Equatable {
     case plan(PlanAction)
     case goal(String)
     case review(String)
+
+    /// Whether this invocation cannot run until the operator supplies an
+    /// argument. Frontends use this to request that argument instead of
+    /// treating the bare command as a request to execute.
+    var requiresArgument: Bool {
+        switch self {
+        case .plan(.missingGoal): true
+        case let .goal(goal): goal.isEmpty
+        case .plan, .review: false
+        }
+    }
 }
 
 /// Canonical coordinator command families shared by parsing and frontend menus.

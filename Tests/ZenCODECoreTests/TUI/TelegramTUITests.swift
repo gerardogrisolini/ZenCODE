@@ -318,6 +318,34 @@ struct TelegramTUITests {
     }
 
     @Test
+    func telegramBareCommandWithoutRequiredArgumentRemainsImmediate() async throws {
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: FileManager.default.temporaryDirectory
+            ),
+            stdinIsTerminal: false
+        )
+        let lease = await Self.installTestRoute(on: terminal)
+        terminal.telegramControlState.isActive = true
+        terminal.telegramControlState.wireLifecycleEpoch = UUID()
+        let messages = Mutex<[String]>([])
+        terminal.onTelegramSystemMessage = { message, _ in
+            messages.withLock { $0.append(message) }
+            return true
+        }
+
+        guard case .continueChat = await terminal.submittedTelegramLineAction(
+            "/review", origin: .telegramLease(lease)
+        ) else {
+            Issue.record("/review has no required argument and must stay immediate")
+            return
+        }
+        #expect(messages.withLock { !$0.isEmpty })
+    }
+
+    @Test
     func telegramRoutesPlanGoalReviewAndClarificationWithoutAbsorbingCommandsOrMentions() async throws {
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/telegram-plan-routing-\(UUID().uuidString)",

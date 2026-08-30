@@ -157,6 +157,9 @@ public final class TerminalChat {
     /// Presentation emitted while a Telegram coordinator command is handled
     /// synchronously. `nil` outside that narrow transport adapter scope.
     var telegramImmediateCommandOutput: [String]?
+    /// Pending ForceReply receipts for coordinator commands that require an
+    /// argument. A reply must match both the receipt and its original route.
+    var telegramCommandReplyBindings: [TerminalTelegramCommandReplyKey: TerminalTelegramCommandReplyBinding] = [:]
     /// Test seam for bot-control messages. Production sends through the service.
     var onTelegramSystemMessage: (@Sendable (String, Int64) async -> Bool)?
     /// Route-aware test seam; production is nil. Kept alongside the legacy hook
@@ -505,4 +508,15 @@ public final class TerminalChat {
         _ = await telegramControlService.stop()
         await statusBar.stop()
     }
+}
+
+struct TerminalTelegramCommandReplyKey: Hashable, Sendable {
+    let chatID: Int64
+    let receiptMessageID: Int
+}
+
+struct TerminalTelegramCommandReplyBinding: Sendable {
+    let command: String
+    let chatID: Int64
+    let lease: TerminalTelegramRouteLease
 }

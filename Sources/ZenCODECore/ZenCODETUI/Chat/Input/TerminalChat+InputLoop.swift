@@ -1057,6 +1057,9 @@ extension TerminalChat {
                 await interactiveReader.setPanelProcessing(false)
                 await endTelegramTurnProgressReporting()
                 await telegramRouteRuntimeState.teardown(lease: lease)
+                telegramCommandReplyBindings = telegramCommandReplyBindings.filter {
+                    $0.value.lease != lease
+                }
                 if telegramActiveRouteLease == lease {
                     telegramActiveRouteLease = nil
                     await telegramSharedChatRelay.deactivate()

@@ -137,6 +137,134 @@ struct TelegramChatRoundTripTests {
     }
 
     @Test
+    func bareParameterizedMenuCommandUsesForceReplyAndQueuesCompletedCommand() async throws {
+        let terminal = try Self.makeTerminal(linkedChatID: 42)
+        _ = await Self.installRoute(on: terminal)
+        let cards = Mutex<[(String, TerminalTelegramReplyMarkup)]>([])
+        terminal.onTelegramMentionPickerMessage = { text, _, markup in
+            cards.withLock {
+                $0.append((text, markup))
+                return 89 + $0.count
+            }
+        }
+        var queuedPrompts = TerminalQueuedPromptBuffer()
+
+        await terminal.handleTelegramMessage(
+            Self.message("/plan"), queuedPrompts: &queuedPrompts,
+            eventQueue: TerminalChatEventQueue(), transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+
+        #expect(queuedPrompts.isEmpty)
+        #expect(cards.withLock { $0.map(\.1) } == [.forceReply])
+        #expect(cards.withLock { $0.first?.0.contains("/plan") } == true)
+
+        await terminal.handleTelegramMessage(
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: "route all frontends", voice: nil,
+                messageID: 2, chatTitle: "Gerardo", username: "gerardo", replyToMessageID: 90
+            ), queuedPrompts: &queuedPrompts, eventQueue: TerminalChatEventQueue(),
+            transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+
+        #expect(queuedPrompts.dequeue()?.text == "/plan route all frontends")
+        await terminal.handleTelegramMessage(
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: "ordinary follow-up", voice: nil,
+                messageID: 3, chatTitle: "Gerardo", username: "gerardo", replyToMessageID: 90
+            ), queuedPrompts: &queuedPrompts, eventQueue: TerminalChatEventQueue(),
+            transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+        #expect(queuedPrompts.dequeue()?.text == "ordinary follow-up")
+
+        await terminal.handleTelegramMessage(
+            Self.message("/goal@zencode_bot", messageID: 4), queuedPrompts: &queuedPrompts,
+            eventQueue: TerminalChatEventQueue(), transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+        #expect(queuedPrompts.isEmpty)
+        await terminal.handleTelegramMessage(
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: "implement parity", voice: nil,
+                messageID: 5, chatTitle: "Gerardo", username: "gerardo", replyToMessageID: 91
+            ), queuedPrompts: &queuedPrompts, eventQueue: TerminalChatEventQueue(),
+            transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+        #expect(cards.withLock { $0.map(\.1) } == [.forceReply, .forceReply])
+        #expect(queuedPrompts.dequeue()?.text == "/goal implement parity")
+    }
+
+    @Test
+    func unknownOrWrongRouteForceReplyDoesNotCaptureOrdinaryPrompt() async throws {
+        let terminal = try Self.makeTerminal(linkedChatID: 42)
+        let lease = await Self.installRoute(on: terminal)
+        let staleKey = TerminalTelegramCommandReplyKey(chatID: 42, receiptMessageID: 90)
+        terminal.telegramCommandReplyBindings[staleKey] = TerminalTelegramCommandReplyBinding(
+            command: "/goal", chatID: 42,
+            lease: .init(key: lease.key, generation: lease.generation + 1)
+        )
+        var queuedPrompts = TerminalQueuedPromptBuffer()
+
+        await terminal.handleTelegramMessage(
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: "ordinary reply", voice: nil,
+                messageID: 2, chatTitle: "Gerardo", username: "gerardo", replyToMessageID: 90
+            ), queuedPrompts: &queuedPrompts, eventQueue: TerminalChatEventQueue(),
+            transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+        await terminal.handleTelegramMessage(
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: "unknown reply", voice: nil,
+                messageID: 3, chatTitle: "Gerardo", username: "gerardo", replyToMessageID: 99
+            ), queuedPrompts: &queuedPrompts, eventQueue: TerminalChatEventQueue(),
+            transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+
+        #expect(queuedPrompts.dequeue()?.text == "ordinary reply")
+        #expect(queuedPrompts.dequeue()?.text == "unknown reply")
+        #expect(terminal.telegramCommandReplyBindings[staleKey]?.lease != lease)
+    }
+
+    @Test
+    func commandReplyReceiptsAreScopedByChatAndReplacePriorRouteBinding() async throws {
+        let terminal = try Self.makeTerminal(linkedChatID: 42)
+        let lease = await Self.installRoute(on: terminal)
+        let cards = Mutex<Int>(0)
+        terminal.onTelegramMentionPickerMessage = { _, _, _ in
+            cards.withLock { count in
+                count += 1
+                return 89 + count
+            }
+        }
+        var queuedPrompts = TerminalQueuedPromptBuffer()
+
+        await terminal.handleTelegramMessage(
+            Self.message("/plan"), queuedPrompts: &queuedPrompts,
+            eventQueue: TerminalChatEventQueue(), transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+        await terminal.handleTelegramMessage(
+            Self.message("/goal", messageID: 2), queuedPrompts: &queuedPrompts,
+            eventQueue: TerminalChatEventQueue(), transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+
+        #expect(terminal.telegramCommandReplyBindings.count == 1)
+        #expect(terminal.telegramCommandReplyBindings[
+            .init(chatID: 42, receiptMessageID: 91)
+        ]?.command == "/goal")
+        terminal.telegramCommandReplyBindings[
+            .init(chatID: 43, receiptMessageID: 91)
+        ] = TerminalTelegramCommandReplyBinding(command: "/plan", chatID: 43, lease: lease)
+        #expect(terminal.telegramCommandReplyBindings.count == 2)
+
+        await terminal.handleTelegramMessage(
+            TerminalTelegramIncomingMessage(
+                chatID: 42, userID: 7, text: "old reply", voice: nil,
+                messageID: 3, chatTitle: "Gerardo", username: "gerardo", replyToMessageID: 90
+            ), queuedPrompts: &queuedPrompts, eventQueue: TerminalChatEventQueue(),
+            transcriptions: TerminalVoiceTranscriptionRegistry()
+        )
+        #expect(queuedPrompts.dequeue()?.text == "old reply")
+    }
+
+    @Test
     func pickerReplyTargetsPreserveCoordinatorAndAgentDestinations() {
         let coordinator = TerminalChat.telegramMentionPickerReplyTarget(
             destination: .coordinator, roomID: "room", chatID: 42, handle: "coordinator"

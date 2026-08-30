@@ -326,6 +326,31 @@ extension TerminalChat {
             return
         }
 
+        if let coordinatorCommand = CoordinatorCommandParser.parse(text),
+           coordinatorCommand.requiresArgument {
+            let command = Self.telegramCommandWithoutBotMention(text)
+            await requestTelegramCommandArgument(
+                command, chatID: message.chatID, lease: routeLease
+            )
+            return
+        }
+
+        if let completedCommand = consumeTelegramCommandArgumentReply(
+            from: message, lease: routeLease
+        ) {
+            guard queuedPrompts.enqueue(
+                TerminalQueuedPrompt(text: completedCommand, origin: .telegramLease(routeLease))
+            ) else {
+                await sendTelegramSystemMessageIfLinked(
+                    "ZenCODE is busy and the prompt queue is full. Your command was not queued; try again after a running prompt completes.",
+                    origin: routeOrigin
+                )
+                return
+            }
+            telegramRuntimeEventQueue = eventQueue
+            return
+        }
+
         if text == "@" {
             await handleTelegramMentionPickerRequest(
                 chatID: message.chatID, origin: routeOrigin
@@ -360,6 +385,49 @@ extension TerminalChat {
         telegramRuntimeEventQueue = eventQueue
     }
 
+    /// A menu selection is delivered by Telegram as a bare message. Ask for the
+    /// missing argument with a receipt-backed ForceReply, then accept only a
+    /// reply to that exact receipt on its original route.
+    private func requestTelegramCommandArgument(
+        _ command: String, chatID: Int64, lease: TerminalTelegramRouteLease
+    ) async {
+        let prompt = "Enter the argument for \(command). Reply to this message; it will not be treated as a normal prompt."
+        let receipt = await sendTelegramReplyMarkupMessage(
+            prompt, to: chatID, replyMarkup: .forceReply, origin: .telegramLease(lease)
+        )
+        guard let receipt else { return }
+        // One unanswered command per route bounds this ledger even if an
+        // operator repeatedly opens a parameterized menu command.
+        telegramCommandReplyBindings = telegramCommandReplyBindings.filter {
+            $0.value.lease != lease
+        }
+        telegramCommandReplyBindings[
+            .init(chatID: chatID, receiptMessageID: receipt)
+        ] = TerminalTelegramCommandReplyBinding(
+            command: command, chatID: chatID, lease: lease
+        )
+    }
+
+    private func consumeTelegramCommandArgumentReply(
+        from message: TerminalTelegramIncomingMessage,
+        lease: TerminalTelegramRouteLease
+    ) -> String? {
+        guard let receipt = message.replyToMessageID,
+              let binding = telegramCommandReplyBindings[
+                  .init(chatID: message.chatID, receiptMessageID: receipt)
+              ],
+              binding.chatID == message.chatID,
+              binding.lease == lease,
+              let argument = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !argument.isEmpty else {
+            return nil
+        }
+        telegramCommandReplyBindings.removeValue(
+            forKey: .init(chatID: message.chatID, receiptMessageID: receipt)
+        )
+        return "\(binding.command) \(argument)"
+    }
+
     private func sendTelegramBusyMessage(origin: TerminalPromptOrigin) async {
         await sendTelegramSystemMessageIfLinked(
             "ZenCODE is busy generating a response in this session. This Telegram request was not queued; wait for the current response to finish and send it again.",
@@ -381,7 +449,7 @@ extension TerminalChat {
         )
         guard !buttons.isEmpty else { return }
         let markup = TerminalTelegramReplyMarkup.inlineKeyboard(buttons.map { [$0] })
-        _ = await sendTelegramMentionPickerMessage(
+        _ = await sendTelegramReplyMarkupMessage(
             "Choose who to message. After selecting, reply to the next card with your message.",
             to: chatID,
             replyMarkup: markup,
@@ -423,7 +491,7 @@ extension TerminalChat {
             )
             return
         }
-        let receipt = await sendTelegramMentionPickerMessage(
+        let receipt = await sendTelegramReplyMarkupMessage(
             "Writing to @\(handle). Reply to this message with the content to send; it will not be treated as a normal prompt.",
             to: chatID,
             replyMarkup: .forceReply,
@@ -439,7 +507,7 @@ extension TerminalChat {
         )
     }
 
-    private func sendTelegramMentionPickerMessage(
+    private func sendTelegramReplyMarkupMessage(
         _ text: String, to chatID: Int64, replyMarkup: TerminalTelegramReplyMarkup,
         origin: TerminalPromptOrigin? = nil
     ) async -> Int? {
@@ -910,6 +978,9 @@ extension TerminalChat {
               let lease = telegramActiveRouteLease,
               lease.key.roomID == roomID,
               (try? await telegramSessionRouter.validate(lease)) != nil else {
+            // A room swap or invalidated lease retires every command receipt
+            // associated with this terminal before a new route can be bound.
+            telegramCommandReplyBindings.removeAll()
             await telegramSharedChatRelay.deactivate()
             return
         }

@@ -33,6 +33,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Selecting Telegram menu commands that require an argument (`/plan` or
+  `/goal`) now asks for it with Telegram's reply flow instead of executing an
+  incomplete request. Commands without required arguments keep their immediate
+  behavior.
+
 - Telegram ingress now rejects new prompts, commands, live-chat mentions,
   attachments and voice notes while that TUI session is generating, instead of
   queueing or starting work in the background. The authorized route receives a
