@@ -16,6 +16,7 @@ Windows (via WSL), all the way down to a Raspberry Pi.
 - **Provider-agnostic** — any OpenAI-compatible endpoint (OpenRouter, local servers, any `/v1` API), or a browser sign-in with your ChatGPT or Claude subscription.
 - **Native Swift, small footprint** — a single compiled binary with no interpreter or Node event loop, suitable for constrained ARM boards.
 - **Runs everywhere** — macOS, Linux, and Windows (via WSL); model inference stays on the remote provider, so even a single-board computer can host the agent.
+- **Automation-friendly** — run a one-shot prompt as plain text or consume the versioned `--jsonl` lifecycle stream from scripts and CI.
 - **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, as a native coding agent.
 - **Agentic workflows** — dependency-aware task graph with `/plan`, `/goal`, and `/review`; `/plan save` and `/plan load` hand plans between sessions of the same project, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
 - **Live agent chat** — while sub-agents run, the operator, coordinator, and agent instances share a transient chat room: message the coordinator or broadcast to all agents from the terminal with `@coordinator` / `@all`, or reach a specific agent by its handle. See [agents.md](Docs/agents.md).
@@ -36,7 +37,12 @@ ZenCODE supports several ways to run the model, all selected during automatic fi
 
 ## Run
 
-- `zen` runs the standalone terminal and ACP coding agent with configured providers.
+- `zen` opens the standalone terminal coding agent.
+- `zen -p "Summarize the current changes"` runs one headless turn and prints only
+  the final assistant text.
+- `zen --jsonl -p "Summarize the current changes"` emits a versioned JSON Lines
+  lifecycle stream for scripts and CI. See the [JSONL protocol guide](Docs/jsonl.md).
+- `zen --acp` runs the ACP stdio agent for compatible clients.
 
 ## Install
 
@@ -201,6 +207,7 @@ Start here — [Docs index](Docs/README.md).
 
 **Using ZenCODE**
 - [ZenCODE guide](Docs/zen.md) — modes, commands, sessions, orchestration.
+- [Headless JSONL protocol](Docs/jsonl.md) — schema v1 records, lifecycle, errors, privacy, and automation examples.
 - [Why ZenCODE](Docs/why-zen.md) — rationale and differences.
 
 **Agents and delegation**

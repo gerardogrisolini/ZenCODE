@@ -9,6 +9,7 @@ Guides for using, extending, and maintaining ZenCODE. Start with the
 | --- | --- |
 | [why-zen.md](why-zen.md) | Why the project exists and how it differs from other agents |
 | [zen.md](zen.md) | Modes, CLI options, TUI commands, sessions, task orchestration, and project memory |
+| [jsonl.md](jsonl.md) | Versioned headless JSONL protocol, lifecycle records, errors, privacy, and consumer examples |
 
 ## Agents and delegation
 

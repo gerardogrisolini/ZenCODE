@@ -5,11 +5,15 @@
 ## Modes
 
 ```bash
-zen          # standalone chat TUI
-zen --acp    # ACP over stdio for compatible clients
+zen                              # standalone chat TUI
+zen -p "Summarize the changes"   # one headless turn; final text on stdout
+zen --jsonl -p "Summarize"       # one headless turn; JSON Lines events on stdout
+zen --acp                        # ACP over stdio for compatible clients
 ```
 
 Standalone `zen` uses providers/models from `~/.zencode/settings.json`.
+Headless JSONL mode is documented in the dedicated
+[protocol guide](jsonl.md).
 
 ## Recovering Incomplete Tasks at Startup
 
@@ -108,9 +112,14 @@ exact paths involved.
 ## Command Line Options
 
 ```text
-zen [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
+zen [-p PROMPT] [--jsonl] [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
 ```
 
+- `-p, --prompt PROMPT`: run one non-interactive turn. Redirected stdin, when
+  present, is appended as additional context. Without `--jsonl`, stdout contains
+  only the final assistant text.
+- `--jsonl`: with `-p`/`--prompt`, emit the versioned headless lifecycle and
+  final response as JSON Lines. See the [JSONL protocol guide](jsonl.md).
 - `--version`: print the ZenCODE version and exit.
 - `--doctor`: print a redacted, read-only diagnostic report and exit. It never
   starts setup, accesses a provider, creates configuration, or writes a log.
