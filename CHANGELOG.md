@@ -12,6 +12,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Active tool blocks now preserve their terminal anchor when Chat opens, closes,
+  or first appears: the verified old rows are removed before the status-bar
+  repaint and the pending tool is republished against the resulting layout.
 - Tool argument handling now treats `skills.read`'s optional `resource` argument as absent when empty, and no longer lets empty string/array aliases hide later non-empty aliases in `tasks.get` and `local.readFiles`.
 - `/plan save` now preserves the original planning request as the saved Goal
   when a Planner clarification reply (such as an approval to prepare the plan)

@@ -958,7 +958,10 @@ extension TerminalChat {
                             isExpanded: false,
                             observationID: sharedChatObservation.observation.id
                         )
-                        await renderCoordinator.endBottomOverlayTransition()
+                        let currentOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+                        await renderCoordinator.endBottomOverlayTransition(
+                            maximumInPlaceRows: currentOutputCapacity
+                        )
                         await renderSubAgentOverview(force: false)
                         isSharedChatReaderOpen = false
                         interactiveReader.setSharedChatReaderOpen(false)
@@ -980,7 +983,10 @@ extension TerminalChat {
                         selection: .message(sharedChatReadingBuffer.readerOpeningMessageID),
                         observationID: sharedChatObservation.observation.id
                     )
-                    await renderCoordinator.endBottomOverlayTransition()
+                    let currentOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+                    await renderCoordinator.endBottomOverlayTransition(
+                        maximumInPlaceRows: currentOutputCapacity
+                    )
                     await renderSubAgentOverview(force: false)
                     guard didExpand else {
                         // Nothing was committed: the compact dock keeps
@@ -1105,8 +1111,8 @@ extension TerminalChat {
                 guard !newMessages.isEmpty else { continue }
                 let entries = await sharedChatReaderEntries()
                 // A Chat update can repaint the status region even when the dock
-                // receives no visible row. Retire the old relative overview
-                // anchor before that external cursor move, then republish it.
+                // receives no visible row. Retire old relative overview and tool
+                // anchors before that external cursor move, then republish them.
                 let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
                 await renderCoordinator.beginBottomOverlayTransition(
                     maximumInPlaceRows: previousOutputCapacity
@@ -1117,7 +1123,10 @@ extension TerminalChat {
                     isExpanded: isSharedChatReaderOpen,
                     observationID: sharedChatObservation.observation.id
                 )
-                await renderCoordinator.endBottomOverlayTransition()
+                let currentOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+                await renderCoordinator.endBottomOverlayTransition(
+                    maximumInPlaceRows: currentOutputCapacity
+                )
                 await renderSubAgentOverview(force: false)
                 await refreshSharedChatPanelSuggestions()
             case let .sharedChatObservationEnded(_, observationID):

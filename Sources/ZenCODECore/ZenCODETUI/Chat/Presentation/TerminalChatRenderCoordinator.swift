@@ -122,6 +122,10 @@ actor TerminalChatRenderCoordinator {
     var hasWrittenSubmittedPrompt = false
 
     var toolState = TerminalToolBlockAccounting<ActiveToolBlock>()
+    /// Tool lifecycle presentations deferred while an external bottom-overlay
+    /// repaint owns the cursor. They are replayed in arrival order after the
+    /// status bar establishes the new transcript boundary.
+    var bottomOverlayDeferredToolRenders: [DeferredToolRender] = []
     var subAgentToolState = TerminalSubAgentToolPresentationState()
     var activeSubAgentOverviewBlock: ActiveOverviewBlock?
     /// Fences periodic overview publications while the status bar changes the

@@ -97,12 +97,26 @@ extension TerminalChatRenderCoordinator {
     }
 
     struct ActiveToolBlock: Sendable {
+        let toolCall: DirectAgentToolCall
         let id: String
         let rows: Int
         let columnWidth: Int
         let maximumInPlaceRows: Int?
         let cursorStateBeforeRender: CursorState
         let writeSequence: UInt64
+    }
+
+    struct DeferredToolRender: Sendable {
+        let toolCall: DirectAgentToolCall
+        let lifecycle: ToolBlockLifecycle
+        let isSubAgentTool: Bool
+        /// `true` for a tool that genuinely started during the transition. A
+        /// detached block already owns its transcript spacing and is reanchored
+        /// without adding another separator.
+        let preparesOutput: Bool
+        /// Known row count for a detached block. A reduced transcript must fit
+        /// every row before that presentation can be safely republished.
+        let requiredRows: Int?
     }
 
     struct CursorState: Sendable {

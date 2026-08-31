@@ -448,24 +448,32 @@ extension TerminalChatRenderCoordinator {
         return block.rows
     }
 
-    /// Fences overview refreshes while the status bar changes its reserved rows.
+    /// Fences live rewrite regions while the status bar changes its reserved rows.
     ///
     /// The status bar writes outside this coordinator and may place the cursor at
     /// the new scroll boundary even when the visible overlay height is unchanged.
     /// Capacity deltas therefore cannot prove that a relative cursor anchor is
-    /// still valid. Remove a verifiably owned block before that external write;
-    /// otherwise forget it append-safely. The caller republishes the current
-    /// snapshot after the transition, establishing a fresh physical anchor.
+    /// still valid. Remove verifiably owned tool and overview blocks before that
+    /// external write; otherwise forget them append-safely. The pending tool is
+    /// republished here after the transition, while the caller republishes the
+    /// current overview snapshot, establishing fresh physical anchors.
     func beginBottomOverlayTransition(maximumInPlaceRows: Int?) {
         isBottomOverlayTransitionActive = true
-        guard activeSubAgentOverviewBlock != nil else { return }
-        clearOwnedSubAgentOverviewBeforeInterleavedOutput(
+        detachActiveToolBeforeBottomOverlayTransition(
             maximumInPlaceRows: maximumInPlaceRows
         )
+        if activeSubAgentOverviewBlock != nil {
+            clearOwnedSubAgentOverviewBeforeInterleavedOutput(
+                maximumInPlaceRows: maximumInPlaceRows
+            )
+        }
     }
 
-    func endBottomOverlayTransition() {
+    func endBottomOverlayTransition(maximumInPlaceRows: Int? = nil) {
         isBottomOverlayTransitionActive = false
+        republishToolAfterBottomOverlayTransition(
+            maximumInPlaceRows: maximumInPlaceRows
+        )
         renderPendingOverviewsIfIdle()
     }
 

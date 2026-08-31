@@ -13,9 +13,22 @@ extension TerminalChatRenderCoordinator {
         _ toolCall: DirectAgentToolCall,
         maximumInPlaceRows: Int? = nil
     ) {
+        let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
+        if isBottomOverlayTransitionActive {
+            toolState.startInstants[toolCall.id] = toolNow()
+            bottomOverlayDeferredToolRenders.append(
+                DeferredToolRender(
+                    toolCall: toolCall,
+                    lifecycle: .started,
+                    isSubAgentTool: isSubAgentTool,
+                    preparesOutput: true,
+                    requiredRows: nil
+                )
+            )
+            return
+        }
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
-        let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
         if isSubAgentTool {
             clearOwnedSubAgentOverviewBeforeInterleavedOutput(
                 maximumInPlaceRows: maximumInPlaceRows
@@ -36,13 +49,7 @@ extension TerminalChatRenderCoordinator {
         result: DirectAgentToolResult,
         maximumInPlaceRows: Int? = nil
     ) {
-        finishThoughtOutputIfNeeded()
-        finishAssistantContentFormatting()
-        if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
-            clearOwnedSubAgentOverviewBeforeInterleavedOutput(
-                maximumInPlaceRows: maximumInPlaceRows
-            )
-        }
+        let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
         let elapsed = toolState.startInstants.removeValue(forKey: toolCall.id)
             .map { $0.duration(to: toolNow()) }
         let compactStatusDetail = TerminalChat.compactToolCompletionDetail(
@@ -50,16 +57,36 @@ extension TerminalChatRenderCoordinator {
             result: result,
             elapsed: elapsed
         )
+        let lifecycle = ToolBlockLifecycle.completed(
+            result: result,
+            compactStatusDetail: compactStatusDetail,
+            elapsed: elapsed
+        )
+        if isBottomOverlayTransitionActive {
+            bottomOverlayDeferredToolRenders.append(
+                DeferredToolRender(
+                    toolCall: toolCall,
+                    lifecycle: lifecycle,
+                    isSubAgentTool: isSubAgentTool,
+                    preparesOutput: false,
+                    requiredRows: nil
+                )
+            )
+            return
+        }
+        finishThoughtOutputIfNeeded()
+        finishAssistantContentFormatting()
+        if isSubAgentTool {
+            clearOwnedSubAgentOverviewBeforeInterleavedOutput(
+                maximumInPlaceRows: maximumInPlaceRows
+            )
+        }
 
         // A stale completion must never take ownership from a newer active
         // block; it is rendered append-only below.
         renderToolBlock(
             toolCall,
-            lifecycle: .completed(
-                result: result,
-                compactStatusDetail: compactStatusDetail,
-                elapsed: elapsed
-            ),
+            lifecycle: lifecycle,
             maximumInPlaceRows: maximumInPlaceRows
         )
     }
@@ -226,6 +253,7 @@ extension TerminalChatRenderCoordinator {
         )
         if let pendingOwnership {
             toolState.activeBlock = ActiveToolBlock(
+                toolCall: toolCall,
                 id: toolCall.id,
                 rows: pendingOwnership.rows,
                 columnWidth: columnWidth,
@@ -354,6 +382,80 @@ extension TerminalChatRenderCoordinator {
         toolState.activeBlock = nil
         toolState.activeBlockIsSubAgentTool = false
         writeChat("\n", to: .standardError)
+    }
+
+    func detachActiveToolBeforeBottomOverlayTransition(
+        maximumInPlaceRows: Int?
+    ) {
+        bottomOverlayDeferredToolRenders.removeAll(keepingCapacity: true)
+        flushChatOutput()
+        guard let block = toolState.activeBlock else { return }
+        let isSubAgentTool = toolState.activeBlockIsSubAgentTool
+        toolState.activeBlock = nil
+        toolState.activeBlockIsSubAgentTool = false
+
+        let columnWidth = freshColumnWidthProvider()
+        let maximumReplaceableRows = min(
+            replaceableToolRowCapacity(block.maximumInPlaceRows) ?? Int.max,
+            replaceableToolRowCapacity(maximumInPlaceRows) ?? Int.max
+        )
+        guard standardErrorIsTerminal,
+              block.writeSequence == emittedWriteCount,
+              block.columnWidth == columnWidth,
+              block.rows <= maximumReplaceableRows else {
+            // The old block cannot be removed with certainty. Forget its relative
+            // anchor so completion degrades to an append-only presentation.
+            return
+        }
+
+        clearOwnedRows(block.rows)
+        restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
+        bottomOverlayDeferredToolRenders.append(
+            DeferredToolRender(
+                toolCall: block.toolCall,
+                lifecycle: .started,
+                isSubAgentTool: isSubAgentTool,
+                preparesOutput: false,
+                requiredRows: block.rows
+            )
+        )
+    }
+
+    func republishToolAfterBottomOverlayTransition(
+        maximumInPlaceRows: Int?
+    ) {
+        let deferredRenders = bottomOverlayDeferredToolRenders
+        bottomOverlayDeferredToolRenders.removeAll(keepingCapacity: true)
+        guard !deferredRenders.isEmpty else { return }
+        let maximumReplaceableRows = replaceableToolRowCapacity(maximumInPlaceRows)
+            ?? Int.max
+        for deferred in deferredRenders {
+            if let requiredRows = deferred.requiredRows,
+               requiredRows > maximumReplaceableRows {
+                // The newly reduced transcript cannot own every detached row.
+                // Keep that tool append-only rather than drawing a block its
+                // completion could not safely replace.
+                continue
+            }
+            finishThoughtOutputIfNeeded()
+            finishAssistantContentFormatting()
+            if deferred.isSubAgentTool {
+                clearOwnedSubAgentOverviewBeforeInterleavedOutput(
+                    maximumInPlaceRows: maximumInPlaceRows
+                )
+            }
+            if deferred.preparesOutput {
+                prepareForToolOutput()
+            }
+            if !deferred.lifecycle.isCompletion {
+                toolState.activeBlockIsSubAgentTool = deferred.isSubAgentTool
+            }
+            renderToolBlock(
+                deferred.toolCall,
+                lifecycle: deferred.lifecycle,
+                maximumInPlaceRows: maximumInPlaceRows
+            )
+        }
     }
 
     /// Transfers the terminal's single live rewrite slot from a pending

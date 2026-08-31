@@ -1909,6 +1909,203 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func firstSharedChatMessageHeaderReanchorsActiveToolBlock() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let statusBar = TerminalStatusBar(isEnabled: true) { _ in }
+        await statusBar.configureForTesting(row: 14, columns: 80)
+        await statusBar.updateInputPanel(
+            text: "draft",
+            cursorIndex: 5,
+            modeText: "Chat",
+            helpText: "Enter"
+        )
+        await statusBar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: false)
+        let toolCall = presentedToolCall(
+            id: "tool-before-first-chat-message",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/Example.swift"],
+            argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
+        )
+        let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+        await renderer.writeToolCallStarted(
+            toolCall,
+            maximumInPlaceRows: previousOutputCapacity
+        )
+        let started = await renderer.snapshot()
+        let eventsBeforeTransition = await renderer.capturedWriteEvents().count
+
+        await renderer.beginBottomOverlayTransition(
+            maximumInPlaceRows: previousOutputCapacity
+        )
+        #expect(await renderer.snapshot().activeToolCallID == nil)
+        await statusBar.setSharedChatReader(
+            entries: [
+                TerminalSharedChatReaderEntry(
+                    id: UUID(),
+                    route: "worker",
+                    text: "Ready"
+                )
+            ],
+            unreadCount: 1,
+            isExpanded: false
+        )
+        let currentOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+        await renderer.endBottomOverlayTransition(
+            maximumInPlaceRows: currentOutputCapacity
+        )
+
+        let reanchored = await renderer.snapshot()
+        let transitionEvents = Array(
+            (await renderer.capturedWriteEvents()).dropFirst(eventsBeforeTransition)
+        )
+        let transitionText = transitionEvents.map(\.text).joined()
+        #expect(started.activeToolCallID == toolCall.id)
+        #expect(started.activeToolRenderedRowCount > 0)
+        #expect(
+            transitionEvents.first?.text.hasPrefix(
+                "\u{1B}[\(started.activeToolRenderedRowCount)A\r"
+            ) == true
+        )
+        #expect(TerminalANSIText.stripANSI(transitionText).contains("local.readFile"))
+        #expect(reanchored.activeToolCallID == toolCall.id)
+        #expect(reanchored.activeToolRenderedRowCount > 0)
+
+        let eventsBeforeCompletion = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done"),
+            maximumInPlaceRows: currentOutputCapacity
+        )
+        let completionEvents = Array(
+            (await renderer.capturedWriteEvents()).dropFirst(eventsBeforeCompletion)
+        )
+        #expect(
+            completionEvents.first?.text.hasPrefix(
+                "\u{1B}[\(reanchored.activeToolRenderedRowCount)A\r"
+            ) == true
+        )
+        #expect(await renderer.snapshot().activeToolCallID == nil)
+    }
+
+    @Test
+    func toolStartDuringBottomOverlayTransitionWaitsForTheNewAnchor() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let toolCall = presentedToolCall(
+            id: "tool-started-during-chat-repaint",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/Example.swift"],
+            argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
+        )
+        await renderer.beginBottomOverlayTransition(maximumInPlaceRows: 6)
+        let eventsBeforeStart = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallStarted(toolCall, maximumInPlaceRows: 6)
+
+        #expect(await renderer.capturedWriteEvents().count == eventsBeforeStart)
+        #expect(await renderer.snapshot().activeToolCallID == nil)
+
+        await renderer.endBottomOverlayTransition(maximumInPlaceRows: 6)
+
+        let reanchored = await renderer.snapshot()
+        let replayText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeStart)
+            .map(\.text)
+            .joined()
+        #expect(reanchored.activeToolCallID == toolCall.id)
+        #expect(reanchored.activeToolRenderedRowCount > 0)
+        #expect(TerminalANSIText.stripANSI(replayText).contains("local.readFile"))
+    }
+
+    @Test
+    func toolCompletionDuringBottomOverlayTransitionReplaysAfterTheRepaint() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let toolCall = presentedToolCall(
+            id: "tool-completed-during-chat-repaint",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/Example.swift"],
+            argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
+        )
+        await renderer.writeToolCallStarted(toolCall, maximumInPlaceRows: 6)
+        await renderer.beginBottomOverlayTransition(maximumInPlaceRows: 6)
+        let eventsBeforeCompletion = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done"),
+            maximumInPlaceRows: 6
+        )
+
+        #expect(await renderer.capturedWriteEvents().count == eventsBeforeCompletion)
+        #expect(await renderer.snapshot().activeToolCallID == nil)
+
+        await renderer.endBottomOverlayTransition(maximumInPlaceRows: 6)
+
+        let replayText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeCompletion)
+            .map(\.text)
+            .joined()
+        #expect(TerminalANSIText.stripANSI(replayText).contains("local.readFile"))
+        #expect(TerminalANSIText.stripANSI(replayText).contains("✅"))
+        #expect(containsCursorUpSequence(replayText))
+        #expect(await renderer.snapshot().activeToolCallID == nil)
+    }
+
+    @Test
+    func bottomOverlayTransitionAbandonsUnreachableToolRowsAppendSafely() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let toolCall = presentedToolCall(
+            id: "tool-outside-reduced-chat-region",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/Example.swift"],
+            argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
+        )
+        await renderer.writeToolCallStarted(toolCall, maximumInPlaceRows: 3)
+        let started = await renderer.snapshot()
+        let eventsBeforeTransition = await renderer.capturedWriteEvents().count
+
+        await renderer.beginBottomOverlayTransition(maximumInPlaceRows: 3)
+        await renderer.endBottomOverlayTransition(maximumInPlaceRows: 1)
+
+        let transitionEvents = Array(
+            (await renderer.capturedWriteEvents()).dropFirst(eventsBeforeTransition)
+        )
+        #expect(
+            transitionEvents.first?.text.hasPrefix(
+                "\u{1B}[\(started.activeToolRenderedRowCount)A\r"
+            ) == true
+        )
+        #expect(!TerminalANSIText.stripANSI(transitionEvents.map(\.text).joined()).contains(
+            "local.readFile"
+        ))
+        #expect(await renderer.snapshot().activeToolCallID == nil)
+
+        let eventsBeforeCompletion = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done"),
+            maximumInPlaceRows: 1
+        )
+        let completionText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeCompletion)
+            .map(\.text)
+            .joined()
+        #expect(!containsCursorUpSequence(completionText))
+        #expect(TerminalANSIText.stripANSI(completionText).contains("local.readFile"))
+    }
+
+    @Test
     func firstSharedChatMessageHeaderPreservesSubAgentOverviewOwnership() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
