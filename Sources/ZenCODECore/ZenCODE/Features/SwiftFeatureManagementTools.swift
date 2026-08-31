@@ -496,7 +496,7 @@ extension SwiftFeatureRuntime {
             throw DirectToolError.permissionDenied(
                 "MCP bridge features are currently supported only on macOS."
             )
-            #endif
+            #else
             let serviceName = arguments
                 .string("serviceName", "service_name")?
                 .nilIfBlank ?? displayName
@@ -523,6 +523,7 @@ extension SwiftFeatureRuntime {
                 enabled: arguments.bool("enabled") ?? false
             ).write(to: manifestURL, atomically: true, encoding: .utf8)
             reportToolName = toolPrefix
+            #endif
         }
 
         _ = try installFeatureDirectory(

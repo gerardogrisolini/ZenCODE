@@ -232,6 +232,30 @@ struct DirectTaskToolAdapterTests {
     }
 
     @Test
+    func tasksGetFallsBackToTaskIDWhenIDIsBlank() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "session",
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "work", title: "Work")]
+        )
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+
+        let output = try await adapter.execute(
+            sessionID: "session",
+            toolCall: call(
+                name: "tasks.get",
+                arguments: ["id": "   ", "taskID": "work"]
+            )
+        )
+
+        #expect(output.contains("work"))
+        #expect(output.contains("Work"))
+    }
+
+    @Test
     func workflowTaskCreationRequiresSubAgentExecution() async throws {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(

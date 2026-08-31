@@ -10,6 +10,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Tool argument handling now treats `skills.read`'s optional `resource` argument as absent when empty, and no longer lets empty string/array aliases hide later non-empty aliases in `tasks.get` and `local.readFiles`.
+
 ## [2.1.1] - 2026-08-31
 
 ### Changed

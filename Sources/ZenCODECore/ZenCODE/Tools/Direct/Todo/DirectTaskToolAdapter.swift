@@ -94,7 +94,10 @@ public actor DirectTaskToolAdapter {
             return Self.renderList(views, graph: snapshot)
 
         case "tasks.get":
-            let taskID = try DirectTodoRuntime.requiredString(["id"], in: request.arguments)
+            let taskID = try DirectTodoRuntime.requiredString(
+                ["id", "taskID", "task_id"],
+                in: request.arguments
+            )
             let view = try await orchestrator.task(
                 sessionID: sessionID,
                 taskID: taskID,

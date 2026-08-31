@@ -136,8 +136,9 @@ struct LocalReadFilesTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        let rawPaths = (input.paths ?? input.file_paths ?? [])
-            .compactMap { $0.nilIfBlank }
+        let primaryPaths = input.paths?.compactMap { $0.nilIfBlank } ?? []
+        let fallbackPaths = input.file_paths?.compactMap { $0.nilIfBlank } ?? []
+        let rawPaths = primaryPaths.isEmpty ? fallbackPaths : primaryPaths
         guard !rawPaths.isEmpty else {
             throw LocalToolsFeatureError.missingArgument("paths")
         }

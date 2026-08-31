@@ -250,10 +250,10 @@ public enum PromptSkillToolProvider {
         }
         let resource: String?
         if let value = arguments["resource"] {
-            guard let string = (value as? String)?.nilIfBlank else {
+            guard let string = value as? String else {
                 throw PromptSkillToolProviderError.invalidResource
             }
-            resource = string
+            resource = string.nilIfBlank
         } else {
             resource = nil
         }

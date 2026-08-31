@@ -285,6 +285,24 @@ struct PromptSkillToolProviderTests {
     }
 
     @Test
+    func readEmptyResourceRemainsCompatibleWithOmittedResource() async throws {
+        let provider = PromptSkillSessionProvider(skills: [
+            skill(promptBody: "LEGACY-GUIDANCE")
+        ])
+
+        let omittedResource = try await read(
+            provider,
+            arguments: #"{"identifier":"release-review"}"#
+        )
+        let emptyResource = try await read(
+            provider,
+            arguments: #"{"identifier":"release-review","resource":""}"#
+        )
+
+        #expect(emptyResource == omittedResource)
+    }
+
+    @Test
     func readResourceReturnsUTF8Content() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

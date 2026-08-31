@@ -139,6 +139,22 @@ struct LocalIOOffloaderTests {
     }
 
     @Test
+    func offloadedReadFilesFallsBackToFilePathsWhenPathsIsEmpty() async throws {
+        let root = try Self.makeTempDir("readfiles-alias-fallback")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("via-file-paths.txt")
+        try "from alias".write(to: file, atomically: true, encoding: .utf8)
+
+        let output = try await Self.invoke(
+            "local.readFiles",
+            arguments: ["paths": [], "file_paths": [file.path]],
+            workingDirectory: root
+        )
+
+        #expect(output == "===== \(file.path) =====\n1\tfrom alias")
+    }
+
+    @Test
     func offloadedReadFilesContinuesAcrossPerFileErrors() async throws {
         let root = try Self.makeTempDir("readfiles-error")
         defer { try? FileManager.default.removeItem(at: root) }
