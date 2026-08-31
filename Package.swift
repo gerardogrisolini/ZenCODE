@@ -116,6 +116,7 @@ let targets: [Target] = [
         name: "ZenCODECoreTests",
         dependencies: [
             "ZenCODECore",
+            "zen",
             "MemoryPersistenceTestHelper",
             "FeatureMCPBridgeKit",
             "FeatureKit",

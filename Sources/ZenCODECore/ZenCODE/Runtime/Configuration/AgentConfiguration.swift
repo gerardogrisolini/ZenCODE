@@ -35,11 +35,12 @@ public struct AgentConfiguration: Sendable {
     Autonomous ZenCODE CLI and ACP agent.
 
     Usage:
-      zen [-p PROMPT] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
+      zen [-p PROMPT] [--jsonl] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
 
     Modes:
       default                Human terminal chat.
       -p, --prompt PROMPT    Run one headless text prompt.
+      --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt).
       --acp                  ACP JSON-RPC over stdio for compatible clients.
 
     Agent runtime:
@@ -71,7 +72,11 @@ public struct AgentConfiguration: Sendable {
       ZENCODE_AGENT_SKILLS         Initial chat skill selection by name/number, all, or none.
 
     With an inline headless prompt, piped stdin is supplied as additional context.
-    In ACP mode stdout contains only ACP JSON-RPC messages. In headless mode stdout contains only the final assistant text.
+    In ACP mode stdout contains only ACP JSON-RPC messages. In headless mode stdout contains only the final assistant text, unless `--jsonl` is supplied.
+    `--jsonl` is ignored with `--help`, `--version`, `--doctor`, and `--install-features`; those meta-commands keep their normal textual output and exit code.
+
+    Example:
+      zen --jsonl -p "Summarize the current changes"
     """
 
     public let modelID: String?
@@ -79,6 +84,8 @@ public struct AgentConfiguration: Sendable {
     public let selectedAgent: AgentProfile?
     public let effectiveModelID: String?
     public let runMode: AgentRunMode
+    /// Enables the machine-readable JSON Lines headless output protocol.
+    public let jsonl: Bool
     /// Inline prompt supplied by `-p`; nil is invalid for a headless turn.
     public let headlessPrompt: String?
     public let workingDirectory: URL
@@ -131,6 +138,7 @@ public struct AgentConfiguration: Sendable {
         var rawModelID = agentEnvironmentValue("MODEL")
         var rawRunMode = agentEnvironmentValue("MODE") ?? "automatic"
         var rawHeadlessPrompt: String?
+        var rawJSONL = false
         let environmentWorkingDirectory = agentEnvironmentValue("CWD")?.nilIfBlank
         var hasExplicitWorkingDirectory = environmentWorkingDirectory != nil
         var rawWorkingDirectory = environmentWorkingDirectory
@@ -171,8 +179,17 @@ public struct AgentConfiguration: Sendable {
                 guard !explicitlyRequestedHeadless else {
                     throw AgentConfigurationError.conflictingOptions("--acp", "-p/--prompt")
                 }
+                guard !rawJSONL else {
+                    throw AgentConfigurationError.conflictingOptions("--acp", "--jsonl")
+                }
                 explicitlyRequestedACP = true
                 rawRunMode = AgentRunMode.acp.rawValue
+            case "--jsonl":
+                guard !explicitlyRequestedACP else {
+                    throw AgentConfigurationError.conflictingOptions("--jsonl", "--acp")
+                }
+                rawJSONL = true
+                rawRunMode = AgentRunMode.headless.rawValue
             case "-p", "--prompt":
                 guard !explicitlyRequestedACP else {
                     throw AgentConfigurationError.conflictingOptions("--acp", "-p/--prompt")
@@ -225,6 +242,14 @@ public struct AgentConfiguration: Sendable {
             index += 1
         }
 
+        if rawJSONL,
+           rawHeadlessPrompt == nil,
+           !shouldPrintHelp,
+           !shouldPrintVersion,
+           !shouldPrintDoctor {
+            throw AgentConfigurationError.missingValue("--prompt")
+        }
+
         let normalizedRunMode = rawRunMode
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -272,6 +297,7 @@ public struct AgentConfiguration: Sendable {
         self.selectedAgent = selectedAgent
         self.effectiveModelID = effectiveModelID
         self.runMode = runMode
+        self.jsonl = rawJSONL
         self.headlessPrompt = rawHeadlessPrompt
         self.workingDirectory = workingDirectory
         self.initialSkillSelection = rawInitialSkillSelection?.nilIfBlank
@@ -293,6 +319,7 @@ public struct AgentConfiguration: Sendable {
         availableModels: [AgentSettingsModelManifest] = [],
         cacheAgentProfiles: Bool = true,
         runMode: AgentRunMode = .chat,
+        jsonl: Bool = false,
         workingDirectory: URL,
         initialSkillSelection: String? = nil,
         maxToolRounds: Int = AgentToolRoundPolicy.defaultMaxToolRounds,
@@ -321,6 +348,7 @@ public struct AgentConfiguration: Sendable {
         self.selectedAgent = selectedAgent
         self.effectiveModelID = effectiveModelID
         self.runMode = runMode
+        self.jsonl = jsonl
         self.headlessPrompt = nil
         self.workingDirectory = workingDirectory
         self.initialSkillSelection = initialSkillSelection?.nilIfBlank

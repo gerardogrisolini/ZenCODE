@@ -60,6 +60,15 @@ public enum AgentOutput {
         redirectToNull([STDERR_FILENO])
     }
 
+    /// Redirects both the inherited stderr descriptor and the preserved stderr
+    /// handle to `/dev/null`. JSONL mode owns stdout as a strict protocol and
+    /// must not leak diagnostics to stderr, including diagnostics emitted by
+    /// shared subsystems through `AgentOutput.standardError`.
+    public static func silenceAllStandardError() {
+        _ = standardError
+        redirectToNull([STDERR_FILENO, standardError.fileDescriptor])
+    }
+
     private static func redirectToNull(_ fileDescriptors: [Int32]) {
         let nullFileDescriptor = open(nullPath, O_WRONLY)
         guard nullFileDescriptor >= 0 else {

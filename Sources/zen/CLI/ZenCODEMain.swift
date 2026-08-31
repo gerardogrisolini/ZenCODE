@@ -17,7 +17,11 @@ struct ZenCODEMain {
         // This must run before the configuration gate. Optional features are
         // useful on a fresh installation, where no provider or model exists yet.
         if ZenCODEOptionalFeatureInstaller.shouldRun(arguments: arguments) {
-            Foundation.exit(await ZenCODEOptionalFeatureInstaller.run(arguments: arguments))
+            // `--install-features` is a textual meta-command. Ignore `--jsonl`
+            // before handing arguments to its own strict parser so output and
+            // exit semantics are exactly the same as the ordinary invocation.
+            let installerArguments = arguments.filter { $0 != "--jsonl" }
+            Foundation.exit(await ZenCODEOptionalFeatureInstaller.run(arguments: installerArguments))
         }
 
         if arguments.dropFirst().contains(where: { $0 == "--help" || $0 == "-h" }) {
@@ -43,7 +47,11 @@ struct ZenCODEMain {
         do {
             try AgentConfiguration.validateArguments(arguments)
         } catch {
-            AgentOutput.standardError.writeString("ZenCODE: \(error.localizedDescription)\n")
+            if runsJSONL(arguments) {
+                writeJSONLError(error)
+            } else {
+                AgentOutput.standardError.writeString("ZenCODE: \(error.localizedDescription)\n")
+            }
             Foundation.exit(1)
         }
 
@@ -74,8 +82,16 @@ struct ZenCODEMain {
         )
     }
 
+    private static func runsJSONL(_ arguments: [String]) -> Bool {
+        ZenCODECommandLineRunner.jsonlIsActive(arguments: arguments)
+    }
+
+    private static func writeJSONLError(_ error: Error) {
+        ZenCODEHeadlessJSONLProtocol.writeFramedError(error)
+    }
+
     private static func runsHeadless(_ arguments: [String]) -> Bool {
-        arguments.dropFirst().contains(where: { $0 == "-p" || $0 == "--prompt" })
+        arguments.dropFirst().contains(where: { $0 == "-p" || $0 == "--prompt" || $0 == "--jsonl" })
             || ProcessInfo.processInfo.environment["ZENCODE_AGENT_MODE"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased() == AgentRunMode.headless.rawValue
@@ -116,9 +132,10 @@ struct ZenCODEMain {
 
 private enum ZenCODEStandaloneHelp {
     static var text: String {
-        let usage = "zen [--doctor] [--install-features [id,id,...]] [-p PROMPT] [--acp]"
+        let usage = "zen [--doctor] [--install-features [id,id,...]] [--jsonl] [-p PROMPT] [--acp]"
         let options = """
           -p, --prompt PROMPT    Run one headless text prompt.
+          --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt).
           --acp                  ACP JSON-RPC over stdio for compatible clients.
           --doctor               Print a redacted diagnostic report (environment, configuration, permissions) and exit. Non-interactive; never starts setup or reveals secrets.
           --install-features [id,id,...]
@@ -129,11 +146,11 @@ private enum ZenCODEStandaloneHelp {
 
         return AgentConfiguration.helpText
             .replacingOccurrences(
-                of: "zen [-p PROMPT] [--acp]",
+                of: "zen [-p PROMPT] [--jsonl] [--acp]",
                 with: usage
             )
             .replacingOccurrences(
-                of: "  -p, --prompt PROMPT    Run one headless text prompt.\n  --acp                  ACP JSON-RPC over stdio for compatible clients.",
+                of: "  -p, --prompt PROMPT    Run one headless text prompt.\n  --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt).\n  --acp                  ACP JSON-RPC over stdio for compatible clients.",
                 with: options
             )
     }

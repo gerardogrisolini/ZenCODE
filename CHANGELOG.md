@@ -10,6 +10,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- `zen --jsonl -p PROMPT` runs the headless turn with a machine-readable
+  newline-delimited JSON stream. Runtime events, the final result, and failures
+  are emitted as one JSON object per line on stdout; stderr remains empty in
+  JSONL mode. Records carry schema version 1 and a run identifier for clients
+  that need to correlate the stream. Textual meta-commands (`--help`,
+  `--version`, `--doctor`, and `--install-features`) ignore `--jsonl` and keep
+  their existing output and exit behavior.
+
 ### Fixed
 
 - Active tool blocks now preserve their terminal anchor when Chat opens, closes,

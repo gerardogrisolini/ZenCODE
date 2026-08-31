@@ -20,6 +20,29 @@ import Foundation
 public typealias ZenCODEInteractiveSetupHandler = @Sendable () async throws -> Bool
 
 public enum ZenCODECommandLineRunner {
+    /// Meta-commands that keep their normal textual behavior and exit code.
+    /// When one of them is present, `--jsonl` is ignored: the meta-command
+    /// wins and the JSONL stream never replaces its human-readable output.
+    private static let metaCommandOptions: Set<String> = [
+        "--help", "-h", "--version", "--doctor", "--install-features"
+    ]
+
+    /// Whether `--jsonl` owns stdout for this invocation. It is deliberately
+    /// false whenever a meta-command is present, so meta-commands preserve
+    /// their textual output and exit semantics. `--install-features=id` and
+    /// friends are recognized through their `=`-form too.
+    public static func jsonlIsActive(arguments: [String]) -> Bool {
+        let options = arguments.dropFirst()
+        guard options.contains("--jsonl") else {
+            return false
+        }
+        let hasMetaCommand = options.contains { option in
+            metaCommandOptions.contains(option)
+                || (option.hasPrefix("--install-features")
+                    && option.dropFirst("--install-features".count).first == "=")
+        }
+        return !hasMetaCommand
+    }
     public static func main(
         setupHandler: ZenCODEInteractiveSetupHandler? = nil,
         backendFactory: AgentRuntimeBackendFactory? = nil
@@ -36,14 +59,18 @@ public enum ZenCODECommandLineRunner {
         setupHandler: ZenCODEInteractiveSetupHandler? = nil,
         backendFactory: AgentRuntimeBackendFactory? = nil
     ) async {
+        var requestedJSONL = false
+        var jsonlRunnerStarted = false
         do {
             SwiftPMResourceBundleDirectory.configure()
 
             let sanitizedArguments = ZenCODECommandLineArgumentSanitizer.sanitized(rawArguments)
+            requestedJSONL = jsonlIsActive(arguments: sanitizedArguments)
             if ZenCODEDoctorRunner.shouldRun(arguments: sanitizedArguments) {
                 // Non-interactive diagnostics: print a redacted report and exit.
                 // Handled before configuration parsing so it never starts setup
-                // or is rejected as an unknown argument.
+                // or is rejected as an unknown argument. A meta-command always
+                // wins over --jsonl (see `jsonlIsActive(arguments:)`).
                 Foundation.exit(ZenCODEDoctorRunner.run())
             }
             var configuration = try AgentConfiguration(
@@ -69,11 +96,15 @@ public enum ZenCODECommandLineRunner {
             switch resolvedRunMode {
             case .headless:
                 AgentOutput.silenceInheritedProcessOutput()
+                if configuration.jsonl {
+                    AgentOutput.silenceAllStandardError()
+                }
                 let prompt = try ZenCODEHeadlessRunner.prompt(
                     inlinePrompt: configuration.headlessPrompt,
                     stdinIsTerminal: stdinIsTerminal
                 )
                 let permissionAuthorizer = LocalExecPermissionAuthorizer()
+                jsonlRunnerStarted = configuration.jsonl
                 try await AgentRuntimeLauncher.runHeadless(
                     configuration: configuration,
                     prompt: prompt,
@@ -132,9 +163,15 @@ public enum ZenCODECommandLineRunner {
                 )
             }
         } catch {
-            AgentOutput.standardError.writeString(
-                "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"
-            )
+            if requestedJSONL {
+                if !jsonlRunnerStarted {
+                    ZenCODEHeadlessJSONLProtocol.writeFramedError(error)
+                }
+            } else {
+                AgentOutput.standardError.writeString(
+                    "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"
+                )
+            }
             Foundation.exit(1)
         }
     }
@@ -179,6 +216,7 @@ public enum ZenCODECommandLineRunner {
             || argument == "--acp"
             || argument == "-p"
             || argument == "--prompt"
+            || argument == "--jsonl"
             || argument == "--working-directory"
             || argument == "--skills"
             || argument == "--max-tool-rounds"

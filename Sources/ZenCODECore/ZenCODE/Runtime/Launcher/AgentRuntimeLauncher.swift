@@ -7,7 +7,8 @@ import Foundation
 
 /// Shared entry points for launching ZenCODE terminal and ACP runtimes.
 public enum AgentRuntimeLauncher {
-    /// Runs one non-interactive turn and writes only its final assistant text.
+    /// Runs one non-interactive turn. Legacy headless mode writes only the final
+    /// assistant text; JSONL mode writes the approved lifecycle records.
     @TerminalChatActor
     public static func runHeadless(
         configuration: AgentConfiguration,
