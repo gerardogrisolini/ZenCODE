@@ -29,11 +29,9 @@ extension TerminalChatRenderCoordinator {
         }
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
-        if isSubAgentTool {
-            clearOwnedSubAgentOverviewBeforeInterleavedOutput(
-                maximumInPlaceRows: maximumInPlaceRows
-            )
-        }
+        clearOwnedSubAgentOverviewBeforeInterleavedOutput(
+            maximumInPlaceRows: maximumInPlaceRows
+        )
         prepareForToolOutput()
         toolState.startInstants[toolCall.id] = toolNow()
         toolState.activeBlockIsSubAgentTool = isSubAgentTool
@@ -76,11 +74,9 @@ extension TerminalChatRenderCoordinator {
         }
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
-        if isSubAgentTool {
-            clearOwnedSubAgentOverviewBeforeInterleavedOutput(
-                maximumInPlaceRows: maximumInPlaceRows
-            )
-        }
+        clearOwnedSubAgentOverviewBeforeInterleavedOutput(
+            maximumInPlaceRows: maximumInPlaceRows
+        )
 
         // A stale completion must never take ownership from a newer active
         // block; it is rendered append-only below.
@@ -439,11 +435,9 @@ extension TerminalChatRenderCoordinator {
             }
             finishThoughtOutputIfNeeded()
             finishAssistantContentFormatting()
-            if deferred.isSubAgentTool {
-                clearOwnedSubAgentOverviewBeforeInterleavedOutput(
-                    maximumInPlaceRows: maximumInPlaceRows
-                )
-            }
+            clearOwnedSubAgentOverviewBeforeInterleavedOutput(
+                maximumInPlaceRows: maximumInPlaceRows
+            )
             if deferred.preparesOutput {
                 prepareForToolOutput()
             }

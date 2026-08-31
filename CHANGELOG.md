@@ -22,6 +22,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Sub-Agent overviews are now retired before ordinary tool output and its Chat
+  repaint replay, preventing stale or duplicate overview sections.
 - Active tool blocks now preserve their terminal anchor when Chat opens, closes,
   or first appears: the verified old rows are removed before the status-bar
   repaint and the pending tool is republished against the resulting layout.

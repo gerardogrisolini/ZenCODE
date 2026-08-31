@@ -488,7 +488,7 @@ extension TerminalChatRenderCoordinator {
         writeDirect("\u{1B}[\(rowCount)A\r", to: .standardError)
     }
 
-    /// Removes a still-owned transient overview before a coordinator `agent.*`
+    /// Removes a still-owned transient overview before a coordinator tool
     /// lifecycle block is written. Starts and completions both replace the live
     /// overview in the one shared rewrite slot; otherwise every subsequent
     /// coordinator call would strand the prior section in the transcript.
@@ -499,7 +499,7 @@ extension TerminalChatRenderCoordinator {
         // The lifecycle block removes the live overview from the terminal's
         // current presentation even when the snapshot itself has not changed.
         // Forget its signature so the publication immediately following an
-        // `agent.*` start/completion can redraw that same snapshot. Otherwise
+        // tool start/completion can redraw that same snapshot. Otherwise
         // `agent.wait` keeps only its tool row visible until agent state changes
         // (or the wait completes), because every periodic refresh is incorrectly
         // deduplicated against a section that is no longer on screen.

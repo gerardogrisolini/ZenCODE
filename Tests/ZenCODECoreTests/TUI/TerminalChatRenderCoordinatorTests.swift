@@ -1991,6 +1991,132 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func ordinaryToolStartRetiresSubAgentOverviewBeforeChatRepaintReplay() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let statusBar = TerminalStatusBar(isEnabled: true) { _ in }
+        await statusBar.configureForTesting(row: 14, columns: 80)
+        await statusBar.updateInputPanel(
+            text: "draft",
+            cursorIndex: 5,
+            modeText: "Chat",
+            helpText: "Enter"
+        )
+        await statusBar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: false)
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:before-ordinary-tool",
+            text: "\n👥 Sub-Agents:\n   running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave"
+        )
+        let toolCall = presentedToolCall(
+            id: "ordinary-tool-before-chat-repaint",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/Example.swift"],
+            argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
+        )
+        let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+        let eventsBeforeTool = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallStarted(
+            toolCall,
+            maximumInPlaceRows: previousOutputCapacity
+        )
+
+        let toolStartText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeTool)
+            .map(\.text)
+            .joined()
+        #expect(toolStartText.hasPrefix("\u{1B}[3A\r"))
+        #expect(toolStartText.components(separatedBy: "\u{1B}[2K").count - 1 >= 3)
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+
+        await renderer.beginBottomOverlayTransition(
+            maximumInPlaceRows: previousOutputCapacity
+        )
+        await statusBar.setSharedChatReader(
+            entries: [
+                TerminalSharedChatReaderEntry(
+                    id: UUID(),
+                    route: "worker",
+                    text: "Ready"
+                )
+            ],
+            unreadCount: 1,
+            isExpanded: false
+        )
+        let currentOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+        await renderer.endBottomOverlayTransition(
+            maximumInPlaceRows: currentOutputCapacity
+        )
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done"),
+            maximumInPlaceRows: currentOutputCapacity
+        )
+        #expect(await renderer.snapshot().activeToolCallID == nil)
+        let eventsBeforeOverviewRefresh = await renderer.capturedWriteEvents().count
+
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:after-ordinary-tool-chat-repaint",
+            text: "\n👥 Sub-Agents:\n   completed\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave",
+            maximumInPlaceRows: currentOutputCapacity
+        )
+
+        let refreshedOverviewText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeOverviewRefresh)
+            .map(\.text)
+            .joined()
+        #expect(!containsCursorUpSequence(refreshedOverviewText))
+        #expect(!TerminalANSIText.stripANSI(refreshedOverviewText).contains("running"))
+        #expect(TerminalANSIText.stripANSI(refreshedOverviewText).contains("completed"))
+        let refreshedSnapshot = await renderer.snapshot()
+        #expect(refreshedSnapshot.activeSubAgentOverviewRowCount > 0)
+    }
+
+    @Test
+    func ordinaryToolCompletionRetiresActiveSubAgentOverview() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:before-ordinary-completion",
+            text: "\n👥 Sub-Agents:\n   running\n",
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "wave"
+        )
+        let toolCall = presentedToolCall(
+            id: "ordinary-completion-with-overview",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/Example.swift"],
+            argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
+        )
+        let eventsBeforeCompletion = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done")
+        )
+
+        let completionText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeCompletion)
+            .map(\.text)
+            .joined()
+        #expect(completionText.hasPrefix("\u{1B}[3A\r"))
+        #expect(completionText.components(separatedBy: "\u{1B}[2K").count - 1 >= 3)
+        #expect(TerminalANSIText.stripANSI(completionText).contains("local.readFile"))
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
+    }
+
+    @Test
     func toolStartDuringBottomOverlayTransitionWaitsForTheNewAnchor() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
