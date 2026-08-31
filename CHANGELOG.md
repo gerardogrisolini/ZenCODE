@@ -13,6 +13,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 ### Fixed
 
 - Tool argument handling now treats `skills.read`'s optional `resource` argument as absent when empty, and no longer lets empty string/array aliases hide later non-empty aliases in `tasks.get` and `local.readFiles`.
+- `/plan save` now preserves the original planning request as the saved Goal
+  when a Planner clarification reply (such as an approval to prepare the plan)
+  immediately precedes the final plan response.
 
 ## [2.1.1] - 2026-08-31
 

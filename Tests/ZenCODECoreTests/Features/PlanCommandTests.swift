@@ -494,7 +494,18 @@ struct PlanCommandTests {
         )
         terminal.activeSessionTranscript = [
             AgentRuntimeMessage(role: .user, content: "Design the migration"),
-            AgentRuntimeMessage(role: .assistant, content: "First inspect, then migrate and test."),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "Planner questions\n1. Which migration constraints matter?"
+            ),
+            AgentRuntimeMessage(
+                role: .user,
+                content: "perfetto, prepara il piano da implementare"
+            ),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "First inspect, then migrate and test."
+            ),
         ]
 
         #expect(isContinueChat(await terminal.handlePlanCommand("/plan save")))
@@ -1039,6 +1050,87 @@ struct PlanCommandTests {
         #expect(PlanningCommandKernel.planFromLatestAssistantMessage(
             in: messages
         ) == nil)
+    }
+
+    @Test
+    func textOnlyPlanUsesOriginalGoalInsteadOfPlannerConfirmationReply() throws {
+        let messages = [
+            AgentRuntimeMessage(
+                role: .user,
+                content: "Implement dark mode in the terminal"
+            ),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "Planner questions\n1. Which terminal surfaces should change?"
+            ),
+            AgentRuntimeMessage(
+                role: .user,
+                content: "perfetto, prepara il piano da implementare"
+            ),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "Specifiche concordate\n\nImplementation plan\n1. Update the terminal theme."
+            ),
+        ]
+
+        let plan = try #require(
+            PlanningCommandKernel.planFromLatestAssistantMessage(in: messages)
+        )
+        #expect(plan.originalGoal == "Implement dark mode in the terminal")
+        #expect(plan.consolidatedText.contains("Update the terminal theme"))
+    }
+
+    @Test
+    func textOnlyPlanSkipsExplicitConfirmationWithoutPlannerHeading() throws {
+        let messages = [
+            AgentRuntimeMessage(
+                role: .user,
+                content: "Migrate the session store to schema 2"
+            ),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "I have enough context. Shall I prepare the implementation plan?"
+            ),
+            AgentRuntimeMessage(
+                role: .user,
+                content: "Perfect, prepare the implementation plan."
+            ),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "Implementation plan\n1. Migrate the persisted schema."
+            ),
+        ]
+
+        let plan = try #require(
+            PlanningCommandKernel.planFromLatestAssistantMessage(in: messages)
+        )
+        #expect(plan.originalGoal == "Migrate the session store to schema 2")
+    }
+
+    @Test
+    func olderPlannerQuestionsDoNotReplaceANewerPlanGoal() throws {
+        let messages = [
+            AgentRuntimeMessage(role: .user, content: "Plan the legacy migration"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "Planner questions\n1. Which legacy constraints matter?"
+            ),
+            AgentRuntimeMessage(role: .user, content: "Keep the old identifiers"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "Implementation plan\n1. Migrate the legacy store."
+            ),
+            AgentRuntimeMessage(role: .user, content: "Plan the new export command"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "Implementation plan\n1. Add the export command."
+            ),
+        ]
+
+        let plan = try #require(
+            PlanningCommandKernel.planFromLatestAssistantMessage(in: messages)
+        )
+        #expect(plan.originalGoal == "Plan the new export command")
     }
 
     @Test
