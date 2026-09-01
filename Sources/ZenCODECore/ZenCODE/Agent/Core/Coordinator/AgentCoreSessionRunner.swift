@@ -90,6 +90,10 @@ public actor AgentCoreSessionRunner {
     /// reset/shutdown clears this map; the per-prompt `defer` must not.
     let defaultToolAuthorizationHandler: AgentToolAuthorizationHandler?
     let mcpRuntime: DirectMCPToolRuntime
+    /// Session-scoped feature runtime shared with the UI and remote tool
+    /// executors. Its persistent-feature registry owns connections such as the
+    /// Xcode MCP bridge, so it must not be recreated for a live backend.
+    public nonisolated let swiftFeatureRuntime: SwiftFeatureRuntime
     public let taskOrchestrator: SessionTaskOrchestrator
     let backendFactory: AgentRuntimeBackendFactory?
 
@@ -108,6 +112,7 @@ public actor AgentCoreSessionRunner {
     public init(
         defaultToolAuthorizationHandler: AgentToolAuthorizationHandler? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
+        swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
         backendFactory: AgentRuntimeBackendFactory? = nil,
         taskOrchestrator: SessionTaskOrchestrator? = nil,
         taskGraphStore: SessionTaskGraphStore? = SessionTaskGraphStore()
@@ -115,6 +120,7 @@ public actor AgentCoreSessionRunner {
         self.init(
             defaultToolAuthorizationHandler: defaultToolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime,
             backendFactory: backendFactory,
             taskOrchestrator: taskOrchestrator,
             taskGraphStore: taskGraphStore,
@@ -125,6 +131,7 @@ public actor AgentCoreSessionRunner {
     init(
         defaultToolAuthorizationHandler: AgentToolAuthorizationHandler? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
+        swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
         backendFactory: AgentRuntimeBackendFactory? = nil,
         taskOrchestrator: SessionTaskOrchestrator? = nil,
         taskGraphStore: SessionTaskGraphStore? = SessionTaskGraphStore(),
@@ -132,6 +139,7 @@ public actor AgentCoreSessionRunner {
     ) {
         self.defaultToolAuthorizationHandler = defaultToolAuthorizationHandler
         self.mcpRuntime = mcpRuntime
+        self.swiftFeatureRuntime = swiftFeatureRuntime
         self.backendFactory = backendFactory
         self.taskOrchestrator = taskOrchestrator
             ?? SessionTaskOrchestrator(store: taskGraphStore)

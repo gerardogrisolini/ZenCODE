@@ -636,6 +636,7 @@ extension AgentCoreSessionRunner {
         let backend = AgentCoreBackend(
             configuration: runtimeConfiguration,
             mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime,
             backendFactory: backendFactory
         )
         await backend.installTaskOrchestrator(taskOrchestrator)

@@ -10,6 +10,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Xcode tool discovery and agent invocations now share the same persistent
+  feature runtime in Chat, preventing a second Xcode authorization request
+  after tools have already been activated.
+
 ## [2.1.2] - 2026-08-31
 
 ### Added

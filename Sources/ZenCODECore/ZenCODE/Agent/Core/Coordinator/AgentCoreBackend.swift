@@ -25,6 +25,7 @@ public actor AgentCoreBackend {
 
     private let configuration: AgentRuntimeConfiguration
     private let mcpRuntime: DirectMCPToolRuntime
+    private let swiftFeatureRuntime: SwiftFeatureRuntime
     private var activeBackend: (any AgentRuntimeBackend)?
     /// Single-flight guard for resolving and hydrating the runtime backend.
     /// Actor reentrancy allows another caller into `resolveBackend` whenever
@@ -47,10 +48,12 @@ public actor AgentCoreBackend {
     public init(
         configuration: AgentRuntimeConfiguration,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
+        swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
         backendFactory: AgentRuntimeBackendFactory? = nil
     ) {
         self.configuration = configuration
         self.mcpRuntime = mcpRuntime
+        self.swiftFeatureRuntime = swiftFeatureRuntime
         self.backendFactory = backendFactory
     }
 
@@ -476,7 +479,8 @@ public actor AgentCoreBackend {
         )
         let backend = try Self.makeRemoteBackend(
             configuration: configuration,
-            mcpRuntime: mcpRuntime
+            mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime
         )
         if !configuration.appMode,
            let provider = selection?.remoteProvider {

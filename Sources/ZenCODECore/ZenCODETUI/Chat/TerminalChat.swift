@@ -31,7 +31,7 @@ public final class TerminalChat {
     public let reader = StdioLineReader()
     public let interactiveReader = TerminalInteractiveLineReader()
     public let permissionAuthorizer: LocalExecPermissionAuthorizer
-    public let featureRuntime = SwiftFeatureRuntime()
+    public let featureRuntime: SwiftFeatureRuntime
     public var sessionID = TerminalChat.newTerminalSessionID()
     public var activeSessionCacheKey: String?
     public var activeSessionHistory: [AgentRuntimeMessage] = []
@@ -281,11 +281,19 @@ public final class TerminalChat {
         )
         let permissionAuthorizer = permissionAuthorizer ?? LocalExecPermissionAuthorizer()
         self.permissionAuthorizer = permissionAuthorizer
-        self.sessionRunner = sessionRunner ?? AgentCoreSessionRunner(
-            defaultToolAuthorizationHandler: { request in
-                await permissionAuthorizer.authorize(request)
-            }
-        )
+        if let sessionRunner {
+            self.sessionRunner = sessionRunner
+            self.featureRuntime = sessionRunner.swiftFeatureRuntime
+        } else {
+            let featureRuntime = SwiftFeatureRuntime()
+            self.featureRuntime = featureRuntime
+            self.sessionRunner = AgentCoreSessionRunner(
+                defaultToolAuthorizationHandler: { request in
+                    await permissionAuthorizer.authorize(request)
+                },
+                swiftFeatureRuntime: featureRuntime
+            )
+        }
         self.selectedAgent = configuration.selectedAgent
         self.manualModelIDOverride = configuration.modelID
         self.telegramControlService = TerminalTelegramControlService(
