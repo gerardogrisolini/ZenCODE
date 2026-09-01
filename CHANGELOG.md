@@ -12,6 +12,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- A same-ID tool completion that follows its pending block without intervening
+  output now updates its cursor-adjacent status rows without repeating the tool
+  header when a scrolling-region capacity fuse makes full replacement unsafe.
+  Resize, stale, interleaved, and different-ID completions retain the safe
+  append-only path.
 - Xcode tool discovery and agent invocations now share the same persistent
   feature runtime in Chat, preventing a second Xcode authorization request
   after tools have already been activated.

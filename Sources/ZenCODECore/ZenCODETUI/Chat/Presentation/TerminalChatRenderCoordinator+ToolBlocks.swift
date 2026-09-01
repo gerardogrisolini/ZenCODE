@@ -178,6 +178,8 @@ extension TerminalChatRenderCoordinator {
                 cursorState: currentCursorState(for: .standardError)
             )
         }
+        var compactRowsToWrite = renderRows.compactRows.map(\.plainText)
+        var firstCompactRowIsTitle = true
 
         switch lifecycle {
         case .started:
@@ -219,6 +221,40 @@ extension TerminalChatRenderCoordinator {
                     && block.rows <= maximumReplaceableRows
             } ?? false
 
+            // A pending compact block terminates with a newline, so the cursor
+            // is on the row *after* its status. If only the capacity fuse
+            // prevents the full redraw, its original geometry is still known:
+            // replace just the status rows. A resize deliberately remains
+            // append-only because even this relative movement could target
+            // reflowed or foreign output.
+            if let activeBlock,
+               activeBlock.id == toolCall.id,
+               activeBlock.writeSequence == emittedWriteCount,
+               standardErrorIsTerminal,
+               activeBlock.columnWidth == columnWidth,
+               !shouldRewriteActiveBlock {
+                let pendingRows = toolBlockRows(
+                    for: activeBlock.toolCall,
+                    lifecycle: .started,
+                    contentInsetWidth: contentInsetWidth,
+                    columnWidth: activeBlock.columnWidth
+                )
+                let titleRowCount = pendingRows.compactRows.count > 1
+                    ? TerminalChat.renderedTerminalRowCount(
+                        for: [pendingRows.compactRows[0].plainText],
+                        contentInsetWidth: contentInsetWidth,
+                        columnWidth: activeBlock.columnWidth
+                    )
+                    : 0
+                let statusRowCount = activeBlock.rows - titleRowCount
+                if statusRowCount > 0,
+                   statusRowCount <= activeBlock.rows {
+                    clearOwnedRows(statusRowCount)
+                    compactRowsToWrite = Array(renderRows.compactRows.suffix(1)).map(\.plainText)
+                    firstCompactRowIsTitle = false
+                }
+            }
+
             // Starts transfer the one physical rewrite slot to the newest
             // block. A completion for an older or otherwise unowned tool is
             // append-only: it must not erase the newer block. It *does*,
@@ -245,7 +281,9 @@ extension TerminalChatRenderCoordinator {
         writeToolBlockRows(
             renderRows,
             for: toolCall,
-            lifecycle: lifecycle
+            lifecycle: lifecycle,
+            compactRows: compactRowsToWrite,
+            firstCompactRowIsTitle: firstCompactRowIsTitle
         )
         if let pendingOwnership {
             toolState.activeBlock = ActiveToolBlock(
@@ -299,11 +337,14 @@ extension TerminalChatRenderCoordinator {
     private func writeToolBlockRows(
         _ renderRows: TerminalChat.ToolPresentationRows,
         for toolCall: DirectAgentToolCall,
-        lifecycle: ToolBlockLifecycle
+        lifecycle: ToolBlockLifecycle,
+        compactRows: [String]? = nil,
+        firstCompactRowIsTitle: Bool = true
     ) {
         writeCompactToolLines(
-            renderRows.compactRows.map(\.plainText),
-            newline: lifecycle.isCompletion && renderRows.detailRows.isEmpty
+            compactRows ?? renderRows.compactRows.map(\.plainText),
+            newline: lifecycle.isCompletion && renderRows.detailRows.isEmpty,
+            firstLineIsTitle: firstCompactRowIsTitle
         )
         guard !renderRows.detailRows.isEmpty else {
             return
@@ -320,13 +361,15 @@ extension TerminalChatRenderCoordinator {
     private func writeCompactToolLines(
         _ lines: [String],
         newline: Bool = false,
-        terminator: String = "\n"
+        terminator: String = "\n",
+        firstLineIsTitle: Bool = true
     ) {
         let text = TerminalChat.compactToolTerminalText(
             lines,
             lineInset: lineInset,
             newline: newline,
-            terminator: terminator
+            terminator: terminator,
+            firstLineIsTitle: firstLineIsTitle
         )
         writeRawChatError(text)
     }

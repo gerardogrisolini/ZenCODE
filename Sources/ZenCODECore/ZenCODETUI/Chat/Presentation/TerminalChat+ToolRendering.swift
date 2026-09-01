@@ -256,14 +256,15 @@ extension TerminalChat {
         _ lines: [String],
         lineInset: String,
         newline: Bool = false,
-        terminator: String = "\n"
+        terminator: String = "\n",
+        firstLineIsTitle: Bool = true
     ) -> String {
         let reset = TerminalStyle.reset
         let suffix = newline ? "\n" : ""
         let text = lines
             .enumerated()
             .map { index, line in
-                "\r\u{1B}[2K\(lineInset)\(Self.renderCompactToolLine(line, isTitle: index == 0))\(reset)"
+                "\r\u{1B}[2K\(lineInset)\(Self.renderCompactToolLine(line, isTitle: firstLineIsTitle && index == 0))\(reset)"
             }
             .joined(separator: "\n")
         return "\(text)\(terminator)\(suffix)"

@@ -4002,6 +4002,72 @@ struct TerminalChatToolBlockResizeTests {
         #expect(!completionEvents.map(\.text).joined().contains("\u{1B}[J"))
     }
 
+    @Test(arguments: [
+        ("memory.search", ["query": "duplicate header regression"]),
+        ("memory.update", ["id": "memory-entry-id", "content": "Updated entry"])
+    ])
+    func sameIDMemoryCompletionAtCapacityKeepsOneVisibleHeader(
+        toolName: String,
+        arguments: [String: String]
+    ) async {
+        // The pending block is taller than the available in-place region. Its
+        // title can no longer be safely cleared, but its status remains the
+        // cursor-adjacent owned row and can be updated without another title.
+        let widthBox = ColumnWidthBox(100)
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { widthBox.width }
+        )
+        let toolCall = presentedToolCall(
+            id: "\(toolName)-same-id-resize",
+            name: toolName,
+            argumentsObject: arguments,
+            argumentsJSON: "{}"
+        )
+
+        await renderer.writeToolCallStarted(toolCall, maximumInPlaceRows: 1)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Completed", summary: "Completed"),
+            maximumInPlaceRows: 1
+        )
+
+        let screen = terminalScreenText(
+            await renderer.capturedWriteEvents().map(\.text).joined()
+        )
+        #expect(screen.components(separatedBy: toolName).count - 1 == 1)
+        #expect(screen.contains("✅"))
+        #expect(!screen.contains("⏳"))
+    }
+
+    @Test
+    func sameIDSingleRowCompletionAtCapacityIsNotDropped() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 100 }
+        )
+        let toolCall = presentedToolCall(
+            id: "single-row-capacity",
+            name: "agent.wait",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+
+        await renderer.writeToolCallStarted(toolCall, maximumInPlaceRows: 1)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Completed", summary: "Completed"),
+            maximumInPlaceRows: 1
+        )
+
+        let screen = terminalScreenText(
+            await renderer.capturedWriteEvents().map(\.text).joined()
+        )
+        #expect(screen.components(separatedBy: "agent.wait").count - 1 == 1)
+        #expect(screen.contains("✅"))
+        #expect(!screen.contains("⏳"))
+    }
+
 
     private func makeRenderer(
         standardErrorIsTerminal: Bool,
@@ -4018,6 +4084,87 @@ struct TerminalChatToolBlockResizeTests {
             columnWidthProvider: columnWidthProvider
         )
     }
+}
+
+/// Minimal ANSI screen model for lifecycle regressions. It deliberately covers
+/// only the controls emitted by the coordinator's compact tool renderer.
+private func terminalScreenText(_ text: String) -> String {
+    var rows = [[Character]](repeating: [], count: 1)
+    var row = 0
+    var column = 0
+    let scalars = Array(text.unicodeScalars)
+    var index = 0
+
+    func ensureRow(_ target: Int) {
+        while rows.count <= target {
+            rows.append([])
+        }
+    }
+    func eraseLine(_ mode: Int) {
+        switch mode {
+        case 0:
+            if column < rows[row].count {
+                rows[row].removeSubrange(column...)
+            }
+        case 1:
+            guard !rows[row].isEmpty else { return }
+            let end = min(column, rows[row].count - 1)
+            rows[row].replaceSubrange(0...end, with: repeatElement(" ", count: end + 1))
+        default: // CSI 2K (and unknown modes used by this renderer)
+            rows[row].removeAll()
+        }
+    }
+    while index < scalars.count {
+        let scalar = scalars[index]
+        if scalar == "\u{1B}", index + 1 < scalars.count, scalars[index + 1] == "[" {
+            index += 2
+            var parameter = ""
+            while index < scalars.count {
+                let value = scalars[index].value
+                guard (48...57).contains(value) || scalars[index] == ";" else {
+                    break
+                }
+                parameter.unicodeScalars.append(scalars[index])
+                index += 1
+            }
+            guard index < scalars.count else { break }
+            let count = Int(parameter.split(separator: ";").first ?? "") ?? 1
+            switch scalars[index] {
+            case "A":
+                row = max(0, row - count)
+            case "B":
+                row += count
+                ensureRow(row)
+            case "K":
+                eraseLine(Int(parameter.split(separator: ";").first ?? "") ?? 0)
+            default:
+                break // SGR and unsupported controls do not move the cursor.
+            }
+            index += 1
+            continue
+        }
+        switch scalar {
+        case "\r":
+            column = 0
+        case "\n":
+            row += 1
+            ensureRow(row)
+            column = 0
+        default:
+            let character = Character(String(scalar))
+            while rows[row].count < column {
+                rows[row].append(" ")
+            }
+            if rows[row].count == column {
+                rows[row].append(character)
+            } else {
+                rows[row][column] = character
+            }
+            column += 1
+        }
+        index += 1
+    }
+    return rows.map { String($0) }.joined(separator: "\n")
 }
 
 private actor OverviewMirrorRecorder {
