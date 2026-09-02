@@ -18,7 +18,7 @@ extension ZenCODESetupRunner {
             selectedModelID: manifest.selectedModelID,
             selectedThinkingSelection: manifest.selectedThinkingSelection,
             telegram: telegram,
-            voice: manifest.voice,
+            voice: voiceSettings(for: telegram),
             remoteAPIKeysByProviderID: manifest.remoteAPIKeysByProviderID,
             localExecAllowedCommands: manifest.localExecAllowedCommands,
             chatGPTSubscriptionCredentials: manifest.chatGPTSubscriptionCredentials,
@@ -26,6 +26,25 @@ extension ZenCODESetupRunner {
             responseLanguage: manifest.responseLanguage,
             memoryEmbedding: manifest.memoryEmbedding
         )
+    }
+
+    /// Voice transcription is a Telegram capability, supported only by the
+    /// built-in macOS speech frameworks. Keep it absent whenever Telegram is
+    /// not active so disabling Telegram cannot leave voice enabled.
+    static func voiceSettings(
+        for telegram: AgentTelegramSettingsManifest?
+    ) -> AgentVoiceSettingsManifest? {
+        #if os(macOS)
+        guard telegram?.isEnabled == true else {
+            return nil
+        }
+        return AgentVoiceSettingsManifest(
+            enabled: true,
+            language: AgentVoiceSettingsManifest.defaultLanguage
+        )
+        #else
+        return nil
+        #endif
     }
 
     static func promptTelegramSettings(

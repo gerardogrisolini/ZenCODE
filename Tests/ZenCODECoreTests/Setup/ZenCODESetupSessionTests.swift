@@ -178,6 +178,40 @@ struct ZenCODESetupSessionTests {
     }
 
     @Test
+    func voiceToolsAreNotAnAvailableSetupSection() {
+        let options = ZenCODESetupRunner.setupSectionOptions(
+            currentManifest: Self.remoteManifest()
+        )
+
+        #expect(!options.map(\.section).contains { $0.title == "Voice tools" })
+    }
+
+    @Test
+    func telegramVoiceSettingsFollowPlatformAndTelegramState() {
+        let enabledTelegram = AgentTelegramSettingsManifest(
+            enabled: true,
+            botToken: "token",
+            linkedChatID: 1,
+            linkedChatTitle: nil,
+            ownerUserID: 2,
+            routes: [AgentTelegramRouteManifest(roomID: "default")]
+        )
+
+        #if os(macOS)
+        #expect(
+            ZenCODESetupRunner.voiceSettings(for: enabledTelegram) ==
+                AgentVoiceSettingsManifest(
+                    enabled: true,
+                    language: AgentVoiceSettingsManifest.defaultLanguage
+                )
+        )
+        #else
+        #expect(ZenCODESetupRunner.voiceSettings(for: enabledTelegram) == nil)
+        #endif
+        #expect(ZenCODESetupRunner.voiceSettings(for: nil) == nil)
+    }
+
+    @Test
     func responseLanguageSectionIsAvailableWithoutConfiguredModels() {
         let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
 

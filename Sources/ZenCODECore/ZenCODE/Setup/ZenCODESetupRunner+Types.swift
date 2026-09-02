@@ -168,7 +168,7 @@ struct SetupSession {
 
 enum SetupSection: Equatable, Hashable {
     case providersAndModels, defaultModelSettings, defaultModel, defaultThinking
-    case telegram, voice, features, agents, agentModels, responseLanguage, memoryEmbedding
+    case telegram, features, agents, agentModels, responseLanguage, memoryEmbedding
     case dataManagement
     case resetRemoteConfiguration, finish, cancel
 
@@ -185,7 +185,6 @@ enum SetupSection: Equatable, Hashable {
         .defaultModel: .init(title: "Default model", category: .recommended, requiresConfiguredModels: true, aliases: ["default", "default model", "selected model", "model default"]),
         .defaultThinking: .init(title: "Default thinking", category: .recommended, requiresConfiguredModels: true, aliases: ["thinking", "default thinking", "reasoning", "thinking default"]),
         .telegram: .init(title: "Telegram remote control", category: .optional, requiresConfiguredModels: true, aliases: ["telegram", "remote control", "bot"]),
-        .voice: .init(title: "Voice tools", category: .optional, requiresConfiguredModels: true, aliases: ["voice", "voice transcription", "voice messages", "speech"]),
         .features: .init(title: "Features", category: .recommended, requiresConfiguredModels: false, aliases: ["features", "feature", "tools", "swift features", "enable features", "disable features"]),
         .agents: .init(title: "Agents", category: .recommended, requiresConfiguredModels: false, aliases: ["agents", "agent", "profiles", "agent profiles"]),
         .agentModels: .init(title: "Agent model bindings", category: .recommended, requiresConfiguredModels: true, aliases: ["agent models", "agent model bindings", "agent bindings", "agent capability", "models", "capability", "agent models & capability"]),
@@ -202,34 +201,6 @@ enum SetupSection: Equatable, Hashable {
     var category: SetupSectionCategory { descriptor.category }
     var requiresConfiguredModels: Bool { descriptor.requiresConfiguredModels }
     func matches(_ value: String) -> Bool { descriptor.aliases.contains(value) }
-}
-
-struct VoiceSetupOption {
-    let value: String
-    let title: String
-    let detail: String?
-    let aliases: [String]
-
-    init(
-        value: String,
-        title: String,
-        detail: String? = nil,
-        aliases: [String] = []
-    ) {
-        self.value = value
-        self.title = title
-        self.detail = detail
-        self.aliases = aliases
-    }
-
-    func matches(_ rawValue: String?) -> Bool {
-        guard let value = rawValue?.nilIfBlank?.lowercased() else {
-            return false
-        }
-        return self.value.lowercased() == value
-            || title.lowercased() == value
-            || aliases.contains { $0.lowercased() == value }
-    }
 }
 
 struct SetupProviderInput {

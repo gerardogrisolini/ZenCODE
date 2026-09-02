@@ -10,6 +10,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Voice transcription is now configured automatically with Telegram: it is
+  enabled on macOS using the default Italian language and is unavailable on
+  other platforms. The separate "Voice tools" setup section has been removed;
+  disabling Telegram also removes its voice configuration.
+
 ### Fixed
 
 - A same-ID tool completion that follows its pending block without intervening

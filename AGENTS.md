@@ -8,6 +8,17 @@
 - Update `CHANGELOG.md` whenever a change is user-visible or otherwise warrants a release note.
 - Composition starts at `Sources/zen/CLI/ZenCODEMain.swift`; shared session coordination is centered on `AgentCoreSessionRunner`, backend state is behind `AgentCoreBackend`, and direct-tool dispatch is behind `DirectToolExecutor`.
 
+## Architecture Map
+
+- `zen` is the only executable composition root and the only layer that selects and injects a remote model backend. `ZenCODECore` owns the shared runtime; terminal UI, Telegram, and ACP adapt that runtime without moving transport-specific types into neutral Agent or Remote domains.
+- The reusable target flow is `ToolCore` → `FeatureKit` → `LocalToolsSupport`, with `FeatureMCPBridgeKit` depending only on `FeatureKit` and `ToolCore`. `ZenCODECore` consumes these support targets and `ZenPackageMetadata`; keep dependency-light contracts in the lowest viable layer and never introduce a dependency on `zen`.
+- `Sources/Features/<Feature>` contains standalone Swift packages, not root targets. Each optional feature owns its product, implementation, policy, tests, and thin executable; generic feature-process and MCP machinery belongs in `FeatureKit` or `FeatureMCPBridgeKit`, never feature-specific behavior.
+- `AgentCoreSessionRunner` is the session-level coordinator and injects one `SessionTaskOrchestrator` into every backend. The orchestrator is the sole mutable owner of task DAGs and checkpoints; backend recreation must not replace or discard that state.
+- `DirectToolExecutor` is the authorization and dispatch boundary for direct tools. Delegated-agent tool grants come from configured profiles, not model-authored arguments or task metadata.
+- Provider generation is remote-only and provider-agnostic runtime state stays local. Shared HTTP/SSE/WebSocket behavior belongs under `Remote/Generation`; authentication remains separate from generation transport.
+- Persisted state lives under the support directory (default `~/.zencode`, overridable with `ZENCODE_SUPPORT_DIRECTORY`) and includes settings, sessions, task checkpoints, permissions, feature manifests, and per-workspace memory graphs. Presentation trees, live shared chat, and unfinished Planner clarification state are intentionally transient and must not enter snapshots or checkpoints.
+- Treat `Docs/architecture.md` as authoritative for compatibility surfaces, ownership details, persistence formats, and migration rules. Structural changes must preserve observable behavior, use direct imports/dependencies, update registries/scripts/parity checks together, and receive focused characterization tests before moving persistence- or wire-sensitive paths.
+
 ## Build and Validation
 
 - Every root Swift target enables `MemberImportVisibility`; source files must import the modules that define the members they use.
@@ -38,4 +49,4 @@
 - Use UUID-named temporary directories for filesystem tests. Mark suites that mutate process-wide environment or shared state with `@Suite(.serialized)`.
 - Runtime state defaults to `~/.zencode` and honors `ZENCODE_SUPPORT_DIRECTORY`. Isolate stateful tests from the developer's real support directory and do not turn runtime state into repository fixtures.
 - `ZENCODE_RUN_LIVE_*` variables opt into live checks; leave them unset during ordinary validation.
-- Durable memory storage, retrieval, embedding, recall, and memory-test rules: see [Memory Contract](#memory-contract).
+- Durable memory storage, retrieval, embedding, recall, and persistence rules are defined under `Memory Ownership and Persistence` in `Docs/architecture.md`.

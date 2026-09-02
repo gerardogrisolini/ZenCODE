@@ -102,8 +102,6 @@ extension ZenCODESetupRunner {
             return setupStatusMarker(agentModelsSetupDetail() != "not configured", optional: true)
         case .telegram:
             return setupStatusMarker(manifest?.telegram?.isEnabled == true, optional: true)
-        case .voice:
-            return setupStatusMarker(manifest?.voice?.isConfigured == true, optional: true)
         case .features:
             return setupStatusMarker(featuresAreEnabled(), optional: true)
         case .memoryEmbedding:
@@ -150,22 +148,13 @@ extension ZenCODESetupRunner {
                 detail: manifest?.telegram?.isEnabled == true ? "enabled" : "disabled"
             ),
             SetupSectionOption(
-                section: .voice,
-                detail: manifest?.voice?.isConfigured == true ? "enabled" : "disabled"
-            ),
-            SetupSectionOption(
                 section: .dataManagement,
                 detail: "export, import, and reset ZenCODE data"
             ),
             SetupSectionOption(section: .finish, detail: "save and exit"),
             SetupSectionOption(section: .cancel, detail: "discard changes")
         ]
-        #if !canImport(AVFoundation)
-        let available = options.filter { $0.section != .voice }
-        #else
-        let available = options
-        #endif
-        return groupedByCategory(available)
+        return groupedByCategory(options)
     }
 
     /// Lays the options out in category order while preserving the authored

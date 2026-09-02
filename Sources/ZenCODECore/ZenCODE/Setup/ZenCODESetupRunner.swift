@@ -164,16 +164,11 @@ public enum ZenCODESetupRunner {
         manifest: AgentSettingsManifest,
         agentProfiles: [AgentProfile]
     ) {
-        #if canImport(AVFoundation)
-        let voiceHint = " and voice"
-        #else
-        let voiceHint = ""
-        #endif
         AgentOutput.standardError.writeString(
             """
 
             Quick setup configures a remote provider and its default model.
-            Advanced options like Telegram\(voiceHint) can be enabled later with /setup.
+            Advanced options like Telegram can be enabled later with /setup.
 
             """
         )
@@ -237,10 +232,6 @@ public enum ZenCODESetupRunner {
         case .telegram:
             return SetupSectionConfigurationResult(
                 manifest: try await configureTelegram(in: requireExistingManifest(manifest))
-            )
-        case .voice:
-            return SetupSectionConfigurationResult(
-                manifest: try configureVoice(in: requireExistingManifest(manifest))
             )
         case .features:
             try await configureFeatures()
