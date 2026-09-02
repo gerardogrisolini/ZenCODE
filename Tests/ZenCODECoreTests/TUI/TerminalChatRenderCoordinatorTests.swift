@@ -4004,7 +4004,8 @@ struct TerminalChatToolBlockResizeTests {
 
     @Test(arguments: [
         ("memory.search", ["query": "duplicate header regression"]),
-        ("memory.update", ["id": "memory-entry-id", "content": "Updated entry"])
+        ("memory.update", ["id": "memory-entry-id", "content": "Updated entry"]),
+        ("memory.write", ["content": "Stored entry"])
     ])
     func sameIDMemoryCompletionAtCapacityKeepsOneVisibleHeader(
         toolName: String,
