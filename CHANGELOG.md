@@ -23,6 +23,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Live tool and Sub-Agent headers no longer duplicate when a Chat overlay
+  transition completes without any Chat messages. Superseded lifecycle snapshots
+  now share one re-established terminal rewrite anchor; interleaved output and
+  capacity-fuse fallbacks remain append-only.
 - A same-ID tool completion that follows its pending block without intervening
   output now updates its cursor-adjacent status rows without repeating the tool
   header when a scrolling-region capacity fuse makes full replacement unsafe.

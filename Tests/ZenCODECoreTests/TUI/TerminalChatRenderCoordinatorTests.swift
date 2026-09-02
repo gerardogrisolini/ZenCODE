@@ -2149,6 +2149,88 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func toolStartAndCompletionDuringBottomOverlayTransitionKeepCanonicalSpacing() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let toolCall = presentedToolCall(
+            id: "tool-started-and-completed-during-chat-repaint",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/Example.swift"],
+            argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
+        )
+        await renderer.beginBottomOverlayTransition(maximumInPlaceRows: 6)
+        let eventsBeforeReplay = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallStarted(toolCall, maximumInPlaceRows: 6)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done"),
+            maximumInPlaceRows: 6
+        )
+        await renderer.endBottomOverlayTransition(maximumInPlaceRows: 6)
+
+        let replayText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeReplay)
+            .map(\.text)
+            .joined()
+        let replayPlainText = TerminalANSIText.stripANSI(replayText)
+        #expect(replayText.hasPrefix("\n\n"))
+        #expect(replayPlainText.components(separatedBy: "local.readFile").count - 1 == 1)
+        #expect(replayPlainText.contains("✅"))
+        #expect(await renderer.snapshot().activeToolCallID == nil)
+    }
+
+    @Test
+    func interleavedToolLifecycleDuringBottomOverlayTransitionDoesNotCoalesceAcrossFIFO() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let firstTool = presentedToolCall(
+            id: "first-tool",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/First.swift"],
+            argumentsJSON: #"{"path":"/tmp/First.swift"}"#
+        )
+        let secondTool = presentedToolCall(
+            id: "second-tool",
+            name: "local.pwd",
+            argumentsObject: [:],
+            argumentsJSON: "{}"
+        )
+        await renderer.beginBottomOverlayTransition(maximumInPlaceRows: 12)
+        let eventsBeforeReplay = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallStarted(firstTool, maximumInPlaceRows: 12)
+        await renderer.writeToolCallStarted(secondTool, maximumInPlaceRows: 12)
+        await renderer.writeToolCallCompleted(
+            firstTool,
+            result: DirectAgentToolResult(output: "Done", summary: "Done"),
+            maximumInPlaceRows: 12
+        )
+        await renderer.endBottomOverlayTransition(maximumInPlaceRows: 12)
+
+        let replayPlainText = TerminalANSIText.stripANSI(
+            (await renderer.capturedWriteEvents())
+                .dropFirst(eventsBeforeReplay)
+                .map(\.text)
+                .joined()
+        )
+        let firstHeader = replayPlainText.range(of: "local.readFile")
+        let secondHeader = replayPlainText.range(of: "local.pwd")
+        let completion = replayPlainText.range(of: "✅")
+        #expect(replayPlainText.components(separatedBy: "local.readFile").count - 1 == 2)
+        #expect(replayPlainText.components(separatedBy: "local.pwd").count - 1 == 1)
+        #expect(firstHeader != nil)
+        #expect(secondHeader != nil)
+        #expect(completion != nil)
+        #expect(firstHeader!.lowerBound < secondHeader!.lowerBound)
+        #expect(secondHeader!.lowerBound < completion!.lowerBound)
+    }
+
+    @Test
     func toolCompletionDuringBottomOverlayTransitionReplaysAfterTheRepaint() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
@@ -2181,7 +2263,64 @@ struct TerminalChatRenderCoordinatorTests {
             .joined()
         #expect(TerminalANSIText.stripANSI(replayText).contains("local.readFile"))
         #expect(TerminalANSIText.stripANSI(replayText).contains("✅"))
-        #expect(containsCursorUpSequence(replayText))
+        #expect(!containsCursorUpSequence(replayText))
+        #expect(await renderer.snapshot().activeToolCallID == nil)
+    }
+
+    @Test(arguments: [
+        ("memory.search", ["query": "duplicate header regression"]),
+        ("memory.update", ["id": "memory-entry-id", "content": "Updated entry"])
+    ])
+    func emptySharedChatTransitionCoalescesDetachedMemoryToolLifecycle(
+        toolName: String,
+        arguments: [String: String]
+    ) async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let statusBar = TerminalStatusBar(isEnabled: true) { _ in }
+        await statusBar.configureForTesting(row: 14, columns: 80)
+        await statusBar.updateInputPanel(
+            text: "draft",
+            cursorIndex: 5,
+            modeText: "Chat",
+            helpText: "Enter"
+        )
+        // An attached room with no entries has no visible Chat message rows.
+        await statusBar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: false)
+        let toolCall = presentedToolCall(
+            id: "\(toolName)-completes-during-empty-chat-transition",
+            name: toolName,
+            argumentsObject: arguments,
+            argumentsJSON: "{}"
+        )
+        let outputCapacity = await statusBar.scrollableOutputRowCapacity()
+        await renderer.writeToolCallStarted(
+            toolCall,
+            maximumInPlaceRows: outputCapacity
+        )
+        await renderer.beginBottomOverlayTransition(
+            maximumInPlaceRows: outputCapacity
+        )
+        await statusBar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: false)
+        let eventsBeforeReplay = await renderer.capturedWriteEvents().count
+
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Done", summary: "Done"),
+            maximumInPlaceRows: outputCapacity
+        )
+        await renderer.endBottomOverlayTransition(maximumInPlaceRows: outputCapacity)
+
+        let replayText = (await renderer.capturedWriteEvents())
+            .dropFirst(eventsBeforeReplay)
+            .map(\.text)
+            .joined()
+        let replayPlainText = TerminalANSIText.stripANSI(replayText)
+        #expect(replayPlainText.components(separatedBy: toolName).count - 1 == 1)
+        #expect(replayPlainText.contains("✅"))
+        #expect(!containsCursorUpSequence(replayText))
         #expect(await renderer.snapshot().activeToolCallID == nil)
     }
 

@@ -16,7 +16,7 @@ extension TerminalChatRenderCoordinator {
         let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
         if isBottomOverlayTransitionActive {
             toolState.startInstants[toolCall.id] = toolNow()
-            bottomOverlayDeferredToolRenders.append(
+            enqueueBottomOverlayDeferredToolRender(
                 DeferredToolRender(
                     toolCall: toolCall,
                     lifecycle: .started,
@@ -61,7 +61,7 @@ extension TerminalChatRenderCoordinator {
             elapsed: elapsed
         )
         if isBottomOverlayTransitionActive {
-            bottomOverlayDeferredToolRenders.append(
+            enqueueBottomOverlayDeferredToolRender(
                 DeferredToolRender(
                     toolCall: toolCall,
                     lifecycle: lifecycle,
@@ -449,7 +449,7 @@ extension TerminalChatRenderCoordinator {
 
         clearOwnedRows(block.rows)
         restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
-        bottomOverlayDeferredToolRenders.append(
+        enqueueBottomOverlayDeferredToolRender(
             DeferredToolRender(
                 toolCall: block.toolCall,
                 lifecycle: .started,
@@ -458,6 +458,44 @@ extension TerminalChatRenderCoordinator {
                 requiredRows: block.rows
             )
         )
+    }
+
+    /// Keeps one pending presentation for the current tool at the end of an
+    /// overlay transaction. The detached live block is only a snapshot needed
+    /// to restore an anchor after the external repaint; if its own lifecycle
+    /// advances before that repaint completes, replaying both snapshots would
+    /// publish two physical headers for the same block. Only an adjacent event
+    /// is coalesced, so interleaved calls retain their transcript order and
+    /// remain append-only as usual.
+    private func enqueueBottomOverlayDeferredToolRender(
+        _ render: DeferredToolRender
+    ) {
+        if let last = bottomOverlayDeferredToolRenders.last,
+           last.toolCall.id == render.toolCall.id {
+            bottomOverlayDeferredToolRenders.removeLast()
+            bottomOverlayDeferredToolRenders.append(
+                DeferredToolRender(
+                    toolCall: render.toolCall,
+                    lifecycle: render.lifecycle,
+                    isSubAgentTool: render.isSubAgentTool,
+                    preparesOutput: last.preparesOutput || render.preparesOutput,
+                    requiredRows: maxRequiredRows(last.requiredRows, render.requiredRows)
+                )
+            )
+            return
+        }
+        bottomOverlayDeferredToolRenders.append(render)
+    }
+
+    private func maxRequiredRows(_ lhs: Int?, _ rhs: Int?) -> Int? {
+        switch (lhs, rhs) {
+        case let (lhs?, rhs?):
+            max(lhs, rhs)
+        case let (value?, nil), let (nil, value?):
+            value
+        case (nil, nil):
+            nil
+        }
     }
 
     func republishToolAfterBottomOverlayTransition(
