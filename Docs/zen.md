@@ -275,7 +275,7 @@ Commands start with `/`:
 - `/plan status` — show plan progress from the graph state.
 - `/plan approve` — activate the plan and start implementation.
 - `/plan clear` — archive the graph and remove the active plan.
-- `/goal <goal>` — plan and delegate all work to sub-agents. It creates an active workflow graph up front; every graph task is enforced as a sub-agent execution attempt. It refuses to start while an active `/plan` exists; finish that plan or use `/plan clear` first. The current agent stays as coordinator and final reviewer, retaining its normal tool grant for that work. No separate Planner sub-agent or approval step. Use `/tasks` to monitor progress.
+- `/goal <goal>` — autonomously inspect the workspace and context to turn the request into a concrete objective with testable acceptance criteria, then plan and delegate all work to sub-agents. It creates an active workflow graph up front; every graph task is enforced as a sub-agent execution attempt. A normal model `end_turn` does not stop the command while that graph remains open: ZenCODE automatically continues coordinating, delegating, retrying, and validating until the graph is completed, the user explicitly cancels it, or a material ambiguity requires a focused `Workflow question`. It refuses to start while an active `/plan` exists; finish that plan or use `/plan clear` first. The current agent stays as coordinator and final reviewer, retaining its normal tool grant for that work. No separate Planner sub-agent, routine objective-confirmation step, or approval step. Use `/tasks` to monitor progress.
 - `/review [focus]` — delegate review to sub-agents using the configured `Reviewer` profile. See [reviewer.md](reviewer.md).
 - `/feature` — manage Swift feature packages (Builder profile only). See [builder.md](builder.md).
 
@@ -283,8 +283,8 @@ Commands start with `/`:
 
 | | `/plan` | `/goal` |
 |---|---|---|
-| **Planning** | Delegated to a sub-agent using the configured Planner profile | Done by the current agent directly |
-| **Approval step** | Yes — `/plan approve` activates the graph | No — starts immediately |
+| **Planning** | Delegated to a sub-agent using the configured Planner profile | Done autonomously by the current agent after inspecting the request, workspace, context, and project conventions |
+| **Approval step** | Yes — `/plan approve` activates the graph | No — starts immediately and continues automatically while its graph is open |
 | **Task implementation** | The current agent works freely: directly or by delegating, as it sees fit | Every graph task must be claimed by a sub-agent; coordinator task attempts are rejected while its normal tool grant remains unchanged |
 | **Sub-agent selection** | The model decides per task if and when to delegate | The model must assign the best-matching profile to every task |
 | **Role of current agent** | Implementer (can delegate when useful) | Coordinator and final reviewer only |

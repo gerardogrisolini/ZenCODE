@@ -278,12 +278,15 @@ extension ZenCODEACPBridge {
                 selectedAgentSkills(for: session.selectedAgent),
                 sessionID: promptConfiguration.sessionID
             )
-            let response = try await sessionRunner.sendPrompt(
-                configuration: promptConfiguration,
-                prompt: modelPromptText,
-                attachments: attachments,
-                toolProviders: [],
-                onEvent: { event in
+            var generationPrompt = modelPromptText
+            var generationAttachments = attachments
+            while true {
+                let response = try await sessionRunner.sendPrompt(
+                    configuration: promptConfiguration,
+                    prompt: generationPrompt,
+                    attachments: generationAttachments,
+                    toolProviders: [],
+                    onEvent: { event in
                     switch event {
                     case let .status(message):
                         if !appMode {
@@ -390,13 +393,38 @@ extension ZenCODEACPBridge {
                         break
                     }
                 }
-            )
-            return PromptCompletion(
-                text: response.text,
-                finalAssistantBlock: await assistantBlocks.lastBlock(),
-                stopReason: Self.acpStopReason(response.stopReason),
-                modelID: response.modelID
-            )
+                )
+                let completion = PromptCompletion(
+                    text: response.text,
+                    finalAssistantBlock: await assistantBlocks.lastBlock(),
+                    stopReason: Self.acpStopReason(response.stopReason),
+                    modelID: response.modelID
+                )
+                if case let .workflow(graphID) = commandPurpose {
+                    let graph = try? await sessionRunner.taskGraphSnapshot(
+                        sessionID: sessionID,
+                        graphID: graphID
+                    )
+                    let disposition = PlanningCommandKernel.workflowTurnDisposition(
+                        graph: graph,
+                        expectedGraphID: graphID,
+                        coordinatorMessage: completion.finalAssistantBlock
+                    )
+                    if case .continueAutomatically = disposition, let graph {
+                        await assistantBlocks.finishBlock()
+                        let goal = session.workflowContinuation?.graphID == graphID
+                            ? session.workflowContinuation?.goal ?? ""
+                            : ""
+                        generationPrompt = PlanningCommandKernel.workflowAutomaticContinuationPrompt(
+                            goal: goal,
+                            graph: graph
+                        )
+                        generationAttachments = []
+                        continue
+                    }
+                }
+                return completion
+            }
         }
 
         // Register the task under the reservation. A `session/cancel` that

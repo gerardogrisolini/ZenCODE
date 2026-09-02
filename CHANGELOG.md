@@ -12,6 +12,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- `/goal` now derives a concrete objective and testable acceptance criteria from
+  the request, workspace, context, and project conventions without requiring a
+  routine confirmation step. If a coordinator generation ends while its workflow
+  graph is still open, ZenCODE automatically continues on the same graph instead
+  of behaving like an ordinary one-turn prompt; it returns control only for
+  graph-backed completion, explicit cancellation, failure, or a focused workflow
+  clarification.
 - The setup menu now groups "Default model & thinking" and "Agents" under
   Required, directly after providers and models. `zen --doctor` now always
   reports a dedicated check for each required setup item, including the

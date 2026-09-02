@@ -33,6 +33,10 @@ struct GoalCommandTests {
         #expect(prompt.contains("Do not start a task attempt directly with tasks.update"))
         #expect(prompt.contains("Continue working until the stated goal is fully achieved and validated"))
         #expect(prompt.contains("ask the user a focused clarification question instead of guessing"))
+        #expect(prompt.contains("Phase 0 — Identify the objective autonomously"))
+        #expect(prompt.contains("observable definition of done"))
+        #expect(prompt.contains("Do not ask the user to confirm an objective"))
+        #expect(prompt.contains("explicit, testable acceptance criteria"))
     }
 
     @Test
@@ -445,6 +449,56 @@ struct GoalCommandTests {
         #expect(prompt.contains("canonical agent.create"))
         #expect(prompt.contains("Use the active workflow graph workflow_test"))
         #expect(prompt.contains("never create or replace another graph"))
+    }
+
+    @Test
+    func workflowRuntimeContinuesEveryOpenTurnUnlessItExplicitlyAsks() {
+        let graph = TaskGraphSnapshot(
+            id: "workflow_test",
+            source: .workflow,
+            state: .active
+        )
+
+        #expect(PlanningCommandKernel.workflowTurnDisposition(
+            graph: graph,
+            expectedGraphID: graph.id,
+            coordinatorMessage: "I created part of the plan."
+        ) == .continueAutomatically)
+        #expect(PlanningCommandKernel.workflowTurnDisposition(
+            graph: graph,
+            expectedGraphID: graph.id,
+            coordinatorMessage: "Workflow question\nWhich compatibility mode is required?"
+        ) == .awaitingClarification)
+
+        var completed = graph
+        completed.state = .completed
+        #expect(PlanningCommandKernel.workflowTurnDisposition(
+            graph: completed,
+            expectedGraphID: graph.id,
+            coordinatorMessage: "Done."
+        ) == .completed)
+    }
+
+    @Test
+    func automaticWorkflowContinuationReinjectsGoalGraphAndContract() {
+        let graph = TaskGraphSnapshot(
+            id: "workflow_test",
+            source: .workflow,
+            state: .active
+        )
+
+        let prompt = PlanningCommandKernel.workflowAutomaticContinuationPrompt(
+            goal: "Ship the complete feature",
+            graph: graph
+        )
+
+        #expect(prompt.contains("Continue the active /goal workflow automatically"))
+        #expect(prompt.contains("Goal: Ship the complete feature"))
+        #expect(prompt.contains("Active workflow task graph: workflow_test"))
+        #expect(prompt.contains("no tasks defined"))
+        #expect(prompt.contains("not permission to return a progress summary"))
+        #expect(prompt.contains("Continue working until the stated goal is fully achieved"))
+        #expect(prompt.contains("canonical agent.create"))
     }
 
     private func makeTerminal() throws -> TerminalChat {

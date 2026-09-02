@@ -224,12 +224,19 @@ creation time; taskless agents are for single self-contained lookups.
 
 `/goal <goal>` automates this pattern:
 
-1. It creates an active workflow graph.
-2. The current agent adds its task definitions with `tasks.create`, including a
+1. It inspects the request, workspace, existing context, and project conventions to
+   derive the concrete objective and testable acceptance criteria without requiring
+   routine confirmation from the user.
+2. It creates an active workflow graph.
+3. The current agent adds its task definitions with `tasks.create`, including a
    `complexity` per task.
-3. It delegates every task to the best-matching profile and binding via
+4. It delegates every task to the best-matching profile and binding via
    `agent.create(taskID:)`.
-4. It validates and reviews the results.
+5. It validates and reviews the results.
+6. If a coordinator generation ends while the graph is still open, the runtime
+   automatically starts another coordinator generation on that same graph. It
+   returns control only after graph-backed completion, explicit cancellation, or
+   a focused `Workflow question` for a material ambiguity.
 
 Workflow tasks must use `execution.executor: sub_agent`; the orchestrator
 rejects coordinator task attempts without narrowing the coordinator's normal tool

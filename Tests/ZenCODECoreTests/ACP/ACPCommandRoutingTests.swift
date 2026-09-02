@@ -118,6 +118,15 @@ private actor ScriptedACPCommandBackend: AgentRuntimeBackend {
         prompts.append(prompt)
         // Workflow prompts are recognised by content, so `/goal` behaves the
         // same regardless of how many planning turns preceded it.
+        if prompt.contains("Continue the active /goal workflow automatically") {
+            let workflowQuestion = "Workflow question\nWhich remaining constraint should I apply?"
+            await onEvent(.content(workflowQuestion))
+            return DirectAgentResponse(
+                text: workflowQuestion,
+                stopReason: "end_turn",
+                modelID: "workflow-model"
+            )
+        }
         if prompt.contains("Continue the delegated workflow") {
             await onEvent(.content("WORKFLOW CONTINUED"))
             return DirectAgentResponse(
@@ -528,24 +537,25 @@ struct ACPCommandRoutingTests {
             "sessionId": sessionID,
             "prompt": "Start with ACP.",
         ])
-        let continuationPrompt = try #require(await fixture.backend.recordedPrompts().last)
+        let prompts = await fixture.backend.recordedPrompts()
+        let continuationPrompt = try #require(prompts.dropLast().last)
         #expect(continuationPrompt.contains("Continue the delegated workflow"))
         #expect(continuationPrompt.contains("Active workflow task graph: \(graph.id)"))
         #expect(continuationPrompt.contains("Start with ACP."))
         #expect(continuationPrompt.contains("Which surface should I cover first?"))
 
-        // That turn ended without the explicit question block, so the next plain
-        // message is an ordinary prompt again.
+        // The backend ended that generation with an ordinary progress response
+        // while the graph was still open. `/goal` must immediately re-enter the
+        // coordinator instead of returning as a normal chat turn.
+        let automaticPrompt = try #require(prompts.last)
+        #expect(automaticPrompt.contains("Continue the active /goal workflow automatically"))
+        #expect(automaticPrompt.contains("Goal: ship cross-surface parity"))
+        #expect(automaticPrompt.contains("Active workflow task graph: \(graph.id)"))
         #expect(await bridge.workflowStateForTesting(sessionID: sessionID)?
-            .isAwaitingReply == false)
-        try await bridge.prompt(id: .number(3), params: [
-            "sessionId": sessionID,
-            "prompt": "unrelated question",
-        ])
-        #expect((await fixture.backend.recordedPrompts()).last == "unrelated question")
+            .isAwaitingReply == true)
 
         // A second /goal is refused with an actionable message, not graphNotMutable.
-        try await bridge.prompt(id: .number(4), params: [
+        try await bridge.prompt(id: .number(3), params: [
             "sessionId": sessionID,
             "prompt": "/goal start another one",
         ])

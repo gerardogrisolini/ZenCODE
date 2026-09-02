@@ -321,6 +321,15 @@ struct PlannerTurnBaseline: Sendable, Equatable {
 }
 
 enum PlanningCommandKernel {
+    /// Runtime decision after each coordinator generation in a `/goal` turn.
+    /// An open graph is never treated as a successful end turn merely because
+    /// the model stopped producing tool calls or prose.
+    enum WorkflowTurnDisposition: Equatable, Sendable {
+        case completed
+        case awaitingClarification
+        case continueAutomatically
+    }
+
     static let planAuthorAgentName = "plan-author"
 
     static func plannerSnapshots(
@@ -561,6 +570,27 @@ enum PlanningCommandKernel {
             == workflowClarificationHeading
     }
 
+    /// Determines whether the `/goal` driver may return control to the user.
+    /// Completion is graph-backed, clarification uses the explicit protocol,
+    /// and every other non-terminal state must trigger another coordinator turn.
+    static func workflowTurnDisposition(
+        graph: TaskGraphSnapshot?,
+        expectedGraphID: String,
+        coordinatorMessage: String?
+    ) -> WorkflowTurnDisposition {
+        guard let graph,
+              graph.id == expectedGraphID,
+              graph.source.requiresSubAgentExecution,
+              !graph.state.isTerminal else {
+            return .completed
+        }
+        if let coordinatorMessage,
+           isWorkflowClarificationResponse(coordinatorMessage) {
+            return .awaitingClarification
+        }
+        return .continueAutomatically
+    }
+
     /// The completion contract shared by the initial `/goal` prompt and every
     /// continuation prompt. A clarification round-trip must not weaken it.
     static let workflowCompletionContract = """
@@ -646,6 +676,47 @@ enum PlanningCommandKernel {
         """
     }
 
+    /// Re-enters an open workflow after the coordinator ended a generation
+    /// without either completing its graph or asking an explicit clarification.
+    /// This is the runtime enforcement that makes `/goal` persistent rather than
+    /// a one-shot prompt convention.
+    static func workflowAutomaticContinuationPrompt(
+        goal: String,
+        graph: TaskGraphSnapshot
+    ) -> String {
+        let goalLine = goal.nilIfBlank.map { "Goal: \($0)" }
+            ?? "Goal: complete the objective recorded by this workflow graph."
+        let counts = Dictionary(grouping: graph.tasks, by: \.status)
+            .map { status, tasks in "\(status.rawValue)=\(tasks.count)" }
+            .sorted()
+            .joined(separator: ", ")
+            .nilIfBlank ?? "no tasks defined"
+        return """
+        Continue the active /goal workflow automatically. Your previous generation ended, but \
+        the runtime verified that the goal graph is not complete. This is not a new user request \
+        and not permission to return a progress summary.
+
+        \(goalLine)
+
+        Active workflow task graph: \(graph.id)
+        Current task state: \(counts).
+
+        Call tasks.list for \(graph.id) first. If the graph has no tasks, finish identifying the \
+        concrete objective and create the complete delegated task DAG. Otherwise continue with \
+        every pending, blocked, failed, or awaiting-validation task: inspect evidence, delegate \
+        runnable work, validate results, retry failed attempts, and add any work discovered during \
+        validation. Do not repeat a progress report and do not wait for the user unless a material \
+        decision cannot be resolved from the request, workspace, existing context, or project \
+        conventions.
+
+        Completion contract:
+        \(workflowCompletionContract)
+
+        Rules:
+        \(workflowRules(graphID: graph.id))
+        """
+    }
+
     static func workflowPrompt(goal: String, graphID: String) -> String {
         return """
         You are the coordinator of a delegated workflow. You plan the work, add tasks to \
@@ -660,6 +731,19 @@ enum PlanningCommandKernel {
 
         Completion contract:
         \(workflowCompletionContract)
+
+        Phase 0 — Identify the objective autonomously:
+        - Treat the user's wording as the requested outcome, not merely as a prompt to answer. \
+        Inspect the workspace, relevant documentation, current implementation, tests, and session \
+        context to determine the actual change required and the observable definition of done.
+        - Resolve ordinary implementation details from project conventions and evidence. Do not \
+        ask the user to confirm an objective you can establish reliably yourself.
+        - Translate the objective into explicit, testable acceptance criteria. Ensure the task set \
+        collectively covers the full objective, including integration, regression protection, \
+        validation, and user-visible documentation when applicable.
+        - Ask a focused clarification only when a material product decision remains genuinely \
+        ambiguous after inspection. Do not create speculative implementation tasks before that \
+        blocking ambiguity is resolved.
 
         Phase 1 — Plan and define the task graph:
         - Inspect the workspace to understand scope, relevant files, constraints, and risks.

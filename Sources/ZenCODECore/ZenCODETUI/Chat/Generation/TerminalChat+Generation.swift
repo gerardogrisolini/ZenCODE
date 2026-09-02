@@ -83,12 +83,16 @@ extension TerminalChat {
                     includesActivePlanProgress: false
                 )
             }
-            var response = try await sessionRunner.sendPrompt(
-                configuration: sessionConfiguration,
-                prompt: attempt.prompt,
-                attachments: attempt.attachments,
-                authorizeTool: telegramToolAuthorizationHandler(for: attempt.origin),
-                onToolWillExecute: { toolCall in
+            var generationPrompt = attempt.prompt
+            var generationAttachments = attempt.attachments
+            var response: DirectAgentResponse
+            while true {
+                response = try await sessionRunner.sendPrompt(
+                    configuration: sessionConfiguration,
+                    prompt: generationPrompt,
+                    attachments: generationAttachments,
+                    authorizeTool: telegramToolAuthorizationHandler(for: attempt.origin),
+                    onToolWillExecute: { toolCall in
                     await fileChanges.captureBaselineIfNeeded(
                         forAgentToolCall: toolCall
                     )
@@ -193,7 +197,29 @@ extension TerminalChat {
                         break
                     }
                 }
-            )
+                )
+                if case let .workflow(originalGoal, graphID) = attempt.purpose {
+                    let graph = try? await sessionRunner.taskGraphSnapshot(
+                        sessionID: turnSessionID,
+                        graphID: graphID
+                    )
+                    let disposition = PlanningCommandKernel.workflowTurnDisposition(
+                        graph: graph,
+                        expectedGraphID: graphID,
+                        coordinatorMessage: await transcriptTurn.lastAssistantContent()
+                    )
+                    if case .continueAutomatically = disposition, let graph {
+                        await transcriptTurn.flushAssistantMessage()
+                        generationPrompt = PlanningCommandKernel.workflowAutomaticContinuationPrompt(
+                            goal: originalGoal,
+                            graph: graph
+                        )
+                        generationAttachments = []
+                        continue
+                    }
+                }
+                break
+            }
             if case .plan = attempt.purpose {
                 guard let plannerTurnBaseline,
                       let plannerResult = PlanningCommandKernel.plannerResponse(
