@@ -302,30 +302,26 @@ public enum ZenDoctor {
             checks.append(
                 ZenDoctorCheck(
                     id: "configuration.models",
-                    title: "Models",
+                    title: "Providers and models",
                     status: .warning,
                     detail: "No readable settings.json, so no models are configured.",
                     remedy: "Run zen; setup opens automatically so you can configure at least one model."
                 )
             )
-        }
-
-        // Agents manifest summary (names only).
-        if case let .value(agents) = agentsRead {
             checks.append(
                 ZenDoctorCheck(
-                    id: "configuration.agents",
-                    title: "Agents",
-                    status: agents.isEmpty ? .warning : .ok,
-                    detail: agents.isEmpty
-                        ? "No agent profiles are configured."
-                        : "\(agents.count) agent profile(s): \(agents.map(\.displayName).joined(separator: ", ")).",
-                    remedy: agents.isEmpty
-                        ? "Run zen; setup opens automatically and creates the default agent profiles."
-                        : nil
+                    id: "configuration.selectedModel",
+                    title: "Default model & thinking",
+                    status: .warning,
+                    detail: "No readable settings.json, so no default model or thinking level can be verified.",
+                    remedy: "Run zen; setup opens automatically so you can configure the default model and thinking level."
                 )
             )
         }
+
+        // Agents manifest summary (names only). Keep this required check visible
+        // even when the manifest is missing or invalid.
+        checks.append(agentsCheck(agentsRead, agentsURL: agentsURL))
         if case .missing = agentsRead {
             // No file: there is no privacy mode to inspect.
         } else {
@@ -415,7 +411,7 @@ public enum ZenDoctor {
         if count == 0 {
             return ZenDoctorCheck(
                 id: "configuration.models",
-                title: "Models",
+                title: "Providers and models",
                 status: .warning,
                 detail: "No models are configured.",
                 remedy: "Run zen; setup opens automatically so you can configure at least one model."
@@ -449,7 +445,7 @@ public enum ZenDoctor {
             }.joined(separator: ", ")
             return ZenDoctorCheck(
                 id: "configuration.models",
-                title: "Models",
+                title: "Providers and models",
                 status: .warning,
                 detail: "\(count) model(s) configured; \(providers.count) remote provider(s) have no stored API key: \(summary).",
                 remedy: "Run /setup to save an API key for each provider."
@@ -458,7 +454,7 @@ public enum ZenDoctor {
 
         return ZenDoctorCheck(
             id: "configuration.models",
-            title: "Models",
+            title: "Providers and models",
             status: .ok,
             detail: "\(count) model(s) configured."
         )
@@ -468,26 +464,66 @@ public enum ZenDoctor {
         guard let selected = manifest.selectedModelID?.nilIfBlank else {
             return ZenDoctorCheck(
                 id: "configuration.selectedModel",
-                title: "Selected model",
-                status: manifest.models.isEmpty ? .info : .warning,
-                detail: "No model is selected.",
-                remedy: manifest.models.isEmpty
-                    ? nil
-                    : "Select a default model with the /setup command in zen, or pass --model for a run."
+                title: "Default model & thinking",
+                status: .warning,
+                detail: "No default model is selected, so its thinking level cannot be verified.",
+                remedy: "Select a default model and thinking level with the /setup command in zen."
             )
         }
-        let known = manifest.models.contains { $0.matches(selected) }
+        guard let model = manifest.models.first(where: { $0.matches(selected) }) else {
+            return ZenDoctorCheck(
+                id: "configuration.selectedModel",
+                title: "Default model & thinking",
+                status: .warning,
+                detail: "Default model \(selected) is not among configured models, so its thinking level cannot be verified.",
+                remedy: "Reselect a configured model and thinking level with the /setup command in zen."
+            )
+        }
+        let thinking = model.supportsThinking
+            ? model.thinkingSelection(for: manifest.selectedThinkingSelection)?.displayTitle ?? "default"
+            : "not supported"
         return ZenDoctorCheck(
             id: "configuration.selectedModel",
-            title: "Selected model",
-            status: known ? .ok : .warning,
-            detail: known
-                ? "Selected model is \(selected)."
-                : "Selected model \(selected) is not among configured models.",
-            remedy: known
-                ? nil
-                : "Reselect a configured model with the /setup command in zen."
+            title: "Default model & thinking",
+            status: .ok,
+            detail: "Default model is \(selected); thinking: \(thinking)."
         )
+    }
+
+    private static func agentsCheck(
+        _ agentsRead: ManifestReadOutcome<[AgentProfile]>,
+        agentsURL: URL
+    ) -> ZenDoctorCheck {
+        switch agentsRead {
+        case .missing:
+            return ZenDoctorCheck(
+                id: "configuration.agents",
+                title: "Agents",
+                status: .warning,
+                detail: "Missing agents.json at \(agentsURL.path).",
+                remedy: "Run zen; setup opens automatically and creates the default agent profiles."
+            )
+        case .invalid:
+            return ZenDoctorCheck(
+                id: "configuration.agents",
+                title: "Agents",
+                status: .failure,
+                detail: "agents.json at \(agentsURL.path) could not be read.",
+                remedy: "Repair or recreate the file, then run zen; setup opens automatically when configuration is invalid."
+            )
+        case let .value(agents):
+            return ZenDoctorCheck(
+                id: "configuration.agents",
+                title: "Agents",
+                status: agents.isEmpty ? .warning : .ok,
+                detail: agents.isEmpty
+                    ? "No agent profiles are configured."
+                    : "\(agents.count) agent profile(s): \(agents.map(\.displayName).joined(separator: ", ")).",
+                remedy: agents.isEmpty
+                    ? "Run zen; setup opens automatically and creates the default agent profiles."
+                    : nil
+            )
+        }
     }
 
     // MARK: - Permissions

@@ -12,6 +12,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The setup menu now groups "Default model & thinking" and "Agents" under
+  Required, directly after providers and models. `zen --doctor` now always
+  reports a dedicated check for each required setup item, including the
+  effective default thinking level.
 - Voice transcription is now configured automatically with Telegram: it is
   enabled on macOS using the default Italian language and is unavailable on
   other platforms. The separate "Voice tools" setup section has been removed;

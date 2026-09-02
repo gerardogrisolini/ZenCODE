@@ -178,6 +178,15 @@ struct ZenCODESetupSessionTests {
     }
 
     @Test
+    func coreModelAndAgentSectionsAppearInRequiredGroup() {
+        let sections = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
+            .filter { $0.section.category == .required }
+            .map(\.section)
+
+        #expect(sections == [.providersAndModels, .defaultModelSettings, .agents])
+    }
+
+    @Test
     func voiceToolsAreNotAnAvailableSetupSection() {
         let options = ZenCODESetupRunner.setupSectionOptions(
             currentManifest: Self.remoteManifest()

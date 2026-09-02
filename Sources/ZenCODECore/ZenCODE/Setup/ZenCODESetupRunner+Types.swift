@@ -181,12 +181,12 @@ enum SetupSection: Equatable, Hashable {
 
     private static let descriptors: [SetupSection: Descriptor] = [
         .providersAndModels: .init(title: "Providers and models", category: .required, requiresConfiguredModels: false, aliases: ["providers", "provider", "models", "model", "providers and models", "providers/models", "remote"]),
-        .defaultModelSettings: .init(title: "Default model & thinking", category: .recommended, requiresConfiguredModels: true, aliases: ["default", "default model", "selected model", "model default", "thinking", "default thinking"]),
+        .defaultModelSettings: .init(title: "Default model & thinking", category: .required, requiresConfiguredModels: true, aliases: ["default", "default model", "selected model", "model default", "thinking", "default thinking"]),
         .defaultModel: .init(title: "Default model", category: .recommended, requiresConfiguredModels: true, aliases: ["default", "default model", "selected model", "model default"]),
         .defaultThinking: .init(title: "Default thinking", category: .recommended, requiresConfiguredModels: true, aliases: ["thinking", "default thinking", "reasoning", "thinking default"]),
         .telegram: .init(title: "Telegram remote control", category: .optional, requiresConfiguredModels: true, aliases: ["telegram", "remote control", "bot"]),
         .features: .init(title: "Features", category: .recommended, requiresConfiguredModels: false, aliases: ["features", "feature", "tools", "swift features", "enable features", "disable features"]),
-        .agents: .init(title: "Agents", category: .recommended, requiresConfiguredModels: false, aliases: ["agents", "agent", "profiles", "agent profiles"]),
+        .agents: .init(title: "Agents", category: .required, requiresConfiguredModels: false, aliases: ["agents", "agent", "profiles", "agent profiles"]),
         .agentModels: .init(title: "Agent model bindings", category: .recommended, requiresConfiguredModels: true, aliases: ["agent models", "agent model bindings", "agent bindings", "agent capability", "models", "capability", "agent models & capability"]),
         .responseLanguage: .init(title: "Response language", category: .recommended, requiresConfiguredModels: false, aliases: ["language", "response language", "locale", "response_language"]),
         .memoryEmbedding: .init(title: "Memory embeddings", category: .recommended, requiresConfiguredModels: false, aliases: ["memory embeddings", "memory embedding", "embeddings", "embedding", "bm25"]),

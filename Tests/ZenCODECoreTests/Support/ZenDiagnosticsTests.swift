@@ -421,6 +421,65 @@ struct ZenDiagnosticsTests {
     }
 
     @Test
+    func doctorChecksEveryRequiredSetupSection() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let provider = AgentRemoteProvider(
+            id: AgentRemoteProvider.chatGPTSubscriptionProviderID,
+            name: "ChatGPT Subscription",
+            baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
+            modelID: "thinking-model"
+        )
+        let model = AgentSettingsModelManifest(
+            kind: .remoteAPI,
+            modelID: "thinking-model",
+            provider: provider,
+            thinkingOptions: [.off, .low, .medium, .high, .max],
+            defaultThinkingSelection: .medium
+        )
+        let manifest = AgentSettingsManifest(
+            models: [model],
+            selectedModelID: model.id,
+            selectedThinkingSelection: .max
+        )
+        let encoder = JSONEncoder()
+        try encoder.encode(manifest).write(to: root.appendingPathComponent("settings.json"))
+        try encoder.encode(
+            AgentProfileManifest(agents: AgentProfileStore.defaultProfiles())
+        ).write(to: root.appendingPathComponent("agents.json"))
+
+        let checks = ZenDoctor.runReport(supportDirectory: root).allChecks
+        let requiredChecks = try [
+            #require(checks.first { $0.id == "configuration.models" }),
+            #require(checks.first { $0.id == "configuration.selectedModel" }),
+            #require(checks.first { $0.id == "configuration.agents" }),
+        ]
+
+        #expect(requiredChecks.map(\.title) == [
+            "Providers and models", "Default model & thinking", "Agents",
+        ])
+        #expect(requiredChecks.allSatisfy { $0.status == .ok })
+        #expect(requiredChecks[1].detail.contains("thinking: Max"))
+    }
+
+    @Test
+    func doctorKeepsRequiredChecksVisibleWhenConfigurationIsMissing() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let checks = ZenDoctor.runReport(supportDirectory: root).allChecks
+        for id in [
+            "configuration.models",
+            "configuration.selectedModel",
+            "configuration.agents",
+        ] {
+            let check = try #require(checks.first { $0.id == id })
+            #expect(check.status == .warning)
+        }
+    }
+
+    @Test
     func doctorReportsOnlyKeyRequiringProvidersWithoutStoredKeys() throws {
         let root = try temporaryDirectory()
         defer {
