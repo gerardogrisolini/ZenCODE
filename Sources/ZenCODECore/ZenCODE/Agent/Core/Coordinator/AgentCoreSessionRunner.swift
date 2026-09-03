@@ -64,6 +64,10 @@ public actor AgentCoreSessionRunner {
     /// sessions. It is deliberately outside backend state so a turn remains
     /// ordered across backend creation, recovery, and finalisation.
     let sessionTurnLease: AgentSessionTurnLease
+    /// Lifecycle-owned memory durability barrier. The public runner always
+    /// uses the process registry; the internal initializer permits isolated
+    /// lifecycle tests without mutating that shared actor.
+    let memoryGraphStoreRegistry: MemoryGraphStoreRegistry
     /// Serializes session creation/recreation with history replacement for the
     /// same logical id. Close remains deliberately preemptive: it invalidates the
     /// generation while a suspended mutation unwinds, and a replacement checks
@@ -124,7 +128,8 @@ public actor AgentCoreSessionRunner {
             backendFactory: backendFactory,
             taskOrchestrator: taskOrchestrator,
             taskGraphStore: taskGraphStore,
-            sessionTurnLease: AgentSessionTurnLease()
+            sessionTurnLease: AgentSessionTurnLease(),
+            memoryGraphStoreRegistry: .shared
         )
     }
 
@@ -135,7 +140,8 @@ public actor AgentCoreSessionRunner {
         backendFactory: AgentRuntimeBackendFactory? = nil,
         taskOrchestrator: SessionTaskOrchestrator? = nil,
         taskGraphStore: SessionTaskGraphStore? = SessionTaskGraphStore(),
-        sessionTurnLease: AgentSessionTurnLease
+        sessionTurnLease: AgentSessionTurnLease,
+        memoryGraphStoreRegistry: MemoryGraphStoreRegistry = .shared
     ) {
         self.defaultToolAuthorizationHandler = defaultToolAuthorizationHandler
         self.mcpRuntime = mcpRuntime
@@ -144,6 +150,7 @@ public actor AgentCoreSessionRunner {
         self.taskOrchestrator = taskOrchestrator
             ?? SessionTaskOrchestrator(store: taskGraphStore)
         self.sessionTurnLease = sessionTurnLease
+        self.memoryGraphStoreRegistry = memoryGraphStoreRegistry
     }
 
     func localExecAccessMode() -> AgentLocalExecAccessMode {

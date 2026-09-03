@@ -283,6 +283,55 @@ actor MemoryEngine {
 
     public func snapshot() -> MemoryGraph { graph }
 
+    /// A single, coherent graph for one read-only store request.
+    ///
+    /// `snapshot()` alone shows the graph this engine last held, which may lag
+    /// behind a durable graph another ZenCODE process committed in the
+    /// meantime. This helper closes that gap without turning a read into a
+    /// write: it reloads the durable graph under the engine's write lock (so it
+    /// cannot interleave with an in-flight transaction) and replays the local
+    /// pending recall maintenance onto the *copy* only. Nothing is persisted,
+    /// `needsSave`, the pending intents and the live graph are left untouched,
+    /// and automatic recall keeps its maintenance-bearing path.
+    ///
+    /// Guard rails against silent staleness regressions:
+    ///
+    /// - A lazy legacy migration (or a deferred `insert(persist: false)`) lives
+    ///   only in this actor; reloading the file would discard it, so a dirty
+    ///   engine serves its local graph directly.
+    /// - A non-transactional persistence has no durable reload boundary, so the
+    ///   local graph — which already contains every pending overlay — is the
+    ///   freshest coherent view this engine can produce.
+    /// - An ordinary reload failure falls back to the local graph so a transient
+    ///   store hiccup does not fail the read. Cancellation and an unsupported
+    ///   future graph version remain observable to the caller.
+    func freshSnapshotForReadOnly() async throws -> MemoryGraph {
+        try await withWriteLock { () -> MemoryGraph in
+            try Task.checkCancellation()
+            guard !needsSave,
+                  let reloadPersistence = persistence as? any MemoryReadOnlyReloadPersistence
+            else { return graph }
+            do {
+                let durable = try await reloadPersistence.reloadReadOnly()
+                var fresh = durable
+                Self.apply(pendingRecallMaintenance, to: &fresh)
+                return fresh
+            } catch let cancellation as CancellationError {
+                throw cancellation
+            } catch let persistenceError as MemoryPersistenceError {
+                // A future graph is not an intermittent read failure. Hiding it
+                // behind the local snapshot could expose data this build cannot
+                // safely interpret and masks the required upgrade signal.
+                throw persistenceError
+            } catch {
+                // Some async APIs surface cancellation using a different error
+                // type; do not turn task cancellation into a stale local read.
+                try Task.checkCancellation()
+                return graph
+            }
+        }
+    }
+
 
     // MARK: - Transactions
 
@@ -709,6 +758,26 @@ actor MemoryEngine {
         try await searchReadOnlyDetailed(query, scope: scope).selected
     }
 
+    /// Read-only retrieval over an explicitly supplied graph.
+    ///
+    /// Store-level reads resolve one coherent graph per request (durable reload
+    /// plus pending-recall overlay — see ``freshSnapshotForReadOnly()``) and run
+    /// this pipeline over it. The overload performs no maintenance and never
+    /// touches persistence; the public no-graph entry points keep using the
+    /// live engine graph exactly as before.
+    func searchReadOnlyDetailed(
+        _ prompt: String,
+        scope: EngineMemoryScope,
+        graph suppliedGraph: MemoryGraph
+    ) async throws -> MemoryRecallResult {
+        let (plan, candidates, selected) = try await retrieveAndSelect(
+            prompt,
+            scope: scope,
+            graph: suppliedGraph
+        )
+        return MemoryRecallResult(plan: plan, candidates: candidates, selected: selected)
+    }
+
     /// The shared analyze → retrieve → select core used by both the
     /// maintenance-bearing ``recallDetailed(_:)`` and the maintenance-free
     /// ``searchReadOnlyDetailed(_:scope:)``.
@@ -719,12 +788,18 @@ actor MemoryEngine {
     /// resulting maintenance transaction runs afterwards.
     private func retrieveAndSelect(
         _ prompt: String,
-        scope: EngineMemoryScope
+        scope: EngineMemoryScope,
+        graph suppliedGraph: MemoryGraph? = nil
     ) async throws -> (plan: MemoryQueryPlan, candidates: [MemoryCandidate], selected: [MemoryCandidate]) {
         let plan = try await analyzeWithPolicy(prompt)
         guard plan.shouldRecall, configuration.maxResults > 0 else {
             return (plan, [], [])
         }
+
+        // Preserve the original engine-level temporal semantics: the live graph
+        // is captured only after the potentially-suspending analysis completes.
+        // An explicitly supplied store snapshot remains fixed for the request.
+        let graph = suppliedGraph ?? self.graph
 
         let activeMemories = Array(graph.memories.values)
         let queries = retrievalQueries(from: plan, originalPrompt: prompt)
@@ -1119,6 +1194,11 @@ actor MemoryEngine {
     /// from before the first intent, avoiding a cold-start double replay. A
     /// failed checkpoint leaves the in-memory intents retryable.
     private func flushPendingRecallMaintenanceLocked() async throws {
+        // A lazy migration or deferred insert is a local durability boundary.
+        // Lifecycle/registry flushing must not reload and replay maintenance
+        // over another process's graph, because that would discard this local
+        // snapshot before an explicit save or transaction commits it.
+        guard !needsSave else { return }
         guard !pendingRecallMaintenance.isEmpty else { return }
         try await commitRecallMaintenance(
             draftGraph: graph,

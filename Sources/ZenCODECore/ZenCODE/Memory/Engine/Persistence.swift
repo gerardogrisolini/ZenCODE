@@ -22,6 +22,14 @@ protocol MemoryTransactionalPersistence: MemoryPersistence {
     ) async throws -> (result: T, graph: MemoryGraph, didChange: Bool)
 }
 
+/// A persistence that can refresh an already-open engine without performing
+/// the permission hardening and other ownership work associated with `load()`.
+/// This contract is intentionally separate: only implementations that can
+/// guarantee a side-effect-free reload participate in fresh store reads.
+protocol MemoryReadOnlyReloadPersistence: MemoryTransactionalPersistence {
+    func reloadReadOnly() async throws -> MemoryGraph
+}
+
 enum MemoryPersistenceError: Error, Sendable, Equatable {
     /// The graph file was written by a newer engine than this build supports.
     /// The file is rejected and left byte-identical on disk.
@@ -134,7 +142,7 @@ private enum MemoryJSONDateCoding {
     }
 }
 
-actor JSONMemoryPersistence: MemoryTransactionalPersistence {
+actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
     public let url: URL
 
     public init(url: URL) {
@@ -148,6 +156,14 @@ actor JSONMemoryPersistence: MemoryTransactionalPersistence {
         // tightened. Best effort on purpose: a read must not start failing
         // because the mode of a file owned by another user cannot be changed.
         Self.hardenExistingItems(graphURL: url, lockURL: lockURL)
+        guard FileManager.default.fileExists(atPath: url.path) else { return MemoryGraph() }
+        return try decodeGraph(Data(contentsOf: url))
+    }
+
+    /// Reloads the graph without chmod, directory creation, lock creation or
+    /// any other filesystem mutation. Opening retains the hardening behavior in
+    /// `load()`; request-time freshness is a strictly read-only operation.
+    func reloadReadOnly() async throws -> MemoryGraph {
         guard FileManager.default.fileExists(atPath: url.path) else { return MemoryGraph() }
         return try decodeGraph(Data(contentsOf: url))
     }

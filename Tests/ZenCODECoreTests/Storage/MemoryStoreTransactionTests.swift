@@ -93,7 +93,7 @@ struct MemoryStoreTransactionTests {
             // internal helper remains a no-op unless a test injects drafts.
             let learned = try await store.learn(from: "a completed conversation")
             #expect(learned.isEmpty)
-            #expect(await store.entries(includeArchived: true, limit: 10).isEmpty)
+            #expect(try await store.entries(includeArchived: true, limit: 10).isEmpty)
         }
     }
 
@@ -136,7 +136,7 @@ struct MemoryStoreTransactionTests {
         #expect(!archived.active)
 
         // Archiving is not deletion: the entry is still there, inactive.
-        let all = await store.entries(includeArchived: true, limit: 10)
+        let all = try await store.entries(includeArchived: true, limit: 10)
         #expect(all.count == 2)
         #expect(all.filter(\.active).count == 1)
     }
@@ -167,7 +167,7 @@ struct MemoryStoreTransactionTests {
         let stored = try await store.learn(from: "conversation")
         #expect(stored.isEmpty)
 
-        let entries = await store.entries(includeArchived: true, limit: 10)
+        let entries = try await store.entries(includeArchived: true, limit: 10)
         #expect(entries.count == 1)
         #expect(entries.first?.id == written.entry.id)
     }
@@ -186,12 +186,12 @@ struct MemoryStoreTransactionTests {
 
         let stored = try await store.learn(from: "conversation")
         #expect(stored.count == 2)
-        #expect(await store.entries(includeArchived: true, limit: 10).count == 2)
+        #expect(try await store.entries(includeArchived: true, limit: 10).count == 2)
 
         // Re-running the same internal draft batch must not append duplicates.
         let again = try await store.learn(from: "conversation")
         #expect(again.isEmpty)
-        #expect(await store.entries(includeArchived: true, limit: 10).count == 2)
+        #expect(try await store.entries(includeArchived: true, limit: 10).count == 2)
     }
 
     // MARK: - Concurrent mutations
@@ -216,7 +216,7 @@ struct MemoryStoreTransactionTests {
         }
 
         #expect(created == 1)
-        let entries = await store.entries(includeArchived: true, limit: 10)
+        let entries = try await store.entries(includeArchived: true, limit: 10)
         #expect(entries.count == 1)
     }
 
@@ -244,7 +244,7 @@ struct MemoryStoreTransactionTests {
         async let archive = store.setArchived(true, id: id)
         _ = try await (update, archive)
 
-        let entry = try #require(await store.entry(id: id))
+        let entry = try #require(try await store.entry(id: id))
         #expect(entry.content.contains("the corrected state."))
         #expect(!entry.active)
         // Identity is preserved by both paths.
@@ -269,7 +269,7 @@ struct MemoryStoreTransactionTests {
             }
         }
 
-        let entries = await store.entries(includeArchived: true, limit: total * 2)
+        let entries = try await store.entries(includeArchived: true, limit: total * 2)
         #expect(entries.count == total)
         #expect(Set(entries.map(\.id)).count == total)
     }
@@ -290,7 +290,7 @@ struct MemoryStoreTransactionTests {
         }
 
         // The graph must match the disk: the write reached neither.
-        #expect(await store.entries(includeArchived: true, limit: 10).isEmpty)
+        #expect(try await store.entries(includeArchived: true, limit: 10).isEmpty)
 
         // And the store stays usable once persistence recovers.
         await persistence.setFailing(false)
@@ -300,7 +300,7 @@ struct MemoryStoreTransactionTests {
             tags: []
         )
         #expect(written.created)
-        #expect(await store.entries(includeArchived: true, limit: 10).count == 1)
+        #expect(try await store.entries(includeArchived: true, limit: 10).count == 1)
     }
 
     @Test
@@ -318,7 +318,7 @@ struct MemoryStoreTransactionTests {
             _ = try await store.learn(from: "conversation")
         }
         // All or nothing: not even the first draft of the batch is kept.
-        #expect(await store.entries(includeArchived: true, limit: 10).isEmpty)
+        #expect(try await store.entries(includeArchived: true, limit: 10).isEmpty)
     }
 
     @Test
@@ -343,7 +343,7 @@ struct MemoryStoreTransactionTests {
                 timeZone: TimeZone(identifier: "Europe/Rome") ?? .current
             )
         }
-        var entry = try #require(await store.entry(id: id))
+        var entry = try #require(try await store.entry(id: id))
         #expect(entry.content.contains("the durable state."))
         #expect(entry.tags == ["deploy"])
         #expect(entry.active)
@@ -351,13 +351,13 @@ struct MemoryStoreTransactionTests {
         await #expect(throws: StoreSaveFailure.self) {
             _ = try await store.setArchived(true, id: id)
         }
-        entry = try #require(await store.entry(id: id))
+        entry = try #require(try await store.entry(id: id))
         #expect(entry.active)
 
         await #expect(throws: StoreSaveFailure.self) {
             try await store.delete(id: id)
         }
-        entry = try #require(await store.entry(id: id))
+        entry = try #require(try await store.entry(id: id))
         #expect(entry.content.contains("the durable state."))
     }
 
@@ -386,7 +386,7 @@ struct MemoryStoreTransactionTests {
             )
         }
 
-        let entries = await store.entries(includeArchived: true, limit: 10)
+        let entries = try await store.entries(includeArchived: true, limit: 10)
         #expect(entries.count == 1)
         #expect(entries.first?.active == true)
     }
@@ -441,7 +441,7 @@ struct MemoryStoreTransactionTests {
 
         // The cancelled transaction committed nothing; only the holder's write is
         // present, and there was exactly one save.
-        let entries = await store.entries(includeArchived: true, limit: 10)
+        let entries = try await store.entries(includeArchived: true, limit: 10)
         #expect(entries.count == 1)
         #expect(entries.first?.content.localizedCaseInsensitiveContains("holder") ?? false)
         #expect(await persistence.saveCount == 1)

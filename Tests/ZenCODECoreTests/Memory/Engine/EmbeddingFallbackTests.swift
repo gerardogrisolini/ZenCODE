@@ -279,7 +279,7 @@ struct EmbeddingFallbackTests {
                     messages.withLock { $0.append(message) }
                 }
             )
-            let entries = await store.entries(includeArchived: false, limit: 10)
+            let entries = try await store.entries(includeArchived: false, limit: 10)
             let entry = try #require(entries.first)
             #expect(entry.content.contains("migrated text remains available offline"))
             #expect(entry.embedding == nil)

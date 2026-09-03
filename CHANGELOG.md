@@ -30,6 +30,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Memory reads stay fresh across processes: `memory.read` and `memory.search`
+  now resolve one coherent snapshot of the durable graph per request (reloading
+  what another `zen` process may have committed and overlaying this process's
+  pending recall maintenance on the copy only) while remaining pure — the graph
+  file, live metadata, lazy migrations and pending maintenance are untouched.
+  Session close and backend shutdown now flush every open memory store's
+  pending recall maintenance after prompts have quiesced, attempting all stores;
+  a memory persistence failure is surfaced only after the existing teardown
+  completes, so in-memory maintenance is no longer lost below its checkpoint
+  threshold.
 - Live tool and Sub-Agent headers no longer duplicate when a Chat overlay
   transition completes without any Chat messages. Superseded lifecycle snapshots
   now share one re-established terminal rewrite anchor; interleaved output and

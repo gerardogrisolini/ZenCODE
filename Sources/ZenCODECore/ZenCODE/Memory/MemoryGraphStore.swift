@@ -179,8 +179,21 @@ actor MemoryGraphStore {
 
     // MARK: - Reads
 
-    func entries(includeArchived: Bool, limit: Int) async -> [GraphEntry] {
-        let graph = await engine.snapshot()
+    /// Resolves one coherent graph for a read-only request.
+    ///
+    /// Store-level reads must observe a graph another ZenCODE process may have
+    /// committed since this store was opened, without turning the read into a
+    /// write. The engine reloads the durable graph under its write lock,
+    /// overlays the local pending recall maintenance onto the copy, and never
+    /// persists — `needsSave`, lazy migrations and pending maintenance stay
+    /// exactly as they were. One snapshot per request also keeps the active and
+    /// archived halves of a search coherent.
+    private func freshReadOnlyGraph() async throws -> MemoryGraph {
+        try await engine.freshSnapshotForReadOnly()
+    }
+
+    func entries(includeArchived: Bool, limit: Int) async throws -> [GraphEntry] {
+        let graph = try await freshReadOnlyGraph()
         return Self.ordered(graph.memories.values)
             .filter { includeArchived || $0.active }
             .prefix(max(limit, 0))
@@ -199,7 +212,16 @@ actor MemoryGraphStore {
         // retrieve → select pipeline as automatic recall but skips the
         // transactional maintenance that `recall` applies. Automatic recall
         // (`context(for:)`) keeps its maintenance path unchanged.
-        let recalled = try await engine.searchReadOnly(query, scope: .all)
+        //
+        // The whole request runs over the single coherent snapshot resolved
+        // above, so cross-process writes are visible and the archived section
+        // below sees exactly the graph the active pipeline searched.
+        let fresh = try await freshReadOnlyGraph()
+        let recalled = try await engine.searchReadOnlyDetailed(
+            query,
+            scope: .all,
+            graph: fresh
+        ).selected
         var active = recalled.map(\.memory).filter(\.active)
 
         guard includeArchived else {
@@ -208,7 +230,7 @@ actor MemoryGraphStore {
 
         // Inactive nodes are excluded from both `recall` and the engine's
         // `lexicalBM25` by design, so archived entries are matched separately.
-        let graph = await engine.snapshot()
+        let graph = fresh
         let archived = Self.ordered(graph.memories.values.filter { !$0.active })
             .compactMap { entry -> (entry: GraphEntry, score: Int)? in
                 let score = Self.lexicalScore(entry, query: query)
@@ -234,8 +256,8 @@ actor MemoryGraphStore {
             .map { $0 }
     }
 
-    func entry(id: String) async -> GraphEntry? {
-        await engine.snapshot().memories[id]
+    func entry(id: String) async throws -> GraphEntry? {
+        try await freshReadOnlyGraph().memories[id]
     }
 
     // MARK: - Automatic turn pipeline
@@ -345,6 +367,12 @@ actor MemoryGraphStore {
     /// need an explicit checkpoint after a direct batch of writes.
     func saveGraph() async throws {
         try await engine.save()
+    }
+
+    /// Flushes only automatic-recall maintenance. In particular this must not
+    /// persist a lazy migration or deferred insert represented by `needsSave`.
+    func flushRecallMaintenance() async throws {
+        try await engine.flushRecallMaintenance()
     }
 
     // MARK: - Mutations
@@ -701,6 +729,36 @@ actor MemoryGraphStoreRegistry {
     /// Drops cached stores. Used when the support directory is re-pointed.
     func reset() {
         stores.removeAll()
+    }
+
+    /// Flushes every open store, attempting all before throwing.
+    ///
+    /// A durability barrier for the in-memory state a process holds but has
+    /// not made durable yet — chiefly the automatic-recall maintenance that
+    /// deliberately stays in memory below its checkpoint threshold. Every
+    /// cached store is attempted even when an earlier one fails, so one
+    /// unwritable graph never hides the flush of the others; the first error
+    /// is rethrown afterwards.
+    ///
+    /// Idempotent by construction: the engine primitive returns immediately
+    /// when no recall maintenance is pending. It deliberately ignores unrelated
+    /// dirty state such as lazy migration and deferred inserts.
+    func flushAll() async throws {
+        // Snapshot the pending tasks first: `await`ing a store inside the loop
+        // would re-enter this actor and could observe a dictionary mutated by
+        // a concurrent `store(forWorkspaceRoot:graphURL:)`.
+        let pendingTasks = Array(stores.values)
+        var firstError: (any Error)?
+        for task in pendingTasks {
+            do {
+                try await task.value.flushRecallMaintenance()
+            } catch {
+                if firstError == nil { firstError = error }
+            }
+        }
+        if let firstError {
+            throw firstError
+        }
     }
 }
 

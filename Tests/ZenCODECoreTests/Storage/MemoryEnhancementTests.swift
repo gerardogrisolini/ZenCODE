@@ -519,7 +519,7 @@ struct MemoryEnhancementTests {
                 graphURL: graphURL,
                 workspaceRootURL: workspace.workspaceURL
             )
-            let all = await reopened.entries(includeArchived: true, limit: 100)
+            let all = try await reopened.entries(includeArchived: true, limit: 100)
 
             #expect(all.count == 2)
             #expect(all.contains { $0.id == first.id.uuidString })
@@ -563,7 +563,7 @@ struct MemoryEnhancementTests {
                 graphURL: graphURL,
                 workspaceRootURL: workspace.workspaceURL
             )
-            let firstEntries = await first.entries(includeArchived: true, limit: 100)
+            let firstEntries = try await first.entries(includeArchived: true, limit: 100)
             #expect(firstEntries.count == 3)
             #expect(firstEntries.contains { $0.isArchived })
 
@@ -576,7 +576,7 @@ struct MemoryEnhancementTests {
                 graphURL: graphURL,
                 workspaceRootURL: workspace.workspaceURL
             )
-            let secondEntries = await second.entries(includeArchived: true, limit: 100)
+            let secondEntries = try await second.entries(includeArchived: true, limit: 100)
             #expect(secondEntries.count == firstEntries.count)
             #expect(Set(secondEntries.map(\.id)) == Set(firstEntries.map(\.id)))
         }

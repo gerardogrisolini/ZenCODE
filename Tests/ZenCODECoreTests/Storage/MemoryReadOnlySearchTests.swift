@@ -326,7 +326,7 @@ struct MemoryReadOnlySearchStoreTests {
                 graphURL: graphURL,
                 workspaceRootURL: workspace.workspaceURL
             )
-            let all = await reopened.entries(includeArchived: true, limit: 100)
+            let all = try await reopened.entries(includeArchived: true, limit: 100)
             #expect(all.count == before.count + 1)
         }
     }

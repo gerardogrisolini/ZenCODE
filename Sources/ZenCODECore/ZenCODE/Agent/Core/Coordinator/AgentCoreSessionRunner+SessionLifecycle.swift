@@ -418,13 +418,13 @@ extension AgentCoreSessionRunner {
         } catch {
             ZenLogger.error(
                 .viewModelRuntime,
-                "agent core session runner could not flush task graph: \(error.localizedDescription)"
+                "agent core session runner lifecycle persistence failed: \(error.localizedDescription)"
             )
         }
     }
 
     /// Throwing counterpart to ``closeSession(id:)`` for callers that need to
-    /// report persistence failures before a session is torn down.
+    /// observe persistence failures after the applicable teardown completes.
     public func closeSessionThrowing(id sessionID: String) async throws {
         promptTaskRegistry.cancelAll(for: sessionID)
         // Drop the incarnation before any suspension so a prompt that is still
@@ -443,6 +443,17 @@ extension AgentCoreSessionRunner {
         // the incarnation that owned the conversation. Drop it before the
         // throwing checkpoint flush so a failed close cannot strand a pause.
         await MemoryTurnCoordinator.shared.discard(sessionID: sessionID)
+        // Durability barrier for memory: after the last prompt activity has
+        // quiesced and before any teardown, flush the automatic-recall
+        // maintenance that deliberately stayed in memory below its checkpoint
+        // threshold. Best effort across every open store; the first failure is
+        // rethrown so a persistence error surfaces before the session is gone.
+        var memoryFlushError: (any Error)?
+        do {
+            try await memoryGraphStoreRegistry.flushAll()
+        } catch {
+            memoryFlushError = error
+        }
         try await taskOrchestrator.flush(sessionID: sessionID)
         promptSkillProvidersBySessionID.removeValue(forKey: sessionID)
         // Terminate coordination for this room so a suspended observer resumes
@@ -453,6 +464,7 @@ extension AgentCoreSessionRunner {
         // this close may have re-inserted state before its generation check.
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
+        if let memoryFlushError { throw memoryFlushError }
     }
 
     public func shutdown() async {
@@ -477,20 +489,30 @@ extension AgentCoreSessionRunner {
         } catch {
             ZenLogger.error(
                 .viewModelRuntime,
-                "agent core session runner could not flush task graphs: \(error.localizedDescription)"
+                "agent core session runner lifecycle persistence failed: \(error.localizedDescription)"
             )
         }
     }
 
     /// Throwing counterpart to ``shutdownBackendKeepingExternalTools()``. It
-    /// retains the compatibility wrapper while making a failed graph flush
-    /// observable to lifecycle owners.
+    /// retains the compatibility wrapper, completes the established teardown
+    /// after a memory-flush failure, then makes that failure observable.
     public func shutdownBackendKeepingExternalToolsThrowing() async throws {
         await cancelAllPromptTasksAndWait()
         authorizationRouter.discardAll()
         // Fence in-flight backend creation and session work before suspending.
         let backendToShutdown = backendManager.invalidateBackend()
         snapshotStore.discardAll()
+        // Durability barrier for memory: every prompt task has been cancelled
+        // and awaited, so no recall can be in flight anymore; flushing here —
+        // before the teardown below clears the stores that own the pending
+        // maintenance — makes the accumulated in-memory state durable.
+        var memoryFlushError: (any Error)?
+        do {
+            try await memoryGraphStoreRegistry.flushAll()
+        } catch {
+            memoryFlushError = error
+        }
         try await taskOrchestrator.flush()
         // Terminate every task-graph event observer so suspended `events(...)`
         // consumers resume instead of waiting forever after shutdown.
@@ -503,6 +525,7 @@ extension AgentCoreSessionRunner {
         await sharedChatCoordinatorStorage?.stopAll()
         await sharedChatMentionCatalogStorage?.reset()
         await backendToShutdown?.shutdown()
+        if let memoryFlushError { throw memoryFlushError }
     }
 
     private func waitForPromptTasks(for sessionID: String) async {
