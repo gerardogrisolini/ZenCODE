@@ -479,7 +479,12 @@ extension TerminalChatRenderCoordinator {
                     lifecycle: render.lifecycle,
                     isSubAgentTool: render.isSubAgentTool,
                     preparesOutput: last.preparesOutput || render.preparesOutput,
-                    requiredRows: maxRequiredRows(last.requiredRows, render.requiredRows)
+                    // A detached pending/started snapshot needs every old row
+                    // to be cursor-reachable. Its completion, however, can
+                    // always be replayed append-only after a capacity drop.
+                    requiredRows: render.lifecycle.isCompletion
+                        ? nil
+                        : maxRequiredRows(last.requiredRows, render.requiredRows)
                 )
             )
             return

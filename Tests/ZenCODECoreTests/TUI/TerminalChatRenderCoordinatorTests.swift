@@ -4180,6 +4180,45 @@ struct TerminalChatToolBlockResizeTests {
         #expect(!screen.contains("⏳"))
     }
 
+    @Test(arguments: [
+        ("memory.search", ["query": "reduced overlay capacity"]),
+        ("memory.update", ["id": "memory-entry-id", "content": "Updated entry"])
+    ])
+    func memoryCompletionDuringOverlaySurvivesReducedCapacity(
+        toolName: String,
+        arguments: [String: String]
+    ) async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 80 }
+        )
+        let toolCall = presentedToolCall(
+            id: "\(toolName)-completion-during-reduced-overlay",
+            name: toolName,
+            argumentsObject: arguments,
+            argumentsJSON: "{}"
+        )
+
+        // The detached pending block fits before the overlay. Its replay must
+        // not make the following completion inherit that old row requirement.
+        await renderer.writeToolCallStarted(toolCall, maximumInPlaceRows: 6)
+        await renderer.beginBottomOverlayTransition(maximumInPlaceRows: 6)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "Completed", summary: "Completed"),
+            maximumInPlaceRows: 6
+        )
+        await renderer.endBottomOverlayTransition(maximumInPlaceRows: 1)
+
+        let screen = terminalScreenText(
+            await renderer.capturedWriteEvents().map(\.text).joined()
+        )
+        #expect(screen.components(separatedBy: toolName).count - 1 == 1)
+        #expect(screen.contains("✅"))
+        #expect(!screen.contains("⏳"))
+        #expect(await renderer.snapshot().activeToolCallID == nil)
+    }
+
     @Test
     func sameIDSingleRowCompletionAtCapacityIsNotDropped() async {
         let renderer = makeRenderer(
