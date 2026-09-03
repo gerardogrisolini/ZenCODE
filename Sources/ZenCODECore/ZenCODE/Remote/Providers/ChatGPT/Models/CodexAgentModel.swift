@@ -91,9 +91,16 @@ public nonisolated enum CodexAgentModel {
     )
     public static let availableModels: [ModelOption] = [
         ModelOption(
+            modelID: "gpt-6-astra",
+            title: "GPT-6 Astra",
+            subtitle: "Latest frontier agentic coding model",
+            contextWindowTokenLimit: 1_000_000,
+            thinkingSupport: ultraThinkingSupport
+        ),
+        ModelOption(
             modelID: "gpt-5.6-sol",
             title: "GPT-5.6 Sol",
-            subtitle: "Latest frontier agentic coding model",
+            subtitle: "Bigger frontier agentic coding model",
             contextWindowTokenLimit: 372_000,
             thinkingSupport: ultraThinkingSupport
         ),

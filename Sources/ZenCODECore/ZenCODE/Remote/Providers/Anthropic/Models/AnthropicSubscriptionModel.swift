@@ -40,8 +40,8 @@ public nonisolated enum AnthropicSubscriptionModel {
 
     public static let availableModels: [ModelOption] = [
         modelOption(
-            modelID: "claude-fable-5",
-            title: "Claude Fable 5",
+            modelID: "claude-fable-5.1",
+            title: "Claude Fable 5.1",
             subtitle: "Adaptive reasoning",
             contextWindowTokenLimit: largeContextWindowTokenLimit,
             maxOutputTokens: largeMaxOutputTokens
