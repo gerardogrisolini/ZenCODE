@@ -428,7 +428,17 @@ public final class TerminalChat {
         let sleepAssertion = ZenSleepAssertion(
             reason: "ZenCODE terminal session active"
         )
+        let memoryDiagnosticSink =
+            MemorySemanticFallbackDiagnostics.installVisibleErrorSink {
+                [renderCoordinator] line in
+                Task(name: "ZenCODE.TUI.memory-fallback-diagnostic") {
+                    await renderCoordinator.writeToolAdjacentSystemMessage(line)
+                }
+            }
         defer {
+            MemorySemanticFallbackDiagnostics.removeVisibleErrorSink(
+                token: memoryDiagnosticSink
+            )
             sleepAssertion.invalidate()
         }
         await installOverviewMirroringHandler()

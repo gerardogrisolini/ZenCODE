@@ -219,7 +219,10 @@ extension TerminalChat {
     func configureConsentReader(eventQueue: TerminalChatEventQueue) async {
         await permissionAuthorizer.setConsentReader({ @TerminalChatActor [interactiveReader, renderCoordinator, statusBar, weak self] prompt in
             await interactiveReader.stopPanelInput(clearPanel: false)
-            await renderCoordinator.beginExternalTerminalPrompt()
+            let outputCapacity = await statusBar.scrollableOutputRowCapacity()
+            await renderCoordinator.beginExternalTerminalPrompt(
+                maximumInPlaceRows: outputCapacity
+            )
             let answer = await Self.readConsentKeyOffActor(
                 reader: interactiveReader,
                 prompt: prompt

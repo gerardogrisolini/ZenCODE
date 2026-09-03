@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 enum MemoryIntelligenceFailurePolicy: String, Codable, Sendable, Equatable {
     /// Fall back to direct lexical retrieval / score-based selection if an analyzer or selector fails.
@@ -69,13 +70,26 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
 ///
 /// ``ZenLogger`` alone cannot satisfy "print a visible error": it is opt-in
 /// (`ZENCODE_LOG`) and disabled by default. This helper therefore always
-/// writes one redacted ERROR line to the preserved stderr descriptor
-/// (``AgentOutput/standardError``, never stdout) and additionally forwards a
-/// copy to the opt-in system-log diagnostic channel. The two channels are
-/// distinct by design — terminal-visible feedback versus system-log records —
-/// so no destination-based deduplication exists. `stderrWriter` is a seam so
-/// tests can prove the emission without touching the process-global stderr.
+/// delivers one redacted ERROR line to an installed presentation sink, or falls
+/// back to the preserved stderr descriptor (``AgentOutput/standardError``, never
+/// stdout), and additionally forwards a copy to the opt-in system-log diagnostic
+/// channel. The two channels are distinct by design — terminal-visible feedback
+/// versus system-log records — so no destination-based deduplication exists.
+/// `stderrWriter` is a priority seam so tests can prove the fallback emission
+/// without touching process-global stderr.
 enum MemorySemanticFallbackDiagnostics {
+    typealias VisibleErrorSink = @Sendable (String) -> Void
+
+    private struct SinkRegistration: Sendable {
+        let token: UUID
+        let sink: VisibleErrorSink
+    }
+
+    /// Process-wide presentation override used only while a TUI session is
+    /// running. Registrations form a stack so overlapping owners cannot remove
+    /// a newer sink when an older session tears down.
+    private static let visibleErrorSinks = Mutex<[SinkRegistration]>([])
+
     /// The visible line: same category/level/redaction contract as the
     /// diagnostic channel, with a trailing newline for the raw descriptor.
     static func visibleLine(message: String) -> String {
@@ -86,15 +100,38 @@ enum MemorySemanticFallbackDiagnostics {
         message: String,
         stderrWriter: ((Data) throws -> Void)? = nil
     ) {
-        let data = Data(visibleLine(message: message).utf8)
+        let line = visibleLine(message: message)
+        let data = Data(line.utf8)
         if let stderrWriter {
             try? stderrWriter(data)
+        } else if let sink = visibleErrorSinks.withLock({ $0.last?.sink }) {
+            sink(line)
         } else {
             try? AgentOutput.standardError.write(contentsOf: data)
         }
         // The system-log channel is opt-in (a no-op when diagnostics are off);
         // it is separate from the visible stderr line, which is always written.
         ZenLogger.error(.memory, message)
+    }
+
+    /// Redirects terminal-visible diagnostics without changing the memory
+    /// engine's synchronous reporter API. The returned token scopes teardown so
+    /// one TUI session cannot accidentally remove another session's sink.
+    @discardableResult
+    static func installVisibleErrorSink(
+        _ sink: @escaping VisibleErrorSink
+    ) -> UUID {
+        let token = UUID()
+        visibleErrorSinks.withLock { registrations in
+            registrations.append(SinkRegistration(token: token, sink: sink))
+        }
+        return token
+    }
+
+    static func removeVisibleErrorSink(token: UUID) {
+        visibleErrorSinks.withLock { registrations in
+            registrations.removeAll { $0.token == token }
+        }
     }
 
     /// Maps an embedding failure to a short, secret-free summary for the
@@ -137,7 +174,7 @@ enum MemorySemanticFallbackDiagnostics {
 /// provider outage therefore degrades an entry to its text/search index while
 /// preserving the original operation's cancellation semantics. The caller
 /// supplies the diagnostic sink so engine-level tests can capture messages and
-/// product paths can keep the always-visible stderr behaviour.
+/// product paths can keep the always-visible presentation-or-stderr behaviour.
 enum MemoryEmbeddingFallback {
     struct Result: Sendable {
         let values: [Float]?
@@ -201,11 +238,11 @@ actor MemoryEngine {
     private var pending: [MemoryCandidate] = []
     private var backgroundTasks: [UUID: Task<Void, Never>] = [:]
     /// Visible-diagnostic sink for semantic embedding failures during
-    /// recall/search and best-effort memory mutations. Defaults to an
-    /// always-visible redacted ERROR line on the preserved stderr descriptor
-    /// plus an opt-in copy on the system-log diagnostic channel; tests inject a
-    /// deterministic recorder instead of touching process-global stderr or the
-    /// logger configuration.
+    /// recall/search and best-effort memory mutations. Defaults to one redacted
+    /// ERROR line through the active presentation sink (or the preserved stderr
+    /// descriptor when no sink is installed), plus an opt-in copy on the
+    /// system-log diagnostic channel. Tests inject a deterministic recorder
+    /// instead of touching process-global output or logger configuration.
     private let semanticFailureReporter: @Sendable (String) -> Void
     /// Write-lock state backing ``transaction(_:)``. See that method for why
     /// actor isolation alone is not enough.
@@ -224,9 +261,9 @@ actor MemoryEngine {
     /// commit them. It is cleared only after the complete live graph is saved.
     private var needsSave: Bool
 
-    /// Default reporter: always emits a redacted ERROR line on the preserved
-    /// stderr descriptor (visible even with `ZENCODE_LOG` off) and forwards an
-    /// opt-in copy to the system-log diagnostic channel.
+    /// Default reporter: always emits a redacted ERROR line through the active
+    /// presentation sink or preserved stderr fallback, and forwards an opt-in
+    /// copy to the system-log diagnostic channel.
     private static let defaultSemanticFailureReporter = MemoryEmbeddingFallback.defaultReporter
 
     public init(

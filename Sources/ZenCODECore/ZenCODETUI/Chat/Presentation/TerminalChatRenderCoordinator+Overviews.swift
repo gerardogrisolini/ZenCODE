@@ -284,6 +284,9 @@ extension TerminalChatRenderCoordinator {
                 overviewBatchID: overviewBatchID,
                 maximumInPlaceRows: maximumInPlaceRows
             )
+            activeSubAgentOverviewPresentation = activeSubAgentOverviewBlock == nil
+                ? nil
+                : overview
         }
     }
 
@@ -481,6 +484,7 @@ extension TerminalChatRenderCoordinator {
     /// position or wrapping of the old block can no longer be proven safe.
     func relinquishSubAgentOverviewOwnership() {
         activeSubAgentOverviewBlock = nil
+        activeSubAgentOverviewPresentation = nil
     }
 
     private func moveCursorAboveBottomOverlayGap(_ rowCount: Int) {
@@ -504,6 +508,7 @@ extension TerminalChatRenderCoordinator {
         // (or the wait completes), because every periodic refresh is incorrectly
         // deduplicated against a section that is no longer on screen.
         overviewState.signatures.removeValue(forKey: .subAgents)
+        activeSubAgentOverviewPresentation = nil
         guard let block = activeSubAgentOverviewBlock else { return }
         activeSubAgentOverviewBlock = nil
         let columnWidth = freshColumnWidthProvider()
@@ -522,6 +527,44 @@ extension TerminalChatRenderCoordinator {
         restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
     }
 
+    /// Parks the currently visible Sub-Agents publication before another writer
+    /// inserts permanent rows. The rows are erased only while their geometry is
+    /// still proven; the semantic publication is queued for a fresh anchor after
+    /// the insertion and may be superseded by a newer deferred refresh.
+    func parkSubAgentOverviewForReplay(
+        maximumInPlaceRows: Int?
+    ) {
+        flushChatOutput()
+        guard let block = activeSubAgentOverviewBlock else { return }
+        let parkedOverview = activeSubAgentOverviewPresentation
+        activeSubAgentOverviewBlock = nil
+        activeSubAgentOverviewPresentation = nil
+        overviewState.signatures.removeValue(forKey: .subAgents)
+
+        let columnWidth = freshColumnWidthProvider()
+        guard standardErrorIsTerminal,
+              block.writeSequence == emittedWriteCount,
+              block.columnWidth == columnWidth,
+              block.rows + block.cursorGapRows
+                <= min(
+                    block.maximumInPlaceRows ?? Int.max,
+                    maximumInPlaceRows ?? Int.max
+                ) else {
+            return
+        }
+
+        moveCursorAboveBottomOverlayGap(block.cursorGapRows)
+        clearOwnedRows(block.rows)
+        restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
+
+        guard let parkedOverview else { return }
+        if let pending = overviewState.pending[.subAgents],
+           pending.sequence > parkedOverview.sequence {
+            return
+        }
+        overviewState.pending[.subAgents] = parkedOverview
+    }
+
     /// Tears down the live sub-agent section when the runtime transitions to an
     /// empty snapshot. Destructive clearing is performed only while this actor
     /// still owns the exact rows and they still fit the current scrolling
@@ -538,6 +581,7 @@ extension TerminalChatRenderCoordinator {
         }
         overviewState.pending.removeValue(forKey: .subAgents)
         overviewState.signatures.removeValue(forKey: .subAgents)
+        activeSubAgentOverviewPresentation = nil
 
         flushChatOutput()
         guard let block = activeSubAgentOverviewBlock else { return }

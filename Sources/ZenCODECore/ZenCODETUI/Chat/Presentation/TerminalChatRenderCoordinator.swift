@@ -97,9 +97,11 @@ actor TerminalChatRenderCoordinator {
     /// their existing behavior unless an explicit fresh provider is supplied.
     let freshColumnWidthProvider: @Sendable () -> Int
     var nextWriteSequence: UInt64 = 0
-    /// Counts every physical emission, whether or not writes are captured.
-    /// Live tool and sub-agent blocks use it to detect output written after
-    /// their section, which makes an in-place rewrite unsafe.
+    /// Counts every coordinator emission in logical order. Writes held behind an
+    /// external terminal prompt advance the count immediately, then reach the
+    /// terminal later without being counted twice. Live tool and sub-agent blocks
+    /// use it to detect output scheduled after their section, which makes an
+    /// in-place rewrite unsafe.
     var emittedWriteCount: UInt64 = 0
     var capturedWrites: [WriteEvent] = []
     var pendingStreamingWrites: [PendingWrite] = []
@@ -122,16 +124,32 @@ actor TerminalChatRenderCoordinator {
     var hasWrittenSubmittedPrompt = false
 
     var toolState = TerminalToolBlockAccounting<ActiveToolBlock>()
+    /// Visible diagnostics produced synchronously inside an active tool must not
+    /// move the cursor before that tool's pending rows are replaced. The queue is
+    /// bounded because diagnostics are advisory and must not grow without limit.
+    var pendingToolAdjacentSystemMessages: [String] = []
     /// Tool lifecycle presentations deferred while an external bottom-overlay
     /// repaint owns the cursor. They are replayed in arrival order after the
     /// status bar establishes the new transcript boundary.
     var bottomOverlayDeferredToolRenders: [DeferredToolRender] = []
     var subAgentToolState = TerminalSubAgentToolPresentationState()
     var activeSubAgentOverviewBlock: ActiveOverviewBlock?
+    /// The publication represented by `activeSubAgentOverviewBlock`. Retaining
+    /// the semantic value lets an external terminal prompt remove the physical
+    /// rows before drawing its card, then republish the same snapshot afterward
+    /// when no newer progress arrived while the operator was deciding.
+    var activeSubAgentOverviewPresentation: PendingOverview?
     /// Fences periodic overview publications while the status bar changes the
     /// transcript's scrolling region outside this coordinator.
     var isBottomOverlayTransitionActive = false
     var overviewState = TerminalOverviewArbitration<OverviewKind, PendingOverview>()
+
+    /// An authorization card writes outside this coordinator while awaiting a
+    /// key. Coordinator output remains logically ordered but is held here until
+    /// the external writer releases the shared cursor. Depth protects the retry
+    /// and nested-reader cases from flushing an inner prompt prematurely.
+    var externalTerminalPromptDepth = 0
+    var externalTerminalPromptWrites: [PendingWrite] = []
 
     /// Optional mirror invoked after publishable overview content is actually
     /// rendered locally. The typed notification excludes transient status,

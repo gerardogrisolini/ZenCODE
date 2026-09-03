@@ -7,6 +7,8 @@ import Foundation
 
 /// Tool block lifecycle rendering, including in-place row ownership, redraw safety fuses, and bounded pending rows.
 extension TerminalChatRenderCoordinator {
+    private static let maximumPendingToolAdjacentSystemMessages = 16
+
     // MARK: - Tool blocks
 
     func writeToolCallStarted(
@@ -16,7 +18,7 @@ extension TerminalChatRenderCoordinator {
         let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
         if isBottomOverlayTransitionActive {
             toolState.startInstants[toolCall.id] = toolNow()
-            enqueueBottomOverlayDeferredToolRender(
+            bottomOverlayDeferredToolRenders.append(
                 DeferredToolRender(
                     toolCall: toolCall,
                     lifecycle: .started,
@@ -61,7 +63,7 @@ extension TerminalChatRenderCoordinator {
             elapsed: elapsed
         )
         if isBottomOverlayTransitionActive {
-            enqueueBottomOverlayDeferredToolRender(
+            bottomOverlayDeferredToolRenders.append(
                 DeferredToolRender(
                     toolCall: toolCall,
                     lifecycle: lifecycle,
@@ -85,6 +87,7 @@ extension TerminalChatRenderCoordinator {
             lifecycle: lifecycle,
             maximumInPlaceRows: maximumInPlaceRows
         )
+        flushToolAdjacentSystemMessagesIfPossible()
     }
 
     /// Records the latest delegated call for each agent without writing a
@@ -143,6 +146,45 @@ extension TerminalChatRenderCoordinator {
         renderPendingOverviewsIfIdle()
     }
 
+    /// Receives a diagnostic that was produced inside tool execution but outside
+    /// the TUI callback stream. While a pending tool owns rows, publishing it
+    /// directly would invalidate that relative anchor. Keep it adjacent to the
+    /// tool and publish it only after the completion has replaced those rows.
+    func writeToolAdjacentSystemMessage(_ text: String) {
+        guard !text.isEmpty else { return }
+        guard toolState.activeBlock == nil,
+              !isBottomOverlayTransitionActive else {
+            if pendingToolAdjacentSystemMessages.count
+                == Self.maximumPendingToolAdjacentSystemMessages {
+                pendingToolAdjacentSystemMessages.removeFirst()
+            }
+            pendingToolAdjacentSystemMessages.append(text)
+            return
+        }
+        writeStandaloneToolAdjacentSystemMessage(text)
+    }
+
+    private func writeStandaloneToolAdjacentSystemMessage(_ text: String) {
+        finishThoughtOutputIfNeeded()
+        finishAssistantContentFormatting()
+        parkSubAgentOverviewForReplay(maximumInPlaceRows: nil)
+        writeSystemMessageWithoutInterrupt(text)
+        renderPendingOverviewsIfIdle()
+    }
+
+    private func flushToolAdjacentSystemMessagesIfPossible() {
+        guard toolState.activeBlock == nil,
+              !isBottomOverlayTransitionActive,
+              !pendingToolAdjacentSystemMessages.isEmpty else {
+            return
+        }
+        let messages = pendingToolAdjacentSystemMessages
+        pendingToolAdjacentSystemMessages.removeAll(keepingCapacity: true)
+        for message in messages {
+            writeStandaloneToolAdjacentSystemMessage(message)
+        }
+    }
+
     private func prepareForToolOutput() {
         flushChatOutput()
         if standardErrorIsTerminal {
@@ -178,9 +220,6 @@ extension TerminalChatRenderCoordinator {
                 cursorState: currentCursorState(for: .standardError)
             )
         }
-        var compactRowsToWrite = renderRows.compactRows.map(\.plainText)
-        var firstCompactRowIsTitle = true
-
         switch lifecycle {
         case .started:
             break
@@ -221,40 +260,6 @@ extension TerminalChatRenderCoordinator {
                     && block.rows <= maximumReplaceableRows
             } ?? false
 
-            // A pending compact block terminates with a newline, so the cursor
-            // is on the row *after* its status. If only the capacity fuse
-            // prevents the full redraw, its original geometry is still known:
-            // replace just the status rows. A resize deliberately remains
-            // append-only because even this relative movement could target
-            // reflowed or foreign output.
-            if let activeBlock,
-               activeBlock.id == toolCall.id,
-               activeBlock.writeSequence == emittedWriteCount,
-               standardErrorIsTerminal,
-               activeBlock.columnWidth == columnWidth,
-               !shouldRewriteActiveBlock {
-                let pendingRows = toolBlockRows(
-                    for: activeBlock.toolCall,
-                    lifecycle: .started,
-                    contentInsetWidth: contentInsetWidth,
-                    columnWidth: activeBlock.columnWidth
-                )
-                let titleRowCount = pendingRows.compactRows.count > 1
-                    ? TerminalChat.renderedTerminalRowCount(
-                        for: [pendingRows.compactRows[0].plainText],
-                        contentInsetWidth: contentInsetWidth,
-                        columnWidth: activeBlock.columnWidth
-                    )
-                    : 0
-                let statusRowCount = activeBlock.rows - titleRowCount
-                if statusRowCount > 0,
-                   statusRowCount <= activeBlock.rows {
-                    clearOwnedRows(statusRowCount)
-                    compactRowsToWrite = Array(renderRows.compactRows.suffix(1)).map(\.plainText)
-                    firstCompactRowIsTitle = false
-                }
-            }
-
             // Starts transfer the one physical rewrite slot to the newest
             // block. A completion for an older or otherwise unowned tool is
             // append-only: it must not erase the newer block. It *does*,
@@ -281,9 +286,7 @@ extension TerminalChatRenderCoordinator {
         writeToolBlockRows(
             renderRows,
             for: toolCall,
-            lifecycle: lifecycle,
-            compactRows: compactRowsToWrite,
-            firstCompactRowIsTitle: firstCompactRowIsTitle
+            lifecycle: lifecycle
         )
         if let pendingOwnership {
             toolState.activeBlock = ActiveToolBlock(
@@ -337,14 +340,11 @@ extension TerminalChatRenderCoordinator {
     private func writeToolBlockRows(
         _ renderRows: TerminalChat.ToolPresentationRows,
         for toolCall: DirectAgentToolCall,
-        lifecycle: ToolBlockLifecycle,
-        compactRows: [String]? = nil,
-        firstCompactRowIsTitle: Bool = true
+        lifecycle: ToolBlockLifecycle
     ) {
         writeCompactToolLines(
-            compactRows ?? renderRows.compactRows.map(\.plainText),
-            newline: lifecycle.isCompletion && renderRows.detailRows.isEmpty,
-            firstLineIsTitle: firstCompactRowIsTitle
+            renderRows.compactRows.map(\.plainText),
+            newline: lifecycle.isCompletion && renderRows.detailRows.isEmpty
         )
         guard !renderRows.detailRows.isEmpty else {
             return
@@ -361,15 +361,13 @@ extension TerminalChatRenderCoordinator {
     private func writeCompactToolLines(
         _ lines: [String],
         newline: Bool = false,
-        terminator: String = "\n",
-        firstLineIsTitle: Bool = true
+        terminator: String = "\n"
     ) {
         let text = TerminalChat.compactToolTerminalText(
             lines,
             lineInset: lineInset,
             newline: newline,
-            terminator: terminator,
-            firstLineIsTitle: firstLineIsTitle
+            terminator: terminator
         )
         writeRawChatError(text)
     }
@@ -415,12 +413,46 @@ extension TerminalChatRenderCoordinator {
     }
 
     func finishActiveToolOutputBeforeInterleavedMessage() {
-        guard toolState.activeBlock != nil else {
+        if toolState.activeBlock != nil {
+            toolState.activeBlock = nil
+            toolState.activeBlockIsSubAgentTool = false
+            writeChat("\n", to: .standardError)
+        }
+        flushToolAdjacentSystemMessagesIfPossible()
+    }
+
+    /// Removes a pending tool before an external authorization card takes the
+    /// terminal cursor. Unlike an ordinary interleaved message, the card itself
+    /// replaces the pending presentation while consent is outstanding; the
+    /// eventual completion will therefore be the tool's single visible block.
+    func clearActiveToolBeforeExternalTerminalPrompt(
+        maximumInPlaceRows: Int?
+    ) {
+        flushChatOutput()
+        guard let block = toolState.activeBlock else {
+            flushToolAdjacentSystemMessagesIfPossible()
             return
         }
         toolState.activeBlock = nil
         toolState.activeBlockIsSubAgentTool = false
-        writeChat("\n", to: .standardError)
+        defer { flushToolAdjacentSystemMessagesIfPossible() }
+
+        let columnWidth = freshColumnWidthProvider()
+        let maximumReplaceableRows = min(
+            replaceableToolRowCapacity(block.maximumInPlaceRows) ?? Int.max,
+            replaceableToolRowCapacity(maximumInPlaceRows) ?? Int.max
+        )
+        guard standardErrorIsTerminal,
+              block.writeSequence == emittedWriteCount,
+              block.columnWidth == columnWidth,
+              block.rows <= maximumReplaceableRows else {
+            // Geometry is no longer trustworthy. Forget the relative anchor;
+            // retaining the old rows is safer than erasing transcript or card
+            // content with a speculative cursor movement.
+            return
+        }
+        clearOwnedRows(block.rows)
+        restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
     }
 
     func detachActiveToolBeforeBottomOverlayTransition(
@@ -449,7 +481,7 @@ extension TerminalChatRenderCoordinator {
 
         clearOwnedRows(block.rows)
         restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
-        enqueueBottomOverlayDeferredToolRender(
+        bottomOverlayDeferredToolRenders.append(
             DeferredToolRender(
                 toolCall: block.toolCall,
                 lifecycle: .started,
@@ -460,55 +492,11 @@ extension TerminalChatRenderCoordinator {
         )
     }
 
-    /// Keeps one pending presentation for the current tool at the end of an
-    /// overlay transaction. The detached live block is only a snapshot needed
-    /// to restore an anchor after the external repaint; if its own lifecycle
-    /// advances before that repaint completes, replaying both snapshots would
-    /// publish two physical headers for the same block. Only an adjacent event
-    /// is coalesced, so interleaved calls retain their transcript order and
-    /// remain append-only as usual.
-    private func enqueueBottomOverlayDeferredToolRender(
-        _ render: DeferredToolRender
-    ) {
-        if let last = bottomOverlayDeferredToolRenders.last,
-           last.toolCall.id == render.toolCall.id {
-            bottomOverlayDeferredToolRenders.removeLast()
-            bottomOverlayDeferredToolRenders.append(
-                DeferredToolRender(
-                    toolCall: render.toolCall,
-                    lifecycle: render.lifecycle,
-                    isSubAgentTool: render.isSubAgentTool,
-                    preparesOutput: last.preparesOutput || render.preparesOutput,
-                    // A detached pending/started snapshot needs every old row
-                    // to be cursor-reachable. Its completion, however, can
-                    // always be replayed append-only after a capacity drop.
-                    requiredRows: render.lifecycle.isCompletion
-                        ? nil
-                        : maxRequiredRows(last.requiredRows, render.requiredRows)
-                )
-            )
-            return
-        }
-        bottomOverlayDeferredToolRenders.append(render)
-    }
-
-    private func maxRequiredRows(_ lhs: Int?, _ rhs: Int?) -> Int? {
-        switch (lhs, rhs) {
-        case let (lhs?, rhs?):
-            max(lhs, rhs)
-        case let (value?, nil), let (nil, value?):
-            value
-        case (nil, nil):
-            nil
-        }
-    }
-
     func republishToolAfterBottomOverlayTransition(
         maximumInPlaceRows: Int?
     ) {
         let deferredRenders = bottomOverlayDeferredToolRenders
         bottomOverlayDeferredToolRenders.removeAll(keepingCapacity: true)
-        guard !deferredRenders.isEmpty else { return }
         let maximumReplaceableRows = replaceableToolRowCapacity(maximumInPlaceRows)
             ?? Int.max
         for deferred in deferredRenders {
@@ -536,6 +524,7 @@ extension TerminalChatRenderCoordinator {
                 maximumInPlaceRows: maximumInPlaceRows
             )
         }
+        flushToolAdjacentSystemMessagesIfPossible()
     }
 
     /// Transfers the terminal's single live rewrite slot from a pending

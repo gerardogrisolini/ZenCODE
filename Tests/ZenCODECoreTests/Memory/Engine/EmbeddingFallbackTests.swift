@@ -4,9 +4,9 @@
 //
 //  Verifies that an embedding-endpoint failure during recall/search never
 //  fails the whole retrieval: the engine emits a redacted, always-visible
-//  error line on the preserved stderr descriptor (plus the opt-in ZenLogger
-//  file channel unless it already targets stderr) and continues with BM25-only
-//  results. Cancellation is never degraded into a fallback.
+//  error line through an installed presentation sink or the preserved stderr
+//  descriptor (plus the opt-in ZenLogger file channel) and continues with
+//  BM25-only results. Cancellation is never degraded into a fallback.
 //
 
 import Foundation
@@ -145,6 +145,37 @@ struct EmbeddingFallbackTests {
         #expect(line.contains("[MemoryService][ERROR]"))
         #expect(line.contains("BM25-only results"))
         #expect(!line.contains("Swift actors protect"))
+    }
+
+    @Test
+    func installedVisibleSinkReplacesRawStderrUntilItsTokenIsRemoved() throws {
+        let captured = Mutex<[String]>([])
+        let token = MemorySemanticFallbackDiagnostics.installVisibleErrorSink {
+            line in
+            captured.withLock { $0.append(line) }
+        }
+        defer {
+            MemorySemanticFallbackDiagnostics.removeVisibleErrorSink(token: token)
+        }
+
+        MemorySemanticFallbackDiagnostics.emitVisibleError(
+            message: "semantic embedding retrieval failed (httpStatus 503); continuing with BM25-only results."
+        )
+
+        let line = try #require(captured.withLock { $0.first })
+        #expect(line.hasSuffix("\n"))
+        #expect(line.contains("[MemoryService][ERROR]"))
+        #expect(line.contains("BM25-only results"))
+
+        // The explicit writer remains the priority test seam and must never be
+        // shadowed by a process-level presentation sink.
+        var explicitlyWritten: [Data] = []
+        MemorySemanticFallbackDiagnostics.emitVisibleError(
+            message: "semantic embedding update failed (httpStatus 503)",
+            stderrWriter: { explicitlyWritten.append($0) }
+        )
+        #expect(explicitlyWritten.count == 1)
+        #expect(captured.withLock { $0.count } == 1)
     }
 
     @Test

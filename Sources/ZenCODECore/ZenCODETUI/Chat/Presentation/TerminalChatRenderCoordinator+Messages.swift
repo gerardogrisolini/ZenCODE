@@ -151,21 +151,53 @@ extension TerminalChatRenderCoordinator {
 
     // MARK: - External terminal prompts
 
-    /// Suspends coordinator-owned overview output before an interactive prompt
-    /// writes directly to the shared terminal. The external rows move the cursor
-    /// beyond any active tool block, so that block must relinquish its in-place
-    /// rewrite slot; otherwise its completion would cursor-up through the prompt
-    /// and erase the authorization card's footer and bottom border.
-    func beginExternalTerminalPrompt() {
+    /// Establishes an exclusive external-writer phase for an interactive prompt.
+    /// Existing transient rows are retired before the card is drawn; subsequent
+    /// coordinator output is accumulated rather than emitted into the card.
+    func beginExternalTerminalPrompt(maximumInPlaceRows: Int? = nil) {
+        guard externalTerminalPromptDepth == 0 else {
+            externalTerminalPromptDepth += 1
+            return
+        }
+
         overviewState.isSuspended = true
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
-        finishActiveToolOutputBeforeInterleavedMessage()
+        clearActiveToolBeforeExternalTerminalPrompt(
+            maximumInPlaceRows: maximumInPlaceRows
+        )
+        parkSubAgentOverviewForReplay(
+            maximumInPlaceRows: maximumInPlaceRows
+        )
+
+        // The consent reader's card and echoed answer both terminate with a
+        // newline, and the caller adds a second boundary newline before ending
+        // this phase. Format deferred output against that future cursor state,
+        // not against the rows just removed above.
+        var postPromptCursorState = CursorState()
+        postPromptCursorState.spacing.trailingNewlineCount = 2
+        restoreCursorState(postPromptCursorState, for: .standardError)
+        externalTerminalPromptDepth = 1
     }
 
-    /// Releases the external prompt guard and publishes any overview deferred
-    /// while the operator was choosing an authorization response.
+    /// Releases the external writer, resolves deferred overview arbitration into
+    /// the same ordered batch as any tool/stream progress, then emits that batch
+    /// below the completed card.
     func endExternalTerminalPrompt() {
-        setOverviewPublishingSuspended(false)
+        guard externalTerminalPromptDepth > 0 else { return }
+        guard externalTerminalPromptDepth == 1 else {
+            externalTerminalPromptDepth -= 1
+            return
+        }
+
+        // Keep the external phase active while pending streams and overviews are
+        // resolved, so they join the tail of the same FIFO rather than overtaking
+        // tool bytes that were accumulated earlier in the authorization wait.
+        flushPendingStreamingWrites()
+        overviewState.isSuspended = false
+        renderPendingOverviewsIfIdle()
+        flushPendingStreamingWrites()
+        externalTerminalPromptDepth = 0
+        flushExternalTerminalPromptWrites()
     }
 }

@@ -284,6 +284,19 @@ extension TerminalChatRenderCoordinator {
             return
         }
         emittedWriteCount &+= 1
+        guard externalTerminalPromptDepth == 0 else {
+            externalTerminalPromptWrites.append(
+                PendingWrite(channel: channel, text: text)
+            )
+            return
+        }
+        emitPhysical(text, to: channel)
+    }
+
+    /// Performs an already-accounted physical write. Deferred authorization
+    /// output passes through here when its card closes, so replay does not alter
+    /// the logical write sequence used by live-row ownership checks.
+    func emitPhysical(_ text: String, to channel: OutputChannel) {
         if capturesWrites {
             capturedWrites.append(
                 WriteEvent(
@@ -299,6 +312,16 @@ extension TerminalChatRenderCoordinator {
             standardOutput?.writeString(text)
         case .standardError:
             standardError?.writeString(text)
+        }
+    }
+
+    /// Publishes all bytes accumulated behind an external terminal prompt in
+    /// their original cross-channel order.
+    func flushExternalTerminalPromptWrites() {
+        let writes = externalTerminalPromptWrites
+        externalTerminalPromptWrites.removeAll(keepingCapacity: true)
+        for write in writes {
+            emitPhysical(write.text, to: write.channel)
         }
     }
 }

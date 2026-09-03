@@ -40,17 +40,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
   a memory persistence failure is surfaced only after the existing teardown
   completes, so in-memory maintenance is no longer lost below its checkpoint
   threshold.
-- Live tool and Sub-Agent headers no longer duplicate when a Chat overlay
-  transition completes without any Chat messages. Superseded lifecycle snapshots
-  now share one re-established terminal rewrite anchor; interleaved output and
-  capacity-fuse fallbacks remain append-only. A completion coalesced with a
-  detached pending snapshot also remains visible when the overlay reduces row
-  capacity, while pending and started replays retain the capacity fuse.
-- A same-ID tool completion that follows its pending block without intervening
-  output now updates its cursor-adjacent status rows without repeating the tool
-  header when a scrolling-region capacity fuse makes full replacement unsafe.
-  Resize, stale, interleaved, and different-ID completions retain the safe
-  append-only path.
+- Semantic embedding fallback diagnostics from `memory.search` and memory
+  mutations now pass through the TUI render coordinator instead of writing to
+  raw `stderr` beside a pending tool. They remain visible after the completion,
+  while headless and ACP paths keep the preserved-`stderr` fallback; tool headers
+  are no longer duplicated when semantic retrieval degrades to BM25.
+- Interactive authorization cards now exclusively own the shared terminal cursor.
+  Existing live tool and Sub-Agent rows are retired before the card is drawn;
+  concurrent coordinator output is held until the operator answers, then replayed
+  in order with the latest Sub-Agents overview reanchored below the intact card.
+  Delayed consent no longer leaves duplicate Sub-Agent headers or erases the card
+  footer.
 - Xcode tool discovery and agent invocations now share the same persistent
   feature runtime in Chat, preventing a second Xcode authorization request
   after tools have already been activated.
