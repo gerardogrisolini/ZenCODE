@@ -297,7 +297,12 @@ actor MemoryGraphStore {
         scope: GraphScope = .all
     ) async throws -> String? {
         guard embedder != nil else { return nil }
-        return try await engine.lexicalContextReadOnly(for: prompt, scope: scope)
+        let fresh = try await freshReadOnlyGraph()
+        return try await engine.lexicalContextReadOnly(
+            for: prompt,
+            scope: scope,
+            graph: fresh
+        )
     }
 
     /// Runs the engine's configured extractor over `context` and stores what it

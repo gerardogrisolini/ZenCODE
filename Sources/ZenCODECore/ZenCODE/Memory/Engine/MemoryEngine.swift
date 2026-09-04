@@ -806,11 +806,13 @@ actor MemoryEngine {
     /// effects twice when semantic retrieval wins.
     func lexicalContextReadOnly(
         for prompt: String,
-        scope: EngineMemoryScope = .all
+        scope: EngineMemoryScope,
+        graph suppliedGraph: MemoryGraph
     ) async throws -> String {
         let result = try await retrieveAndSelect(
             prompt,
             scope: scope,
+            graph: suppliedGraph,
             includeSemantic: false
         )
         return contextFormatter.format(result.selected)

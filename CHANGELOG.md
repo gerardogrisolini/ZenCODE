@@ -36,6 +36,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   retrieval; a fast semantic result still wins, while a timeout injects the
   prepared text into the currently selected chat model/provider without waiting
   for or coupling memory vectors to that model.
+- Automatic-recall's timeout fallback now reloads the durable graph before
+  ranking, so it cannot inject a memory another ZenCODE process has archived or
+  deleted after the local reader opened.
 - Memory reads stay fresh across processes: `memory.read` and `memory.search`
   now resolve one coherent snapshot of the durable graph per request (reloading
   what another `zen` process may have committed and overlaying this process's

@@ -291,6 +291,70 @@ struct MemoryAutomationFlowTests {
     }
 
     @Test
+    func timeoutFallbackDoesNotReturnMemoryArchivedByAnotherEngine() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            let graphURL = workspace.graphURL()
+            let id = UUID().uuidString
+            var graph = MemoryGraph()
+            graph.addMemory(
+                EngineMemoryEntry(
+                    id: id,
+                    category: .fact,
+                    content: "The obsolete quantum flange must not be recalled."
+                )
+            )
+            try await JSONMemoryPersistence(url: graphURL).save(graph)
+
+            await scopedEnv([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1",
+                MemoryAutomationSettings.environmentRecallTimeoutKey: "100"
+            ]) {
+                await MemoryEmbedding.withProvider(
+                    DelayedMemoryEmbeddingProvider(delay: .seconds(2))
+                ) {
+                    // Open and retain the reader through the registry while its
+                    // resident graph still contains the entry.
+                    let initial = await MemoryTurnCoordinator.shared.memoryBlock(
+                        sessionID: "stale-reader-\(UUID().uuidString)",
+                        workspaceRootURL: workspace.workspaceURL,
+                        prompt: "quantum flange"
+                    )
+                    #expect(initial?.contains("obsolete quantum flange") == true)
+
+                    // A separate engine represents another ZenCODE process.
+                    // Its durable archive must be visible to the timeout's
+                    // lexical fallback, rather than the cached reader graph.
+                    do {
+                        let writer = try await MemoryEngine.open(
+                            persistence: JSONMemoryPersistence(url: graphURL)
+                        )
+                        let writerStore = MemoryGraphStore(
+                            graphURL: graphURL,
+                            engine: writer,
+                            embedder: nil
+                        )
+                        _ = try await writerStore.setArchived(true, id: id)
+                    } catch {
+                        Issue.record("Could not archive the stale memory: \(error)")
+                        return
+                    }
+
+                    let fallback = await MemoryTurnCoordinator.shared.memoryBlock(
+                        sessionID: "stale-fallback-\(UUID().uuidString)",
+                        workspaceRootURL: workspace.workspaceURL,
+                        prompt: "quantum flange"
+                    )
+                    #expect(fallback == nil)
+                }
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
+    @Test
     func recallDegradesToNilOnStoreFailure() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
