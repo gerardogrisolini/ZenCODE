@@ -477,14 +477,18 @@ character budget (`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`, default 4 000
 characters, clamped to [200, 32 000]; ZenCODE counts roughly four characters
 per token, so the default is about 1k tokens of recalled memory). The whole
 pipeline, including on a cold workspace the one-time graph open and
-`MEMORY.md` migration, races `ZENCODE_MEMORY_RECALL_TIMEOUT_MS` (default
-150 ms, clamped to [10, 5000]); the first side to finish wins and the loser is
-abandoned rather than awaited, so a turn waits at most the budget. Every
-failure — timeout, throw, cancellation, empty result — resolves to no block,
-which makes the outgoing request byte-identical to one sent with memory
-switched off. A session is auto-disabled after three consecutive unusable
-recall attempts; any success resets the counter, and closing or resetting a
-session discards its state.
+`MEMORY.md` migration, is bounded by `ZENCODE_MEMORY_RECALL_TIMEOUT_MS` (default
+150 ms, clamped to [10, 5000]). When an embedding provider is configured,
+`MemoryTurnCoordinator` prepares a maintenance-free local BM25 result alongside
+the full semantic recall. A semantic result completed within the deadline wins;
+if the endpoint is still pending, the prepared lexical block is injected instead
+and the losing request is cancelled without being awaited. If the graph cannot
+open or the local fallback itself is not ready at the deadline, recall resolves
+to no block, which makes the outgoing request byte-identical to one sent with
+memory switched off. A session is auto-disabled after three consecutive
+unusable attempts; a delivered lexical fallback counts as a success, any other
+success resets the counter, and closing or resetting a session discards its
+state.
 
 The engine's N→N+1 `submitContext(_:)` / `takePending()` pipeline is
 deliberately not used. `ZenMemory.pending` is a single unkeyed array on the
@@ -496,10 +500,15 @@ retrieval keeps every recall bound to the prompt that asked for it.
 
 The block travels out-of-band through
 `MemoryTurnContext.currentTurnMemoryBlock`, a task-local bound around
-`sendPrompt`. At request assembly,
-`RemoteGenerationClient.applyingCurrentTurnMemory(to:)` merges it into the
-outgoing copy of the last user message — the single shared injection point
-for all three concrete generation clients, so the wire formats cannot drift.
+`sendPrompt`. The embedding provider is the single fixed provider resolved from
+setup for the workspace store; it is independent of the destination chat model
+or provider. Operator turns and delegated agents using GLM, Claude, GPT, or any
+other configured model query the same memory graph through that embedder, then
+receive only the selected memory text. Switching the chat backend neither
+re-embeds nor duplicates durable entries. At request assembly,
+`RemoteGenerationClient.applyingCurrentTurnMemory(to:)` merges the block into the
+outgoing copy of the last user message — the single shared injection point for
+all three concrete generation clients, so the wire formats cannot drift.
 Callers apply it on every tool round against the fresh value of
 `session.messages`, so each round's outgoing copy carries the block exactly
 once. `session.messages` is never mutated, so the block never enters

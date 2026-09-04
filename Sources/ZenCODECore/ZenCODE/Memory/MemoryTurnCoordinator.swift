@@ -78,15 +78,25 @@ actor MemoryTurnCoordinator {
             return nil
         }
 
-        let raw = await Self.racingDeadline(MemoryAutomationSettings.recallTimeout) {
-            try await Self.retrievedContext(
-                workspaceRootURL: standardizedRoot,
-                prompt: normalizedPrompt
-            )
-        }
+        let raw = await Self.racingDeadline(
+            MemoryAutomationSettings.recallTimeout,
+            operation: {
+                try await Self.retrievedContext(
+                    workspaceRootURL: standardizedRoot,
+                    prompt: normalizedPrompt
+                )
+            },
+            fallback: {
+                try await Self.retrievedLexicalFallback(
+                    workspaceRootURL: standardizedRoot,
+                    prompt: normalizedPrompt
+                )
+            }
+        )
 
         guard let raw else {
-            // Timed out, threw, or was cancelled: all degrade identically.
+            // The store failed, the task was cancelled, or the deadline expired
+            // before either semantic recall or its lexical fallback was usable.
             noteFailure(key)
             return nil
         }
@@ -130,6 +140,17 @@ actor MemoryTurnCoordinator {
         return try await store.context(for: prompt)
     }
 
+    /// Local-only safety net for a semantic recall that reaches the turn
+    /// deadline. Both paths resolve the same cached workspace store; this one
+    /// skips the configured embedder and performs no retrieval maintenance.
+    private static func retrievedLexicalFallback(
+        workspaceRootURL: URL,
+        prompt: String
+    ) async throws -> String? {
+        let store = try await store(workspaceRootURL: workspaceRootURL)
+        return try await store.lexicalFallbackContext(for: prompt)
+    }
+
     private static func store(workspaceRootURL: URL) async throws -> MemoryGraphStore {
         try await MemoryGraphStoreRegistry.shared.store(
             forWorkspaceRoot: workspaceRootURL,
@@ -137,31 +158,51 @@ actor MemoryTurnCoordinator {
         )
     }
 
-    /// Runs `operation` against a deadline, returning `nil` when the deadline
-    /// wins or the operation fails.
+    /// Runs the full semantic recall against a deadline while preparing a
+    /// maintenance-free lexical result in parallel. If semantic retrieval wins,
+    /// behavior is unchanged. If the deadline wins, the already-computed BM25
+    /// block is returned instead of dropping all memory context. Store/open
+    /// failures preserve the previous nil degradation behavior.
     ///
     /// This intentionally does not use a task group: waiting for cancelled group
     /// children would turn a cooperative cancellation into an unbounded wait
-    /// during a cold open or large graph decode. The registry retains its
-    /// in-flight open task, so an abandoned first attempt can still warm the
-    /// cache for a later turn.
+    /// during a cold open or a non-cooperative embedding request. The registry
+    /// retains its in-flight open task, so an abandoned first attempt can still
+    /// warm the cache for a later turn.
     private static func racingDeadline<T: Sendable>(
         _ timeout: Duration,
-        _ operation: @escaping @Sendable () async throws -> T
+        operation: @escaping @Sendable () async throws -> T,
+        fallback: @escaping @Sendable () async throws -> T?
     ) async -> T? {
         let latch = FirstResultLatch<T>()
         let work = Task<Void, Never> {
-            let value = try? await operation()
-            await latch.resolve(value)
+            do {
+                await latch.resolve(try await operation())
+            } catch {
+                // Preserve the established failure contract: an unusable full
+                // retrieval resolves to nil immediately rather than masking a
+                // graph/persistence error with a second read.
+                await latch.resolve(nil)
+            }
+        }
+        let lexicalFallback = Task<Void, Never> {
+            do {
+                await latch.offerFallback(try await fallback())
+            } catch {
+                // The full retrieval still owns the result. A failed safety-net
+                // lookup simply leaves no value for the deadline to use.
+            }
         }
         let deadline = Task<Void, Never> {
             try? await Task.sleep(for: timeout)
-            await latch.resolve(nil)
+            await latch.resolveUsingFallback()
         }
         let result = await latch.value()
-        // Best effort only: neither task is awaited, so a non-cooperative
-        // operation cannot hold the main turn after the deadline.
+        // Best effort only: no loser is awaited, so an endpoint that ignores
+        // cancellation cannot hold the model turn beyond its deadline. Engine
+        // cancellation checks prevent such a loser from applying maintenance.
         work.cancel()
+        lexicalFallback.cancel()
         deadline.cancel()
         return result
     }
@@ -284,9 +325,22 @@ actor MemoryTurnCoordinator {
 /// uncooperative loser.
 private actor FirstResultLatch<T: Sendable> {
     /// The outer optional means “resolved”; the inner value may legitimately be
-    /// nil when the deadline wins.
+    /// nil when the operation fails or no fallback was ready at the deadline.
     private var resolved: T??
+    /// Best lexical result produced while the semantic operation is in flight.
+    /// It never resolves the latch by itself: semantic retrieval retains the
+    /// entire configured budget and wins whenever it completes in time.
+    private var fallback: T?
     private var waiters: [CheckedContinuation<T?, Never>] = []
+
+    func offerFallback(_ value: T?) {
+        guard resolved == nil else { return }
+        fallback = value
+    }
+
+    func resolveUsingFallback() {
+        resolve(fallback)
+    }
 
     func resolve(_ value: T?) {
         guard resolved == nil else {

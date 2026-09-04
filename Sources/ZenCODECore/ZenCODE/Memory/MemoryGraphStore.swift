@@ -284,6 +284,22 @@ actor MemoryGraphStore {
         try await engine.context(for: prompt, scope: scope)
     }
 
+    /// Returns the same provider-neutral memory block using only local ranking.
+    ///
+    /// This path exists solely as the deadline fallback for automatic recall.
+    /// A configured embedding provider is required; without one the ordinary
+    /// `context(for:)` call is already local BM25 and starting a duplicate lookup
+    /// would add work without providing a fallback. The engine method is read-only
+    /// so running it beside the full semantic recall cannot double-apply retrieval
+    /// maintenance.
+    func lexicalFallbackContext(
+        for prompt: String,
+        scope: GraphScope = .all
+    ) async throws -> String? {
+        guard embedder != nil else { return nil }
+        return try await engine.lexicalContextReadOnly(for: prompt, scope: scope)
+    }
+
     /// Runs the engine's configured extractor over `context` and stores what it
     /// returns. Stores opened by the product always use `NoopMemoryExtractor`,
     /// so this is a no-op there and makes no network call. The internal helper

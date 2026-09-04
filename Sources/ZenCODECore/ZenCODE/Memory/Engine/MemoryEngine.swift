@@ -795,6 +795,27 @@ actor MemoryEngine {
         try await searchReadOnlyDetailed(query, scope: scope).selected
     }
 
+    /// Formats a maintenance-free lexical fallback for bounded automatic recall.
+    ///
+    /// The product normally enriches this same BM25/metadata/cascade pipeline
+    /// with semantic ranking. `MemoryTurnCoordinator` runs this local-only path
+    /// alongside that full retrieval so a slow embedding endpoint cannot erase
+    /// lexical results when the turn deadline expires. It deliberately performs
+    /// no recall maintenance: only the full retrieval may mutate confidence,
+    /// counters, or links, preventing the parallel fallback from applying those
+    /// effects twice when semantic retrieval wins.
+    func lexicalContextReadOnly(
+        for prompt: String,
+        scope: EngineMemoryScope = .all
+    ) async throws -> String {
+        let result = try await retrieveAndSelect(
+            prompt,
+            scope: scope,
+            includeSemantic: false
+        )
+        return contextFormatter.format(result.selected)
+    }
+
     /// Read-only retrieval over an explicitly supplied graph.
     ///
     /// Store-level reads resolve one coherent graph per request (durable reload
@@ -826,7 +847,8 @@ actor MemoryEngine {
     private func retrieveAndSelect(
         _ prompt: String,
         scope: EngineMemoryScope,
-        graph suppliedGraph: MemoryGraph? = nil
+        graph suppliedGraph: MemoryGraph? = nil,
+        includeSemantic: Bool = true
     ) async throws -> (plan: MemoryQueryPlan, candidates: [MemoryCandidate], selected: [MemoryCandidate]) {
         let plan = try await analyzeWithPolicy(prompt)
         guard plan.shouldRecall, configuration.maxResults > 0 else {
@@ -866,7 +888,9 @@ actor MemoryEngine {
         )
         if !metadata.isEmpty { rankings.append(metadata) }
 
-        if let embedder, configuration.maxSemanticQueries > 0 {
+        if includeSemantic,
+           let embedder,
+           configuration.maxSemanticQueries > 0 {
             let semanticQueries = Array(queries.prefix(configuration.maxSemanticQueries))
             var semanticFailures = 0
             var firstFailure: (any Error)?

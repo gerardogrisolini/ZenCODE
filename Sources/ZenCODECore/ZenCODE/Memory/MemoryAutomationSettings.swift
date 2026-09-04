@@ -14,9 +14,11 @@ import ToolCore
 /// embedding endpoint configured it is pure lexical BM25 plus graph expansion,
 /// which is local and sub-millisecond. When an endpoint is configured, semantic
 /// similarity adds a bounded HTTP call to that endpoint — but never a second LLM
-/// call: the formatted block is folded into the main turn's outgoing request,
-/// so its timeout and character budget protect turn latency and prompt size
-/// independently of the configured provider.
+/// call: a maintenance-free BM25 result is prepared in parallel and becomes the
+/// turn's context if the semantic call misses the deadline. The selected block is
+/// folded into the main turn's outgoing request, so the timeout and character
+/// budget protect turn latency and prompt size independently of the configured
+/// chat provider.
 enum MemoryAutomationSettings {
     /// Enables automatic recall. Absent ⇒ true.
     static let environmentAutoRecallKey = "ZENCODE_MEMORY_AUTO_RECALL"
@@ -28,8 +30,9 @@ enum MemoryAutomationSettings {
 
     /// Without an endpoint, retrieval is offline BM25 over an in-memory graph,
     /// which is normally sub-millisecond. With an endpoint, a bounded HTTP call
-    /// to the embedding service is added. The budget absorbs scheduling jitter
-    /// while ensuring a cold graph open never delays the main turn indefinitely.
+    /// to the embedding service is added while a local BM25 fallback is prepared
+    /// beside it. The budget absorbs scheduling jitter, caps semantic latency,
+    /// and still bounds a cold graph open that cannot prepare either result.
     static let defaultRecallTimeoutMilliseconds = 150
     /// Hard bounds so a mistyped value cannot defeat the latency guarantee.
     static let minimumRecallTimeoutMilliseconds = 10

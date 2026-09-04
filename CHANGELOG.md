@@ -30,6 +30,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Automatic memory recall no longer drops already-available lexical matches when
+  the fixed embedding endpoint exceeds the turn deadline. Operator and delegated
+  sub-agent turns prepare a maintenance-free BM25 fallback alongside semantic
+  retrieval; a fast semantic result still wins, while a timeout injects the
+  prepared text into the currently selected chat model/provider without waiting
+  for or coupling memory vectors to that model.
 - Memory reads stay fresh across processes: `memory.read` and `memory.search`
   now resolve one coherent snapshot of the durable graph per request (reloading
   what another `zen` process may have committed and overlaying this process's

@@ -173,9 +173,9 @@ struct MemoryAutomationFlowTests {
         #expect(MemoryAutomationSettings.approximateTokens(forCharacters: 4_000) == 1_000)
     }
 
-    // MARK: - Recall degradation paths (every failure → no block, never a thrown
-    // turn). `memoryBlock` is non-throwing by construction, which is itself half
-    // of the "memory must never break the turn" guarantee.
+    // MARK: - Recall degradation paths. Store/cold-open failures never break the
+    // turn; a slow semantic endpoint uses an already-prepared BM25 block when
+    // available. `memoryBlock` remains non-throwing by construction.
 
     @Test
     func recallReturnsNilWhenAutoRecallDisabled() async throws {
@@ -241,6 +241,52 @@ struct MemoryAutomationFlowTests {
                 #expect(resolved.contains("</project-memory>"))
                 #expect(resolved.contains("frobnicator"))
             }
+        }
+    }
+
+    @Test
+    func slowSemanticRecallReturnsPreparedBM25FallbackAtDeadline() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            // Seed the durable graph without an embedding. The subsequent open
+            // uses a deliberately slow *fixed* provider, mirroring a normal
+            // configured endpoint whose query request exceeds the turn budget.
+            var graph = MemoryGraph()
+            graph.addMemory(
+                EngineMemoryEntry(
+                    id: UUID().uuidString,
+                    category: .fact,
+                    content: "The quantum flange calibrates every frobnicator before deploy."
+                )
+            )
+            try await JSONMemoryPersistence(url: workspace.graphURL()).save(graph)
+
+            try await scopedEnv([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1",
+                MemoryAutomationSettings.environmentRecallTimeoutKey: "100"
+            ]) {
+                let started = ContinuousClock.now
+                let block = await MemoryEmbedding.withProvider(
+                    DelayedMemoryEmbeddingProvider(delay: .seconds(2))
+                ) {
+                    await MemoryTurnCoordinator.shared.memoryBlock(
+                        sessionID: "slow-semantic-\(UUID().uuidString)",
+                        workspaceRootURL: workspace.workspaceURL,
+                        prompt: "how do I calibrate the frobnicator"
+                    )
+                }
+                let elapsed = started.duration(to: ContinuousClock.now)
+
+                let resolved = try #require(block)
+                #expect(resolved.contains("<project-memory>"))
+                #expect(resolved.contains("quantum flange"))
+                // The endpoint's two-second response is not awaited. The
+                // configured 100 ms deadline releases the turn with BM25 text.
+                #expect(elapsed < .seconds(1))
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
         }
     }
 
@@ -521,6 +567,77 @@ struct MemoryAutomationFlowTests {
         }
     }
 
+    @Test
+    func subAgentReceivesBM25FallbackWhenFixedEmbedderMissesDeadline() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            var graph = MemoryGraph()
+            graph.addMemory(
+                EngineMemoryEntry(
+                    id: UUID().uuidString,
+                    category: .fact,
+                    content: "The quantum flange calibrates every frobnicator before deploy."
+                )
+            )
+            try await JSONMemoryPersistence(url: workspace.graphURL()).save(graph)
+
+            let backend = MemoryObservingBackend()
+            let developer = AgentProfile(
+                id: "developer-slow-embedding-profile",
+                name: "Developer",
+                tools: ["local.readFile"]
+            )
+            let executor = DirectToolExecutor(
+                swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+                subAgentContextualBackendFactory: { _ in backend },
+                subAgentProfileResolver: { _ in developer }
+            )
+
+            await scopedEnv([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1",
+                MemoryAutomationSettings.environmentRecallTimeoutKey: "100"
+            ]) {
+                await MemoryEmbedding.withProvider(
+                    DelayedMemoryEmbeddingProvider(delay: .seconds(2))
+                ) {
+                    let createResult = await executor.execute(
+                        sessionID: "root",
+                        toolCall: presentedToolCall(
+                            id: "create-slow-recall-worker",
+                            name: "agent.create",
+                            argumentsObject: [
+                                "name": "slow-recall-worker",
+                                "profile": "Developer",
+                                "prompt": "calibrate the frobnicator flange"
+                            ],
+                            argumentsJSON: #"{"name":"slow-recall-worker","profile":"Developer","prompt":"calibrate the frobnicator flange"}"#
+                        ),
+                        workingDirectory: workspace.workspaceURL
+                    )
+                    #expect(createResult.status == .completed)
+                    _ = await executor.execute(
+                        sessionID: "root",
+                        toolCall: presentedToolCall(
+                            id: "wait-slow-recall-worker",
+                            name: "agent.wait",
+                            argumentsObject: ["name": "slow-recall-worker"],
+                            argumentsJSON: #"{"name":"slow-recall-worker"}"#
+                        ),
+                        workingDirectory: workspace.workspaceURL
+                    )
+                }
+            }
+
+            let observed = try #require(await backend.observedMemoryBlock())
+            #expect(observed.contains("<project-memory>"))
+            #expect(observed.contains("quantum flange"))
+
+            await executor.subAgentRuntime.shutdown()
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
     // MARK: - Recall health: the pause is per incarnation, and discard — wired
     // into the real close/reset paths — makes a recreated session start clean.
 
@@ -775,6 +892,18 @@ struct MemoryAutomationFlowTests {
 }
 
 // MARK: - Test doubles and helpers
+
+/// Fixed embedding provider that cooperatively exceeds the automatic-recall
+/// deadline. It is local and deterministic; no test network request is made.
+private struct DelayedMemoryEmbeddingProvider: EmbeddingProvider {
+    let modelID = "delayed-memory-embedding"
+    let delay: Duration
+
+    func embed(_ text: String) async throws -> [Float] {
+        try await Task.sleep(for: delay)
+        return text.isEmpty ? [0] : [1]
+    }
+}
 
 /// Captures the per-turn memory block that reaches `sendPrompt` and reports the
 /// session's working directory from `snapshotSession` (so the sub-agent work
