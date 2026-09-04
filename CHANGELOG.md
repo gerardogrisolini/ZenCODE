@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-09-04
+
 ### Changed
 
 - `/goal` now derives a concrete objective and testable acceptance criteria from
