@@ -157,30 +157,6 @@ extension RemoteGenerationClient {
             ?? nestedProcessedPromptTokens
             ?? anthropicProcessedPromptTokens
             ?? inferredProcessedPromptTokens
-        let promptTokensPerSecond = firstDoubleValue(
-            in: usageObject,
-            for: [
-                "prompt_tokens_per_second",
-                "processed_prompt_tokens_per_second",
-                "input_tokens_per_second",
-                "promptTokensPerSecond",
-                "processedPromptTokensPerSecond",
-                "inputTokensPerSecond"
-            ]
-        )
-        let completionTokensPerSecond = firstDoubleValue(
-            in: usageObject,
-            for: [
-                "completion_tokens_per_second",
-                "generation_tokens_per_second",
-                "output_tokens_per_second",
-                "tokens_per_second",
-                "completionTokensPerSecond",
-                "generationTokensPerSecond",
-                "outputTokensPerSecond",
-                "tokensPerSecond"
-            ]
-        )
         let responseDurationSeconds = firstDoubleValue(
             in: usageObject,
             for: [
@@ -197,8 +173,6 @@ extension RemoteGenerationClient {
                 || contextTokens != nil
                 || processedPromptTokens != nil
                 || cachedPromptTokens != nil
-                || promptTokensPerSecond != nil
-                || completionTokensPerSecond != nil
                 || responseDurationSeconds != nil else {
             return nil
         }
@@ -210,8 +184,6 @@ extension RemoteGenerationClient {
             contextTokens: contextTokens,
             processedPromptTokens: processedPromptTokens,
             cachedPromptTokens: cachedPromptTokens,
-            promptTokensPerSecond: promptTokensPerSecond,
-            completionTokensPerSecond: completionTokensPerSecond,
             responseDurationSeconds: responseDurationSeconds
         )
     }
@@ -234,14 +206,8 @@ extension RemoteGenerationClient {
         return nil
     }
 
-    public static func generationSummary(
-        _ stats: [RemoteGenerationStats],
-        estimateMissingRates: Bool = false
-    ) -> String? {
-        guard let metrics = generationMetrics(
-            stats,
-            estimateMissingRates: estimateMissingRates
-        ) else {
+    public static func generationSummary(_ stats: [RemoteGenerationStats]) -> String? {
+        guard let metrics = generationMetrics(stats) else {
             return nil
         }
 
@@ -266,19 +232,9 @@ extension RemoteGenerationClient {
            cachedPromptTokenCount > 0 {
             lines.append("  Cache: \(cachedPromptTokenCount) tokens reused")
         }
-        if let promptTokensPerSecond = metrics.promptTokensPerSecond {
-            lines.append(
-                "  Prompt: \(String(format: "%.1f", promptTokensPerSecond)) tok/s"
-            )
-        } else {
-            lines.append("  Prompt: n/a")
-        }
         if let completionTokenCount {
-            let speedSuffix = metrics.completionTokensPerSecond.map {
-                " (\(String(format: "%.1f", $0)) tok/s)"
-            } ?? ""
             lines.append(
-                "  Output: \(completionTokenCount) tokens in \(renderedGenerateTime)s\(speedSuffix)"
+                "  Output: \(completionTokenCount) tokens in \(renderedGenerateTime)s"
             )
         } else {
             lines.append("  Output: n/a in \(renderedGenerateTime)s")
@@ -325,10 +281,7 @@ extension RemoteGenerationClient {
         """
     }
 
-    public static func generationMetrics(
-        _ stats: [RemoteGenerationStats],
-        estimateMissingRates: Bool = false
-    ) -> DirectAgentGenerationMetrics? {
+    public static func generationMetrics(_ stats: [RemoteGenerationStats]) -> DirectAgentGenerationMetrics? {
         guard !stats.isEmpty else {
             return nil
         }
@@ -339,24 +292,6 @@ extension RemoteGenerationClient {
         let cachedPromptTokenCount = latestUsage?.cachedPromptTokens
         let contextTokenCount = latestUsage?.contextTokens
         let completionTokenCount = latestUsage?.completionTokens
-        let promptTokensPerSecond =
-            average(stats.compactMap { stat in
-                stat.usage?.promptTokensPerSecond
-                    ?? rate(
-                        tokens: stat.usage?.processedPromptTokens ?? stat.usage?.promptTokens,
-                        seconds: stat.prefillElapsed,
-                        enabled: estimateMissingRates
-                    )
-            })
-        let completionTokensPerSecond =
-            average(stats.compactMap { stat in
-                stat.usage?.completionTokensPerSecond
-                    ?? rate(
-                        tokens: stat.usage?.completionTokens,
-                        seconds: stat.generationElapsed,
-                        enabled: estimateMissingRates
-                    )
-            })
         let responseDurationSeconds = stats.reduce(0) { partialResult, stat in
             partialResult
                 + (stat.usage?.responseDurationSeconds
@@ -366,9 +301,7 @@ extension RemoteGenerationClient {
         return DirectAgentGenerationMetrics(
             promptTokenCount: promptTokenCount,
             cachedPromptTokenCount: cachedPromptTokenCount,
-            promptTokensPerSecond: promptTokensPerSecond,
             completionTokenCount: completionTokenCount,
-            completionTokensPerSecond: completionTokensPerSecond,
             responseDurationSeconds: responseDurationSeconds,
             contextTokenCount: contextTokenCount,
             clearsPromptMetrics: true,
@@ -397,29 +330,6 @@ extension RemoteGenerationClient {
 
     public static func summed(_ values: [Int]) -> Int? {
         values.isEmpty ? nil : values.reduce(0, +)
-    }
-
-    public static func average(_ values: [Double]) -> Double? {
-        let normalized = values.filter { $0.isFinite && $0 > 0 }
-        guard !normalized.isEmpty else {
-            return nil
-        }
-        return normalized.reduce(0, +) / Double(normalized.count)
-    }
-
-    public static func rate(
-        tokens: Int?,
-        seconds: TimeInterval,
-        enabled: Bool
-    ) -> Double? {
-        guard enabled, let tokens, tokens > 0, seconds > 0 else {
-            return nil
-        }
-        return Double(tokens) / seconds
-    }
-
-    public static func shouldEstimateStreamingRates(baseURL: String) -> Bool {
-        AgentRemoteProvider.isOpenRouterBaseURL(baseURL)
     }
 
     public nonisolated func appendAssistantMessage(

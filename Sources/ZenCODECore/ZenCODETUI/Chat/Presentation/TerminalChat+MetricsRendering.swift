@@ -8,8 +8,7 @@ import Foundation
 extension TerminalChat {
     public func writeMetricsStatus(_ metrics: DirectAgentGenerationMetrics) async {
         _ = await statusBar.update(metrics: metrics)
-        guard Self.shouldPrintMetricsForAutomation(),
-              metrics.completionTokensPerSecond != nil else {
+        guard Self.shouldPrintMetricsForAutomation() else {
             return
         }
         await writeChatError(
@@ -34,14 +33,8 @@ extension TerminalChat {
         let prefill = metrics.promptTokenCount.map(String.init) ?? "--"
         let cache = metrics.cachedPromptTokenCount.map(String.init) ?? "--"
         let output = metrics.completionTokenCount.map(String.init) ?? "--"
-        let promptRate = metrics.promptTokensPerSecond.map {
-            String(format: "%.1f", $0)
-        } ?? "--"
-        let generationRate = metrics.completionTokensPerSecond.map {
-            String(format: "%.1f", $0)
-        } ?? "--"
         let duration = metrics.responseDurationSeconds.map(Self.durationText) ?? "--"
-        return "tokens \(total) | pre \(prefill) | cache \(cache) | prompt \(promptRate)/s | out \(output) | gen \(generationRate)/s | time \(duration)"
+        return "tokens \(total) | pre \(prefill) | cache \(cache) | out \(output) | time \(duration)"
     }
 
     public nonisolated static func durationText(_ value: Double) -> String {

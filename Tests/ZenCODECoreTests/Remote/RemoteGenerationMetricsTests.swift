@@ -13,65 +13,6 @@ import ToolCore
 @Suite
 struct RemoteGenerationMetricsTests {
     @Test
-    func generationMetricsCanEstimateMissingStreamingRates() {
-        let startedAt = Date(timeIntervalSince1970: 100)
-        let firstDeltaAt = startedAt.addingTimeInterval(2)
-        let finishedAt = firstDeltaAt.addingTimeInterval(4)
-        let stats = [
-            RemoteGenerationStats(
-                usage: RemoteGenerationUsage(
-                    promptTokens: 100,
-                    completionTokens: 40,
-                    totalTokens: 140,
-                    promptTokensPerSecond: nil,
-                    completionTokensPerSecond: nil
-                ),
-                requestStartedAt: startedAt,
-                firstDeltaAt: firstDeltaAt,
-                finishedAt: finishedAt,
-                generatedCharacterCount: 120
-            )
-        ]
-
-        let metrics = RemoteGenerationClient.generationMetrics(
-            stats,
-            estimateMissingRates: true
-        )
-
-        #expect(metrics?.promptTokensPerSecond == 50)
-        #expect(metrics?.completionTokensPerSecond == 10)
-        #expect(metrics?.responseDurationSeconds == 6)
-    }
-
-    @Test
-    func generationMetricsKeepsMissingRatesEmptyUnlessEstimationIsEnabled() {
-        let startedAt = Date(timeIntervalSince1970: 100)
-        let firstDeltaAt = startedAt.addingTimeInterval(2)
-        let finishedAt = firstDeltaAt.addingTimeInterval(4)
-        let stats = [
-            RemoteGenerationStats(
-                usage: RemoteGenerationUsage(
-                    promptTokens: 100,
-                    completionTokens: 40,
-                    totalTokens: 140,
-                    promptTokensPerSecond: nil,
-                    completionTokensPerSecond: nil
-                ),
-                requestStartedAt: startedAt,
-                firstDeltaAt: firstDeltaAt,
-                finishedAt: finishedAt,
-                generatedCharacterCount: 120
-            )
-        ]
-
-        let metrics = RemoteGenerationClient.generationMetrics(stats)
-
-        #expect(metrics?.promptTokensPerSecond == nil)
-        #expect(metrics?.completionTokensPerSecond == nil)
-        #expect(metrics?.responseDurationSeconds == 6)
-    }
-
-    @Test
     func generationMetricsUsesLatestRoundCountsAndKeepsSummaryAggregated() {
         let startedAt = Date(timeIntervalSince1970: 100)
         let stats = [
@@ -83,8 +24,6 @@ struct RemoteGenerationMetricsTests {
                     contextTokens: 6_050,
                     processedPromptTokens: 6_000,
                     cachedPromptTokens: 0,
-                    promptTokensPerSecond: nil,
-                    completionTokensPerSecond: nil
                 ),
                 requestStartedAt: startedAt,
                 firstDeltaAt: nil,
@@ -99,8 +38,6 @@ struct RemoteGenerationMetricsTests {
                     contextTokens: 4_325,
                     processedPromptTokens: 200,
                     cachedPromptTokens: 4_100,
-                    promptTokensPerSecond: nil,
-                    completionTokensPerSecond: nil
                 ),
                 requestStartedAt: startedAt,
                 firstDeltaAt: nil,
@@ -138,8 +75,6 @@ struct RemoteGenerationMetricsTests {
                         contextTokens: 1_010,
                         processedPromptTokens: 200,
                         cachedPromptTokens: 800,
-                        promptTokensPerSecond: nil,
-                        completionTokensPerSecond: nil
                     ),
                     requestStartedAt: startedAt,
                     firstDeltaAt: nil,
@@ -159,9 +94,7 @@ struct RemoteGenerationMetricsTests {
             current: DirectAgentGenerationMetrics(
                 promptTokenCount: 300,
                 cachedPromptTokenCount: 700,
-                promptTokensPerSecond: 100,
                 completionTokenCount: 5,
-                completionTokensPerSecond: 10,
                 contextTokenCount: 1_005
             ),
             update: metrics
@@ -175,9 +108,7 @@ struct RemoteGenerationMetricsTests {
         #expect(metrics.replacesPreviousMetrics)
         #expect(mergedMetrics.promptTokenCount == nil)
         #expect(mergedMetrics.cachedPromptTokenCount == nil)
-        #expect(mergedMetrics.promptTokensPerSecond == nil)
         #expect(mergedMetrics.completionTokenCount == nil)
-        #expect(mergedMetrics.completionTokensPerSecond == nil)
         #expect(mergedMetrics.contextTokenCount == nil)
     }
 
@@ -563,9 +494,7 @@ struct RemoteGenerationMetricsTests {
                 DirectAgentGenerationMetrics(
                     promptTokenCount: 160,
                     cachedPromptTokenCount: 800,
-                    promptTokensPerSecond: 60,
                     completionTokenCount: 32,
-                    completionTokensPerSecond: 8,
                     responseDurationSeconds: 4,
                     contextTokenCount: 992
                 )
@@ -573,9 +502,7 @@ struct RemoteGenerationMetricsTests {
 
         #expect(visibleMetrics.promptTokenCount == 160)
         #expect(visibleMetrics.cachedPromptTokenCount == 800)
-        #expect(visibleMetrics.promptTokensPerSecond == 60)
         #expect(visibleMetrics.completionTokenCount == 32)
-        #expect(visibleMetrics.completionTokensPerSecond == 8)
         #expect(visibleMetrics.responseDurationSeconds == 4)
         #expect(visibleMetrics.contextTokenCount == 992)
         #expect(visibleMetrics.clearsPromptMetrics)
@@ -589,9 +516,7 @@ struct RemoteGenerationMetricsTests {
                 DirectAgentGenerationMetrics(
                     promptTokenCount: 120,
                     cachedPromptTokenCount: 800,
-                    promptTokensPerSecond: 60,
                     completionTokenCount: 32,
-                    completionTokensPerSecond: 8,
                     responseDurationSeconds: 4,
                     contextTokenCount: 992
                 )
@@ -599,9 +524,7 @@ struct RemoteGenerationMetricsTests {
 
         #expect(visibleMetrics.promptTokenCount == 120)
         #expect(visibleMetrics.cachedPromptTokenCount == 800)
-        #expect(visibleMetrics.promptTokensPerSecond == 60)
         #expect(visibleMetrics.completionTokenCount == 32)
-        #expect(visibleMetrics.completionTokensPerSecond == 8)
         #expect(visibleMetrics.responseDurationSeconds == 4)
         #expect(visibleMetrics.contextTokenCount == 992)
         #expect(visibleMetrics.clearsPromptMetrics)
@@ -616,8 +539,6 @@ struct RemoteGenerationMetricsTests {
             totalTokens: 4_010,
             processedPromptTokens: 4_000,
             cachedPromptTokens: 0,
-            promptTokensPerSecond: nil,
-            completionTokensPerSecond: nil
         )
 
         #expect(
@@ -645,8 +566,6 @@ struct RemoteGenerationMetricsTests {
             totalTokens: 810,
             processedPromptTokens: 800,
             cachedPromptTokens: 0,
-            promptTokensPerSecond: nil,
-            completionTokensPerSecond: nil
         )
         let healthyUsage = RemoteGenerationUsage(
             promptTokens: 4_000,
@@ -654,8 +573,6 @@ struct RemoteGenerationMetricsTests {
             totalTokens: 4_010,
             processedPromptTokens: 500,
             cachedPromptTokens: 3_500,
-            promptTokensPerSecond: nil,
-            completionTokensPerSecond: nil
         )
 
         #expect(

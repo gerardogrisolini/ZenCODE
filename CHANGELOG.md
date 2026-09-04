@@ -10,6 +10,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Removed
+
+- Provider-reported and locally estimated prefill/generation token-throughput
+  metrics are no longer decoded, propagated, or rendered. Token usage counts,
+  cache/context data, response durations, and streaming usage requests remain
+  available.
+
 ## [2.1.3] - 2026-09-04
 
 ### Changed

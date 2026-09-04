@@ -1015,9 +1015,7 @@ struct TerminalChatRenderingTests {
                 DirectAgentGenerationMetrics(
                     promptTokenCount: 120,
                     cachedPromptTokenCount: 800,
-                    promptTokensPerSecond: 60,
                     completionTokenCount: 32,
-                    completionTokensPerSecond: 8
                 )
             )
 
@@ -1032,9 +1030,7 @@ struct TerminalChatRenderingTests {
         let metrics = DirectAgentGenerationMetrics(
             promptTokenCount: 120,
             cachedPromptTokenCount: 800,
-            promptTokensPerSecond: 60,
             completionTokenCount: 32,
-            completionTokensPerSecond: 8,
             responseDurationSeconds: 4
         )
         let contextWindow = DirectAgentContextWindowStatus(
@@ -1077,9 +1073,7 @@ struct TerminalChatRenderingTests {
             metrics: DirectAgentGenerationMetrics(
                 promptTokenCount: 120,
                 cachedPromptTokenCount: 800,
-                promptTokensPerSecond: 60,
                 completionTokenCount: 32,
-                completionTokensPerSecond: 8,
                 responseDurationSeconds: 4
             )
         )
@@ -1090,18 +1084,14 @@ struct TerminalChatRenderingTests {
         _ = await statusBar.update(
             metrics: DirectAgentGenerationMetrics(
                 promptTokenCount: nil,
-                promptTokensPerSecond: nil,
                 completionTokenCount: 5,
-                completionTokensPerSecond: 2
             )
         )
 
         let state = await statusBar.state
         #expect(state.latestMetrics?.promptTokenCount == nil)
         #expect(state.latestMetrics?.cachedPromptTokenCount == nil)
-        #expect(state.latestMetrics?.promptTokensPerSecond == nil)
         #expect(state.latestMetrics?.completionTokenCount == 5)
-        #expect(state.latestMetrics?.completionTokensPerSecond == 2)
         #expect(state.latestMetrics?.responseDurationSeconds == nil)
     }
 
@@ -1109,15 +1099,11 @@ struct TerminalChatRenderingTests {
     func statusBarGenerationTokenCountsFragmentIsCompactAndOptional() {
         let metrics = DirectAgentGenerationMetrics(
             promptTokenCount: 15_000,
-            promptTokensPerSecond: nil,
             completionTokenCount: 20_000,
-            completionTokensPerSecond: nil
         )
         let unavailableMetrics = DirectAgentGenerationMetrics(
             promptTokenCount: nil,
-            promptTokensPerSecond: nil,
             completionTokenCount: nil,
-            completionTokensPerSecond: nil
         )
 
         #expect(TerminalStatusBar.generationTokenCountsFragment(metrics) == "p:15k g:20k")
@@ -1129,9 +1115,7 @@ struct TerminalChatRenderingTests {
         let metrics = DirectAgentGenerationMetrics(
             promptTokenCount: 15_000,
             cachedPromptTokenCount: 0,
-            promptTokensPerSecond: nil,
             completionTokenCount: 2_000,
-            completionTokensPerSecond: nil
         )
 
         #expect(
@@ -1145,9 +1129,7 @@ struct TerminalChatRenderingTests {
         var state = TerminalStatusBar.State()
         state.latestMetrics = DirectAgentGenerationMetrics(
             promptTokenCount: 15_000,
-            promptTokensPerSecond: nil,
             completionTokenCount: 20_000,
-            completionTokensPerSecond: nil,
             responseDurationSeconds: 12
         )
 
@@ -2231,9 +2213,7 @@ struct TerminalChatRenderingTests {
             latestMetrics: DirectAgentGenerationMetrics(
                 promptTokenCount: 1_200,
                 cachedPromptTokenCount: 800,
-                promptTokensPerSecond: nil,
                 completionTokenCount: 42,
-                completionTokensPerSecond: nil
             ),
             latestOutput: nil,
             latestError: nil,
@@ -2285,9 +2265,7 @@ struct TerminalChatRenderingTests {
             latestMetrics: DirectAgentGenerationMetrics(
                 promptTokenCount: 1_200,
                 cachedPromptTokenCount: 800,
-                promptTokensPerSecond: nil,
                 completionTokenCount: 42,
-                completionTokensPerSecond: nil
             ),
             latestOutput: nil,
             latestError: nil,
@@ -2328,9 +2306,7 @@ struct TerminalChatRenderingTests {
             pending: true,
             latestMetrics: DirectAgentGenerationMetrics(
                 promptTokenCount: nil,
-                promptTokensPerSecond: nil,
                 completionTokenCount: 42,
-                completionTokensPerSecond: nil
             ),
             latestOutput: nil,
             latestError: nil,
@@ -2388,9 +2364,7 @@ struct TerminalChatRenderingTests {
         let metrics = DirectAgentGenerationMetrics(
             promptTokenCount: 1_200,
             cachedPromptTokenCount: 800,
-            promptTokensPerSecond: nil,
             completionTokenCount: 42,
-            completionTokensPerSecond: nil
         )
         let ids = (0..<8).map { "agent-\($0)" }
         let withMetrics = ids.map { snapshot(id: $0, metrics: metrics) }
@@ -2440,9 +2414,7 @@ struct TerminalChatRenderingTests {
                 metrics: DirectAgentGenerationMetrics(
                     promptTokenCount: 1_200,
                     cachedPromptTokenCount: 800,
-                    promptTokensPerSecond: nil,
                     completionTokenCount: nil,
-                    completionTokensPerSecond: nil
                 )
             )
         ])
@@ -2451,9 +2423,7 @@ struct TerminalChatRenderingTests {
                 metrics: DirectAgentGenerationMetrics(
                     promptTokenCount: 1_200,
                     cachedPromptTokenCount: 800,
-                    promptTokensPerSecond: nil,
                     completionTokenCount: 42,
-                    completionTokensPerSecond: nil
                 )
             )
         ])
@@ -2463,9 +2433,7 @@ struct TerminalChatRenderingTests {
                 metrics: DirectAgentGenerationMetrics(
                     promptTokenCount: 1_200,
                     cachedPromptTokenCount: 800,
-                    promptTokensPerSecond: 99,
                     completionTokenCount: 42,
-                    completionTokensPerSecond: 12
                 )
             )
         ])

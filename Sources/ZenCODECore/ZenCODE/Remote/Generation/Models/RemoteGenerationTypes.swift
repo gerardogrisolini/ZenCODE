@@ -86,8 +86,6 @@ public struct RemoteGenerationUsage: Sendable {
     public let contextTokens: Int?
     public let processedPromptTokens: Int?
     public let cachedPromptTokens: Int?
-    public let promptTokensPerSecond: Double?
-    public let completionTokensPerSecond: Double?
     public let responseDurationSeconds: Double?
 
     public init(
@@ -97,8 +95,6 @@ public struct RemoteGenerationUsage: Sendable {
         contextTokens: Int? = nil,
         processedPromptTokens: Int? = nil,
         cachedPromptTokens: Int? = nil,
-        promptTokensPerSecond: Double?,
-        completionTokensPerSecond: Double?,
         responseDurationSeconds: Double? = nil
     ) {
         self.promptTokens = promptTokens
@@ -107,8 +103,6 @@ public struct RemoteGenerationUsage: Sendable {
         self.contextTokens = contextTokens
         self.processedPromptTokens = processedPromptTokens
         self.cachedPromptTokens = cachedPromptTokens
-        self.promptTokensPerSecond = promptTokensPerSecond
-        self.completionTokensPerSecond = completionTokensPerSecond
         self.responseDurationSeconds = responseDurationSeconds
     }
 }

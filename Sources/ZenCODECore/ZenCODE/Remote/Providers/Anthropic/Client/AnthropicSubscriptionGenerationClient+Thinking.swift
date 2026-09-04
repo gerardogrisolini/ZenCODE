@@ -24,9 +24,7 @@ extension AnthropicSubscriptionGenerationClient {
         DirectAgentGenerationMetrics(
             promptTokenCount: metrics.promptTokenCount,
             cachedPromptTokenCount: metrics.cachedPromptTokenCount,
-            promptTokensPerSecond: metrics.promptTokensPerSecond,
             completionTokenCount: metrics.completionTokenCount,
-            completionTokensPerSecond: metrics.completionTokensPerSecond,
             responseDurationSeconds: metrics.responseDurationSeconds,
             contextTokenCount: metrics.contextTokenCount,
             clearsPromptMetrics: true,

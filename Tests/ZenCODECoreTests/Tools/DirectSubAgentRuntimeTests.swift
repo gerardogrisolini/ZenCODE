@@ -657,9 +657,7 @@ struct DirectSubAgentRuntimeTests {
                 DirectAgentGenerationMetrics(
                     promptTokenCount: 1_200,
                     cachedPromptTokenCount: 800,
-                    promptTokensPerSecond: 90,
                     completionTokenCount: nil,
-                    completionTokensPerSecond: nil
                 )
             ),
             agentID: agentID
@@ -669,9 +667,7 @@ struct DirectSubAgentRuntimeTests {
             .metrics(
                 DirectAgentGenerationMetrics(
                     promptTokenCount: nil,
-                    promptTokensPerSecond: nil,
                     completionTokenCount: 42,
-                    completionTokensPerSecond: 12
                 )
             ),
             agentID: agentID
@@ -696,9 +692,7 @@ struct DirectSubAgentRuntimeTests {
             .metrics(
                 DirectAgentGenerationMetrics(
                     promptTokenCount: nil,
-                    promptTokensPerSecond: nil,
                     completionTokenCount: 7,
-                    completionTokensPerSecond: nil
                 )
             ),
             agentID: agentID

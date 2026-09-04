@@ -180,13 +180,6 @@ extension TerminalStatusBar {
         return String(format: "%.1f%%", clamped)
     }
     
-    static func rateText(_ value: Double) -> String {
-        guard value.isFinite else {
-            return "--"
-        }
-        return String(format: "%.1f", value)
-    }
-    
     static func durationText(_ value: Double) -> String {
         guard value.isFinite, value >= 0 else {
             return "--"

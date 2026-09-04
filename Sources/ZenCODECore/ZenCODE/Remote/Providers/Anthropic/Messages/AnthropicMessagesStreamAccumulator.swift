@@ -151,7 +151,6 @@ struct AnthropicMessagesStreamAccumulator {
         usage = RemoteGenerationUsage(
             promptTokens: prompt, completionTokens: output, totalTokens: prompt + output,
             contextTokens: nil, processedPromptTokens: processed, cachedPromptTokens: cached,
-            promptTokensPerSecond: nil, completionTokensPerSecond: nil
         )
     }
 }

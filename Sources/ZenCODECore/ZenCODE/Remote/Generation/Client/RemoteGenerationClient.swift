@@ -475,12 +475,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             }) else {
                 throw RemoteGenerationClientError.missingSession
             }
-            if let metrics = Self.generationMetrics(
-                generationStats,
-                estimateMissingRates: Self.shouldEstimateStreamingRates(
-                    baseURL: provider.baseURL
-                )
-            ) {
+            if let metrics = Self.generationMetrics(generationStats) {
                 await Self.publishGenerationMetrics(
                     metrics,
                     maxTokens: configuration.configuredContextWindowLimit,
@@ -491,12 +486,7 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
 
             if streamResult.toolCalls.isEmpty {
                 if !configuration.appMode,
-                   let summary = Self.generationSummary(
-                       generationStats,
-                       estimateMissingRates: Self.shouldEstimateStreamingRates(
-                           baseURL: provider.baseURL
-                       )
-                   ) {
+                   let summary = Self.generationSummary(generationStats) {
                     await onEvent(.diagnostic(summary))
                 }
                 return DirectAgentResponse(

@@ -117,10 +117,6 @@ public enum AnthropicSubscriptionRequestBuilder {
                 ?? previous?.processedPromptTokens,
             cachedPromptTokens: usage.cachedPromptTokens
                 ?? previous?.cachedPromptTokens,
-            promptTokensPerSecond: usage.promptTokensPerSecond
-                ?? previous?.promptTokensPerSecond,
-            completionTokensPerSecond: usage.completionTokensPerSecond
-                ?? previous?.completionTokensPerSecond,
             responseDurationSeconds: usage.responseDurationSeconds
                 ?? previous?.responseDurationSeconds
         )
