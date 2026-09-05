@@ -763,16 +763,19 @@ enum PlanningCommandKernel {
 
         Phase 2 — Delegate all work to sub-agents:
         - Call tasks.list with runnableOnly=true to find tasks ready to execute.
-        - For each runnable task, select the best-matching agent profile and one of its \
-        authorized model bindings:
+        - For each runnable task, select the best-matching agent profile and, when configured, \
+        one of its authorized model bindings:
           - Determine the task type (investigation, implementation, review, planning) and \
         required tools before comparing capability.
           - Exclude profiles whose role or constraints are incompatible.
           - Within a compatible profile, choose the lowest-capability authorized model binding \
         that meets the task complexity; if none meets it, use that profile's highest-capability \
         binding and report the gap.
+          - For profiles without bindings, omit `model` to inherit the main session model and \
+        provider; do not invent a binding or capability rating.
         - Delegate each task with one canonical agent.create `agents` item containing the selected \
-        profile and `model` binding, and put the task ID in that item's `taskID` field. Batch \
+        profile and, only when bindings are configured, the `model` binding. Put the task ID in \
+        that item's `taskID` field. Batch \
         independent runnable tasks in a single agent.create call when \
         parallel execution is safe and useful.
         - Wait for sub-agents with agent.wait — they run in parallel.

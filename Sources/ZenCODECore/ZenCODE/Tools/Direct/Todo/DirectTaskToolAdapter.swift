@@ -153,7 +153,8 @@ public actor DirectTaskToolAdapter {
                     + "profile and its lowest-capability authorized model binding that meets "
                     + "the task complexity. If none exists, use that profile's highest-capability "
                     + "binding and "
-                    + "report the capability gap."
+                    + "report the capability gap. For a profile without bindings, omit model in "
+                    + "agent.create to inherit the main session model and provider."
             }
             return rendered
 

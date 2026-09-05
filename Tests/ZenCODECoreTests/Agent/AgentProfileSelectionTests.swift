@@ -884,7 +884,7 @@ struct DelegatableAgentsSectionTests {
     }
 
     @Test
-    func excludesAgentsWithoutModelOrCapability() {
+    func includesAgentsWithoutBindingsButExcludesBindingsWithoutCapability() {
         let agents = [
             AgentProfile(id: "1", name: "WithModel", modelID: "gpt-4", capability: 5),
             AgentProfile(id: "2", name: "NoModel"),
@@ -897,18 +897,61 @@ struct DelegatableAgentsSectionTests {
         )
         #expect(section != nil)
         #expect(section?.contains("WithModel") == true)
-        #expect(section?.contains("NoModel") == false)
+        #expect(section?.contains("NoModel") == true)
+        #expect(section?.contains("inherits the main session model") == true)
         #expect(section?.contains("ModelNoCapability") == false)
     }
 
     @Test
-    func returnsNilWhenNoAgentsHaveCapability() {
+    func includesUnboundProfilesWhenNoBindingsAreDelegatable() throws {
         let agents = [
             AgentProfile(id: "1", name: "Bare"),
             AgentProfile(id: "2", name: "ModelOnly", modelID: "gpt"),
         ]
-        let section = SystemPromptBuilder.delegatableAgentsSection(
+        let section = try #require(SystemPromptBuilder.delegatableAgentsSection(
             agents: agents,
+            allowedToolNames: nil,
+            models: [Self.model("gpt")]
+        ))
+        #expect(section.contains("Bare [read-write; tools: none configured]"))
+        #expect(section.contains("inherits the main session model"))
+        #expect(!section.contains("ModelOnly"))
+        #expect(!section.contains("Do not call agent.create"))
+    }
+
+    @Test
+    func unboundProfilesRemainDelegatableWithoutACatalog() throws {
+        let agents = [
+            AgentProfile(
+                id: "reviewer",
+                name: "Reviewer",
+                instructions: "Review only; do not edit files.",
+                readOnly: true,
+                tools: ["local.readFile"]
+            ),
+            AgentProfile(id: "bound", name: "Unavailable", modelID: "missing", capability: 5),
+        ]
+        for snapshot: AgentDelegationCatalogSnapshot in [
+            .available(models: []),
+            .unavailable("settings unavailable"),
+        ] {
+            let section = try #require(SystemPromptBuilder.delegatableAgentsSection(
+                agents: agents,
+                allowedToolNames: ["agent.create"],
+                snapshot: snapshot
+            ))
+            #expect(section.contains("Reviewer [read-only; tools: local.readFile]: Review only; do not edit files."))
+            #expect(section.contains("inherits the main session model"))
+            #expect(section.contains("omit `model`"))
+            #expect(!section.contains("Unavailable"))
+            #expect(!section.contains("Do not call agent.create"))
+        }
+    }
+
+    @Test
+    func returnsUnavailableWhenOnlyExplicitBindingsLackCapability() {
+        let section = SystemPromptBuilder.delegatableAgentsSection(
+            agents: [AgentProfile(id: "model-only", name: "ModelOnly", modelID: "gpt")],
             allowedToolNames: nil,
             models: [Self.model("gpt")]
         )
@@ -990,7 +1033,9 @@ struct DelegatableAgentsSectionTests {
         #expect(!section.contains(TaskRecord.agentSelectionPolicy))
         #expect(section.contains("exact profile name as `profile`"))
         #expect(section.contains("exact `binding:...` value"))
-        #expect(section.contains("Both fields are required"))
+        #expect(section.contains("For profiles with configured bindings"))
+        #expect(section.contains("For profiles without bindings, omit `model`"))
+        #expect(!section.contains("Both fields are required"))
         #expect(section.contains("selected profile supplies the child tool grant"))
     }
 }

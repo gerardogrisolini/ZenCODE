@@ -97,6 +97,8 @@ struct GoalCommandTests {
         #expect(prompt.contains("canonical `agents` array"))
         #expect(prompt.contains("task ID in the item's `taskID` field"))
         #expect(prompt.contains("the task graph enforces sub-agent execution"))
+        #expect(prompt.contains("For profiles without bindings, omit `model` to inherit the main session model"))
+        #expect(prompt.contains("only when bindings are configured, the `model` binding"))
         #expect(!prompt.contains("your only direct actions"))
         #expect(!prompt.localizedCaseInsensitiveContains("read-only"))
         #expect(prompt.contains("validation is negative, record the task as failed"))

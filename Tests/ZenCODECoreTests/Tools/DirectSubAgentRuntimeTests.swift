@@ -200,8 +200,8 @@ struct DirectSubAgentRuntimeTests {
         await runtime.shutdown()
     }
 
-    @Test
-    func taskBoundAgentKeepsIntrinsicReportingToolsAlongsideProfileGrant() async throws {
+    @Test(arguments: [false, true])
+    func taskBoundAgentKeepsIntrinsicReportingToolsAlongsideProfileGrant(isWorkflow: Bool) async throws {
         let reporter = AgentProfile(
             id: "reporter-profile",
             name: "Reporter",
@@ -211,9 +211,13 @@ struct DirectSubAgentRuntimeTests {
         _ = try await orchestrator.createGraph(
             sessionID: "root",
             id: "graph",
-            source: .manual,
+            source: isWorkflow ? .workflow : .manual,
             state: .active,
-            tasks: [TaskDefinition(id: "report", title: "Report findings")]
+            tasks: [TaskDefinition(
+                id: "report",
+                title: "Report findings",
+                execution: TaskExecutionSpec(executor: .subAgent)
+            )]
         )
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
@@ -224,9 +228,13 @@ struct DirectSubAgentRuntimeTests {
 
         _ = try await runtime.createAgents(
             arguments: [
-                "name": .string("reporter"),
-                "profile": .string("Reporter"),
-                "taskID": .string("report")
+                "agents": .array([
+                    .object([
+                        "name": .string("reporter"),
+                        "profile": .string("Reporter"),
+                        "taskID": .string("report"),
+                    ]),
+                ]),
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
             parentAllowedToolNames: ["git.status"],
@@ -1414,7 +1422,9 @@ struct DirectSubAgentRuntimeTests {
         )
 
         #expect(descriptor.description.contains("canonical agents array"))
-        #expect(descriptor.description.contains("each item requires profile and model"))
+        #expect(descriptor.description.contains("each item requires profile"))
+        #expect(descriptor.description.contains("omit model to inherit the main session model"))
+        #expect(!descriptor.description.contains("each item requires profile and model"))
         #expect(descriptor.description.contains("exact profile and binding references"))
         #expect(descriptor.description.contains("taskID is never a root argument"))
         #expect(!descriptor.description.contains(TaskRecord.agentSelectionPolicy))
@@ -1446,7 +1456,7 @@ struct DirectSubAgentRuntimeTests {
         let item = try #require(agents["items"] as? [String: Any])
         let itemProperties = try #require(item["properties"] as? [String: Any])
         #expect(Set(itemProperties.keys) == ["profile", "model", "taskID", "prompt", "name", "role"])
-        #expect(item["required"] as? [String] == ["profile", "model"])
+        #expect(item["required"] as? [String] == ["profile"])
         #expect(item["additionalProperties"] as? Bool == false)
 
         for legacyKey in [
@@ -1472,7 +1482,7 @@ struct DirectSubAgentRuntimeTests {
             let wireProperties = try #require(parameters["properties"] as? [String: Any])
             let wireAgents = try #require(wireProperties["agents"] as? [String: Any])
             let wireItem = try #require(wireAgents["items"] as? [String: Any])
-            #expect(wireItem["required"] as? [String] == ["profile", "model"])
+            #expect(wireItem["required"] as? [String] == ["profile"])
         }
     }
 
@@ -1698,8 +1708,8 @@ struct DirectSubAgentRuntimeTests {
         await runtime.shutdown()
     }
 
-    @Test
-    func createAgentWithoutModelProfileInheritsParentConfiguration() async throws {
+    @Test(arguments: [false, true])
+    func createAgentWithoutModelProfileInheritsParentConfiguration(catalogAvailable: Bool) async throws {
         let minimal = AgentProfile(
             id: "minimal-profile",
             name: "Minimal",
@@ -1717,14 +1727,21 @@ struct DirectSubAgentRuntimeTests {
                     matching: payload,
                     in: [minimal]
                 )
+            },
+            modelCatalogProvider: {
+                catalogAvailable ? .available(models: []) : .unavailable("test catalog unavailable")
             }
         )
 
         _ = try await runtime.createAgents(
             arguments: [
-                "name": .string("quick-task"),
-                "role": .string("Minimal"),
-                "profile": .string("Minimal")
+                "agents": .array([
+                    .object([
+                        "name": .string("quick-task"),
+                        "role": .string("Minimal"),
+                        "profile": .string("Minimal"),
+                    ]),
+                ]),
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests", isDirectory: true),
             parentAllowedToolNames: nil
@@ -1733,7 +1750,11 @@ struct DirectSubAgentRuntimeTests {
         let context = try #require(recorder.contexts.first)
         #expect(context.profile == minimal)
         #expect(context.modelID == nil)
+        #expect(context.modelBinding == nil)
+        #expect(context.modelSelection == nil)
         #expect(context.thinkingSelection == nil)
+        #expect(await backend.createdSessions().count == 1)
+        await runtime.shutdown()
     }
 
     @Test

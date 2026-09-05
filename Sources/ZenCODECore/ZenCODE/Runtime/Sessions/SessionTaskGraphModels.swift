@@ -291,15 +291,17 @@ public struct TaskRecord: Codable, Equatable, Sendable, Identifiable {
         + "7-10 = complex architecture, cross-system integration, or deep reasoning"
 
     /// The canonical policy for selecting a delegated agent and one of its
-    /// authorized model bindings from task complexity.
+    /// authorized model bindings, when configured, from task complexity.
     public static let agentSelectionPolicy =
         "Determine the task type and required tools before comparing capability. "
         + "Exclude profiles whose stated role or constraints are incompatible, and do not "
         + "delegate when the effective tool grant cannot perform the work. For a compatible "
-        + "profile, choose only one of its authorized model bindings: use the lowest-capability "
-        + "binding that is greater than or equal to task complexity. If none meets the "
+        + "profile with configured bindings, choose only one of its authorized model bindings: "
+        + "use the lowest-capability binding that is greater than or equal to task complexity. If none meets the "
         + "complexity, use that profile's highest-capability binding and explicitly report the "
-        + "capability gap. Never select a profile or model binding by capability alone."
+        + "capability gap. For a profile without bindings, omit model in agent.create to inherit "
+        + "the main session model and provider; do not invent a binding or capability rating. "
+        + "Never select a profile or model binding by capability alone."
 
     public let id: String
     public var title: String

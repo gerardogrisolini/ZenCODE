@@ -170,10 +170,10 @@ public enum SystemPromptBuilder {
             the task ID returned by tasks.create/tasks.list in each canonical \
             agent.create `agents` item as `taskID`; never pass taskID as a root argument. This \
             claims the assignment and execution attempt atomically. Select the most suitable \
-            agent profile and one of its authorized model \
-            bindings from the delegatable roster: determine the task type and required tools, then \
-            choose the lowest-capability binding that meets the task complexity. Delegate independent \
-            runnable tasks together when \
+            agent profile from the delegatable roster: determine the task type and required tools, \
+            then, if the profile has bindings, choose the lowest-capability authorized binding \
+            that meets the task complexity. For profiles without bindings, omit `model` to inherit \
+            the main session model. Delegate independent runnable tasks together when \
             parallel execution is safe and useful; serialize work that mutates overlapping \
             files or shared state. When a task graph is already active, every delegated agent \
             must use `agents[].taskID`; do not create taskless agents outside that workflow. A \
@@ -277,7 +277,7 @@ public enum SystemPromptBuilder {
         }
         let roster = AgentDelegationCatalog.roster(agents: agents, snapshot: snapshot)
             .filter {
-                !$0.delegatableBindings.isEmpty
+                !$0.hasDeclaredBindings || !$0.delegatableBindings.isEmpty
             }
             .sorted {
                 AgentDelegationCatalog.lookupKey($0.profile.displayName)
@@ -297,6 +297,13 @@ public enum SystemPromptBuilder {
             let tools = resolved.profile.tools.compactMap(\.nilIfBlank)
             let access = resolved.profile.readOnly ? "read-only" : "read-write"
             let toolsSummary = tools.isEmpty ? "none configured" : tools.joined(separator: ", ")
+            let profileLine = "- \(resolved.profile.displayName) [\(access); tools: \(toolsSummary)]: \(roleSummary)"
+            guard resolved.hasDeclaredBindings else {
+                return [
+                    profileLine,
+                    "  - no configured bindings: inherits the main session model and provider; omit `model`."
+                ]
+            }
             let bindingLines = resolved.delegatableBindings.map { binding -> String in
                 let capability = binding.capability ?? 1
                 let provider = binding.providerTitle ?? "Unknown provider"
@@ -305,25 +312,24 @@ public enum SystemPromptBuilder {
                     + "| pass model: \(binding.selectionReference) "
                     + "| capability: \(capability)/10\(profileDefault)"
             }
-            return [
-                "- \(resolved.profile.displayName) [\(access); tools: \(toolsSummary)]: \(roleSummary)"
-            ] + bindingLines
+            return [profileLine] + bindingLines
         }
 
         let selectionPolicy: String
         if taskWorkflowToolsAreAvailable(allowedToolNames) {
             selectionPolicy = ""
         } else {
-            selectionPolicy = "\nSelect a role/tool-compatible profile first, then the lowest-capability listed binding that meets the task."
+            selectionPolicy = "\nSelect a role/tool-compatible profile first. When it has bindings, choose the lowest-capability listed binding that meets the task; otherwise inherit the main session model without inventing a capability rating."
         }
 
         return """
         Delegatable agent profiles and model bindings:
         \(lines.joined(separator: "\n"))
         \(selectionPolicy)
-        In every agent.create `agents` item, pass the exact profile name as `profile` and the exact \
-        `binding:...` value shown after “pass model” as `model`. Both fields are required. Do not \
-        substitute provider names, display names, raw model slugs, or aliases. Give each sub-agent \
+        In every agent.create `agents` item, pass the exact profile name as `profile`. For profiles with configured bindings, \
+        pass the exact `binding:...` value shown after “pass model” as `model`; it is required for those profiles. \
+        For profiles without bindings, omit `model` to inherit the main session model and provider. Do not \
+        substitute provider names, display names, raw model slugs, or aliases for a binding. Give each sub-agent \
         an explicit role and scope. The selected profile supplies the child tool grant.
         """
     }

@@ -707,6 +707,8 @@ struct DirectTaskToolAdapterTests {
         #expect(output.contains("role-compatible profile and its lowest-capability authorized model binding"))
         #expect(output.contains("profile's highest-capability binding"))
         #expect(output.contains("report the capability gap"))
+        #expect(output.contains("For a profile without bindings, omit model in agent.create"))
+        #expect(output.contains("inherit the main session model and provider"))
     }
 
     private func call(name: String, arguments: [String: Any]) -> DirectAgentToolCall {

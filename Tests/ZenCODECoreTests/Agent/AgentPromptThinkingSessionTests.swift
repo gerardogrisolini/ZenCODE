@@ -145,6 +145,9 @@ extension AgentConfigurationTests {
             "lowest-capability binding that is greater than or equal to task complexity"
         ))
         #expect(policy.contains("Never select a profile or model binding by capability alone"))
+        #expect(policy.contains("For profiles without bindings, omit `model` to inherit the main session model"))
+        #expect(policy.contains("For a profile without bindings, omit model in agent.create"))
+        #expect(policy.contains("do not invent a binding or capability rating"))
         #expect(SystemPromptBuilder.taskWorkflowToolsAreAvailable(taskTools))
         #expect(SystemPromptBuilder.taskOrchestrationSection(
             allowedToolNames: ["tasks.create", "tasks.list"]

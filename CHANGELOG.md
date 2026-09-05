@@ -10,6 +10,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Agent model bindings are now optional for delegation as well as direct use.
+  Profiles without bindings inherit the main session's selected model and provider;
+  the delegation roster, `agent.create` schema, and workflow guidance no longer
+  require a dedicated binding. Explicit bindings and profile tool grants remain
+  unchanged.
+
 ### Changed
 
 - Telegram internals were conservatively reorganized without changing user

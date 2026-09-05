@@ -68,8 +68,8 @@ extension ZenCODEAgentProfileSetupRunner {
 
             Agent model bindings
             Assign one or more authorized models to each agent. Each binding has its own \
-            capability (1–10) and thinking selection. Agents without a binding remain \
-            selectable but are excluded from dedicated-model delegation routing.
+            capability (1–10) and thinking selection. Bindings are optional: agents without \
+            a binding use the main session model and provider, including when delegated.
 
             """
         )
