@@ -222,6 +222,7 @@ extension AnthropicSubscriptionGenerationClient {
 
         var accumulatedText = ""
         var stopReason = "end_turn"
+        var sawMessageStop = false
         var firstDeltaAt: Date?
         var usage: RemoteGenerationUsage?
         var contentNormalizer = ThinkingBoundarySpacingNormalizer()
@@ -296,6 +297,8 @@ extension AnthropicSubscriptionGenerationClient {
                 if let remoteUsage = Self.usage(from: object["usage"], previous: usage) {
                     usage = remoteUsage
                 }
+            case "message_stop":
+                sawMessageStop = true
             case "error":
                 throw RemoteGenerationClientError.remoteFailure(
                     Self.errorMessage(from: object) ?? "Anthropic Subscription request failed."
@@ -303,6 +306,12 @@ extension AnthropicSubscriptionGenerationClient {
             default:
                 break
             }
+        }
+
+        guard sawMessageStop else {
+            throw RemoteGenerationClientError.remoteFailure(
+                "Anthropic streaming response ended before message_stop."
+            )
         }
 
         let normalizedRemainder = contentNormalizer.finish()

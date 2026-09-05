@@ -606,7 +606,7 @@ extension ZenCODESetupRunner {
                 detail: nil
             )
         }
-        let selectedIndexes = promptMenuSelection(
+        let selectedIndexes = try promptMenuSelection(
             title: "Models available from /models",
             items: items,
             selected: models.isEmpty ? [] : [0]
@@ -658,7 +658,7 @@ extension ZenCODESetupRunner {
                 detail: candidate.detail
             )
         }
-        let selectedIndexes = promptMenuSelection(
+        let selectedIndexes = try promptMenuSelection(
             title: title,
             items: items,
             selected: subscriptionModelSelectionDefaultIndexes(

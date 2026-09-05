@@ -192,11 +192,15 @@ public enum ZenCODESetupRunner {
         return manifest
     }
 
-    static func confirmRemoteConfigurationReset() throws -> Bool {
-        try promptYesNo(
+    static func confirmRemoteConfigurationReset(
+        prompt: (String, Bool, String?) throws -> Bool = {
+            try promptYesNo($0, defaultValue: $1, help: $2)
+        }
+    ) throws -> Bool {
+        try prompt(
             "Reset remote configuration?",
-            defaultValue: false,
-            help: "This removes provider settings, profiles, permissions, saved sessions, and global ZenCODE context."
+            false,
+            "This removes provider settings, profiles, permissions, global ZenCODE context, and the saved-session index (sessions.json). Per-project session files (.session) are not removed."
         )
     }
 

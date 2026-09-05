@@ -12,6 +12,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Anthropic Subscription streaming now requires `message_stop` before finalizing
+  responses or tool calls. Incomplete streams fail clearly without replaying the
+  request or committing an incomplete assistant response.
+
+- Setup yes/no prompts now display their help before selection. The remote reset
+  warning accurately distinguishes the saved-session index from per-project
+  session files and still defaults to No. Cancelling a multiple-selection setup
+  menu now cancels setup instead of silently accepting the preselected defaults.
 - Agent model bindings are now optional for delegation as well as direct use.
   Profiles without bindings inherit the main session's selected model and provider;
   the delegation roster, `agent.create` schema, and workflow guidance no longer

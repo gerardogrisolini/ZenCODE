@@ -11,6 +11,7 @@ import FoundationNetworking
 #endif
 @testable import ZenCODECore
 import Testing
+import Synchronization
 
 @Suite("Anthropic Subscription NIO streaming", .serialized)
 struct AnthropicSubscriptionNIOStreamingTests {
@@ -25,6 +26,8 @@ struct AnthropicSubscriptionNIOStreamingTests {
         data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"NIO"}}
 
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}
+
+        data: {"type":"message_stop"}
 
         """
         let fixture = try await RemoteNIOStreamingFixture.start(
@@ -164,6 +167,8 @@ struct AnthropicSubscriptionNIOStreamingTests {
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"ok"}}
 
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
+
+        data: {"type":"message_stop"}
 
         """
         let fixture = try await RemoteNIOStreamingFixture.start(responseBody: Data(response.utf8))
@@ -358,6 +363,202 @@ struct AnthropicSubscriptionNIOStreamingTests {
         // compaction budget.
         #expect(await client.requestOverhead(forSessionID: sessionID) == .none)
     }
+
+    @Test("messages reject regular EOF without message_stop and never replay", arguments: ["", Self.partialTextResponse, Self.toolResponse, "data: [DONE]\n\n"])
+    func messagesRejectIncompleteEOF(response: String) async throws {
+        let fixture = try await RemoteNIOStreamingFixture.start(responseBody: Data(response.utf8))
+        defer { fixture.beginShutdown() }
+        let client = makeClient(fixture: fixture)
+        let lease = try await installedLease(in: client)
+
+        do {
+            _ = try await client.streamAnthropicMessages(
+                lease: lease,
+                modelID: "claude-haiku-4-5",
+                modelLLMID: "claude-haiku-4-5",
+                credentials: credentials(),
+                applyTurnMemory: false,
+                onEvent: { _ in }
+            )
+            Issue.record("Expected missing message_stop to fail.")
+        } catch let error as RemoteGenerationClientError {
+            guard case let .remoteFailure(message) = error else {
+                Issue.record("Unexpected provider error: \(error)")
+                return
+            }
+            #expect(message == "Anthropic streaming response ended before message_stop.")
+        }
+        #expect(fixture.capturedRequests().count == 1)
+    }
+
+    @Test("messages finalize tool calls only with message_stop")
+    func messagesCompleteToolStream() async throws {
+        let response = Self.toolResponse + "data: {\"type\":\"message_stop\"}\n\n"
+        let fixture = try await RemoteNIOStreamingFixture.start(responseBody: Data(response.utf8))
+        defer { fixture.beginShutdown() }
+        let client = makeClient(fixture: fixture)
+        let lease = try await installedLease(in: client)
+        let result = try await client.streamAnthropicMessages(
+            lease: lease,
+            modelID: "claude-haiku-4-5",
+            modelLLMID: "claude-haiku-4-5",
+            credentials: credentials(),
+            applyTurnMemory: false,
+            onEvent: { _ in }
+        )
+        #expect(result.toolCalls.count == 1)
+        #expect(result.toolCalls.first?.id == "tool_incomplete")
+        #expect(result.stopReason == "tool_calls")
+        #expect(fixture.capturedRequests().count == 1)
+    }
+
+    @Test("SSE errors are not replaced by the missing terminal error", arguments: [false, true])
+    func messagesPreserveSSEError(afterStop: Bool) async throws {
+        let response = (afterStop ? "data: {\"type\":\"message_stop\"}\n\n" : "")
+            + "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Fixture overloaded\"}}\n\n"
+        let fixture = try await RemoteNIOStreamingFixture.start(responseBody: Data(response.utf8))
+        defer { fixture.beginShutdown() }
+        let client = makeClient(fixture: fixture)
+        let lease = try await installedLease(in: client)
+        do {
+            _ = try await client.streamAnthropicMessages(
+                lease: lease,
+                modelID: "claude-haiku-4-5",
+                modelLLMID: "claude-haiku-4-5",
+                credentials: credentials(),
+                applyTurnMemory: false,
+                onEvent: { _ in }
+            )
+            Issue.record("Expected SSE error to propagate.")
+        } catch let error as RemoteGenerationClientError {
+            guard case let .remoteFailure(message) = error else {
+                Issue.record("Unexpected provider error: \(error)")
+                return
+            }
+            #expect(message.contains("Fixture overloaded"))
+            #expect(!message.contains("ended before message_stop"))
+        }
+        #expect(fixture.capturedRequests().count == 1)
+    }
+
+    @Test("prompt does not commit incomplete assistant messages or execute tools", arguments: ["", Self.partialTextResponse, Self.toolResponse])
+    func promptRejectsIncompleteStreamWithoutSideEffects(response: String) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("anthropic-incomplete-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try await AppStorageDirectory.withSupportDirectoryURL(directory) {
+            try AgentSettingsManifestStore.save(AgentSettingsManifest(
+                models: [],
+                anthropicSubscriptionCredentials: credentials()
+            ))
+            let fixture = try await RemoteNIOStreamingFixture.start(responseBody: Data(response.utf8))
+            defer { fixture.beginShutdown() }
+            let client = makeClient(fixture: fixture)
+            let sessionID = "incomplete-prompt"
+            await client.createSession(
+                id: sessionID,
+                cwd: directory.path,
+                history: [
+                    AgentRuntimeMessage(role: .user, content: "previous request"),
+                    AgentRuntimeMessage(role: .assistant, content: "previous answer")
+                ],
+                allowedToolNames: []
+            )
+            let before = try #require(await client.snapshotSession(id: sessionID))
+            let toolEvents = Mutex(0)
+            let events = CapturedDirectAgentEvents()
+            do {
+                _ = try await client.sendPrompt(
+                    sessionID: sessionID,
+                    prompt: "new request",
+                    attachments: [],
+                    onEvent: { event in
+                        events.append(event)
+                        switch event {
+                        case .toolCallStarted, .toolCallCompleted:
+                            toolEvents.withLock { $0 += 1 }
+                        default:
+                            break
+                        }
+                    }
+                )
+                Issue.record("Expected the incomplete prompt response to fail.")
+            } catch let error as RemoteGenerationClientError {
+                guard case let .remoteFailure(message) = error else {
+                    Issue.record("Unexpected provider error: \(error)")
+                    return
+                }
+                #expect(message == "Anthropic streaming response ended before message_stop.")
+            }
+            let after = try #require(await client.snapshotSession(id: sessionID))
+            #expect(after.history.count == before.history.count + 1)
+            #expect(after.history.filter { $0.role == .assistant }.map(\.content) == ["previous answer"])
+            #expect(after.history.last?.role == .user)
+            #expect(after.history.last?.content == "new request")
+            #expect(after.history.contains { $0.role == .tool } == false)
+            #expect(toolEvents.withLock { $0 } == 0)
+            #expect(fixture.capturedRequests().count == 1)
+            if response == Self.partialTextResponse {
+                // Live deltas may already be visible; only a complete message
+                // is allowed into the reusable conversation history.
+                #expect(events.contentText() == "Partial reply")
+            }
+            await client.shutdown()
+        }
+    }
+
+    @Test("prompt commits assistant text when message_stop is present")
+    func promptCommitsCompleteStream() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("anthropic-complete-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try await AppStorageDirectory.withSupportDirectoryURL(directory) {
+            try AgentSettingsManifestStore.save(AgentSettingsManifest(
+                models: [],
+                anthropicSubscriptionCredentials: credentials()
+            ))
+            let response = Self.partialTextResponse + "data: {\"type\":\"message_stop\"}\n\n"
+            let fixture = try await RemoteNIOStreamingFixture.start(responseBody: Data(response.utf8))
+            defer { fixture.beginShutdown() }
+            let client = makeClient(fixture: fixture)
+            let result = try await client.sendPrompt(
+                sessionID: "complete-prompt",
+                prompt: "new request",
+                attachments: [],
+                onEvent: { _ in }
+            )
+            let snapshot = try #require(await client.snapshotSession(id: "complete-prompt"))
+            #expect(result.text == "Partial reply")
+            #expect(result.stopReason == "end_turn")
+            #expect(snapshot.history.last?.role == .assistant)
+            #expect(snapshot.history.last?.content == "Partial reply")
+            #expect(fixture.capturedRequests().count == 1)
+            await client.shutdown()
+        }
+    }
+
+    private static let partialTextResponse = """
+    data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Partial reply"}}
+
+    data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+
+
+    """
+
+    private static let toolResponse = #"""
+    data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_incomplete","name":"local_writeFile","input":{}}}
+
+    data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"/tmp/should-not-be-written\",\"content\":\"incomplete\"}"}}
+
+    data: {"type":"content_block_stop","index":0}
+
+    data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}
+
+
+    """#
 
     private func makeClient(
         fixture: RemoteNIOStreamingFixture,

@@ -73,17 +73,20 @@ extension ZenCODESetupRunner {
     static func promptYesNo(
         _ label: String,
         defaultValue: Bool,
-        help: String? = nil
+        help: String? = nil,
+        writeHelp: (String) -> Void = { AgentOutput.standardError.writeString($0) },
+        selectOne: (String, [TerminalCheckboxMenuItem<Bool>], Bool) -> Bool? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        }
     ) throws -> Bool {
+        if let help {
+            writeHelp("\(help)\n")
+        }
         let items = [
             TerminalCheckboxMenuItem(value: true, title: "Yes", detail: nil),
             TerminalCheckboxMenuItem(value: false, title: "No", detail: nil)
         ]
-        guard let value = TerminalCheckboxMenu.selectOne(
-            title: label,
-            items: items,
-            selected: defaultValue
-        ) else {
+        guard let value = selectOne(label, items, defaultValue) else {
             throw ZenCODESetupError.cancelled
         }
         return value
@@ -107,13 +110,15 @@ extension ZenCODESetupRunner {
     static func promptMenuSelection<Value: Hashable>(
         title: String,
         items: [TerminalCheckboxMenuItem<Value>],
-        selected defaultValues: Set<Value>
-    ) -> Set<Value> {
-        TerminalCheckboxMenu.select(
-            title: title,
-            items: items,
-            selected: defaultValues
-        ) ?? defaultValues
+        selected defaultValues: Set<Value>,
+        select: (String, [TerminalCheckboxMenuItem<Value>], Set<Value>) -> Set<Value>? = {
+            TerminalCheckboxMenu.select(title: $0, items: $1, selected: $2)
+        }
+    ) throws -> Set<Value> {
+        guard let values = select(title, items, defaultValues) else {
+            throw ZenCODESetupError.cancelled
+        }
+        return values
     }
 
 

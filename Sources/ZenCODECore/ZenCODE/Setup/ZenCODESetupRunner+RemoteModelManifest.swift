@@ -251,7 +251,7 @@ extension ZenCODESetupRunner {
         )
 
         while true {
-            let selectedIndexes = promptMenuSelection(
+            let selectedIndexes = try promptMenuSelection(
                 title: "Select supported thinking levels for \(modelID)",
                 items: menuItems,
                 selected: defaultMenuSelection

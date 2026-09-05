@@ -174,6 +174,8 @@ extension RemoteSessionSnapshotTests {
 
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
 
+        data: {"type":"message_stop"}
+
         """
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
