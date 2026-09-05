@@ -213,6 +213,77 @@ struct TerminalTelegramRichMessageTests {
         #expect(!TerminalTelegramControlService.isRichMessageCompatibilityError(.httpError(500, nil)))
     }
 
+    /// A 400 whose description names an entity-parsing failure is the Markdown
+    /// fallback contract: the plain-text retry keeps the receipt API usable
+    /// when Telegram rejects the markup.
+    @Test
+    func markdownParseFailureFallsBackToExactlyOnePlainRetry() async throws {
+        let transport = MarkdownFallbackTransport()
+        let support = try makeSupportDirectory()
+        try await AppStorageDirectory.withSupportDirectoryURL(support) {
+            let service = TerminalTelegramControlService(transportFactory: { transport })
+            let state = try await service.start()
+            let returned = try await service.sendMessage(
+                "**bold with <bad> tag**", to: 42, topicID: nil,
+                fence: makeFence(epoch: try #require(state.wireLifecycleEpoch))
+            )
+            #expect(returned.isActive)
+            #expect(returned.lastError == nil)
+            _ = await service.stop()
+        }
+        let requests = transport.requests
+        #expect(requests.map(\.method) == ["sendMessage", "sendMessage"])
+        let pair = try #require(requests.count == 2 ? requests : nil)
+        let first = try jsonDictionary(pair[0].body)
+        let fallback = try jsonDictionary(pair[1].body)
+        #expect(first["parse_mode"] as? String == "Markdown")
+        #expect(fallback["parse_mode"] == nil)
+        #expect(fallback["text"] as? String == "**bold with <bad> tag**")
+    }
+
+    /// Only a 400 that names entity parsing is a markup failure: an explicit
+    /// 429 is retried by the governor with the same Markdown payload (never a
+    /// plain-text resend), and any other 400 surfaces after exactly one send.
+    @Test
+    func nonMarkupFailuresNeverResendAsPlainText() async throws {
+        // (status, description, retryAfterPayload, expectedSendCount)
+        let cases: [(Int, String, Bool, Int)] = [
+            (429, "Too Many Requests: retry after 1", true, 2),
+            (400, "Bad Request: chat not found", false, 1),
+        ]
+        for rejection in cases {
+            let transport = MarkdownFallbackTransport(
+                status: rejection.0, description: rejection.1,
+                includeRetryAfter: rejection.2
+            )
+            let support = try makeSupportDirectory()
+            try await AppStorageDirectory.withSupportDirectoryURL(support) {
+                let service = TerminalTelegramControlService(transportFactory: { transport })
+                let state = try await service.start()
+                if rejection.0 == 429 {
+                    let returned = try await service.sendMessage(
+                        "hello", to: 42, topicID: nil,
+                        fence: makeFence(epoch: try #require(state.wireLifecycleEpoch))
+                    )
+                    #expect(returned.isActive)
+                } else {
+                    await #expect(throws: TerminalTelegramControlError.self) {
+                        _ = try await service.sendMessage(
+                            "hello", to: 42, topicID: nil,
+                            fence: makeFence(epoch: try #require(state.wireLifecycleEpoch))
+                        )
+                    }
+                }
+                _ = await service.stop()
+            }
+            #expect(transport.requests.count == rejection.3)
+            for request in transport.requests {
+                let body = try jsonDictionary(request.body)
+                #expect(body["parse_mode"] as? String == "Markdown")
+            }
+        }
+    }
+
     private func jsonObject(_ value: some Encodable) throws -> [String: Any] {
         try jsonDictionary(JSONEncoder().encode(value))
     }
@@ -346,4 +417,55 @@ private actor LifecycleMessageGateTransport: TelegramHTTPTransport {
         await withCheckedContinuation { releaseWaiter = $0 }
         return (200, Data(#"{"ok":true,"result":{"message_id":9,"chat":{"id":42,"type":"private"},"text":"visible"}}"#.utf8))
     }
+}
+
+/// Records `sendMessage` calls and rejects the first one with a configurable
+/// Bot API envelope, so the Markdown fallback contract is characterized over
+/// the exact wire shapes Telegram produces.
+private final class MarkdownFallbackTransport: TelegramHTTPTransport, Sendable {
+    struct Request: Sendable { let method: String; let body: Data }
+    private let storage = Mutex<[Request]>([])
+    private let rejectionStatus: Int
+    private let rejectionDescription: String
+    private let includeRetryAfter: Bool
+
+    init(
+        status: Int = 400,
+        description: String = "Bad Request: can't parse entities: unsupported start tag at byte offset 5",
+        includeRetryAfter: Bool = false
+    ) {
+        self.rejectionStatus = status
+        self.rejectionDescription = description
+        self.includeRetryAfter = includeRetryAfter
+    }
+
+    func send(
+        url: URL, method: String, headers: [RemoteHTTPHeader], body: Data?, timeout: Duration?
+    ) async throws -> (status: Int, body: Data) {
+        switch url.lastPathComponent {
+        case "deleteWebhook", "setMyCommands":
+            return (200, Data(#"{"ok":true,"result":true}"#.utf8))
+        case "getMe":
+            return (200, Data(#"{"ok":true,"result":{"id":9003,"is_bot":true,"first_name":"bot","username":"test_bot"}}"#.utf8))
+        case "getUpdates":
+            try await Task.sleep(for: .seconds(60))
+            throw CancellationError()
+        default:
+            break
+        }
+        storage.withLock { $0.append(Request(method: url.lastPathComponent, body: body ?? Data())) }
+        let count = storage.withLock { $0.count }
+        if url.lastPathComponent == "sendMessage", count == 1 {
+            let parameters = includeRetryAfter
+                ? ",\"parameters\":{\"retry_after\":1}"
+                : ""
+            return (
+                rejectionStatus,
+                Data("{\"ok\":false,\"error_code\":\(rejectionStatus),\"description\":\"\(rejectionDescription)\"\(parameters)}".utf8)
+            )
+        }
+        return (200, Data(#"{"ok":true,"result":{"message_id":8,"chat":{"id":42,"type":"private"},"text":"ok"}}"#.utf8))
+    }
+
+    var requests: [Request] { storage.withLock { $0 } }
 }

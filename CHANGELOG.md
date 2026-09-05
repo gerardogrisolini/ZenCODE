@@ -10,6 +10,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Telegram internals were conservatively reorganized without changing user
+  experience, persistence, Bot API wire contracts, authorization policy, or
+  routing/lifecycle ownership. `TerminalTelegramControlService` now retains
+  lifecycle and ingress coordination while pairing, wire effects, attachments,
+  and the command registry live in dedicated files; the terminal adapter is
+  split into eight responsibility-focused extensions alongside its existing
+  Overviews companion. Two Markdown fallback tests characterize the existing
+  Markdown-to-plain-text retry behavior; they are not a functional bug fix.
+
 ### Removed
 
 - Provider-reported and locally estimated prefill/generation token-throughput
