@@ -549,38 +549,12 @@ extension TerminalChat {
         _ rawSelection: String,
         availableSkills: [PromptSkill]
     ) throws -> Set<String> {
-        let tokens = rawSelection
-            .replacingOccurrences(of: ",", with: " ")
-            .split { $0.isWhitespace }
-            .map(String.init)
-
-        guard !tokens.isEmpty else {
-            return []
-        }
-
-        if tokens.count == 1 {
-            let normalizedToken = tokens[0].lowercased()
-            if normalizedToken == "all" {
-                return Set(availableSkills.map(\.id))
-            }
-            if ["none", "off", "clear", "disabled"].contains(normalizedToken) {
-                return []
-            }
-        }
-
-        var selectedSkillIDs = Set<String>()
-        for token in tokens {
-            if let index = Int(token),
-               availableSkills.indices.contains(index - 1) {
-                selectedSkillIDs.insert(availableSkills[index - 1].id)
-                continue
-            }
+        try TerminalSelection.parse(rawSelection, keys: availableSkills.map(\.id)) { token in
             guard let skill = skill(matching: token, in: availableSkills) else {
                 throw TerminalSkillSelectionError.unknownToken(token)
             }
-            selectedSkillIDs.insert(skill.id)
+            return skill.id
         }
-        return selectedSkillIDs
     }
 
     public nonisolated static func skill(
@@ -601,15 +575,6 @@ extension TerminalChat {
     }
 
     public nonisolated static func selectionKey(_ value: String) -> String {
-        let foldedValue = value.folding(
-            options: [.caseInsensitive, .diacriticInsensitive],
-            locale: .current
-        )
-        let characters = foldedValue.unicodeScalars.map { scalar -> Character in
-            CharacterSet.alphanumerics.contains(scalar) ? Character(String(scalar)) : "-"
-        }
-        return String(characters)
-            .replacingOccurrences(of: #"-+"#, with: "-", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        TerminalSelection.lookupKey(value)
     }
 }

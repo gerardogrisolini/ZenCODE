@@ -148,34 +148,9 @@ public enum TerminalToolSelectionCatalog {
         _ rawSelection: String,
         items: [TerminalToolSelectionItem]
     ) throws -> Set<String> {
-        let tokens = rawSelection
-            .replacingOccurrences(of: ",", with: " ")
-            .split { $0.isWhitespace }
-            .map(String.init)
-
-        guard !tokens.isEmpty else {
-            return []
-        }
-
-        if tokens.count == 1 {
-            let normalizedToken = tokens[0].lowercased()
-            if normalizedToken == "all" {
-                return Set(items.map(\.key))
-            }
-            if ["none", "off", "clear", "disabled"].contains(normalizedToken) {
-                return []
-            }
-        }
-
-        var selectedKeys = Set<String>()
-        for token in tokens {
-            if let index = Int(token),
-               items.indices.contains(index - 1) {
-                selectedKeys.insert(items[index - 1].key)
-                continue
-            }
+        try TerminalSelection.parse(rawSelection, keys: items.map(\.key)) { token in
             let matchedKeys = selectionKeys(for: token, items: items)
-            guard !matchedKeys.isEmpty else {
+            guard let matchedKey = matchedKeys.first else {
                 throw TerminalToolSelectionError.unknownToken(token)
             }
             guard matchedKeys.count == 1 else {
@@ -184,9 +159,8 @@ public enum TerminalToolSelectionCatalog {
                     matches: matchedKeys.sorted()
                 )
             }
-            selectedKeys.formUnion(matchedKeys)
+            return matchedKey
         }
-        return selectedKeys
     }
 
     public static func normalizedSelectionKeys(
@@ -227,16 +201,16 @@ public enum TerminalToolSelectionCatalog {
             return [trimmedToken]
         }
 
-        let token = normalizedLookupKey(trimmedToken)
+        let token = TerminalSelection.lookupKey(trimmedToken)
         guard !token.isEmpty else {
             return []
         }
 
-        let matchedKeys = Set(
+        return Set(
             items.compactMap { item in
                 let lookupKeys = Set(
                     ([item.key, item.title] + Array(item.aliases))
-                        .map(normalizedLookupKey)
+                        .map(TerminalSelection.lookupKey)
                 )
                 if lookupKeys.contains(token)
                     || item.key.lowercased().hasPrefix(trimmedToken.lowercased()) {
@@ -245,11 +219,6 @@ public enum TerminalToolSelectionCatalog {
                 return nil
             }
         )
-        if !matchedKeys.isEmpty {
-            return matchedKeys
-        }
-
-        return []
     }
 
     private static func coreItems(
@@ -521,18 +490,5 @@ public enum TerminalToolSelectionCatalog {
             break
         }
         return aliases
-    }
-
-    private static func normalizedLookupKey(_ value: String) -> String {
-        let foldedValue = value.folding(
-            options: [.caseInsensitive, .diacriticInsensitive],
-            locale: .current
-        )
-        let characters = foldedValue.unicodeScalars.map { scalar -> Character in
-            CharacterSet.alphanumerics.contains(scalar) ? Character(String(scalar)) : "-"
-        }
-        return String(characters)
-            .replacingOccurrences(of: #"-+"#, with: "-", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 }

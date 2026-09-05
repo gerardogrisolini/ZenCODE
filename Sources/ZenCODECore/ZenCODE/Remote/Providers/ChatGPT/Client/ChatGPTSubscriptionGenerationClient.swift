@@ -12,7 +12,7 @@ import ToolCore
 import os
 #endif
 
-public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
+public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
     public static var isAvailable: Bool {
         CodexAgentModel.isReady
     }
@@ -258,67 +258,6 @@ public actor ChatGPTSubscriptionGenerationClient: AgentRuntimeBackend {
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory
         )
     }
-    public func installTaskOrchestrator(
-        _ orchestrator: SessionTaskOrchestrator
-    ) async {
-        await toolExecutor.installTaskOrchestrator(orchestrator)
-    }
-
-    public func closeSubAgent(id: String) async -> Bool {
-        await toolExecutor.closeSubAgent(id: id)
-    }
-
-    public func interruptSubAgents(rootSessionID: String) async -> Int {
-        await toolExecutor.interruptSubAgents(rootSessionID: rootSessionID)
-    }
-
-    public func interruptBackgroundJobs() async -> Int {
-        await toolExecutor.interruptBackgroundJobs()
-    }
-
-    public func sharedChatParticipants(rootSessionID: String) async -> [AgentSharedChat.Participant] {
-        await toolExecutor.sharedChatParticipants(rootSessionID: rootSessionID)
-    }
-
-    public func sendSharedChatMessage(
-        text: String,
-        destination: AgentSharedChat.Destination,
-        rootSessionID: String
-    ) async throws -> AgentSharedChat.Delivery {
-        try await sendSharedChatMessage(
-            text: text,
-            destination: destination,
-            rootSessionID: rootSessionID,
-            messageID: UUID()
-        )
-    }
-
-    public func sendSharedChatMessage(
-        text: String,
-        destination: AgentSharedChat.Destination,
-        rootSessionID: String,
-        messageID: UUID
-    ) async throws -> AgentSharedChat.Delivery {
-        try await toolExecutor.sendSharedChatMessage(
-            text: text,
-            destination: destination,
-            rootSessionID: rootSessionID,
-            messageID: messageID
-        )
-    }
-
-    public func drainCoordinatorSharedChatMessages(
-        rootSessionID: String
-    ) async -> [AgentSharedChat.Message] {
-        await toolExecutor.drainCoordinatorSharedChatMessages(rootSessionID: rootSessionID)
-    }
-
-    public func sharedChatTranscriptMessages(
-        rootSessionID: String
-    ) async -> [AgentSharedChat.Message] {
-        await toolExecutor.sharedChatTranscriptMessages(rootSessionID: rootSessionID)
-    }
-
     struct SessionLease: Sendable {
         let id: String
         let generation: UInt64

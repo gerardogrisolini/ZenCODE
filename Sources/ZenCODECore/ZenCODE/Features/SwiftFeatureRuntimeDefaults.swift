@@ -61,18 +61,7 @@ extension SwiftFeatureRuntime {
             guard record.enabled else {
                 return nil
             }
-            return SwiftFeatureBundle(
-                id: record.id,
-                executableURL: record.executableURL,
-                tools: record.tools,
-                toolNamePrefixes: record.toolNamePrefixes,
-                toolNameAliases: record.toolNameAliases,
-                discoversToolsAtRuntime: record.discoversToolsAtRuntime,
-                supportsPersistentSession: record.supportsPersistentSession,
-                invocationTimeoutSeconds: record.invocationTimeoutSeconds,
-                source: record.source,
-                isCore: record.isCore
-            )
+            return SwiftFeatureBundle(record: record, source: record.source, isCore: record.isCore)
         }
     }
 
@@ -194,26 +183,24 @@ extension SwiftFeatureRuntime {
         from record: SwiftFeatureRecord,
         tools: [String]
     ) -> SwiftFeatureStatus {
-        status(
+        SwiftFeatureStatus(
             id: record.id,
             displayName: record.displayName,
             description: record.description,
             source: record.source,
             isCore: record.isCore,
             adoptedFrom: record.adoptedFrom,
-            editable: record.source == .generated && !record.isCore,
-            adoptable: record.source == .bundled && !record.isCore,
-            executableURL: record.executableURL,
             enabled: record.enabled,
             available: record.executableAvailable,
+            executablePath: record.executableURL.path,
             manifestPath: record.manifestURL?.path,
-            issue: record.issue,
-            tools: tools,
+            tools: tools.sorted(),
             toolNamePrefixes: record.toolNamePrefixes,
             toolNameAliases: record.toolNameAliases,
             discoversToolsAtRuntime: record.discoversToolsAtRuntime,
             build: record.build,
-            generated: record.generated
+            generated: record.generated,
+            issue: record.issue
         )
     }
 
@@ -225,69 +212,23 @@ extension SwiftFeatureRuntime {
         issue: String?,
         tools: [String]
     ) -> SwiftFeatureStatus {
-        status(
+        SwiftFeatureStatus(
             id: feature.id,
             displayName: nil,
             description: nil,
             source: feature.source,
             isCore: feature.isCore,
             adoptedFrom: nil,
-            editable: feature.source == .generated && !feature.isCore,
-            adoptable: feature.source == .bundled && !feature.isCore,
-            executableURL: feature.executableURL,
             enabled: enabled,
             available: available,
+            executablePath: feature.executableURL.path,
             manifestPath: manifestPath,
-            issue: issue,
-            tools: tools,
+            tools: tools.sorted(),
             toolNamePrefixes: feature.toolNamePrefixes,
             toolNameAliases: feature.toolNameAliases,
             discoversToolsAtRuntime: feature.discoversToolsAtRuntime,
             build: nil,
-            generated: nil
-        )
-    }
-
-    static func status(
-        id: String,
-        displayName: String?,
-        description: String?,
-        source: SwiftFeatureBundleSource,
-        isCore: Bool,
-        adoptedFrom: String?,
-        editable: Bool,
-        adoptable: Bool,
-        executableURL: URL,
-        enabled: Bool,
-        available: Bool,
-        manifestPath: String?,
-        issue: String?,
-        tools: [String],
-        toolNamePrefixes: [String],
-        toolNameAliases: [String],
-        discoversToolsAtRuntime: Bool,
-        build: SwiftFeatureBuildManifest?,
-        generated: SwiftFeatureGeneratedManifest?
-    ) -> SwiftFeatureStatus {
-        SwiftFeatureStatus(
-            id: id,
-            displayName: displayName,
-            description: description,
-            source: source,
-            isCore: isCore,
-            adoptedFrom: adoptedFrom,
-            editable: editable,
-            adoptable: adoptable,
-            enabled: enabled,
-            available: available,
-            executablePath: executableURL.path,
-            manifestPath: manifestPath,
-            tools: tools.sorted(),
-            toolNamePrefixes: toolNamePrefixes,
-            toolNameAliases: toolNameAliases,
-            discoversToolsAtRuntime: discoversToolsAtRuntime,
-            build: build,
-            generated: generated,
+            generated: nil,
             issue: issue
         )
     }

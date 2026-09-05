@@ -259,6 +259,16 @@ The root product surface is intentionally simplified: interactive setup now
 belongs to `ZenCODECore`, and the former `ZenCODESetup` product/target has been
 removed as an explicit migration.
 
+Within `ZenCODECore/ZenCODE`, the internal `DirectToolRuntimeBackend` refinement
+in `Agent/Runtime` shares forwarding for three remote clients without changing
+`AgentRuntimeBackend`, concrete public APIs, external defaults, or ownership;
+Anthropic retains its overhead-invalidation overrides. The internal
+`TerminalSelection` helper in `Tools/Selection` shares tool/skill selection syntax
+and Unicode lookup normalization, leaving domain-specific resolvers and errors
+separate. Feature record-to-bundle projection uses an internal initializer, and
+status construction avoids a redundant intermediary while preserving `source`
+and `isCore` overrides and permissions.
+
 | Area | Intended responsibility and directory layout |
 | --- | --- |
 | `Sources/ToolCore` | Dependency-light wire, descriptor, environment, compatibility, declarative tool-presentation types, and the dependency-safe `ToolSecretRedactor` used by lower-level process/transport modules. It contains no registry or presentation policy keyed by tool name and does not contain Xcode- or Figma-specific request or workspace behavior. |

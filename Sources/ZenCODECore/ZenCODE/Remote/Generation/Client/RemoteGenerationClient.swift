@@ -8,7 +8,7 @@
 import Foundation
 import ToolCore
 
-public actor RemoteGenerationClient: AgentRuntimeBackend {
+public actor RemoteGenerationClient: DirectToolRuntimeBackend {
     public struct AgentSession {
         public let id: String
         public let cwd: URL
@@ -85,67 +85,6 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             subAgentContextualBackendFactory: subAgentContextualBackendFactory
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory
         )
-    }
-
-    public func installTaskOrchestrator(
-        _ orchestrator: SessionTaskOrchestrator
-    ) async {
-        await toolExecutor.installTaskOrchestrator(orchestrator)
-    }
-
-    public func closeSubAgent(id: String) async -> Bool {
-        await toolExecutor.closeSubAgent(id: id)
-    }
-
-    public func interruptSubAgents(rootSessionID: String) async -> Int {
-        await toolExecutor.interruptSubAgents(rootSessionID: rootSessionID)
-    }
-
-    public func interruptBackgroundJobs() async -> Int {
-        await toolExecutor.interruptBackgroundJobs()
-    }
-
-    public func sharedChatParticipants(rootSessionID: String) async -> [AgentSharedChat.Participant] {
-        await toolExecutor.sharedChatParticipants(rootSessionID: rootSessionID)
-    }
-
-    public func sendSharedChatMessage(
-        text: String,
-        destination: AgentSharedChat.Destination,
-        rootSessionID: String
-    ) async throws -> AgentSharedChat.Delivery {
-        try await sendSharedChatMessage(
-            text: text,
-            destination: destination,
-            rootSessionID: rootSessionID,
-            messageID: UUID()
-        )
-    }
-
-    public func sendSharedChatMessage(
-        text: String,
-        destination: AgentSharedChat.Destination,
-        rootSessionID: String,
-        messageID: UUID
-    ) async throws -> AgentSharedChat.Delivery {
-        try await toolExecutor.sendSharedChatMessage(
-            text: text,
-            destination: destination,
-            rootSessionID: rootSessionID,
-            messageID: messageID
-        )
-    }
-
-    public func drainCoordinatorSharedChatMessages(
-        rootSessionID: String
-    ) async -> [AgentSharedChat.Message] {
-        await toolExecutor.drainCoordinatorSharedChatMessages(rootSessionID: rootSessionID)
-    }
-
-    public func sharedChatTranscriptMessages(
-        rootSessionID: String
-    ) async -> [AgentSharedChat.Message] {
-        await toolExecutor.sharedChatTranscriptMessages(rootSessionID: rootSessionID)
     }
 
     public func createSession(
@@ -228,25 +167,6 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         sessions[id] = session
     }
 
-    public func updateBorrowedSubAgentToolExecutor(
-        _ executor: AgentBorrowedToolExecutor?
-    ) async {
-        await toolExecutor.updateBorrowedSubAgentToolExecutor(executor)
-    }
-
-    public func updateSharedChatMessageAvailableHandler(
-        _ handler: (@Sendable (String) -> Void)?
-    ) async {
-        await toolExecutor.updateSharedChatMessageAvailableHandler(handler)
-    }
-
-    public func updateToolProviders(
-        _ providers: [AgentToolProvider],
-        sessionID: String? = nil
-    ) async {
-        await toolExecutor.updateToolProviders(providers, sessionID: sessionID)
-    }
-
     public func shutdown() async {
         sessions.removeAll()
         sessionGenerations.removeAll()
@@ -267,10 +187,6 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
         return provider.modelID
     }
 
-    public func activeToolDescriptors() async -> [DirectToolDescriptor] {
-        await activeToolDescriptors(sessionID: nil)
-    }
-
     public func activeToolDescriptors(
         sessionID: String?
     ) async -> [DirectToolDescriptor] {
@@ -287,16 +203,6 @@ public actor RemoteGenerationClient: AgentRuntimeBackend {
             preferredWorkspaceRootURL: session.cwd,
             sessionID: session.id
         )
-    }
-
-    public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
-        await toolExecutor.subAgentSnapshots()
-    }
-
-    public func updateSubAgentToolEventHandler(
-        _ handler: DirectSubAgentToolEventHandler?
-    ) async {
-        await toolExecutor.updateSubAgentToolEventHandler(handler)
     }
 
     public func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? {

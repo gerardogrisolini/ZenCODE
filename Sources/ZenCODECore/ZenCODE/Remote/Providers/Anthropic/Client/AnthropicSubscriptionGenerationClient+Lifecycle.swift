@@ -100,12 +100,6 @@ extension AnthropicSubscriptionGenerationClient {
         invalidateRequestOverhead(sessionID: nil)
     }
 
-    public func updateSharedChatMessageAvailableHandler(
-        _ handler: (@Sendable (String) -> Void)?
-    ) async {
-        await toolExecutor.updateSharedChatMessageAvailableHandler(handler)
-    }
-
     public func updateToolProviders(
         _ providers: [AgentToolProvider],
         sessionID: String? = nil
@@ -135,10 +129,6 @@ extension AnthropicSubscriptionGenerationClient {
         return modelLLMID
     }
 
-    public func activeToolDescriptors() async -> [DirectToolDescriptor] {
-        await activeToolDescriptors(sessionID: nil)
-    }
-
     public func activeToolDescriptors(
         sessionID: String?
     ) async -> [DirectToolDescriptor] {
@@ -155,16 +145,6 @@ extension AnthropicSubscriptionGenerationClient {
             preferredWorkspaceRootURL: session.cwd,
             sessionID: session.id
         )
-    }
-
-    public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
-        await toolExecutor.subAgentSnapshots()
-    }
-
-    public func updateSubAgentToolEventHandler(
-        _ handler: DirectSubAgentToolEventHandler?
-    ) async {
-        await toolExecutor.updateSubAgentToolEventHandler(handler)
     }
 
     public func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? {

@@ -108,18 +108,7 @@ public enum SwiftFeatureRegistry {
                 guard record.enabled else {
                     return nil
                 }
-                return SwiftFeatureBundle(
-                    id: record.id,
-                    executableURL: record.executableURL,
-                    tools: record.tools,
-                    toolNamePrefixes: record.toolNamePrefixes,
-                    toolNameAliases: record.toolNameAliases,
-                    discoversToolsAtRuntime: record.discoversToolsAtRuntime,
-                    supportsPersistentSession: record.supportsPersistentSession,
-                    invocationTimeoutSeconds: record.invocationTimeoutSeconds,
-                    source: .generated,
-                    isCore: false
-                )
+                return SwiftFeatureBundle(record: record, source: .generated, isCore: false)
             }
     }
 

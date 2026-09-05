@@ -20,6 +20,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Consolidated remote runtime forwarding, terminal tool/skill selection helpers,
+  and feature projections without changing public APIs, selection behavior,
+  permissions, persistence, or runtime ownership.
 - Telegram internals were conservatively reorganized without changing user
   experience, persistence, Bot API wire contracts, authorization policy, or
   routing/lifecycle ownership. `TerminalTelegramControlService` now retains

@@ -51,6 +51,21 @@ public struct SwiftFeatureBundle: Hashable, Sendable {
         self.isCore = isCore
     }
 
+    init(record: SwiftFeatureRecord, source: SwiftFeatureBundleSource, isCore: Bool) {
+        self.init(
+            id: record.id,
+            executableURL: record.executableURL,
+            tools: record.tools,
+            toolNamePrefixes: record.toolNamePrefixes,
+            toolNameAliases: record.toolNameAliases,
+            discoversToolsAtRuntime: record.discoversToolsAtRuntime,
+            supportsPersistentSession: record.supportsPersistentSession,
+            invocationTimeoutSeconds: record.invocationTimeoutSeconds,
+            source: source,
+            isCore: isCore
+        )
+    }
+
     public func contains(toolName: String) -> Bool {
         tools.contains { $0.name == toolName }
             || toolNameAliases.contains(toolName)
