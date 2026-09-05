@@ -12,6 +12,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Desktop window actions now reject conflicting selectors and absent or ambiguous
+  public AX/Quartz associations instead of choosing a relative best match or
+  reporting an unverified requested window ID. Screenshot regions validate safe
+  rounded integer dimensions before capture side effects, and pointer/region
+  validation uses actual monitor bounds rather than a desktop bounding box.
+- Desktop text input rejects requests exceeding a conservative execution budget
+  before posting events, without shortening text, changing intervals, or using the
+  clipboard. Application-state probes remain fresh one-shot AppKit snapshots but
+  use bounded retry backoff; desktop child processes now share FeatureKit's
+  cancellable, deadline-bound runner with concurrently drained, bounded pipes.
+
 - Anthropic Subscription streaming now requires `message_stop` before finalizing
   responses or tool calls. Incomplete streams fail clearly without replaying the
   request or committing an incomplete assistant response.

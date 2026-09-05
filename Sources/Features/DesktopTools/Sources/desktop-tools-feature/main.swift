@@ -403,9 +403,7 @@ private struct DesktopRunTool: FeatureTool {
     )
 
     func run(_ input: DesktopRunInput, context: FeatureContext) async throws -> DesktopRunOutput {
-        try await MainActor.run {
-            try DesktopController.execute(input, context: context)
-        }
+        try await DesktopController.execute(input, context: context)
     }
 }
 
@@ -470,7 +468,7 @@ private enum DesktopController {
     private static let maximumArtifacts = 50
     private static let axFullScreenAttribute = "AXFullScreen" as CFString
 
-    static func execute(_ input: DesktopRunInput, context: FeatureContext) throws -> DesktopRunOutput {
+    static func execute(_ input: DesktopRunInput, context: FeatureContext) async throws -> DesktopRunOutput {
         let action = input.action.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !action.isEmpty else {
             throw DesktopControlError.invalidArgument("action", "must not be empty.")
@@ -534,7 +532,7 @@ private enum DesktopController {
             )
 
         case "screenshot":
-            return try screenshot(input, context: context, action: action)
+            return try await screenshot(input, context: context, action: action)
 
         case "move_mouse":
             try requireEventPosting()
@@ -600,12 +598,13 @@ private enum DesktopController {
             )
 
         case "type_text":
-            try requireEventPosting()
             let text = try requiredNonempty(input.text, name: "text", action: action, allowEmpty: true)
             guard text.count <= maximumTextLength else {
                 throw DesktopControlError.invalidArgument("text", "must contain at most \(maximumTextLength) characters.")
             }
             let interval = try boundedDouble(input.interval ?? 0.01, name: "interval", range: 0...1)
+            try DesktopSafetyPolicy.validateTypingBudget(characterCount: text.count, interval: interval)
+            try requireEventPosting()
             try typeText(text, interval: interval)
             return DesktopRunOutput(
                 action: action,
@@ -627,7 +626,7 @@ private enum DesktopController {
             )
 
         case "launch_app":
-            let app = try launchApp(input, context: context)
+            let app = try await launchApp(input, context: context)
             return DesktopRunOutput(
                 action: action,
                 summary: "Launched \(app.localizedName ?? app.bundleIdentifier ?? "application").",
@@ -637,13 +636,13 @@ private enum DesktopController {
         case "activate_app":
             var app = matchingRunningApp(input, defaultToFrontmost: false)
             if app == nil, input.launch_if_needed ?? false {
-                app = try launchApp(input, context: context)
+                app = try await launchApp(input, context: context)
             }
             guard let app else { throw DesktopControlError.appNotFound }
             guard app.activate(options: [.activateAllWindows]) else {
                 throw DesktopControlError.operationFailed("macOS refused to activate the selected application.")
             }
-            guard let activeProbe = try waitForApplicationProbe(
+            guard let activeProbe = try await waitForApplicationProbe(
                 pid: app.processIdentifier,
                 timeout: 2,
                 where: { $0.exists && $0.is_active }
@@ -658,11 +657,11 @@ private enum DesktopController {
 
         case "hide_app":
             let app = try selectedRunningApp(input)
-            let initialProbe = try applicationProbe(pid: app.processIdentifier)
+            let initialProbe = try await applicationProbe(pid: app.processIdentifier)
             if !initialProbe.is_hidden {
                 _ = app.hide()
             }
-            guard let hiddenProbe = try waitForApplicationProbe(
+            guard let hiddenProbe = try await waitForApplicationProbe(
                 pid: app.processIdentifier,
                 timeout: 2,
                 where: { $0.exists && $0.is_hidden }
@@ -677,11 +676,11 @@ private enum DesktopController {
 
         case "unhide_app":
             let app = try selectedRunningApp(input)
-            let initialProbe = try applicationProbe(pid: app.processIdentifier)
+            let initialProbe = try await applicationProbe(pid: app.processIdentifier)
             if initialProbe.is_hidden {
                 _ = app.unhide()
             }
-            guard let visibleProbe = try waitForApplicationProbe(
+            guard let visibleProbe = try await waitForApplicationProbe(
                 pid: app.processIdentifier,
                 timeout: 2,
                 where: { $0.exists && !$0.is_hidden }
@@ -719,14 +718,14 @@ private enum DesktopController {
             }
             _ = AXUIElementSetAttributeValue(selection.element, kAXMainAttribute as CFString, kCFBooleanTrue)
             _ = AXUIElementSetAttributeValue(selection.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-            let window = axWindowInfo(selection, preferredWindowID: input.window_id)
+            let window = axWindowInfo(selection)
             return DesktopRunOutput(action: action, summary: "Focused the selected window.", window: window)
 
         case "move_window":
             let selection = try selectedAXWindow(input)
             let point = try requiredPoint(x: input.x, y: input.y, action: action)
             try setAXPoint(selection.element, attribute: kAXPositionAttribute as CFString, point: point, operation: "move window")
-            let window = axWindowInfo(selection, preferredWindowID: input.window_id)
+            let window = axWindowInfo(selection)
             return DesktopRunOutput(action: action, summary: "Moved the selected window.", window: window)
 
         case "resize_window":
@@ -734,7 +733,7 @@ private enum DesktopController {
             let width = try positiveFinite(input.width, name: "width", action: action)
             let height = try positiveFinite(input.height, name: "height", action: action)
             try setAXSize(selection.element, attribute: kAXSizeAttribute as CFString, size: CGSize(width: width, height: height), operation: "resize window")
-            let window = axWindowInfo(selection, preferredWindowID: input.window_id)
+            let window = axWindowInfo(selection)
             return DesktopRunOutput(action: action, summary: "Resized the selected window.", window: window)
 
         case "minimize_window":
@@ -743,7 +742,7 @@ private enum DesktopController {
                 throw DesktopControlError.missingArgument("state", action)
             }
             try setAXBoolean(selection.element, attribute: kAXMinimizedAttribute as CFString, value: state, operation: "set minimized state")
-            let window = axWindowInfo(selection, preferredWindowID: input.window_id)
+            let window = axWindowInfo(selection)
             return DesktopRunOutput(action: action, summary: state ? "Minimized the selected window." : "Restored the selected window.", window: window)
 
         case "set_fullscreen":
@@ -752,12 +751,12 @@ private enum DesktopController {
                 throw DesktopControlError.missingArgument("state", action)
             }
             try setAXBoolean(selection.element, attribute: axFullScreenAttribute, value: state, operation: "set fullscreen state")
-            let window = axWindowInfo(selection, preferredWindowID: input.window_id)
+            let window = axWindowInfo(selection)
             return DesktopRunOutput(action: action, summary: state ? "Entered fullscreen for the selected window." : "Exited fullscreen for the selected window.", window: window)
 
         case "close_window":
             let selection = try selectedAXWindow(input)
-            let before = axWindowInfo(selection, preferredWindowID: input.window_id)
+            let before = axWindowInfo(selection)
             let closeButton = try copyAXElement(selection.element, attribute: kAXCloseButtonAttribute as CFString, operation: "read close button")
             let result = AXUIElementPerformAction(closeButton, kAXPressAction as CFString)
             guard result == .success else {
@@ -787,7 +786,7 @@ private enum DesktopController {
             return DesktopRunOutput(action: action, summary: "Wrote \(text.count) character(s) to the clipboard.", count: text.count)
 
         case "open":
-            try openTarget(input, context: context)
+            try await openTarget(input, context: context)
             return DesktopRunOutput(action: action, summary: "Opened the requested URL or file.")
 
         case "wait":
@@ -797,7 +796,7 @@ private enum DesktopController {
                 range: 0...30
             )
             let started = Date()
-            Thread.sleep(forTimeInterval: duration)
+            try await Task.sleep(for: .seconds(duration))
             let elapsed = Int(Date().timeIntervalSince(started) * 1_000)
             return DesktopRunOutput(action: action, summary: "Waited \(format(duration)) second(s).", elapsed_ms: elapsed)
 
@@ -927,39 +926,26 @@ private enum DesktopController {
         return app
     }
 
-    private static func applicationProbe(pid: pid_t) throws -> DesktopAppProbe {
+    private static func applicationProbe(pid: pid_t, timeout: TimeInterval = 2) async throws -> DesktopAppProbe {
         guard let executableURL = Bundle.main.executableURL else {
             throw DesktopControlError.operationFailed("Could not locate the desktop feature executable for an application-state probe.")
         }
-        let process = Process()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.executableURL = executableURL
-        process.arguments = [DesktopInternalCommand.appProbeFlag, String(pid)]
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-        do {
-            try process.run()
-        } catch {
-            throw DesktopControlError.operationFailed(
-                "Could not start the application-state probe: \(error.localizedDescription)"
-            )
-        }
-        process.waitUntilExit()
-        let output = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let error = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        guard process.terminationStatus == 0 else {
-            let detail = String(decoding: error, as: UTF8.self)
+        let result = try await DesktopProcess.run(
+            executableURL: executableURL,
+            arguments: [DesktopInternalCommand.appProbeFlag, String(pid)],
+            timeout: timeout, maximumOutputBytes: 65_536
+        )
+        guard result.exitCode == 0 else {
+            let detail = String(decoding: result.stderrData, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw DesktopControlError.operationFailed(
                 detail.isEmpty
-                    ? "The application-state probe exited with status \(process.terminationStatus)."
+                    ? "The application-state probe exited with status \(result.exitCode)."
                     : "The application-state probe failed: \(detail)"
             )
         }
         do {
-            return try JSONDecoder().decode(DesktopAppProbe.self, from: output)
+            return try JSONDecoder().decode(DesktopAppProbe.self, from: result.stdoutData)
         } catch {
             throw DesktopControlError.operationFailed(
                 "The application-state probe returned invalid data: \(error.localizedDescription)"
@@ -971,15 +957,24 @@ private enum DesktopController {
         pid: pid_t,
         timeout: TimeInterval,
         where condition: (DesktopAppProbe) -> Bool
-    ) throws -> DesktopAppProbe? {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            let probe = try applicationProbe(pid: pid)
+    ) async throws -> DesktopAppProbe? {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(timeout))
+        var attempt = 0
+        while let childTimeout = DesktopProbePolicy.childTimeout(remaining: seconds(clock.now.duration(to: deadline))) {
+            try Task.checkCancellation()
+            let probe = try await applicationProbe(pid: pid, timeout: childTimeout)
             if condition(probe) { return probe }
-            if Date() >= deadline { break }
-            Thread.sleep(forTimeInterval: max(0, min(0.05, deadline.timeIntervalSinceNow)))
-        } while true
+            let delay = DesktopProbePolicy.retryDelay(attempt: attempt, remaining: seconds(clock.now.duration(to: deadline)))
+            if delay <= 0 { break }
+            try await Task.sleep(for: .seconds(delay))
+            attempt += 1
+        }
         return nil
+    }
+
+    private static func seconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
     }
 
     private static func appInfo(
@@ -1005,7 +1000,7 @@ private enum DesktopController {
         )
     }
 
-    private static func launchApp(_ input: DesktopRunInput, context: FeatureContext) throws -> NSRunningApplication {
+    private static func launchApp(_ input: DesktopRunInput, context: FeatureContext) async throws -> NSRunningApplication {
         let arguments: [String]
         let launchedBundleURL: URL?
         if let appPath = input.app_path?.nilIfBlank {
@@ -1028,31 +1023,26 @@ private enum DesktopController {
             throw DesktopControlError.missingArgument("app_path, bundle_id, or app_name", "launch_app")
         }
 
-        let result = try runProcess(executable: "/usr/bin/open", arguments: arguments)
+        let timeout = try boundedDouble(input.timeout ?? 5, name: "timeout", range: 0...30)
+        let result = try await runProcess(executable: "/usr/bin/open", arguments: arguments)
         guard result.status == 0 else {
             throw DesktopControlError.processFailed("Could not launch the application: \(result.message)")
         }
 
-        let timeout = try boundedDouble(input.timeout ?? 5, name: "timeout", range: 0...30)
-        let deadline = Date().addingTimeInterval(timeout)
         var observedApp: NSRunningApplication?
-        repeat {
+        let ready = try await DesktopProbePolicy.waitForLaunch(timeout: timeout, observe: { childTimeout in
             let matchedApp = matchingRunningApp(input, defaultToFrontmost: false)
                 ?? launchedBundleURL.flatMap { expectedURL in
                     NSWorkspace.shared.runningApplications.first {
                         $0.bundleURL?.standardizedFileURL == expectedURL
                     }
                 }
-            if let matchedApp {
-                observedApp = matchedApp
-                let probe = try applicationProbe(pid: matchedApp.processIdentifier)
-                if probe.exists && probe.is_finished_launching {
-                    return matchedApp
-                }
-            }
-            if Date() >= deadline { break }
-            Thread.sleep(forTimeInterval: max(0, min(0.1, deadline.timeIntervalSinceNow)))
-        } while true
+            guard let matchedApp else { return false }
+            observedApp = matchedApp
+            let probe = try await applicationProbe(pid: matchedApp.processIdentifier, timeout: childTimeout)
+            return probe.exists && probe.is_finished_launching
+        })
+        if ready, let observedApp { return observedApp }
 
         if observedApp != nil {
             throw DesktopControlError.operationFailed(
@@ -1064,7 +1054,7 @@ private enum DesktopController {
         )
     }
 
-    private static func openTarget(_ input: DesktopRunInput, context: FeatureContext) throws {
+    private static func openTarget(_ input: DesktopRunInput, context: FeatureContext) async throws {
         let target = try requiredNonempty(input.target, name: "target", action: "open")
         let resolvedTarget: String
         if let url = URL(string: target), let scheme = url.scheme, !scheme.isEmpty {
@@ -1088,7 +1078,7 @@ private enum DesktopController {
             arguments += ["-a", appName]
         }
         arguments.append(resolvedTarget)
-        let result = try runProcess(executable: "/usr/bin/open", arguments: arguments)
+        let result = try await runProcess(executable: "/usr/bin/open", arguments: arguments)
         guard result.status == 0 else {
             throw DesktopControlError.processFailed("Could not open the target: \(result.message)")
         }
@@ -1151,6 +1141,7 @@ private enum DesktopController {
     }
 
     private static func selectedQuartzWindow(_ input: DesktopRunInput) throws -> DesktopWindowInfo {
+        try DesktopSafetyPolicy.validateSelectors(windowID: input.window_id, windowIndex: input.window_index)
         let records: [DesktopWindowInfo]
         if input.window_id != nil {
             records = windowRecords(onScreenOnly: false, matching: input)
@@ -1179,10 +1170,12 @@ private enum DesktopController {
     private struct AXWindowCandidate {
         let element: AXUIElement
         let title: String?
-        let frame: CGRect
+        let frame: CGRect?
+        var identity: DesktopSafetyPolicy.WindowIdentity { .init(title: title, frame: frame) }
     }
 
     private static func selectedAXWindow(_ input: DesktopRunInput) throws -> AXWindowSelection {
+        try DesktopSafetyPolicy.validateSelectors(windowID: input.window_id, windowIndex: input.window_index)
         try requireAccessibility()
 
         let expected = input.window_id.flatMap { id in
@@ -1210,7 +1203,7 @@ private enum DesktopController {
             AXWindowCandidate(
                 element: element,
                 title: copyAXString(element, attribute: kAXTitleAttribute as CFString),
-                frame: axFrame(element) ?? .zero
+                frame: axFrame(element)
             )
         }
 
@@ -1219,16 +1212,16 @@ private enum DesktopController {
         }
 
         if let expected {
-            let expectedRect = CGRect(
-                x: expected.bounds.x,
-                y: expected.bounds.y,
-                width: expected.bounds.width,
-                height: expected.bounds.height
-            )
-            candidates.sort { lhs, rhs in
-                axMatchScore(lhs, expectedTitle: expected.title, expectedFrame: expectedRect)
-                    > axMatchScore(rhs, expectedTitle: expected.title, expectedFrame: expectedRect)
+            let identity = windowIdentity(expected)
+            let index = try DesktopSafetyPolicy.uniqueMatch(candidates.map(\.identity), expected: identity)
+            // Check the reverse association too: one AX element can otherwise
+            // appear unique when Quartz exposes two indistinguishable windows.
+            let quartz = windowRecords(onScreenOnly: false, matching: DesktopRunInput(windowLookupPID: pid, title: nil))
+            let quartzIndex = try DesktopSafetyPolicy.uniqueMatch(quartz.map(windowIdentity), expected: candidates[index].identity)
+            guard quartz[quartzIndex].window_id == expected.window_id else {
+                throw DesktopControlError.windowNotFound
             }
+            return AXWindowSelection(element: candidates[index].element, pid: pid, expected: expected)
         }
 
         let index = try boundedInteger(input.window_index ?? 0, name: "window_index", range: 0...500)
@@ -1236,32 +1229,43 @@ private enum DesktopController {
         return AXWindowSelection(element: candidates[index].element, pid: pid, expected: expected)
     }
 
-    private static func axMatchScore(_ candidate: AXWindowCandidate, expectedTitle: String?, expectedFrame: CGRect) -> Double {
-        var score = 0.0
-        if let expectedTitle, let title = candidate.title {
-            if title == expectedTitle { score += 1_000 }
-            else if title.localizedCaseInsensitiveContains(expectedTitle) { score += 250 }
-        }
-        let distance = abs(candidate.frame.origin.x - expectedFrame.origin.x)
-            + abs(candidate.frame.origin.y - expectedFrame.origin.y)
-            + abs(candidate.frame.width - expectedFrame.width)
-            + abs(candidate.frame.height - expectedFrame.height)
-        return score - Double(distance)
+    private static func windowIdentity(_ window: DesktopWindowInfo) -> DesktopSafetyPolicy.WindowIdentity {
+        .init(title: window.title, frame: CGRect(x: window.bounds.x, y: window.bounds.y,
+                                               width: window.bounds.width, height: window.bounds.height))
     }
 
-    private static func axWindowInfo(_ selection: AXWindowSelection, preferredWindowID: UInt32?) -> DesktopWindowInfo {
+    private static func axWindowInfo(_ selection: AXWindowSelection) -> DesktopWindowInfo {
         let frame = axFrame(selection.element) ?? .zero
         let app = NSRunningApplication(processIdentifier: selection.pid)
         let title = copyAXString(selection.element, attribute: kAXTitleAttribute as CFString)
-        let matchedWindow = windowRecords(
+        let records = windowRecords(
             onScreenOnly: false,
-            matching: DesktopRunInput(windowLookupPID: selection.pid, title: title)
-        ).min { lhs, rhs in
-            frameDistance(lhs.bounds, frame) < frameDistance(rhs.bounds, frame)
+            matching: DesktopRunInput(windowLookupPID: selection.pid, title: nil)
+        )
+        let index = try? DesktopSafetyPolicy.uniqueMatch(
+            records.map(windowIdentity), expected: .init(title: title, frame: axFrame(selection.element))
+        )
+        let matchedWindow = index.map { records[$0] }
+        var verifiedWindowID: UInt32?
+        if let matchedWindow {
+            let application = AXUIElementCreateApplication(selection.pid)
+            var rawWindows: CFTypeRef?
+            if AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &rawWindows) == .success,
+               let elements = rawWindows as? [AXUIElement] {
+                let identities = elements.map {
+                    DesktopSafetyPolicy.WindowIdentity(
+                        title: copyAXString($0, attribute: kAXTitleAttribute as CFString), frame: axFrame($0)
+                    )
+                }
+                if let axIndex = try? DesktopSafetyPolicy.uniqueMatch(identities, expected: windowIdentity(matchedWindow)),
+                   CFEqual(elements[axIndex], selection.element) {
+                    verifiedWindowID = matchedWindow.window_id
+                }
+            }
         }
 
         return DesktopWindowInfo(
-            window_id: preferredWindowID ?? matchedWindow?.window_id ?? selection.expected?.window_id,
+            window_id: verifiedWindowID,
             pid: selection.pid,
             app_name: app?.localizedName ?? matchedWindow?.app_name,
             bundle_id: app?.bundleIdentifier ?? matchedWindow?.bundle_id,
@@ -1274,13 +1278,6 @@ private enum DesktopController {
             is_minimized: copyAXBoolean(selection.element, attribute: kAXMinimizedAttribute as CFString),
             is_fullscreen: copyAXBoolean(selection.element, attribute: axFullScreenAttribute)
         )
-    }
-
-    private static func frameDistance(_ rect: DesktopRect, _ frame: CGRect) -> Double {
-        abs(rect.x - Double(frame.origin.x))
-            + abs(rect.y - Double(frame.origin.y))
-            + abs(rect.width - Double(frame.width))
-            + abs(rect.height - Double(frame.height))
     }
 
     private static func axFrame(_ element: AXUIElement) -> CGRect? {
@@ -1362,21 +1359,11 @@ private enum DesktopController {
 
     // MARK: Screenshot artifacts
 
-    private static func screenshot(_ input: DesktopRunInput, context: FeatureContext, action: String) throws -> DesktopRunOutput {
-        guard CGPreflightScreenCaptureAccess() else {
-            throw DesktopControlError.permissionRequired(
-                "Screen Recording permission is required. Run action=request_permissions, then allow ZenCODE/macOS in System Settings > Privacy & Security > Screen & System Audio Recording."
-            )
-        }
-
+    private static func screenshot(_ input: DesktopRunInput, context: FeatureContext, action: String) async throws -> DesktopRunOutput {
         let scope = (input.scope?.nilIfBlank ?? "display").lowercased()
         let delay = try boundedDouble(input.delay ?? 0, name: "delay", range: 0...30)
-        if delay > 0 { Thread.sleep(forTimeInterval: delay) }
-
-        let root = try artifactDirectory(context: context)
         let label = try sanitizedLabel(input.label)
-        let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let url = root.appendingPathComponent("\(label)-\(timestamp)-\(UUID().uuidString).png")
+
         var arguments = ["-x", "-tpng"]
         var displayIndex: Int?
         var windowID: UInt32?
@@ -1400,21 +1387,33 @@ private enum DesktopController {
             let origin = try requiredPoint(x: input.x, y: input.y, action: action)
             let width = try positiveFinite(input.width, name: "width", action: action)
             let height = try positiveFinite(input.height, name: "height", action: action)
-            let selectedRegion = CGRect(x: origin.x, y: origin.y, width: width, height: height)
-            guard desktopBounds().intersects(selectedRegion) else {
-                throw DesktopControlError.invalidArgument("x/y/width/height", "region does not intersect an attached display.")
+            let selectedRegion = try DesktopSafetyPolicy.captureRegion(
+                x: Double(origin.x), y: Double(origin.y), width: width, height: height
+            )
+            guard DesktopSafetyPolicy.intersects(selectedRegion.rect, displays: displayBounds()) else {
+                throw DesktopControlError.invalidArgument("x/y/width/height", "rounded region does not intersect an attached display.")
             }
-            arguments.append("-R\(Int(origin.x.rounded())),\(Int(origin.y.rounded())),\(Int(width.rounded())),\(Int(height.rounded()))")
-            region = selectedRegion
+            arguments.append(selectedRegion.argument)
+            region = selectedRegion.rect
         default:
             throw DesktopControlError.invalidArgument("scope", "must be display, window, or region.")
         }
 
+        guard CGPreflightScreenCaptureAccess() else {
+            throw DesktopControlError.permissionRequired(
+                "Screen Recording permission is required. Run action=request_permissions, then allow ZenCODE/macOS in System Settings > Privacy & Security > Screen & System Audio Recording."
+            )
+        }
+        if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
+        try Task.checkCancellation()
+        let root = try artifactDirectory(context: context)
+        let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let url = root.appendingPathComponent("\(label)-\(timestamp)-\(UUID().uuidString).png")
         if input.include_cursor ?? false { arguments.append("-C") }
         arguments.append(url.path)
 
         do {
-            let result = try runProcess(executable: "/usr/sbin/screencapture", arguments: arguments)
+            let result = try await runProcess(executable: "/usr/sbin/screencapture", arguments: arguments)
             guard result.status == 0 else {
                 throw DesktopControlError.processFailed("Screenshot capture failed: \(result.message)")
             }
@@ -1641,8 +1640,10 @@ private enum DesktopController {
     }
 
     private static func typeText(_ text: String, interval: Double) throws {
+        try Task.checkCancellation()
         let source = try eventSource()
         for character in text {
+            try Task.checkCancellation()
             let units = Array(String(character).utf16)
             guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
                   let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
@@ -1727,22 +1728,11 @@ private enum DesktopController {
         }
     }
 
-    private static func runProcess(executable: String, arguments: [String]) throws -> ProcessResult {
-        let process = Process()
-        let errorPipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = errorPipe
-        do {
-            try process.run()
-        } catch {
-            throw DesktopControlError.processFailed("Could not start \(executable): \(error.localizedDescription)")
-        }
-        process.waitUntilExit()
-        let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        return ProcessResult(status: process.terminationStatus, stderr: String(decoding: data, as: UTF8.self))
+    private static func runProcess(executable: String, arguments: [String]) async throws -> ProcessResult {
+        let result = try await DesktopProcess.run(
+            executableURL: URL(fileURLWithPath: executable), arguments: arguments
+        )
+        return ProcessResult(status: result.exitCode, stderr: String(decoding: result.stderrData, as: UTF8.self))
     }
 
     private static func requiredNonempty(_ value: String?, name: String, action: String, allowEmpty: Bool = false) throws -> String {
@@ -1800,14 +1790,12 @@ private enum DesktopController {
         try boundedDouble(value ?? 0.2, name: "duration", range: 0...10)
     }
 
-    private static func desktopBounds() -> CGRect {
-        NSScreen.screens.reduce(CGRect.null) { partial, screen in
-            partial.union(CGDisplayBounds(displayID(for: screen)))
-        }
+    private static func displayBounds() -> [CGRect] {
+        NSScreen.screens.map { CGDisplayBounds(displayID(for: $0)) }
     }
 
     private static func validateDesktopPoint(_ point: CGPoint, argument: String) throws {
-        guard desktopBounds().contains(point) else {
+        guard DesktopSafetyPolicy.contains(point, displays: displayBounds()) else {
             throw DesktopControlError.invalidArgument(argument, "point lies outside all attached displays; call system_info for global bounds.")
         }
     }

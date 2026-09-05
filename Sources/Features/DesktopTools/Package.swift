@@ -27,7 +27,10 @@ let package = Package(
         ),
         .testTarget(
             name: "DesktopToolsFeatureTests",
-            dependencies: ["desktop-tools-feature"],
+            dependencies: [
+                "desktop-tools-feature",
+                .product(name: "FeatureKit", package: "ZenCODE")
+            ],
             swiftSettings: memberImportVisibilitySettings
         )
     ]
