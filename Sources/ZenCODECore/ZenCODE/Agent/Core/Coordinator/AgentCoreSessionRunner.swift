@@ -24,6 +24,7 @@ public actor AgentCoreSessionRunner {
     /// before the change cannot cache or restore state afterwards.
     typealias SessionGeneration = AgentCoreSessionSnapshotStore.Generation
 
+    var memoryLearningPermits: [String: MemoryLearningPermit] = [:]
     var backendManager = AgentCoreBackendManager()
     var backend: AgentCoreBackend? {
         get { backendManager.backend }

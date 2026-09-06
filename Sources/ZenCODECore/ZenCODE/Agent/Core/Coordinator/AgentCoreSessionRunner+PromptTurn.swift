@@ -84,6 +84,9 @@ extension AgentCoreSessionRunner {
         // close/reset/rebuild drops this generation and fences the turn's
         // snapshot cache and backend restore.
         let sessionGeneration = currentSessionGeneration(for: configuration.sessionID)
+        let learningPermit = memoryLearningPermits[configuration.sessionID] ?? MemoryLearningPermit()
+        memoryLearningPermits[configuration.sessionID] = learningPermit
+        let learningLedger = MemoryLearningLedger(workspace: configuration.workingDirectory, prompt: prompt)
         let initialSnapshot = await backend.snapshotSession(id: configuration.sessionID)
             ?? AgentRuntimeSessionSnapshot(configuration: configuration)
         try verifyBackendGeneration(generation)
@@ -126,6 +129,7 @@ extension AgentCoreSessionRunner {
                         attachments: attachments,
                         onEvent: { event in
                             await turnRecorder.record(event)
+                            await learningLedger.record(event)
                             if case let .toolCallStarted(toolCall) = event {
                                 await onToolWillExecute?(toolCall)
                             }
@@ -135,6 +139,15 @@ extension AgentCoreSessionRunner {
                 }
             }
             try verifyBackendGeneration(generation)
+            let grants: Set<String>? = configuration.appMode ? (configuration.allowedToolNames ?? []) : configuration.allowedToolNames
+            let mayWriteMemory = DirectToolExecutor.isAllowed("memory.write", allowedToolNames: grants)
+                || DirectToolExecutor.isAllowed("memory.update", allowedToolNames: grants)
+            if mayWriteMemory {
+                await consolidateMemory(ledger: learningLedger, permit: learningPermit, event: promptID,
+                    configuration: configuration, backend: backend, generation: generation,
+                    sessionGeneration: sessionGeneration,
+                    authorize: authorizeTool ?? defaultToolAuthorizationHandler)
+            }
             await finalizeTurn(
                 outcome: .completed,
                 backend: backend,

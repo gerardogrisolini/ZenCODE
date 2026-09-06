@@ -359,7 +359,7 @@ public actor DirectToolExecutor {
         preferredWorkspaceRootURL: URL? = nil,
         sessionID: String? = nil
     ) async -> [DirectToolDescriptor] {
-        if allowedToolNames?.isEmpty == true {
+        if MemoryConsolidationContext.isIsolated || allowedToolNames?.isEmpty == true {
             return []
         }
         let preferredWorkspaceRootURL = preferredWorkspaceRootURL
@@ -510,6 +510,11 @@ public actor DirectToolExecutor {
         workingDirectory: URL,
         allowedToolNames: Set<String>? = nil
     ) async -> DirectAgentToolResult {
+        // Fail closed before feature discovery, execution, shared-chat delivery
+        // or logging, including a hallucinated tool call in an isolated request.
+        if MemoryConsolidationContext.isIsolated {
+            return DirectAgentToolResult(output: "Tools unavailable.", summary: "Tools unavailable.", status: .permissionDenied)
+        }
         let clock = ContinuousClock()
         let started = clock.now
         let result: DirectAgentToolResult

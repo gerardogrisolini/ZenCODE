@@ -10,6 +10,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Conservative automatic project-memory consolidation after eligible root turns:
+  one isolated, tool-less request to the current model/backend may propose a
+  verified error/correction lesson, explicit project decision, or durable fact.
+  Runtime citation/order/privacy/grant checks, atomic current-state deduplication,
+  and limits of one mutation per event / three per root session also cover updates
+  and manual-write races. Empty output is normal; failed/cancelled turns and task
+  completion alone are not evidence. Initial adapters support bounded project-file
+  evidence and Swift build/test invocation outcomes; causal relevance and semantic
+  deduplication remain model judgments with documented limits. Temporary requests
+  do not inherit recall, history, tools, user cache keys, or persisted session state.
+  Existing memory tools and JSON formats are unchanged; no `MEMORY.md` is restored.
+
 ### Removed
 
 - Removed all legacy `MEMORY.md` handling, including parsing, import, migration,

@@ -95,7 +95,8 @@ extension ChatGPTSubscriptionGenerationClient {
     }
 
     func promptCacheKey(for identity: SessionIdentity) -> String? {
-        promptCacheKeysByIdentity[identity]
+        guard !MemoryConsolidationContext.isIsolated else { return nil }
+        return promptCacheKeysByIdentity[identity]
             ?? storedPromptCacheKeysByIdentity[identity.promptCachePersistenceKey]
     }
 
@@ -104,6 +105,7 @@ extension ChatGPTSubscriptionGenerationClient {
         _ promptCacheKey: String,
         for identity: SessionIdentity
     ) -> String {
+        guard !MemoryConsolidationContext.isIsolated else { return promptCacheKey }
         promptCacheKeysByIdentity[identity] = promptCacheKey
         guard identity.connectionScopeID == nil else {
             return promptCacheKey

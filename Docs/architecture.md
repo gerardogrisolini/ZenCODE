@@ -280,7 +280,7 @@ and `isCore` overrides and permissions.
 | `Sources/Features/BrowserTools/Sources/browser-tools-feature` | Thin `browser-tools-feature` executable target that delegates to `BrowserToolsFeatureRunner`. |
 | `Sources/Features/DesktopTools` | Standalone macOS-only `desktop-tools-feature` package exposing the single typed tool `desktop.run`: permission/system inspection, app and window enumeration, PNG screenshots attached to the model's multimodal context, pointer/keyboard/clipboard input, and app/window management through AppKit, Accessibility, and Quartz. It must never execute caller-supplied shell or AppleScript code, must not be enabled in a default agent profile, and requires Screen Recording plus Accessibility consent (`action=permissions` first). `isInstalledOnLinux` is `false` because the platform integration does not exist there. |
 | `Sources/LocalToolsSupport` | Reusable local file, search, text, and patch tooling. |
-| `Sources/ZenCODECore/ZenCODE/Memory/Engine` | Internal memory implementation area within the `ZenCODECore` target; it is not a separate Foundation-only module or public product. It is an MIT-licensed independent Swift implementation of the memory architecture of `1jehuang/jcode`, attributed in `THIRD_PARTY_NOTICES.md`. It owns the memory graph, typed edges, lexical retrieval through a pluggable `MemoryIndex` protocol (default `BM25MemoryIndex`), optional semantic retrieval through a pluggable `EmbeddingProvider` (reciprocal-rank fusion only when one is present), a breadth-first cascade with depth decay, the confidence lifecycle, persistence, and embedding provider protocols. The graph, BM25 path, default selectors, and persistence remain dependency-free; opt-in OpenAI-compatible transport adapters and ZenCODE diagnostic seams live in the same implementation-private target and are not installed when a store opens. Retrieval is also pluggable end to end through a `MemoryQueryAnalyzer` (default `DirectMemoryQueryAnalyzer`, which uses the prompt verbatim as the query), a `MemorySelector` (default `TopScoreMemorySelector`), a `MemoryExtractor` (default `NoopMemoryExtractor`, which extracts nothing) and a `MemoryContextFormatter` (default `BulletMemoryContextFormatter`); every default is dependency-free and makes no network call. The engine additionally exposes `context(for:)` (a ready-to-inject memory block) and `learn(from:)` (automatic extraction), and ships LLM-backed analyzer/selector/extractor implementations over the `MemoryLanguageModel` / `OpenAICompatibleChatModel` contracts; all of these stay unwired engine internals — opening a product store never installs a network-backed extractor or makes a generation request. ZenCODECore wires only automatic recall through its `MemoryTurnCoordinator`: it calls the store's `context(for:scope:)` inline before every turn and is on by default over the dependency-free BM25 path (no second LLM call — the formatted block rides the turn's own outgoing request). Durable entries are read and written explicitly by the main model through the five `memory.*` tools (`memory.read` / `memory.search` / `memory.write` / `memory.update` / `memory.archive`), guided by `MemoryService.toolUsagePromptSection()`. The `MemoryVerifier` protocol is deprecated in favour of `MemorySelector`. This source area is implementation-private within `ZenCODECore`, not a separate SwiftPM target or public library product. |
+| `Sources/ZenCODECore/ZenCODE/Memory/Engine` | Internal memory implementation area within the `ZenCODECore` target; it is not a separate Foundation-only module or public product. It is an MIT-licensed independent Swift implementation of the memory architecture of `1jehuang/jcode`, attributed in `THIRD_PARTY_NOTICES.md`. It owns the memory graph, typed edges, lexical retrieval through a pluggable `MemoryIndex` protocol (default `BM25MemoryIndex`), optional semantic retrieval through a pluggable `EmbeddingProvider` (reciprocal-rank fusion only when one is present), a breadth-first cascade with depth decay, the confidence lifecycle, persistence, and embedding provider protocols. The graph, BM25 path, default selectors, and persistence remain dependency-free; opt-in OpenAI-compatible transport adapters and ZenCODE diagnostic seams live in the same implementation-private target and are not installed when a store opens. Retrieval is also pluggable end to end through a `MemoryQueryAnalyzer` (default `DirectMemoryQueryAnalyzer`, which uses the prompt verbatim as the query), a `MemorySelector` (default `TopScoreMemorySelector`), a `MemoryExtractor` (default `NoopMemoryExtractor`, which extracts nothing) and a `MemoryContextFormatter` (default `BulletMemoryContextFormatter`); every default is dependency-free and makes no network call. The engine additionally exposes `context(for:)` (a ready-to-inject memory block) and `learn(from:)` (automatic extraction), and ships LLM-backed analyzer/selector/extractor implementations over the `MemoryLanguageModel` / `OpenAICompatibleChatModel` contracts; all of these stay unwired engine internals — opening a product store never installs a network-backed extractor or makes a generation request. ZenCODECore wires automatic recall through its `MemoryTurnCoordinator`: it calls the store's `context(for:scope:)` inline before every turn and is on by default over the dependency-free BM25 path (no second LLM call — the formatted block rides the turn's own outgoing request). Durable entries are read and written explicitly by the main model through the five `memory.*` tools (`memory.read` / `memory.search` / `memory.write` / `memory.update` / `memory.archive`), guided by `MemoryService.toolUsagePromptSection()`. The `MemoryVerifier` protocol is deprecated in favour of `MemorySelector`. This source area is implementation-private within `ZenCODECore`, not a separate SwiftPM target or public library product. |
 | `Sources/ZenPackageMetadata` | Internal bundled-feature distribution metadata used for catalog parity; it is not a public product. |
 | `Sources/Features/<Feature>` | A self-contained optional SwiftPM package with its own `Package.swift`, `Sources/<product-name>/`, and package-local `Tests/`. It is outside the root graph; keep the entry point thin and place implementation in feature-owned support or library targets. The marker `// zencode:package-path` must immediately precede the root `.package(path: "../../..")` dependency so installation can rewrite only that path. |
 | `Sources/ZenCODECore/ZenCODE` | Runtime domains: `Agent`, `Remote`, `Tools`, `Features`, `Context`, `Memory`, `FileChanges`, `Runtime`, `Setup`, `Telegram`, and `Support`; `ZenCODETUI` and ACP remain source areas within this target. The `Memory` domain is an async facade over the internal `Memory/Engine` implementation: `MemoryGraphLocation`, `MemoryGraphStore`, `MemoryService`, `MemoryLegacyCompatibility` (the deprecated 1.1.x synchronous surface), and the automatic-recall pipeline (`MemoryTurnCoordinator`, `MemoryTurnContext`, `MemoryAutomationSettings`). `MemoryService+Documents.swift` is removed. ZenCODECore exposes its own public DTOs (`MemoryEntry`, `MemoryScope`, `MemoryCategory` under `ZenCODE/Models`) that preserve the 1.1.x contract (`id: UUID`, `Hashable`, journal-shaped scope); the internal engine implementation keeps its graph types hidden behind the facade. |
@@ -543,8 +543,102 @@ fresh evidence over memory). `MemoryTurnCoordinator` drives recall only, and
 `MemoryTurnCoordinator.discard(sessionID:)` drops only per-session recall health
 state on close/reset/rebuild. The engine's `learn(from:)`, its default
 `NoopMemoryExtractor` (which extracts nothing), and its LLM-backed extractor
-stay unwired internals of `ZenMemory`, so no product code path ever performs an
-extraction request.
+stay unwired internals of `ZenMemory`. Selective product consolidation instead
+uses the runner-owned same-backend path described below; opening a store alone
+still never performs an extraction request.
+
+### Conservative project-memory consolidation
+
+`AgentCoreSessionRunner` is the sole automatic writer owner. After a successful
+root turn, while retaining the turn lease, `MemoryLearningLedger` offers a bounded
+**new tool-evidence delta**, not the conversation. Delegated runtimes do not run
+independent extractors; their summaries and task `succeeded` / `validatedAt`
+(including empty evidence) are not proof and are not imported into this ledger.
+Cancelled/failed turns and unresolved failures do not consolidate. Existing manual
+`memory.*` semantics and all public protocols/JSON formats remain unchanged.
+
+The initial, intentionally narrow evidence adapters recognize correlated
+`local.editFile`, `local.multiEdit`, `local.writeFile`, bounded `local.readFile`,
+and `swift.test` / `swift.build` results. A substantive explicit-decision cue in
+the current user prompt plus an observed project file can trigger a decision
+proposal without an error or test. There is no mandatory user prefix: English
+and Italian cue fragments only limit calls; the model must judge actual explicit
+project intent. An anaphoric “yes” is insufficient. Other facts require a file
+correction and a later verification. Ordinary conversation, assistant claims,
+thoughts, task completion, recalled notes, and generic operational preferences
+are never evidence. Only an explicit allowlist of known read-only observations
+can be ignored safely; other commands (including `local.exec`, `swift.run`,
+`swift.package` and pathless `local.applyPatch`) invalidate the delta rather than
+leaving an earlier verification apparently current. Later failures, even uncited
+or differently scoped, cannot be hidden behind an old pass; every observed failing
+invocation needs a later matching pass. Uninterpretable/out-of-root verification
+fails closed. Only same-turn chains are supported initially. Root and evidence
+paths resolve symlinks before containment checks; both alias and target paths are
+screened for sensitivity. This is not protection against concurrent filesystem
+symlink replacement between tool execution and evidence observation.
+
+A lesson must cite an observed failure, a supported cause from file/correction
+evidence, an identified correction, a later relevant successful verification,
+and prevention mentioning the actual project path. Runtime checks citation
+existence, kind, ordering, bounds, and identical failing/passing invocation and
+workspace scope. Test metadata is parsed only from the structured header and
+requires explicit non-timeout/non-truncation flags; raw tails are discarded.
+Build summaries lack completeness metadata, so **only invocation/status** is
+retained: build diagnostics cannot establish a cause. Causal explanation, actual
+project-decision intent, and verification relevance to the correction remain model
+judgments, **not automatically proven correctness**. No candidate is a normal
+outcome; there is no quota to fill. Unsupported tools/projects may yield no
+learning even after useful work.
+
+Eligible events use one additional request (with cost and latency) through the
+already active `AgentCoreBackend` / `AgentRuntimeBackend`, reusing its provider,
+model and compatible generation/thinking settings, never resolving a new provider
+or credentials. The ephemeral session has empty history, no user cache key, no
+recall, no runner snapshot/seed/skill/task-graph registration, and an empty tool
+allowlist. An internal task-local isolation flag additionally disables tool
+catalogue/provider discovery and rejects even attempted execution before logging
+or shared-chat delivery. The production remote clients refuse to recreate a
+missing isolated session with default grants. ChatGPT cache-key lookup/persistence
+is bypassed for this request. Its output/events never reach the normal user
+stream; the normal response is unchanged. Structured child tasks enforce an
+8-second deadline, cancel/close the temporary session and join request cleanup;
+no detached extraction survives its turn. A non-cooperative custom backend can
+extend cleanup latency: bounded abandonment is deliberately not used. Close,
+reset and backend replacement fence stale commits and close temporary sessions.
+Backend replacement and same-session rebuild rotate the incarnation fence while
+sharing the remaining logical-session budget and event deduplication. Old tokens
+cannot reserve or commit, and subsequent turns can use only the remaining slots;
+only logical reset/close or shutdown discards the budget.
+
+The runtime checks the same tool-grant classifier before the extra request and
+again for the proposed `memory.write`/`memory.update`; installed authorization
+handlers also approve the concrete mutation. Read-only profiles cannot acquire
+write capability through automation. Privacy rejects credential-shaped text,
+sensitive paths, and overlong material before request assembly and again before
+persistence; known key prefixes, credential fields, bearer/JWT/private keys and
+credential-bearing URLs are covered. This is heuristic filtering, **not a
+comprehensive secret detector**. At most 24 evidence items (2400 characters each),
+24 relevant existing notes (8000 characters total), and a 32000-character / 64000-byte
+assembled input are admitted. A saturated evidence ledger fails closed. Notes
+are at most 1000 characters including preserved citation IDs and project paths;
+raw transcript/logs and truncated evidence are not persisted.
+
+`MemoryGraphStore.commitLearning` is a separate atomic transaction, not a call
+to the legacy multi-draft `learn`. The model sees bounded lexically relevant
+existing notes solely for semantic deduplication. A complete active-note content
+set stays runtime-only for compare-and-swap and global exact/lexical-near-duplicate
+checks. Any concurrent/manual content or archive change makes the proposal a
+no-op. Semantic equivalence beyond the selected notes is **not guaranteed**.
+Only IDs from the actual bounded lookup are accepted for updates. Automatic
+updates enrich rather than erase manual information, preserve original metadata,
+IDs, tags and archive boundaries, and skip a merge that exceeds the note budget.
+This path does not generate embeddings; changed entries clear obsolete vectors.
+An incarnation permit is rechecked inside the transaction: at most one mutation
+per event and three per root session, including updates. Failed-save reservations
+may conservatively consume budget. Retry races cannot spend the same event twice.
+Successful commits use the existing memory-change notification; errors are
+best-effort diagnostics, never a change to the work result.
+
 
 ZenCODECore installs its own `ScoreThresholdMemorySelector` (a `MemorySelector`)
 in place of the engine's default `TopScoreMemorySelector`. The default returns

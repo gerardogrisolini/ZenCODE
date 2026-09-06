@@ -337,9 +337,10 @@ extension AgentCoreSessionRunner {
     /// Rebuilds transient model/session state while preserving the authoritative
     /// task graph for the same session identity.
     public func rebuildSession(id sessionID: String) async {
+        memoryLearningPermits[sessionID] = memoryLearningPermits[sessionID]?.renewed()
         promptTaskRegistry.cancelAll(for: sessionID)
         await waitForPromptTasks(for: sessionID)
-        invalidateSessionGeneration(for: sessionID)
+        invalidateSessionGeneration(for: sessionID, preservingLearningBudget: true)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
         promptSkillProvidersBySessionID.removeValue(forKey: sessionID)
@@ -378,7 +379,12 @@ extension AgentCoreSessionRunner {
     /// surface a checkpoint-deletion failure instead of treating teardown as
     /// best-effort. The original non-throwing API remains available.
     public func resetSessionThrowing(id sessionID: String? = nil) async throws {
+        if sessionID == nil {
+            memoryLearningPermits.values.forEach { $0.invalidate() }
+            memoryLearningPermits.removeAll()
+        }
         if let sessionID {
+            memoryLearningPermits.removeValue(forKey: sessionID)?.invalidate()
             _ = await interruptSubAgents(rootSessionID: sessionID)
             await rebuildSession(id: sessionID)
             try await taskOrchestrator.discardSession(id: sessionID)
@@ -468,6 +474,8 @@ extension AgentCoreSessionRunner {
     }
 
     public func shutdown() async {
+        memoryLearningPermits.values.forEach { $0.invalidate() }
+        memoryLearningPermits.removeAll()
         // Latch before the first suspension: an `ensureBackend` caller that is
         // already parked in the single-flight preparation observes this and
         // gives up, instead of looping and building a fresh backend for a
@@ -498,6 +506,8 @@ extension AgentCoreSessionRunner {
     /// retains the compatibility wrapper, completes the established teardown
     /// after a memory-flush failure, then makes that failure observable.
     public func shutdownBackendKeepingExternalToolsThrowing() async throws {
+        memoryLearningPermits.values.forEach { $0.invalidate() }
+        memoryLearningPermits.removeAll()
         await cancelAllPromptTasksAndWait()
         authorizationRouter.discardAll()
         // Fence in-flight backend creation and session work before suspending.
@@ -682,6 +692,8 @@ extension AgentCoreSessionRunner {
     }
 
     private func resetBackend() async {
+        // Rotate fences, retaining the logical-session budget for subsequent turns.
+        memoryLearningPermits = memoryLearningPermits.mapValues { $0.renewed() }
         let backendToShutdown = backendManager.invalidateBackend()
         // A runtime mismatch (for example another ACP session selecting a
         // different model or cwd) replaces the single backend, not the logical
@@ -713,7 +725,10 @@ extension AgentCoreSessionRunner {
         snapshotStore.currentGeneration(for: sessionID)
     }
 
-    private func invalidateSessionGeneration(for sessionID: String) {
+    private func invalidateSessionGeneration(for sessionID: String, preservingLearningBudget: Bool = false) {
+        if !preservingLearningBudget {
+            memoryLearningPermits.removeValue(forKey: sessionID)?.invalidate()
+        }
         snapshotStore.discard(sessionID)
     }
 

@@ -15,6 +15,7 @@ extension AnthropicSubscriptionGenerationClient {
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
         if sessions[sessionID] == nil {
+            guard !MemoryConsolidationContext.isIsolated else { throw CancellationError() }
             createSession(id: sessionID, cwd: configuration.workingDirectory.path)
         }
         guard var session = sessions[sessionID] else {
