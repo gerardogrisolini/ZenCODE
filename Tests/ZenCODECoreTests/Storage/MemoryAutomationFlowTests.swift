@@ -389,24 +389,29 @@ struct MemoryAutomationFlowTests {
     func recallDegradesToNilOnTimeout() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
-        // Seed a large legacy journal directly (no prior open), so the very
-        // first recall must cold-migrate thousands of entries. That open is
-        // reliably slower than the minimum 10 ms budget, so the racing deadline
-        // wins and recall degrades to nil instead of waiting for the migration.
-        // The abandoned migration keeps warming the registry cache in the
-        // background; later turns for the same workspace would be served warm.
-        try workspace.writeLegacyJournal(largeLegacyJournal(entryCount: 5_000))
-
-        await workspace.withIsolatedSupport {
+        // Delay query embedding, not store opening, to exercise the deadline.
+        // Keep the JSON fixture unrelated to the query so BM25 fallback is empty.
+        try await workspace.withIsolatedSupport {
+            var graph = MemoryGraph()
+            graph.addMemory(EngineMemoryEntry(
+                id: UUID().uuidString,
+                category: .fact,
+                content: "garden irrigation schedule"
+            ))
+            try await JSONMemoryPersistence(url: workspace.graphURL()).save(graph)
             await scopedEnv([
                 MemoryAutomationSettings.environmentRecallTimeoutKey: "10"
             ]) {
                 let started = ContinuousClock.now
-                let block = await MemoryTurnCoordinator.shared.memoryBlock(
-                    sessionID: "timeout-\(UUID().uuidString)",
-                    workspaceRootURL: workspace.workspaceURL,
-                    prompt: "frobnicator"
-                )
+                let block = await MemoryEmbedding.withProvider(
+                    DelayedMemoryEmbeddingProvider(delay: .seconds(2))
+                ) {
+                    await MemoryTurnCoordinator.shared.memoryBlock(
+                        sessionID: "timeout-\(UUID().uuidString)",
+                        workspaceRootURL: workspace.workspaceURL,
+                        prompt: "frobnicator"
+                    )
+                }
                 let elapsed = started.duration(to: ContinuousClock.now)
 
                 #expect(block == nil)
@@ -1095,19 +1100,4 @@ private func setEnv(_ key: String, _ value: String?) {
     } else {
         unsetenv(key)
     }
-}
-
-/// Builds a legacy `MEMORY.md` with `entryCount` dated entries that all mention
-/// the `frobnicator` keyword, so a cold first-open migration does real work.
-private func largeLegacyJournal(entryCount: Int) -> String {
-    var lines = ["# MEMORY.md", "", "## Active", ""]
-    for index in 0..<entryCount {
-        lines.append("""
-        - Timestamp: 2026-01-\(String(format: "%02d", (index % 28) + 1)) 09:00 Europe/Rome
-          Summary: frobnicator note \(index).
-          State: the quantum flange calibrates frobnicator \(index) for deploy.
-          Next: keep it.
-        """)
-    }
-    return lines.joined(separator: "\n")
 }

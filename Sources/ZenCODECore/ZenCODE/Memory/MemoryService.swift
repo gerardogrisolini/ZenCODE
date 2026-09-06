@@ -9,9 +9,7 @@ import Foundation
 
 /// Async facade over the per-workspace MemoryEngine graph.
 ///
-/// The durable store is the graph, not `MEMORY.md`. An existing `MEMORY.md` is
-/// imported on first open (in memory only — see ``MemoryGraphStore/open``) and
-/// then left untouched on disk as a legacy human-readable artifact.
+/// The durable store is exclusively the per-workspace JSON graph.
 ///
 /// `@unchecked Sendable`: the only stored property is a `FileManager`, which is
 /// not formally `Sendable` but is documented as safe to call from multiple
@@ -19,39 +17,7 @@ import Foundation
 /// checks, and never assigns a delegate. All mutable state lives behind
 /// `MemoryGraphStore`.
 public final class MemoryService: @unchecked Sendable {
-    public static let filename = "MEMORY.md"
     public static let entriesDidChangeNotification = Notification.Name("MemoryEntriesDidChange")
-    public static let defaultProjectMemoryContent: String = """
-    # MEMORY.md
-
-    Durable project journal for this workspace.
-
-    Use this file for:
-    - concise handoff entries for significant completed work
-    - a release or publication record once the version, artifacts, and validation are known
-    - current validated project state
-    - blockers, caveats, or decisions that affect future work
-    - the next logical step for the codebase
-
-    Preferred entry shape:
-    - Timestamp: YYYY-MM-DD HH:mm TimeZone
-    - Updated: YYYY-MM-DD HH:mm TimeZone, added when an existing entry changes
-    - Summary: durable milestone or change, not a command-by-command history
-    - State: current validated state, including version/tag and important caveats when relevant
-    - Next: next logical open step, or `None currently` when no useful follow-up remains
-
-    Do not use this file for:
-    - every command or tool call
-    - raw outputs, detailed logs, or large diffs
-    - temporary progress, speculative plans, or unverified claims
-    - general user preferences or operating rules
-    - information already obvious from current files
-
-    ## Active
-
-    ## Archived
-    """
-
     private let fileManager: FileManager
 
     public init(fileManager: FileManager = .default) {
@@ -260,7 +226,6 @@ public final class MemoryService: @unchecked Sendable {
         }
         let standardizedRoot = workspaceRootURL.standardizedFileURL
         return try await MemoryGraphStoreRegistry.shared.store(
-            forWorkspaceRoot: standardizedRoot,
             graphURL: MemoryGraphLocation.graphURL(
                 for: standardizedRoot,
                 fileManager: fileManager
@@ -318,8 +283,6 @@ public enum MemoryServiceError: LocalizedError {
     case scopeUnavailable(String)
     case invalidIdentifier(String)
     case entryNotFound(String)
-    case documentUnreadable(String)
-    case invalidDocument(String)
 
     public var errorDescription: String? {
         switch self {
@@ -331,10 +294,6 @@ public enum MemoryServiceError: LocalizedError {
             return "Invalid memory identifier: \(identifier)."
         case let .entryNotFound(identifier):
             return "No memory entry was found for \(identifier)."
-        case let .documentUnreadable(path):
-            return "MEMORY.md could not be read safely at \(path); it was left unchanged."
-        case let .invalidDocument(path):
-            return "MEMORY.md has an unrecognized format at \(path); it was left unchanged and not migrated."
         }
     }
 }

@@ -183,7 +183,7 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         _ body: @Sendable (inout MemoryGraph) throws -> T
     ) async throws -> (result: T, graph: MemoryGraph, didChange: Bool) {
         try withExclusiveFileLock {
-            // A lazy legacy migration lives only in the engine until its first
+            // An initial graph can live only in the engine until its first
             // mutation. Seed only a genuinely absent file; once any process has
             // committed, always reload that durable graph under this lock.
             var graph = if FileManager.default.fileExists(atPath: url.path) {

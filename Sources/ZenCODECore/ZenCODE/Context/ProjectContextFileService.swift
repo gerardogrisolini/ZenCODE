@@ -9,10 +9,9 @@ import Foundation
 
 public enum ProjectContextFileKind: String, CaseIterable, Hashable, Identifiable, Sendable {
     case agents
-    case memory
 
     public static var allCases: [ProjectContextFileKind] {
-        [.agents, .memory]
+        [.agents]
     }
 
     public var id: String {
@@ -23,8 +22,6 @@ public enum ProjectContextFileKind: String, CaseIterable, Hashable, Identifiable
         switch self {
         case .agents:
             return AgentsContextService.filename
-        case .memory:
-            return MemoryService.filename
         }
     }
 

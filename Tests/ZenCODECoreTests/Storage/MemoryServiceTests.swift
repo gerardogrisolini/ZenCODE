@@ -5,8 +5,7 @@
 //  Created by Gerardo Grisolini on 27/05/26.
 //
 //  Graph-backed memory facade tests. The durable store is the MemoryEngine
-//  graph; MEMORY.md is no longer written, only migrated in memory on first
-//  open and persisted by the first mutation.
+//  graph, loaded from JSON and persisted by mutations.
 //
 
 import Foundation
@@ -17,19 +16,13 @@ import Testing
 @Suite
 struct MemoryServiceTests {
     @Test
-    func memoryTemplatesDescribeProjectResponsibilities() {
-        #expect(MemoryService.defaultProjectMemoryContent.contains("Durable project journal"))
-        #expect(MemoryService.defaultProjectMemoryContent.contains("Timestamp: YYYY-MM-DD HH:mm TimeZone"))
+    func memoryPromptDescribesProjectResponsibilities() {
         #expect(MemoryService.toolUsagePromptSection().contains("Treat durable project memory as first-class context"))
         #expect(!MemoryService.toolUsagePromptSection().localizedCaseInsensitiveContains("global memory"))
         #expect(MemoryService.toolUsagePromptSection().contains("At the end of a substantial project turn"))
         #expect(MemoryService.toolUsagePromptSection().contains("release, version, or publication"))
         #expect(MemoryService.toolUsagePromptSection().contains("concrete evidence"))
         #expect(MemoryService.toolUsagePromptSection().contains("speculative plans"))
-        #expect(MemoryService.defaultProjectMemoryContent.contains("release or publication record"))
-        #expect(MemoryService.defaultProjectMemoryContent.contains("unverified claims"))
-        #expect(MemoryService.defaultProjectMemoryContent.contains("durable milestone or change"))
-        #expect(MemoryService.defaultProjectMemoryContent.contains("None currently"))
         #expect(MemoryService.toolUsagePromptSection().contains("architecture, compatibility, dependencies, or persisted formats"))
         #expect(MemoryService.toolUsagePromptSection().contains("perform the appropriate mutation before finishing"))
         #expect(MemoryService.toolUsagePromptSection().contains("version or changelog edit alone"))
@@ -43,24 +36,6 @@ struct MemoryServiceTests {
         #expect(prompt.contains("do not claim to create, update, archive"))
         #expect(prompt.contains("memory.search"))
         #expect(!prompt.contains("Before writing"))
-    }
-
-    @Test
-    func emptyTemplateJournalMigratesToEmptyGraph() async throws {
-        // The default template has the Active/Archived sections but no entries,
-        // so migrating it must seed an empty graph rather than parsing the
-        // guidance bullets as memory.
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        try workspace.writeLegacyJournal(MemoryService.defaultProjectMemoryContent)
-
-        try await workspace.withIsolatedSupport {
-            let entries = try await MemoryService().readEntries(
-                workspaceRootURL: workspace.workspaceURL,
-                limit: 10
-            )
-            #expect(entries.isEmpty)
-        }
     }
 
     @Test

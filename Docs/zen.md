@@ -505,7 +505,7 @@ Durable context is separated by responsibility:
   automatically.
 - Global `~/.zencode/AGENTS.md` — cross-workspace operating rules. This file is
   separate from the project file and applies across working directories.
-- Project memory — a per-workspace graph of durable project facts stored outside the working tree at `~/.zencode/memory/<workspace-digest>/memory.graph.json` (honouring `ZENCODE_SUPPORT_DIRECTORY`). A legacy project `MEMORY.md` is imported into the graph in memory on first open and then left untouched — the graph file is created only by the first memory mutation or recall maintenance, so a cold search/read never writes — and `MEMORY.md` itself is no longer written. Memory is project-scoped only; there is no global memory store.
+- Project memory — a per-workspace graph of durable project facts stored outside the working tree at `~/.zencode/memory/<workspace-digest>/memory.graph.json` (honouring `ZENCODE_SUPPORT_DIRECTORY`). Opening loads that JSON graph or starts empty when it is absent; a cold search/read never writes. Existing `MEMORY.md` files are completely ignored, even when malformed, and are never imported, embedded, rewritten or deleted. Facts already persisted in JSON remain available. Memory is project-scoped only; there is no global memory store.
 
 The Memory tool group maintains project memory without accumulating avoidable duplicates:
 

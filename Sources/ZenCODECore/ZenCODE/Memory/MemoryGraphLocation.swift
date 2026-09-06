@@ -20,9 +20,7 @@ enum MemoryGraphLocation {
 
     /// Full SHA256 hex of the standardized workspace path.
     ///
-    /// A full 32-byte digest is used here rather than the 16-byte UUID form of
-    /// `LegacyMemoryJournal.legacyIdentifier`, because this value names a
-    /// directory shared by every workspace on the machine.
+    /// The full digest names a directory shared by every workspace on the machine.
     static func workspaceDigest(for workspaceRootURL: URL) -> String {
         let path = workspaceRootURL.standardizedFileURL.path
         return Data(path.utf8).sha256Hex()
@@ -46,9 +44,4 @@ enum MemoryGraphLocation {
             .standardizedFileURL
     }
 
-    /// Legacy human-readable journal that seeds the graph on first open.
-    static func legacyJournalURL(for workspaceRootURL: URL) -> URL {
-        workspaceRootURL.standardizedFileURL
-            .appendingPathComponent(MemoryService.filename)
-    }
 }

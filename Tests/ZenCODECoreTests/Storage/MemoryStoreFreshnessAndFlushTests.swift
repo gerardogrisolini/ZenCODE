@@ -147,7 +147,7 @@ struct MemoryGraphStoreRegistryFlushAllTests {
             try await JSONMemoryPersistence(url: graphURL).save(graph)
 
             let registry = MemoryGraphStoreRegistry()
-            let store = try await registry.store(forWorkspaceRoot: workspace, graphURL: graphURL)
+            let store = try await registry.store(graphURL: graphURL)
             _ = try await store.context(for: "flush durability")
             #expect(try await JSONMemoryPersistence(url: graphURL).reloadReadOnly().metadata.retrievalCount == 0)
             try await registry.flushAll()
@@ -159,37 +159,37 @@ struct MemoryGraphStoreRegistryFlushAllTests {
     }
 
     @Test
-    func migrationACommitBFlushADoesNotOverwriteCommitB() async throws {
+    func deferredInsertACommitBFlushADoesNotOverwriteCommitB() async throws {
         try await MemoryEmbedding.withProvider(nil) {
             let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("memory-migration-race-\(UUID().uuidString)", isDirectory: true)
+                .appendingPathComponent("memory-deferred-insert-race-\(UUID().uuidString)", isDirectory: true)
             defer { try? FileManager.default.removeItem(at: directory) }
             let workspace = directory.appendingPathComponent("workspace", isDirectory: true)
             try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-            let legacyID = UUID().uuidString
-            let canonicalLegacyID = MemoryIdentifier.canonical(try #require(UUID(uuidString: legacyID)))
-            try "# MEMORY.md\n\n## Active\n\n- [id: \(legacyID)] Summary: lazy migration A.\n"
-                .write(to: workspace.appendingPathComponent(MemoryService.filename), atomically: true, encoding: .utf8)
+            let deferredID = UUID().uuidString
             let graphURL = directory.appendingPathComponent("memory.graph.json")
-            let registry = MemoryGraphStoreRegistry()
-            let store = try await registry.store(forWorkspaceRoot: workspace, graphURL: graphURL)
-            // Exercise A's automatic recall path once, below the default
-            // checkpoint threshold, so flushAll sees pending maintenance while
-            // the lazy migration still needs its own explicit durability boundary.
-            let recalledContext = try await store.context(for: "lazy migration A")
-            #expect(recalledContext.contains("lazy migration A"))
+            let engine = MemoryEngine(persistence: JSONMemoryPersistence(url: graphURL))
+            try await engine.insert(
+                EngineMemoryEntry(id: deferredID, category: .fact, content: "deferred insert A"),
+                persist: false
+            )
+            let store = MemoryGraphStore(graphURL: graphURL, engine: engine, embedder: nil)
+            // Deferred engine inserts still require their own durability boundary;
+            // flushing recall maintenance must not persist unrelated local state.
+            let recalledContext = try await store.context(for: "deferred insert A")
+            #expect(recalledContext.contains("deferred insert A"))
 
             let writerB = try await MemoryEngine.open(persistence: JSONMemoryPersistence(url: graphURL))
             try await writerB.remember("commit B survives lifecycle flush", id: "commit-b")
             let bytesAfterB = try Data(contentsOf: graphURL)
-            try await registry.flushAll()
+            try await store.flushRecallMaintenance()
 
             #expect(try Data(contentsOf: graphURL) == bytesAfterB)
             let durable = try await JSONMemoryPersistence(url: graphURL).reloadReadOnly()
             #expect(durable.memories["commit-b"] != nil)
-            #expect(durable.memories[canonicalLegacyID] == nil)
+            #expect(durable.memories[deferredID] == nil)
             #expect(try await store.entries(includeArchived: false, limit: 10).contains {
-                $0.id == canonicalLegacyID
+                $0.id == deferredID
             })
         }
     }
@@ -209,7 +209,7 @@ struct MemoryGraphStoreRegistryFlushAllTests {
                 var graph = MemoryGraph()
                 graph.addMemory(EngineMemoryEntry(id: name, category: .fact, content: "\(name) flush target"))
                 try await JSONMemoryPersistence(url: graphURL).save(graph)
-                stores.append((graphURL, try await registry.store(forWorkspaceRoot: workspace, graphURL: graphURL)))
+                stores.append((graphURL, try await registry.store(graphURL: graphURL)))
             }
             _ = try await stores[0].1.context(for: "broken flush")
             _ = try await stores[1].1.context(for: "healthy flush")
@@ -241,7 +241,7 @@ struct MemoryFlushLifecycleCleanupTests {
             try await JSONMemoryPersistence(url: graphURL).save(graph)
 
             let registry = MemoryGraphStoreRegistry()
-            let store = try await registry.store(forWorkspaceRoot: workspace, graphURL: graphURL)
+            let store = try await registry.store(graphURL: graphURL)
             _ = try await store.context(for: "lifecycle flush")
             try Data("{\"graph_version\":999999}".utf8).write(to: graphURL, options: .atomic)
 

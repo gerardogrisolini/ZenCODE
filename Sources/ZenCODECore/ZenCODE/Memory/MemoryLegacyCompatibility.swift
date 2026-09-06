@@ -4,9 +4,8 @@
 //
 //  Source compatibility layer for the pre-graph (1.1.4 / 3003ddc) memory API.
 //
-//  Before the graph migration `MemoryService` read and wrote `MEMORY.md`
-//  synchronously, so every public entry point was a *synchronous* function
-//  taking a `scope:` argument. The graph store is actor-backed, so the primary
+//  The 1.1.x `MemoryService` API exposed each public entry point synchronously,
+//  as a function taking a `scope:` argument. The graph store is actor-backed, so the primary
 //  API is now async and drops `scope:` (only `.project` is backed by a
 //  per-workspace graph).
 //

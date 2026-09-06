@@ -4,7 +4,7 @@
 //
 //  Graph-backed memory enhancement behaviour: in-place update, archive,
 //  rendering detail, hybrid recall + relation cascade, confidence decay/boost,
-//  JSON persistence round-trip, and the one-shot MEMORY.md migration.
+//  and JSON persistence round-trip.
 //
 
 import Foundation
@@ -344,7 +344,6 @@ struct MemoryEnhancementTests {
             )
 
             let store = try await MemoryGraphStoreRegistry.shared.store(
-                forWorkspaceRoot: workspace.workspaceURL,
                 graphURL: workspace.graphURL()
             )
             _ = try await store.context(for: "transport architecture")
@@ -395,7 +394,6 @@ struct MemoryEnhancementTests {
             )
 
             let store = try await MemoryGraphStoreRegistry.shared.store(
-                forWorkspaceRoot: workspace.workspaceURL,
                 graphURL: workspace.graphURL()
             )
             // Each query strongly matches exactly one entry; the other two
@@ -516,8 +514,7 @@ struct MemoryEnhancementTests {
             // A freshly opened store must read the persisted JSON, not the
             // cached in-memory engine.
             let reopened = try await MemoryGraphStore.open(
-                graphURL: graphURL,
-                workspaceRootURL: workspace.workspaceURL
+                graphURL: graphURL
             )
             let all = try await reopened.entries(includeArchived: true, limit: 100)
 
@@ -525,104 +522,6 @@ struct MemoryEnhancementTests {
             #expect(all.contains { $0.id == first.id.uuidString })
             #expect(all.contains { $0.isArchived && $0.id == second.id.uuidString })
             #expect(Set(all.flatMap(\.tags)) == ["persistence"])
-        }
-    }
-
-    @Test
-    func migratingLegacyJournalIsIdempotent() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        let archivedID = UUID()
-        let journal = """
-        # MEMORY.md
-
-        ## Active
-
-        - Timestamp: 2026-08-01 09:00 Europe/Rome
-          Summary: first legacy entry.
-          State: migrated once.
-          Next: never duplicate it.
-
-        - Timestamp: 2026-08-02 09:00 Europe/Rome
-          Summary: second legacy entry.
-          State: also migrated once.
-          Next: keep order.
-
-        ## Archived
-
-        - [id: \(archivedID.uuidString)] Timestamp: 2026-07-30 09:00 Europe/Rome
-          Summary: archived legacy entry.
-          State: retained as inactive.
-          Next: stay archived.
-        """
-        try await workspace.withIsolatedSupport {
-            try workspace.writeLegacyJournal(journal)
-            let graphURL = workspace.graphURL()
-
-            let first = try await MemoryGraphStore.open(
-                graphURL: graphURL,
-                workspaceRootURL: workspace.workspaceURL
-            )
-            let firstEntries = try await first.entries(includeArchived: true, limit: 100)
-            #expect(firstEntries.count == 3)
-            #expect(firstEntries.contains { $0.isArchived })
-
-            // The migration is deterministic (identity is derived from the
-            // journal), so a second open re-migrates from MEMORY.md and
-            // converges on the same nodes. open no longer persists the graph
-            // — the first mutation will — so re-migration is the expected path
-            // until a write has created the file.
-            let second = try await MemoryGraphStore.open(
-                graphURL: graphURL,
-                workspaceRootURL: workspace.workspaceURL
-            )
-            let secondEntries = try await second.entries(includeArchived: true, limit: 100)
-            #expect(secondEntries.count == firstEntries.count)
-            #expect(Set(secondEntries.map(\.id)) == Set(firstEntries.map(\.id)))
-        }
-    }
-
-    @Test
-    func undatedLegacyEntriesDoNotSortAboveDatedOnes() async throws {
-        // Regression: undated legacy entries used to default to "now" and were
-        // hoisted above their dated predecessors. They must inherit a slot just
-        // below the entry that precedes them in the document.
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        let journal = """
-        # MEMORY.md
-
-        ## Active
-
-        - Timestamp: 2026-08-05 09:00 Europe/Rome
-          Summary: dated newest entry.
-          State: should stay on top.
-          Next: none.
-
-        - Summary: undated legacy entry.
-          State: must not be hoisted above the dated entry above it.
-          Next: none.
-
-        - Timestamp: 2026-08-01 09:00 Europe/Rome
-          Summary: dated older entry.
-          State: should stay below the undated entry.
-          Next: none.
-
-        ## Archived
-        """
-        try await workspace.withIsolatedSupport {
-            try workspace.writeLegacyJournal(journal)
-            let entries = try await MemoryService().readEntries(
-                workspaceRootURL: workspace.workspaceURL,
-                limit: 10
-            )
-            let summaries = entries.compactMap(\.metadata.summary)
-
-            #expect(summaries == [
-                "dated newest entry.",
-                "undated legacy entry.",
-                "dated older entry."
-            ])
         }
     }
 
@@ -666,157 +565,6 @@ struct MemoryEnhancementTests {
             )
             #expect(limited.count == 2)
             #expect(limited.contains { $0.id == archived.id })
-        }
-    }
-
-    @Test
-    func malformedLegacyJournalsAreRejectedAndNeverOverwritten() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        let duplicateID = UUID()
-        let invalidDocuments: [(name: String, content: String)] = [
-            (
-                "invalid UUID",
-                """
-                # MEMORY.md
-
-                ## Active
-
-                - [id: not-a-uuid] Summary: preserve this malformed entry.
-
-                ## Archived
-                """
-            ),
-            (
-                "missing closing bracket",
-                """
-                # MEMORY.md
-
-                ## Active
-
-                - [id: not-a-uuid Summary: preserve this malformed entry.
-
-                ## Archived
-                """
-            ),
-            (
-                "empty UUID",
-                """
-                # MEMORY.md
-
-                ## Active
-
-                - [id: ] Summary: preserve this malformed entry.
-
-                ## Archived
-                """
-            ),
-            (
-                "duplicate UUID",
-                """
-                # MEMORY.md
-
-                ## Active
-
-                - [id: \(duplicateID.uuidString)] Summary: preserve the first entry.
-                - [id: \(duplicateID.uuidString)] Summary: preserve the second entry.
-
-                ## Archived
-                """
-            ),
-        ]
-
-        try await workspace.withIsolatedSupport {
-            let service = MemoryService()
-
-            for document in invalidDocuments {
-                let memoryURL = workspace.workspaceURL
-                    .appendingPathComponent(MemoryService.filename)
-                try document.content.write(to: memoryURL, atomically: true, encoding: .utf8)
-                let before = try Data(contentsOf: memoryURL)
-
-                for request in [
-                    ToolRequest(name: "memory.read", arguments: [:]),
-                    ToolRequest(
-                        name: "memory.search",
-                        arguments: ["query": .string("preserve")]
-                    ),
-                ] {
-                    do {
-                        _ = try await MemoryTool.executeAsync(
-                            request,
-                            context: MemoryToolContext(workingDirectory: workspace.workspaceURL),
-                            memoryService: service
-                        )
-                        Issue.record("Expected \(request.name) to reject \(document.name).")
-                    } catch MemoryServiceError.invalidDocument {
-                        // Expected: invalid data is not presented as an empty journal.
-                    }
-                }
-
-                do {
-                    _ = try await service.writeEntry(
-                        content: "Summary: a new entry must not replace malformed data.",
-                        workspaceRootURL: workspace.workspaceURL
-                    )
-                    Issue.record("Expected mutation to reject \(document.name).")
-                } catch MemoryServiceError.invalidDocument {
-                    // Expected: the file remains byte-for-byte unchanged.
-                }
-
-                #expect(try Data(contentsOf: memoryURL) == before)
-            }
-        }
-    }
-
-    @Test
-    func legacyEntriesHaveStableIdentifiersAcrossReads() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        let journal = """
-        # MEMORY.md
-
-        ## Active
-
-        - Timestamp: 2026-08-01 09:00 Europe/Rome
-          Summary: legacy entry without an explicit id.
-          State: it predates persisted memory identifiers.
-          Next: update it safely.
-
-        ## Archived
-        """
-        try await workspace.withIsolatedSupport {
-            try workspace.writeLegacyJournal(journal)
-            let service = MemoryService()
-            let firstRead = try #require(try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
-                limit: 10
-            ).first)
-            let secondRead = try #require(try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
-                limit: 10
-            ).first)
-
-            // The deterministic derived identifier is stable across reads.
-            #expect(firstRead.id == secondRead.id)
-            #expect(firstRead.source == MemoryGraphStore.migrationSource)
-
-            _ = try await service.updateEntry(
-                id: firstRead.id.uuidString,
-                content: """
-                Summary: migrated legacy entry.
-                State: the identifier now lives in the graph.
-                Next: retain normal update and archive operations.
-                """,
-                workspaceRootURL: workspace.workspaceURL
-            )
-            let updated = try #require(try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
-                limit: 10
-            ).first)
-
-            #expect(updated.id == firstRead.id)
-            #expect(updated.metadata.summary == "migrated legacy entry.")
         }
     }
 

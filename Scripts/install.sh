@@ -44,7 +44,6 @@ CONFIG_RELATIVE_PATHS=(
     "settings.json"
     "permissions.json"
     "AGENTS.md"
-    "MEMORY.md"
     "features/state.json"
 )
 ORIGINAL_ARGS=("$@")

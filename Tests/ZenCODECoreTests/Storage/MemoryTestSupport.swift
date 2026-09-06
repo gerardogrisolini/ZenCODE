@@ -50,15 +50,6 @@ struct MemoryTestWorkspace {
         }
     }
 
-    /// Seeds the workspace with a legacy `MEMORY.md` journal for migration tests.
-    func writeLegacyJournal(_ content: String) throws {
-        try content.write(
-            to: workspaceURL.appendingPathComponent(MemoryService.filename),
-            atomically: true,
-            encoding: .utf8
-        )
-    }
-
     /// Resolves the graph URL for this workspace under the scoped support dir.
     /// Must be called inside `withIsolatedSupport` so the override is honoured.
     func graphURL() -> URL {

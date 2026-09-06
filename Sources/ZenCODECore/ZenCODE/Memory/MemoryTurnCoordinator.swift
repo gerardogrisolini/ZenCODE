@@ -153,7 +153,6 @@ actor MemoryTurnCoordinator {
 
     private static func store(workspaceRootURL: URL) async throws -> MemoryGraphStore {
         try await MemoryGraphStoreRegistry.shared.store(
-            forWorkspaceRoot: workspaceRootURL,
             graphURL: MemoryGraphLocation.graphURL(for: workspaceRootURL)
         )
     }

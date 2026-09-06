@@ -280,50 +280,47 @@ struct EmbeddingFallbackTests {
     }
 
     @Test
-    func legacyMigrationKeepsTextWhenEmbeddingFails() async throws {
+    func persistedGraphKeepsTextWhenEmbeddingFails() async throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("embedding-migration-fallback-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("embedding-graph-fallback-\(UUID().uuidString)", isDirectory: true)
         let workspace = root.appendingPathComponent("workspace", isDirectory: true)
         let graphURL = root.appendingPathComponent("memory.graph.json")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-        let identifier = UUID().uuidString
-        let journal = """
-        # MEMORY.md
-
-        ## Active
-
-        - [id: \(identifier)] Summary: migrated text remains available offline.
-        """
-        try journal.write(
-            to: workspace.appendingPathComponent(MemoryService.filename),
-            atomically: true,
-            encoding: .utf8
-        )
+        var graph = MemoryGraph()
+        graph.addMemory(EngineMemoryEntry(
+            id: UUID().uuidString,
+            category: .fact,
+            content: "Summary: persisted text remains available offline"
+        ))
+        try await JSONMemoryPersistence(url: graphURL).save(graph)
 
         let messages = Mutex<[String]>([])
         try await MemoryEmbedding.withProvider(AlwaysFailingEmbeddingProvider()) {
             let store = try await MemoryGraphStore.open(
                 graphURL: graphURL,
-                workspaceRootURL: workspace,
                 semanticFailureReporter: { message in
                     messages.withLock { $0.append(message) }
                 }
             )
             let entries = try await store.entries(includeArchived: false, limit: 10)
             let entry = try #require(entries.first)
-            #expect(entry.content.contains("migrated text remains available offline"))
+            #expect(entry.content.contains("persisted text remains available offline"))
             #expect(entry.embedding == nil)
             #expect(entry.embeddingModel == nil)
 
-            // Persist the migrated graph and verify the text-only node survives
-            // the same JSON path used by normal mutations.
-            try await store.saveGraph()
+            // Opening reads stored text without embedding it. A search may fail
+            // semantically but must still retrieve the persisted lexical match.
+            #expect(messages.withLock { $0.isEmpty })
+            let results = try await store.search(
+                query: "persisted text", includeArchived: false, limit: 10
+            )
+            #expect(results.contains { $0.id == entry.id })
         }
 
         let persisted = try await JSONMemoryPersistence(url: graphURL).load()
         let entry = try #require(persisted.memories.values.first)
-        #expect(entry.content.contains("migrated text remains available offline"))
+        #expect(entry.content.contains("persisted text remains available offline"))
         #expect(entry.embedding == nil)
         #expect(entry.embeddingModel == nil)
         #expect(messages.withLock { $0.count } == 1)

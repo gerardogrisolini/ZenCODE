@@ -10,6 +10,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Removed
+
+- Removed all legacy `MEMORY.md` handling, including parsing, import, migration,
+  templates and file-specific API constants/errors. Memory opens only the JSON
+  graph, or an empty graph when absent; existing Markdown files are ignored and
+  left untouched, including malformed files. Already persisted JSON entries,
+  JSON version compatibility and graph-backed synchronous APIs are preserved.
+  Installation no longer treats `MEMORY.md` as a configuration artifact.
+
 ### Fixed
 
 - Desktop window actions now reject conflicting selectors and absent or ambiguous

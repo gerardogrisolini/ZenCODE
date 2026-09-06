@@ -11,10 +11,7 @@ import Foundation
 ///
 /// The engine is already an actor, but ZenCODE's operations (deduplicating
 /// write, content update, archive) are read-modify-write pairs that must not
-/// interleave. This actor provides that transaction boundary; it is the
-/// graph-era replacement for `FileTransactionCoordinator.withLock(for:)` on
-/// MEMORY.md. `FileTransactionCoordinator` itself is unchanged and still serves
-/// `SavedSessionsStore`.
+/// interleave. This actor provides that transaction boundary.
 actor MemoryGraphStore {
     let graphURL: URL
     private let engine: MemoryEngine
@@ -38,52 +35,21 @@ actor MemoryGraphStore {
         self.semanticFailureReporter = semanticFailureReporter
     }
 
-    // MARK: - Opening and migration
+    // MARK: - Opening
 
-    /// Opens the graph for a workspace, migrating a legacy MEMORY.md exactly once.
-    ///
-    /// The graph is loaded (or migrated from `MEMORY.md`) entirely in memory;
-    /// **nothing is persisted during open.** Persistence is deferred to the
-    /// first transactional mutation or maintenance pass. This keeps a cold read
-    /// — `memory.search` / `memory.read` on a workspace whose graph file does
-    /// not yet exist — from creating `memory.graph.json` and from failing when
-    /// the support directory is not writable. The first real write
-    /// (`memory.write`, `memory.update`, …) or the first automatic recall
-    /// maintenance will persist the full graph (migration + new entries) in one
-    /// atomic save.
-    ///
-    /// Idempotence: when no graph file exists the migration runs on every cold
-    /// open, but entry identity is derived deterministically from the journal,
-    /// so repeated migrations converge on the same nodes instead of duplicating
-    /// them. Once a mutation has persisted the file, subsequent opens load it
-    /// directly and skip migration.
+    /// Opens the persisted JSON graph, or an empty graph when it is absent.
+    /// Opening is read-only; the first mutation persists the graph atomically.
     static func open(
         graphURL: URL,
-        workspaceRootURL: URL,
         semanticFailureReporter: @escaping @Sendable (String) -> Void = MemoryEmbeddingFallback.defaultReporter
     ) async throws -> MemoryGraphStore {
-        // `FileManager.default` is used deliberately: this runs inside a
-        // detached task, and `FileManager` is not `Sendable`, so an injected
-        // instance must not cross the isolation boundary. Path resolution
-        // (which is what an injected file manager influences) has already
-        // happened by the time `graphURL` is computed.
-        let fileManager = FileManager.default
         let embedder = MemoryEmbedding.provider()
         let persistence = JSONMemoryPersistence(url: graphURL)
-
-        // Load or migrate the graph in memory only; do NOT persist. The first
-        // mutation/maintenance will persist the full graph atomically.
-        let graphAlreadyExists = fileManager.fileExists(atPath: graphURL.path)
         let initialGraph: MemoryGraph
-        if graphAlreadyExists {
+        if FileManager.default.fileExists(atPath: graphURL.path) {
             initialGraph = try await persistence.load()
         } else {
-            initialGraph = try await migratedGraph(
-                workspaceRootURL: workspaceRootURL,
-                embedder: embedder,
-                semanticFailureReporter: semanticFailureReporter,
-                fileManager: fileManager
-            )
+            initialGraph = MemoryGraph()
         }
 
         // Construct the engine directly with the in-memory graph and the same
@@ -98,10 +64,6 @@ actor MemoryGraphStore {
             // remains an internal engine seam, but opening a product store never
             // installs a network-backed extractor or makes a generation request.
             extractor: NoopMemoryExtractor(),
-            // A non-empty legacy journal is an intentional lazy mutation: open
-            // remains read-only, while an explicit `save()` must be able to
-            // materialize the migration even before another user mutation.
-            needsSave: !graphAlreadyExists && initialGraph != MemoryGraph(),
             semanticFailureReporter: semanticFailureReporter
         )
         return MemoryGraphStore(
@@ -112,71 +74,6 @@ actor MemoryGraphStore {
         )
     }
 
-    /// Builds the initial graph from the legacy journal, losslessly.
-    private static func migratedGraph(
-        workspaceRootURL: URL,
-        embedder: (any EmbeddingProvider)?,
-        semanticFailureReporter: @escaping @Sendable (String) -> Void,
-        fileManager: FileManager
-    ) async throws -> MemoryGraph {
-        var graph = MemoryGraph()
-        let journalURL = MemoryGraphLocation.legacyJournalURL(for: workspaceRootURL)
-
-        switch LegacyMemoryJournal.read(at: journalURL, fileManager: fileManager) {
-        case .missing:
-            return graph
-        case .unusable:
-            // The journal exists but cannot be parsed safely. Refuse to migrate
-            // rather than start an empty graph and strand the user's entries.
-            throw MemoryServiceError.invalidDocument(journalURL.path)
-        case let .loaded(legacyEntries):
-            // The journal is newest-first. Preserve that order exactly: use the
-            // entry's own Timestamp when it parses, but never let an entry sort
-            // above the one that precedes it in the document. Entries without a
-            // usable Timestamp inherit a slot just below their predecessor
-            // instead of defaulting to "now", which would hoist undated legacy
-            // entries to the top of the journal.
-            let importedAt = Date()
-            var previousCreatedAt: Date?
-            for legacy in legacyEntries {
-                let ceiling = previousCreatedAt?.addingTimeInterval(-1)
-                let parsed = MemoryEntryMetadata(content: legacy.content).timestampDate
-                let createdAt: Date = switch (parsed, ceiling) {
-                case let (.some(parsed), .some(ceiling)): min(parsed, ceiling)
-                case let (.some(parsed), .none): parsed
-                case let (.none, .some(ceiling)): ceiling
-                case (.none, .none): importedAt
-                }
-                previousCreatedAt = createdAt
-
-                let embedded = try await MemoryEmbeddingFallback.embed(
-                    legacy.content,
-                    with: embedder,
-                    operation: "migration",
-                    reporter: semanticFailureReporter
-                )
-                var entry = GraphEntry(
-                    id: MemoryIdentifier.canonical(legacy.id),
-                    category: .fact,
-                    content: legacy.content,
-                    tags: [],
-                    source: migrationSource,
-                    trust: .medium,
-                    scope: .project,
-                    createdAt: createdAt,
-                    updatedAt: createdAt,
-                    embedding: embedded.values,
-                    embeddingModel: embedded.model
-                )
-                entry.active = !legacy.isArchived
-                graph.addMemory(entry)
-            }
-            return graph
-        }
-    }
-
-    static let migrationSource = "memory-md-migration"
-
     // MARK: - Reads
 
     /// Resolves one coherent graph for a read-only request.
@@ -185,7 +82,7 @@ actor MemoryGraphStore {
     /// committed since this store was opened, without turning the read into a
     /// write. The engine reloads the durable graph under its write lock,
     /// overlays the local pending recall maintenance onto the copy, and never
-    /// persists — `needsSave`, lazy migrations and pending maintenance stay
+    /// persists — `needsSave` and pending maintenance stay
     /// exactly as they were. One snapshot per request also keeps the active and
     /// archived halves of a search coherent.
     private func freshReadOnlyGraph() async throws -> MemoryGraph {
@@ -391,7 +288,7 @@ actor MemoryGraphStore {
     }
 
     /// Flushes only automatic-recall maintenance. In particular this must not
-    /// persist a lazy migration or deferred insert represented by `needsSave`.
+    /// persist a deferred insert represented by `needsSave`.
     func flushRecallMaintenance() async throws {
         try await engine.flushRecallMaintenance()
     }
@@ -681,8 +578,7 @@ actor MemoryGraphStore {
 
 enum MemoryIdentifier {
     /// Every ZenCODE-authored node uses a canonical uppercase UUID string, so
-    /// the identifiers surfaced to the model stay in the shape callers and
-    /// existing MEMORY.md `[id: …]` markers already use.
+    /// the identifiers surfaced to the model retain the public DTO's UUID shape.
     static func canonical(_ id: UUID) -> String {
         id.uuidString
     }
@@ -723,7 +619,6 @@ actor MemoryGraphStoreRegistry {
     private var stores: [URL: Task<MemoryGraphStore, Error>] = [:]
 
     func store(
-        forWorkspaceRoot workspaceRootURL: URL,
         graphURL: URL
     ) async throws -> MemoryGraphStore {
         if let pending = stores[graphURL] {
@@ -732,8 +627,7 @@ actor MemoryGraphStoreRegistry {
 
         let task = Task(executorPreference: MemoryLegacyBridge.taskExecutor) {
             try await MemoryGraphStore.open(
-                graphURL: graphURL,
-                workspaceRootURL: workspaceRootURL
+                graphURL: graphURL
             )
         }
         stores[graphURL] = task
@@ -763,11 +657,11 @@ actor MemoryGraphStoreRegistry {
     ///
     /// Idempotent by construction: the engine primitive returns immediately
     /// when no recall maintenance is pending. It deliberately ignores unrelated
-    /// dirty state such as lazy migration and deferred inserts.
+    /// dirty state such as deferred inserts.
     func flushAll() async throws {
         // Snapshot the pending tasks first: `await`ing a store inside the loop
         // would re-enter this actor and could observe a dictionary mutated by
-        // a concurrent `store(forWorkspaceRoot:graphURL:)`.
+        // a concurrent `store(graphURL:)`.
         let pendingTasks = Array(stores.values)
         var firstError: (any Error)?
         for task in pendingTasks {

@@ -157,18 +157,6 @@ struct MemoryReadOnlySearchStoreTests {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
 
-        // Seed a legacy journal so the cold open has real migration work to do.
-        try workspace.writeLegacyJournal("""
-        # MEMORY.md
-
-        ## Active
-
-        - Timestamp: 2026-08-01 09:00 Europe/Rome
-          Summary: cold open must not persist.
-          State: the graph file must not be created on a read-only path.
-          Next: verify no graph file exists after a cold search.
-        """)
-
         try await workspace.withIsolatedSupport {
             let graphURL = workspace.graphURL()
             #expect(!FileManager.default.fileExists(atPath: graphURL.path))
@@ -176,15 +164,15 @@ struct MemoryReadOnlySearchStoreTests {
             let service = MemoryService()
 
             // A cold search on a workspace with no graph file must not throw,
-            // must return migrated results, and must NOT create the graph file.
+            // must return no results, and must NOT create the graph file.
             let results = try await service.searchEntries(
                 query: "cold",
                 workspaceRootURL: workspace.workspaceURL,
                 limit: 10
             )
-            #expect(!results.isEmpty)
+            #expect(results.isEmpty)
 
-            // The graph file must still not exist — open migrated in memory.
+            // The graph file must still not exist after opening an empty graph.
             #expect(!FileManager.default.fileExists(atPath: graphURL.path))
 
             // A cold read is equally harmless.
@@ -192,7 +180,7 @@ struct MemoryReadOnlySearchStoreTests {
                 workspaceRootURL: workspace.workspaceURL,
                 limit: 10
             )
-            #expect(!entries.isEmpty)
+            #expect(entries.isEmpty)
             #expect(!FileManager.default.fileExists(atPath: graphURL.path))
         }
     }
@@ -201,17 +189,6 @@ struct MemoryReadOnlySearchStoreTests {
     func coldSearchDoesNotFailWhenGraphDirectoryIsReadOnly() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
-
-        try workspace.writeLegacyJournal("""
-        # MEMORY.md
-
-        ## Active
-
-        - Timestamp: 2026-08-01 09:00 Europe/Rome
-          Summary: read-only directory cold open.
-          State: must not throw and must not create files.
-          Next: keep MEMORY.md untouched.
-        """)
 
         try await workspace.withIsolatedSupport {
             let graphURL = workspace.graphURL()
@@ -237,17 +214,16 @@ struct MemoryReadOnlySearchStoreTests {
             }
 
             // The cold open + search must succeed despite the read-only
-            // directory: open migrates in memory and never calls save.
+            // directory: open loads an empty graph and never calls save.
             let store = try await MemoryGraphStore.open(
-                graphURL: graphURL,
-                workspaceRootURL: workspace.workspaceURL
+                graphURL: graphURL
             )
             let results = try await store.search(
                 query: "directory",
                 includeArchived: false,
                 limit: 10
             )
-            #expect(!results.isEmpty)
+            #expect(results.isEmpty)
 
             // No graph file was created.
             #expect(!FileManager.default.fileExists(atPath: graphURL.path))
@@ -255,65 +231,23 @@ struct MemoryReadOnlySearchStoreTests {
     }
 
     @Test
-    func explicitSavePersistsLazyLegacyMigration() async throws {
+    func firstMutationPersistsEmptyGraph() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
-
-        try workspace.writeLegacyJournal("""
-        # MEMORY.md
-
-        ## Active
-
-        - Timestamp: 2026-08-01 09:00 Europe/Rome
-          Summary: migrated entry persisted by explicit save.
-          State: migration remains lazy until a durability boundary.
-          Next: verify the graph file.
-        """)
-
-        try await workspace.withIsolatedSupport {
-            let graphURL = workspace.graphURL()
-            let store = try await MemoryGraphStore.open(
-                graphURL: graphURL,
-                workspaceRootURL: workspace.workspaceURL
-            )
-            #expect(!FileManager.default.fileExists(atPath: graphURL.path))
-
-            try await store.saveGraph()
-            #expect(FileManager.default.fileExists(atPath: graphURL.path))
-            let persisted = try await JSONMemoryPersistence(url: graphURL).load()
-            #expect(persisted.memories.count == 1)
-        }
-    }
-
-    @Test
-    func firstMutationPersistsMigratedGraph() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try workspace.writeLegacyJournal("""
-        # MEMORY.md
-
-        ## Active
-
-        - Timestamp: 2026-08-01 09:00 Europe/Rome
-          Summary: migrated entry persisted on first write.
-          State: the graph must appear on disk only after a mutation.
-          Next: confirm both legacy and new entries are on disk.
-        """)
 
         try await workspace.withIsolatedSupport {
             let graphURL = workspace.graphURL()
             let service = MemoryService()
 
-            // Cold read: migration in memory, no file.
+            // Cold read: empty graph in memory, no file.
             let before = try await service.readEntries(
                 workspaceRootURL: workspace.workspaceURL,
                 limit: 10
             )
-            #expect(!before.isEmpty)
+            #expect(before.isEmpty)
             #expect(!FileManager.default.fileExists(atPath: graphURL.path))
 
-            // First mutation: the full graph (migration + new entry) is
+            // First mutation: the new entry is
             // persisted atomically.
             _ = try await service.writeEntry(
                 content: "Summary: the write that triggers persistence.",
@@ -321,10 +255,9 @@ struct MemoryReadOnlySearchStoreTests {
             )
             #expect(FileManager.default.fileExists(atPath: graphURL.path))
 
-            // A fresh open must load from disk and see both entries.
+            // A fresh open must load the written entry from disk.
             let reopened = try await MemoryGraphStore.open(
-                graphURL: graphURL,
-                workspaceRootURL: workspace.workspaceURL
+                graphURL: graphURL
             )
             let all = try await reopened.entries(includeArchived: true, limit: 100)
             #expect(all.count == before.count + 1)

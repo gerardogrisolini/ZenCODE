@@ -85,8 +85,7 @@ struct MemoryStoreTransactionTests {
 
         try await workspace.withIsolatedSupport {
             let store = try await MemoryGraphStore.open(
-                graphURL: MemoryGraphLocation.graphURL(for: workspace.workspaceURL),
-                workspaceRootURL: workspace.workspaceURL
+                graphURL: MemoryGraphLocation.graphURL(for: workspace.workspaceURL)
             )
 
             // The product's default has no extractor-backed work at all. The

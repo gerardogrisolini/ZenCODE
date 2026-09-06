@@ -205,7 +205,7 @@ extension RemoteSessionSnapshotTests {
                 "role": "tool",
                 "tool_call_id": "call_memory",
                 "name": "memory_write",
-                "content": "Saved memory entry to project MEMORY.md."
+                "content": "Saved memory entry to the project graph."
             ]
         ]
     }

@@ -204,9 +204,7 @@ struct MemoryAPICompatibilityTests {
         let normalize: (String) -> String = MemoryEntry.normalizedContent(_:)
 
         // Statics that were part of the same contract.
-        let _: String = MemoryService.filename
         let _: Notification.Name = MemoryService.entriesDidChangeNotification
-        let _: String = MemoryService.defaultProjectMemoryContent
         let _: () -> Void = MemoryService.notifyMemoryEntriesChanged
         let _: () -> String = MemoryService.toolUsagePromptSection
 

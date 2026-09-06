@@ -256,9 +256,9 @@ actor MemoryEngine {
     /// live graph here would replay that intent twice on a cold checkpoint.
     private var pendingRecallBaseGraph: MemoryGraph?
     /// Local state which has deliberately not crossed a persistence boundary.
-    /// This is distinct from recall maintenance: `insert(persist: false)` and a
-    /// lazy legacy migration have no replayable intent, but `save()` must still
-    /// commit them. It is cleared only after the complete live graph is saved.
+    /// This is distinct from recall maintenance: `insert(persist: false)` has
+    /// no replayable intent, but `save()` must still commit it. This flag is
+    /// cleared only after the complete live graph is saved.
     private var needsSave: Bool
 
     /// Default reporter: always emits a redacted ERROR line through the active
@@ -333,7 +333,7 @@ actor MemoryEngine {
     ///
     /// Guard rails against silent staleness regressions:
     ///
-    /// - A lazy legacy migration (or a deferred `insert(persist: false)`) lives
+    /// - A deferred `insert(persist: false)` lives
     ///   only in this actor; reloading the file would discard it, so a dirty
     ///   engine serves its local graph directly.
     /// - A non-transactional persistence has no durable reload boundary, so the
@@ -412,7 +412,7 @@ actor MemoryEngine {
             let pending = pendingRecallMaintenance
             // A transactional store normally reloads its file before applying
             // the body. That is correct for durable state, but would discard a
-            // preceding `insert(persist: false)` (or lazy migration) which only
+            // preceding `insert(persist: false)` which only
             // exists in this actor. Commit that local snapshot first instead.
             if needsSave {
                 var draft = graph
@@ -1030,7 +1030,7 @@ actor MemoryEngine {
         try await withWriteLock {
             // Do not materialize a pristine graph. Conversely, a dirty local
             // graph cannot go through a transactional reload: that would lose
-            // deferred inserts/migrations before they reach disk.
+            // deferred inserts before they reach disk.
             if needsSave {
                 try await persist(graph)
                 needsSave = false
@@ -1257,7 +1257,7 @@ actor MemoryEngine {
     /// from before the first intent, avoiding a cold-start double replay. A
     /// failed checkpoint leaves the in-memory intents retryable.
     private func flushPendingRecallMaintenanceLocked() async throws {
-        // A lazy migration or deferred insert is a local durability boundary.
+        // A deferred insert is a local durability boundary.
         // Lifecycle/registry flushing must not reload and replay maintenance
         // over another process's graph, because that would discard this local
         // snapshot before an explicit save or transaction commits it.

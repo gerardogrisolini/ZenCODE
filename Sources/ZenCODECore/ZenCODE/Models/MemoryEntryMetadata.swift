@@ -7,8 +7,8 @@ import Foundation
 
 /// Structured fields derived from a journal entry's human-readable content.
 ///
-/// Metadata remains embedded in `MemoryEntry.content`, so existing MEMORY.md
-/// documents keep their persisted format and older entries remain readable.
+/// Metadata remains embedded in `MemoryEntry.content`; graph entries need no
+/// separate persisted metadata fields.
 nonisolated struct MemoryEntryMetadata: Sendable {
     let timestamp: String?
     let updated: String?

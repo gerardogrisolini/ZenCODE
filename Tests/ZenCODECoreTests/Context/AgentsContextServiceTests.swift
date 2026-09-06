@@ -12,6 +12,12 @@ import Testing
 @Suite
 struct AgentsContextServiceTests {
     @Test
+    func projectContextCatalogContainsOnlyAgents() {
+        #expect(ProjectContextFileKind.allCases == [.agents])
+        #expect(ProjectContextFileKind.agents.filename == "AGENTS.md")
+    }
+
+    @Test
     func globalAgentsTemplateContainsOnlyAdditionalXcodeGuidance() {
         let content = AgentsContextService.defaultGlobalAgentsContent
 
