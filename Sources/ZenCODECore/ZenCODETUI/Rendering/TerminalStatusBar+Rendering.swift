@@ -86,6 +86,38 @@ extension TerminalStatusBar {
         writeLocked(sequence)
     }
     
+    /// Repaints only the Chat-owned layout. A margin write homes the cursor,
+    /// even when DECSTBM repeats the current margins, so ordinary unread and
+    /// selection refreshes must not write it at all.
+    func repaintSharedChatLayoutLocked(
+        state: inout State,
+        oldReservedRows: Int,
+        availableTranscriptGapRows: Int = 0
+    ) {
+        guard state.row > 0, state.columns > 0, !state.isResizePending else { return }
+        let newReservedRows = reservedBottomRowsLocked(state: &state)
+        if newReservedRows != oldReservedRows {
+            let scrolledRows = max(
+                0, newReservedRows - oldReservedRows - max(0, availableTranscriptGapRows)
+            )
+            // Save only around the margin/scroll commands: the clearing and
+            // painting helpers use the SAME single DECSC slot, not a stack.
+            writeLocked("\u{1B}7")
+            scrollOutputRegionUpLocked(
+                state: &state, by: scrolledRows, reservedRows: oldReservedRows
+            )
+            writeScrollRegionLocked(state: &state, moveCursorToPrompt: false)
+            writeLocked("\u{1B}8")
+            if scrolledRows > 0 {
+                // Restoring gives the old physical row; the transcript moved
+                // up by this amount. CUU also safely clamps at the first row.
+                writeLocked("\u{1B}[\(scrolledRows)A")
+            }
+            clearReservedRowsLocked(state: &state, count: max(oldReservedRows, newReservedRows))
+        }
+        renderLocked(state: &state)
+    }
+
     func scrollOutputRegionUpLocked(state: inout State, by count: Int, reservedRows: Int) {
         guard count > 0, state.row > reservedRows else {
             return

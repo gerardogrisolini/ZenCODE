@@ -1001,6 +1001,10 @@ extension TerminalChat {
                     interactiveReader.setSharedChatReaderOpen(true)
                 case let .sharedChatReaderNavigation(action):
                     guard isSharedChatReaderOpen else { continue }
+                    let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+                    await renderCoordinator.beginBottomOverlayTransition(
+                        maximumInPlaceRows: previousOutputCapacity
+                    )
                     let unreadCountBeforeNavigation = sharedChatReadingBuffer.unreadCount
                     sharedChatReadingBuffer.navigate(action)
                     await statusBar.navigateSharedChatReader(action)
@@ -1018,6 +1022,11 @@ extension TerminalChat {
                             observationID: sharedChatObservation.observation.id
                         )
                     }
+                    let currentOutputCapacity = await statusBar.scrollableOutputRowCapacity()
+                    await renderCoordinator.endBottomOverlayTransition(
+                        maximumInPlaceRows: currentOutputCapacity
+                    )
+                    await renderSubAgentOverview(force: false)
                 case .endOfInput:
                     generationTask?.cancel()
                     break eventLoop
@@ -1113,9 +1122,9 @@ extension TerminalChat {
                 let newMessages = sharedChatReadingBuffer.append(messages)
                 guard !newMessages.isEmpty else { continue }
                 let entries = await sharedChatReaderEntries()
-                // A Chat update can repaint the status region even when the dock
-                // receives no visible row. Retire old relative overview and tool
-                // anchors before that external cursor move, then republish them.
+                // Fence concurrent publications across the external repaint.
+                // The status bar preserves the retired block's insertion point
+                // on same-height updates and adjusts it only for actual scroll.
                 let previousOutputCapacity = await statusBar.scrollableOutputRowCapacity()
                 await renderCoordinator.beginBottomOverlayTransition(
                     maximumInPlaceRows: previousOutputCapacity

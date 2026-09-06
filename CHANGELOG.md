@@ -35,6 +35,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Terminal Chat reader updates no longer reset the transcript cursor to the status
+  bar, leaving empty space above republished tool and Sub-Agents blocks. Same-height
+  unread/selection repaints preserve the cursor; opening, closing and unread-row
+  transitions compensate only actual transcript scrolling. Navigation uses the
+  same render barrier, retaining resize/capacity checks and append-safe fallback.
+
 - Conversation compaction now aims for at most 50% of the available prompt budget
   (after output, overhead and wire-inflation reservations), with the 95% trigger
   unchanged. This is a target, not a guarantee: indivisible system context and

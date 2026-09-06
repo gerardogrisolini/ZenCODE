@@ -453,13 +453,13 @@ extension TerminalChatRenderCoordinator {
 
     /// Fences live rewrite regions while the status bar changes its reserved rows.
     ///
-    /// The status bar writes outside this coordinator and may place the cursor at
-    /// the new scroll boundary even when the visible overlay height is unchanged.
-    /// Capacity deltas therefore cannot prove that a relative cursor anchor is
-    /// still valid. Remove verifiably owned tool and overview blocks before that
+    /// The status bar writes outside this coordinator. Ordinary Chat repaints
+    /// preserve the insertion point; a layout transition may scroll transcript
+    /// rows, and a resize can invalidate physical anchors entirely. Keep the
+    /// barrier and remove only verifiably owned tool/overview blocks before the
     /// external write; otherwise forget them append-safely. The pending tool is
-    /// republished here after the transition, while the caller republishes the
-    /// current overview snapshot, establishing fresh physical anchors.
+    /// republished here, while the caller republishes the current overview,
+    /// establishing fresh anchors within the resulting capacity.
     func beginBottomOverlayTransition(maximumInPlaceRows: Int?) {
         isBottomOverlayTransitionActive = true
         detachActiveToolBeforeBottomOverlayTransition(

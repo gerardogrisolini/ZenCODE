@@ -244,20 +244,11 @@ public actor TerminalStatusBar {
                 state.sharedChatReaderObservationID = observationID
             }
             guard state.isStarted else { return }
-            let newReservedRows = reservedBottomRowsLocked(state: &state)
-            if newReservedRows > oldReservedRows {
-                scrollOutputRegionUpLocked(
-                    state: &state,
-                    by: max(
-                        0,
-                        newReservedRows - oldReservedRows - availableTranscriptGapRows
-                    ),
-                    reservedRows: oldReservedRows
-                )
-            }
-            clearReservedRowsLocked(state: &state, count: max(oldReservedRows, newReservedRows))
-            writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
-            renderLocked(state: &state)
+            repaintSharedChatLayoutLocked(
+                state: &state,
+                oldReservedRows: oldReservedRows,
+                availableTranscriptGapRows: availableTranscriptGapRows
+            )
         }
     }
 
@@ -281,9 +272,7 @@ public actor TerminalStatusBar {
             state.sharedChatReaderDock = nil
             state.sharedChatReaderObservationID = nil
             guard state.isStarted else { return }
-            clearReservedRowsLocked(state: &state, count: oldReservedRows)
-            writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
-            renderLocked(state: &state)
+            repaintSharedChatLayoutLocked(state: &state, oldReservedRows: oldReservedRows)
         }
     }
 
@@ -306,10 +295,7 @@ public actor TerminalStatusBar {
             dock.isExpanded = false
             state.sharedChatReaderDock = dock
             guard state.isStarted else { return }
-            let newReservedRows = reservedBottomRowsLocked(state: &state)
-            clearReservedRowsLocked(state: &state, count: max(oldReservedRows, newReservedRows))
-            writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
-            renderLocked(state: &state)
+            repaintSharedChatLayoutLocked(state: &state, oldReservedRows: oldReservedRows)
         }
     }
 
@@ -370,23 +356,11 @@ public actor TerminalStatusBar {
                 state.sharedChatReaderObservationID = previousObservationID
                 return false
             }
-            let newReservedRows = reservedBottomRowsLocked(state: &state)
-            if newReservedRows > oldReservedRows {
-                scrollOutputRegionUpLocked(
-                    state: &state,
-                    by: max(
-                        0,
-                        newReservedRows - oldReservedRows - availableTranscriptGapRows
-                    ),
-                    reservedRows: oldReservedRows
-                )
-            }
-            clearReservedRowsLocked(
+            repaintSharedChatLayoutLocked(
                 state: &state,
-                count: max(oldReservedRows, newReservedRows)
+                oldReservedRows: oldReservedRows,
+                availableTranscriptGapRows: availableTranscriptGapRows
             )
-            writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
-            renderLocked(state: &state)
             return true
         }
     }
@@ -399,17 +373,7 @@ public actor TerminalStatusBar {
             dock.navigate(action, viewportRows: sharedChatReaderViewportRowsLocked(state: &state), width: width)
             state.sharedChatReaderDock = dock
             guard state.isStarted else { return }
-            let newReservedRows = reservedBottomRowsLocked(state: &state)
-            if newReservedRows > oldReservedRows {
-                scrollOutputRegionUpLocked(
-                    state: &state,
-                    by: newReservedRows - oldReservedRows,
-                    reservedRows: oldReservedRows
-                )
-            }
-            clearReservedRowsLocked(state: &state, count: max(oldReservedRows, newReservedRows))
-            writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
-            renderLocked(state: &state)
+            repaintSharedChatLayoutLocked(state: &state, oldReservedRows: oldReservedRows)
         }
     }
 

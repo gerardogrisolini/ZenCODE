@@ -2514,6 +2514,162 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(TerminalANSIText.stripANSI(completionText).contains("local.readFile"))
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func sharedChatCombinedSinkKeepsLiveBlockBesideTranscript(tool: Bool, full: Bool) async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        _ = FileManager.default.createFile(atPath: url.path, contents: nil)
+        let sink = try FileHandle(forWritingTo: url)
+        defer {
+            try? sink.close()
+            try? FileManager.default.removeItem(at: url)
+        }
+        let renderer = TerminalChatRenderCoordinator(
+            stdinIsTerminal: false,
+            standardOutput: sink,
+            standardError: sink,
+            standardOutputIsTerminal: true,
+            standardErrorIsTerminal: true,
+            cursorTopology: .shared,
+            capturesWrites: true,
+            streamingFlushDelay: nil,
+            columnWidthProvider: { 80 }
+        )
+        let statusBar = TerminalStatusBar(isEnabled: true) { sink.write(Data($0.utf8)) }
+        let height = 30
+        await statusBar.configureForTesting(row: height, columns: 80)
+        await statusBar.updateInputPanel(text: "draft", cursorIndex: 5, modeText: "Chat", helpText: "Enter")
+        await statusBar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: false)
+        let initialCapacity = try #require(await statusBar.scrollableOutputRowCapacity())
+        #expect(initialCapacity == 24)
+        sink.write(Data("\u{1B}[1;1H".utf8))
+        // Keep the short transcript above the dock's maximum growth; a separate
+        // cursor-edge fixture below exercises clamping at row one.
+        let transcriptRows = full ? initialCapacity - 3 : 8
+        for index in 0..<transcriptRows {
+            sink.write(Data("PERMANENT-\(index)\r\n".utf8))
+        }
+        let marker = tool ? "local.readFile" : "AGENT-ANCHOR"
+        let call = presentedToolCall(
+            id: "combined-chat", name: "local.readFile",
+            argumentsObject: ["path": "/tmp/fixture"], argumentsJSON: #"{"path":"/tmp/fixture"}"#
+        )
+        if tool {
+            await renderer.writeToolCallStarted(call, maximumInPlaceRows: initialCapacity)
+        } else {
+            _ = await renderer.renderSubAgentOverview(
+                signature: "combined", text: "\nSub-Agents: AGENT-ANCHOR\n   running\n",
+                force: false, rememberSignature: true, overviewBatchID: "wave",
+                maximumInPlaceRows: initialCapacity
+            )
+        }
+        func screen() throws -> [String] {
+            let text = String(decoding: try Data(contentsOf: url), as: UTF8.self)
+            return terminalScreenText(text, height: height, width: 80).components(separatedBy: "\n")
+        }
+        var entries: [TerminalSharedChatReaderEntry] = []
+        // Empty -> first unread -> same-height arrivals -> open -> close -> last
+        // unread consumed. Each assertion uses the actual reserved-row delta.
+        for (unread, expanded) in [(1, false), (2, false), (3, false), (3, true), (1, false), (0, false)] {
+            let before = try screen()
+            let oldMarkerRow = try #require(before.firstIndex { $0.contains(marker) })
+            let oldPermanentRow = try #require(before.firstIndex { $0.contains("PERMANENT-\(transcriptRows - 1)") })
+            let oldCapacity = try #require(await statusBar.scrollableOutputRowCapacity())
+            let eventOffset = try Data(contentsOf: url).count
+            await renderer.beginBottomOverlayTransition(maximumInPlaceRows: oldCapacity)
+            while entries.count < unread {
+                entries.append(TerminalSharedChatReaderEntry(id: UUID(), route: "worker", text: "Ready"))
+            }
+            if expanded {
+                #expect(await statusBar.expandSharedChatReader(entries: entries, unreadCount: unread))
+                await statusBar.navigateSharedChatReader(.nextMessage)
+                await statusBar.setSharedChatReader(entries: entries, unreadCount: 0, isExpanded: true)
+            } else {
+                await statusBar.setSharedChatReader(entries: entries, unreadCount: unread, isExpanded: false)
+            }
+            let newCapacity = try #require(await statusBar.scrollableOutputRowCapacity())
+            await renderer.endBottomOverlayTransition(maximumInPlaceRows: newCapacity)
+            if !tool {
+                _ = await renderer.renderSubAgentOverview(
+                    signature: "combined", text: "\nSub-Agents: AGENT-ANCHOR\n   running\n",
+                    force: false, rememberSignature: true, overviewBatchID: "wave",
+                    maximumInPlaceRows: newCapacity
+                )
+            }
+            let after = try screen()
+            let scroll = max(0, oldCapacity - newCapacity)
+            #expect(after.firstIndex { $0.contains(marker) } == max(0, oldMarkerRow - scroll))
+            if oldPermanentRow >= scroll {
+                #expect(after.firstIndex { $0.contains("PERMANENT-\(transcriptRows - 1)") } == oldPermanentRow - scroll)
+            }
+            #expect(after.filter { $0.contains(marker) }.count == 1)
+            if oldCapacity == newCapacity {
+                let repaint = String(decoding: try Data(contentsOf: url).dropFirst(eventOffset), as: UTF8.self)
+                #expect(!repaint.contains("\u{1B}[1;\(newCapacity)r"))
+            }
+        }
+    }
+
+    @Test(arguments: [0, 1, 2], [false, true])
+    func sharedChatCursorEdgesRespectEffectiveGeometry(scenario: Int, bottom: Bool) async throws {
+        let height = [8, 14, 30][scenario]
+        let draft = scenario == 1 ? String(repeating: "draft\n", count: 10) : "draft"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        _ = FileManager.default.createFile(atPath: url.path, contents: nil)
+        let sink = try FileHandle(forWritingTo: url)
+        defer {
+            try? sink.close()
+            try? FileManager.default.removeItem(at: url)
+        }
+        let bar = TerminalStatusBar(isEnabled: true) { sink.write(Data($0.utf8)) }
+        await bar.configureForTesting(row: height, columns: 80)
+        await bar.updateInputPanel(text: draft, cursorIndex: draft.count, modeText: "Chat", helpText: "Enter")
+        let entries = [TerminalSharedChatReaderEntry(id: UUID(), route: "worker", text: "Ready")]
+        // At 8 rows the dock folds into the existing mode row; a tall draft
+        // shares the same measured budget rather than an assumed dock height.
+        for phase in 0..<7 {
+            let oldCapacity = try #require(await bar.scrollableOutputRowCapacity())
+            #expect(oldCapacity >= 2)
+            if scenario == 0 { #expect(oldCapacity == 2) }
+            let cursorRow = bottom ? oldCapacity : 1
+            sink.write(Data("\u{1B}[\(cursorRow);1H".utf8))
+            switch phase {
+            case 0, 1:
+                await bar.setSharedChatReader(entries: entries, unreadCount: 1, isExpanded: false)
+            case 2:
+                _ = await bar.expandSharedChatReader(entries: entries, unreadCount: 1)
+            case 3:
+                await bar.navigateSharedChatReader(.lastMessage)
+            case 4:
+                await bar.setSharedChatReader(entries: entries, unreadCount: 0, isExpanded: false)
+            case 5:
+                await bar.setSharedChatReader(entries: entries, unreadCount: 1, isExpanded: false)
+            default:
+                await bar.removeSharedChatReader()
+            }
+            let capacity = try #require(await bar.scrollableOutputRowCapacity())
+            let expectedRow = max(1, cursorRow - max(0, oldCapacity - capacity))
+            sink.write(Data("CURSOR-\(phase)".utf8))
+            let text = String(decoding: try Data(contentsOf: url), as: UTF8.self)
+            let rows = terminalScreenText(text, height: height, width: 80).components(separatedBy: "\n")
+            #expect(rows[expectedRow - 1].hasPrefix("CURSOR-\(phase)"))
+            #expect(expectedRow <= capacity)
+            // Remove the probe without changing the cursor position used by the
+            // next independently positioned phase.
+            sink.write(Data("\r\u{1B}[2K".utf8))
+        }
+    }
+
+    @Test
+    func ansiScreenModelsMarginsSaveRestoreAndDelayedWrap() {
+        let text = "\u{1B}[1;3r\u{1B}[1;1HABCDX\r\nKEEP\r\n"
+            + "\u{1B}7\u{1B}[5;1HDOCK\u{1B}8Z"
+        let rows = terminalScreenText(text, height: 5, width: 4).components(separatedBy: "\n")
+        #expect(rows == ["X", "KEEP", "Z", "", "DOCK"])
+        // Save/restore has one slot, not a stack, and setting margins homes.
+        #expect(terminalScreenText("\u{1B}[3;2H\u{1B}7\u{1B}[1;4rA\u{1B}8B", height: 5, width: 8)
+            .components(separatedBy: "\n") == ["A", "", " B", "", ""])
+    }
+
     @Test
     func firstSharedChatMessageHeaderPreservesSubAgentOverviewOwnership() async {
         let renderer = makeRenderer(
@@ -4306,86 +4462,101 @@ struct TerminalChatToolBlockResizeTests {
 /// this applies the cursor movement and erase controls emitted by the coordinator,
 /// so it verifies what remains visible after an external terminal writer has
 /// inserted rows between two coordinator phases.
-private func terminalScreenText(_ text: String) -> String {
-    var rows = [[Character]](repeating: [], count: 1)
+private func terminalScreenText(
+    _ text: String,
+    height: Int? = nil,
+    width: Int? = nil
+) -> String {
+    var rows = [[Character]](repeating: [], count: height ?? 1)
     var row = 0
     var column = 0
+    var scrollTop = 0
+    var scrollBottom = height.map { $0 - 1 }
+    var savedCursor = (row: 0, column: 0)
     let scalars = Array(text.unicodeScalars)
     var index = 0
 
     func ensureRow(_ target: Int) {
-        while rows.count <= target {
-            rows.append([])
-        }
+        while rows.count <= target { rows.append([]) }
     }
 
-    func eraseLine(_ mode: Int) {
-        switch mode {
-        case 0:
-            if column < rows[row].count {
-                rows[row].removeSubrange(column...)
-            }
-        case 1:
-            guard !rows[row].isEmpty else { return }
-            let end = min(column, rows[row].count - 1)
-            rows[row].replaceSubrange(
-                0...end,
-                with: repeatElement(" ", count: end + 1)
-            )
-        default:
-            rows[row].removeAll()
+    func lineFeed() {
+        if let bottom = scrollBottom, row == bottom {
+            rows.remove(at: scrollTop)
+            rows.insert([], at: bottom)
+        } else {
+            row = min(row + 1, height.map { $0 - 1 } ?? Int.max)
+            ensureRow(row)
         }
+        column = 0
     }
 
     while index < scalars.count {
         let scalar = scalars[index]
-        if scalar == "\u{1B}",
-           index + 1 < scalars.count,
-           scalars[index + 1] == "[" {
-            index += 2
-            var parameter = ""
-            while index < scalars.count {
-                let value = scalars[index].value
-                guard (48...57).contains(value) || scalars[index] == ";" else {
-                    break
+        if scalar == "\u{1B}", index + 1 < scalars.count {
+            let next = scalars[index + 1]
+            if next == "7" || next == "8" {
+                if next == "7" {
+                    savedCursor = (row, column)
+                } else {
+                    row = savedCursor.row
+                    column = savedCursor.column
                 }
-                parameter.unicodeScalars.append(scalars[index])
-                index += 1
+                index += 2
+                continue
             }
-            guard index < scalars.count else { break }
-            let count = Int(parameter.split(separator: ";").first ?? "") ?? 1
-            switch scalars[index] {
-            case "A":
-                row = max(0, row - count)
-            case "B":
-                row += count
+            if next == "[" {
+                index += 2
+                var parameter = ""
+                while index < scalars.count, !(0x40...0x7E).contains(scalars[index].value) {
+                    parameter.unicodeScalars.append(scalars[index])
+                    index += 1
+                }
+                guard index < scalars.count else { break }
+                let values = parameter.split(separator: ";", omittingEmptySubsequences: false)
+                    .map { Int($0) ?? 0 }
+                let first = values.first ?? 0
+                let count = max(1, first)
+                switch scalars[index] {
+                case "A": row = max(0, row - count)
+                case "B": row = min(row + count, height.map { $0 - 1 } ?? Int.max)
+                case "H", "f":
+                    row = min(count - 1, height.map { $0 - 1 } ?? Int.max)
+                    column = max(1, values.count > 1 ? values[1] : 1) - 1
+                case "r":
+                    scrollTop = count - 1
+                    scrollBottom = values.count > 1 && values[1] > 0 ? values[1] - 1 : height.map { $0 - 1 }
+                    // DECSTBM homes the cursor even if the margins did not change.
+                    row = 0
+                    column = 0
+                case "s": savedCursor = (row, column)
+                case "u":
+                    row = savedCursor.row
+                    column = savedCursor.column
+                case "K":
+                    ensureRow(row)
+                    if first == 0, column < rows[row].count {
+                        rows[row].removeSubrange(column...)
+                    } else if first == 1, !rows[row].isEmpty {
+                        let end = min(column, rows[row].count - 1)
+                        rows[row].replaceSubrange(0...end, with: repeatElement(" ", count: end + 1))
+                    } else if first == 2 { rows[row].removeAll() }
+                default: break // SGR and cursor visibility do not paint cells.
+                }
                 ensureRow(row)
-            case "K":
-                eraseLine(Int(parameter.split(separator: ";").first ?? "") ?? 0)
-            default:
-                break
+                index += 1
+                continue
             }
-            index += 1
-            continue
         }
-
         switch scalar {
-        case "\r":
-            column = 0
-        case "\n":
-            row += 1
-            ensureRow(row)
-            column = 0
+        case "\r": column = 0
+        case "\n": lineFeed()
         default:
+            if let width, column >= width { lineFeed() }
             let character = Character(String(scalar))
-            while rows[row].count < column {
-                rows[row].append(" ")
-            }
-            if rows[row].count == column {
-                rows[row].append(character)
-            } else {
-                rows[row][column] = character
-            }
+            while rows[row].count < column { rows[row].append(" ") }
+            if rows[row].count == column { rows[row].append(character) }
+            else { rows[row][column] = character }
             column += 1
         }
         index += 1
