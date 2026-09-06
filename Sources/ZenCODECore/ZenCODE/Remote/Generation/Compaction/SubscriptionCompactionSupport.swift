@@ -85,7 +85,7 @@ enum SubscriptionCompactionSupport {
     /// The conversation only owns what remains after the model's reserved
     /// output and the request overhead compaction cannot touch (tool catalogue,
     /// provider-injected system blocks). Feeding the raw context window to the
-    /// shared policy would let the 75% target aim at tokens that are already
+    /// shared policy would let the 50% target aim at tokens that are already
     /// spoken for, which is exactly what made preflight compaction repeat.
     static func compactionBudget(
         contextWindowTokens: Int?,

@@ -17,7 +17,9 @@ struct AgentConversationCompactionBudgetUsageTests {
     func compactionUsesNearlyAllOfTheTargetBudgetOnConstrainedWindows() {
         let messages = longConversation()
 
-        for maxTokens in [8_000, 20_000] {
+        // At the 50% target policy these windows retain the former 6k/15k
+        // working budgets, so saturation must still preserve >=20 raw turns.
+        for maxTokens in [12_000, 30_000] {
             let target = AgentConversationCompactionPolicy.targetTokenCount(for: maxTokens)
             let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
                 messages,

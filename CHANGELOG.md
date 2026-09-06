@@ -35,6 +35,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Conversation compaction now aims for at most 50% of the available prompt budget
+  (after output, overhead and wire-inflation reservations), with the 95% trigger
+  unchanged. This is a target, not a guarantee: indivisible system context and
+  tool-safe recent turns retain the existing material-progress fallback.
+- Compaction deduplicates safe suffixes and prunes impossible fits using the exact
+  additive no-summary lower bound. Impossible targets stop after the preferred
+  summary-budget pass instead of scanning up to 24,001 budgets. Feasible suffixes
+  still use exhaustive per-character search because rendering is non-monotonic;
+  its residual worst-case cost is intentionally retained rather than skipping fits.
+- Compacted user/tool history is explicitly marked as untrusted historical data,
+  quoted with provenance and escaped against structural marker/markup collisions.
+  Tiny summaries omit facts when their trust envelope cannot fit. Legacy summaries
+  remain readable and repeated compaction does not nest quote wrappers. Stable
+  summary headers, system role, snapshot/cache formats and memory storage are unchanged.
+
 - Desktop window actions now reject conflicting selectors and absent or ambiguous
   public AX/Quartz associations instead of choosing a relative best match or
   reporting an unverified requested window ID. Screenshot regions validate safe

@@ -17,8 +17,8 @@ struct AgentConversationCompactionSupportTests {
     }
 
     @Test
-    func compactionTargetUsesMostOfContextWindowWhileLeavingHeadroom() {
-        #expect(AgentConversationCompactionPolicy.targetTokenCount(for: 100_000) == 75_000)
+    func compactionTargetReservesHalfOfAvailableContext() {
+        #expect(AgentConversationCompactionPolicy.targetTokenCount(for: 100_000) == 50_000)
         #expect(
             AgentConversationCompactionPolicy.targetTokenCount(for: 100_000)
                 < AgentConversationCompactionPolicy.triggerTokenCount(for: 100_000)
