@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.1.4] - 2026-09-07
+
 ### Added
 
 - Conservative automatic project-memory consolidation after eligible root turns:
@@ -34,6 +36,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   Installation no longer treats `MEMORY.md` as a configuration artifact.
 
 ### Fixed
+
+- Renamed the DesktopTools executable entry-point file from `main.swift` to
+  `DesktopToolsFeatureMain.swift` to avoid Swift's conflict with `@main`, preserving
+  the existing `private enum DesktopFeatureMain` and executable behavior.
 
 - Terminal Chat reader updates no longer reset the transcript cursor to the status
   bar, leaving empty space above republished tool and Sub-Agents blocks. Same-height
