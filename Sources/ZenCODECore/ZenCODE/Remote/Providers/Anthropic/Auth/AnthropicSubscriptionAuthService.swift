@@ -44,6 +44,7 @@ public enum AnthropicSubscriptionAuthError: LocalizedError {
     case missingOAuthState
     case tokenExchangeFailed(status: Int, body: String)
     case invalidTokenResponse
+    case refreshTokenRejected
     case browserOpenFailed
     case randomBytesFailed(Int32)
     case missingCredentials
@@ -73,6 +74,8 @@ public enum AnthropicSubscriptionAuthError: LocalizedError {
                 return "Anthropic sign-in token exchange failed with HTTP \(status)."
             }
             return "Anthropic sign-in token exchange failed with HTTP \(status): \(detail)"
+        case .refreshTokenRejected:
+            return "Anthropic Subscription refresh token was rejected. Sign in again."
         case .invalidTokenResponse:
             return "Anthropic sign-in returned an invalid token response."
         case .browserOpenFailed:
@@ -473,9 +476,13 @@ public enum AnthropicSubscriptionAuthService {
         ], fallbackRefreshToken: refreshToken)
     }
 
-    private static func tokenRequest(
+    static func tokenRequest(
         parameters: [String: String],
-        fallbackRefreshToken: String? = nil
+        fallbackRefreshToken: String? = nil,
+        sendRequest: @Sendable (RemoteHTTPStreamingRequest) async throws -> (status: Int, body: Data) = {
+            let response = try await RemoteTransportCore().sendRequest($0)
+            return (response.status, response.body)
+        }
     ) async throws -> AnthropicSubscriptionCredentials {
         var lastFailure: AnthropicSubscriptionAuthError?
         let body = try JSONSerialization.data(withJSONObject: parameters)
@@ -489,9 +496,20 @@ public enum AnthropicSubscriptionAuthService {
                 ],
                 body: body
             )
-            let response = try await RemoteTransportCore().sendRequest(request)
+            try Task.checkCancellation()
+            let response = try await sendRequest(request)
+            try Task.checkCancellation()
 
             guard (200..<300).contains(response.status) else {
+                // A rejected refresh grant requires a new login, not a retry on
+                // the legacy token endpoint. Never classify code-exchange,
+                // server, or malformed responses as recoverable credentials.
+                if parameters["grant_type"] == "refresh_token",
+                   response.status == 400,
+                   let failure = try? JSONDecoder().decode(OAuthTokenFailure.self, from: response.body),
+                   failure.error == "invalid_grant" {
+                    throw AnthropicSubscriptionAuthError.refreshTokenRejected
+                }
                 lastFailure = AnthropicSubscriptionAuthError.tokenExchangeFailed(
                     status: response.status,
                     body: String(decoding: response.body, as: UTF8.self)
@@ -557,6 +575,10 @@ private actor AnthropicSubscriptionRefreshCoordinator {
         }
         return try await task.value
     }
+}
+
+private struct OAuthTokenFailure: Decodable {
+    let error: String
 }
 
 private struct TokenResponse: Decodable {

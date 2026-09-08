@@ -477,18 +477,25 @@ extension ZenCODESetupRunner {
         return credentials
     }
 
-    static func ensureAnthropicSubscriptionCredentials() async throws -> AnthropicSubscriptionCredentials {
+    static func ensureAnthropicSubscriptionCredentials(
+        loadCredentials: () async throws -> AnthropicSubscriptionCredentials = {
+            try await AnthropicSubscriptionAuthService.loadValidCredentials(persistRefresh: false)
+        },
+        signIn: () async throws -> AnthropicSubscriptionCredentials = {
+            try await signInAnthropicSubscription()
+        }
+    ) async throws -> AnthropicSubscriptionCredentials {
+        try Task.checkCancellation()
         do {
-            return try await AnthropicSubscriptionAuthService.loadValidCredentials(
-                persistRefresh: false
-            )
+            return try await loadCredentials()
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as AnthropicSubscriptionAuthError {
-            // Only missing/invalid credentials are recoverable by starting a new
-            // sign-in; structural or transport errors must surface unchanged.
+            // Missing credentials and explicitly rejected refresh grants need
+            // a new sign-in; structural or transport errors surface unchanged.
             switch error {
-            case .missingCredentials, .invalidCredentials:
+            case .missingCredentials, .invalidCredentials, .refreshTokenRejected:
+                try Task.checkCancellation()
                 AgentOutput.standardError.writeString(
                     "Claude Subscription is not connected. Opening Claude login in the browser.\n"
                 )
@@ -499,6 +506,11 @@ extension ZenCODESetupRunner {
             throw error
         }
 
+        try Task.checkCancellation()
+        return try await signIn()
+    }
+
+    private static func signInAnthropicSubscription() async throws -> AnthropicSubscriptionCredentials {
         let session = try await AnthropicSubscriptionAuthService.startSignIn()
         AgentOutput.standardError.writeString(
             """

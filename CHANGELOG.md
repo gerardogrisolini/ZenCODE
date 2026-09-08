@@ -12,6 +12,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Claude Subscription setup now offers a new login when token refresh explicitly
+  fails with OAuth `invalid_grant`. Network, server, malformed token responses,
+  authorization-code exchange failures and cancellation remain visible instead
+  of being treated as disconnected credentials.
+
 - ChatGPT subscription requests now explicitly request detailed public reasoning
   summaries for ACP thinking streams: `auto` can produce reasoning without a public
   summary. This requests provider-supplied summaries, not raw chain-of-thought.
