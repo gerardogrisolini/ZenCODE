@@ -28,6 +28,12 @@ extension ChatGPTSubscriptionGenerationClient {
     actor StreamAccumulator {
         private var responseText = ""
         private var responseReasoningText = ""
+        private struct ReasoningSummaryKey: Hashable {
+            let itemID: String?
+            let summaryIndex: Int
+        }
+        /// Snapshots belong to one summary part, not to the entire response.
+        private var reasoningSummaryText: [ReasoningSummaryKey: String] = [:]
         private var stopReason = "end_turn"
         private var toolCallAccumulator = RemoteToolCallAccumulator()
         private var requestUsage: RemoteGenerationUsage?
@@ -59,8 +65,13 @@ extension ChatGPTSubscriptionGenerationClient {
                 ChatGPTSubscriptionGenerationClient.subscriptionUsage(from: object) {
                 events.append(.subscriptionUsage(subscriptionUsage))
             }
+            let normalizedType = (object["type"] as? String)
+                .map(normalizedEventType) ?? ""
+            let didParseSummaryEvent = ingestReasoningSummaryEvent(
+                object, normalizedType: normalizedType, events: &events
+            )
             var didParseContentFromResponsesEvent = false
-            var didParseReasoningDeltaFromResponsesEvent = false
+            var didParseReasoningDeltaFromResponsesEvent = didParseSummaryEvent
 
             for event in ResponsesStreamParser.parse(object) {
                 switch event {
@@ -77,7 +88,7 @@ extension ChatGPTSubscriptionGenerationClient {
                     }
                     didParseContentFromResponsesEvent = true
                 case let .reasoning(delta):
-                    guard !delta.isEmpty else {
+                    guard !didParseSummaryEvent, !delta.isEmpty else {
                         continue
                     }
                     didParseReasoningDeltaFromResponsesEvent = true
@@ -117,8 +128,6 @@ extension ChatGPTSubscriptionGenerationClient {
                 }
             }
 
-            let normalizedType = (object["type"] as? String)
-                .map(normalizedEventType) ?? ""
             switch normalizedType {
             case "response_output_text_delta",
                  "response_content_part_delta":
@@ -262,7 +271,96 @@ extension ChatGPTSubscriptionGenerationClient {
             return true
         }
 
+        /// Public summary events can arrive as deltas or complete part snapshots.
+        /// Read only their documented text fields; encrypted replay data is never display text.
+        private func ingestReasoningSummaryEvent(
+            _ object: [String: Any],
+            normalizedType: String,
+            events: inout [DirectAgentEvent]
+        ) -> Bool {
+            let text: String?
+            let isDelta: Bool
+            switch normalizedType {
+            case "response_reasoning_summary_text_delta",
+                 "response_reasoning_summary_delta",
+                 "reasoning_summary_delta",
+                 "reasoning_summary_part_added":
+                // Preserve legacy payload shapes and whitespace-only chunks before
+                // falling back to the compatibility parser (which filters blanks).
+                text = (object["delta"] as? String)
+                    ?? ((object["delta"] as? [String: Any])?["text"] as? String)
+                    ?? (object["text"] as? String)
+                    ?? ChatGPTSubscriptionGenerationClient.responseReasoningDelta(from: object)
+                isDelta = true
+            case "response_reasoning_summary_text_done":
+                text = object["text"] as? String
+                isDelta = false
+            case "response_reasoning_summary_part_added", "response_reasoning_summary_part_done":
+                let part = object["part"] as? [String: Any]
+                text = part?["type"] as? String == "summary_text" ? part?["text"] as? String : nil
+                isDelta = false
+            default:
+                return false
+            }
+            guard let text else { return false }
+            let key = ReasoningSummaryKey(
+                itemID: object["item_id"] as? String,
+                summaryIndex: RemoteGenerationClient.integerValue(object["summary_index"]) ?? 0
+            )
+            let delta = appendReasoningSummary(text, key: key, isDelta: isDelta)
+            if !delta.isEmpty {
+                events.append(.thought(delta))
+            }
+            return true
+        }
+
+        private func appendReasoningSummary(
+            _ text: String,
+            key: ReasoningSummaryKey,
+            isDelta: Bool
+        ) -> String {
+            var accumulated = reasoningSummaryText[key] ?? ""
+            if !isDelta, reasoningSummaryText[key] == nil {
+                let anonymousKey = ReasoningSummaryKey(itemID: nil, summaryIndex: key.summaryIndex)
+                if key.itemID != nil,
+                   let anonymousText = reasoningSummaryText[anonymousKey],
+                   text.hasPrefix(anonymousText) {
+                    accumulated = anonymousText
+                    reasoningSummaryText.removeValue(forKey: anonymousKey)
+                }
+                // Adopt unkeyed compatibility summaries once, even when this snapshot adds nothing.
+                reasoningSummaryText[key] = accumulated
+            }
+            let delta: String
+            if isDelta {
+                delta = text
+            } else if text.hasPrefix(accumulated) {
+                delta = String(text.dropFirst(accumulated.count))
+            } else {
+                // ACP thought chunks are append-only: do not replay a revised snapshot.
+                return ""
+            }
+            guard !delta.isEmpty else { return "" }
+            reasoningSummaryText[key] = accumulated + delta
+            responseReasoningText.append(delta)
+            markFirstDelta()
+            return delta
+        }
+
         private func appendReasoningItemSnapshot(_ item: [String: Any]) -> DirectAgentEvent? {
+            if let summary = item["summary"] as? [[String: Any]], !summary.isEmpty {
+                var delta = ""
+                for (index, part) in summary.enumerated() {
+                    guard part["type"] as? String == "summary_text",
+                          let text = part["text"] as? String else { continue }
+                    delta.append(appendReasoningSummary(
+                        text,
+                        key: ReasoningSummaryKey(itemID: item["id"] as? String, summaryIndex: index),
+                        isDelta: false
+                    ))
+                }
+                return delta.isEmpty ? nil : .thought(delta)
+            }
             guard let snapshot = ChatGPTSubscriptionGenerationClient
                 .reasoningText(from: item)?
                 .nilIfBlank else {
