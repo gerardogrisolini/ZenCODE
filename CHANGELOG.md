@@ -10,6 +10,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- ACP thinking streams now contain only model reasoning: model-loaded notices,
+  runtime status and diagnostics (including retries) are no longer emitted as
+  `agent_thought_chunk` in either standard or app mode. Genuine thought deltas
+  and assistant responses remain unchanged; model metadata stays in ACP configuration.
+
 ## [2.1.4] - 2026-09-07
 
 ### Added

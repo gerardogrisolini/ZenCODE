@@ -94,11 +94,17 @@ private extension Dictionary where Key == String, Value == JSONValue {
     }
 }
 
-/// Backend that streams the same event shape the remote generation clients
-/// produce for a reasoning model: incremental `.thought` deltas followed by
-/// incremental `.content` deltas.
+/// Backend with configurable runtime events for exact ACP wire assertions.
 private actor ThinkingACPBackend: AgentRuntimeBackend {
     private var thinkingSelections: [AgentThinkingSelection?] = []
+    private let events: [DirectAgentEvent]
+
+    init(events: [DirectAgentEvent] = [
+        .thought("Analisi"), .thought(" del problema."),
+        .content("Ecco la risposta"), .content(" finale.")
+    ]) {
+        self.events = events
+    }
 
     func createSession(
         id _: String,
@@ -161,10 +167,9 @@ private actor ThinkingACPBackend: AgentRuntimeBackend {
         attachments _: [AgentRuntimeAttachment],
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
-        await onEvent(.thought("Analisi"))
-        await onEvent(.thought(" del problema."))
-        await onEvent(.content("Ecco la risposta"))
-        await onEvent(.content(" finale."))
+        for event in events {
+            await onEvent(event)
+        }
         return DirectAgentResponse(
             text: "Ecco la risposta finale.",
             stopReason: "end_turn",
@@ -179,6 +184,55 @@ private actor ThinkingACPBackend: AgentRuntimeBackend {
 
 @Suite(.serialized)
 struct ACPThinkingStreamTests {
+    /// Lifecycle and diagnostic events are not model output, including retries.
+    /// Classification must depend on the event type, never on text prefixes.
+    @Test(arguments: [false, true], [false, true])
+    func onlyModelThoughtsReachTheReasoningChannel(
+        appMode: Bool,
+        includesThoughts: Bool
+    ) async throws {
+        let thoughts = ["Remote request: ragionamento autentico\n", "  perché è così. 🧠"]
+        var events: [DirectAgentEvent] = [
+            .modelLoaded("MODEL_SENTINEL"),
+            .status("STATUS_SENTINEL"),
+            .diagnostic("Remote request: REQUEST_SENTINEL"),
+            .diagnostic("DIAGNOSTIC_SENTINEL")
+        ]
+        if includesThoughts { events.append(.thought(thoughts[0])) }
+        events += [
+            .diagnostic("Retrying remote request."),
+            .modelLoaded("RETRY_MODEL_SENTINEL"),
+            .status("RETRY_STATUS_SENTINEL")
+        ]
+        if includesThoughts { events.append(.thought(thoughts[1])) }
+        events += [
+            .content("Ecco la risposta"),
+            .diagnostic("RETRY_DIAGNOSTIC_SENTINEL"),
+            .status("FINAL_STATUS_SENTINEL"),
+            .content(" finale."),
+            .diagnostic("Generation done: METRICS_SENTINEL")
+        ]
+        let fixture = try await Self.makeFixture(
+            sessionID: "acp-thinking-isolation-\(UUID().uuidString)",
+            appMode: appMode,
+            events: events
+        )
+
+        await fixture.bridge.handleLine("""
+        {"jsonrpc":"2.0","id":25,"method":"session/prompt","params":{"sessionId":"\
+        \(fixture.sessionID)","prompt":[{"type":"text","text":"explain"}]}}
+        """)
+
+        #expect(fixture.wire.updateTexts(kind: "agent_thought_chunk")
+            == (includesThoughts ? thoughts : []))
+        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").joined()
+            == "Ecco la risposta finale.")
+        #expect(fixture.wire.allUpdateChunksCarryTextContent(kind: "agent_thought_chunk"))
+        #expect(fixture.wire.sessionIDs(forUpdateKind: "agent_thought_chunk")
+            .allSatisfy { $0 == fixture.sessionID })
+        #expect(fixture.wire.stopReason(for: 25) == "end_turn")
+    }
+
     /// A turn's reasoning deltas must reach the ACP client as distinct, ordered
     /// `agent_thought_chunk` updates that precede the assistant message chunks.
     @Test
@@ -325,7 +379,8 @@ struct ACPThinkingStreamTests {
 
     private static func makeFixture(
         sessionID: String,
-        appMode: Bool
+        appMode: Bool,
+        events: [DirectAgentEvent]? = nil
     ) async throws -> (
         bridge: ZenCODEACPBridge,
         backend: ThinkingACPBackend,
@@ -334,7 +389,7 @@ struct ACPThinkingStreamTests {
     ) {
         let workingDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(sessionID, isDirectory: true)
-        let backend = ThinkingACPBackend()
+        let backend = events.map { ThinkingACPBackend(events: $0) } ?? ThinkingACPBackend()
         let wire = ACPThinkingWire()
         let configuration = try AgentConfiguration(
             hostedModelID: "thinking-model",

@@ -288,32 +288,14 @@ extension ZenCODEACPBridge {
                     toolProviders: [],
                     onEvent: { event in
                     switch event {
-                    case let .status(message):
-                        if !appMode {
-                            await sendPromptUpdate(
-                                Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: message)
-                            )
-                        }
-                    case let .diagnostic(message):
-                        if Self.isAppSuppressedDiagnostic(message) {
-                            break
-                        }
-                        await sendPromptUpdate(
-                            Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: message)
-                        )
+                    case .status, .diagnostic, .modelLoaded:
+                        // Runtime lifecycle and diagnostics are not model reasoning.
+                        // Model selection is already exposed through ACP configuration.
+                        break
                     case let .thought(message):
                         await sendPromptUpdate(
                             Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: message)
                         )
-                    case let .modelLoaded(modelID):
-                        if !appMode {
-                            await sendPromptUpdate(
-                                Self.textChunkJSONUpdate(
-                                    kind: "agent_thought_chunk",
-                                    text: "Loaded model: \(modelID)"
-                                )
-                            )
-                        }
                     case .metrics:
                         break
                     case let .contextWindow(status):
