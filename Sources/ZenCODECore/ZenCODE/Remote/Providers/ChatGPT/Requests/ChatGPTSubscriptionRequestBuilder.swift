@@ -169,9 +169,10 @@ public enum ChatGPTSubscriptionRequestBuilder {
             .nilIfBlank
         if let normalizedReasoningEffort,
            normalizedReasoningEffort != "none" {
+            // `auto` may produce reasoning without a public summary for ACP.
             body["reasoning"] = [
                 "effort": normalizedReasoningEffort,
-                "summary": "auto"
+                "summary": "detailed"
             ]
         }
 

@@ -12,6 +12,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- ChatGPT subscription requests now explicitly request detailed public reasoning
+  summaries for ACP thinking streams: `auto` can produce reasoning without a public
+  summary. This requests provider-supplied summaries, not raw chain-of-thought.
+
 - ACP thinking streams now contain only model reasoning: model-loaded notices,
   runtime status and diagnostics (including retries) are no longer emitted as
   `agent_thought_chunk` in either standard or app mode. Genuine thought deltas
