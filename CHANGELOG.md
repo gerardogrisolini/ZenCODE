@@ -10,6 +10,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- ACP chat now shows the current agent, model and thinking selection once before
+  the first model-generating prompt, using `agent_message_chunk` in standard and
+  app mode. Immediate local commands do not consume this summary; configuration
+  changes preserve it and restored session incarnations show it again. The summary
+  is presentation-only, never model input, reasoning or persisted history. Missing
+  thinking selections are reported as default/unsupported rather than disabled.
+
 ### Fixed
 
 - Claude Subscription setup now offers a new login when token refresh explicitly
@@ -24,7 +33,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - ACP thinking streams now contain only model reasoning: model-loaded notices,
   runtime status and diagnostics (including retries) are no longer emitted as
   `agent_thought_chunk` in either standard or app mode. Genuine thought deltas
-  and assistant responses remain unchanged; model metadata stays in ACP configuration.
+  and model-generated assistant responses remain unchanged; model metadata is
+  also available through ACP configuration.
 
 ## [2.1.4] - 2026-09-07
 

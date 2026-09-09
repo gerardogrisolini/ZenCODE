@@ -119,6 +119,9 @@ extension ZenCODEACPBridge {
         )
     }
 
+    // All same-incarnation reconstruction paths (mention, refresh and
+    // reconfiguration) inherit ACP presentation state from the live entry.
+    // A fresh epoch, including load/resume, deliberately starts unannounced.
     func sessionStateWithCommandState(
         configuration: AgentCoreSessionConfiguration,
         selectedAgent: AgentProfile? = nil,
@@ -137,6 +140,13 @@ extension ZenCODEACPBridge {
             configuration: configuration,
             epoch: epoch ?? makeSessionEpoch(),
             selectedAgent: selectedAgent,
+            hasPresentedInitialConfiguration: epoch.flatMap { expectedEpoch in
+                sessions[configuration.sessionID].flatMap { existing in
+                    existing.epoch == expectedEpoch
+                        ? existing.hasPresentedInitialConfiguration
+                        : nil
+                }
+            } ?? false,
             activePromptID: activePromptID,
             activePromptTask: activePromptTask,
             operationState: operationState,
@@ -144,6 +154,26 @@ extension ZenCODEACPBridge {
             planBrainstorming: planBrainstorming,
             workflowContinuation: workflowContinuation
         )
+    }
+
+    /// Describes the selected runtime configuration without resolving a new
+    /// thinking value or injecting presentation metadata into the model turn.
+    func initialConfigurationSummary(for session: SessionState) -> String {
+        let agent = session.selectedAgent?.name.nilIfBlank
+            ?? session.configuration.agentName?.nilIfBlank
+            ?? session.configuration.agentID?.nilIfBlank
+            ?? "Default"
+        let model = session.configuration.modelID?.nilIfBlank ?? "Default"
+        let thinking: String
+        if let selection = session.configuration.thinkingSelection {
+            thinking = selection.displayTitle
+        } else if modelManifest(for: session.configuration.modelID)?.supportsThinking == false {
+            thinking = "Not supported"
+        } else {
+            // Missing/unknown capability is not evidence that thinking is off.
+            thinking = "Default"
+        }
+        return "Agent: \(agent) · Model: \(model) · Thinking: \(thinking)\n\n"
     }
 
     public static func allowedToolNames(

@@ -278,6 +278,30 @@ extension ZenCODEACPBridge {
                 selectedAgentSkills(for: session.selectedAgent),
                 sessionID: promptConfiguration.sessionID
             )
+            try Task.checkCancellation()
+            guard let currentSession = liveSession(id: sessionID, epoch: epoch),
+                  currentSession.activePromptID == promptID,
+                  currentSession.operationState == .prompting(promptID) else {
+                throw CancellationError()
+            }
+            if !currentSession.hasPresentedInitialConfiguration {
+                // Claim before suspending. This flag belongs to this live ACP
+                // incarnation, not to the backend conversation or its snapshot.
+                sessions[sessionID]?.hasPresentedInitialConfiguration = true
+                await sendPromptUpdate(Self.textChunkJSONUpdate(
+                    kind: "agent_message_chunk",
+                    text: initialConfigurationSummary(for: currentSession)
+                ))
+                // In app mode, do not leave the summary buffered until the
+                // first model event: it must already be visible before generation.
+                await flushPromptUpdates()
+            }
+            try Task.checkCancellation()
+            guard let readySession = liveSession(id: sessionID, epoch: epoch),
+                  readySession.activePromptID == promptID,
+                  readySession.operationState == .prompting(promptID) else {
+                throw CancellationError()
+            }
             var generationPrompt = modelPromptText
             var generationAttachments = attachments
             while true {

@@ -33,6 +33,9 @@ public actor ZenCODEACPBridge {
         /// write state back into a newer session with the same id.
         public let epoch: UInt64
         public var selectedAgent: AgentProfile?
+        /// ACP presentation only: never persisted or added to model history.
+        /// A loaded/resumed session is a new incarnation and announces again.
+        var hasPresentedInitialConfiguration = false
         /// Reserved synchronously by `session/prompt` before its first `await`,
         /// making one prompt per session atomically exclusive even when several
         /// requests are dispatched concurrently.

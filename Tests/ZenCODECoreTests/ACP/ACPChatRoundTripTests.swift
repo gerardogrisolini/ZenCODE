@@ -168,8 +168,8 @@ private actor EchoACPBackend: AgentRuntimeBackend {
 struct ACPChatRoundTripTests {
     /// The full bidirectional path: a JSON-RPC `session/prompt` line handed to
     /// the bridge exactly as stdin delivers it must reach the shared runner, and
-    /// the reply must return to the client as an `agent_message_chunk` plus the
-    /// prompt result.
+    /// the reply must return to the client after the initial configuration summary,
+    /// as separate `agent_message_chunk` updates plus the prompt result.
     @Test
     func promptLineFromClientIsAnsweredOnTheSameWire() async throws {
         let fixture = try await Self.makeFixture(sessionID: "acp-round-trip")
@@ -181,11 +181,14 @@ struct ACPChatRoundTripTests {
 
         // Inbound: the prompt reached the shared session runner unchanged.
         #expect(await fixture.backend.recordedPrompts() == ["ping from client"])
-        // Outbound: the client sees its own message echoed back and the reply.
+        // Outbound: the client sees its own message, the configuration summary, and the reply.
         #expect(fixture.wire.updateTexts(kind: "user_message_chunk")
             == ["ping from client"])
         #expect(fixture.wire.updateTexts(kind: "agent_message_chunk")
-            == ["echo: ping from client"])
+            == [
+                "Agent: Default · Model: test-model · Thinking: Not supported\n\n",
+                "echo: ping from client"
+            ])
         // The request is answered, and answered for the right session.
         #expect(fixture.wire.hasError(for: 7) == false)
         #expect(fixture.wire.stopReason(for: 7) == "end_turn")
@@ -224,10 +227,13 @@ struct ACPChatRoundTripTests {
         """)
 
         #expect(fixture.wire.updateTexts(kind: "agent_message_chunk")
-            == ["echo: ordering"])
+            == [
+                "Agent: Default · Model: test-model · Thinking: Not supported\n\n",
+                "echo: ordering"
+            ])
 
         let trace = fixture.wire.trace()
-        let replyIndex = try #require(trace.firstIndex(of: "agent_message_chunk"))
+        let replyIndex = try #require(trace.lastIndex(of: "agent_message_chunk"))
         let notificationIndex = try #require(
             trace.firstIndex(of: "_zencode/usage/subscription")
         )
@@ -251,8 +257,16 @@ struct ACPChatRoundTripTests {
         """)
 
         #expect(fixture.wire.updateTexts(kind: "agent_message_chunk")
-            == ["echo: direct notification"])
-        #expect(fixture.wire.trace().contains("_zencode/usage/subscription"))
+            == [
+                "Agent: Default · Model: test-model · Thinking: Not supported\n\n",
+                "echo: direct notification"
+            ])
+        let trace = fixture.wire.trace()
+        let replyIndex = try #require(trace.lastIndex(of: "agent_message_chunk"))
+        let notificationIndex = try #require(
+            trace.firstIndex(of: "_zencode/usage/subscription")
+        )
+        #expect(replyIndex < notificationIndex)
         #expect(
             fixture.wire.sessionIDs(forMethod: "_zencode/usage/subscription")
                 == [fixture.sessionID]

@@ -320,7 +320,9 @@ struct ACPCommandRoutingTests {
         #expect(wire.updateTexts(kind: "user_message_chunk").contains(
             "/plan unify ACP and Telegram"
         ))
-        #expect(wire.updateTexts(kind: "agent_message_chunk") == [
+        let firstTurnMessages = wire.updateTexts(kind: "agent_message_chunk")
+        #expect(firstTurnMessages.first?.hasPrefix("Agent:") == true)
+        #expect(Array(firstTurnMessages.dropFirst()) == [
             "# Planner questions\n1. Keep the discussion only in runtime memory?"
         ])
         #expect(!wire.updateTexts(kind: "agent_message_chunk").contains {
