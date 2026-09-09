@@ -95,18 +95,28 @@ private extension Dictionary where Key == String, Value == JSONValue {
 }
 
 /// Backend with configurable runtime events for exact ACP wire assertions.
+enum ThinkingACPTermination: String, Sendable {
+    case success, cancelled, failure
+}
+
+private enum ThinkingACPFailure: Error {
+    case interrupted
+}
+
 private actor ThinkingACPBackend: AgentRuntimeBackend {
     private var thinkingSelections: [AgentThinkingSelection?] = []
     private var prompts: [String] = []
     private var summaryCountsAtGeneration: [Int] = []
     private let wire: ACPThinkingWire?
     private let events: [DirectAgentEvent]
+    private let termination: ThinkingACPTermination
 
     init(events: [DirectAgentEvent] = [
         .thought("Analisi"), .thought(" del problema."),
         .content("Ecco la risposta"), .content(" finale.")
-    ], wire: ACPThinkingWire? = nil) {
+    ], wire: ACPThinkingWire? = nil, termination: ThinkingACPTermination = .success) {
         self.events = events
+        self.termination = termination
         self.wire = wire
     }
 
@@ -178,6 +188,11 @@ private actor ThinkingACPBackend: AgentRuntimeBackend {
         )
         for event in events {
             await onEvent(event)
+        }
+        switch termination {
+        case .success: break
+        case .cancelled: throw CancellationError()
+        case .failure: throw ThinkingACPFailure.interrupted
         }
         return DirectAgentResponse(
             text: "Ecco la risposta finale.",
@@ -544,10 +559,192 @@ struct ACPThinkingStreamTests {
             ?? "acp-thinking-selection"
     }
 
+    @Test(arguments: [false, true], [
+        AgentProtocolProfileID.openAIChatGPTSubscription,
+        .anthropicClaudeSubscription,
+        .openAIResponses,
+    ])
+    func formattingIsScopedToConfiguredChatGPTProvider(
+        appMode: Bool, protocolProfile: AgentProtocolProfileID
+    ) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("acp-thought-format-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try await AppStorageDirectory.withSupportDirectoryURL(directory) {
+            try Self.installThinkingProvider(protocolProfile)
+            let rawThought = "**Riduco il problema a sottoinsiemi****Verifico**\n\n"
+            let fixture = try await Self.makeFixture(
+                sessionID: "acp-format-\(UUID().uuidString)", appMode: appMode,
+                events: [.thought("*"), .thought("*Riduco il pro"),
+                         .diagnostic("retry diagnostic"),
+                         .thought("blema a sottoinsiemi*"), .thought("***Verifico**\n"),
+                         .thought("\n"), .content("**Risposta** *invariata*")]
+            )
+            try await fixture.bridge.prompt(id: .number(70), params: [
+                "sessionId": fixture.sessionID, "prompt": "explain"
+            ])
+            let expected = protocolProfile == .openAIChatGPTSubscription
+                ? "Riduco il problema a sottoinsiemi\nVerifico" : rawThought
+            let thoughtText = fixture.wire.updateTexts(kind: "agent_thought_chunk").joined()
+            #expect(thoughtText == expected)
+            if protocolProfile == .openAIChatGPTSubscription {
+                #expect(!thoughtText.contains("\n\n"))
+                #expect(!thoughtText.hasSuffix("\n"))
+                var prefix = ""
+                for chunk in fixture.wire.updateTexts(kind: "agent_thought_chunk") {
+                    prefix += chunk
+                    #expect(prefix.unicodeScalars.last?.properties.isWhitespace != true)
+                }
+                #expect(!thoughtText.contains("\r"))
+            }
+            #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").joined()
+                .hasSuffix("**Risposta** *invariata*"))
+            #expect(fixture.wire.allUpdateChunksCarryTextContent(kind: "agent_thought_chunk"))
+            #expect(fixture.wire.stopReason(for: 70) == "end_turn")
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    @Test(arguments: [false, true], [
+        ThinkingACPTermination.success, .cancelled, .failure,
+    ])
+    func promptExitLeavesNoTrailingWhitespaceOrStateLeak(
+        appMode: Bool, termination: ThinkingACPTermination
+    ) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("acp-thought-exit-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try await AppStorageDirectory.withSupportDirectoryURL(directory) {
+            try Self.installThinkingProvider(.openAIChatGPTSubscription)
+            let fixture = try await Self.makeFixture(
+                sessionID: "acp-exit-\(UUID().uuidString)", appMode: appMode,
+                events: [.thought("**Ultimo blocco*"), .thought("*")],
+                termination: termination
+            )
+            for id in [71, 72] {
+                let previousChunks = fixture.wire.updateTexts(kind: "agent_thought_chunk").count
+                await fixture.bridge.handleLine("""
+                {"jsonrpc":"2.0","id":\(id),"method":"session/prompt","params":{"sessionId":"\(fixture.sessionID)","prompt":"explain"}}
+                """)
+                if termination != .failure {
+                    #expect(fixture.wire.stopReason(for: id)
+                        == (termination == .cancelled ? "cancelled" : "end_turn"))
+                }
+                let segment = Array(fixture.wire.updateTexts(kind: "agent_thought_chunk")
+                    .dropFirst(previousChunks))
+                #expect(segment == ["Ultimo blocco"])
+            }
+            #expect(fixture.wire.updateTexts(kind: "agent_thought_chunk")
+                == ["Ultimo blocco", "Ultimo blocco"])
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    @Test
+    func replayDoesNotAssumeCurrentProviderIsHistoricalProvenance() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("acp-thought-replay-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try await AppStorageDirectory.withSupportDirectoryURL(directory) {
+            try Self.installThinkingProvider(.openAIChatGPTSubscription)
+            let fixture = try await Self.makeFixture(
+                sessionID: "acp-replay-\(UUID().uuidString)", appMode: false
+            )
+            let original = AgentRuntimeMessage(
+                role: .assistant, content: "**Finale**", reasoningContent: "**Origine ignota**"
+            )
+            let snapshot = AgentRuntimeSessionSnapshot(
+                sessionID: fixture.sessionID, modelID: "thinking-model",
+                workingDirectoryPath: directory.path, systemPrompt: nil, cacheKey: nil,
+                history: [original], allowedToolNames: nil,
+                thinkingSelection: nil, preserveThinking: true
+            )
+            await fixture.bridge.replaySessionHistory(snapshot)
+            #expect(fixture.wire.updateTexts(kind: "agent_thought_chunk") == ["**Origine ignota**"])
+            #expect(fixture.wire.updateTexts(kind: "agent_message_chunk") == ["**Finale**"])
+            #expect(snapshot.history == [original])
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func formattingStreamsBeforeTurnEndAndFlushesBeforeToolOrAnswer(buffersUpdates: Bool) async throws {
+        let wire = ACPThinkingWire()
+        let pipeline = ACPPromptUpdatePipeline(
+            sessionID: "format-pipeline", writer: ACPWriter(sink: wire.sink),
+            buffer: ACPPromptUpdateBuffer(), buffersUpdates: buffersUpdates,
+            normalizesChatGPTThoughts: true
+        )
+        func thought(_ text: String) async {
+            await pipeline.enqueue(.init(kind: .consume(
+                ZenCODEACPBridge.textChunkJSONUpdate(kind: "agent_thought_chunk", text: text)
+            ))).value
+            let chunks = wire.updateTexts(kind: "agent_thought_chunk")
+            for chunk in chunks {
+                #expect(chunk.unicodeScalars.last?.properties.isWhitespace != true)
+            }
+        }
+        await thought("**Sto ragio")
+        #expect(wire.updateTexts(kind: "agent_thought_chunk").joined() == "Sto ragio")
+        await thought("nando*")
+        await pipeline.enqueue(.init(kind: .flushThenNotify(
+            method: "_zencode/usage/subscription", params: .object([:])
+        ))).value
+        await thought("*")
+        await pipeline.enqueue(.init(kind: .consume(.object([
+            "sessionUpdate": .string("tool_call"), "toolCallId": .string("test-tool"),
+            "title": .string("Test tool"), "status": .string("pending"),
+        ])))).value
+        #expect(wire.updateTexts(kind: "agent_thought_chunk").joined() == "Sto ragionando")
+        let firstSegmentChunkCount = wire.updateTexts(kind: "agent_thought_chunk").count
+        let trace = wire.trace()
+        let toolIndex = try #require(trace.firstIndex(of: "tool_call"))
+        let thoughtIndex = try #require(trace.lastIndex(of: "agent_thought_chunk"))
+        #expect(thoughtIndex < toolIndex)
+        await thought("\r\n **Dopo il tool**\r\n")
+        await thought("*")
+        await thought("")
+        await thought("*")
+        #expect(wire.updateTexts(kind: "agent_thought_chunk")
+            .dropFirst(firstSegmentChunkCount).joined() == "Dopo il tool")
+        await thought("Altro blocco**\n")
+        await pipeline.enqueue(.init(kind: .consume(
+            ZenCODEACPBridge.textChunkJSONUpdate(kind: "agent_message_chunk", text: "**Finale**")
+        ))).value
+        await pipeline.enqueue(.init(kind: .flush)).value
+        #expect(wire.updateTexts(kind: "agent_thought_chunk")
+            .dropFirst(firstSegmentChunkCount).joined() == "Dopo il tool\nAltro blocco")
+        #expect(wire.updateTexts(kind: "agent_message_chunk").joined() == "**Finale**")
+        let afterAnswerChunkCount = wire.updateTexts(kind: "agent_thought_chunk").count
+        await thought("**Nuovo segmento** ")
+        await pipeline.enqueue(.init(kind: .flush)).value
+        #expect(wire.updateTexts(kind: "agent_thought_chunk")
+            .dropFirst(afterAnswerChunkCount).joined() == "Nuovo segmento")
+    }
+
+    private static func installThinkingProvider(_ protocolProfile: AgentProtocolProfileID) throws {
+        let isAnthropic = protocolProfile == .anthropicClaudeSubscription
+        let provider = AgentRemoteProvider(
+            name: "Deliberately unrelated display name", baseURL: "https://example.invalid/v1",
+            modelID: "same-model-for-every-provider",
+            providerProfileID: isAnthropic ? .anthropic : .openAI,
+            protocolProfileID: protocolProfile,
+            authPolicy: isAnthropic ? .anthropicSubscription
+                : (protocolProfile == .openAIChatGPTSubscription ? .chatGPTSubscription : .apiKeyRequired)
+        )
+        try AgentSettingsManifestStore.save(AgentSettingsManifest(models: [
+            AgentSettingsModelManifest(
+                id: "thinking-model", kind: .remoteAPI,
+                modelID: "same-model-for-every-provider", provider: provider
+            ),
+        ]))
+    }
+
     private static func makeFixture(
         sessionID: String,
         appMode: Bool,
-        events: [DirectAgentEvent]? = nil
+        events: [DirectAgentEvent]? = nil,
+        termination: ThinkingACPTermination = .success
     ) async throws -> (
         bridge: ZenCODEACPBridge,
         backend: ThinkingACPBackend,
@@ -560,7 +757,8 @@ struct ACPThinkingStreamTests {
         let backend = ThinkingACPBackend(
             events: events ?? [.thought("Analisi"), .thought(" del problema."),
                                .content("Ecco la risposta"), .content(" finale.")],
-            wire: wire
+            wire: wire,
+            termination: termination
         )
         let configuration = try AgentConfiguration(
             hostedModelID: "thinking-model",

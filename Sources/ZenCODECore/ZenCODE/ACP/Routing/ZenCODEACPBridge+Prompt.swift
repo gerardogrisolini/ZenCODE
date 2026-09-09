@@ -223,16 +223,23 @@ extension ZenCODEACPBridge {
 
         let writer = self.writer
         let appMode = configuration.appMode
-        // Single serialized exit point for app-mode prompt updates. Overlapping
+        // Single serialized exit point for app-mode buffering and ChatGPT-only
+        // thinking presentation. Non-app mode still writes every fragment directly.
+        // Overlapping
         // `@Sendable` callbacks must not interleave buffer drains with writer
         // calls, or a later notification could overtake content an earlier
         // callback had already claimed; the pipeline chains every unit so the
         // wire order equals the enqueue order.
-        let updatePipeline = appMode
+        let normalizesChatGPTThoughts = AgentSettingsStore.defaultSelection(
+            explicitModelID: promptConfiguration.modelID
+        )?.remoteProvider?.isChatGPTSubscriptionProvider == true
+        let updatePipeline = appMode || normalizesChatGPTThoughts
             ? ACPPromptUpdatePipeline(
                 sessionID: sessionID,
                 writer: writer,
-                buffer: ACPPromptUpdateBuffer()
+                buffer: ACPPromptUpdateBuffer(),
+                buffersUpdates: appMode,
+                normalizesChatGPTThoughts: normalizesChatGPTThoughts
             )
             : nil
         let sessionRunner = self.sessionRunner
@@ -394,12 +401,20 @@ extension ZenCODEACPBridge {
                                 workingDirectory: workspaceURL
                             )
                         )
-                    case .sessionSnapshot,
-                         .turnEnded:
+                    case .turnEnded:
+                        if let updatePipeline {
+                            await updatePipeline.enqueue(.init(kind: .finishThought)).value
+                        }
+                    case .sessionSnapshot:
                         break
                     }
                 }
                 )
+                // Also covers backends that return without a turnEnded event,
+                // before an automatic workflow continuation starts a new turn.
+                if let updatePipeline {
+                    await updatePipeline.enqueue(.init(kind: .finishThought)).value
+                }
                 let completion = PromptCompletion(
                     text: response.text,
                     finalAssistantBlock: await assistantBlocks.lastBlock(),

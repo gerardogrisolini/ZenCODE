@@ -285,6 +285,9 @@ extension ZenCODEACPBridge {
                 }
                 await sendUserMessageChunk(sessionID: snapshot.sessionID, text: text)
             case .assistant:
+                // Snapshots have no per-message provider provenance. The current
+                // snapshot.modelID may follow a provider switch, so replay must
+                // not apply the live ChatGPT formatter to possibly foreign text.
                 if let thought = message.reasoningContent?.nilIfBlank {
                     await writer.sendSessionUpdate(
                         sessionID: snapshot.sessionID,

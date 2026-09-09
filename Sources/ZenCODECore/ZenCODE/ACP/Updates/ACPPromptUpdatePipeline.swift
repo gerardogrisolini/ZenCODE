@@ -2,8 +2,8 @@
 //  ACPPromptUpdatePipeline.swift
 //  ZenCODE
 //
-//  Serializes every app-mode prompt-update unit that leaves the ACP prompt path
-//  for one writer. Callbacks reaching `onEvent` are `@Sendable` and can overlap
+//  Serializes app-mode and ChatGPT thinking prompt-update units leaving the ACP
+//  prompt path for one writer. Callbacks reaching `onEvent` are `@Sendable` and can overlap
 //  arbitrarily: without this choke point, two concurrent units could interleave
 //  their "drain buffer" and "write wire" steps, and a notification emitted by a
 //  later callback could reach the host ahead of buffered content an earlier
@@ -24,10 +24,12 @@ final class ACPPromptUpdatePipeline: Sendable {
     /// One serialized unit of work that ends in zero or more writer calls.
     struct Unit: Sendable {
         enum Kind: Sendable {
-            /// Consume one update through the buffer, then write what it emits.
+            /// Consume one update, optionally format reasoning and buffer it.
             case consume(JSONValue)
             /// Flush the buffer, then write what it emits.
             case flush
+            /// End a model reasoning segment without flushing unrelated content.
+            case finishThought
             /// Flush the buffer, then write one custom notification after it.
             case flushThenNotify(method: String, params: JSONValue)
             /// A no-op unit used to establish a chain barrier for `drain()`.
@@ -47,6 +49,8 @@ final class ACPPromptUpdatePipeline: Sendable {
     let buffer: ACPPromptUpdateBuffer
     private let writer: ACPWriter
     private let sessionID: String
+    private let buffersUpdates: Bool
+    private let thoughtNormalizer: Mutex<ACPChatGPTThoughtNormalizer?>
     /// Test seam invoked by every raw task before it awaits its predecessor.
     /// It proves that all task bodies may be scheduled in any order while the
     /// writer-facing unit execution remains ordered by the predecessor chain.
@@ -60,6 +64,8 @@ final class ACPPromptUpdatePipeline: Sendable {
         sessionID: String,
         writer: ACPWriter,
         buffer: ACPPromptUpdateBuffer,
+        buffersUpdates: Bool = true,
+        normalizesChatGPTThoughts: Bool = false,
         onTaskStart: (@Sendable (Int) async -> Void)? = nil,
         onUnitStart: (@Sendable (Int) async -> Void)? = nil,
         onUnitFinish: (@Sendable (Int) async -> Void)? = nil
@@ -67,6 +73,8 @@ final class ACPPromptUpdatePipeline: Sendable {
         self.sessionID = sessionID
         self.writer = writer
         self.buffer = buffer
+        self.buffersUpdates = buffersUpdates
+        self.thoughtNormalizer = Mutex(normalizesChatGPTThoughts ? ACPChatGPTThoughtNormalizer() : nil)
         self.onTaskStart = onTaskStart
         self.onUnitStart = onUnitStart
         self.onUnitFinish = onUnitFinish
@@ -102,19 +110,50 @@ final class ACPPromptUpdatePipeline: Sendable {
         await enqueue(.init(kind: .barrier)).value
     }
 
+    private func writeUpdate(_ update: JSONValue) async {
+        let updates = buffersUpdates ? buffer.consume(update) : [update]
+        for update in updates {
+            await writer.sendSessionUpdate(sessionID: sessionID, update: update)
+        }
+    }
+
+    private func finishThought() async {
+        let suffix = thoughtNormalizer.withLock { $0?.finish() ?? "" }
+        guard !suffix.isEmpty else { return }
+        await writeUpdate(ZenCODEACPBridge.textChunkJSONUpdate(
+            kind: "agent_thought_chunk", text: suffix
+        ))
+    }
+
     private func run(_ unit: Unit, ordinal: Int) async {
         if let onUnitStart {
             await onUnitStart(ordinal)
         }
         switch unit.kind {
         case let .consume(update):
-            for bufferedUpdate in buffer.consume(update) {
-                await writer.sendSessionUpdate(
-                    sessionID: sessionID,
-                    update: bufferedUpdate
-                )
+            let kind = update.objectValue?["sessionUpdate"]?.acpStringValue
+            if kind == "agent_message_chunk" || kind == "tool_call" {
+                await finishThought()
             }
+            if kind == "agent_thought_chunk",
+               let text = update.objectValue?["content"]?.objectValue?["text"]?.acpStringValue {
+                let normalized = thoughtNormalizer.withLock { $0?.consume(text) }
+                if let normalized {
+                    if !normalized.isEmpty {
+                        await writeUpdate(ZenCODEACPBridge.textChunkJSONUpdate(
+                            kind: "agent_thought_chunk", text: normalized
+                        ))
+                    }
+                } else {
+                    await writeUpdate(update)
+                }
+            } else {
+                await writeUpdate(update)
+            }
+        case .finishThought:
+            await finishThought()
         case .flush:
+            await finishThought()
             for bufferedUpdate in buffer.flushAll() {
                 await writer.sendSessionUpdate(
                     sessionID: sessionID,

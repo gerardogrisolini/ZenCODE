@@ -21,6 +21,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Live ChatGPT Subscription thinking sent through ACP now removes asterisks and
+  separates bold summary titles with one internal newline, including split streaming
+  delimiters. Only whitespace separators are deferred until actual following content;
+  title text still streams immediately. Existing CR/LF, repeated whitespace and empty
+  or incomplete markers cannot leave a trailing blank line. Tool, answer and turn-exit
+  boundaries finish without output and reset separators, so the next thinking card
+  starts without leading whitespace, including after repeated flushes. Ambiguous bold
+  text followed by prose on the same line stays inline.
+  Other providers, final answers and internal/persisted text are unchanged.
+  History replay stays verbatim because snapshots lack per-message provider provenance.
+  The user confirmed correctly separated thinking lines in Xcode with the previous
+  presentation patch but reported a terminal blank line; this deferred-separator
+  refinement has not yet been tested in the host.
+
 - Claude Subscription setup now offers a new login when token refresh explicitly
   fails with OAuth `invalid_grant`. Network, server, malformed token responses,
   authorization-code exchange failures and cancellation remain visible instead
