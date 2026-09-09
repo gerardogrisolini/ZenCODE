@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.1.5] - 2026-09-10
+
 ### Added
 
 - ACP chat now shows the current agent, model and thinking selection once before
