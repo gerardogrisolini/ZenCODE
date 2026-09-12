@@ -12,6 +12,35 @@ import Testing
 @Suite
 struct ZenCODEAgentProfileSetupRunnerTests {
     @Test
+    func bindingDisplayTitlePreservesModelNameFormatting() {
+        let uuid = "d3eea8e9-eccf-499e-9697-298ede7af8d5"
+        let cases: [(modelID: String, provider: String?, expected: String)] = [
+            ("remoteapi:\(uuid):vendor:model", nil, "vendor:model"),
+            ("REMOTEAPI:\(uuid):vendor:model:", "Remote", "Remote / vendor:model:"),
+            (" \tremoteapi:\(uuid): model \n", "Remote", "Remote /  model"),
+            ("remoteapi:invalid:vendor:model", nil, "remoteapi:invalid:vendor:model"),
+            ("remoteapi:invalid:vendor:model", "Remote", "Remote / model"),
+            ("provider:vendor:model", "Provider", "Provider / model"),
+            ("provider:vendor:model", nil, "provider:vendor:model"),
+            ("provider:vendor:model:", "Provider", "Provider / provider:vendor:model:"),
+            ("remoteapi:\(uuid):", "Remote", "Remote / remoteapi:\(uuid):"),
+            ("remoteapi:\(uuid): \n", "Remote", "Remote / remoteapi:\(uuid):"),
+            ("provider: model \n", "Provider", "Provider /  model"),
+            (" model ", nil, "model"),
+            ("", nil, ""),
+            ("", "Provider", "Provider / "),
+            (" \n", nil, ""),
+        ]
+        for item in cases {
+            let binding = AgentModelBinding(id: "unchanged", modelID: item.modelID, modelProvider: item.provider)
+            let original = binding
+            #expect(ZenCODEAgentProfileSetupRunner.bindingDisplayTitle(binding) == item.expected)
+            #expect(binding == original)
+            #expect(binding.id == "unchanged")
+        }
+    }
+
+    @Test
     func setupPreparationPreservesCustomAgentsAndRestoresOnlyDeveloper() throws {
         let existingAgents = [
             AgentProfile(

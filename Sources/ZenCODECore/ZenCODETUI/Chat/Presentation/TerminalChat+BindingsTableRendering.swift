@@ -51,7 +51,7 @@ extension TerminalChat {
                     let defaultGlyph = binding.id == defaultBindingID
                         ? bindingsDefaultMarkerGlyph
                         : bindingsBindingMarkerGlyph
-                    let modelName = Self.strippedModelNameForBinding(
+                    let modelName = ModelNamePresentation.strippedModelNameForBinding(
                         binding.modelID,
                         modelProvider: binding.modelProvider
                     )

@@ -267,7 +267,11 @@ Anthropic retains its overhead-invalidation overrides. The internal
 and Unicode lookup normalization, leaving domain-specific resolvers and errors
 separate. Feature record-to-bundle projection uses an internal initializer, and
 status construction avoids a redundant intermediary while preserving `source`
-and `isCore` overrides and permissions.
+and `isCore` overrides and permissions. The internal `ModelNamePresentation`
+helper under `Presentation` owns the two identifier-to-display-name transformations
+shared by setup and terminal presentation. The existing public `TerminalChat`
+formatting methods remain compatibility forwarders; model identifiers, catalog
+lookup, and persisted bindings are unchanged.
 
 | Area | Intended responsibility and directory layout |
 | --- | --- |

@@ -390,7 +390,7 @@ extension ZenCODEAgentProfileSetupRunner {
     }
 
     static func bindingDisplayTitle(_ binding: AgentModelBinding) -> String {
-        let modelName = TerminalChat.strippedModelNameForBinding(
+        let modelName = ModelNamePresentation.strippedModelNameForBinding(
             binding.modelID,
             modelProvider: binding.modelProvider
         )

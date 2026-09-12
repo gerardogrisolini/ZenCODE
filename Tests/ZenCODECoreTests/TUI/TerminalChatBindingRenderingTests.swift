@@ -10,6 +10,90 @@ import Testing
 @Suite
 struct TerminalChatBindingRenderingTests {
     @Test
+    func remoteAPIModelNameCharacterization() {
+        let uuid = "d3eea8e9-eccf-499e-9697-298ede7af8d5"
+        let cases: [(input: String, expected: String?)] = [
+            ("remoteapi:\(uuid):model", "model"),
+            ("REMOTEAPI:\(uuid.uppercased()):vendor:model:v2", "vendor:model:v2"),
+            (" \tremoteapi:\(uuid): model:v2 \n", " model:v2"),
+            ("remoteapi:\(uuid):model:", "model:"),
+            ("remoteapi:\(uuid)::", ":"),
+            ("remoteapi:\(uuid):", nil),
+            ("remoteapi:\(uuid): \n", nil),
+            ("remoteapi:\(uuid)", nil),
+            ("remoteapi:not-a-uuid:model", nil),
+            ("remoteapi::model", nil),
+            ("remoteapi:", nil),
+            ("chatgpt:model", nil),
+            (" model ", nil),
+            ("", nil),
+            (" \n", nil),
+        ]
+        for item in cases {
+            #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix(item.input) == item.expected)
+            #expect(ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix(item.input) == item.expected)
+            #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix(item.input)
+                == ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix(item.input))
+        }
+    }
+
+    @Test
+    func bindingModelNameCharacterization() {
+        let uuid = "d3eea8e9-eccf-499e-9697-298ede7af8d5"
+        let cases: [(input: String, provider: String?, expected: String)] = [
+            ("remoteapi:\(uuid):vendor:model", nil, "vendor:model"),
+            ("REMOTEAPI:\(uuid):vendor:model:", "Remote", "vendor:model:"),
+            (" \tremoteapi:\(uuid): model \n", nil, " model"),
+            ("remoteapi:not-a-uuid:vendor:model", nil, "remoteapi:not-a-uuid:vendor:model"),
+            ("remoteapi:not-a-uuid:vendor:model", "Remote", "model"),
+            ("provider:vendor:model", nil, "provider:vendor:model"),
+            ("provider:vendor:model", "Provider", "model"),
+            ("provider:vendor:model", "", "model"),
+            ("provider:vendor:model:", "Provider", "provider:vendor:model:"),
+            ("provider:vendor:model:", nil, "provider:vendor:model:"),
+            ("remoteapi:\(uuid):", "Remote", "remoteapi:\(uuid):"),
+            ("remoteapi:\(uuid): \n", "Remote", " \n"),
+            ("provider: model \n", "Provider", " model \n"),
+            ("provider: model \n", nil, "provider: model \n"),
+            (" model ", "Provider", " model "),
+            (" model ", nil, " model "),
+            ("", nil, ""),
+            ("", "Provider", ""),
+            (" \n", "Provider", " \n"),
+            (":", "Provider", ":"),
+        ]
+        for item in cases {
+            #expect(TerminalChat.strippedModelNameForBinding(item.input, modelProvider: item.provider) == item.expected)
+            #expect(ModelNamePresentation.strippedModelNameForBinding(item.input, modelProvider: item.provider) == item.expected)
+            #expect(TerminalChat.strippedModelNameForBinding(item.input, modelProvider: item.provider)
+                == ModelNamePresentation.strippedModelNameForBinding(item.input, modelProvider: item.provider))
+        }
+    }
+
+    @Test
+    func bindingTablePreservesModelNameColonSemantics() {
+        let agent = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            modelBindings: [
+                AgentModelBinding(id: "remote", modelID: "REMOTEAPI:d3eea8e9-eccf-499e-9697-298ede7af8d5:vendor:model:", modelProvider: "Remote"),
+                AgentModelBinding(id: "scoped", modelID: "provider:vendor:last", modelProvider: "Provider"),
+                AgentModelBinding(id: "unscoped", modelID: "unscoped:vendor:whole", modelProvider: nil),
+                AgentModelBinding(id: "trailing", modelID: "provider:trailing:", modelProvider: "Provider"),
+            ]
+        )
+        let rendered = TerminalChat.renderAgentModelBindingsTable(
+            agents: [agent], selectedAgent: nil, columns: 200, colorsEnabled: false
+        )
+        #expect(rendered.contains("vendor:model:"))
+        #expect(rendered.contains("last"))
+        #expect(rendered.contains("unscoped:vendor:whole"))
+        #expect(rendered.contains("provider:trailing:"))
+        #expect(!rendered.contains("REMOTEAPI:"))
+        #expect(!rendered.contains("provider:vendor:last"))
+    }
+
+    @Test
     func bindingRenderingShowsEveryModelAndItsMetadata() {
         let developer = AgentProfile(
             id: "developer",

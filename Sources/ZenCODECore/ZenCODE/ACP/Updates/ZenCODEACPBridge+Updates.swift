@@ -43,18 +43,11 @@ extension ZenCODEACPBridge {
         for toolCall: DirectAgentToolCall,
         workingDirectory: URL? = nil
     ) -> [String: Any] {
-        [
-            "sessionUpdate": "tool_call",
-            "toolCallId": toolCall.id,
-            "title": toolTitle(for: toolCall),
-            "kind": toolKind(for: toolCall, workingDirectory: workingDirectory),
-            "status": "pending",
-            "content": [] as [Any],
-            "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory),
-            "_meta": [
-                "rawInput": toolCall.argumentsObject
-            ]
-        ]
+        var update = toolCallCommonFields(for: toolCall, workingDirectory: workingDirectory)
+        update["sessionUpdate"] = "tool_call"
+        update["status"] = "pending"
+        update["content"] = [] as [Any]
+        return update
     }
 
     /// Sendable ACP wire representation used by prompt event callbacks.
@@ -147,17 +140,10 @@ extension ZenCODEACPBridge {
         for toolCall: DirectAgentToolCall,
         workingDirectory: URL? = nil
     ) -> [String: Any] {
-        [
-            "sessionUpdate": "tool_call_update",
-            "toolCallId": toolCall.id,
-            "title": toolTitle(for: toolCall),
-            "kind": toolKind(for: toolCall, workingDirectory: workingDirectory),
-            "status": "in_progress",
-            "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory),
-            "_meta": [
-                "rawInput": toolCall.argumentsObject
-            ]
-        ]
+        var update = toolCallCommonFields(for: toolCall, workingDirectory: workingDirectory)
+        update["sessionUpdate"] = "tool_call_update"
+        update["status"] = "in_progress"
+        return update
     }
 
     public static func toolCallProgressJSONUpdate(
@@ -172,21 +158,15 @@ extension ZenCODEACPBridge {
         result: DirectAgentToolResult,
         workingDirectory: URL? = nil
     ) -> [String: Any] {
-        var update: [String: Any] = [
-            "sessionUpdate": "tool_call_update",
-            "toolCallId": toolCall.id,
-            "title": toolTitle(for: toolCall),
-            "kind": toolKind(for: toolCall, workingDirectory: workingDirectory),
-            "status": result.isFailure ? "failed" : "completed",
-            "locations": toolLocations(for: toolCall, workingDirectory: workingDirectory),
-            "_meta": [
-                "rawInput": toolCall.argumentsObject,
-                "rawOutput": [
-                    "output": result.output,
-                    "summary": result.summary
-                ]
-            ]
+        var update = toolCallCommonFields(for: toolCall, workingDirectory: workingDirectory)
+        update["sessionUpdate"] = "tool_call_update"
+        update["status"] = result.isFailure ? "failed" : "completed"
+        var metadata = update["_meta"] as? [String: Any] ?? [:]
+        metadata["rawOutput"] = [
+            "output": result.output,
+            "summary": result.summary
         ]
+        update["_meta"] = metadata
         if !result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             update["content"] = [
                 [
@@ -211,6 +191,23 @@ extension ZenCODEACPBridge {
             result: result,
             workingDirectory: workingDirectory
         ))
+    }
+
+    private static func toolCallCommonFields(
+        for toolCall: DirectAgentToolCall,
+        workingDirectory: URL?
+    ) -> [String: Any] {
+        let locations = toolLocations(for: toolCall, workingDirectory: workingDirectory)
+        return [
+            "toolCallId": toolCall.id,
+            "title": toolTitle(for: toolCall),
+            "kind": acpToolKind(
+                ToolCallPresentation.toolKind(for: toolCall),
+                hasFileLocations: !locations.isEmpty
+            ),
+            "locations": locations,
+            "_meta": ["rawInput": toolCall.argumentsObject]
+        ]
     }
 
     static func textChunkJSONUpdate(kind: String, text: String) -> JSONValue {

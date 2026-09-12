@@ -15,6 +15,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Setup no longer offers global model or thinking selection, including quick setup
   and its summary. Use `/models` and `/thinking` to update those persisted selections;
   per-model configuration and agent profile model bindings remain available in setup.
+- Consolidate common ACP tool-update fields, inline shared-chat result delivery,
+  and existing feature JSON and subscription numeric parsing helpers. Model-name
+  formatting shared by setup and the terminal UI now lives in a neutral presentation
+  helper; public APIs, ACP payloads, displayed text, and persisted formats are unchanged.
 
 ### Fixed
 

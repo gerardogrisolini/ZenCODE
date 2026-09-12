@@ -320,6 +320,127 @@ extension ACPCompatibilityTests {
     }
 
     @Test
+    func toolCallCreatePreservesCompleteWirePayloadAndJSONWrapper() throws {
+        let toolCall = presentedToolCall(
+            id: "call_wire",
+            name: "local.exec",
+            argumentsObject: ["command": "swift test", "workingDirectory": "Sources"],
+            argumentsJSON: #"{"command":"swift test","workingDirectory":"Sources"}"#
+        )
+        let workspace = URL(fileURLWithPath: "/tmp/acp-workspace")
+        let expected: JSONValue = .object([
+            "sessionUpdate": .string("tool_call"),
+            "toolCallId": .string("call_wire"),
+            "title": .string("local.exec swift test"),
+            "kind": .string("execute"),
+            "status": .string("pending"),
+            "content": .array([]),
+            "locations": .array([.object(["path": .string("/tmp/acp-workspace/Sources")])]),
+            "_meta": .object([
+                "rawInput": .object([
+                    "command": .string("swift test"),
+                    "workingDirectory": .string("Sources"),
+                ]),
+            ]),
+        ])
+        let update = ZenCODEACPBridge.toolCallCreateUpdate(for: toolCall, workingDirectory: workspace)
+        let decoded = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: update))
+        #expect(decoded == expected)
+        #expect(ZenCODEACPBridge.toolCallCreateJSONUpdate(for: toolCall, workingDirectory: workspace) == expected)
+    }
+
+    @Test
+    func toolCallProgressPreservesCompleteWirePayloadAndJSONWrapper() throws {
+        let toolCall = presentedToolCall(
+            id: "call_wire",
+            name: "local.exec",
+            argumentsObject: ["command": "swift test"],
+            argumentsJSON: #"{"command":"swift test"}"#
+        )
+        let expected: JSONValue = .object([
+            "sessionUpdate": .string("tool_call_update"),
+            "toolCallId": .string("call_wire"),
+            "title": .string("local.exec swift test"),
+            "kind": .string("execute"),
+            "status": .string("in_progress"),
+            "locations": .array([]),
+            "_meta": .object(["rawInput": .object(["command": .string("swift test")])]),
+        ])
+        let update = ZenCODEACPBridge.toolCallProgressUpdate(for: toolCall)
+        let decoded = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: update))
+        #expect(decoded == expected)
+        #expect(ZenCODEACPBridge.toolCallProgressJSONUpdate(for: toolCall) == expected)
+    }
+
+    @Test
+    func toolCallCompletionPreservesCompleteWirePayloadAndJSONWrapper() throws {
+        let toolCall = presentedToolCall(
+            id: "call_wire",
+            name: "local.exec",
+            argumentsObject: ["command": "swift test", "workingDirectory": "Sources"],
+            argumentsJSON: #"{"command":"swift test","workingDirectory":"Sources"}"#
+        )
+        let workspace = URL(fileURLWithPath: "/tmp/acp-workspace")
+        let cases: [(output: String, summary: String, status: DirectAgentToolResult.Status, wireStatus: String, content: JSONValue?)] = [
+            ("", "", .completed, "completed", nil),
+            (" \n\t", "No output", .completed, "completed", nil),
+            ("", "", .failed, "failed", nil),
+            (" \n\t", "Denied", .permissionDenied, "failed", nil),
+            (" Done.\n", "Success", .completed, "completed", .array([
+                .object(["type": .string("content"), "content": .object([
+                    "type": .string("text"), "text": .string(" Done.\n"),
+                ])]),
+            ])),
+            ("Failure details", "Failed", .failed, "failed", .array([
+                .object(["type": .string("content"), "content": .object([
+                    "type": .string("text"), "text": .string("Failure details"),
+                ])]),
+            ])),
+            ("Tool error: unavailable", "Error", .completed, "failed", .array([
+                .object(["type": .string("content"), "content": .object([
+                    "type": .string("text"), "text": .string("Tool error: unavailable"),
+                ])]),
+            ])),
+        ]
+        for fixture in cases {
+            let result = DirectAgentToolResult(
+                output: fixture.output,
+                summary: fixture.summary,
+                modelOutput: "Not part of the ACP payload",
+                status: fixture.status
+            )
+            var fields: [String: JSONValue] = [
+                "sessionUpdate": .string("tool_call_update"),
+                "toolCallId": .string("call_wire"),
+                "title": .string("local.exec swift test"),
+                "kind": .string("execute"),
+                "status": .string(fixture.wireStatus),
+                "locations": .array([.object(["path": .string("/tmp/acp-workspace/Sources")])]),
+                "_meta": .object([
+                    "rawInput": .object([
+                        "command": .string("swift test"),
+                        "workingDirectory": .string("Sources"),
+                    ]),
+                    "rawOutput": .object([
+                        "output": .string(fixture.output),
+                        "summary": .string(fixture.summary),
+                    ]),
+                ]),
+            ]
+            fields["content"] = fixture.content
+            let expected = JSONValue.object(fields)
+            let update = ZenCODEACPBridge.toolCallCompletionUpdate(
+                for: toolCall, result: result, workingDirectory: workspace
+            )
+            let decoded = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: update))
+            #expect(decoded == expected)
+            #expect(ZenCODEACPBridge.toolCallCompletionJSONUpdate(
+                for: toolCall, result: result, workingDirectory: workspace
+            ) == expected)
+        }
+    }
+
+    @Test
     func emptyToolResultsDoNotEmitEmptyContentBlocks() {
         let toolCall = presentedToolCall(
             id: "call_empty",

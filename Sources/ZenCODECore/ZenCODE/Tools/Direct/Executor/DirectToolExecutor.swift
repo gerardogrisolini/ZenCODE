@@ -517,7 +517,7 @@ public actor DirectToolExecutor {
         }
         let clock = ContinuousClock()
         let started = clock.now
-        let result: DirectAgentToolResult
+        let baseResult: DirectAgentToolResult
         var executionError: Error?
         do {
             let isAllowed = Self.isAllowed(
@@ -537,40 +537,35 @@ public actor DirectToolExecutor {
                 workingDirectory: workingDirectory,
                 allowedToolNames: allowedToolNames
             )
-            result = await deliveringInlineSharedChatMessages(
-                self.result(
-                    output: execution.output,
-                    toolName: toolCall.name,
-                    status: .completed,
-                    attachments: execution.attachments
-                ),
-                sessionID: sessionID
+            baseResult = self.result(
+                output: execution.output,
+                toolName: toolCall.name,
+                status: .completed,
+                attachments: execution.attachments
             )
         } catch {
             executionError = error
             if let executorError = error as? DirectToolExecutorError,
                case let .authorizationDenied(denialOutput) = executorError {
-                result = await deliveringInlineSharedChatMessages(
-                    self.result(
-                        output: denialOutput,
-                        toolName: toolCall.name,
-                        status: .permissionDenied,
-                        attachments: []
-                    ),
-                    sessionID: sessionID
+                baseResult = self.result(
+                    output: denialOutput,
+                    toolName: toolCall.name,
+                    status: .permissionDenied,
+                    attachments: []
                 )
             } else {
                 let output = "Tool error: \(error.localizedDescription)"
-                result = await deliveringInlineSharedChatMessages(
-                    DirectAgentToolResult(
-                        output: output,
-                        summary: output,
-                        status: Self.toolResultStatus(for: error)
-                    ),
-                    sessionID: sessionID
+                baseResult = DirectAgentToolResult(
+                    output: output,
+                    summary: output,
+                    status: Self.toolResultStatus(for: error)
                 )
             }
         }
+        let result = await deliveringInlineSharedChatMessages(
+            baseResult,
+            sessionID: sessionID
+        )
         ToolExecutionLog.record(
             context: toolExecutionContext,
             sessionID: sessionID,

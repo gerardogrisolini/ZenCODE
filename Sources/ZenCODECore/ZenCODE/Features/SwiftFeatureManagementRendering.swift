@@ -31,10 +31,7 @@ extension SwiftFeatureRuntime {
             discoverRuntimeTools: discoverRuntimeTools
         )
         let payload = SwiftFeatureListPayload(features: statuses)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(payload)
-        let json = String(data: data, encoding: .utf8) ?? "{}"
+        let json = try renderJSON(payload)
         if let prefix {
             return "\(prefix)\n\(json)"
         }

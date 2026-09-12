@@ -12,6 +12,35 @@ import Testing
 @Suite
 struct SubscriptionUsageParsingTests {
     @Test
+    func chatGPTIntegerAliasesPreservePrecedenceAndConversion() {
+        let cases: [(keys: [String], object: [String: Any], expected: Int?)] = [
+            (["primary", "secondary"], ["primary": 12, "secondary": 34], 12),
+            (["secondary", "primary"], ["primary": 12, "secondary": 34], 34),
+            (["primary", "secondary"], ["primary": "invalid", "secondary": 34], 34),
+            (["primary", "secondary"], ["primary": 0, "secondary": 34], 0),
+            (["primary", "secondary"], ["primary": "0", "secondary": 34], 0),
+            (["primary"], ["primary": 12.0], 12),
+            (["primary"], ["primary": " \n-12\t"], -12),
+            (["primary", "secondary"], ["primary": 12.5, "secondary": "34"], 34),
+            (["primary", "secondary"], ["primary": NSNull(), "secondary": 34], 34),
+            (["primary", "secondary"], ["secondary": 34], 34),
+            (["primary"], ["primary": 12.5], nil),
+            (["primary"], ["primary": "12.5"], nil),
+            (["primary"], ["primary": true], nil),
+            (["primary"], ["primary": NSNull()], nil),
+            (["primary"], [:], nil),
+            ([], ["primary": 12], nil),
+        ]
+        for testCase in cases {
+            let value = ChatGPTSubscriptionGenerationClient.intValue(
+                for: testCase.keys,
+                in: testCase.object
+            )
+            #expect(value == testCase.expected)
+        }
+    }
+
+    @Test
     func chatGPTParsesRateLimitsWithWindowMinutes() throws {
         let object: [String: Any] = [
             "type": "token_count",

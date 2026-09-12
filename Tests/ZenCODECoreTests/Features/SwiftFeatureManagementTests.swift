@@ -12,6 +12,79 @@ import ToolCore
 
 extension SwiftFeatureRuntimeTests {
     @Test
+    func featureListRenderingPreservesEmptyPayloadBytesAndPrefix() async throws {
+        let runtime = SwiftFeatureRuntime(features: [])
+        let expected = """
+        {
+          "features" : [
+
+          ]
+        }
+        """
+        for prefix in [nil, "", "Feature aggiornata / caffè ☕"] as [String?] {
+            let output = try await runtime.renderFeatureList(
+                prefix: prefix,
+                includeTools: true,
+                includeDisabled: true,
+                discoverRuntimeTools: false
+            )
+            let expectedOutput = prefix.map { "\($0)\n\(expected)" } ?? expected
+            #expect(Array(output.utf8) == Array(expectedOutput.utf8))
+        }
+    }
+
+    @Test
+    func featureListRenderingPreservesSlashAndUnicodeBytes() async throws {
+        let runtime = SwiftFeatureRuntime(
+            features: [SwiftFeatureBundle(
+                id: "caffè/工具",
+                executableURL: URL(fileURLWithPath: "/fixture/caffe/工具"),
+                tools: [],
+                toolNamePrefixes: ["caffè/"],
+                toolNameAliases: ["工具/eco"]
+            )],
+            fileManager: FeatureListRenderingFileManager()
+        )
+        let expected = """
+        {
+          "features" : [
+            {
+              "adoptable" : false,
+              "available" : false,
+              "discoversToolsAtRuntime" : false,
+              "editable" : true,
+              "enabled" : true,
+              "executablePath" : "/fixture/caffe/工具",
+              "id" : "caffè/工具",
+              "isCore" : false,
+              "source" : "generated",
+              "toolCount" : 0,
+              "toolNameAliases" : [
+                "工具/eco"
+              ],
+              "toolNamePrefixes" : [
+                "caffè/"
+              ],
+              "tools" : [
+
+              ]
+            }
+          ]
+        }
+        """
+        for prefix in [nil, "Feature aggiornata / caffè ☕"] as [String?] {
+            let output = try await runtime.renderFeatureList(
+                prefix: prefix,
+                includeTools: true,
+                includeDisabled: true,
+                discoverRuntimeTools: false
+            )
+            let expectedOutput = prefix.map { "\($0)\n\(expected)" } ?? expected
+            #expect(Array(output.utf8) == Array(expectedOutput.utf8))
+        }
+    }
+
+    @Test
     func featureUpdateCompatibilityAliasSharesTheCanonicalDescriptor() throws {
         let edit = try #require(
             SwiftFeatureRuntime.managementToolDescriptors.first { $0.name == "feature.edit" }
@@ -867,5 +940,12 @@ extension SwiftFeatureRuntimeTests {
             argumentsObject: arguments,
             argumentsJSON: "{}"
         )
+    }
+}
+
+/// Keeps rendering fixtures independent of executable availability on the host.
+private final class FeatureListRenderingFileManager: FileManager, @unchecked Sendable {
+    override func isExecutableFile(atPath path: String) -> Bool {
+        false
     }
 }

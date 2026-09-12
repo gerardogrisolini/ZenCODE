@@ -19,6 +19,132 @@ struct SharedChatInlineDeliveryTests {
 
     // MARK: - DirectToolExecutor: coordinator inline delivery
 
+    @Test(arguments: ["success", "authorizationDenied", "genericError"])
+    func executorDeliversExactlyOneMailboxBatchPerResultBranch(branch: String) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("inline-branches-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try await AppStorageDirectory.withSupportDirectoryURL(directory) {
+            let room = "branch-\(UUID().uuidString)"
+            let chat = AgentSharedChat()
+            _ = try await chat.registerCoordinator(roomID: room)
+            _ = try await chat.registerAgent(id: "alpha", name: "alpha", roomID: room)
+            let executor = DirectToolExecutor(
+                authorizationHandler: { _ in false },
+                swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+                sharedChat: chat,
+                sharedChatRootSessionID: room,
+                subAgentContextualBackendFactory: { _ in InlineDeliveryTestBackend() }
+            )
+            let toolCall: DirectAgentToolCall
+            let expectedStatus: DirectAgentToolResult.Status
+            switch branch {
+            case "success":
+                toolCall = DirectAgentToolCall(
+                    id: branch, name: "local.pwd", argumentsObject: [:], argumentsJSON: "{}"
+                )
+                expectedStatus = .completed
+            case "authorizationDenied":
+                toolCall = DirectAgentToolCall(
+                    id: branch, name: "local.exec",
+                    argumentsObject: ["command": "whoami"],
+                    argumentsJSON: #"{"command":"whoami"}"#
+                )
+                expectedStatus = .permissionDenied
+            default:
+                // Missing required arguments fail in dispatch, not authorization.
+                toolCall = DirectAgentToolCall(
+                    id: branch, name: "local.readFile", argumentsObject: [:], argumentsJSON: "{}"
+                )
+                expectedStatus = .failed
+            }
+            let base = await executor.execute(
+                sessionID: room, toolCall: toolCall, workingDirectory: directory
+            )
+            #expect(base.status == expectedStatus)
+            #expect(base.output.hasPrefix("Tool error:") == (branch == "genericError"))
+
+            let batchSize = AgentSharedChat.maximumMessagesPerInjectedPrompt
+            for index in 0...batchSize {
+                try await chat.send(
+                    roomID: room, senderID: "alpha", destination: .coordinator,
+                    text: "mailbox-marker-\(index)-end"
+                )
+            }
+            let first = await executor.execute(
+                sessionID: room, toolCall: toolCall, workingDirectory: directory
+            )
+            #expect(first.output == base.output)
+            #expect(first.summary == base.summary)
+            #expect(first.status == base.status)
+            #expect(first.attachments == base.attachments)
+            #expect(first.modelOutput.hasPrefix(base.modelOutput + "\n\n"))
+            for index in 0..<batchSize {
+                #expect(first.modelOutput.components(separatedBy: "mailbox-marker-\(index)-end").count == 2)
+            }
+            #expect(!first.modelOutput.contains("mailbox-marker-\(batchSize)-end"))
+
+            // A second call must see exactly the one message left by the first drain.
+            let second = await executor.execute(
+                sessionID: room, toolCall: toolCall, workingDirectory: directory
+            )
+            #expect(second.output == base.output)
+            #expect(second.summary == base.summary)
+            #expect(second.modelOutput.components(separatedBy: "mailbox-marker-\(batchSize)-end").count == 2)
+            #expect(!second.modelOutput.contains("mailbox-marker-0-end"))
+            #expect(await chat.drain(
+                roomID: room, participantID: AgentSharedChat.coordinatorID(for: room)
+            ).isEmpty)
+            let third = await executor.execute(
+                sessionID: room, toolCall: toolCall, workingDirectory: directory
+            )
+            #expect(third.modelOutput == base.modelOutput)
+        }
+    }
+
+    @Test
+    func isolatedExecutorLeavesPendingMailboxUntouched() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("inline-isolated-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try await AppStorageDirectory.withSupportDirectoryURL(directory) {
+            let room = "isolated-\(UUID().uuidString)"
+            let chat = AgentSharedChat()
+            _ = try await chat.registerCoordinator(roomID: room)
+            _ = try await chat.registerAgent(id: "alpha", name: "alpha", roomID: room)
+            let executor = DirectToolExecutor(
+                swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+                sharedChat: chat,
+                sharedChatRootSessionID: room,
+                subAgentContextualBackendFactory: { _ in InlineDeliveryTestBackend() }
+            )
+            try await chat.send(
+                roomID: room, senderID: "alpha", destination: .coordinator,
+                text: "pending during isolation"
+            )
+            let result = await MemoryConsolidationContext.$isIsolated.withValue(true) {
+                await executor.execute(
+                    sessionID: room,
+                    toolCall: DirectAgentToolCall(
+                        id: "isolated", name: "local.pwd", argumentsObject: [:], argumentsJSON: "{}"
+                    ),
+                    workingDirectory: directory
+                )
+            }
+            #expect(result.status == .permissionDenied)
+            #expect(result.output == "Tools unavailable.")
+            #expect(result.summary == result.output)
+            #expect(result.modelOutput == result.output)
+            #expect(result.attachments.isEmpty)
+            let pending = await chat.drain(
+                roomID: room, participantID: AgentSharedChat.coordinatorID(for: room)
+            )
+            #expect(pending.map(\.text) == ["pending during isolation"])
+        }
+    }
+
     @Test
     func coordinatorExecutorInjectsMailboxIntoModelOutputOnly() async throws {
         let room = "no-drain-room-\(UUID().uuidString)"

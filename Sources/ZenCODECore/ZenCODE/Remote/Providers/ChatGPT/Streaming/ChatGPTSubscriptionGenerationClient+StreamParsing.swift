@@ -668,12 +668,7 @@ extension ChatGPTSubscriptionGenerationClient {
         for keys: [String],
         in object: [String: Any]
     ) -> Int? {
-        for key in keys {
-            if let value = JSONValue.intValue(fromJSONObject: object[key]) {
-                return value
-            }
-        }
-        return nil
+        RemoteGenerationClient.firstIntegerValue(in: object, for: keys)
     }
 
     static func compactJSONString(from value: Any?) -> String? {

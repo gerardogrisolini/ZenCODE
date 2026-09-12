@@ -627,7 +627,7 @@ extension TerminalChat {
         if let hostedModel {
             return AgentModelCatalogPresentation.modelTitle(for: hostedModel)
         }
-        if let stripped = subAgentModelNameStrippingRemoteAPIPrefix(modelID) {
+        if let stripped = ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix(modelID) {
             return stripped
         }
         return modelID
@@ -638,24 +638,7 @@ extension TerminalChat {
     public nonisolated static func subAgentModelNameStrippingRemoteAPIPrefix(
         _ modelID: String
     ) -> String? {
-        let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.lowercased().hasPrefix("remoteapi:") else {
-            return nil
-        }
-        let afterPrefix = trimmed.dropFirst("remoteapi:".count)
-        guard !afterPrefix.isEmpty else {
-            return nil
-        }
-        guard let colonRange = afterPrefix.range(of: ":") else {
-            return nil
-        }
-        let providerSegment = afterPrefix[afterPrefix.startIndex..<colonRange.lowerBound]
-        let modelName = afterPrefix[colonRange.upperBound...]
-        guard UUID(uuidString: String(providerSegment)) != nil,
-              !modelName.isEmpty else {
-            return nil
-        }
-        return String(modelName)
+        ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix(modelID)
     }
 
     /// Returns the bare model name from a binding identifier when the provider
@@ -666,15 +649,7 @@ extension TerminalChat {
         _ modelID: String,
         modelProvider: String?
     ) -> String {
-        if let stripped = subAgentModelNameStrippingRemoteAPIPrefix(modelID) {
-            return stripped
-        }
-        guard modelProvider != nil,
-              let colonRange = modelID.range(of: ":", options: .backwards) else {
-            return modelID
-        }
-        let modelName = modelID[colonRange.upperBound...]
-        return modelName.isEmpty ? modelID : String(modelName)
+        ModelNamePresentation.strippedModelNameForBinding(modelID, modelProvider: modelProvider)
     }
 
     /// Stable affordance shown while an agent is reasoning but has no
