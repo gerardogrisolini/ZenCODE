@@ -18,6 +18,23 @@ extension ChatGPTSubscriptionGenerationClient {
         attachments: [AgentRuntimeAttachment],
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
+        try await sendPrompt(
+            sessionID: sessionID,
+            prompt: prompt,
+            attachments: attachments,
+            loadCredentials: { try await CodexAgentModel.loadValidCredentials() },
+            onEvent: onEvent
+        )
+    }
+
+    // Internal credential seam keeps deterministic caller tests off real auth storage.
+    func sendPrompt(
+        sessionID: String,
+        prompt: String,
+        attachments: [AgentRuntimeAttachment],
+        loadCredentials: @Sendable () async throws -> CodexAgentCredentials,
+        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> DirectAgentResponse {
         if sessions[sessionID] == nil {
             guard !MemoryConsolidationContext.isIsolated else { throw CancellationError() }
             createSession(
@@ -46,7 +63,7 @@ extension ChatGPTSubscriptionGenerationClient {
         }
         let httpFallbackScopeID = Self.httpFallbackScopeID(for: lease)
 
-        var credentials = try await CodexAgentModel.loadValidCredentials()
+        var credentials = try await loadCredentials()
         guard let loadedSession = currentSession(for: lease) else {
             throw ChatGPTSubscriptionGenerationError.missingSession
         }
@@ -105,6 +122,7 @@ extension ChatGPTSubscriptionGenerationClient {
         var didRetryAfterContextLimit = false
         var didReportUnsatisfiableBudget = false
         var streamInterruptionRetries = 0
+        var didRetryInvalidToolArguments = false
 
 
         for round in 0..<configuration.maxToolRounds {
@@ -129,7 +147,12 @@ extension ChatGPTSubscriptionGenerationClient {
             // argument, but it keeps a mis-estimated overhead from spinning.
             var preflightCompactionAttempts = 0
             var lastRequestEstimate = SubscriptionCompactionSupport.RequestEstimate.unmeasured
+            let outputRelay = RemoteRoundOutputRelay()
+            let roundEvents: @Sendable (DirectAgentEvent) async -> Void = { event in
+                await outputRelay.forward(event, to: onEvent)
+            }
             while true {
+                try Task.checkCancellation()
                 guard let turnSession = currentSession(for: lease) else {
                     throw ChatGPTSubscriptionGenerationError.missingSession
                 }
@@ -247,7 +270,7 @@ extension ChatGPTSubscriptionGenerationClient {
                         try Task.checkCancellation()
                         let events = try await streamAccumulator.ingest(StreamAccumulatorObject(object))
                         for event in events {
-                            await onEvent(event)
+                            await roundEvents(event)
                         }
                     }
                 } catch {
@@ -356,7 +379,32 @@ extension ChatGPTSubscriptionGenerationClient {
                     await onEvent(.diagnostic(Self.httpFallbackDiagnostic()))
                 }
                 await streamAccumulator.recordCompletionResponseID(completion.responseID)
-                let rawStreamResult = try await streamAccumulator.result()
+                let rawStreamResult: StreamAccumulatorResult
+                do {
+                    rawStreamResult = try await streamAccumulator.result()
+                } catch RemoteGenerationClientError.invalidToolArguments {
+                    // response.completed has already entered the pool's cache.
+                    // Discard that transport even when the turn's retry is spent;
+                    // only validated history may seed a subsequent request.
+                    guard mutateSession(for: lease, { session in
+                        resetContinuationAndTransport(session: &session)
+                    }) else {
+                        throw ChatGPTSubscriptionGenerationError.missingSession
+                    }
+                    try Task.checkCancellation()
+                    guard !didRetryInvalidToolArguments else {
+                        throw RemoteGenerationClientError.invalidToolArguments
+                    }
+                    didRetryInvalidToolArguments = true
+                    await outputRelay.beginRetry()
+                    await onEvent(.diagnostic(
+                        "Invalid tool arguments received. Retrying this generation round once."
+                    ))
+                    continue
+                }
+                // Cancellation must be observed before, never after, committing
+                // an assistant tool-call batch that requires matching results.
+                try Task.checkCancellation()
                 let streamResult = StreamAccumulatorResult(
                     text: rawStreamResult.text,
                     reasoningText: rawStreamResult.reasoningText,
@@ -372,7 +420,7 @@ extension ChatGPTSubscriptionGenerationClient {
                 )
                 if !streamResult.didEmitContent,
                    !streamResult.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    await onEvent(.content(streamResult.text))
+                    await roundEvents(.content(streamResult.text))
                 }
                 generationStats.append(
                     RemoteGenerationStats(
@@ -393,6 +441,7 @@ extension ChatGPTSubscriptionGenerationClient {
                     await onEvent(.diagnostic(cacheWarning))
                 }
 
+                try Task.checkCancellation()
                 guard mutateSession(for: lease, { session in
                     Self.appendAssistantMessage(
                         text: streamResult.text,

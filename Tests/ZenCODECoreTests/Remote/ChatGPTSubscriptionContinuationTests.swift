@@ -2871,7 +2871,7 @@ private final class ChatGPTSubscriptionWebSocketPoolHarnessState: @unchecked Sen
 /// Deterministic adapter double shared by all ChatGPT WebSocket tests. It has
 /// no Foundation/WebKit/Network dependency, so exactly the same tests compile
 /// on macOS and Linux.
-private final class ChatGPTSubscriptionTestWebSocketTask:
+final class ChatGPTSubscriptionTestWebSocketTask:
     ChatGPTSubscriptionWebSocketTask,
     @unchecked Sendable
 {

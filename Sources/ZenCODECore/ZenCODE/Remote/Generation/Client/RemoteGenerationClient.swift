@@ -294,6 +294,7 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         var accumulatedText = ""
         var generationStats: [RemoteGenerationStats] = []
         var didRetryWithoutImages = false
+        var didRetryInvalidToolArguments = false
         for round in 0..<configuration.maxToolRounds {
             // Re-read shared state at the start of each round so changes applied
             // by concurrent operations between rounds are not lost.
@@ -308,9 +309,17 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
             // keeps it out of history, snapshots and the cache key; the
             // prompt-cache expectation above is deliberately computed from the
             // unmodified array.
-            let outgoingMessages = Self.applyingCurrentTurnMemory(to: session.messages)
+            let outputRelay = RemoteRoundOutputRelay()
+            let roundEvents: @Sendable (DirectAgentEvent) async -> Void = { event in
+                await outputRelay.forward(event, to: onEvent)
+            }
             let streamResult: RemoteStreamResult
             while true {
+                try Task.checkCancellation()
+                guard let activeSession = currentSession(for: lease) else {
+                    throw RemoteGenerationClientError.missingSession
+                }
+                let outgoingMessages = Self.applyingCurrentTurnMemory(to: activeSession.messages)
                 do {
                     if provider.protocolProfileID == .anthropicMessages {
                         streamResult = try await streamAnthropicMessages(
@@ -319,7 +328,7 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
                             allowedToolNames: session.allowedToolNames,
                             preferredWorkspaceRootURL: session.cwd,
                             thinkingSelection: session.thinkingSelection,
-                            onEvent: onEvent
+                            onEvent: roundEvents
                         )
                     } else {
                         switch provider.chatEndpoint {
@@ -330,7 +339,7 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
                                 allowedToolNames: session.allowedToolNames,
                                 preferredWorkspaceRootURL: session.cwd,
                                 thinkingSelection: session.thinkingSelection,
-                                onEvent: onEvent
+                                onEvent: roundEvents
                             )
                         case .responses:
                             streamResult = try await streamResponses(
@@ -339,12 +348,25 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
                                 allowedToolNames: session.allowedToolNames,
                                 preferredWorkspaceRootURL: session.cwd,
                                 thinkingSelection: session.thinkingSelection,
-                                onEvent: onEvent
+                                onEvent: roundEvents
                             )
                         }
                     }
                     break
                 } catch {
+                    try Task.checkCancellation()
+                    guard currentSession(for: lease) != nil else {
+                        throw RemoteGenerationClientError.missingSession
+                    }
+                    if case RemoteGenerationClientError.invalidToolArguments = error,
+                       !didRetryInvalidToolArguments {
+                        didRetryInvalidToolArguments = true
+                        await outputRelay.beginRetry()
+                        await onEvent(.diagnostic(
+                            "Invalid tool arguments received. Retrying this generation round once."
+                        ))
+                        continue
+                    }
                     if !didRetryWithoutImages,
                        Self.isImageContentRejectedError(error),
                        Self.messagesContainImageContent(session.messages) {
@@ -365,6 +387,10 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
                 }
             }
 
+            try Task.checkCancellation()
+            guard currentSession(for: lease) != nil else {
+                throw RemoteGenerationClientError.missingSession
+            }
             accumulatedText.append(streamResult.text)
             generationStats.append(streamResult.stats)
             if let cacheWarning = Self.promptCacheWarning(
@@ -374,6 +400,7 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
             ) {
                 await onEvent(.diagnostic(cacheWarning))
             }
+            try Task.checkCancellation()
             guard mutateSession(for: lease, { session in
                 appendAssistantMessage(
                     streamResult: streamResult,
@@ -403,25 +430,68 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
                 )
             }
 
-            for toolCall in streamResult.toolCalls {
-                await onEvent(.toolCallStarted(toolCall))
-                guard let activeSession = currentSession(for: lease) else {
+            var completedToolCount = 0
+            do {
+                for toolCall in streamResult.toolCalls {
+                    try Task.checkCancellation()
+                    guard currentSession(for: lease) != nil else {
+                        throw RemoteGenerationClientError.missingSession
+                    }
+                    await onEvent(.toolCallStarted(toolCall))
+                    try Task.checkCancellation()
+                    guard let activeSession = currentSession(for: lease) else {
+                        throw RemoteGenerationClientError.missingSession
+                    }
+                    let result = await toolExecutor.execute(
+                        sessionID: activeSession.id,
+                        toolCall: toolCall,
+                        workingDirectory: activeSession.cwd,
+                        allowedToolNames: activeSession.allowedToolNames
+                    )
+                    // Persist an obtained result before a reentrant callback can
+                    // cancel the turn. Never replace an executed tool's result.
+                    guard mutateSession(for: lease, { session in
+                        session.messages.append(
+                            Self.toolResultMessage(toolCall: toolCall, result: result)
+                        )
+                    }) else {
+                        throw RemoteGenerationClientError.missingSession
+                    }
+                    completedToolCount += 1
+                    await onEvent(.toolCallCompleted(toolCall, result))
+                }
+                // Includes cancellation by the final completion callback, even
+                // when this is the last permitted tool round.
+                try Task.checkCancellation()
+                guard currentSession(for: lease) != nil else {
                     throw RemoteGenerationClientError.missingSession
                 }
-                let result = await toolExecutor.execute(
-                    sessionID: activeSession.id,
-                    toolCall: toolCall,
-                    workingDirectory: activeSession.cwd,
-                    allowedToolNames: activeSession.allowedToolNames
+            } catch is CancellationError {
+                let pending = streamResult.toolCalls.dropFirst(completedToolCount)
+                let cancellation = DirectAgentToolResult(
+                    output: "Tool execution cancelled before dispatch.",
+                    summary: "Tool execution cancelled before dispatch.",
+                    status: DirectToolExecutor.toolResultStatus(for: CancellationError())
                 )
-                await onEvent(.toolCallCompleted(toolCall, result))
+                // Close the entire committed batch without suspension. Completion
+                // callbacks may reset the session, so none may run before all
+                // pending results are appended to the still-valid lease.
                 guard mutateSession(for: lease, { session in
-                    session.messages.append(
-                        Self.toolResultMessage(toolCall: toolCall, result: result)
-                    )
+                    for toolCall in pending {
+                        session.messages.append(
+                            Self.toolResultMessage(toolCall: toolCall, result: cancellation)
+                        )
+                    }
                 }) else {
                     throw RemoteGenerationClientError.missingSession
                 }
+                for toolCall in pending {
+                    guard currentSession(for: lease) != nil else {
+                        throw RemoteGenerationClientError.missingSession
+                    }
+                    await onEvent(.toolCallCompleted(toolCall, cancellation))
+                }
+                throw CancellationError()
             }
 
             if round == configuration.maxToolRounds - 1 {

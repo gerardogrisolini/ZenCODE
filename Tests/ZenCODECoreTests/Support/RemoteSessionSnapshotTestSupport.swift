@@ -501,6 +501,7 @@ final class RemoteNIOStreamingFixture: @unchecked Sendable {
 
     static func start(
         responseBody: Data,
+        responseSequence: [Data] = [],
         responseStatus: Int = 200,
         responseHeaders: [RemoteHTTPHeader] = [
             RemoteHTTPHeader(name: "content-type", value: "text/event-stream")
@@ -512,6 +513,7 @@ final class RemoteNIOStreamingFixture: @unchecked Sendable {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let script = RemoteNIOStreamingScript(
             responseBody: responseBody,
+            responseSequence: responseSequence,
             responseStatus: responseStatus,
             responseHeaders: responseHeaders,
             bodyChunks: bodyChunks,
@@ -604,6 +606,7 @@ final class RemoteNIOStreamingFixture: @unchecked Sendable {
 private final class RemoteNIOStreamingScript: @unchecked Sendable {
     private let lock = NSLock()
     private let responseBody: Data
+    private var responseSequence: [Data]
     private let responseStatus: Int
     private let responseHeaders: [RemoteHTTPHeader]
     private let bodyChunks: [Data]?
@@ -614,6 +617,7 @@ private final class RemoteNIOStreamingScript: @unchecked Sendable {
 
     init(
         responseBody: Data,
+        responseSequence: [Data],
         responseStatus: Int,
         responseHeaders: [RemoteHTTPHeader],
         bodyChunks: [Data]?,
@@ -621,6 +625,7 @@ private final class RemoteNIOStreamingScript: @unchecked Sendable {
         closeAfterHead: Bool
     ) {
         self.responseBody = responseBody
+        self.responseSequence = responseSequence
         self.responseStatus = responseStatus
         self.responseHeaders = responseHeaders
         self.bodyChunks = bodyChunks
@@ -657,10 +662,11 @@ private final class RemoteNIOStreamingScript: @unchecked Sendable {
             lock.unlock()
             return .closeBeforeHead
         }
+        let selectedBody = responseSequence.isEmpty ? responseBody : responseSequence.removeFirst()
         let response = RemoteNIOStreamingFixtureResponse(
             status: responseStatus,
             headers: responseHeaders,
-            bodyChunks: bodyChunks ?? [responseBody],
+            bodyChunks: bodyChunks ?? [selectedBody],
             closeAfterHead: closeAfterHead
         )
         lock.unlock()

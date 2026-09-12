@@ -10,6 +10,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Remote generation retries a malformed tool-argument batch once per turn before
+  committing history or executing any tool, including Anthropic Messages and ChatGPT
+  Subscription. Earlier tool rounds are not replayed. Content and thinking retain
+  their existing streaming behavior; matching retry prefixes are suppressed
+  independently across chunk boundaries, while divergent text already displayed
+  remains visible. ChatGPT Subscription discards the malformed response's transport
+  and continuation before rebuilding from validated history, including when the
+  retry budget is exhausted. Cancellation and session replacement prevent stale
+  retries and history commits.
+
 ## [2.1.5] - 2026-09-10
 
 ### Added
