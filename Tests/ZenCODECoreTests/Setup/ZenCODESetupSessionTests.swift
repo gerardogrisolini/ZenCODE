@@ -183,7 +183,24 @@ struct ZenCODESetupSessionTests {
             .filter { $0.section.category == .required }
             .map(\.section)
 
-        #expect(sections == [.providersAndModels, .defaultModelSettings, .agents])
+        #expect(sections == [.providersAndModels, .agents])
+    }
+
+    @Test(arguments: [false, true])
+    func setupMenuContainsOnlyConfigurationSections(hasConfiguredModels: Bool) {
+        let manifest = hasConfiguredModels ? Self.remoteManifest() : nil
+        let sections = ZenCODESetupRunner.setupSectionOptions(currentManifest: manifest)
+            .map(\.section)
+
+        #expect(sections == [
+            .providersAndModels, .agents,
+            .agentModels, .responseLanguage, .features, .memoryEmbedding,
+            .telegram, .dataManagement,
+            .finish, .cancel,
+        ])
+        for alias in ["default", "default model", "selected model", "thinking", "default thinking"] {
+            #expect(!sections.contains { $0.matches(alias) })
+        }
     }
 
     @Test

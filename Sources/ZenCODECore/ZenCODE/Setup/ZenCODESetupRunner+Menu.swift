@@ -94,8 +94,6 @@ extension ZenCODESetupRunner {
         case .providersAndModels:
             let ready = manifest?.providers.isEmpty == false && manifest?.models.isEmpty == false
             return setupStatusMarker(ready)
-        case .defaultModelSettings:
-            return setupStatusMarker(manifest.map { selectedModel(in: $0) != nil } ?? false)
         case .agents:
             return setupStatusMarker(agentsSetupDetail() != "not configured")
         case .agentModels:
@@ -106,7 +104,7 @@ extension ZenCODESetupRunner {
             return setupStatusMarker(featuresAreEnabled(), optional: true)
         case .memoryEmbedding:
             return setupStatusMarker(manifest?.memoryEmbedding != nil, optional: true)
-        case .defaultModel, .defaultThinking, .dataManagement, .resetRemoteConfiguration, .finish, .cancel, .responseLanguage:
+        case .dataManagement, .resetRemoteConfiguration, .finish, .cancel, .responseLanguage:
             return nil
         }
     }
@@ -118,10 +116,6 @@ extension ZenCODESetupRunner {
             SetupSectionOption(
                 section: .providersAndModels,
                 detail: providersAndModelsSetupDetail(manifest)
-            ),
-            SetupSectionOption(
-                section: .defaultModelSettings,
-                detail: defaultModelSettingsSetupDetail(manifest)
             ),
             SetupSectionOption(
                 section: .agents,
@@ -215,100 +209,6 @@ extension ZenCODESetupRunner {
             return "not configured"
         }
         return "\(providerCount) providers, \(modelCount) models"
-    }
-
-    static func defaultModelSetupDetail(
-        _ manifest: AgentSettingsManifest?
-    ) -> String {
-        guard let manifest,
-              !manifest.models.isEmpty else {
-            return "requires providers/models"
-        }
-        if let model = selectedModel(in: manifest) {
-            return model.displayTitle
-        }
-        return "not selected"
-    }
-
-    static func defaultThinkingSetupDetail(
-        _ manifest: AgentSettingsManifest?
-    ) -> String {
-        guard let manifest,
-              !manifest.models.isEmpty else {
-            return "requires providers/models"
-        }
-        guard let model = selectedModel(in: manifest) else {
-            return "requires default model"
-        }
-        guard model.supportsThinking else {
-            return "not supported by selected model"
-        }
-        let selection = model.thinkingSelection(for: manifest.selectedThinkingSelection)
-        return selection?.displayTitle ?? "default"
-    }
-
-    static func defaultModelSettingsSetupDetail(
-        _ manifest: AgentSettingsManifest?
-    ) -> String {
-        let modelDetail = defaultModelSetupDetail(manifest)
-        let thinkingDetail = defaultThinkingSetupDetail(manifest)
-        if modelDetail.hasPrefix("requires") {
-            return modelDetail
-        }
-        return "\(modelDetail), thinking: \(thinkingDetail)"
-    }
-
-    static func promptDefaultModelSetupSection(
-        currentManifest manifest: AgentSettingsManifest
-    ) throws -> SetupSection? {
-        let options = [
-            SetupSectionOption(
-                section: .defaultModel,
-                detail: defaultModelSetupDetail(manifest)
-            ),
-            SetupSectionOption(
-                section: .defaultThinking,
-                detail: defaultThinkingSetupDetail(manifest)
-            )
-        ]
-        return try promptNestedSetupSection(
-            title: "Default model",
-            options: options,
-            defaultIndex: 0
-        )
-    }
-
-    static func promptNestedSetupSection(
-        title: String,
-        options: [SetupSectionOption],
-        defaultIndex: Int
-    ) throws -> SetupSection? {
-        let backValue = options.count
-        var items = options.enumerated().map { index, option in
-            TerminalCheckboxMenuItem(
-                value: index,
-                title: option.section.title,
-                detail: option.detail
-            )
-        }
-        items.append(
-            TerminalCheckboxMenuItem(
-                value: backValue,
-                title: "Back",
-                detail: "return to the previous menu",
-                groupTitle: " "
-            )
-        )
-
-        let selected = options.indices.contains(defaultIndex) ? defaultIndex : backValue
-        guard let choice = TerminalCheckboxMenu.selectOne(
-            title: title,
-            items: items,
-            selected: selected
-        ), options.indices.contains(choice) else {
-            return nil
-        }
-        return options[choice].section
     }
 
 }

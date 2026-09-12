@@ -167,7 +167,7 @@ struct SetupSession {
 }
 
 enum SetupSection: Equatable, Hashable {
-    case providersAndModels, defaultModelSettings, defaultModel, defaultThinking
+    case providersAndModels
     case telegram, features, agents, agentModels, responseLanguage, memoryEmbedding
     case dataManagement
     case resetRemoteConfiguration, finish, cancel
@@ -181,9 +181,6 @@ enum SetupSection: Equatable, Hashable {
 
     private static let descriptors: [SetupSection: Descriptor] = [
         .providersAndModels: .init(title: "Providers and models", category: .required, requiresConfiguredModels: false, aliases: ["providers", "provider", "models", "model", "providers and models", "providers/models", "remote"]),
-        .defaultModelSettings: .init(title: "Default model & thinking", category: .required, requiresConfiguredModels: true, aliases: ["default", "default model", "selected model", "model default", "thinking", "default thinking"]),
-        .defaultModel: .init(title: "Default model", category: .recommended, requiresConfiguredModels: true, aliases: ["default", "default model", "selected model", "model default"]),
-        .defaultThinking: .init(title: "Default thinking", category: .recommended, requiresConfiguredModels: true, aliases: ["thinking", "default thinking", "reasoning", "thinking default"]),
         .telegram: .init(title: "Telegram remote control", category: .optional, requiresConfiguredModels: true, aliases: ["telegram", "remote control", "bot"]),
         .features: .init(title: "Features", category: .recommended, requiresConfiguredModels: false, aliases: ["features", "feature", "tools", "swift features", "enable features", "disable features"]),
         .agents: .init(title: "Agents", category: .required, requiresConfiguredModels: false, aliases: ["agents", "agent", "profiles", "agent profiles"]),

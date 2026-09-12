@@ -126,10 +126,6 @@ extension ZenCODESetupRunner {
         manifest: AgentSettingsManifest,
         settingsWillBeWritten: Bool
     ) {
-        let selectedModelTitle = selectedModel(in: manifest)?.displayTitle ?? "not selected"
-        let thinkingTitle = selectedModel(in: manifest)
-            .flatMap { $0.thinkingSelection(for: manifest.selectedThinkingSelection)?.displayTitle }
-            ?? "default"
         let telegramStatus = manifest.telegram?.isEnabled == true ? "enabled" : "disabled"
         #if canImport(Speech)
         let voiceStatus = manifest.voice?.isConfigured == true ? "enabled" : "disabled"
@@ -147,8 +143,6 @@ extension ZenCODESetupRunner {
             Setup summary:
               Providers: \(manifest.providers.count)
               Models: \(manifest.models.count)
-              Default model: \(selectedModelTitle)
-              Default thinking: \(thinkingTitle)
               Agents: \(agentsDetail)
               Response language: \(responseLanguageDetail)
               Memory embeddings: \(memoryEmbeddingDetail)

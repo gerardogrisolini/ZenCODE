@@ -167,14 +167,13 @@ public enum ZenCODESetupRunner {
         AgentOutput.standardError.writeString(
             """
 
-            Quick setup configures a remote provider and its default model.
+            Quick setup configures a remote provider and its models.
             Advanced options like Telegram can be enabled later with /setup.
 
             """
         )
 
         var manifest = try await configureProvidersAndModels(existingManifest: existingManifest)
-        manifest = try configureDefaultModel(in: manifest)
         manifest = try configureResponseLanguage(existingManifest: manifest)
         let agentProfiles = try ZenCODEAgentProfileSetupRunner.configureInteractively(
             currentAgents: nil,
@@ -213,25 +212,6 @@ public enum ZenCODESetupRunner {
         case .providersAndModels:
             return SetupSectionConfigurationResult(
                 manifest: try await configureProvidersAndModels(existingManifest: manifest)
-            )
-        case .defaultModelSettings:
-            guard let nestedSection = try promptDefaultModelSetupSection(
-                currentManifest: requireExistingManifest(manifest)
-            ) else {
-                return SetupSectionConfigurationResult(manifest: manifest)
-            }
-            return try await configureSetupSection(
-                nestedSection,
-                currentManifest: manifest,
-                currentAgentProfiles: currentAgentProfiles
-            )
-        case .defaultModel:
-            return SetupSectionConfigurationResult(
-                manifest: try configureDefaultModel(in: requireExistingManifest(manifest))
-            )
-        case .defaultThinking:
-            return SetupSectionConfigurationResult(
-                manifest: try configureDefaultThinking(in: requireExistingManifest(manifest))
             )
         case .telegram:
             return SetupSectionConfigurationResult(

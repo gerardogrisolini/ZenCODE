@@ -10,6 +10,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Setup no longer offers global model or thinking selection, including quick setup
+  and its summary. Use `/models` and `/thinking` to update those persisted selections;
+  per-model configuration and agent profile model bindings remain available in setup.
+
 ### Fixed
 
 - Remote generation retries a malformed tool-argument batch once per turn before
