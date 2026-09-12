@@ -13,12 +13,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
 ### Changed
 
 - Setup no longer offers global model or thinking selection, including quick setup
-  and its summary. Use `/models` and `/thinking` to update those persisted selections;
+  and its summary. Use `/models` and `/think` to update those persisted selections;
   per-model configuration and agent profile model bindings remain available in setup.
 - Consolidate common ACP tool-update fields, inline shared-chat result delivery,
   and existing feature JSON and subscription numeric parsing helpers. Model-name
   formatting shared by setup and the terminal UI now lives in a neutral presentation
   helper; public APIs, ACP payloads, displayed text, and persisted formats are unchanged.
+- Documentation reorganized: memory ownership and persistence rules moved from
+  `Docs/architecture.md` to the new `Docs/memory.md`, referenced from the contract;
+  `Docs/README.md` is now the single documentation index and the project README links
+  to it; the validation gate is defined once in `CONTRIBUTING.md` and referenced from
+  the README and `Docs/release.md`; `/think` and `/attach` are documented in the
+  command references; the unimplemented Core AI backend evaluation document was removed.
 
 ### Fixed
 

@@ -237,6 +237,7 @@ Commands start with `/`:
 - `/help` — show command help.
 - `/setup` — save the current session, open setup, rebuild the runtime from the updated configuration, and restore the conversation.
 - `/models` — show every configured model and choose the model for the current session.
+- `/think` — open a menu to select the thinking level of the current model.
 - `/agents [list|<name>|<number>]` — switch agent profile.
 - `/tools [all|none|tool-name|package-name|number]` — select exposed tool groups; `/tools logs` opens the platform system log viewer (Console.app on macOS).
 - `/skills` — select or install prompt skills; `/skills uninstall` opens a multi-selection menu for removing app-installed skills.

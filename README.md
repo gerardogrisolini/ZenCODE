@@ -148,10 +148,12 @@ swift build -c release --product zen
 /help        Show available commands
 /setup       Reconfigure ZenCODE, then restore the current session
 /models      Select a model for the current session
+/think       Select the thinking level for the current model
 /agents      Select an agent profile
 /tools       Select tool groups (`/tools logs` opens the system log viewer)
 /skills      Select, install, or uninstall prompt skills (`/skills uninstall`)
 /sessions    Manage sessions and checkpoint trees
+/attach      Attach image or video files to the next prompt
 /open        Open a referenced file, URL, or attachment
 /changes     Review the latest tracked file changes
 /undo        Revert the latest tracked agent changes
@@ -192,8 +194,8 @@ describes the complete handoff flow.
 ## Development Commands
 
 ```bash
-swift test
-swift build -c release --product zen
+swift build --target ZenCODECore     # fast shared-runtime compile
+swift build -c release --product zen # release product
 
 zen --help
 zen --doctor
@@ -201,28 +203,18 @@ zen --working-directory /path/to/project
 zen --acp --working-directory /path/to/project
 ```
 
+The full validation gate CI enforces is defined once in
+[CONTRIBUTING.md](CONTRIBUTING.md#validation); run it before opening a pull
+request.
+
 ## More Docs
 
-Start here — [Docs index](Docs/README.md).
-
-**Using ZenCODE**
-- [ZenCODE guide](Docs/zen.md) — modes, commands, sessions, orchestration.
-- [Headless JSONL protocol](Docs/jsonl.md) — schema v1 records, lifecycle, errors, privacy, and automation examples.
-- [Why ZenCODE](Docs/why-zen.md) — rationale and differences.
-
-**Agents and delegation**
-- [Agents and sub-agents](Docs/agents.md) — profiles, tools, delegation.
-- [Model bindings](Docs/bindings.md) — agent/model/workflow bindings and capability routing.
-- Profile guides: [Builder](Docs/builder.md), [Planner](Docs/planner.md), [Reviewer](Docs/reviewer.md), [Reporter](Docs/reporter.md).
-
-**Integrations**
-- [Xcode ACP setup](Docs/xcode.md)
-- [Aion UI manual setup](Docs/aion-ui.md)
-
-**Project**
-- [Architecture and layout contract](Docs/architecture.md)
-- [Release and reproducible installs](Docs/release.md)
-- [Persisted credential security](Docs/security.md)
+The [Docs index](Docs/README.md) is the complete catalogue of guides, grouped by
+getting started, agents and delegation, integrations, and project maintenance,
+with a suggested reading order. The most common entry points are the
+[ZenCODE guide](Docs/zen.md) for daily use, [agents.md](Docs/agents.md) for
+profiles and delegation, and
+[architecture.md](Docs/architecture.md) before changing the codebase.
 
 ## Contributing
 

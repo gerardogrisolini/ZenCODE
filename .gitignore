@@ -66,6 +66,9 @@ fastlane/test_output
 # standalone feature lockfiles are tracked for the same reason and validated by
 # their dedicated CI matrix.
 MEMORY.md
+# Docs/memory.md is tracked documentation, not runtime memory state. The rule
+# above matches it on case-insensitive filesystems, so exempt it explicitly.
+!Docs/memory.md
 
 # macOS Finder metadata
 .DS_Store

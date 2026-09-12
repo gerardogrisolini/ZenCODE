@@ -34,8 +34,10 @@ Guides for using, extending, and maintaining ZenCODE. Start with the
 | Guide | Read it for |
 | --- | --- |
 | [architecture.md](architecture.md) | Layout contract, module boundaries, dependency direction, validation gates |
+| [memory.md](memory.md) | Durable memory ownership, retrieval, embeddings, recall, and persisted graph format |
 | [release.md](release.md) | Release checklist and reproducible installs |
 | [security.md](security.md) | Protection model for persisted credentials |
+| [editing-tool-size-baseline.md](editing-tool-size-baseline.md) | Size baseline enforced by the local editing-tool contract tests |
 
 ## Suggested reading order
 
@@ -45,3 +47,6 @@ Guides for using, extending, and maintaining ZenCODE. Start with the
    delegation before using `/plan`, `/goal`, or `/review`.
 4. The profile guide matching the work you delegate.
 5. [architecture.md](architecture.md) — before changing the codebase itself.
+
+This index is the single catalogue of ZenCODE documentation; the project README
+links here instead of repeating it.

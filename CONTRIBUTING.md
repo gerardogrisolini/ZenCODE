@@ -22,6 +22,8 @@ swift build -c release --product zen
 
 ## Validation
 
+This is the single definition of the validation gate; the README and
+[`Docs/release.md`](Docs/release.md) reference it instead of repeating it.
 Run the same gate CI runs before opening a pull request:
 
 ```bash

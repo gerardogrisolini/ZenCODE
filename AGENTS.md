@@ -49,4 +49,4 @@
 - Use UUID-named temporary directories for filesystem tests. Mark suites that mutate process-wide environment or shared state with `@Suite(.serialized)`.
 - Runtime state defaults to `~/.zencode` and honors `ZENCODE_SUPPORT_DIRECTORY`. Isolate stateful tests from the developer's real support directory and do not turn runtime state into repository fixtures.
 - `ZENCODE_RUN_LIVE_*` variables opt into live checks; leave them unset during ordinary validation.
-- Durable memory storage, retrieval, embedding, recall, and persistence rules are defined under `Memory Ownership and Persistence` in `Docs/architecture.md`.
+- Durable memory storage, retrieval, embedding, recall, and persistence rules are defined in `Docs/memory.md`, referenced from the contract in `Docs/architecture.md`.

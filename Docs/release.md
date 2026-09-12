@@ -18,7 +18,8 @@ but it is not a reproducible release input.
 
    Commit the resulting `Package.resolved`; it pins the exact revisions used by
    CI and release builds.
-3. Run the local release gate:
+3. Run the local release gate — the same commands defined once in
+   [CONTRIBUTING.md](../CONTRIBUTING.md#validation):
 
    ```bash
    swift build --target ZenCODECore
