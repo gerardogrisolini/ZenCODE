@@ -266,7 +266,8 @@ extension ZenCODEACPBridge {
                 id: graphID,
                 source: .workflow,
                 state: .active,
-                tasks: []
+                tasks: [],
+                originalGoal: goal
             )
         } catch {
             return .immediate("ZenCODE: \(error.localizedDescription)")
@@ -282,9 +283,8 @@ extension ZenCODEACPBridge {
             )
             throw CancellationError()
         }
-        // Track the workflow for the conversational continuation round-trip, the
-        // same way the TUI does. Nothing is armed yet: only an explicit
-        // clarification block (or an interrupted turn) arms it.
+        // Track the transient reply transcript. The graph owns the original
+        // objective and structured workflow state; a new workflow starts running.
         guard updateReservedPromptSession(
             sessionID: sessionID,
             epoch: epoch,
@@ -322,12 +322,29 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             epoch: epoch,
             promptID: promptID
-        ), var workflow = session.workflowContinuation, workflow.isAwaitingReply else {
+        ) else {
             return nil
         }
         guard acpSubAgentsAreAvailable(in: session) else { return nil }
+        let currentGraph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID)
+        var projectedWorkflow = session.workflowContinuation
+        if projectedWorkflow == nil, let graph = currentGraph,
+           graph.source.requiresSubAgentExecution, !graph.state.isTerminal {
+            var restored = WorkflowCommandRuntimeState(goal: graph.workflow?.originalGoal ?? "", graphID: graph.id)
+            if graph.workflow != nil, graph.workflow?.state != .running {
+                restored.recordCoordinatorOutput(nil, graph: graph)
+            } else {
+                restored.armForResumedGraph()
+            }
+            projectedWorkflow = restored
+        }
+        if let graph = currentGraph, graph.id == projectedWorkflow?.graphID,
+           graph.workflow != nil, graph.workflow?.state != .running {
+            projectedWorkflow?.recordCoordinatorOutput(nil, graph: graph)
+        }
+        guard var workflow = projectedWorkflow, workflow.isAwaitingReply else { return nil }
         // Never resume a graph that is no longer the session's open workflow.
-        guard let graph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID),
+        guard let graph = currentGraph,
               graph.id == workflow.graphID,
               graph.source.requiresSubAgentExecution,
               !graph.state.isTerminal else {
@@ -340,12 +357,30 @@ extension ZenCODEACPBridge {
             return nil
         }
         guard workflow.recordReply(reply) else { return nil }
-        guard updateReservedPromptSession(
+        let runnerGeneration = await sessionRunner.currentSessionGeneration(for: sessionID)
+        guard !Task.isCancelled, reservedPromptSession(
+            sessionID: sessionID, epoch: epoch, promptID: promptID
+        ) != nil else { return nil }
+        let resumedGraph: TaskGraphSnapshot
+        do {
+            resumedGraph = try await sessionRunner.taskOrchestrator.resumeWorkflow(
+                sessionID: sessionID, expectedGraph: graph
+            )
+        } catch {
+            return .immediate("ZenCODE: \(error.localizedDescription)")
+        }
+        guard !Task.isCancelled, updateReservedPromptSession(
             sessionID: sessionID,
             epoch: epoch,
             promptID: promptID,
             { $0.workflowContinuation = workflow }
         ) else {
+            if let runnerGeneration,
+               await sessionRunner.isCurrentSessionGeneration(runnerGeneration, for: sessionID) {
+                try? await sessionRunner.taskOrchestrator.rollbackWorkflowResume(
+                    sessionID: sessionID, previousGraph: graph, resumedGraph: resumedGraph
+                )
+            }
             return nil
         }
         let openCount = graph.tasks.filter {
@@ -568,7 +603,7 @@ extension ZenCODEACPBridge {
         return !requiresMessaging || allowedToolNames.contains("agent.message")
     }
 
-    private func reservedPromptSession(
+    func reservedPromptSession(
         sessionID: String,
         epoch: UInt64,
         promptID: UUID
@@ -583,7 +618,7 @@ extension ZenCODEACPBridge {
     }
 
     @discardableResult
-    private func updateReservedPromptSession(
+    func updateReservedPromptSession(
         sessionID: String,
         epoch: UInt64,
         promptID: UUID,

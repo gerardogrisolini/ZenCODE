@@ -55,6 +55,7 @@ extension ZenCODEACPBridge {
                     return
                 }
                 session.activePromptID = nil
+                session.activeWorkflowPromptID = nil
                 session.activePromptTask = nil
                 session.operationState = .idle
             }
@@ -195,6 +196,13 @@ extension ZenCODEACPBridge {
         case let .generate(prompt, purpose, prelude):
             modelPromptText = prompt
             commandPurpose = purpose
+            _ = updateReservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) { live in
+                if case .workflow = purpose {
+                    live.activeWorkflowPromptID = promptID
+                } else {
+                    live.activeWorkflowPromptID = nil
+                }
+            }
             if let prelude {
                 await writer.sendSessionUpdate(
                     sessionID: sessionID,
@@ -562,10 +570,8 @@ extension ZenCODEACPBridge {
         }
     }
 
-    /// Arms the ACP `/goal` continuation round-trip only when the coordinator
-    /// used the explicit `Workflow question` protocol and its graph is still
-    /// open. Any other output disarms it, so an ordinary workflow turn never
-    /// captures the next ACP message.
+    /// Projects structured workflow control into the ACP reply route, fenced by
+    /// the current prompt reservation. Prose does not suspend new workflows.
     func armACPWorkflowContinuationIfNeeded(
         graphID: String,
         coordinatorMessage: String?,
@@ -577,7 +583,7 @@ extension ZenCODEACPBridge {
         let graphIsOpen = graph?.id == graphID
             && graph?.source.requiresSubAgentExecution == true
             && graph?.state.isTerminal == false
-        _ = updateLiveSession(id: sessionID, epoch: epoch) { session in
+        _ = updateReservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) { session in
             guard var workflow = session.workflowContinuation,
                   workflow.graphID == graphID else {
                 return
@@ -586,15 +592,13 @@ extension ZenCODEACPBridge {
                 session.workflowContinuation = nil
                 return
             }
-            workflow.recordCoordinatorOutput(coordinatorMessage)
+            workflow.recordCoordinatorOutput(coordinatorMessage, graph: graph)
             session.workflowContinuation = workflow
         }
     }
 
-    /// Handles a failed or cancelled ACP `/goal` turn. An empty graph is
-    /// removed; a graph that already holds delegated tasks is preserved and its
-    /// continuation is armed for recovery, so the next message really can resume
-    /// or retry that same graph.
+    /// Preserves persisted objectives (including zero-task workflows) and arms
+    /// recovery without replacing an authoritative structured suspension.
     func handleFailedACPWorkflowTurn(
         graphID: String,
         reason: String,
@@ -606,7 +610,8 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             graphID: graphID
         )
-        guard let graph, !graph.tasks.isEmpty else {
+        guard reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else { return }
+        guard let graph, graph.workflow != nil || !graph.tasks.isEmpty else {
             _ = try? await sessionRunner.removeTaskGraph(id: graphID, sessionID: sessionID)
             _ = updateLiveSession(id: sessionID, epoch: epoch) { session in
                 if session.workflowContinuation?.graphID == graphID {
@@ -618,8 +623,10 @@ extension ZenCODEACPBridge {
         _ = updateLiveSession(id: sessionID, epoch: epoch) { session in
             var workflow = session.workflowContinuation?.graphID == graphID
                 ? session.workflowContinuation!
-                : WorkflowCommandRuntimeState(goal: "", graphID: graphID)
-            workflow.armForRecoverableFailure(reason: reason)
+                : WorkflowCommandRuntimeState(goal: graph.workflow?.originalGoal ?? "", graphID: graphID)
+            if !workflow.recordCoordinatorOutput(nil, graph: graph) {
+                workflow.armForRecoverableFailure(reason: reason)
+            }
             session.workflowContinuation = workflow
         }
     }
@@ -655,8 +662,20 @@ extension ZenCODEACPBridge {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
         session.activePromptTask?.cancel()
+        // Arm synchronously while this incarnation still owns the reservation.
+        // Late prompt completions remain fenced out after activePromptID clears.
+        // The reply route projects any newer persisted pause before consuming it.
+        if let promptID = session.activePromptID,
+           session.activeWorkflowPromptID == promptID,
+           var workflow = session.workflowContinuation {
+            if !workflow.isAwaitingReply {
+                workflow.armForRecoverableFailure(reason: "cancelled")
+            }
+            session.workflowContinuation = workflow
+        }
         session.activePromptTask = nil
         session.activePromptID = nil
+        session.activeWorkflowPromptID = nil
         session.operationState = .idle
         sessions[sessionID] = session
         await clearACPPlanBrainstorming(

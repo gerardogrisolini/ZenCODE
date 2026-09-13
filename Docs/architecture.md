@@ -73,6 +73,29 @@ manifest, and selection contracts.
 
 The task control plane follows the same compatibility rule: `SessionTaskOrchestrator` is the sole mutable owner, task checkpoint schema 1 is written atomically per project/session, and saved-session v4 embeds the checkpoint tree (`SessionCheckpointTree`) alongside the current graph. Schema-1 task graphs may carry additive optional `TaskGraphSavedPlan` metadata: `/plan save` writes a draft graph into a stable project plan-library logical session, preserving the goal and complete plan text beside the existing todo-derived tasks while checkpoints without that field remain decodable. Keeping that library separate from the live chat session lets a logical chat reset delete its own execution checkpoint without deleting explicitly saved plans. `/plan load` requires that no plan is active, reads the newest library metadata into a new unapproved plan, and does not take over previous execution state. Approval materializes every plan into the current session's graph; a text-only legacy plan receives one stable task rather than an inferred task breakdown. Sessions saved before v4 are not loadable. Backend replacement may rebuild transient model state but must not discard the graph; only a logical session reset deletes its checkpoint. Startup recovery identifies work by the pair `sessionID + graphID`, not by session alone: the selected graph must become active/current and that `currentGraphID` must be persisted before backend creation. A checkpoint's formerly current graph must never replace a different graph explicitly selected by the operator.
 
+`/goal` additionally persists optional `TaskGraphWorkflow` metadata on schema-1
+graphs: the immutable original goal (nil only for adopted legacy graphs),
+`running` / `awaiting_user` / `blocked` control state, an explanatory message,
+and a workflow-specific monotonic revision. These are owned and committed only
+by `SessionTaskOrchestrator`; frontend reply transcripts remain transient.
+New workflows are retained for recovery even before the first task exists.
+`tasks.update` exposes an exclusive root-coordinator workflow mode requiring
+`graphID`, `expectedRevision` from `tasks.list`, and `workflow: {state, message}`;
+it rejects task payloads, objective changes, non-current/non-active/non-workflow
+graphs, and delegated execution scopes. Both TUI (including Telegram) and ACP
+use the graph state to stop on a clarification or genuine blocker, without
+parsing explanation text. A plain user reply resumes the same graph and
+reinserts its original objective. Resume/rollback compare workflow metadata and
+graph incarnation, not task revision, preserving independent child progress;
+rollback changes only metadata and advances its token to prevent ABA adoption.
+Terminal task validation and mandatory sub-agent execution remain unchanged;
+workflow state does not automatically verify semantic goal completion.
+Older schema-1 checkpoints without this field still decode. Their unavailable
+original objective is explicit rather than inferred from tasks or replayed chat;
+the legacy heading protocol remains a compatibility fallback only until first
+resume or structured update adopts the graph. This persistence exception is
+specific to `/goal`, not unfinished Planner clarification.
+
 `CoordinatorCommandParser` under Agent Core owns shared recognition and transport
 routing for `/plan`, `/goal`, and `/review`; `PlanningCommandKernel` owns the
 shared planning and workflow semantics consumed by the TUI, Telegram adapter, and

@@ -235,8 +235,21 @@ creation time; taskless agents are for single self-contained lookups.
 5. It validates and reviews the results.
 6. If a coordinator generation ends while the graph is still open, the runtime
    automatically starts another coordinator generation on that same graph. It
-   returns control only after graph-backed completion, explicit cancellation, or
-   a focused `Workflow question` for a material ambiguity.
+   returns control after graph-backed completion, explicit cancellation, or a
+   structured workflow pause (`awaiting_user` for clarification, `blocked` for an
+   unresolved genuine blocker). A paused workflow is not automatically retried.
+
+The coordinator pauses with `tasks.update`, using only `graphID`, the
+`expectedRevision` returned by `tasks.list`, and `workflow: {state, message}`.
+The message explains the question or blocker; no exact heading is required and
+text alone does not suspend new workflows. This mode is root-only, rejects task
+fields and changes to the original objective, and requires the current active
+workflow graph. A user reply resumes that same graph. The original `/goal`
+argument and workflow control state live in optional schema-1 checkpoint
+metadata, separate from tasks, and are restored even before any tasks exist.
+Legacy checkpoints remain readable; their missing objective is stated explicitly,
+not guessed. Until first resumed or structurally updated, legacy graphs without
+metadata retain their old heading-based clarification fallback.
 
 Workflow tasks must use `execution.executor: sub_agent`; the orchestrator
 rejects coordinator task attempts without narrowing the coordinator's normal tool

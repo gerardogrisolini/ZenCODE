@@ -64,6 +64,8 @@ struct DirectTaskToolAdapterTests {
         #expect(!childDescriptor.inputSchema.contains("\"dependsOn\""))
         #expect(!childDescriptor.inputSchema.contains("\"evidence\""))
         #expect(!childDescriptor.inputSchema.contains("\"status\""))
+        #expect(!childDescriptor.inputSchema.contains("\"workflow\""))
+        #expect(rootDescriptor.inputSchema.contains("\"workflow\""))
     }
 
     @Test
@@ -102,7 +104,7 @@ struct DirectTaskToolAdapterTests {
             sessionID: "child"
         )
 
-        let rootExpected = ["dependsOn", "evidence", "status"]
+        let rootExpected = ["dependsOn", "evidence", "status", "workflow"]
         let childExpected = ["output", "progress", "statusReason", "expectedRevision"]
         for properties in [
             rootProperties.responses,

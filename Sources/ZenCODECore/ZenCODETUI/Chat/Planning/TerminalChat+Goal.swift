@@ -54,7 +54,8 @@ extension TerminalChat {
                 id: graphID,
                 source: .workflow,
                 state: .active,
-                tasks: []
+                tasks: [],
+                originalGoal: argument
             )
         } catch {
             await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
@@ -87,6 +88,23 @@ extension TerminalChat {
             return nil
         }
         guard workflow.recordReply(reply) else { return nil }
+        let continuationSessionID = sessionID
+        let previousWorkflow = activeWorkflow
+        do {
+            let resumedGraph = try await sessionRunner.taskOrchestrator.resumeWorkflow(
+                sessionID: continuationSessionID, expectedGraph: graph
+            )
+            guard !Task.isCancelled, sessionID == continuationSessionID,
+                  activeWorkflow == previousWorkflow else {
+                try? await sessionRunner.taskOrchestrator.rollbackWorkflowResume(
+                    sessionID: continuationSessionID, previousGraph: graph, resumedGraph: resumedGraph
+                )
+                return .continueChat
+            }
+        } catch {
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            return .continueChat
+        }
         activeWorkflow = workflow
 
         return .runHiddenPrompt(
@@ -99,12 +117,9 @@ extension TerminalChat {
         )
     }
 
-    /// Arms the continuation round-trip only when the workflow turn ended with
-    /// the explicit `Workflow question` clarification block while its graph is
-    /// still open, and tells the user their next message continues it. Any other
-    /// output disarms the round-trip: an ordinary workflow turn must never
-    /// capture the user's next message. A finished (or vanished) graph clears
-    /// the state instead.
+    /// Projects the authoritative workflow pause and explains how to resume it.
+    /// New workflows never infer control state from prose. A finished or vanished
+    /// graph clears the transient projection instead.
     func recordWorkflowTurnOutcome(
         graphID: String,
         coordinatorMessage: String?
@@ -114,7 +129,7 @@ extension TerminalChat {
             activeWorkflow = nil
             return
         }
-        let didArm = workflow.recordCoordinatorOutput(coordinatorMessage)
+        let didArm = workflow.recordCoordinatorOutput(coordinatorMessage, graph: graph)
         activeWorkflow = workflow
         guard didArm else {
             // Truthful notice: the graph survives, but nothing is waiting for a
@@ -124,6 +139,13 @@ extension TerminalChat {
                     graphID: graph.id,
                     pendingTaskCount: Self.openTaskCount(in: graph)
                 )
+            )
+            return
+        }
+        if graph.workflow?.state == .blocked {
+            await writeSystemMessage(
+                "Workflow \"\(graph.id)\" is blocked: \(graph.workflow?.message ?? "")\n"
+                    + "Your next message resumes this same workflow; use /tasks clear to stop it.\n"
             )
             return
         }
@@ -137,11 +159,9 @@ extension TerminalChat {
 
     /// Handles a workflow turn that failed or was cancelled.
     ///
-    /// A graph that never received a task is dropped, so a cancelled `/goal`
-    /// cannot leave an empty "0 of 0 tasks pending" graph behind for the resume
-    /// menu. A graph that already holds delegated tasks is preserved *and* the
-    /// continuation round-trip is armed for recovery, so the announced retry
-    /// path really exists: the next message resumes that same graph.
+    /// Legacy empty graphs may be dropped; persisted workflow metadata retains
+    /// the objective even before delegation. Structured pauses take precedence
+    /// over the transient failure signal.
     func handleFailedWorkflowTurn(graphID: String, reason: String) async {
         guard let graph = await currentWorkflowGraph(), graph.id == graphID else {
             if activeWorkflow?.graphID == graphID {
@@ -149,7 +169,7 @@ extension TerminalChat {
             }
             return
         }
-        guard !graph.tasks.isEmpty else {
+        guard graph.workflow != nil || !graph.tasks.isEmpty else {
             _ = try? await sessionRunner.removeTaskGraph(id: graphID, sessionID: sessionID)
             if activeWorkflow?.graphID == graphID {
                 activeWorkflow = nil
@@ -158,8 +178,10 @@ extension TerminalChat {
         }
         var workflow = activeWorkflow?.graphID == graphID
             ? activeWorkflow!
-            : WorkflowCommandRuntimeState(goal: "", graphID: graphID)
-        workflow.armForRecoverableFailure(reason: reason)
+            : WorkflowCommandRuntimeState(goal: graph.workflow?.originalGoal ?? "", graphID: graphID)
+        if !workflow.recordCoordinatorOutput(nil, graph: graph) {
+            workflow.armForRecoverableFailure(reason: reason)
+        }
         activeWorkflow = workflow
         await writeSystemMessage(
             Self.workflowRecoverableFailureMessage(

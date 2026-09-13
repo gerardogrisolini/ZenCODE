@@ -209,6 +209,18 @@ extension SessionTaskOrchestrator {
             }
         }
 
+        if let workflow = graph.workflow {
+            guard graph.source.requiresSubAgentExecution,
+                  workflow.revision > 0,
+                  workflow.originalGoal.map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) ?? true,
+                  workflow.state == .running || workflow.message?.nilIfBlank != nil else {
+                throw SessionTaskOrchestratorError.invalidSnapshot("invalid workflow control metadata")
+            }
+            if let message = workflow.message, message.count > limits.maximumDetailsLength {
+                throw SessionTaskOrchestratorError.valueTooLong(field: "workflow.message", limit: limits.maximumDetailsLength)
+            }
+        }
+
         if graph.source.requiresSubAgentExecution {
             for task in graph.tasks {
                 guard task.execution.executor == .subAgent,
@@ -487,7 +499,7 @@ extension SessionTaskOrchestrator {
     func resumableGraphs(in state: SessionState) -> [TaskGraphSnapshot] {
         state.graphs.values.filter { graph in
             !graph.state.isTerminal
-                && graph.tasks.contains(where: { !$0.status.isTerminal })
+                && (graph.workflow != nil || graph.tasks.contains(where: { !$0.status.isTerminal }))
         }
     }
 

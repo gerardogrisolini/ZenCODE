@@ -298,7 +298,8 @@ public actor SessionTaskOrchestrator {
         state graphState: TaskGraphState = .draft,
         tasks definitions: [TaskDefinition],
         makeCurrent: Bool = true,
-        archivePreviousCurrent: Bool = true
+        archivePreviousCurrent: Bool = true,
+        originalGoal: String? = nil
     ) throws -> TaskGraphSnapshot {
         let sessionID = try requireRootAccess(rawSessionID)
         if graphState == .active {
@@ -328,6 +329,7 @@ public actor SessionTaskOrchestrator {
             source: source,
             state: graphState,
             tasks: records,
+            workflow: originalGoal.map { TaskGraphWorkflow(originalGoal: $0) },
             createdAt: now,
             updatedAt: now
         )

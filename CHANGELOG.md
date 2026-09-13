@@ -28,6 +28,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- `/goal` now persists its original objective and structured workflow control
+  (`running`, `awaiting_user`, `blocked`) separately from tasks in optional schema-1
+  checkpoint metadata. Clarification no longer requires a particular heading on
+  new workflows, and genuine blockers stop automatic continuation instead of
+  repeating retries. TUI, Telegram, and ACP user replies resume the same graph
+  with its original goal; checkpoints retain workflows paused before task creation.
+  Legacy checkpoints remain readable with an explicit unavailable-goal fallback.
+  Root-only workflow updates and revision-fenced resume/rollback preserve task
+  progress, required sub-agent delegation, and coordinator validation.
+- Workflow recovery now preserves persisted objectives and structured pauses even
+  when generation fails before the first task. ACP `session/cancel` keeps the next
+  reply on the same workflow without accepting stale prompt completions; loading
+  a saved TUI session reconstructs (or clears) its workflow continuation from the
+  adopted graph. `/tasks clear` remains the explicit cancellation path.
+
 - Remote generation retries a malformed tool-argument batch once per turn before
   committing history or executing any tool, including Anthropic Messages and ChatGPT
   Subscription. Earlier tool rounds are not replayed. Content and thinking retain

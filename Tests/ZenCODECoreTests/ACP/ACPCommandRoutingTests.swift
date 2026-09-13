@@ -48,11 +48,43 @@ private final class ACPCommandWire: Sendable {
     }
 }
 
-private actor ScriptedACPCommandBackend: AgentRuntimeBackend {
+actor ScriptedACPCommandBackend: AgentRuntimeBackend {
     private var turn = 0
     private var prompts: [String] = []
     private var plannerSnapshot: DirectSubAgentRuntime.AgentSnapshot?
     private var closedPlannerIDs: [String] = []
+    private var orchestrator: SessionTaskOrchestrator?
+    private var workflowPauseState: TaskGraphWorkflowState = .awaitingUser
+    private var interruptNextWorkflow = false
+    private var failNextWorkflow = false
+    private var pauseBeforeInterruption = false
+    private var workflowIsSuspended = false
+
+    func interruptWorkflow(fail: Bool, afterPause: Bool) {
+        interruptNextWorkflow = true
+        failNextWorkflow = fail
+        pauseBeforeInterruption = afterPause
+        workflowIsSuspended = false
+    }
+
+    func isWorkflowSuspended() -> Bool { workflowIsSuspended }
+
+    func setWorkflowPauseState(_ state: TaskGraphWorkflowState) {
+        workflowPauseState = state
+    }
+
+    func installTaskOrchestrator(_ orchestrator: SessionTaskOrchestrator) {
+        self.orchestrator = orchestrator
+    }
+
+    private func pauseWorkflow(sessionID: String, message: String) async throws {
+        let orchestrator = try #require(orchestrator)
+        let graph = try #require(try await orchestrator.graphSnapshot(sessionID: sessionID))
+        _ = try await orchestrator.updateWorkflow(
+            sessionID: sessionID, graphID: graph.id,
+            state: workflowPauseState, message: message, expectedRevision: graph.revision
+        )
+    }
 
     func createSession(
         id _: String,
@@ -116,10 +148,23 @@ private actor ScriptedACPCommandBackend: AgentRuntimeBackend {
     ) async throws -> DirectAgentResponse {
         turn += 1
         prompts.append(prompt)
+        if interruptNextWorkflow {
+            interruptNextWorkflow = false
+            if pauseBeforeInterruption {
+                try await pauseWorkflow(sessionID: sessionID, message: "Persisted pause before interruption")
+            }
+            workflowIsSuspended = true
+            if failNextWorkflow {
+                throw NSError(domain: "ScriptedWorkflowProvider", code: 1)
+            }
+            try await Task.sleep(for: .seconds(60))
+            try Task.checkCancellation()
+        }
         // Workflow prompts are recognised by content, so `/goal` behaves the
         // same regardless of how many planning turns preceded it.
         if prompt.contains("Continue the active /goal workflow automatically") {
-            let workflowQuestion = "Workflow question\nWhich remaining constraint should I apply?"
+            let workflowQuestion = "Which remaining constraint should I apply?"
+            try await pauseWorkflow(sessionID: sessionID, message: workflowQuestion)
             await onEvent(.content(workflowQuestion))
             return DirectAgentResponse(
                 text: workflowQuestion,
@@ -136,8 +181,9 @@ private actor ScriptedACPCommandBackend: AgentRuntimeBackend {
             )
         }
         if prompt.contains("You are the coordinator of a delegated workflow") {
-            // The `/goal` coordinator uses the explicit clarification protocol.
-            let workflowQuestion = "Workflow question\n1. Which surface should I cover first?"
+            // No heading: runtime suspension follows the persisted tool state.
+            let workflowQuestion = "Which surface should I cover first?"
+            try await pauseWorkflow(sessionID: sessionID, message: workflowQuestion)
             await onEvent(.content(workflowQuestion))
             return DirectAgentResponse(
                 text: workflowQuestion,
@@ -568,21 +614,23 @@ struct ACPCommandRoutingTests {
     }
 
     @Test
-    func acpWorkflowSignalUsesOnlyTheFinalAssistantBlockAfterTools() async {
+    func legacyACPWorkflowSignalUsesOnlyTheFinalAssistantBlockAfterTools() async {
         let questionThenSummary = ACPAssistantBlockCollector()
         await questionThenSummary.append("Workflow question\nWhich surface?")
         await questionThenSummary.finishBlock()
         await questionThenSummary.append("Summary: task list refreshed.")
 
         var state = WorkflowCommandRuntimeState(goal: "Ship it", graphID: "workflow_test")
-        #expect(!state.recordCoordinatorOutput(await questionThenSummary.lastBlock()))
+        let ignoredSummary = state.recordCoordinatorOutput(await questionThenSummary.lastBlock())
+        #expect(!ignoredSummary)
         #expect(!state.isAwaitingReply)
 
         let progressThenQuestion = ACPAssistantBlockCollector()
         await progressThenQuestion.append("Progress: task list refreshed.")
         await progressThenQuestion.finishBlock()
         await progressThenQuestion.append("Workflow question\nWhich surface?")
-        #expect(state.recordCoordinatorOutput(await progressThenQuestion.lastBlock()))
+        let recordedQuestion = state.recordCoordinatorOutput(await progressThenQuestion.lastBlock())
+        #expect(recordedQuestion)
         #expect(state.isAwaitingReply)
     }
 
@@ -606,12 +654,14 @@ struct ACPCommandRoutingTests {
             ]
         )
 
+        let promptID = UUID()
+        await bridge.reserveWorkflowPromptForTesting(sessionID: sessionID, promptID: promptID)
         await bridge.handleFailedACPWorkflowTurn(
             graphID: graphID,
             reason: "the turn was cancelled",
             sessionID: sessionID,
             epoch: await bridge.sessionEpochForTesting(sessionID: sessionID),
-            promptID: UUID()
+            promptID: promptID
         )
 
         let graph = try #require(try await bridge.sessionRunner.taskGraphSnapshot(
@@ -623,6 +673,135 @@ struct ACPCommandRoutingTests {
         #expect(recovery.graphID == graphID)
         #expect(recovery.isAwaitingReply)
         #expect(recovery.pendingCoordinatorMessage?.contains("the turn was cancelled") == true)
+    }
+
+    @Test
+    func acpBlockedWorkflowStopsAndRestoreReinjectsItsOriginalObjective() async throws {
+        let fixture = try await makeFixture(sessionID: "acp-workflow-blocked")
+        await fixture.backend.setWorkflowPauseState(.blocked)
+        try await fixture.bridge.prompt(id: .number(1), params: [
+            "sessionId": fixture.sessionID, "prompt": "/goal preserve the full objective",
+        ])
+        let blocked = try #require(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID))
+        #expect(blocked.workflow?.state == .blocked)
+        #expect(blocked.workflow?.originalGoal == "preserve the full objective")
+        #expect(await fixture.backend.recordedPrompts().count == 1)
+        #expect(fixture.wire.stopReason(for: 1) == "end_turn")
+        try await fixture.bridge.restoreSession(
+            id: .number(2), params: ["sessionId": fixture.sessionID], replayHistory: false
+        )
+        try await fixture.bridge.prompt(id: .number(3), params: [
+            "sessionId": fixture.sessionID, "prompt": "The external blocker is resolved",
+        ])
+        let prompts = await fixture.backend.recordedPrompts()
+        let continuation = try #require(prompts.first { $0.contains("Continue the delegated workflow") })
+        #expect(continuation.contains("Goal: preserve the full objective"))
+        #expect(continuation.contains("Active workflow task graph: \(blocked.id)"))
+        #expect(continuation.contains("The external blocker is resolved"))
+        let after = try #require(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID))
+        #expect(after.id == blocked.id)
+        #expect(after.workflow?.originalGoal == blocked.workflow?.originalGoal)
+    }
+
+    @Test
+    func staleACPWorkflowFailureCannotArmAnotherPrompt() async throws {
+        let fixture = try await makeFixture(sessionID: "acp-workflow-stale")
+        let graph = try await fixture.bridge.sessionRunner.taskOrchestrator.createGraph(
+            sessionID: fixture.sessionID, id: "workflow-stale", source: .workflow, state: .active,
+            tasks: [], originalGoal: "Keep this goal"
+        )
+        await fixture.bridge.reserveWorkflowPromptForTesting(sessionID: fixture.sessionID, promptID: UUID())
+        await fixture.bridge.handleFailedACPWorkflowTurn(
+            graphID: graph.id, reason: "stale", sessionID: fixture.sessionID,
+            epoch: await fixture.bridge.sessionEpochForTesting(sessionID: fixture.sessionID), promptID: UUID()
+        )
+        #expect(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID) == graph)
+        #expect(await fixture.bridge.workflowStateForTesting(sessionID: fixture.sessionID) == nil)
+    }
+
+    @Test(arguments: [false, true], [TaskGraphWorkflowState.running, .awaitingUser, .blocked])
+    func realSessionCancelRearmsFirstTurnAndConsumedReply(afterReply: Bool, state: TaskGraphWorkflowState) async throws {
+        let fixture = try await makeFixture(sessionID: "acp-real-cancel-\(UUID().uuidString)")
+        let bridge = fixture.bridge
+        let sessionID = fixture.sessionID
+        if afterReply {
+            try await bridge.prompt(id: .number(1), params: [
+                "sessionId": sessionID, "prompt": "/goal Keep cancel objective",
+            ])
+        }
+        await fixture.backend.setWorkflowPauseState(state)
+        await fixture.backend.interruptWorkflow(fail: false, afterPause: state != .running)
+        let generation = Task {
+            try await bridge.prompt(id: .number(2), params: [
+                "sessionId": sessionID,
+                "prompt": afterReply ? "First answer" : "/goal Keep cancel objective",
+            ])
+        }
+        defer { generation.cancel() }
+        for _ in 0..<500 {
+            if await fixture.backend.isWorkflowSuspended() { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await fixture.backend.isWorkflowSuspended())
+        let before = try #require(try await bridge.sessionRunner.taskGraphSnapshot(sessionID: sessionID))
+        try await bridge.cancel(id: .number(3), params: ["sessionId": sessionID])
+        _ = try await generation.value
+        #expect(await bridge.workflowStateForTesting(sessionID: sessionID)?.isAwaitingReply == true)
+        await fixture.backend.setWorkflowPauseState(.awaitingUser)
+        try await bridge.prompt(id: .number(4), params: ["sessionId": sessionID, "prompt": "Retry after real cancel"])
+        let prompts = await fixture.backend.recordedPrompts()
+        let resumed = try #require(prompts.first { $0.contains("Retry after real cancel") })
+        #expect(resumed.contains("Continue the delegated workflow"))
+        #expect(resumed.contains("Goal: Keep cancel objective"))
+        #expect(resumed.contains("Active workflow task graph: \(before.id)"))
+        if state != .running {
+            #expect(resumed.contains("Persisted pause before interruption"))
+        }
+        if afterReply {
+            #expect(resumed.contains("First answer"))
+        }
+        let after = try #require(try await bridge.sessionRunner.taskGraphSnapshot(sessionID: sessionID))
+        #expect(after.id == before.id)
+        #expect(after.workflow?.originalGoal == before.workflow?.originalGoal)
+        #expect(after.tasks == before.tasks)
+    }
+
+    @Test(arguments: [TaskGraphWorkflowState.running, .awaitingUser, .blocked])
+    func providerFailurePreservesZeroTaskWorkflowAndStructuredPause(state: TaskGraphWorkflowState) async throws {
+        let fixture = try await makeFixture(sessionID: "acp-provider-failure-\(UUID().uuidString)")
+        await fixture.backend.setWorkflowPauseState(state)
+        await fixture.backend.interruptWorkflow(fail: true, afterPause: state != .running)
+        do {
+            try await fixture.bridge.prompt(id: .number(1), params: [
+                "sessionId": fixture.sessionID, "prompt": "/goal Preserve provider failure objective",
+            ])
+            Issue.record("Il provider simulato deve restituire un errore")
+        } catch {
+            #expect(await fixture.backend.isWorkflowSuspended())
+        }
+        let graph = try #require(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID))
+        #expect(graph.tasks.isEmpty)
+        #expect(graph.workflow?.originalGoal == "Preserve provider failure objective")
+        #expect(graph.workflow?.state == state)
+        let projection = try #require(await fixture.bridge.workflowStateForTesting(sessionID: fixture.sessionID))
+        #expect(projection.isAwaitingReply)
+        if state != .running {
+            #expect(projection.pendingCoordinatorMessage == "Persisted pause before interruption")
+        }
+    }
+
+    @Test
+    func cancellingOrdinaryReservationDoesNotArmStaleWorkflowProjection() async throws {
+        let fixture = try await makeFixture(sessionID: "acp-ordinary-cancel-\(UUID().uuidString)")
+        let graph = try await fixture.bridge.sessionRunner.taskOrchestrator.createGraph(
+            sessionID: fixture.sessionID, id: "ordinary-cancel-workflow", source: .workflow,
+            state: .active, tasks: [], originalGoal: "Do not capture ordinary chat"
+        )
+        await fixture.bridge.installDisarmedWorkflowForTesting(sessionID: fixture.sessionID, graphID: graph.id)
+        await fixture.bridge.reserveWorkflowPromptForTesting(sessionID: fixture.sessionID, promptID: UUID())
+        try await fixture.bridge.cancel(id: .number(1), params: ["sessionId": fixture.sessionID])
+        #expect(await fixture.bridge.workflowStateForTesting(sessionID: fixture.sessionID)?.isAwaitingReply == false)
+        #expect(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID) == graph)
     }
 
     private func makeFixture(
@@ -669,5 +848,16 @@ struct ACPCommandRoutingTests {
         )
         await bridge.installTestSession(sessionConfiguration)
         return (bridge, backend, wire, sessionID)
+    }
+}
+
+extension ZenCODEACPBridge {
+    fileprivate func installDisarmedWorkflowForTesting(sessionID: String, graphID: String) {
+        sessions[sessionID]?.workflowContinuation = WorkflowCommandRuntimeState(goal: "Do not capture ordinary chat", graphID: graphID)
+    }
+
+    fileprivate func reserveWorkflowPromptForTesting(sessionID: String, promptID: UUID) {
+        sessions[sessionID]?.activePromptID = promptID
+        sessions[sessionID]?.operationState = .prompting(promptID)
     }
 }

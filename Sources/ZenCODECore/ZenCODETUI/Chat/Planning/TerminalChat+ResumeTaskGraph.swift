@@ -158,15 +158,33 @@ extension TerminalChat {
         }
     }
 
+    func restoreWorkflowProjection(from snapshot: TaskGraphSnapshot?) {
+        guard let snapshot, snapshot.source.requiresSubAgentExecution,
+              !snapshot.state.isTerminal else {
+            activeWorkflow = nil
+            return
+        }
+        var workflow = WorkflowCommandRuntimeState(
+            goal: snapshot.workflow?.originalGoal ?? "", graphID: snapshot.id
+        )
+        if snapshot.workflow != nil, snapshot.workflow?.state != .running {
+            workflow.recordCoordinatorOutput(nil, graph: snapshot)
+        } else {
+            workflow.armForResumedGraph()
+        }
+        activeWorkflow = workflow
+    }
+
     func writeResumedTaskGraphNotice(_ graph: ResumableTaskGraph) async {
         // A resumed workflow graph keeps its `/goal` contract: arm the same
         // continuation round-trip used after a clarification question so the
         // next message resumes the coordinator on this exact graph instead of
         // starting an unrelated turn.
         if graph.source.requiresSubAgentExecution, !graph.state.isTerminal {
-            var workflow = WorkflowCommandRuntimeState(goal: "", graphID: graph.graphID)
-            workflow.armForResumedGraph()
-            activeWorkflow = workflow
+            let snapshot = try? await sessionRunner.taskGraphSnapshot(
+                sessionID: sessionID, graphID: graph.graphID
+            )
+            restoreWorkflowProjection(from: snapshot)
             await writeSystemMessage(
                 "Resumed workflow \"\(graph.graphID)\" from a previous session "
                 + "(\(graph.pendingTaskCount) task\(graph.pendingTaskCount == 1 ? "" : "s") pending). "

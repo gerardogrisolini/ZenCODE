@@ -408,6 +408,28 @@ public struct TaskRecord: Codable, Equatable, Sendable, Identifiable {
     public var assigneeAgentID: String? { activeAttempt?.agentID }
 }
 
+public enum TaskGraphWorkflowState: String, Codable, Equatable, Sendable {
+    case running
+    case awaitingUser = "awaiting_user"
+    case blocked
+}
+
+/// Persisted /goal control state, separate from task lifecycle and Planner clarification.
+public struct TaskGraphWorkflow: Codable, Equatable, Sendable {
+    /// Nil only when adopting a legacy checkpoint that did not retain its objective.
+    public let originalGoal: String?
+    public var state: TaskGraphWorkflowState
+    public var revision: Int
+    public var message: String?
+
+    public init(originalGoal: String?, state: TaskGraphWorkflowState = .running, message: String? = nil) {
+        self.originalGoal = originalGoal
+        self.state = state
+        self.revision = 1
+        self.message = message
+    }
+}
+
 public struct TaskGraphSnapshot: Codable, Equatable, Sendable, Identifiable {
     public static let currentSchemaVersion = 1
 
@@ -420,6 +442,7 @@ public struct TaskGraphSnapshot: Codable, Equatable, Sendable, Identifiable {
     /// Additive, optional metadata. Its absence keeps schema-1 checkpoints
     /// written by earlier releases decodable without migration.
     public var savedPlan: TaskGraphSavedPlan?
+    public var workflow: TaskGraphWorkflow?
     public let createdAt: Date
     public var updatedAt: Date
 
@@ -431,6 +454,7 @@ public struct TaskGraphSnapshot: Codable, Equatable, Sendable, Identifiable {
         revision: Int = 1,
         tasks: [TaskRecord] = [],
         savedPlan: TaskGraphSavedPlan? = nil,
+        workflow: TaskGraphWorkflow? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -441,6 +465,7 @@ public struct TaskGraphSnapshot: Codable, Equatable, Sendable, Identifiable {
         self.revision = revision
         self.tasks = tasks
         self.savedPlan = savedPlan
+        self.workflow = workflow
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

@@ -36,6 +36,7 @@ public actor DirectTaskToolAdapter {
                 "tasks.cancel requires an explicit sessionID; refusing to use a fallback task graph."
             )
         }
+        let hasExplicitSessionID = sessionID?.nilIfBlank != nil
         let sessionID = sessionID?.nilIfBlank ?? "default"
 
         switch request.name {
@@ -109,6 +110,27 @@ public actor DirectTaskToolAdapter {
             return Self.renderTask(view, detailed: true)
 
         case "tasks.update":
+            if let workflowValue = request.arguments["workflow"] {
+                guard hasExplicitSessionID,
+                      Set(request.arguments.keys).isSubset(of: ["workflow", "graphID", "expectedRevision"]),
+                      case let .object(workflow) = workflowValue,
+                      Set(workflow.keys).isSubset(of: ["state", "message"]),
+                      let rawState = DirectTodoRuntime.firstString(["state"], in: workflow),
+                      let state = TaskGraphWorkflowState(rawValue: rawState),
+                      let graphID = DirectTodoRuntime.firstString(["graphID"], in: request.arguments)?.nilIfBlank,
+                      let revision = DirectTodoRuntime.firstInt(["expectedRevision"], in: request.arguments),
+                      workflow["message"] == nil || workflow["message"]?.stringValue != nil else {
+                    throw DirectTodoTaskRuntimeError.invalidArgument("workflow requires only state/message, explicit graphID and expectedRevision, and no task payload")
+                }
+                let graph = try await orchestrator.updateWorkflow(
+                    sessionID: sessionID,
+                    graphID: graphID,
+                    state: state,
+                    message: DirectTodoRuntime.firstString(["message"], in: workflow),
+                    expectedRevision: revision
+                )
+                return Self.renderList([], graph: graph)
+            }
             let taskID = try DirectTodoRuntime.requiredString(["id"], in: request.arguments)
             if Self.containsAssignee(in: request.arguments) {
                 throw SessionTaskOrchestratorError.permissionDenied(
@@ -400,6 +422,13 @@ extension DirectTaskToolAdapter {
         var lines = [
             "Task graph \(graph.id) state=\(graph.state.rawValue) revision=\(graph.revision)",
         ]
+        if let workflow = graph.workflow {
+            lines.append("Workflow state=\(workflow.state.rawValue) revision=\(workflow.revision)")
+            lines.append("Original goal: \(workflow.originalGoal ?? "unavailable (legacy checkpoint)")")
+            if let message = workflow.message { lines.append("Workflow message: \(message)") }
+        } else if graph.source.requiresSubAgentExecution {
+            lines.append("Legacy workflow: original goal and structured control state were not recorded.")
+        }
         guard !views.isEmpty else {
             lines.append("No matching tasks.")
             return lines.joined(separator: "\n")

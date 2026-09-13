@@ -172,35 +172,31 @@ struct PlanningCommandRuntimeState: Sendable, Equatable {
     }
 }
 
-/// Runtime-only `/goal` workflow state. Like ``PlanningCommandRuntimeState``
-/// this type intentionally does not conform to `Codable`: saved sessions and
-/// task-graph checkpoints must never restore an unfinished clarification loop.
-/// A restarted session rebuilds it from the resumed workflow graph instead.
+/// Transient frontend projection and reply transcript for the persisted /goal workflow.
+/// The checkpoint owns the original goal and structured control state, not this transcript.
 struct WorkflowCommandRuntimeState: Sendable, Equatable {
     struct Exchange: Sendable, Equatable {
         let coordinatorMessage: String
         let userReply: String
     }
 
-    /// The only reasons a workflow may capture the next plain user message.
-    /// Every case is an explicit, testable signal: a workflow turn that simply
-    /// ended with prose arms nothing, exactly like a Planner turn that did not
-    /// emit its mandatory question heading.
+    /// Explicit persisted pauses and transient recovery/resume signals may
+    /// capture the next plain user message. Ordinary prose arms nothing on new workflows.
     enum ContinuationSignal: Sendable, Equatable {
-        /// The coordinator emitted the explicit `Workflow question` block
-        /// mandated by the `/goal` completion contract.
+        /// The graph awaits a user answer (legacy graphs may use the old heading).
         case clarification(String)
+        case blocked(String)
         /// The workflow graph was restored from a previous session, so no
         /// coordinator prose exists for it.
         case resumedGraph
-        /// The last workflow turn failed or was cancelled while the graph still
-        /// held delegated tasks, so the graph was preserved for a retry.
+        /// The last workflow turn failed or was cancelled while its persisted
+        /// objective or delegated tasks were preserved for a retry.
         case recoverableFailure(String)
 
         /// Human-readable text recorded in the continuation transcript.
         var transcriptMessage: String {
             switch self {
-            case let .clarification(text):
+            case let .clarification(text), let .blocked(text):
                 return text
             case .resumedGraph:
                 return PlanningCommandKernel.workflowResumeSignalMessage
@@ -213,8 +209,7 @@ struct WorkflowCommandRuntimeState: Sendable, Equatable {
     /// The workflow graph this state belongs to. Every continuation turn must
     /// re-inject it so the coordinator keeps working on the same graph.
     let graphID: String
-    /// The original `/goal` argument. Empty when the workflow was rebuilt from a
-    /// checkpoint, whose graph does not persist the prose goal.
+    /// The original /goal argument from its checkpoint; empty only for legacy graphs.
     let goal: String
     var exchanges: [Exchange]
     /// The explicit signal that armed the continuation round-trip, if any. Only
@@ -238,11 +233,22 @@ struct WorkflowCommandRuntimeState: Sendable, Equatable {
         pendingSignal?.transcriptMessage
     }
 
-    /// Arms the continuation round-trip only when the coordinator used the
-    /// explicit clarification protocol. Any other output disarms it, so an
-    /// ordinary workflow turn never captures the user's next message.
+    /// Projects authoritative persisted state. Only legacy checkpoints without
+    /// workflow metadata retain the old heading protocol until their first resume.
     @discardableResult
-    mutating func recordCoordinatorOutput(_ text: String?) -> Bool {
+    mutating func recordCoordinatorOutput(_ text: String?, graph: TaskGraphSnapshot? = nil) -> Bool {
+        if let graph, let workflow = graph.workflow {
+            guard graph.id == graphID, !graph.state.isTerminal else {
+                pendingSignal = nil
+                return false
+            }
+            switch workflow.state {
+            case .running: pendingSignal = nil
+            case .awaitingUser: pendingSignal = .clarification(workflow.message ?? "Workflow awaiting user input.")
+            case .blocked: pendingSignal = .blocked(workflow.message ?? "Workflow blocked.")
+            }
+            return pendingSignal != nil
+        }
         guard let text = text?.nilIfBlank,
               PlanningCommandKernel.isWorkflowClarificationResponse(text) else {
             pendingSignal = nil
@@ -257,8 +263,8 @@ struct WorkflowCommandRuntimeState: Sendable, Equatable {
         pendingSignal = .resumedGraph
     }
 
-    /// Arms the round-trip after a failed or cancelled turn that left a
-    /// non-empty graph behind, preserving a real retry path.
+    /// Arms the round-trip after a failed or cancelled turn that preserved its
+    /// workflow graph, including metadata-only objectives before delegation.
     mutating func armForRecoverableFailure(reason: String) {
         pendingSignal = .recoverableFailure(
             reason.nilIfBlank ?? PlanningCommandKernel.workflowUnknownFailureReason
@@ -327,6 +333,7 @@ enum PlanningCommandKernel {
     enum WorkflowTurnDisposition: Equatable, Sendable {
         case completed
         case awaitingClarification
+        case blocked
         case continueAutomatically
     }
 
@@ -570,9 +577,8 @@ enum PlanningCommandKernel {
             == workflowClarificationHeading
     }
 
-    /// Determines whether the `/goal` driver may return control to the user.
-    /// Completion is graph-backed, clarification uses the explicit protocol,
-    /// and every other non-terminal state must trigger another coordinator turn.
+    /// Completion and pauses are graph-backed. Only legacy metadata-free
+    /// checkpoints use the exact heading compatibility fallback.
     static func workflowTurnDisposition(
         graph: TaskGraphSnapshot?,
         expectedGraphID: String,
@@ -584,6 +590,14 @@ enum PlanningCommandKernel {
               !graph.state.isTerminal else {
             return .completed
         }
+        if let workflow = graph.workflow {
+            switch workflow.state {
+            case .running: return .continueAutomatically
+            case .awaitingUser: return .awaitingClarification
+            case .blocked: return .blocked
+            }
+        }
+        // Explicit compatibility fallback for schema-1 graphs without metadata.
         if let coordinatorMessage,
            isWorkflowClarificationResponse(coordinatorMessage) {
             return .awaitingClarification
@@ -601,14 +615,14 @@ enum PlanningCommandKernel {
         - If any requirement, constraint, expected behavior, or necessary decision is unclear and \
         cannot be resolved reliably from the workspace or existing context, ask the user a focused \
         clarification question instead of guessing. Once clarified, resume this same goal graph.
-        - To ask for clarification you must end that turn with a message whose very first line is \
-        exactly "Workflow question", followed by the focused question(s). Only that explicit \
-        heading tells ZenCODE the workflow is waiting for the user, so the next user message is \
-        routed back into this same workflow graph. Never use that heading for progress reports, \
-        summaries, or blockers.
+        - To pause, call tasks.list to obtain the current graph revision, then tasks.update with \
+        only graphID, expectedRevision, and workflow: {state: "awaiting_user", message: "your question"}. \
+        End the turn with the focused question in normal prose. Text alone, including a \
+        "Workflow question" heading, does not change workflow state. A user reply resumes this same graph.
         - Stop without achieving the goal only for a genuine blocker that cannot be resolved through \
-        clarification, another suitable sub-agent, retry, or available project evidence; explain the \
-        blocker precisely and state what is needed to continue.
+        clarification, another suitable sub-agent, retry, or available project evidence; use tasks.update workflow mode \
+        with state "blocked" and a precise message stating what is needed to continue. End the turn; \
+        do not repeatedly retry blocked work. Runtime control is structured, not inferred from prose.
         """
 
     /// The invariant delegation rules, shared by the initial and continuation
@@ -637,7 +651,7 @@ enum PlanningCommandKernel {
         totalTaskCount: Int
     ) -> String {
         let goalLine = state.goal.nilIfBlank.map { "Goal: \($0)" }
-            ?? "Goal: continue the workflow already recorded in this task graph."
+            ?? "Original goal unavailable: this legacy checkpoint did not record it. Ask the user for any missing objective; do not invent one."
         let transcript = state.exchanges.suffix(3).map { exchange in
             """
             You asked:
@@ -684,8 +698,8 @@ enum PlanningCommandKernel {
         goal: String,
         graph: TaskGraphSnapshot
     ) -> String {
-        let goalLine = goal.nilIfBlank.map { "Goal: \($0)" }
-            ?? "Goal: complete the objective recorded by this workflow graph."
+        let goalLine = (graph.workflow?.originalGoal ?? goal.nilIfBlank).map { "Goal: \($0)" }
+            ?? "Original goal unavailable: this legacy checkpoint did not record it. Ask the user for any missing objective; do not invent one."
         let counts = Dictionary(grouping: graph.tasks, by: \.status)
             .map { status, tasks in "\(status.rawValue)=\(tasks.count)" }
             .sorted()

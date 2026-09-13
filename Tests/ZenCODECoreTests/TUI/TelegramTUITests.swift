@@ -482,9 +482,14 @@ struct TelegramTUITests {
             return
         }
 
+        let graph = try #require(try await terminal.sessionRunner.taskGraphSnapshot(sessionID: terminal.sessionID))
+        _ = try await terminal.sessionRunner.taskOrchestrator.updateWorkflow(
+            sessionID: terminal.sessionID, graphID: graphID, state: .awaitingUser,
+            message: "Which surface should I cover first?", expectedRevision: graph.revision
+        )
         await terminal.recordWorkflowTurnOutcome(
             graphID: graphID,
-            coordinatorMessage: "Workflow question\nWhich surface should I cover first?"
+            coordinatorMessage: "Which surface should I cover first?"
         )
         #expect(terminal.activeWorkflow?.isAwaitingReply == true)
 
@@ -501,9 +506,14 @@ struct TelegramTUITests {
         #expect(terminal.activeWorkflow?.isAwaitingReply == false)
 
         // A slash command still takes precedence over the continuation.
+        let resumed = try #require(try await terminal.sessionRunner.taskGraphSnapshot(sessionID: terminal.sessionID))
+        _ = try await terminal.sessionRunner.taskOrchestrator.updateWorkflow(
+            sessionID: terminal.sessionID, graphID: graphID, state: .awaitingUser,
+            message: "Anything else?", expectedRevision: resumed.revision
+        )
         await terminal.recordWorkflowTurnOutcome(
             graphID: graphID,
-            coordinatorMessage: "Workflow question\nAnything else?"
+            coordinatorMessage: "Anything else?"
         )
         guard case .continueChat = await terminal.submittedTelegramLineAction(
             "/status", origin: telegramOrigin

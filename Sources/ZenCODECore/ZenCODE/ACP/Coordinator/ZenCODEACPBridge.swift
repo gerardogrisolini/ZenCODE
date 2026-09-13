@@ -40,6 +40,8 @@ public actor ZenCODEACPBridge {
         /// making one prompt per session atomically exclusive even when several
         /// requests are dispatched concurrently.
         public var activePromptID: UUID?
+        /// Transient fence: only cancellation of this workflow prompt may arm recovery.
+        var activeWorkflowPromptID: UUID? = nil
         public var activePromptTask: Task<PromptCompletion, Error>?
         /// Reserved synchronously before an operation's first suspension. This
         /// prevents a prompt and a configuration change (or two configuration

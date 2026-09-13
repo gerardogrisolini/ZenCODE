@@ -319,6 +319,7 @@ extension TerminalChat {
 
         await stopTaskGraphObserver()
         await abandonPlanBrainstorming()
+        activeWorkflow = nil
         await sessionRunner.resetSession(id: sessionID)
         sessionID = savedSession.sessionID
         activeSessionCacheKey = savedSession.cacheKey
@@ -373,6 +374,7 @@ extension TerminalChat {
                 sessionID: savedSession.sessionID
             )
         }
+        restoreWorkflowProjection(from: try await sessionRunner.taskGraphSnapshot(sessionID: sessionID))
         await startTaskGraphObserver()
         if let contextWindow = savedSession.contextWindow?.runtimeStatus {
             _ = await statusBar.update(contextWindow: contextWindow)
