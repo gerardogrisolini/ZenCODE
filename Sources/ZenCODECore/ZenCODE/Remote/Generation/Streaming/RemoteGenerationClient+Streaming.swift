@@ -80,6 +80,31 @@ extension RemoteGenerationClient {
                 return
             }
             body["reasoning_effort"] = resolvedEffortSelection(thinkingSelection).rawValue
+        case let .deepSeekThinking(supportsDisable):
+            guard thinkingSelection.isEnabled || supportsDisable else {
+                return
+            }
+            body["thinking"] = [
+                "type": thinkingSelection.isEnabled ? "enabled" : "disabled"
+            ]
+            switch thinkingSelection {
+            case .low, .high, .max:
+                body["reasoning_effort"] = thinkingSelection.rawValue
+            case .enabled:
+                if thinkingOptions.isEmpty || thinkingOptions.contains(.enabled)
+                    || thinkingOptions.contains(.high) {
+                    body["reasoning_effort"] = "high"
+                } else if let effort = thinkingOptions.first(where: { $0 == .low || $0 == .max }) {
+                    body["reasoning_effort"] = effort.rawValue
+                }
+                // Legacy-only declarations retain toggle behavior, not an
+                // unauthorized effort or an invented alias for xhigh.
+            case .off, .minimal, .medium, .xhigh, .ultra:
+                // Older manifests exposed generic effort levels. Preserve their
+                // on/off behavior and the API's high default, without inventing
+                // aliases (in particular xhigh is not DeepSeek's max).
+                break
+            }
         case let .thinkingObject(supportsDisable, keepAll):
             guard thinkingSelection.isEnabled || supportsDisable else {
                 return
@@ -131,10 +156,7 @@ extension RemoteGenerationClient {
         case (.deepSeek, .openAIChatCompletions):
             // The provider dialect can express disable, but only models whose
             // persisted capability explicitly includes `.off` may use it.
-            return .thinkingObject(
-                supportsDisable: thinkingOptions.contains(.off),
-                keepAll: false
-            )
+            return .deepSeekThinking(supportsDisable: thinkingOptions.contains(.off))
         case (.nvidia, .openAIChatCompletions), (.modal, .openAIChatCompletions):
             return .chatTemplateKwargs
         default:

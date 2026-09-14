@@ -109,6 +109,8 @@ public enum AgentThinkingPayloadStyle: Equatable, Sendable {
     case openAIResponsesReasoning
     case reasoningEffort
     case thinkingObject(supportsDisable: Bool, keepAll: Bool)
+    /// DeepSeek separates the thinking toggle from its low/high/max effort.
+    case deepSeekThinking(supportsDisable: Bool)
     /// vLLM chat-template dialect used explicitly by NVIDIA NIM and Modal.
     case chatTemplateKwargs
 }

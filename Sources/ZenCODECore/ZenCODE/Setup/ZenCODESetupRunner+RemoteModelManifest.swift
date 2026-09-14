@@ -23,8 +23,26 @@ extension ZenCODESetupRunner {
             chatEndpoint: chatEndpoint,
             configuredContextWindowLimit: model.contextLength,
             generationParameterOverrides: model.generationParameterOverrides,
-            thinkingSupport: model.thinkingSupport
+            thinkingSupport: directDeepSeekThinkingSupport(modelID: model.id, baseURL: baseURL)
+                ?? model.thinkingSupport
         )
+    }
+
+    /// Capability metadata only: /models remains authoritative for discovery.
+    /// Match documented direct-API IDs, never vendor suffixes or future models.
+    static func directDeepSeekThinkingSupport(
+        modelID: String,
+        baseURL: String
+    ) -> ModelThinkingSupport? {
+        guard AgentRemoteProvider.isDeepSeekBaseURL(baseURL) else { return nil }
+        switch modelID {
+        case "deepseek-flash", "deepseek-v4-pro",
+             "deepseek-v4-flash", "deepseek-v4-flash-vision-exp":
+            // https://api-docs.deepseek.com/guides/thinking_mode/
+            return .effort(levels: [.low, .high, .max], defaultSelection: .high)
+        default:
+            return nil
+        }
     }
 
     static func subscriptionModelManifest(
@@ -49,17 +67,30 @@ extension ZenCODESetupRunner {
     }
 
     static func readModelMetadata(
-        for model: AgentSettingsModelManifest
+        for model: AgentSettingsModelManifest,
+        promptContextWindow: (String, Int?) throws -> Int? = {
+            try promptOptionalContextWindow(forModel: $0, defaultValue: $1)
+        },
+        confirmThinkingSupport: (Bool) throws -> Bool = {
+            try promptYesNo("This model supports thinking?", defaultValue: $0)
+        },
+        selectThinkingLevels: (String, [TerminalCheckboxMenuItem<Int>], Set<Int>) throws -> Set<Int> = {
+            try promptMenuSelection(title: $0, items: $1, selected: $2)
+        }
     ) throws -> AgentSettingsModelManifest {
         AgentOutput.standardError.writeString("\nModel metadata for \(model.displayTitle)\n")
-        let configuredContextWindowLimit = try promptOptionalContextWindow(
-            forModel: model.modelID,
-            defaultValue: model.configuredContextWindowLimit
+        let configuredContextWindowLimit = try promptContextWindow(
+            model.modelID, model.configuredContextWindowLimit
         )
         let thinkingConfiguration = try promptThinkingSupport(
             forModel: model.modelID,
             existingOptions: model.thinkingOptions,
-            existingDefaultSelection: model.defaultThinkingSelection
+            existingDefaultSelection: model.defaultThinkingSelection,
+            fallbackSupport: model.provider.flatMap {
+                directDeepSeekThinkingSupport(modelID: model.modelID, baseURL: $0.baseURL)
+            },
+            confirmSupport: confirmThinkingSupport,
+            selectLevels: selectThinkingLevels
         )
         return modelWithMetadata(
             model,
@@ -182,7 +213,14 @@ extension ZenCODESetupRunner {
         )
 
         let configuredContextWindowLimit = try promptOptionalContextWindow(forModel: modelID)
-        let thinkingConfiguration = try promptThinkingSupport(forModel: modelID)
+        let knownThinkingSupport = directDeepSeekThinkingSupport(modelID: modelID, baseURL: baseURL)
+        let thinkingConfiguration = try promptThinkingSupport(
+            forModel: modelID,
+            existingOptions: AgentSettingsModelManifestFactory.agentThinkingOptions(from: knownThinkingSupport),
+            existingDefaultSelection: AgentSettingsModelManifestFactory.agentThinkingSelection(
+                from: knownThinkingSupport?.defaultSelection
+            )
+        )
         let manifestID = "remoteapi:\(providerID.uuidString.lowercased()):\(modelID)"
         return AgentSettingsModelManifest(
             id: manifestID,
@@ -228,14 +266,28 @@ extension ZenCODESetupRunner {
     static func promptThinkingSupport(
         forModel modelID: String,
         existingOptions: [AgentThinkingSelection]? = nil,
-        existingDefaultSelection: AgentThinkingSelection? = nil
+        existingDefaultSelection: AgentThinkingSelection? = nil,
+        fallbackSupport: ModelThinkingSupport? = nil,
+        confirmSupport: (Bool) throws -> Bool = {
+            try promptYesNo("This model supports thinking?", defaultValue: $0)
+        },
+        selectLevels: (String, [TerminalCheckboxMenuItem<Int>], Set<Int>) throws -> Set<Int> = {
+            try promptMenuSelection(title: $0, items: $1, selected: $2)
+        }
     ) throws -> (options: [AgentThinkingSelection]?, defaultSelection: AgentThinkingSelection?) {
-        guard try promptYesNo(
-            "This model supports thinking?",
-            defaultValue: existingOptions?.isEmpty == false
-        ) else {
+        guard try confirmSupport(existingOptions?.isEmpty == false) else {
             return (nil, nil)
         }
+
+        // Saved absence also represents an earlier opt-out: never use provider
+        // capabilities to change the support confirmation's default.
+        let useFallback = existingOptions?.isEmpty != false
+        let suggestedOptions = useFallback
+            ? AgentSettingsModelManifestFactory.agentThinkingOptions(from: fallbackSupport)
+            : existingOptions
+        let suggestedDefault = existingDefaultSelection ?? (useFallback
+            ? AgentSettingsModelManifestFactory.agentThinkingSelection(from: fallbackSupport?.defaultSelection)
+            : nil)
 
         let availableOptions = AgentThinkingSelection.allCases
         let menuItems = availableOptions.enumerated().map { index, option in
@@ -247,14 +299,14 @@ extension ZenCODESetupRunner {
         }
         let defaultMenuSelection = thinkingSupportDefaultMenuSelection(
             availableOptions: availableOptions,
-            existingOptions: existingOptions
+            existingOptions: suggestedOptions
         )
 
         while true {
-            let selectedIndexes = try promptMenuSelection(
-                title: "Select supported thinking levels for \(modelID)",
-                items: menuItems,
-                selected: defaultMenuSelection
+            let selectedIndexes = try selectLevels(
+                "Select supported thinking levels for \(modelID)",
+                menuItems,
+                defaultMenuSelection
             )
             let selectedOptions = selectedIndexes
                 .sorted()
@@ -270,7 +322,7 @@ extension ZenCODESetupRunner {
             }
 
             let defaultSelection = defaultThinkingSelection(
-                existingDefaultSelection: existingDefaultSelection,
+                existingDefaultSelection: suggestedDefault,
                 selectedOptions: selectedOptions
             )
             return (selectedOptions, defaultSelection)

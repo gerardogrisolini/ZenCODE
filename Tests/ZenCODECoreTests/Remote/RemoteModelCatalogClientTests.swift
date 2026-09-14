@@ -225,6 +225,62 @@ struct RemoteModelCatalogClientTests {
     }
 
     @Test
+    func deepSeekEnrichmentPreservesDiscoveryAndDoesNotImportRoutedThinking() async throws {
+        let modelIDs = ["deepseek-flash", "deepseek-v4-pro", "deepseek-future"]
+        let discovered = modelIDs.map {
+            OpenRouterModelInfo(id: $0, name: $0, contextLength: nil, pricing: nil)
+        }
+        let catalog = (modelIDs + ["not-discovered"]).map {
+            OpenRouterModelInfo(
+                id: "deepseek/\($0)", name: $0, contextLength: 131_072, pricing: nil,
+                thinkingSupport: .effort(levels: [.medium, .xhigh], defaultSelection: .medium)
+            )
+        }
+        for baseURL in ["https://api.deepseek.com", "https://api.deepseek.com/v1"] {
+            let enriched = try await ZenCODESetupRunner.enrichModelsWithOpenRouterMetadata(
+                discovered, providerBaseURL: baseURL, apiKey: nil, catalogLoader: { catalog }
+            )
+            #expect(enriched.map(\.id) == modelIDs)
+            #expect(enriched.allSatisfy { $0.contextLength == 131_072 })
+            #expect(enriched.allSatisfy { $0.thinkingSupport == nil })
+            let manifests = enriched.map {
+                ZenCODESetupRunner.remoteModelManifest(
+                    from: $0, providerID: UUID(), providerName: "DeepSeek",
+                    baseURL: baseURL, chatEndpoint: .chatCompletions
+                )
+            }
+            #expect(manifests.map(\.modelID) == modelIDs)
+            #expect(manifests[0].thinkingOptions == [.off, .low, .high, .max])
+            #expect(manifests[1].defaultThinkingSelection == .high)
+            #expect(manifests[2].thinkingOptions == nil)
+            #expect(manifests[2].defaultThinkingSelection == nil)
+        }
+        let other = try await ZenCODESetupRunner.enrichModelsWithOpenRouterMetadata(
+            discovered, providerBaseURL: "https://other.example/v1", apiKey: nil,
+            catalogLoader: { catalog }
+        )
+        #expect(other.allSatisfy { $0.thinkingSupport?.availableSelections == [.off, .medium, .xhigh] })
+    }
+
+    @Test
+    func deepSeekEnrichmentKeepsProviderThinkingForUnknownModels() async throws {
+        let model = OpenRouterModelInfo(
+            id: "deepseek-future", name: "Future", contextLength: nil, pricing: nil,
+            thinkingSupport: .generic
+        )
+        let catalog = [OpenRouterModelInfo(
+            id: model.id, name: "Routed", contextLength: 32_768, pricing: nil,
+            thinkingSupport: .effort(levels: [.xhigh])
+        )]
+        let enriched = try await ZenCODESetupRunner.enrichModelsWithOpenRouterMetadata(
+            [model], providerBaseURL: "https://api.deepseek.com", apiKey: nil,
+            catalogLoader: { catalog }
+        )
+        #expect(enriched.first?.thinkingSupport == .generic)
+        #expect(enriched.first?.id == model.id)
+    }
+
+    @Test
     func enrichingUnqualifiedZAIModelsUsesUniqueOpenRouterSuffixMetadata() async throws {
         let providerModels = [
             OpenRouterModelInfo(id: "glm-5-turbo", name: "GLM 5 Turbo", contextLength: nil, pricing: nil),

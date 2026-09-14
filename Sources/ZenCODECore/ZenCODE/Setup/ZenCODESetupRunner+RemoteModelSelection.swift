@@ -290,7 +290,11 @@ extension ZenCODESetupRunner {
                 ) else {
                     return model
                 }
-                return modelMergingOpenRouterMetadata(model, metadata: metadata)
+                return modelMergingOpenRouterMetadata(
+                    model,
+                    metadata: metadata,
+                    includeThinkingSupport: !AgentRemoteProvider.isDeepSeekBaseURL(providerBaseURL)
+                )
             }
         } catch let error as CancellationError {
             throw error
@@ -335,14 +339,17 @@ extension ZenCODESetupRunner {
 
     static func modelMergingOpenRouterMetadata(
         _ model: OpenRouterModelInfo,
-        metadata: OpenRouterModelInfo
+        metadata: OpenRouterModelInfo,
+        includeThinkingSupport: Bool = true
     ) -> OpenRouterModelInfo {
         OpenRouterModelInfo(
             id: model.id,
             name: model.name,
             contextLength: metadata.contextLength ?? model.contextLength,
             pricing: model.pricing,
-            thinkingSupport: metadata.thinkingSupport ?? model.thinkingSupport,
+            thinkingSupport: includeThinkingSupport
+                ? (metadata.thinkingSupport ?? model.thinkingSupport)
+                : model.thinkingSupport,
             generationParameterOverrides: model.generationParameterOverrides,
             installed: model.installed,
             loaded: model.loaded,

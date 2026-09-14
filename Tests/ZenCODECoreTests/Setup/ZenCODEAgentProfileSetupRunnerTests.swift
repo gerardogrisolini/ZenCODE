@@ -12,6 +12,163 @@ import Testing
 @Suite
 struct ZenCODEAgentProfileSetupRunnerTests {
     @Test
+    func directDeepSeekSetupUsesDocumentedCapabilitiesWithoutRenamingIDs() {
+        for modelID in ["deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"] {
+            let manifest = ZenCODESetupRunner.remoteModelManifest(
+                from: OpenRouterModelInfo(
+                    id: modelID, name: modelID, contextLength: nil, pricing: nil,
+                    thinkingSupport: .effort(levels: [.medium, .xhigh], defaultSelection: .medium)
+                ),
+                providerID: UUID(), providerName: "DeepSeek",
+                baseURL: "https://api.deepseek.com/v1", chatEndpoint: .chatCompletions
+            )
+            #expect(manifest.modelID == modelID)
+            #expect(manifest.provider?.modelID == modelID)
+            #expect(manifest.thinkingOptions == [.off, .low, .high, .max])
+            #expect(manifest.defaultThinkingSelection == .high)
+            #expect(manifest.configuredContextWindowLimit == nil)
+            let defaults = ZenCODESetupRunner.thinkingSupportDefaultMenuSelection(
+                existingOptions: manifest.thinkingOptions
+            )
+            #expect(defaults == Set([AgentThinkingSelection.off, .low, .high, .max].compactMap {
+                AgentThinkingSelection.allCases.firstIndex(of: $0)
+            }))
+        }
+    }
+
+    @Test
+    func deepSeekSetupDoesNotInferUnknownOrRoutedModelCapabilities() {
+        for modelID in ["deepseek-future", "deepseek-chat", "deepseek-reasoner", "deepseek/deepseek-flash"] {
+            #expect(ZenCODESetupRunner.directDeepSeekThinkingSupport(
+                modelID: modelID, baseURL: "https://api.deepseek.com"
+            ) == nil)
+        }
+        for baseURL in ["https://openrouter.ai/api/v1", "https://other.example/v1"] {
+            let support = ModelThinkingSupport.effort(levels: [.medium, .xhigh], defaultSelection: .medium)
+            let manifest = ZenCODESetupRunner.remoteModelManifest(
+                from: OpenRouterModelInfo(
+                    id: "deepseek-flash", name: "Flash", contextLength: nil,
+                    pricing: nil, thinkingSupport: support
+                ),
+                providerID: UUID(), providerName: "Other", baseURL: baseURL,
+                chatEndpoint: .chatCompletions
+            )
+            #expect(manifest.thinkingOptions == [.off, .medium, .xhigh])
+            #expect(manifest.defaultThinkingSelection == .medium)
+        }
+    }
+
+    @Test(arguments: ["deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"])
+    func existingDeepSeekMetadataRequiresConfirmationBeforeCapabilityFallback(modelID: String) throws {
+        for savedOptions in [nil, []] as [[AgentThinkingSelection]?] {
+            let model = metadataPromptModel(modelID: modelID, options: savedOptions)
+            for confirmsSupport in [false, true] {
+                var levelPromptCount = 0
+                let updated = try ZenCODESetupRunner.readModelMetadata(
+                    for: model,
+                    promptContextWindow: { _, existing in existing },
+                    confirmThinkingSupport: { selected in
+                        #expect(!selected)
+                        return confirmsSupport
+                    },
+                    selectThinkingLevels: { _, items, selected in
+                        levelPromptCount += 1
+                        #expect(selected.sorted().map { items[$0].detail } == ["off", "low", "high", "max"])
+                        return selected
+                    }
+                )
+                #expect(levelPromptCount == (confirmsSupport ? 1 : 0))
+                #expect(updated.thinkingOptions == (confirmsSupport ? [.off, .low, .high, .max] : nil))
+                #expect(updated.defaultThinkingSelection == (confirmsSupport ? .high : nil))
+                #expect(updated.id == model.id)
+                #expect(updated.modelID == modelID)
+                #expect(updated.provider == model.provider)
+                #expect(updated.configuredContextWindowLimit == model.configuredContextWindowLimit)
+                #expect(model.thinkingOptions == nil)
+            }
+        }
+    }
+
+    @Test
+    func existingDeepSeekMetadataPreservesExplicitOptionsAndDefaults() throws {
+        let cases: [(options: [AgentThinkingSelection], selection: AgentThinkingSelection?)] = [
+            ([.off, .low, .medium, .high], .medium),
+            ([.off, .high, .max], .off),
+            ([.low], .low),
+            ([.max], .max),
+            ([.off, .low, .high], nil),
+        ]
+        for item in cases {
+            let model = metadataPromptModel(options: item.options, defaultSelection: item.selection)
+            let updated = try ZenCODESetupRunner.readModelMetadata(
+                for: model,
+                promptContextWindow: { _, existing in existing },
+                confirmThinkingSupport: { selected in
+                    #expect(selected)
+                    return true
+                },
+                selectThinkingLevels: { _, _, selected in
+                    #expect(selected == ZenCODESetupRunner.thinkingSupportDefaultMenuSelection(
+                        existingOptions: model.thinkingOptions
+                    ))
+                    return selected
+                }
+            )
+            #expect(updated.thinkingOptions == model.thinkingOptions)
+            #expect(updated.defaultThinkingSelection == ZenCODESetupRunner.defaultThinkingSelection(
+                existingDefaultSelection: model.defaultThinkingSelection,
+                selectedOptions: item.options
+            ))
+        }
+    }
+
+    @Test
+    func metadataFallbackLeavesUnknownIDsAndOtherProvidersUnchanged() throws {
+        let cases = [
+            ("deepseek-future", "https://api.deepseek.com/v1"),
+            ("deepseek-flash", "https://openrouter.ai/api/v1"),
+            ("deepseek-flash", "https://other.example/v1"),
+        ]
+        for (modelID, baseURL) in cases {
+            for confirmsSupport in [false, true] {
+                let model = metadataPromptModel(modelID: modelID, baseURL: baseURL)
+                let updated = try ZenCODESetupRunner.readModelMetadata(
+                    for: model,
+                    promptContextWindow: { _, existing in existing },
+                    confirmThinkingSupport: { selected in
+                        #expect(!selected)
+                        return confirmsSupport
+                    },
+                    selectThinkingLevels: { _, _, selected in
+                        #expect(confirmsSupport)
+                        #expect(selected == ZenCODESetupRunner.thinkingSupportDefaultMenuSelection(existingOptions: nil))
+                        return selected
+                    }
+                )
+                #expect(updated.thinkingOptions == (confirmsSupport ? [.off, .low, .medium, .high] : nil))
+                #expect(updated.defaultThinkingSelection == (confirmsSupport ? .medium : nil))
+            }
+        }
+    }
+
+    private func metadataPromptModel(
+        modelID: String = "deepseek-flash",
+        baseURL: String = "https://api.deepseek.com/v1",
+        options: [AgentThinkingSelection]? = nil,
+        defaultSelection: AgentThinkingSelection? = nil
+    ) -> AgentSettingsModelManifest {
+        let providerID = UUID()
+        return AgentSettingsModelManifest(
+            id: "saved-model", kind: .remoteAPI, modelID: modelID,
+            providerID: providerID,
+            provider: AgentRemoteProvider(id: providerID, name: "Saved provider", baseURL: baseURL, modelID: modelID),
+            configuredContextWindowLimit: 65536,
+            thinkingOptions: options,
+            defaultThinkingSelection: defaultSelection
+        )
+    }
+
+    @Test
     func bindingDisplayTitlePreservesModelNameFormatting() {
         let uuid = "d3eea8e9-eccf-499e-9697-298ede7af8d5"
         let cases: [(modelID: String, provider: String?, expected: String)] = [

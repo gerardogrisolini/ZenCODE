@@ -24,7 +24,7 @@ struct ProviderThinkingAdapterTests {
             .init(provider: .zAI, protocolProfile: .zaiCodingPlan, model: "unlisted", expected: .reasoningEffort),
             .init(provider: .googleGemini, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .reasoningEffort),
             .init(provider: .moonshot, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .reasoningEffort),
-            .init(provider: .deepSeek, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .thinkingObject(supportsDisable: true, keepAll: false)),
+            .init(provider: .deepSeek, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .deepSeekThinking(supportsDisable: true)),
             .init(provider: .nvidia, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .chatTemplateKwargs),
             .init(provider: .modal, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .chatTemplateKwargs),
             .init(provider: .custom, protocolProfile: .openAIChatCompletions, model: "unlisted", expected: .none)
@@ -43,7 +43,7 @@ struct ProviderThinkingAdapterTests {
             (.zAI, .zaiCodingPlan, .off, #"{"reasoning_effort":"none"}"#),
             (.googleGemini, .openAIChatCompletions, .medium, #"{"reasoning_effort":"medium"}"#),
             (.moonshot, .openAIChatCompletions, .enabled, #"{"reasoning_effort":"enabled"}"#),
-            (.deepSeek, .openAIChatCompletions, .enabled, #"{"thinking":{"type":"enabled"}}"#),
+            (.deepSeek, .openAIChatCompletions, .enabled, #"{"reasoning_effort":"high","thinking":{"type":"enabled"}}"#),
             (.nvidia, .openAIChatCompletions, .high, #"{"chat_template_kwargs":{"enable_thinking":true,"reasoning_effort":"high","thinking":true}}"#),
             (.modal, .openAIChatCompletions, .off, #"{"chat_template_kwargs":{"enable_thinking":false,"thinking":false}}"#),
             (.custom, .openAIChatCompletions, .high, "{}")
@@ -95,10 +95,7 @@ struct ProviderThinkingAdapterTests {
             model: "deepseek-reasoner",
             thinkingOptions: [.enabled]
         )
-        #expect(await alwaysOn.thinkingPayloadStyle == .thinkingObject(
-            supportsDisable: false,
-            keepAll: false
-        ))
+        #expect(await alwaysOn.thinkingPayloadStyle == .deepSeekThinking(supportsDisable: false))
         #expect(await alwaysOn.thinkingPayloadSnapshot(.off, endpoint: .chatCompletions) == "{}")
 
         let configurable = client(
@@ -109,6 +106,77 @@ struct ProviderThinkingAdapterTests {
         )
         #expect(await configurable.thinkingPayloadSnapshot(.off, endpoint: .chatCompletions)
             == #"{"thinking":{"type":"disabled"}}"#)
+    }
+
+    @Test
+    func deepSeekEffortLevelsAndDefaultRemainDistinct() async {
+        let direct = client(
+            provider: .deepSeek, protocolProfile: .openAIChatCompletions,
+            model: "deepseek-flash", thinkingOptions: [.off, .low, .high, .max]
+        )
+        for selection in [AgentThinkingSelection.low, .high, .max] {
+            let expected = "{\"reasoning_effort\":\"\(selection.rawValue)\",\"thinking\":{\"type\":\"enabled\"}}"
+            #expect(await direct.thinkingPayloadSnapshot(selection, endpoint: .chatCompletions) == expected)
+        }
+        #expect(await direct.thinkingPayloadSnapshot(.enabled, endpoint: .chatCompletions)
+            == #"{"reasoning_effort":"high","thinking":{"type":"enabled"}}"#)
+        #expect(await direct.thinkingPayloadSnapshot(.off, endpoint: .chatCompletions)
+            == #"{"thinking":{"type":"disabled"}}"#)
+        #expect(await direct.thinkingPayloadSnapshot(nil, endpoint: .chatCompletions) == "{}")
+        for unauthorized in [AgentThinkingSelection.medium, .xhigh, .ultra] {
+            #expect(await direct.thinkingPayloadSnapshot(unauthorized, endpoint: .chatCompletions) == "{}")
+        }
+    }
+
+    @Test
+    func deepSeekEnabledRespectsDeclaredEfforts() async {
+        let cases: [([AgentThinkingSelection], String)] = [
+            ([.low], #"{"reasoning_effort":"low","thinking":{"type":"enabled"}}"#),
+            ([.max], #"{"reasoning_effort":"max","thinking":{"type":"enabled"}}"#),
+            ([.off, .low, .high, .max], #"{"reasoning_effort":"high","thinking":{"type":"enabled"}}"#),
+            ([.enabled], #"{"reasoning_effort":"high","thinking":{"type":"enabled"}}"#),
+            ([.enabled, .low], #"{"reasoning_effort":"high","thinking":{"type":"enabled"}}"#),
+            ([], #"{"reasoning_effort":"high","thinking":{"type":"enabled"}}"#),
+            ([.xhigh], #"{"thinking":{"type":"enabled"}}"#),
+            ([.minimal, .medium, .ultra], #"{"thinking":{"type":"enabled"}}"#),
+            ([.off], "{}")
+        ]
+        for (options, expected) in cases {
+            let direct = client(
+                provider: .deepSeek, protocolProfile: .openAIChatCompletions,
+                model: "deepseek-flash", thinkingOptions: options
+            )
+            #expect(await direct.thinkingPayloadSnapshot(.enabled, endpoint: .chatCompletions) == expected)
+            #expect(await direct.thinkingPayloadSnapshot(nil, endpoint: .chatCompletions) == "{}")
+            if !options.contains(.off) {
+                #expect(await direct.thinkingPayloadSnapshot(.off, endpoint: .chatCompletions) == "{}")
+            }
+        }
+    }
+
+    @Test
+    func deepSeekLegacyEffortsPreserveToggleWithoutInventingAliases() async {
+        let legacy = client(
+            provider: .deepSeek, protocolProfile: .openAIChatCompletions,
+            model: "deepseek-v4-flash"
+        )
+        for selection in [AgentThinkingSelection.minimal, .medium, .xhigh, .ultra] {
+            #expect(await legacy.thinkingPayloadSnapshot(selection, endpoint: .chatCompletions)
+                == #"{"thinking":{"type":"enabled"}}"#)
+        }
+        let unknown = client(
+            provider: .deepSeek, protocolProfile: .openAIChatCompletions,
+            model: "future-model", thinkingOptions: []
+        )
+        #expect(await unknown.thinkingPayloadSnapshot(.off, endpoint: .chatCompletions) == "{}")
+        #expect(await unknown.thinkingPayloadSnapshot(.low, endpoint: .chatCompletions)
+            == #"{"reasoning_effort":"low","thinking":{"type":"enabled"}}"#)
+        let routed = client(
+            provider: .openRouter, protocolProfile: .openAIChatCompletions,
+            model: "deepseek/deepseek-flash"
+        )
+        #expect(await routed.thinkingPayloadSnapshot(.max, endpoint: .chatCompletions)
+            == #"{"reasoning":{"effort":"max","exclude":false}}"#)
     }
 
     @Test
@@ -268,7 +336,7 @@ struct ProviderThinkingAdapterTests {
 
 private extension RemoteGenerationClient {
     func thinkingPayloadSnapshot(
-        _ selection: AgentThinkingSelection,
+        _ selection: AgentThinkingSelection?,
         endpoint: AgentRemoteChatEndpoint
     ) -> String {
         var body: [String: Any] = [:]

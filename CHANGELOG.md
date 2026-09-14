@@ -28,6 +28,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Direct DeepSeek setup keeps dynamic `/models` discovery while assigning documented
+  `off/low/high/max` thinking options and the `high` default to Flash, V4 Pro, and
+  accepted legacy Flash IDs, without renaming saved models. When editing existing
+  metadata, the support confirmation keeps its saved default (No without metadata);
+  only an explicit Yes proposes these levels and `high` when saved options are absent.
+  Existing explicit options and defaults remain authoritative. OpenRouter enrichment
+  no longer replaces direct DeepSeek thinking capabilities. Chat Completions now
+  sends distinct DeepSeek `reasoning_effort` levels alongside `thinking.type`,
+  retains manifest authorization, and preserves legacy toggle-only selections
+  without interpreting `xhigh` as `max` or migrating settings and agent profiles.
+
 - `/goal` now persists its original objective and structured workflow control
   (`running`, `awaiting_user`, `blocked`) separately from tasks in optional schema-1
   checkpoint metadata. Clarification no longer requires a particular heading on
