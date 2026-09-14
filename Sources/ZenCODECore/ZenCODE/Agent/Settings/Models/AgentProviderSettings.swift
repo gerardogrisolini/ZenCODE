@@ -138,6 +138,8 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
     public static let defaultOpenRouterBaseURL = "https://openrouter.ai/api/v1"
     public static let defaultOpenRouterModelID = "openrouter/auto"
     public static let chatGPTSubscriptionProviderID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+    public static let chatGPTSubscriptionDisplayTitle = "ChatGPT Subscription"
+    public static let anthropicSubscriptionDisplayTitle = "Claude Subscription"
     public static let chatGPTSubscriptionBaseURL = "chatgpt://subscription"
     public static let anthropicSubscriptionProviderID = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
     public static let anthropicSubscriptionBaseURL = "anthropic://subscription"
@@ -734,25 +736,12 @@ public enum AgentSettingsStore {
                 modelID: modelID,
                 remoteProvider: resolvedProvider,
                 apiKey: apiKey(providerID: provider.id),
-                                configuredContextWindowLimit: resolvedConfiguredContextWindowLimit(
-                    for: model,
-                    provider: resolvedProvider
-                ),
+                configuredContextWindowLimit: model.configuredContextWindowLimit,
                 generationParameterOverrides: model.generationParameterOverrides,
                 thinkingOptions: model.thinkingOptions,
                 thinkingSelection: resolvedThinkingSelection
             )
         }
-    }
-
-        private static func resolvedConfiguredContextWindowLimit(
-        for model: AgentSettingsModelManifest,
-        provider: AgentRemoteProvider
-    ) -> Int? {
-        guard provider.isChatGPTSubscriptionProvider else {
-            return model.configuredContextWindowLimit
-        }
-        return CodexAgentModel.contextWindowTokenLimit(forLLMID: model.id)
     }
 
     public static func isRemoteLLMIDSyntax(_ llmID: String) -> Bool {

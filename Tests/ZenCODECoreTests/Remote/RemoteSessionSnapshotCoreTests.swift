@@ -231,7 +231,6 @@ extension RemoteSessionSnapshotTests {
         let result = try await client.streamAnthropicMessages(
             lease: lease,
             modelID: "claude-haiku-4-5",
-            modelLLMID: "claude-haiku-4-5",
             credentials: AnthropicSubscriptionCredentials(
                 accessToken: "test-access-token",
                 refreshToken: "test-refresh-token",
@@ -273,7 +272,6 @@ extension RemoteSessionSnapshotTests {
         let secondResult = try await client.streamAnthropicMessages(
             lease: lease,
             modelID: "claude-haiku-4-5",
-            modelLLMID: "claude-haiku-4-5",
             credentials: AnthropicSubscriptionCredentials(
                 accessToken: "test-access-token",
                 refreshToken: "test-refresh-token",

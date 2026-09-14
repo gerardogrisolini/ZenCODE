@@ -13,9 +13,8 @@ extension AnthropicSubscriptionGenerationClient {
         configuration.modelID?.nilIfBlank ?? provider.modelID
     }
 
-    func resolvedContextWindowTokenLimit(forLLMID modelLLMID: String?) -> Int? {
+    func resolvedContextWindowTokenLimit() -> Int? {
         configuration.configuredContextWindowLimit
-            ?? AnthropicSubscriptionModel.contextWindowTokenLimit(forLLMID: modelLLMID)
     }
 
     nonisolated static func anthropicSubscriptionVisibleMetrics(
@@ -55,170 +54,46 @@ extension AnthropicSubscriptionGenerationClient {
         )
     }
 
-    func resolvedMaxOutputTokens(
-        forLLMID modelLLMID: String?,
-        thinkingSelection: AgentThinkingSelection? = nil
-    ) -> Int {
-        let modelID = AnthropicSubscriptionModel.modelID(fromLLMID: modelLLMID)
-        let modelLimit = AnthropicSubscriptionModel.maxOutputTokens(forLLMID: modelLLMID)
-        guard let configuredLimit = configuration.maxOutputTokens, configuredLimit > 0 else {
-            return modelLimit
-        }
-        guard let thinkingSelection,
-              thinkingSelection.isEnabled,
-              Self.supportsThinking(modelID: modelID),
-              !Self.usesAdaptiveThinking(modelID: modelID) else {
-            return min(configuredLimit, modelLimit)
-        }
-        return min(
-            configuredLimit + Self.thinkingBudgetTokens(for: thinkingSelection),
-            modelLimit
-        )
+    func resolvedMaxOutputTokens() -> Int {
+        let catalogLimit = configuration.generationParameterOverrides.maxTokens.flatMap { $0 > 0 ? $0 : nil }
+        let requestedLimit = configuration.maxOutputTokens.flatMap { $0 > 0 ? $0 : nil }
+        if let catalogLimit, let requestedLimit { return min(catalogLimit, requestedLimit) }
+        return catalogLimit ?? requestedLimit ?? 4_096
     }
 
     func applyThinkingSelection(
         _ selection: AgentThinkingSelection?,
-        to body: inout [String: Any],
-        modelLLMID: String
+        to body: inout [String: Any]
     ) {
-        let modelID = AnthropicSubscriptionModel.modelID(fromLLMID: modelLLMID)
-        guard Self.supportsThinking(modelID: modelID) else {
-            return
-        }
-        let maxTokens = resolvedMaxOutputTokens(
-            forLLMID: modelLLMID,
-            thinkingSelection: selection
+        guard let catalogThinkingMode else { return }
+        let payload = Self.catalogThinkingPayload(
+            mode: catalogThinkingMode,
+            selection: selection,
+            options: thinkingOptions ?? [],
+            maxTokens: resolvedMaxOutputTokens()
         )
-        let payload = Self.thinkingPayload(
-            for: selection,
-            modelID: modelID,
-            maxTokens: maxTokens
-        )
-        if let thinking = payload.thinking {
-            body["thinking"] = thinking
-        }
-        if let outputConfig = payload.outputConfig {
-            body["output_config"] = outputConfig
-        }
+        if let thinking = payload.thinking { body["thinking"] = thinking }
+        if let outputConfig = payload.outputConfig { body["output_config"] = outputConfig }
     }
 
-    static func thinkingPayload(
-        for selection: AgentThinkingSelection?,
-        modelID: String,
-        maxTokens: Int
+    /// Uses the supplied wire mode and explicitly configured thinking options.
+    /// Unknown modes and missing selections do not activate model defaults.
+    static func catalogThinkingPayload(
+        mode: String, selection: AgentThinkingSelection?, options: [AgentThinkingSelection], maxTokens: Int
     ) -> (thinking: [String: Any]?, outputConfig: [String: Any]?) {
-        guard supportsThinking(modelID: modelID) else {
-            return (nil, nil)
+        guard mode == "adaptive" || mode == "enabled",
+              let selection, options.contains(selection) else { return (nil, nil) }
+        guard selection.isEnabled else { return (["type": "disabled"], nil) }
+        if mode == "adaptive" {
+            return (["type": "adaptive"], ["effort": selection.rawValue])
         }
-        guard let selection, selection.isEnabled else {
-            if usesAdaptiveThinking(modelID: modelID) {
-                if selection == .off {
-                    // Explicitly disabled: send disabled to turn off adaptive thinking.
-                    return (["type": "disabled"], nil)
-                }
-                // No preference: activate adaptive thinking at the default
-                // effort. The Claude Code subscription endpoint requires
-                // explicit output_config.effort to enable thinking; omitting
-                // it leaves the model without thinking.
-                return (nil, ["effort": "high"])
-            }
-            return (["type": "disabled"], nil)
-        }
-
-        let outputConfig: [String: Any]?
-        if usesAdaptiveThinking(modelID: modelID),
-           let effort = adaptiveThinkingEffort(
-               for: selection,
-               modelID: modelID
-           ) {
-            outputConfig = ["effort": effort]
-        } else {
-            outputConfig = nil
-        }
-        if usesAdaptiveThinking(modelID: modelID) {
-            var thinking: [String: Any] = ["type": "adaptive"]
-            if usesSummarizedThinkingDisplay(modelID: modelID) {
-                thinking["display"] = "summarized"
-            }
-            return (
-                thinking,
-                outputConfig
-            )
-        }
-
-        let budget = adjustedThinkingBudget(
-            thinkingBudgetTokens(for: selection),
-            maxTokens: maxTokens
-        )
-        guard budget >= minimumThinkingBudgetTokens else {
-            return (nil, nil)
-        }
-        return (
-            [
-                "type": "enabled",
-                "budget_tokens": budget
-            ],
-            outputConfig
-        )
+        let budget = adjustedThinkingBudget(thinkingBudgetTokens(for: selection), maxTokens: maxTokens)
+        guard budget >= minimumThinkingBudgetTokens else { return (nil, nil) }
+        return (["type": "enabled", "budget_tokens": budget], nil)
     }
-
-    /// Adaptive models default to omitting visible thinking text. ZenCODE
-    /// renders streamed thinking, so every enabled adaptive request opts into
-    /// summarized display and receives `thinking_delta` events from Anthropic.
-    static func usesSummarizedThinkingDisplay(modelID: String) -> Bool {
-        adaptiveThinkingModelIDs.contains(modelID)
-    }
-
-    static func supportsThinking(modelID: String) -> Bool {
-        AnthropicSubscriptionModel.option(forModelID: modelID).thinkingSupport != nil
-    }
-
-    /// Models of the Claude 5 generation that replace manual `budget_tokens`
-    /// with `thinking: {type: "adaptive"}` plus `output_config.effort`.
-    /// They are also the models that accept the gated `xhigh` and `max`
-    /// effort levels.
-    static let adaptiveThinkingModelIDs: Set<String> = [
-        "claude-fable-5",
-        "claude-opus-5",
-        "claude-sonnet-5"
-    ]
 
     /// Anthropic rejects a `budget_tokens` value below this floor.
     static let minimumThinkingBudgetTokens = 1_024
-
-    static func usesAdaptiveThinking(modelID: String) -> Bool {
-        adaptiveThinkingModelIDs.contains(modelID)
-    }
-
-    /// `xhigh` and `max` are model gated. Every adaptive model in the catalog
-    /// supports both, while any other model falls back to `high`, which is the
-    /// API default.
-    static func supportsExtendedEffortLevels(modelID: String) -> Bool {
-        adaptiveThinkingModelIDs.contains(modelID)
-    }
-
-    static func adaptiveThinkingEffort(
-        for selection: AgentThinkingSelection,
-        modelID: String
-    ) -> String? {
-        switch selection {
-        case .off, .enabled:
-            // Omitting `effort` selects the API default, which is `high`, and
-            // keeps the prompt cache stable.
-            return nil
-        case .minimal, .low:
-            // Anthropic has no `minimal` effort level.
-            return "low"
-        case .medium:
-            return "medium"
-        case .high:
-            return "high"
-        case .xhigh:
-            return supportsExtendedEffortLevels(modelID: modelID) ? "xhigh" : "high"
-        case .max, .ultra:
-            return supportsExtendedEffortLevels(modelID: modelID) ? "max" : "high"
-        }
-    }
 
     /// Manual thinking budgets for models that still use
     /// `thinking: {type: "enabled", budget_tokens: N}`.
@@ -291,7 +166,7 @@ extension AnthropicSubscriptionGenerationClient {
         return value
     }
 
-    static func oauthBetaHeader(forModelID modelID: String) -> String {
+    static func oauthBetaHeader(contextWindowTokenLimit: Int?, thinkingMode: String?) -> String {
         var headers = [
             claudeCodeBetaHeader,
             oauthBetaHeader,
@@ -299,15 +174,12 @@ extension AnthropicSubscriptionGenerationClient {
             promptCachingScopeBetaHeader,
             extendedCacheTTLHeader
         ]
-        if AnthropicSubscriptionModel
-            .option(forModelID: modelID)
-            .contextWindowTokenLimit == AnthropicSubscriptionModel.largeContextWindowTokenLimit {
+        if let contextWindowTokenLimit, contextWindowTokenLimit > 200_000 {
             headers.append(longContextBetaHeader)
         }
-        if usesAdaptiveThinking(modelID: modelID) {
+        if thinkingMode == "adaptive" {
             headers.append(effortBetaHeader)
-        }
-        if !usesAdaptiveThinking(modelID: modelID) {
+        } else if thinkingMode == "enabled" {
             headers.append(interleavedThinkingBetaHeader)
         }
         return headers.joined(separator: ",")

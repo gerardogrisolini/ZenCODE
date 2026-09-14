@@ -10,6 +10,34 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Subscription setup and reconfiguration discover models through authenticated
+  ChatGPT Codex and Anthropic Models endpoints, retaining the last successful
+  account/login-scoped catalog on transient failures. Saved model IDs, metadata,
+  and default selections are preserved; discovery never switches runtime models
+  or falls back to a public/static catalog.
+- Discovered context/output limits and explicit Anthropic thinking modes reach
+  generation without requiring new model IDs in bundled lists. Unknown or absent
+  capabilities remain disabled. Static subscription catalogs and all model-ID-based
+  model defaults, limits and capability fallbacks are removed; older manifests use
+  configured metadata and generic fallbacks rather than their previous bundled-model
+  behavior. A missing configured model is an explicit configuration error. Auth and
+  the persisted Codex credentials contract remain unchanged, now owned by Auth.
+  The linked Anthropic API-key path uses configured thinking authorization and a
+  generic manual fallback rather than ID heuristics, retaining its 64000-token
+  generic output default.
+  ChatGPT reasoning preserves `none`/`off` and `minimal` through persisted manifests
+  and wire payloads. Malformed Anthropic pagination never replaces the last complete
+  cached catalog.
+- Catalog cache files use private permissions and contain no tokens or token hashes.
+  Anthropic OAuth credentials gain an optional opaque catalog login identifier;
+  existing credentials remain compatible but require a future new sign-in before
+  persistent Anthropic catalog caching is available (refresh alone does not migrate
+  the identifier). No sign-in or live Anthropic validation was performed for this
+  change: OAuth acceptance by its Models endpoint remains unverified. See
+  [subscription catalogs](Docs/subscription-catalogs.md).
+
 ## [2.1.6] - 2026-09-14
 
 ### Changed

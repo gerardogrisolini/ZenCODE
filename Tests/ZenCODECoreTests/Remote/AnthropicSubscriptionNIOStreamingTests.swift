@@ -54,7 +54,6 @@ struct AnthropicSubscriptionNIOStreamingTests {
         let result = try await client.streamAnthropicMessages(
             lease: lease,
             modelID: "claude-haiku-4-5",
-            modelLLMID: "claude-haiku-4-5",
             credentials: credentials(),
             applyTurnMemory: false,
             onEvent: { event in
@@ -109,7 +108,6 @@ struct AnthropicSubscriptionNIOStreamingTests {
             _ = try await client.streamAnthropicMessages(
                 lease: lease,
                 modelID: "claude-haiku-4-5",
-                modelLLMID: "claude-haiku-4-5",
                 credentials: credentials(),
                 applyTurnMemory: false,
                 onEvent: { _ in }
@@ -146,7 +144,6 @@ struct AnthropicSubscriptionNIOStreamingTests {
             _ = try await client.streamAnthropicMessages(
                 lease: lease,
                 modelID: "claude-haiku-4-5",
-                modelLLMID: "claude-haiku-4-5",
                 credentials: credentials(),
                 applyTurnMemory: false,
                 onEvent: { _ in }
@@ -190,7 +187,6 @@ struct AnthropicSubscriptionNIOStreamingTests {
             _ = try await client.streamAnthropicMessages(
                 lease: lease,
                 modelID: "claude-haiku-4-5",
-                modelLLMID: "claude-haiku-4-5",
                 credentials: credentials(),
                 applyTurnMemory: false,
                 onEvent: { event in
@@ -375,7 +371,6 @@ struct AnthropicSubscriptionNIOStreamingTests {
             _ = try await client.streamAnthropicMessages(
                 lease: lease,
                 modelID: "claude-haiku-4-5",
-                modelLLMID: "claude-haiku-4-5",
                 credentials: credentials(),
                 applyTurnMemory: false,
                 onEvent: { _ in }
@@ -401,7 +396,6 @@ struct AnthropicSubscriptionNIOStreamingTests {
         let result = try await client.streamAnthropicMessages(
             lease: lease,
             modelID: "claude-haiku-4-5",
-            modelLLMID: "claude-haiku-4-5",
             credentials: credentials(),
             applyTurnMemory: false,
             onEvent: { _ in }
@@ -424,7 +418,6 @@ struct AnthropicSubscriptionNIOStreamingTests {
             _ = try await client.streamAnthropicMessages(
                 lease: lease,
                 modelID: "claude-haiku-4-5",
-                modelLLMID: "claude-haiku-4-5",
                 credentials: credentials(),
                 applyTurnMemory: false,
                 onEvent: { _ in }

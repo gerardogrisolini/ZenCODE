@@ -40,72 +40,6 @@ extension ChatGPTSubscriptionGenerationClient {
         return nil
     }
 
-    static func events(
-        from object: [String: Any],
-        modelLLMID: String
-    ) -> [ChatGPTSubscriptionStreamEvent] {
-        guard let type = object["type"] as? String else {
-            return []
-        }
-        let normalizedType = normalizedEventType(type)
-
-        switch normalizedType {
-        case "thread_started",
-             "session_configured":
-            return []
-        case "turn_started",
-             "task_started":
-            return []
-        case "turn_completed",
-             "turn_complete",
-             "task_complete":
-            var events: [ChatGPTSubscriptionStreamEvent] = []
-            if let contextWindowStatus = contextWindowStatus(
-                from: usageObject(from: object),
-                modelLLMID: modelLLMID
-            ) {
-                events.append(.contextWindow(contextWindowStatus))
-            }
-            events.append(.completed(stopReason: "completed"))
-            return events
-        case "token_count":
-            return contextWindowStatus(
-                from: usageObject(from: object) ?? object,
-                modelLLMID: modelLLMID
-            ).map { [.contextWindow($0)] } ?? []
-        case "agent_message_content_delta":
-            return stringValue(for: ["delta", "text", "content"], in: object)
-                .map { [.content($0)] } ?? []
-        case "agent_reasoning",
-             "agent_reasoning_raw_content",
-             "agent_reasoning_section_break",
-             "reasoning_content_delta",
-             "reasoning_raw_content_delta",
-             "reasoning_summary_delta",
-             "reasoning_summary_part_added":
-            return reasoningText(from: object)
-            .map { [.thought($0)] } ?? []
-        case "item_started":
-            guard let item = object["item"] as? [String: Any],
-                  let update = toolCallUpdate(from: item, status: "in_progress") else {
-                return []
-            }
-            return [.toolCall(update)]
-        case "item_completed":
-            guard let item = object["item"] as? [String: Any] else {
-                return []
-            }
-            return completedItemEvents(from: item)
-        case "raw_response_item":
-            guard let item = object["item"] as? [String: Any] else {
-                return []
-            }
-            return completedItemEvents(from: item)
-        default:
-            return []
-        }
-    }
-
     static func responseErrorMessage(from object: [String: Any]) -> String? {
         let normalizedType = (object["type"] as? String)
             .map(normalizedEventType) ?? ""
@@ -462,151 +396,6 @@ extension ChatGPTSubscriptionGenerationClient {
         }
     }
 
-    static func completedItemEvents(from item: [String: Any]) -> [ChatGPTSubscriptionStreamEvent] {
-        let itemType = (item["type"] as? String ?? "").lowercased()
-        let text = stringValue(
-            for: [
-                "text",
-                "content",
-                "summary",
-                "summary_text",
-                "summaryText",
-                "raw_content",
-                "rawContent",
-                "reasoning_text",
-                "reasoningText"
-            ],
-            in: item
-        )
-
-        if itemType == "agent_message" || itemType == "message" {
-            return text.map { [.content($0)] } ?? []
-        }
-        if itemType.contains("reasoning") || itemType.contains("thought") {
-            return text.map { [.thought($0)] } ?? []
-        }
-        if let update = toolCallUpdate(from: item, status: "completed") {
-            return [.toolCall(update)]
-        }
-        return []
-    }
-
-    static func toolCallUpdate(
-        from item: [String: Any],
-        status: String
-    ) -> ChatGPTSubscriptionToolCallUpdate? {
-        let itemType = (item["type"] as? String ?? "").lowercased()
-        guard itemType != "agent_message",
-              itemType != "message",
-              !itemType.contains("reasoning"),
-              !itemType.contains("thought") else {
-            return nil
-        }
-
-        let id = (item["id"] as? String)?.nilIfBlank ?? UUID().uuidString
-        let title = stringValue(for: ["title", "name", "command"], in: item)
-            ?? displayTitle(forItemType: itemType)
-        let rawInput = compactJSONString(from: item["input"] ?? item["arguments"] ?? item)
-        let output = stringValue(for: ["output", "result", "text", "content"], in: item)
-        return ChatGPTSubscriptionToolCallUpdate(
-            id: id,
-            title: title,
-            status: status,
-            rawInput: rawInput,
-            output: output
-        )
-    }
-
-    static func directToolCall(
-        from update: ChatGPTSubscriptionToolCallUpdate
-    ) -> DirectAgentToolCall {
-        let argumentsObject = argumentsObject(from: update.rawInput)
-        return DirectAgentToolCall(
-            id: update.id,
-            name: update.title,
-            argumentsObject: argumentsObject,
-            argumentsJSON: update.rawInput ?? "{}"
-        )
-    }
-
-    static func argumentsObject(from rawInput: String?) -> [String: Any] {
-        guard let rawInput = rawInput?.nilIfBlank,
-              let data = rawInput.data(using: .utf8),
-              let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-              let object = value.objectValue else {
-            return [:]
-        }
-        return object.mapValues(\.jsonObject)
-    }
-
-    static func contextWindowStatus(
-        from usage: [String: Any]?,
-        modelLLMID: String
-    ) -> DirectAgentContextWindowStatus? {
-        guard let usage else {
-            return nil
-        }
-        let inputTokens = boundedCodexTokenCount(
-            totalInputTokenCount(from: usage),
-            modelLLMID: modelLLMID
-        )
-        guard let inputTokens,
-              let maxTokens = CodexAgentModel.contextWindowTokenLimit(forLLMID: modelLLMID) else {
-            return nil
-        }
-
-        return DirectAgentContextWindowStatus(
-            usedTokens: inputTokens,
-            maxTokens: maxTokens,
-            modelID: modelLLMID,
-            isApproximate: true
-        )
-    }
-
-    static func totalInputTokenCount(from usage: [String: Any]) -> Int? {
-        if let totalInputTokens = intValue(
-            for: ["prompt_tokens", "total_input_tokens", "promptTokens", "totalInputTokens"],
-            in: usage
-        ) {
-            return totalInputTokens
-        }
-
-        let inputTokens = intValue(
-            for: ["input_tokens", "inputTokens"],
-            in: usage
-        )
-        let cacheReadInputTokens = intValue(
-            for: ["cache_read_input_tokens", "cacheReadInputTokens"],
-            in: usage
-        )
-        let cacheCreationInputTokens = intValue(
-            for: ["cache_creation_input_tokens", "cacheCreationInputTokens"],
-            in: usage
-        )
-
-        if cacheReadInputTokens != nil || cacheCreationInputTokens != nil,
-           let inputTokens {
-            return inputTokens
-                + (cacheReadInputTokens ?? 0)
-                + (cacheCreationInputTokens ?? 0)
-        }
-        return inputTokens
-    }
-
-    static func boundedCodexTokenCount(
-        _ value: Int?,
-        modelLLMID: String
-    ) -> Int? {
-        guard let value, value >= 0 else {
-            return nil
-        }
-        guard let maxTokens = CodexAgentModel.contextWindowTokenLimit(forLLMID: modelLLMID),
-              value <= maxTokens else {
-            return nil
-        }
-        return value
-    }
-
     static func stringValue(
         for keys: [String],
         in object: [String: Any]
@@ -671,20 +460,13 @@ extension ChatGPTSubscriptionGenerationClient {
         RemoteGenerationClient.firstIntegerValue(in: object, for: keys)
     }
 
-    static func compactJSONString(from value: Any?) -> String? {
-        guard let value else {
-            return nil
-        }
-        return JSONValue(jsonObject: value).compactString(sortedKeys: true)
-    }
+}
 
-    static func displayTitle(forItemType itemType: String) -> String {
-        if itemType.isEmpty {
-            return "ChatGPT action"
-        }
-        return itemType
-            .split(separator: "_")
-            .map { $0.capitalized }
-            .joined(separator: " ")
-    }
+/// Normalizes a stream event type string by trimming, replacing separators
+/// with underscores, and lowercasing.
+func normalizedEventType(_ type: String) -> String {
+    type.trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: ".", with: "_")
+        .replacingOccurrences(of: "-", with: "_")
+        .lowercased()
 }

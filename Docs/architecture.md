@@ -471,3 +471,15 @@ receive the same immutable tag or full commit SHA through `--ref`. The tracked
 GitHub Actions workflow mirrors the ordinary macOS/Linux non-live gate; network
 and installer execution remain dedicated validation tasks rather than routine
 checks for a layout-only change.
+
+## Subscription catalog persistence
+
+Authenticated setup-only subscription discovery is described in
+[subscription-catalogs.md](subscription-catalogs.md). Catalog schema 1 is a separate
+private account/login-scoped cache and never owns runtime selection. Credentials
+add an optional Anthropic `catalogScopeID` UUID for OAuth login lineage; legacy
+credentials remain decodable. Generation overrides add optional
+`subscriptionThinkingMode` metadata (`adaptive`, `enabled`, `disabled`), leaving
+legacy manifests unchanged. These additive fields must survive settings round
+trips; cache contents contain no tokens or token hashes. Only setup may select
+new discovered models, and existing saved manifests are not silently replaced.

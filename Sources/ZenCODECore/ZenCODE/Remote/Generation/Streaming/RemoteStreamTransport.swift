@@ -112,23 +112,12 @@ public enum RemoteStreamTransport {
     }
 
     static func requiresAnthropicInterleavedThinkingBeta(body: [String: Any]) -> Bool {
-        guard let model = RemoteGenerationClient.stringValue(body["model"])?.lowercased(),
-              supportsAnthropicInterleavedThinking(modelID: model),
-              let thinking = body["thinking"] as? [String: Any],
+        guard let thinking = body["thinking"] as? [String: Any],
               RemoteGenerationClient.stringValue(thinking["type"]) == "enabled",
               let tools = body["tools"] as? [[String: Any]], !tools.isEmpty else {
             return false
         }
         return true
-    }
-
-    /// Interleaved thinking is a capability of the manual-thinking Claude 4
-    /// families (Opus, Sonnet and Haiku), not a loose version substring. Newer
-    /// adaptive-thinking families do not need this beta header.
-    static func supportsAnthropicInterleavedThinking(modelID: String) -> Bool {
-        let model = modelID.lowercased()
-        let pattern = #"(?:^|/)(?:claude-)?(?:opus|sonnet|haiku)-4(?![-.](?:[6789])(?:[-.]|$))(?:[-.](?:0|1|5))?(?:[-.]|$)"#
-        return model.range(of: pattern, options: .regularExpression) != nil
     }
 
     static func shouldRetryStreamOpening(

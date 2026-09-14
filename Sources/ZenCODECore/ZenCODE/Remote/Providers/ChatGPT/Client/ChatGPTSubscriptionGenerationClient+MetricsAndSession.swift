@@ -12,9 +12,8 @@ import os
 #endif
 
 extension ChatGPTSubscriptionGenerationClient {
-    func resolvedContextWindowTokenLimit(forLLMID modelLLMID: String) -> Int? {
+    func resolvedContextWindowTokenLimit() -> Int? {
         configuration.configuredContextWindowLimit
-            ?? CodexAgentModel.contextWindowTokenLimit(forLLMID: modelLLMID)
     }
 
     static func publishChatGPTSubscriptionMetrics(
@@ -240,14 +239,22 @@ extension ChatGPTSubscriptionGenerationClient {
     }
 
     func modelLLMID() -> String {
-        CodexAgentModel.selectionID(
-            forModelID: CodexAgentModel.modelID(fromLLMID: configuration.modelID)
+        RemoteSubscriptionModelID.selectionID(
+            forModelID: RemoteSubscriptionModelID.modelID(fromLLMID: configuration.modelID, prefix: "chatgpt"), prefix: "chatgpt"
         )
     }
 
     static func chatGPTReasoningEffort(
-        for selection: AgentThinkingSelection
+        for selection: AgentThinkingSelection,
+        catalogLevels: [String]? = nil
     ) -> String? {
+        if let catalogLevels {
+            // Round-trip the provider's exact effort (including none/off and minimal).
+            // Never fall back to legacy normalization for discovered metadata.
+            return catalogLevels.first {
+                SubscriptionModelCatalogClient.Model.reasoningSelection($0)?.rawValue == selection.rawValue
+            }
+        }
         switch selection {
         case .off:
             return nil

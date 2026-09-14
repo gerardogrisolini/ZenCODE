@@ -13,6 +13,10 @@ extension ZenCODESetupRunner {
         let detail: String
         let contextWindowTokenLimit: Int?
         let thinkingSupport: ModelThinkingSupport?
+        var maxOutputTokens: Int? = nil
+        var anthropicThinkingMode: String? = nil
+        var subscriptionReasoningLevels: [String]? = nil
+        var isDiscovered = false
     }
 
     static func reconfigureModels(
@@ -407,7 +411,7 @@ extension ZenCODESetupRunner {
 
     static func ensureChatGPTSubscriptionCredentials() async throws -> CodexAgentCredentials {
         do {
-            return try await CodexAgentModel.loadValidCredentials(
+            return try await ChatGPTSubscriptionAuthService.loadValidCredentials(
                 persistRefresh: false
             )
         } catch is CancellationError {
@@ -635,35 +639,6 @@ extension ZenCODESetupRunner {
         }
     }
 
-
-    static var chatGPTSubscriptionModelCandidates: [SubscriptionModelCandidate] {
-        CodexAgentModel.availableModels.map { model in
-            let context = model.contextWindowTokenLimit.map { "ctx \($0)" } ?? "ctx default"
-            return SubscriptionModelCandidate(
-                manifestID: CodexAgentModel.selectionID(forModelID: model.modelID),
-                modelID: model.modelID,
-                title: model.title,
-                detail: "\(model.modelID) [\(context), thinking]",
-                contextWindowTokenLimit: model.contextWindowTokenLimit,
-                thinkingSupport: model.thinkingSupport
-            )
-        }
-    }
-
-    static var anthropicSubscriptionModelCandidates: [SubscriptionModelCandidate] {
-        AnthropicSubscriptionModel.availableModels.map { model in
-            let context = model.contextWindowTokenLimit.map { "ctx \($0)" } ?? "ctx default"
-            let thinking = model.thinkingSupport?.supportsThinking == true ? ", thinking" : ""
-            return SubscriptionModelCandidate(
-                manifestID: AnthropicSubscriptionModel.selectionID(forModelID: model.modelID),
-                modelID: model.modelID,
-                title: model.title,
-                detail: "\(model.modelID) [\(context)\(thinking)]",
-                contextWindowTokenLimit: model.contextWindowTokenLimit,
-                thinkingSupport: model.thinkingSupport
-            )
-        }
-    }
 
     static func selectSubscriptionModelCandidates(
         _ candidates: [SubscriptionModelCandidate],

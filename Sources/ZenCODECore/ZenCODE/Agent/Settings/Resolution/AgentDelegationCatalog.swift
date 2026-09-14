@@ -81,9 +81,7 @@ public enum AgentDelegationCatalogSnapshot: Sendable {
                 provider.id.uuidString.lowercased()
             ]
         )
-        let configuredContextWindowLimit = resolvedProvider.isChatGPTSubscriptionProvider
-            ? CodexAgentModel.contextWindowTokenLimit(forLLMID: model.id)
-            : model.configuredContextWindowLimit
+        let configuredContextWindowLimit = model.configuredContextWindowLimit
 
         return AgentModelSelection(
             providerKind: model.kind,
@@ -146,7 +144,7 @@ public enum AgentDelegationCatalogSnapshot: Sendable {
     ) -> Bool {
         if let accessToken = environment["CHATGPT_ACCESS_TOKEN"]?.nilIfBlank {
             return environment["CHATGPT_ACCOUNT_ID"]?.nilIfBlank != nil
-                || (try? CodexAgentModel.chatGPTAccountID(from: accessToken)) != nil
+                || (try? ChatGPTSubscriptionAuthService.chatGPTAccountID(from: accessToken)) != nil
         }
         guard let credentials else { return false }
         return credentials.accessToken.nilIfBlank != nil

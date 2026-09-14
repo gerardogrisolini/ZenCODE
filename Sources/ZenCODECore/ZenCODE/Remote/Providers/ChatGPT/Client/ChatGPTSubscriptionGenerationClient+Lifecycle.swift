@@ -176,9 +176,12 @@ extension ChatGPTSubscriptionGenerationClient {
     public func preloadModel(
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> String {
-        _ = try await CodexAgentModel.loadValidCredentials()
+        guard !RemoteSubscriptionModelID.modelID(fromLLMID: modelLLMID(), prefix: "chatgpt").isEmpty else {
+            throw AgentCoreBackendError.missingRemoteProvider
+        }
+        _ = try await ChatGPTSubscriptionAuthService.loadValidCredentials()
         let modelLLMID = modelLLMID()
-        await onEvent(.modelLoaded(CodexAgentModel.selectionTitle(forLLMID: modelLLMID)))
+        await onEvent(.modelLoaded(AgentRemoteProvider.chatGPTSubscriptionDisplayTitle + " · " + RemoteSubscriptionModelID.modelID(fromLLMID: modelLLMID, prefix: "chatgpt")))
         return modelLLMID
     }
 

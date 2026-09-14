@@ -50,3 +50,6 @@ Guides for using, extending, and maintaining ZenCODE. Start with the
 
 This index is the single catalogue of ZenCODE documentation; the project README
 links here instead of repeating it.
+
+- [Authenticated subscription catalogs](subscription-catalogs.md): setup discovery,
+  account-scoped last-success cache, metadata and Anthropic live-validation limits.

@@ -52,7 +52,7 @@ extension ZenCODESetupRunner {
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint
     ) -> AgentSettingsModelManifest {
-        return AgentSettingsModelManifestFactory.remoteAPIModel(
+        let manifest = AgentSettingsModelManifestFactory.remoteAPIModel(
             manifestID: candidate.manifestID,
             title: candidate.title,
             modelID: candidate.modelID,
@@ -61,9 +61,17 @@ extension ZenCODESetupRunner {
             baseURL: baseURL,
             chatEndpoint: chatEndpoint,
             configuredContextWindowLimit: candidate.contextWindowTokenLimit,
-            generationParameterOverrides: nil,
+            generationParameterOverrides: AgentGenerationParameterOverrides(
+                maxTokens: candidate.maxOutputTokens,
+                subscriptionThinkingMode: candidate.anthropicThinkingMode,
+                subscriptionReasoningLevels: candidate.subscriptionReasoningLevels
+            ).nilIfEmpty,
             thinkingSupport: candidate.thinkingSupport
         )
+        guard candidate.isDiscovered, candidate.thinkingSupport?.supportsThinking != true else { return manifest }
+        return modelWithMetadata(manifest,
+            configuredContextWindowLimit: candidate.contextWindowTokenLimit,
+            thinkingOptions: [.off], defaultThinkingSelection: .off)
     }
 
     static func readModelMetadata(

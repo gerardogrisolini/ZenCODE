@@ -6,58 +6,41 @@
 import Foundation
 
 enum RemoteSubscriptionModelID {
-    static func isLLMID(_ value: String?, prefix: String) -> Bool {
-        guard let normalizedValue = value?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased(),
-              !normalizedValue.isEmpty else {
-            return false
-        }
-
-        return isPrefix(normalizedValue, prefix: prefix)
-    }
-
     static func selectionID(
         forModelID modelID: String,
-        prefix: String,
-        defaultModelID: String
+        prefix: String
     ) -> String {
-        "\(prefix):\(normalizedModelID(modelID, defaultModelID: defaultModelID))"
+        let modelID = normalizedModelID(modelID)
+        return modelID.isEmpty ? "" : "\(prefix):\(modelID)"
     }
 
     static func modelID(
         fromLLMID value: String?,
-        prefix: String,
-        defaultModelID: String
+        prefix: String
     ) -> String {
         guard let value else {
-            return defaultModelID
+            return ""
         }
 
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedValue.isEmpty else {
-            return defaultModelID
+            return ""
         }
 
         let lowercasedValue = trimmedValue.lowercased()
         if lowercasedValue == prefix {
-            return defaultModelID
+            return ""
         }
         for separator in [":", "/"] where lowercasedValue.hasPrefix(prefix + separator) {
             let rawModelID = String(trimmedValue.dropFirst(prefix.count + separator.count))
-            return normalizedModelID(rawModelID, defaultModelID: defaultModelID)
+            return normalizedModelID(rawModelID)
         }
-        return normalizedModelID(trimmedValue, defaultModelID: defaultModelID)
+        return normalizedModelID(trimmedValue)
     }
 
-    static func normalizedModelID(_ value: String, defaultModelID: String) -> String {
+    private static func normalizedModelID(_ value: String) -> String {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedValue.isEmpty ? defaultModelID : trimmedValue
+        return trimmedValue
     }
 
-    private static func isPrefix(_ value: String, prefix: String) -> Bool {
-        value == prefix
-            || value.hasPrefix(prefix + ":")
-            || value.hasPrefix(prefix + "/")
-    }
 }

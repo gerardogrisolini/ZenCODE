@@ -96,6 +96,10 @@ public struct AgentStructuredOutputFormat: Codable, Equatable, Hashable, Sendabl
 
 public struct AgentGenerationParameterOverrides: Codable, Equatable, Hashable, Sendable {
     public var maxTokens: Int?
+    /// Subscription discovery wire mode; without metadata no thinking capability is inferred.
+    public var subscriptionThinkingMode: String?
+    /// Exact ChatGPT catalog effort values; nil preserves legacy effort mapping.
+    public var subscriptionReasoningLevels: [String]?
     public var structuredOutput: AgentStructuredOutputFormat?
     public var maxKVSize: Int?
     public var temperature: Double?
@@ -115,6 +119,8 @@ public struct AgentGenerationParameterOverrides: Codable, Equatable, Hashable, S
 
     public init(
         maxTokens: Int? = nil,
+        subscriptionThinkingMode: String? = nil,
+        subscriptionReasoningLevels: [String]? = nil,
         structuredOutput: AgentStructuredOutputFormat? = nil,
         maxKVSize: Int? = nil,
         temperature: Double? = nil,
@@ -133,6 +139,8 @@ public struct AgentGenerationParameterOverrides: Codable, Equatable, Hashable, S
         quantizedKVStart: Int? = nil
     ) {
         self.maxTokens = maxTokens
+        self.subscriptionThinkingMode = subscriptionThinkingMode
+        self.subscriptionReasoningLevels = subscriptionReasoningLevels
         self.structuredOutput = structuredOutput?.nilIfEmpty
         self.maxKVSize = maxKVSize
         self.temperature = temperature
@@ -153,6 +161,8 @@ public struct AgentGenerationParameterOverrides: Codable, Equatable, Hashable, S
 
     public var isEmpty: Bool {
         maxTokens == nil
+            && subscriptionThinkingMode == nil
+            && subscriptionReasoningLevels == nil
             && structuredOutput?.nilIfEmpty == nil
             && maxKVSize == nil
             && temperature == nil
@@ -178,6 +188,8 @@ public struct AgentGenerationParameterOverrides: Codable, Equatable, Hashable, S
     public func normalized() -> Self {
         Self(
             maxTokens: maxTokens.map { min(max($0, 1), 1_048_576) },
+            subscriptionThinkingMode: subscriptionThinkingMode,
+            subscriptionReasoningLevels: subscriptionReasoningLevels,
             structuredOutput: structuredOutput?.normalized().nilIfEmpty,
             maxKVSize: maxKVSize.map { min(max($0, 1), 1_048_576) },
             temperature: temperature.map { min(max($0, 0), 2) },

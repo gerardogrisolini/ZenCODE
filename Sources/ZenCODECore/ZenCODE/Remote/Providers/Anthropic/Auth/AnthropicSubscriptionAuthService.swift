@@ -16,17 +16,21 @@ public struct AnthropicSubscriptionCredentials: Codable, Equatable, Sendable {
     public let refreshToken: String
     public let expiresAt: Date
     public let scope: String?
+    /// Opaque OAuth login lineage for catalog isolation, unrelated to token bytes.
+    public let catalogScopeID: UUID?
 
     public init(
         accessToken: String,
         refreshToken: String,
         expiresAt: Date,
-        scope: String? = nil
+        scope: String? = nil,
+        catalogScopeID: UUID? = nil
     ) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
         self.scope = scope
+        self.catalogScopeID = catalogScopeID
     }
 
     public var isExpiredOrNearlyExpired: Bool {
@@ -353,7 +357,13 @@ public enum AnthropicSubscriptionAuthService {
             credentials: credentials
         ) { credentials in
             let refreshedCredentials = try await tokenRefresher(credentials.refreshToken)
-            return refreshedCredentials
+            return AnthropicSubscriptionCredentials(
+                accessToken: refreshedCredentials.accessToken,
+                refreshToken: refreshedCredentials.refreshToken,
+                expiresAt: refreshedCredentials.expiresAt,
+                scope: refreshedCredentials.scope,
+                catalogScopeID: credentials.catalogScopeID
+            )
         }
         if persist {
             try saveCredentials(refreshedCredentials)
@@ -545,7 +555,8 @@ public enum AnthropicSubscriptionAuthService {
                 expiresAt: Date().addingTimeInterval(TimeInterval(expirationInterval)),
                 scope: tokenResponse.scope?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .nilIfEmpty
+                    .nilIfEmpty,
+                catalogScopeID: parameters["grant_type"] == "authorization_code" ? UUID() : nil
             )
         }
         throw lastFailure ?? AnthropicSubscriptionAuthError.invalidTokenResponse

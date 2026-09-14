@@ -24,7 +24,7 @@ public actor AnthropicSubscriptionGenerationClient: DirectToolRuntimeBackend {
     }
 
     public static var isAvailable: Bool {
-        AnthropicSubscriptionModel.isReady
+        (try? AnthropicSubscriptionAuthService.loadCredentials()) != nil
     }
 
     static let apiBaseURL = URL(string: "https://api.anthropic.com/v1")!
@@ -41,6 +41,11 @@ public actor AnthropicSubscriptionGenerationClient: DirectToolRuntimeBackend {
 
     public let configuration: AgentRuntimeConfiguration
     public let provider: AgentRemoteProvider
+    /// Explicit persisted capability declaration; missing metadata enables no thinking.
+    let thinkingOptions: [AgentThinkingSelection]?
+    var catalogThinkingMode: String? {
+        configuration.generationParameterOverrides.subscriptionThinkingMode
+    }
     /// Shared NIO HTTP/SSE transport for Anthropic message generation.
     public let transport: RemoteTransportCore
     let ownsTransport: Bool
@@ -60,6 +65,7 @@ public actor AnthropicSubscriptionGenerationClient: DirectToolRuntimeBackend {
     public init(
         configuration: AgentRuntimeConfiguration,
         provider: AgentRemoteProvider,
+        thinkingOptions: [AgentThinkingSelection]? = nil,
         transport: RemoteTransportCore? = nil,
         /// A controlled final messages endpoint override for deterministic
         /// loopback tests and embedding boundaries.
@@ -73,6 +79,7 @@ public actor AnthropicSubscriptionGenerationClient: DirectToolRuntimeBackend {
     ) {
         self.configuration = configuration
         self.provider = provider
+        self.thinkingOptions = thinkingOptions
         let resolvedTransport = transport ?? RemoteTransportCore()
         self.transport = resolvedTransport
         ownsTransport = transport == nil

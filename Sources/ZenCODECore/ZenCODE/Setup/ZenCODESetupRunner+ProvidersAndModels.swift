@@ -399,15 +399,19 @@ extension ZenCODESetupRunner {
         let credentials = try await ensureChatGPTSubscriptionCredentials()
 
         let id = AgentRemoteProvider.chatGPTSubscriptionProviderID
-        let name = CodexAgentModel.displayTitle
+        let name = AgentRemoteProvider.chatGPTSubscriptionDisplayTitle
         let baseURL = AgentRemoteProvider.chatGPTSubscriptionBaseURL
         let chatEndpoint = AgentRemoteChatEndpoint.responses
+        let candidates = try await discoveredSubscriptionCandidates(
+            provider: .chatGPT, accessToken: credentials.accessToken,
+            accountID: credentials.accountID, existingModels: existingModels
+        )
         let models = try selectSubscriptionModelCandidates(
-            chatGPTSubscriptionModelCandidates,
+            candidates,
             title: "ChatGPT Subscription models",
             defaultModels: existingModels
         ).map { candidate in
-            subscriptionModelManifest(
+            existingModels.first(where: { $0.modelID == candidate.modelID }) ?? subscriptionModelManifest(
                 candidate: candidate,
                 providerID: id,
                 providerName: name,
@@ -438,15 +442,20 @@ extension ZenCODESetupRunner {
         let credentials = try await ensureAnthropicSubscriptionCredentials()
 
         let id = AgentRemoteProvider.anthropicSubscriptionProviderID
-        let name = AnthropicSubscriptionModel.displayTitle
+        let name = AgentRemoteProvider.anthropicSubscriptionDisplayTitle
         let baseURL = AgentRemoteProvider.anthropicSubscriptionBaseURL
         let chatEndpoint = AgentRemoteChatEndpoint.responses
+        let candidates = try await discoveredSubscriptionCandidates(
+            provider: .anthropic, accessToken: credentials.accessToken,
+            catalogScopeID: credentials.catalogScopeID,
+            existingModels: existingModels
+        )
         let models = try selectSubscriptionModelCandidates(
-            anthropicSubscriptionModelCandidates,
+            candidates,
             title: "Claude Subscription models",
             defaultModels: existingModels
         ).map { candidate in
-            subscriptionModelManifest(
+            existingModels.first(where: { $0.modelID == candidate.modelID }) ?? subscriptionModelManifest(
                 candidate: candidate,
                 providerID: id,
                 providerName: name,

@@ -21,8 +21,10 @@ extension RemoteGenerationClient {
             modelID: provider.modelID,
             messages: wireMessages,
             toolCatalog: catalog,
-            maxTokens: configuration.maxOutputTokens ?? AnthropicSubscriptionModel.defaultMaxOutputTokens,
-            thinkingSelection: thinkingSelection
+            maxTokens: configuration.maxOutputTokens ?? 64_000,
+            thinkingSelection: thinkingSelection,
+            thinkingMode: configuration.generationParameterOverrides.subscriptionThinkingMode,
+            thinkingOptions: thinkingOptions
         )
         let request = try RemoteStreamTransport.buildHTTPStreamingRequest(
             path: "/messages", body: body, provider: provider, apiKey: apiKey,
@@ -58,7 +60,9 @@ extension RemoteGenerationClient {
         messages: [[String: Any]],
         toolCatalog: RemoteToolWireCatalog,
         maxTokens: Int,
-        thinkingSelection: AgentThinkingSelection?
+        thinkingSelection: AgentThinkingSelection?,
+        thinkingMode: String? = nil,
+        thinkingOptions: [AgentThinkingSelection] = []
     ) throws -> [String: Any] {
         let converted = AnthropicMessagesWireCodec.payload(from: messages)
         let effectiveMaxTokens = max(maxTokens, 1)
@@ -82,34 +86,14 @@ extension RemoteGenerationClient {
             body["tools"] = tools
             body["tool_choice"] = ["type": "auto"]
         }
-        try applyAnthropicThinking(
-            selection: thinkingSelection,
-            modelID: modelID,
-            maxTokens: effectiveMaxTokens,
-            body: &body
+        // Without an explicit wire mode, configured thinking authorization uses
+        // the generic manual budget path; adaptive is never inferred from IDs.
+        let payload = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
+            mode: thinkingMode ?? "enabled", selection: thinkingSelection,
+            options: thinkingOptions, maxTokens: effectiveMaxTokens
         )
+        if let thinking = payload.thinking { body["thinking"] = thinking }
+        if let outputConfig = payload.outputConfig { body["output_config"] = outputConfig }
         return body
-    }
-
-    static func applyAnthropicThinking(
-        selection: AgentThinkingSelection?,
-        modelID: String,
-        maxTokens: Int,
-        body: inout [String: Any]
-    ) throws {
-        guard AnthropicSubscriptionGenerationClient.supportsThinking(modelID: modelID) else {
-            return
-        }
-        let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
-            for: selection,
-            modelID: modelID,
-            maxTokens: maxTokens
-        )
-        if let thinking = payload.thinking {
-            body["thinking"] = thinking
-        }
-        if let outputConfig = payload.outputConfig {
-            body["output_config"] = outputConfig
-        }
     }
 }

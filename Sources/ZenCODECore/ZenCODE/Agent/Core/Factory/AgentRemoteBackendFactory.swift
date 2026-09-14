@@ -86,6 +86,13 @@ public enum AgentRemoteBackendFactory {
             throw AgentCoreBackendError.missingRemoteProvider
         }
 
+        if provider.isChatGPTSubscriptionProvider || provider.isAnthropicSubscriptionProvider {
+            let prefix = provider.isChatGPTSubscriptionProvider ? "chatgpt" : "claude"
+            guard !RemoteSubscriptionModelID.modelID(fromLLMID: resolvedConfiguration.modelID, prefix: prefix).isEmpty else {
+                throw AgentCoreBackendError.missingRemoteProvider
+            }
+        }
+
         if provider.requiresAPIKey, apiKey?.nilIfBlank == nil {
             throw AgentCoreBackendError.missingRemoteAPIKey(provider.displayTitle)
         }
@@ -104,9 +111,9 @@ public enum AgentRemoteBackendFactory {
                     mcpRuntime: mcpRuntime,
                     fallbackProvider: AgentRemoteProvider(
                         id: AgentRemoteProvider.chatGPTSubscriptionProviderID,
-                        name: CodexAgentModel.displayTitle,
+                        name: AgentRemoteProvider.chatGPTSubscriptionDisplayTitle,
                         baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
-                        modelID: resolvedConfiguration.modelID ?? CodexAgentModel.defaultLLMID
+                        modelID: resolvedConfiguration.modelID ?? provider.modelID
                     ),
                     fallbackThinkingOptions: thinkingOptions,
                     swiftFeatureRuntime: swiftFeatureRuntime
@@ -118,6 +125,7 @@ public enum AgentRemoteBackendFactory {
             return AnthropicSubscriptionGenerationClient(
                 configuration: resolvedConfiguration,
                 provider: provider,
+                thinkingOptions: thinkingOptions,
                 mcpRuntime: mcpRuntime,
                 swiftFeatureRuntime: swiftFeatureRuntime,
                 sharedChat: sharedChat,

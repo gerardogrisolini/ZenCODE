@@ -89,10 +89,9 @@ extension ChatGPTSubscriptionGenerationClient {
         guard var session = sessions[id] else {
             return nil
         }
-        let modelLLMID = modelLLMID()
         guard let result = compactSession(
             &session,
-            maxTokens: resolvedContextWindowTokenLimit(forLLMID: modelLLMID),
+            maxTokens: resolvedContextWindowTokenLimit(),
             maxOutputTokens: configuration.maxOutputTokens,
             force: force
         ) else {

@@ -123,9 +123,12 @@ extension AnthropicSubscriptionGenerationClient {
     public func preloadModel(
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> String {
+        guard !RemoteSubscriptionModelID.modelID(fromLLMID: modelLLMID(), prefix: "claude").isEmpty else {
+            throw AgentCoreBackendError.missingRemoteProvider
+        }
         _ = try await AnthropicSubscriptionAuthService.loadValidCredentials()
         let modelLLMID = modelLLMID()
-        await onEvent(.modelLoaded(AnthropicSubscriptionModel.selectionTitle(forLLMID: modelLLMID)))
+        await onEvent(.modelLoaded(AgentRemoteProvider.anthropicSubscriptionDisplayTitle + " · " + RemoteSubscriptionModelID.modelID(fromLLMID: modelLLMID, prefix: "claude")))
         return modelLLMID
     }
 

@@ -29,7 +29,6 @@ extension AnthropicSubscriptionGenerationClient {
     func streamAnthropicMessages(
         lease: SessionLease,
         modelID: String,
-        modelLLMID: String,
         credentials: AnthropicSubscriptionCredentials,
         includeThinkingBlocks: Bool = true,
         applyTurnMemory: Bool,
@@ -50,8 +49,16 @@ extension AnthropicSubscriptionGenerationClient {
             throw RemoteGenerationClientError.missingSession
         }
         let toolCatalog = RemoteToolWireCatalog(descriptors: toolDescriptors)
-        let thinkingEnabled = Self.supportsThinking(modelID: modelID)
-            && (session.thinkingSelection?.isEnabled ?? false)
+        let maxOutputTokens = resolvedMaxOutputTokens()
+        var body: [String: Any] = [
+            "model": modelID,
+            "max_tokens": maxOutputTokens,
+            "stream": true
+        ]
+        applyThinkingSelection(session.thinkingSelection, to: &body)
+        // Replay reasoning only when the effective request enables thinking.
+        let thinkingType = (body["thinking"] as? [String: Any])?["type"] as? String
+        let thinkingEnabled = thinkingType == "enabled" || thinkingType == "adaptive"
         let replayThinkingBlocks = thinkingEnabled && includeThinkingBlocks
         let expectsPromptCache = RemoteGenerationClient.messagesExpectPromptCache(
             session.messages
@@ -75,10 +82,6 @@ extension AnthropicSubscriptionGenerationClient {
             userSystemPrompt: anthropicPayload.system
         )
         let tools = Self.anthropicTools(from: toolCatalog.bindings)
-        let maxOutputTokens = resolvedMaxOutputTokens(
-            forLLMID: modelLLMID,
-            thinkingSelection: session.thinkingSelection
-        )
         let estimatedContextTokens = AnthropicSubscriptionRequestBuilder
             .estimatedContextTokenCount(
                 system: systemBlocks,
@@ -111,7 +114,6 @@ extension AnthropicSubscriptionGenerationClient {
             switch compactSessionForEstimatedContextIfNeeded(
                 lease: lease,
                 estimate: requestEstimate,
-                modelLLMID: modelLLMID,
                 maxOutputTokens: maxOutputTokens
             ) {
             case let .compacted(result):
@@ -119,7 +121,6 @@ extension AnthropicSubscriptionGenerationClient {
                 return try await streamAnthropicMessages(
                     lease: lease,
                     modelID: modelID,
-                    modelLLMID: modelLLMID,
                     credentials: credentials,
                     includeThinkingBlocks: includeThinkingBlocks,
                     applyTurnMemory: applyTurnMemory,
@@ -152,21 +153,11 @@ extension AnthropicSubscriptionGenerationClient {
             }
         }
 
-        var body: [String: Any] = [
-            "model": modelID,
-            "messages": requestMessages,
-            "max_tokens": maxOutputTokens,
-            "stream": true
-        ]
+        body["messages"] = requestMessages
         body["system"] = systemBlocks
         if !tools.isEmpty {
             body["tools"] = tools
         }
-        applyThinkingSelection(
-            session.thinkingSelection,
-            to: &body,
-            modelLLMID: modelLLMID
-        )
 
         let requestBody = try JSONValue(
             jsonObject: AnthropicSubscriptionRequestBuilder.sanitizedPayload(body)
@@ -183,7 +174,10 @@ extension AnthropicSubscriptionGenerationClient {
                 RemoteHTTPHeader(name: "anthropic-version", value: "2023-06-01"),
                 RemoteHTTPHeader(
                     name: "anthropic-beta",
-                    value: Self.oauthBetaHeader(forModelID: modelID)
+                    value: Self.oauthBetaHeader(
+                        contextWindowTokenLimit: configuration.configuredContextWindowLimit,
+                        thinkingMode: catalogThinkingMode
+                    )
                 ),
                 RemoteHTTPHeader(
                     name: "anthropic-dangerous-direct-browser-access",

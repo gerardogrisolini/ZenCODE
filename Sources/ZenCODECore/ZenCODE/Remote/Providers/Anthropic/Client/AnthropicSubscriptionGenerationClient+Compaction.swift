@@ -14,16 +14,12 @@ extension AnthropicSubscriptionGenerationClient {
     /// rejected request, because a prompt one token smaller would simply be
     /// rejected again.
     func compactSessionForContextLimitRetry(
-        _ session: inout AgentSession,
-        modelLLMID: String
+        _ session: inout AgentSession
     ) -> AgentConversationCompactionResult? {
         let result = SubscriptionCompactionSupport.compactedMessagesForContextLimitRetry(
             session.messages,
-            maxTokens: resolvedContextWindowTokenLimit(forLLMID: modelLLMID),
-            maxOutputTokens: resolvedMaxOutputTokens(
-                forLLMID: modelLLMID,
-                thinkingSelection: session.thinkingSelection
-            ),
+            maxTokens: resolvedContextWindowTokenLimit(),
+            maxOutputTokens: resolvedMaxOutputTokens(),
             reserveTokenCount: Self.compactionReserveTokenCount,
             overhead: requestOverhead(forSessionID: session.id)
         )
@@ -39,24 +35,19 @@ extension AnthropicSubscriptionGenerationClient {
     }
 
     func compactSessionIfNeeded(
-        _ session: inout AgentSession,
-        modelLLMID: String
+        _ session: inout AgentSession
     ) -> AgentConversationCompactionResult? {
-        compactSession(&session, modelLLMID: modelLLMID, force: false)
+        compactSession(&session, force: false)
     }
 
     func compactSession(
         _ session: inout AgentSession,
-        modelLLMID: String,
         force: Bool
     ) -> AgentConversationCompactionResult? {
         let result = Self.compactedMessagesIfNeeded(
             session.messages,
-            maxTokens: resolvedContextWindowTokenLimit(forLLMID: modelLLMID),
-            maxOutputTokens: resolvedMaxOutputTokens(
-                forLLMID: modelLLMID,
-                thinkingSelection: session.thinkingSelection
-            ),
+            maxTokens: resolvedContextWindowTokenLimit(),
+            maxOutputTokens: resolvedMaxOutputTokens(),
             force: force,
             // The tool catalogue and provider system blocks measured on the
             // last request of this session are part of the same window, along
@@ -83,7 +74,6 @@ extension AnthropicSubscriptionGenerationClient {
         }
         guard let result = compactSession(
             &session,
-            modelLLMID: modelLLMID(),
             force: force
         ) else {
             return nil
@@ -102,7 +92,6 @@ extension AnthropicSubscriptionGenerationClient {
     func compactSessionForEstimatedContextIfNeeded(
         lease: SessionLease,
         estimate: SubscriptionCompactionSupport.RequestEstimate,
-        modelLLMID: String,
         maxOutputTokens: Int
     ) -> SubscriptionCompactionSupport.PreflightOutcome {
         guard let session = currentSession(for: lease) else {
@@ -111,7 +100,7 @@ extension AnthropicSubscriptionGenerationClient {
         let outcome = SubscriptionCompactionSupport.preflightCompaction(
             session.messages,
             estimate: estimate,
-            maxTokens: resolvedContextWindowTokenLimit(forLLMID: modelLLMID),
+            maxTokens: resolvedContextWindowTokenLimit(),
             maxOutputTokens: maxOutputTokens,
             reserveTokenCount: Self.compactionReserveTokenCount
         )

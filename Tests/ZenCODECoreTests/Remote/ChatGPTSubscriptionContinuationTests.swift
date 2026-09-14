@@ -891,7 +891,7 @@ extension RemoteSessionSnapshotTests {
     func chatGPTSubscriptionFactoryScopesDelegatedBackendForHTTPStreaming() async throws {
         let provider = AgentRemoteProvider(
             id: AgentRemoteProvider.chatGPTSubscriptionProviderID,
-            name: CodexAgentModel.displayTitle,
+            name: AgentRemoteProvider.chatGPTSubscriptionDisplayTitle,
             baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
             modelID: "unit-model",
             chatEndpoint: .responses

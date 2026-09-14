@@ -18,11 +18,14 @@ extension ChatGPTSubscriptionGenerationClient {
         attachments: [AgentRuntimeAttachment],
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
-        try await sendPrompt(
+        guard !RemoteSubscriptionModelID.modelID(fromLLMID: modelLLMID(), prefix: "chatgpt").isEmpty else {
+            throw AgentCoreBackendError.missingRemoteProvider
+        }
+        return try await sendPrompt(
             sessionID: sessionID,
             prompt: prompt,
             attachments: attachments,
-            loadCredentials: { try await CodexAgentModel.loadValidCredentials() },
+            loadCredentials: { try await ChatGPTSubscriptionAuthService.loadValidCredentials() },
             onEvent: onEvent
         )
     }
@@ -35,6 +38,9 @@ extension ChatGPTSubscriptionGenerationClient {
         loadCredentials: @Sendable () async throws -> CodexAgentCredentials,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
+        guard !RemoteSubscriptionModelID.modelID(fromLLMID: modelLLMID(), prefix: "chatgpt").isEmpty else {
+            throw AgentCoreBackendError.missingRemoteProvider
+        }
         if sessions[sessionID] == nil {
             guard !MemoryConsolidationContext.isIsolated else { throw CancellationError() }
             createSession(
@@ -69,8 +75,8 @@ extension ChatGPTSubscriptionGenerationClient {
         }
         session = loadedSession
         let modelLLMID = modelLLMID()
-        let modelID = CodexAgentModel.modelID(fromLLMID: modelLLMID)
-        await onEvent(.modelLoaded(CodexAgentModel.selectionTitle(forLLMID: modelLLMID)))
+        let modelID = RemoteSubscriptionModelID.modelID(fromLLMID: modelLLMID, prefix: "chatgpt")
+        await onEvent(.modelLoaded(AgentRemoteProvider.chatGPTSubscriptionDisplayTitle + " · " + RemoteSubscriptionModelID.modelID(fromLLMID: modelLLMID, prefix: "chatgpt")))
         guard let postLoadSession = currentSession(for: lease) else {
             throw ChatGPTSubscriptionGenerationError.missingSession
         }
@@ -111,11 +117,11 @@ extension ChatGPTSubscriptionGenerationClient {
             credentials: credentials,
             webSocketPool: webSocketPool
         )
-        let reasoningEffort = session.thinkingSelection
-            .flatMap(Self.chatGPTReasoningEffort(for:))
-        let maxContextWindowTokens = resolvedContextWindowTokenLimit(
-            forLLMID: modelLLMID
-        )
+        let reasoningEffort = session.thinkingSelection.flatMap {
+            Self.chatGPTReasoningEffort(for: $0,
+                catalogLevels: configuration.generationParameterOverrides.subscriptionReasoningLevels)
+        }
+        let maxContextWindowTokens = resolvedContextWindowTokenLimit()
 
         var accumulatedText = ""
         var generationStats: [RemoteGenerationStats] = []
@@ -254,6 +260,7 @@ extension ChatGPTSubscriptionGenerationClient {
                         model: modelID,
                         instructions: instructions,
                         reasoningEffort: reasoningEffort,
+                        preservesCatalogReasoningEffort: configuration.generationParameterOverrides.subscriptionReasoningLevels != nil,
                         textVerbosity: "medium",
                         sessionID: session.chatGPTSessionID ?? chatGPTSessionID,
                         threadID: session.id,

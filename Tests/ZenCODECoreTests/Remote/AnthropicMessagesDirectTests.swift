@@ -123,7 +123,7 @@ struct AnthropicMessagesDirectTests {
         let body = try RemoteGenerationClient.anthropicMessagesRequestBody(
             modelID: "claude-sonnet-5", messages: messages,
             toolCatalog: RemoteToolWireCatalog(descriptors: []), maxTokens: 8192,
-            thinkingSelection: .high
+            thinkingSelection: .high, thinkingMode: "adaptive", thinkingOptions: [.off, .high]
         )
         #expect(body["system"] as? String == "Be concise.")
         #expect(body["max_tokens"] as? Int == 8192)
@@ -137,13 +137,14 @@ struct AnthropicMessagesDirectTests {
     }
 
     @Test(arguments: [
-        ("claude-sonnet-5", AgentThinkingSelection.enabled, 64_000),
-        ("claude-sonnet-5", AgentThinkingSelection.xhigh, 64_000),
-        ("claude-haiku-4-5", AgentThinkingSelection.medium, 12_000),
-        ("claude-haiku-4-5", AgentThinkingSelection.off, 12_000)
+        ("claude-sonnet-5", Optional("adaptive"), AgentThinkingSelection.high, 64_000),
+        ("claude-sonnet-5", Optional("adaptive"), AgentThinkingSelection.xhigh, 64_000),
+        ("claude-haiku-4-5", nil as String?, AgentThinkingSelection.medium, 12_000),
+        ("claude-haiku-4-5", nil as String?, AgentThinkingSelection.off, 12_000)
     ])
-    func directThinkingPayloadMatchesSubscriptionPolicy(
+    func directThinkingPayloadMatchesExplicitSubscriptionMetadata(
         modelID: String,
+        mode: String?,
         selection: AgentThinkingSelection,
         maxTokens: Int
     ) throws {
@@ -152,11 +153,10 @@ struct AnthropicMessagesDirectTests {
             messages: [["role": "user", "content": "hello"]],
             toolCatalog: RemoteToolWireCatalog(descriptors: []),
             maxTokens: maxTokens,
-            thinkingSelection: selection
+            thinkingSelection: selection, thinkingMode: mode, thinkingOptions: [.off, selection]
         )
-        let subscription = AnthropicSubscriptionGenerationClient.thinkingPayload(
-            for: selection,
-            modelID: modelID,
+        let subscription = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
+            mode: mode ?? "enabled", selection: selection, options: [.off, selection],
             maxTokens: maxTokens
         )
 
@@ -250,7 +250,7 @@ struct AnthropicMessagesDirectTests {
         let body = try RemoteGenerationClient.anthropicMessagesRequestBody(
             modelID: "claude-haiku-4-5", messages: [],
             toolCatalog: RemoteToolWireCatalog(descriptors: []), maxTokens: 4_096,
-            thinkingSelection: .max
+            thinkingSelection: .low, thinkingOptions: [.off, .low]
         )
         #expect(body["max_tokens"] as? Int == 4_096)
         #expect((body["thinking"] as? [String: Any])?["budget_tokens"] as? Int == 3_072)
@@ -258,7 +258,7 @@ struct AnthropicMessagesDirectTests {
         let constrained = try RemoteGenerationClient.anthropicMessagesRequestBody(
             modelID: "claude-haiku-4-5", messages: [],
             toolCatalog: RemoteToolWireCatalog(descriptors: []), maxTokens: 2_047,
-            thinkingSelection: .minimal
+            thinkingSelection: .minimal, thinkingOptions: [.off, .minimal]
         )
         #expect(
             (constrained["thinking"] as? [String: Any])?["budget_tokens"] as? Int
@@ -267,12 +267,24 @@ struct AnthropicMessagesDirectTests {
         #expect(constrained["max_tokens"] as? Int == 2_047)
     }
 
-    @Test func interleavedThinkingCapabilityCoversManualFamiliesOnly() {
-        for model in ["claude-opus-4-1-20250805", "claude-sonnet-4-5", "claude-haiku-4-5"] {
-            #expect(RemoteStreamTransport.supportsAnthropicInterleavedThinking(modelID: model))
+    @Test func interleavedThinkingBetaFollowsEffectivePayload() throws {
+        let catalog = RemoteToolWireCatalog(descriptors: [])
+        for selection in [AgentThinkingSelection.low, .off] {
+            var body = try RemoteGenerationClient.anthropicMessagesRequestBody(
+                modelID: "opaque-model", messages: [], toolCatalog: catalog, maxTokens: 64_000,
+                thinkingSelection: selection, thinkingOptions: [.off, .low]
+            )
+            body["tools"] = [["name": "lookup", "input_schema": ["type": "object"]]]
+            let request = try RemoteStreamTransport.buildHTTPStreamingRequest(
+                path: "/messages", body: body, provider: provider, apiKey: "fixture"
+            )
+            #expect(request.headers.contains { $0.name == "anthropic-beta" } == (selection == .low))
         }
-        for model in ["claude-sonnet-4-6", "claude-3-7-sonnet", "vendor-4-5-model"] {
-            #expect(!RemoteStreamTransport.supportsAnthropicInterleavedThinking(modelID: model))
-        }
+        #expect(!RemoteStreamTransport.requiresAnthropicInterleavedThinkingBeta(
+            body: ["thinking": ["type": "adaptive"], "tools": [["name": "lookup"]]]
+        ))
+        #expect(!RemoteStreamTransport.requiresAnthropicInterleavedThinkingBeta(
+            body: ["thinking": ["type": "enabled"]]
+        ))
     }
 }

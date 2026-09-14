@@ -133,6 +133,7 @@ public enum ChatGPTSubscriptionRequestBuilder {
         model: String,
         instructions: String,
         reasoningEffort: String?,
+        preservesCatalogReasoningEffort: Bool = false,
         textVerbosity: String,
         sessionID: String,
         promptCacheKey: String? = nil,
@@ -168,12 +169,13 @@ public enum ChatGPTSubscriptionRequestBuilder {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfBlank
         if let normalizedReasoningEffort,
-           normalizedReasoningEffort != "none" {
-            // `auto` may produce reasoning without a public summary for ACP.
-            body["reasoning"] = [
-                "effort": normalizedReasoningEffort,
-                "summary": "detailed"
-            ]
+           preservesCatalogReasoningEffort || normalizedReasoningEffort != "none" {
+            var reasoning: [String: Any] = ["effort": normalizedReasoningEffort]
+            if normalizedReasoningEffort != "none" && normalizedReasoningEffort != "off" {
+                // `auto` may produce reasoning without a public summary for ACP.
+                reasoning["summary"] = "detailed"
+            }
+            body["reasoning"] = reasoning
         }
 
         return body

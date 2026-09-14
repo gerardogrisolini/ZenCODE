@@ -233,12 +233,12 @@ struct AnthropicThinkingBlockTests {
         #expect(systemCacheControl["scope"] as? String == "global")
         #expect(
             AnthropicSubscriptionGenerationClient.oauthBetaHeader(
-                forModelID: "claude-sonnet-4-20250514"
+                contextWindowTokenLimit: nil, thinkingMode: nil
             ).contains("extended-cache-ttl")
         )
         #expect(
             AnthropicSubscriptionGenerationClient.oauthBetaHeader(
-                forModelID: "claude-sonnet-4-20250514"
+                contextWindowTokenLimit: nil, thinkingMode: nil
             ).contains("prompt-caching-scope")
         )
     }
@@ -352,10 +352,10 @@ struct AnthropicThinkingBlockTests {
     @Test
     func oauthBetaHeaderMatchesClaudeCodeCachingAndThinkingBetas() {
         let adaptiveHeader = AnthropicSubscriptionGenerationClient.oauthBetaHeader(
-            forModelID: "claude-opus-5"
+            contextWindowTokenLimit: 1_000_000, thinkingMode: "adaptive"
         )
         let interleavedHeader = AnthropicSubscriptionGenerationClient.oauthBetaHeader(
-            forModelID: "claude-haiku-4-5"
+            contextWindowTokenLimit: nil, thinkingMode: "enabled"
         )
 
         #expect(adaptiveHeader.contains("claude-code-20250219"))
@@ -375,34 +375,30 @@ struct AnthropicThinkingBlockTests {
 
     @Test
     func adaptiveThinkingModelsHandleNilAndOffSelections() throws {
-        let nilSelection = AnthropicSubscriptionGenerationClient.thinkingPayload(
-            for: nil,
-            modelID: "claude-fable-5",
+        let nilSelection = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
+            mode: "adaptive", selection: nil, options: [.off, .high],
             maxTokens: 4096
         )
-        let offSelection = AnthropicSubscriptionGenerationClient.thinkingPayload(
-            for: .off,
-            modelID: "claude-fable-5",
+        let offSelection = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
+            mode: "adaptive", selection: .off, options: [.off, .high],
             maxTokens: 4096
         )
-        let nonAdaptiveOff = AnthropicSubscriptionGenerationClient.thinkingPayload(
-            for: .off,
-            modelID: "claude-haiku-4-5",
+        let nonAdaptiveOff = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
+            mode: "enabled", selection: .off, options: [.off, .high],
             maxTokens: 4096
         )
 
         #expect(nilSelection.thinking == nil)
-        #expect(nilSelection.outputConfig?["effort"] as? String == "high")
+        #expect(nilSelection.outputConfig == nil)
         #expect(offSelection.thinking?["type"] as? String == "disabled")
         #expect(offSelection.outputConfig == nil)
         #expect(nonAdaptiveOff.thinking?["type"] as? String == "disabled")
     }
 
     @Test
-    func adaptiveThinkingModelsUseAdaptiveSummarizedThinking() throws {
-        let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
-            for: .high,
-            modelID: "claude-fable-5",
+    func adaptiveThinkingMetadataDoesNotInferDisplaySupport() throws {
+        let payload = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
+            mode: "adaptive", selection: .high, options: [.off, .high],
             maxTokens: 8192
         )
         let thinking = try #require(payload.thinking)
@@ -410,31 +406,25 @@ struct AnthropicThinkingBlockTests {
 
         #expect(thinking["type"] as? String == "adaptive")
         #expect(thinking["budget_tokens"] == nil)
-        #expect(thinking["display"] as? String == "summarized")
+        #expect(thinking["display"] == nil)
         #expect(outputConfig["effort"] as? String == "high")
     }
 
     @Test
-    func adaptiveThinkingModelsRequestSummarizedDisplayAtMaxEffort() throws {
-        for modelID in ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"] {
-            let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
-                for: .max,
-                modelID: modelID,
-                maxTokens: 64_000
-            )
-            let thinking = try #require(payload.thinking)
-
-            #expect(thinking["type"] as? String == "adaptive")
-            #expect(thinking["display"] as? String == "summarized")
-            #expect(payload.outputConfig?["effort"] as? String == "max")
-        }
+    func adaptiveThinkingMetadataPreservesMaxEffortWithoutDisplayGuess() throws {
+        let payload = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
+            mode: "adaptive", selection: .max, options: [.off, .max], maxTokens: 64_000
+        )
+        let thinking = try #require(payload.thinking)
+        #expect(thinking["type"] as? String == "adaptive")
+        #expect(thinking["display"] == nil)
+        #expect(payload.outputConfig?["effort"] as? String == "max")
     }
 
     @Test
     func manualThinkingModelsUseEnabledBudgetWithoutForcedDisplay() throws {
-        let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
-            for: .high,
-            modelID: "claude-haiku-4-5",
+        let payload = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
+            mode: "enabled", selection: .high, options: [.off, .high],
             maxTokens: 8192
         )
         let thinking = try #require(payload.thinking)
@@ -446,46 +436,18 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
-    func adaptiveThinkingEffortUsesGatedLevelsOnEveryAdaptiveModel() {
-        for modelID in ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"] {
-            #expect(
-                AnthropicSubscriptionGenerationClient.adaptiveThinkingEffort(
-                    for: .xhigh,
-                    modelID: modelID
-                ) == "xhigh"
+    func adaptiveThinkingEffortUsesOnlyConfiguredLevels() {
+        for selection in [AgentThinkingSelection.xhigh, .max, .ultra, .minimal] {
+            let allowed = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
+                mode: "adaptive", selection: selection, options: [.off, selection], maxTokens: 8192
             )
-            #expect(
-                AnthropicSubscriptionGenerationClient.adaptiveThinkingEffort(
-                    for: .max,
-                    modelID: modelID
-                ) == "max"
+            #expect(allowed.outputConfig?["effort"] as? String == selection.rawValue)
+            let rejected = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
+                mode: "adaptive", selection: selection, options: [.off, .high], maxTokens: 8192
             )
-            #expect(
-                AnthropicSubscriptionGenerationClient.adaptiveThinkingEffort(
-                    for: .ultra,
-                    modelID: modelID
-                ) == "max"
-            )
+            #expect(rejected.thinking == nil)
+            #expect(rejected.outputConfig == nil)
         }
-
-        #expect(
-            AnthropicSubscriptionGenerationClient.adaptiveThinkingEffort(
-                for: .minimal,
-                modelID: "claude-opus-5"
-            ) == "low"
-        )
-        #expect(
-            AnthropicSubscriptionGenerationClient.adaptiveThinkingEffort(
-                for: .enabled,
-                modelID: "claude-opus-5"
-            ) == nil
-        )
-        #expect(
-            AnthropicSubscriptionGenerationClient.adaptiveThinkingEffort(
-                for: .max,
-                modelID: "claude-haiku-4-5"
-            ) == "high"
-        )
     }
 
     @Test
@@ -515,9 +477,8 @@ struct AnthropicThinkingBlockTests {
 
     @Test
     func manualThinkingPayloadIsOmittedBelowAnthropicBudgetMinimum() {
-        let payload = AnthropicSubscriptionGenerationClient.thinkingPayload(
-            for: .high,
-            modelID: "claude-haiku-4-5",
+        let payload = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
+            mode: "enabled", selection: .high, options: [.off, .high],
             maxTokens: 1_500
         )
 

@@ -14,6 +14,9 @@ extension AnthropicSubscriptionGenerationClient {
         attachments: [AgentRuntimeAttachment],
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
+        guard !RemoteSubscriptionModelID.modelID(fromLLMID: modelLLMID(), prefix: "claude").isEmpty else {
+            throw AgentCoreBackendError.missingRemoteProvider
+        }
         if sessions[sessionID] == nil {
             guard !MemoryConsolidationContext.isIsolated else { throw CancellationError() }
             createSession(id: sessionID, cwd: configuration.workingDirectory.path)
@@ -49,8 +52,8 @@ extension AnthropicSubscriptionGenerationClient {
             throw RemoteGenerationClientError.missingSession
         }
         let modelLLMID = modelLLMID()
-        let modelID = AnthropicSubscriptionModel.modelID(fromLLMID: modelLLMID)
-        await onEvent(.modelLoaded(AnthropicSubscriptionModel.selectionTitle(forLLMID: modelLLMID)))
+        let modelID = RemoteSubscriptionModelID.modelID(fromLLMID: modelLLMID, prefix: "claude")
+        await onEvent(.modelLoaded(AgentRemoteProvider.anthropicSubscriptionDisplayTitle + " · " + RemoteSubscriptionModelID.modelID(fromLLMID: modelLLMID, prefix: "claude")))
 
         var accumulatedText = ""
         var generationStats: [RemoteGenerationStats] = []
@@ -62,8 +65,7 @@ extension AnthropicSubscriptionGenerationClient {
                 throw RemoteGenerationClientError.missingSession
             }
             if let result = compactSessionIfNeeded(
-                &session,
-                modelLLMID: modelLLMID
+                &session
             ) {
                 guard mutateSession(for: lease, { $0.messages = session.messages }) else {
                     throw RemoteGenerationClientError.missingSession
@@ -77,7 +79,6 @@ extension AnthropicSubscriptionGenerationClient {
                     streamResult = try await streamAnthropicMessages(
                         lease: lease,
                         modelID: modelID,
-                        modelLLMID: modelLLMID,
                         credentials: credentials,
                         includeThinkingBlocks: !didRetryAfterThinkingReplayRejection,
                         // Every tool round. The inner `while true` retries
@@ -113,8 +114,7 @@ extension AnthropicSubscriptionGenerationClient {
                     }
                     guard var currentSession = currentSession(for: lease),
                           let result = compactSessionForContextLimitRetry(
-                              &currentSession,
-                              modelLLMID: modelLLMID
+                              &currentSession
                           ) else {
                         await onEvent(.diagnostic(Self.contextLimitRetryUnavailableDiagnostic()))
                         throw error
@@ -141,7 +141,7 @@ extension AnthropicSubscriptionGenerationClient {
                 if let metrics = RemoteGenerationClient.generationMetrics(generationStats) {
                     await Self.publishAnthropicSubscriptionMetrics(
                         metrics,
-                        maxTokens: resolvedContextWindowTokenLimit(forLLMID: modelLLMID),
+                        maxTokens: resolvedContextWindowTokenLimit(),
                         modelID: modelID,
                         onEvent: onEvent
                     )

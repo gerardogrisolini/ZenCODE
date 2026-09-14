@@ -14,7 +14,7 @@ import os
 
 public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
     public static var isAvailable: Bool {
-        CodexAgentModel.isReady
+        (try? ChatGPTSubscriptionAuthService.loadCredentials()) != nil
     }
 
     struct AgentSession {
@@ -79,13 +79,13 @@ public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
         init(configuration: RequestConfiguration) {
             let key = configuration.sessionKey
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let model = CodexAgentModel.selectionID(
-                forModelID: CodexAgentModel.modelID(fromLLMID: configuration.modelID)
+            let model = RemoteSubscriptionModelID.selectionID(
+                forModelID: RemoteSubscriptionModelID.modelID(fromLLMID: configuration.modelID, prefix: "chatgpt"), prefix: "chatgpt"
             )
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
             sessionKey = key.isEmpty ? "default" : key
-            modelID = model.isEmpty ? CodexAgentModel.defaultLLMID : model
+            modelID = model
             workingDirectory = ""
             systemPrompt = configuration.systemPrompt
             toolSelection = Self.toolSelectionSignature(
