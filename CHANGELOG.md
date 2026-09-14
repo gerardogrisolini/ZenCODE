@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.1.6] - 2026-09-14
+
 ### Changed
 
 - Setup no longer offers global model or thinking selection, including quick setup
