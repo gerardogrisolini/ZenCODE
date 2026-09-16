@@ -75,3 +75,53 @@ Environment:
 - **Xcode tools are unavailable**: install or update `xcode-tools` with `zen --install-features xcode-tools`, keep Xcode open, enable the package in `/tools`, and approve any MCP/automation prompt shown by Xcode.
 - **No model is configured**: run `zen` in Terminal; setup opens automatically. If the TUI is already running, use `/setup`.
 - **“This provider requires authentication” in Xcode 27 beta 3**: update ZenCODE, select **Continue with ZenCODE**, then retry the session. This is an Xcode ACP compatibility acknowledgment, not provider authentication.
+
+## Standard ACP presentation: scope and verification
+
+ZenCODE emits standard ACP v1 `plan`, `tool_call`, `tool_call_update` and
+`available_commands_update` updates. Only the supported, capability-gated `goal`,
+`review` and `plan` commands are advertised; textual command responses remain the
+fallback. Creating a delegated agent is distinct from that agent's execution and
+from task validation. Failed/blocked/cancelled plan entries are explicitly labelled
+because ACP's plan status enum has no matching failure values. Taskless idle or
+standby alone is not evidence of successful execution.
+
+Diffs are **per local operation**, not a reconstructed end-of-turn summary. The
+local write/edit/replace/multiEdit/append/applyPatch/delete/move paths capture
+actual before/committed text; delegated tool rows have agent-qualified IDs. Binary
+or unreadable files, directories, failed/rolled-back operations, and opaque
+shell/Git/MCP effects retain text instead of inventing a diff. A move is represented
+as deletion at the source and a write at the destination. Partial rollback failures
+retain their existing explicit error text. No patch string is passed off as a
+file's old or new contents. Capture is limited to verified regular files, at most
+64 KiB per text and 256 KiB per operation. Snapshot reads and emitted old/new
+content have separate cumulative 256 KiB budgets; oversize evidence falls back to
+text without truncation. Ordinary tool results without operation evidence keep
+only their existing output content, without synthetic diff-unavailable notices.
+
+Concurrent known local commits are serialized. An overlapping opaque execution
+suppresses reliable-diff presentation. **After a successful background exec launch,
+that conservative suppression lasts until this ZenCODE process exits**, even if
+the job later finishes: there is no trustworthy end-of-writers signal here.
+Unrelated external writers are outside the in-process attribution guarantee.
+
+Permission dialogs use the root ACP session for delegated requests, with distinct
+per-agent consent keys and root cleanup. Only offered `allow_once`/`allow_always`
+choices authorize; cancellation takes precedence over contradictory selection
+fields. Legacy response envelopes are still decoded, but an invented `allow_*`
+option is not authorization. Full-access policy and persistent local.exec consent
+remain unchanged. Pending tool rows do not claim execution while permission is
+still being requested.
+
+Wire/schema tests **do not demonstrate that Xcode renders these views**. Rendering
+must be verified independently in a real Xcode session (plan replacement/clear,
+parallel agents and retry, file diff, command catalog, permission cancel/deny).
+No live-provider/network exercise or Xcode UI verification accompanies these source
+changes. Added focused suites: `ACPStandardPresentationTests`,
+`ACPPresentationLifecycleIntegrationTests` and `OperationFileChangeTests`; the new
+regressions require independent execution before release. Presentation observers
+are prompt-scoped and do not claim live updates while no ACP prompt is active.
+The next prompt reattaches existing runtime observation even when the root emits
+only text. Each taskless runtime execution has a separate transient identity;
+previous output cannot complete a later running turn. Close drains accepted
+updates before replying; replacement prompt/session fences suppress stale output.

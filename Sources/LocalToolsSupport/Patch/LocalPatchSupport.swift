@@ -178,7 +178,7 @@ extension LocalToolsSupport {
             let lines = addedLines(from: filePatch.hunks)
             return FilePatchResult(newContent: lines.joined(separator: "\n") + "\n", isDelete: false)
         case .update:
-            let source = PatchTextLines(try String(contentsOf: url, encoding: .utf8))
+            let source = PatchTextLines(try LocalOperationWrite.patchText(at: url))
             let result = try applyBeginPatchHunks(
                 filePatch.hunks,
                 path: filePatch.path,
@@ -404,7 +404,7 @@ extension LocalToolsSupport {
         if filePatch.isNewFile || !FileManager.default.fileExists(atPath: url.path) {
             return ""
         }
-        return try String(contentsOf: url, encoding: .utf8)
+        return try LocalOperationWrite.patchText(at: url)
     }
 
     private static func applyUnifiedDiffHunks(

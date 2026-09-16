@@ -242,6 +242,7 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             title: URL(fileURLWithPath: cwd).lastPathComponent
         )
+        await publishAvailableCommands(sessionID: sessionID, epoch: sessionEpoch)
     }
 
     public func resolvedAllowedToolNames(
@@ -417,6 +418,7 @@ extension ZenCODEACPBridge {
                 )
             ])
         )
+        await publishAvailableCommands(sessionID: sessionID, epoch: sessionEpoch)
     }
 
     public func setModel(id: JSONValue?, params: [String: Any]) async throws {
@@ -477,6 +479,7 @@ extension ZenCODEACPBridge {
             throw error
         }
         await writer.sendResultIfRequest(id: id, result: .object([:]))
+        await publishAvailableCommands(sessionID: sessionID, epoch: sessionEpoch)
     }
 
     /// Re-check for the handlers that reconfigure an existing session through
@@ -681,6 +684,7 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             title: workingDirectory.lastPathComponent
         )
+        await publishAvailableCommands(sessionID: sessionID, epoch: restoredSessionEpoch)
     }
 
     public static func sessionID(from params: [String: Any]) -> String? {

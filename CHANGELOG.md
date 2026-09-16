@@ -10,6 +10,32 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Standard ACP task-plan snapshots, separate delegated execution rows, taskless
+  runtime snapshot observation, and a capability-gated goal/review/plan catalog.
+- Per-operation local text diff evidence for write, edit, replace, multi-edit,
+  append, patch, delete and move, propagated without changing provider or persisted
+  DTOs. Binary/opaque/uncertain changes keep explicit text fallback; background
+  exec conservatively disables reliable-diff presentation for the process lifetime.
+- Focused ACP projection/permission and operation-file-evidence test cases.
+  Wire conformity does not establish Xcode rendering compatibility.
+- Offline ACP bridge/pipeline coverage for delegated DAG invalidations, validation
+  and retry, two taskless prompt cycles, close/cancel delivery fences and late consent.
+
+### Fixed
+
+- ACP delegated permission routing uses the root session while consent keys remain
+  isolated; unoffered allow options and cancelled/teardown-racing decisions fail
+  closed. Ordinary tool completions retain their previous output-only content;
+  summaries and diff/fallback blocks are added only with operation evidence.
+- Accepted buffered ACP updates drain before close replies, while replacement
+  session/prompt fences reject stale delivery. Persistent taskless agents are
+  observed again on text-only follow-up prompts with distinct runtime-turn IDs.
+- Diff capture accepts regular files only, bounds each text to 64 KiB and each
+  operation to 256 KiB (separate snapshot-read and emitted old/new budgets), and
+  falls back to explanatory text rather than truncating or reading special files.
+
 ### Changed
 
 - Subscription setup and reconfiguration discover models through authenticated

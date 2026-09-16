@@ -218,7 +218,7 @@ struct LocalWriteFileTool: FeatureTool {
                     withIntermediateDirectories: true
                 )
             }
-            try content.write(to: path, atomically: true, encoding: .utf8)
+            try LocalOperationWrite.write(content, to: path)
             return "Wrote \(path.path) (\(byteCount) bytes)."
         }
     }
@@ -250,7 +250,7 @@ struct LocalReplaceTool: FeatureTool {
                 original, oldText: oldText, with: newText,
                 notFoundMessage: "old text was not found in \(path.path)."
             )
-            try replacement.contents.write(to: path, atomically: true, encoding: .utf8)
+            try LocalOperationWrite.write(replacement.contents, to: path)
             return "Replaced \(replacement.replacements) occurrence(s) in \(path.path)."
         }
     }
@@ -284,7 +284,7 @@ struct LocalEditFileTool: FeatureTool {
             } catch let failure as LocalFileEditFailure {
                 throw LocalToolsFeatureError.permissionDenied(editFailureMessage(failure, path: path.path))
             }
-            try result.contents.write(to: path, atomically: true, encoding: .utf8)
+            try LocalOperationWrite.write(result.contents, to: path)
             return LocalFileEditFeedback.single(path: path.path)
         }
     }
@@ -351,7 +351,7 @@ struct LocalMultiEditTool: FeatureTool {
         try Task.checkCancellation()
         let finalContents = contents
         try await LocalIOOffloader.run {
-            try finalContents.write(to: path, atomically: true, encoding: .utf8)
+            try LocalOperationWrite.write(finalContents, to: path)
         }
         return LocalFileEditFeedback.multiple(path: path.path, editCount: edits.count)
     }
@@ -378,16 +378,24 @@ struct LocalAppendTool: FeatureTool {
         }
         let data = Data(content.utf8)
         return try await LocalIOOffloader.run {
-            let descriptor = path.path.withCString {
-                open($0, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR)
+            try LocalOperationWrite.serialized {
+            let existed = LocalOperationWrite.existsForEvidence(path)
+            let before = LocalOperationWrite.snapshot(path)
+            try LocalOperationWrite.append(data, to: path)
+            let after: String?
+            if OperationFileChangeRecorder.current != nil,
+               content.utf8.count <= OperationFileChangeRecorder.maximumTextBytes,
+               (before?.count ?? 0) + content.utf8.count <= OperationFileChangeRecorder.maximumTextBytes {
+                after = before.flatMap { String(data: $0, encoding: .utf8) }.map { $0 + content }
+                    ?? (existed ? nil : content)
+            } else {
+                after = nil
             }
-            guard descriptor >= 0 else {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            }
-            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
-            defer { try? handle.close() }
-            try handle.write(contentsOf: data)
+            // A missing after-image is not a deletion: force textual fallback.
+            LocalOperationWrite.record(path: path, existed: after == nil ? true : existed,
+                                       before: after == nil ? nil : before, after: after)
             return "Appended \(data.count) bytes to \(path.path)."
+            }
         }
     }
 }
@@ -435,6 +443,7 @@ struct LocalDeleteTool: FeatureTool {
         let path = try LocalToolsSupport.requiredPath(input.path, nil, context: context)
         let recursive = input.recursive
         return try await LocalIOOffloader.run {
+            try LocalOperationWrite.serialized {
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory) else {
                 return "Path does not exist: \(path.path)"
@@ -442,8 +451,11 @@ struct LocalDeleteTool: FeatureTool {
             if isDirectory.boolValue && recursive != true {
                 throw LocalToolsFeatureError.permissionDenied("Refusing to delete directory without recursive=true.")
             }
+            let before = LocalOperationWrite.snapshot(path)
             try FileManager.default.removeItem(at: path)
+            LocalOperationWrite.record(path: path, existed: true, before: before, after: nil)
             return "Deleted \(path.path)."
+            }
         }
     }
 }
@@ -471,12 +483,25 @@ struct LocalMoveTool: FeatureTool {
         let destinationURL = context.resolvePath(destinationPath)
         let overwriteExisting = input.overwriteExisting == true
         return try await LocalIOOffloader.run {
+            try LocalOperationWrite.serialized {
             let manager = FileManager.default
+            let sourceData = LocalOperationWrite.snapshot(sourceURL)
+            let destinationExisted = LocalOperationWrite.existsForEvidence(destinationURL)
+            let destinationData = LocalOperationWrite.snapshot(destinationURL)
+            func recordMove() {
+                LocalOperationWrite.record(path: sourceURL, existed: true, before: sourceData, after: nil)
+                if let text = sourceData.flatMap({ String(data: $0, encoding: .utf8) }), !text.contains("\0") {
+                    LocalOperationWrite.record(path: destinationURL, existed: destinationExisted, before: destinationData, after: text)
+                } else {
+                    LocalOperationWrite.record(path: destinationURL, existed: true, before: nil, after: nil)
+                }
+            }
             guard manager.fileExists(atPath: sourceURL.path) else {
                 throw LocalToolsFeatureError.permissionDenied("Source does not exist: \(sourceURL.path).")
             }
             guard manager.fileExists(atPath: destinationURL.path) else {
                 try manager.moveItem(at: sourceURL, to: destinationURL)
+                recordMove()
                 return "Moved \(sourceURL.path) to \(destinationURL.path)."
             }
             guard overwriteExisting else {
@@ -492,6 +517,7 @@ struct LocalMoveTool: FeatureTool {
             do {
                 try manager.moveItem(at: sourceURL, to: destinationURL)
                 try? manager.removeItem(at: backupURL)
+                recordMove()
                 return "Moved \(sourceURL.path) to \(destinationURL.path)."
             } catch {
                 var restorationError: Error?
@@ -509,6 +535,7 @@ struct LocalMoveTool: FeatureTool {
                     )
                 }
                 throw error
+            }
             }
         }
     }

@@ -167,17 +167,35 @@ extension ZenCODEACPBridge {
             "summary": result.summary
         ]
         update["_meta"] = metadata
-        if !result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let visibleText = result.fileChanges.isEmpty ? result.output : [result.summary, result.output]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .reduce(into: [String]()) { texts, text in
+                if !texts.contains(text) { texts.append(text) }
+            }.joined(separator: "\n\n")
+        if !visibleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             update["content"] = [
                 [
                     "type": "content",
                     "content": [
                         "type": "text",
-                        "text": result.output
+                        "text": visibleText
                     ]
                 ]
             ]
         }
+        var contents = update["content"] as? [[String: Any]] ?? []
+        for change in result.fileChanges {
+            if let explanation = change.explanation {
+                contents.append(["type": "content", "content": ["type": "text", "text": "\(change.path): \(explanation)"]])
+            } else {
+                contents.append([
+                    "type": "diff", "path": change.path,
+                    "oldText": change.oldText as Any? ?? NSNull(),
+                    "newText": change.newText ?? ""
+                ])
+            }
+        }
+        if !contents.isEmpty { update["content"] = contents }
         return update
     }
 

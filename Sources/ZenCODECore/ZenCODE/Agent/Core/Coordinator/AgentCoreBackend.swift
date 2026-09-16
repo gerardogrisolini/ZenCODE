@@ -776,3 +776,15 @@ private actor MemoryProposalEvents {
     }
     func acceptsResponse() -> Bool { !attemptedTool && characters <= 4000 }
 }
+
+extension AgentCoreBackend {
+    func existingSubAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]>? {
+        guard let activeBackend else { return nil }
+        return await activeBackend.subAgentSnapshotEvents(rootSessionID: rootSessionID)
+    }
+
+    public func subAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]> {
+        guard let activeBackend else { return AsyncStream { $0.finish() } }
+        return await activeBackend.subAgentSnapshotEvents(rootSessionID: rootSessionID)
+    }
+}

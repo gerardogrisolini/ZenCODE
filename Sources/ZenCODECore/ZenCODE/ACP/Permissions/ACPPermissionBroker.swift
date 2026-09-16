@@ -13,12 +13,18 @@ public actor ACPPermissionBroker {
     private var alwaysAllowedKeys = Set<String>()
     private var alwaysRejectedKeys = Set<String>()
     private var decisionKeysBySessionID: [String: Set<String>] = [:]
+    private var sessionGenerations: [String: UInt64] = [:]
+    private var generation: UInt64 = 0
 
     public init(writer: ACPWriter) {
         self.writer = writer
     }
 
     public func authorize(_ request: AgentToolAuthorizationRequest) async -> Bool {
+        guard !Task.isCancelled else { return false }
+        let ownerSessionID = request.delegatedIdentity?.rootSessionID ?? request.sessionID ?? ""
+        let sessionGeneration = sessionGenerations[ownerSessionID, default: 0]
+        let currentGeneration = generation
         let cacheKey = permissionCacheKey(for: request)
         if alwaysAllowedKeys.contains(cacheKey) {
             return true
@@ -42,9 +48,15 @@ public actor ACPPermissionBroker {
             return false
         }
 
+        // Reentrancy during the dialog must not resurrect consent after teardown.
+        guard !Task.isCancelled,
+              generation == currentGeneration,
+              sessionGenerations[ownerSessionID, default: 0] == sessionGeneration else {
+            return false
+        }
         if optionID == "allow_always" {
             alwaysAllowedKeys.insert(cacheKey)
-            remember(cacheKey: cacheKey, for: request.sessionID)
+            remember(cacheKey: cacheKey, for: ownerSessionID)
             if request.toolName == "local.exec" {
                 LocalExecPermissionAuthorizer.persistAllowedCommand(request.command)
             }
@@ -52,10 +64,10 @@ public actor ACPPermissionBroker {
         }
         if optionID == "reject_always" {
             alwaysRejectedKeys.insert(cacheKey)
-            remember(cacheKey: cacheKey, for: request.sessionID)
+            remember(cacheKey: cacheKey, for: ownerSessionID)
             return false
         }
-        if optionID == "allow" || optionID.hasPrefix("allow_") {
+        if optionID == "allow_once" {
             return true
         }
         return false
@@ -66,6 +78,7 @@ public actor ACPPermissionBroker {
     }
 
     public func removeCachedDecisions(sessionID: String) {
+        sessionGenerations[sessionID, default: 0] &+= 1
         guard let keys = decisionKeysBySessionID.removeValue(forKey: sessionID) else {
             return
         }
@@ -74,6 +87,8 @@ public actor ACPPermissionBroker {
     }
 
     public func removeAllCachedDecisions() {
+        generation &+= 1
+        sessionGenerations.removeAll()
         alwaysAllowedKeys.removeAll()
         alwaysRejectedKeys.removeAll()
         decisionKeysBySessionID.removeAll()
@@ -89,7 +104,7 @@ public actor ACPPermissionBroker {
     }
 
     private func permissionParams(for request: AgentToolAuthorizationRequest) -> [String: Any] {
-        let sessionID = request.sessionID ?? ""
+        let sessionID = request.delegatedIdentity?.rootSessionID ?? request.sessionID ?? ""
         return [
             "sessionId": sessionID,
             "options": [
@@ -115,7 +130,7 @@ public actor ACPPermissionBroker {
                 ]
             ],
             "toolCall": [
-                "toolCallId": request.toolCallID,
+                "toolCallId": request.delegatedIdentity.map { "acp:tool:\($0.agentID):\(request.toolCallID)" } ?? request.toolCallID,
                 "status": "pending",
                 "title": request.title,
                 "kind": ZenCODEACPBridge.acpToolKind(request.kind),
@@ -155,12 +170,16 @@ public actor ACPPermissionBroker {
     }
 
     static func permissionCacheKeyValue(for request: AgentToolAuthorizationRequest) -> String {
-        Self.lengthPrefixedComponents([
+        let components = [
             request.sessionID ?? "",
             request.toolName,
             request.workingDirectory,
             Self.permissionCacheCommandIdentity(for: request)
-        ])
+        ]
+        guard let identity = request.delegatedIdentity else {
+            return Self.lengthPrefixedComponents(components)
+        }
+        return Self.lengthPrefixedComponents(components + [identity.rootSessionID, identity.agentID])
     }
 
     static func permissionCacheCommandIdentity(
@@ -188,6 +207,12 @@ public actor ACPPermissionBroker {
             return optionID
         }
         guard let object = result?.objectValue else {
+            return nil
+        }
+        // Cancellation wins over contradictory legacy selection fields.
+        if object["outcome"]?.acpStringValue == "cancelled"
+            || object["outcome"]?.objectValue?["outcome"]?.acpStringValue == "cancelled"
+            || object["selected"]?.objectValue?["outcome"]?.acpStringValue == "cancelled" {
             return nil
         }
         if let optionID = selectedOptionID(in: object) {

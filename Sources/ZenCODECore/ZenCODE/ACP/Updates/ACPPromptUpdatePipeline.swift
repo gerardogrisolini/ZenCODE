@@ -50,6 +50,8 @@ final class ACPPromptUpdatePipeline: Sendable {
     private let writer: ACPWriter
     private let sessionID: String
     private let buffersUpdates: Bool
+    private let isValid: @Sendable () async -> Bool
+    private let canDeliver: @Sendable () async -> Bool
     private let thoughtNormalizer: Mutex<ACPChatGPTThoughtNormalizer?>
     /// Test seam invoked by every raw task before it awaits its predecessor.
     /// It proves that all task bodies may be scheduled in any order while the
@@ -66,6 +68,8 @@ final class ACPPromptUpdatePipeline: Sendable {
         buffer: ACPPromptUpdateBuffer,
         buffersUpdates: Bool = true,
         normalizesChatGPTThoughts: Bool = false,
+        isValid: @escaping @Sendable () async -> Bool = { true },
+        canDeliver: @escaping @Sendable () async -> Bool = { true },
         onTaskStart: (@Sendable (Int) async -> Void)? = nil,
         onUnitStart: (@Sendable (Int) async -> Void)? = nil,
         onUnitFinish: (@Sendable (Int) async -> Void)? = nil
@@ -74,6 +78,8 @@ final class ACPPromptUpdatePipeline: Sendable {
         self.writer = writer
         self.buffer = buffer
         self.buffersUpdates = buffersUpdates
+        self.isValid = isValid
+        self.canDeliver = canDeliver
         self.thoughtNormalizer = Mutex(normalizesChatGPTThoughts ? ACPChatGPTThoughtNormalizer() : nil)
         self.onTaskStart = onTaskStart
         self.onUnitStart = onUnitStart
@@ -84,7 +90,11 @@ final class ACPPromptUpdatePipeline: Sendable {
     /// returned task waits for this unit specifically, so a final result can
     /// never overtake updates enqueued before it.
     @discardableResult
-    func enqueue(_ unit: Unit) -> Task<Void, Never> {
+    /// `onAccepted` acknowledges consume units only after admission and buffer/
+    /// writer processing. Rejection by the prompt fence never acknowledges.
+    /// Accepted buffered content remains owned by this pipeline's close flush;
+    /// delivery still uses the separate incarnation fence.
+    func enqueue(_ unit: Unit, onAccepted: (@Sendable () async -> Void)? = nil) -> Task<Void, Never> {
         state.withLock { state -> Task<Void, Never> in
             let predecessor = state.tail
             let ordinal = state.nextOrdinal
@@ -96,7 +106,7 @@ final class ACPPromptUpdatePipeline: Sendable {
                 if let predecessor {
                     await predecessor.value
                 }
-                await self.run(unit, ordinal: ordinal)
+                await self.run(unit, ordinal: ordinal, onAccepted: onAccepted)
             }
             state.tail = task
             return task
@@ -110,11 +120,14 @@ final class ACPPromptUpdatePipeline: Sendable {
         await enqueue(.init(kind: .barrier)).value
     }
 
-    private func writeUpdate(_ update: JSONValue) async {
+    @discardableResult
+    private func writeUpdate(_ update: JSONValue) async -> Bool {
         let updates = buffersUpdates ? buffer.consume(update) : [update]
         for update in updates {
+            guard await canDeliver() else { return false }
             await writer.sendSessionUpdate(sessionID: sessionID, update: update)
         }
+        return true
     }
 
     private func finishThought() async {
@@ -125,36 +138,41 @@ final class ACPPromptUpdatePipeline: Sendable {
         ))
     }
 
-    private func run(_ unit: Unit, ordinal: Int) async {
+    private func run(_ unit: Unit, ordinal: Int, onAccepted: (@Sendable () async -> Void)?) async {
         if let onUnitStart {
             await onUnitStart(ordinal)
         }
         switch unit.kind {
         case let .consume(update):
+            // Fence admission, not delivery: close must flush accepted content.
+            guard await isValid() else { return }
             let kind = update.objectValue?["sessionUpdate"]?.acpStringValue
             if kind == "agent_message_chunk" || kind == "tool_call" {
                 await finishThought()
             }
+            var accepted = true
             if kind == "agent_thought_chunk",
                let text = update.objectValue?["content"]?.objectValue?["text"]?.acpStringValue {
                 let normalized = thoughtNormalizer.withLock { $0?.consume(text) }
                 if let normalized {
                     if !normalized.isEmpty {
-                        await writeUpdate(ZenCODEACPBridge.textChunkJSONUpdate(
+                        accepted = await writeUpdate(ZenCODEACPBridge.textChunkJSONUpdate(
                             kind: "agent_thought_chunk", text: normalized
                         ))
                     }
                 } else {
-                    await writeUpdate(update)
+                    accepted = await writeUpdate(update)
                 }
             } else {
-                await writeUpdate(update)
+                accepted = await writeUpdate(update)
             }
+            if accepted, let onAccepted { await onAccepted() }
         case .finishThought:
             await finishThought()
         case .flush:
             await finishThought()
             for bufferedUpdate in buffer.flushAll() {
+                guard await canDeliver() else { return }
                 await writer.sendSessionUpdate(
                     sessionID: sessionID,
                     update: bufferedUpdate
@@ -162,11 +180,13 @@ final class ACPPromptUpdatePipeline: Sendable {
             }
         case let .flushThenNotify(method, params):
             for bufferedUpdate in buffer.flushAll() {
+                guard await canDeliver() else { return }
                 await writer.sendSessionUpdate(
                     sessionID: sessionID,
                     update: bufferedUpdate
                 )
             }
+            guard await isValid() else { return }
             await writer.sendCustomNotification(method: method, params: params)
         case .barrier:
             break

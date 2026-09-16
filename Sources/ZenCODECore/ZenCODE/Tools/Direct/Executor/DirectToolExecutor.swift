@@ -515,8 +515,22 @@ public actor DirectToolExecutor {
         if MemoryConsolidationContext.isIsolated {
             return DirectAgentToolResult(output: "Tools unavailable.", summary: "Tools unavailable.", status: .permissionDenied)
         }
+        let opaqueMutation = !Self.isCoreLocalFileOrTextToolName(toolCall.name)
+            && !toolCall.name.hasPrefix("agent.")
+            && !toolCall.name.hasPrefix("tasks.")
+            && !toolCall.name.hasPrefix("todo.")
+        if opaqueMutation { OperationMutationUncertainty.begin() }
+        // Background commands can continue writing after their tool result. Keep
+        // evidence conservatively unavailable for this process once launched.
+        let requestsBackground = toolCall.name == "local.exec"
+            && toolCall.argumentsObject.bool("background") == true
+        var mayOutliveCall = false
+        defer {
+            if opaqueMutation && !mayOutliveCall { OperationMutationUncertainty.end() }
+        }
         let clock = ContinuousClock()
         let started = clock.now
+        let recorder = OperationFileChangeRecorder()
         let baseResult: DirectAgentToolResult
         var executionError: Error?
         do {
@@ -531,12 +545,15 @@ public actor DirectToolExecutor {
             guard isAllowed || featureToolIsAllowed else {
                 throw DirectToolExecutorError.toolNotAllowed(toolCall.name)
             }
-            let execution = try await executeThrowingResult(
-                sessionID: sessionID,
-                toolCall: toolCall,
-                workingDirectory: workingDirectory,
-                allowedToolNames: allowedToolNames
-            )
+            let execution = try await OperationFileChangeRecorder.$current.withValue(recorder) {
+                try await executeThrowingResult(
+                    sessionID: sessionID,
+                    toolCall: toolCall,
+                    workingDirectory: workingDirectory,
+                    allowedToolNames: allowedToolNames
+                )
+            }
+            mayOutliveCall = requestsBackground
             baseResult = self.result(
                 output: execution.output,
                 toolName: toolCall.name,
@@ -562,8 +579,13 @@ public actor DirectToolExecutor {
                 )
             }
         }
+        let evidencedResult = DirectAgentToolResult(
+            output: baseResult.output, summary: baseResult.summary,
+            modelOutput: baseResult.modelOutput, status: baseResult.status,
+            attachments: baseResult.attachments, fileChanges: recorder.changes
+        )
         let result = await deliveringInlineSharedChatMessages(
-            baseResult,
+            evidencedResult,
             sessionID: sessionID
         )
         ToolExecutionLog.record(
@@ -603,7 +625,8 @@ public actor DirectToolExecutor {
                 + "\n\n"
                 + DirectSubAgentRuntime.inlineSharedChatDeliveryBlock(deliverable),
             status: result.status,
-            attachments: result.attachments
+            attachments: result.attachments,
+            fileChanges: result.fileChanges
         )
     }
 
@@ -772,5 +795,11 @@ public actor DirectToolExecutor {
     /// has the shared `SessionTaskOrchestrator` installed separately.
     static func isBorrowedSubAgentToolName(_ toolName: String) -> Bool {
         DirectSubAgentRuntime.isSubAgentToolName(toolName)
+    }
+}
+
+extension DirectToolExecutor {
+    public func subAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]> {
+        await subAgentRuntime.snapshotEvents(rootSessionID: rootSessionID)
     }
 }

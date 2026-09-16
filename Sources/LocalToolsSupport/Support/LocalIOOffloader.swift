@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import ToolCore
 
 /// Runs blocking, integral file/text I/O off the cooperative thread pool and
 /// honors cooperative `Task` cancellation.
@@ -52,10 +53,14 @@ enum LocalIOOffloader {
         // (and occupying a GCD thread) when the caller already gave up.
         try Task.checkCancellation()
 
+        let recorder = OperationFileChangeRecorder.current
         let value = try await withCheckedThrowingContinuation { continuation in
             Self.ioQueue.async {
                 do {
-                    continuation.resume(returning: try operation())
+                    let result = try OperationFileChangeRecorder.$current.withValue(recorder) {
+                        try operation()
+                    }
+                    continuation.resume(returning: result)
                 } catch is CancellationError {
                     continuation.resume(throwing: CancellationError())
                 } catch {

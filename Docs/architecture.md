@@ -483,3 +483,45 @@ credentials remain decodable. Generation overrides add optional
 legacy manifests unchanged. These additive fields must survive settings round
 trips; cache contents contain no tokens or token hashes. Only setup may select
 new discovered models, and existing saved manifests are not silently replaced.
+
+## ACP standard presentation and operation evidence
+
+ACP projects the current `SessionTaskOrchestrator` snapshot as a complete standard
+`plan`, using its event stream as invalidation (including delegated mutations),
+not as a second DAG owner. `normal` priority becomes `medium`; blocked, failed and
+cancelled entries retain their real state in the label rather than being shown as
+successful completion. Attempt work is a separate standard tool row from the real
+`agent.create` call. Runtime snapshot streams provide the corresponding taskless
+presentation without polling. These streams and their projections are ephemeral;
+prompt teardown cancels/drains observers. Admission fences reject late producers;
+accepted buffered output still drains during close, unless a replacement prompt or
+session owns the wire identity. Persistent taskless agents are re-observed at the
+next prompt start, even without root tools. Runtime execution revisions identify
+actual turns independently of historical output revisions; terminal rows are not
+reopened. These revisions and projections are not persisted. Validation remains
+a task state, not an inference from standby.
+
+`OperationFileChangeRecorder` is a neutral, task-local, non-Codable ToolCore
+contract. LocalToolsSupport captures bytes at the local mutation's commit boundary
+and carries them through the offloaded I/O closure into the non-Codable
+`DirectAgentToolResult`; no provider wire or saved-session DTO changes. Text write,
+edit, replace, multi-edit, append, patch, delete and move use a shared synchronous
+mutation critical section. Patch evidence is published only after all commits
+succeed, never from parsed hunk text or after a successful rollback. Move evidence
+is a source deletion plus destination write. Missing old files use null old text;
+binary/unreadable content and directories have explanatory text instead of a
+fabricated diff. Text summaries accompany actual operation evidence; ordinary tool
+results retain their prior output-only content and `_meta`.
+
+Capture runs only with an installed operation recorder and verifies regular-file
+identity on the opened descriptor. Each text is limited to 64 KiB; snapshot reads
+reserve a cumulative 256 KiB budget before reading, and emitted old/new texts share
+a separate 256 KiB operation budget. Oversize, binary, special-file, or uncertain
+evidence produces explanatory fallback, never a truncated diff.
+
+Opaque foreground operations conservatively invalidate overlapping local evidence.
+A launched `local.exec` background operation invalidates certainty for the rest of
+that process: the return of its tool call is not proof that its writers stopped.
+External processes not launched through this executor cannot be synchronized by
+this in-process mechanism. Shell/Git/MCP effects themselves have text fallback,
+not inferred per-operation patches. See `Docs/xcode.md` for host-rendering limits.

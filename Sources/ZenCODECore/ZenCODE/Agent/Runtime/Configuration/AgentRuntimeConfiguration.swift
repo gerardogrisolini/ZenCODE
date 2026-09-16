@@ -709,6 +709,7 @@ public protocol AgentRuntimeBackend: Actor {
     func activeToolDescriptors(sessionID: String?) async -> [DirectToolDescriptor]
 
     func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot]
+    func subAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]>
 
     func sharedChatParticipants(rootSessionID: String) async -> [AgentSharedChat.Participant]
     func sendSharedChatMessage(
@@ -835,5 +836,11 @@ extension AgentRuntimeBackend {
 
     public func snapshotSession(id _: String) -> AgentRuntimeSessionSnapshot? {
         nil
+    }
+}
+
+extension AgentRuntimeBackend {
+    public func subAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]> {
+        AsyncStream { $0.finish() }
     }
 }

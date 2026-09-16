@@ -147,6 +147,12 @@ extension ZenCODEACPBridge {
                         : nil
                 }
             } ?? false,
+            presentedCommands: epoch.flatMap { expectedEpoch in
+                sessions[configuration.sessionID].flatMap { $0.epoch == expectedEpoch ? $0.presentedCommands : nil }
+            },
+            tasklessPresentation: epoch.flatMap { expectedEpoch in
+                sessions[configuration.sessionID].flatMap { $0.epoch == expectedEpoch ? $0.tasklessPresentation : nil }
+            } ?? ACPTasklessPresentation(),
             activePromptID: activePromptID,
             activePromptTask: activePromptTask,
             operationState: operationState,

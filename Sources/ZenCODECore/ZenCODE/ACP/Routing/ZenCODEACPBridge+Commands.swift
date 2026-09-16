@@ -591,7 +591,7 @@ extension ZenCODEACPBridge {
         """
     }
 
-    private func acpSubAgentsAreAvailable(
+    func acpSubAgentsAreAvailable(
         in session: SessionState,
         requiresMessaging: Bool = false
     ) -> Bool {
@@ -1202,5 +1202,28 @@ extension ZenCODEACPBridge {
             stopReason: parent.stopReason,
             modelID: plannerResult.response.modelID
         )
+    }
+}
+
+extension ZenCODEACPBridge {
+    func availableCommandsUpdate(for session: SessionState) -> JSONValue {
+        var commands: [JSONValue] = []
+        if acpSubAgentsAreAvailable(in: session) {
+            for (name, description) in [("goal", "Run a delegated task workflow"), ("review", "Review with delegated agents"), ("plan", "Create or manage a plan")] {
+                commands.append(.object([
+                    "name": .string(name), "description": .string(description),
+                    "input": .object(["hint": .string("Instructions or subcommand")])
+                ]))
+            }
+        }
+        return .object(["sessionUpdate": .string("available_commands_update"), "availableCommands": .array(commands)])
+    }
+
+    func publishAvailableCommands(sessionID: String, epoch: UInt64) async {
+        guard let session = liveSession(id: sessionID, epoch: epoch) else { return }
+        let update = availableCommandsUpdate(for: session)
+        guard session.presentedCommands != update else { return }
+        sessions[sessionID]?.presentedCommands = update
+        await writer.sendSessionUpdate(sessionID: sessionID, update: update)
     }
 }

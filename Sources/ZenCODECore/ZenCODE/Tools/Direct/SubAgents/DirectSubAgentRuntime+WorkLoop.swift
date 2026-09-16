@@ -173,6 +173,7 @@ extension DirectSubAgentRuntime {
         agent.currentTurnRepliesToOperator = repliesToOperator
         agent.currentTurnSentOperatorMessage = false
         agent.status = .running
+        agent.executionRevision &+= 1
         agent.resetActivityState()
         // Keep the previous turn's counters on screen until this turn reports
         // its own, then replace them wholesale.
@@ -411,6 +412,7 @@ extension DirectSubAgentRuntime {
         let trimmedOutput = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
         agent.latestOutput = trimmedOutput
         agent.latestOutputRevision &+= 1
+        agent.completedExecutionRevision = agent.executionRevision
         if let existing = agent.accumulatedOutput?.trimmingCharacters(in: .whitespacesAndNewlines),
            !existing.isEmpty,
            !trimmedOutput.isEmpty {

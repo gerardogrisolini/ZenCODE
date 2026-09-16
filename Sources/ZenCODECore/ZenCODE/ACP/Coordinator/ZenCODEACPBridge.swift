@@ -36,6 +36,11 @@ public actor ZenCODEACPBridge {
         /// ACP presentation only: never persisted or added to model history.
         /// A loaded/resumed session is a new incarnation and announces again.
         var hasPresentedInitialConfiguration = false
+        var presentedCommands: JSONValue?
+        var promptUpdatePipeline: ACPPromptUpdatePipeline?
+        var delegatedToolNotifications = Set<String>()
+        var tasklessObserver: Task<Void, Never>?
+        var tasklessPresentation = ACPTasklessPresentation()
         /// Reserved synchronously by `session/prompt` before its first `await`,
         /// making one prompt per session atomically exclusive even when several
         /// requests are dispatched concurrently.
@@ -158,6 +163,8 @@ public actor ZenCODEACPBridge {
         let drainWaiters = promptHandlerDrainWaiters
         promptHandlerDrainWaiters.removeAll()
         let sessionIDs = Array(sessions.keys)
+        let tasklessObservers = sessions.values.compactMap(\.tasklessObserver)
+        for observer in tasklessObservers { observer.cancel() }
         for sessionID in sessionIDs {
             sessions[sessionID]?.activePromptTask?.cancel()
             sessions[sessionID]?.activePromptTask = nil
@@ -178,6 +185,7 @@ public actor ZenCODEACPBridge {
         // writer, so latching it here is what makes "nothing is written after
         // shutdown" true regardless of where in-flight work was parked.
         await writer.close()
+        for observer in tasklessObservers { await observer.value }
         await permissionBroker.removeAllCachedDecisions()
         await sessionRunner.shutdown()
     }
@@ -350,6 +358,14 @@ public actor ZenCODEACPBridge {
         }
     }
 
+    /// Delivery ownership outlives admission during close/cancel so accepted
+    /// buffered content drains, but never crosses into a replacement prompt.
+    func canDeliverPresentation(sessionID: String, epoch: UInt64, promptID: UUID) -> Bool {
+        guard !didShutDown else { return false }
+        guard let session = sessions[sessionID] else { return true }
+        return session.epoch == epoch && (session.activePromptID == nil || session.activePromptID == promptID)
+    }
+
     /// Returns the session only when it is still the same incarnation, so a
     /// caller that suspended cannot resurrect a closed or replaced session.
     func liveSession(id sessionID: String, epoch: UInt64) -> SessionState? {
@@ -382,6 +398,7 @@ public actor ZenCODEACPBridge {
         guard sessions[sessionID]?.epoch == epoch else {
             return
         }
+        sessions[sessionID]?.tasklessObserver?.cancel()
         sessions.removeValue(forKey: sessionID)
         updateSessionSleepAssertion()
     }

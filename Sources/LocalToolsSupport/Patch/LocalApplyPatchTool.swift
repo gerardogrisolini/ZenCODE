@@ -15,6 +15,8 @@ import FeatureKit
 import ToolCore
 
 struct LocalApplyPatchTool: FeatureTool {
+    /// Internal fault injection scoped to a test task, never a tool input.
+    @TaskLocal static var failAfterCommitCount: Int?
     struct Input: Decodable, Sendable {
         let patch: String?
         let diff: String?
@@ -44,10 +46,13 @@ struct LocalApplyPatchTool: FeatureTool {
         let rawPatch = try LocalToolsSupport.requiredRawString(input.patch, input.diff, name: "patch")
         // Parsing and hunk validation happen before staging; the complete commit
         // then remains off the cooperative pool with no await/reentrancy point.
+        let failAfterCommitCount = Self.failAfterCommitCount
         return try await LocalIOOffloader.run { [self] in
-            let plannedChanges = try plannedPatchChanges(for: rawPatch, context: context)
-            let changedPaths = try commit(plannedChanges)
-            return "Applied patch to \(changedPaths.count) file(s):\n" + changedPaths.joined(separator: "\n")
+            return try LocalOperationWrite.serialized {
+                let plannedChanges = try plannedPatchChanges(for: rawPatch, context: context)
+                let changedPaths = try commit(plannedChanges, failAfterCommitCount: failAfterCommitCount)
+                return "Applied patch to \(changedPaths.count) file(s):\n" + changedPaths.joined(separator: "\n")
+            }
         }
     }
 
@@ -97,7 +102,7 @@ struct LocalApplyPatchTool: FeatureTool {
     /// backups. POSIX has no portable all-files atomic rename, so a failure is
     /// rolled back synchronously. If rollback itself fails, the error explicitly
     /// lists paths that may have been committed rather than claiming atomicity.
-    private func commit(_ changes: [PlannedPatchChange]) throws -> [String] {
+    private func commit(_ changes: [PlannedPatchChange], failAfterCommitCount: Int?) throws -> [String] {
         let duplicatePaths = Dictionary(grouping: changes, by: { $0.url.standardizedFileURL.path })
             .filter { $0.value.count > 1 }
             .map(\.key)
@@ -122,6 +127,9 @@ struct LocalApplyPatchTool: FeatureTool {
             for stagedChange in staged {
                 try apply(stagedChange)
                 committed.append(stagedChange)
+                if failAfterCommitCount == committed.count {
+                    throw POSIXError(.EIO)
+                }
             }
         } catch {
             let rollbackFailures = rollback(staged.reversed())
@@ -144,6 +152,13 @@ struct LocalApplyPatchTool: FeatureTool {
             stagedChange.change.isDelete
                 ? "deleted \(stagedChange.change.url.path)"
                 : "patched \(stagedChange.change.url.path)"
+        }
+        // Publish evidence only after every commit succeeded. Rolled-back writes
+        // produce no diff; partial rollback failure remains an explicit text error.
+        for item in staged {
+            let before = item.backupURL.flatMap { LocalOperationWrite.snapshot($0) }
+            LocalOperationWrite.record(path: item.change.url, existed: item.hadOriginal,
+                                       before: before, after: item.change.newContent)
         }
         cleanup(staged)
         return changedPaths

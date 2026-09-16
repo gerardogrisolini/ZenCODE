@@ -227,3 +227,16 @@ extension AgentCoreSessionRunner {
     /// intended for best-effort replay presentation; live calls already carry
     /// the descriptor snapshot selected for their model round.
 }
+
+extension AgentCoreSessionRunner {
+    /// Does not instantiate a backend; the first-tool hook can retry after creation.
+    func existingSubAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]>? {
+        guard let backend else { return nil }
+        return await backend.existingSubAgentSnapshotEvents(rootSessionID: rootSessionID)
+    }
+
+    public func subAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]> {
+        guard let backend else { return AsyncStream { $0.finish() } }
+        return await backend.subAgentSnapshotEvents(rootSessionID: rootSessionID)
+    }
+}

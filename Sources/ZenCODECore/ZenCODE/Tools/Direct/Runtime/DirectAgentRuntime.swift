@@ -124,19 +124,22 @@ public struct DirectAgentToolResult: Sendable {
     public let modelOutput: String
     public let status: Status
     public let attachments: [AgentRuntimeAttachment]
+    public let fileChanges: [OperationFileChange]
 
     public init(
         output: String,
         summary: String,
         modelOutput: String? = nil,
         status: Status = .completed,
-        attachments: [AgentRuntimeAttachment] = []
+        attachments: [AgentRuntimeAttachment] = [],
+        fileChanges: [OperationFileChange] = []
     ) {
         self.output = output
         self.summary = summary
         self.modelOutput = modelOutput ?? output
         self.status = status
         self.attachments = attachments
+        self.fileChanges = fileChanges
     }
 
     public var isFailure: Bool {

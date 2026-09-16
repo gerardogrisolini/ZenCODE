@@ -241,15 +241,15 @@ extension ZenCODEACPBridge {
         let normalizesChatGPTThoughts = AgentSettingsStore.defaultSelection(
             explicitModelID: promptConfiguration.modelID
         )?.remoteProvider?.isChatGPTSubscriptionProvider == true
-        let updatePipeline = appMode || normalizesChatGPTThoughts
-            ? ACPPromptUpdatePipeline(
+        let updatePipeline: ACPPromptUpdatePipeline? = ACPPromptUpdatePipeline(
                 sessionID: sessionID,
                 writer: writer,
                 buffer: ACPPromptUpdateBuffer(),
                 buffersUpdates: appMode,
-                normalizesChatGPTThoughts: normalizesChatGPTThoughts
+                normalizesChatGPTThoughts: normalizesChatGPTThoughts,
+                isValid: { await self.isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) },
+                canDeliver: { await self.canDeliverPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) }
             )
-            : nil
         let sessionRunner = self.sessionRunner
         // ACP locations must be absolute. Relative tool arguments are resolved
         // by the tools against the session workspace, not against the agent
@@ -286,8 +286,43 @@ extension ZenCODEACPBridge {
             throw CancellationError()
         }
 
+        sessions[sessionID]?.promptUpdatePipeline = updatePipeline
+        sessions[sessionID]?.delegatedToolNotifications.removeAll()
+        // Persistent taskless agents may run during a text-only follow-up.
+        await ensureTasklessObserver(sessionID: sessionID, epoch: epoch, promptID: promptID)
+        await sessionRunner.updateSubAgentToolEventHandler { [weak self] event in
+            await self?.presentDelegatedToolEvent(event)
+        }
         let planPointCollector = PlanningPointCollector()
         let assistantBlocks = ACPAssistantBlockCollector()
+        let taskPresentation = ACPTaskPresentation()
+        let graphEvents = await sessionRunner.taskOrchestrator.events(sessionID: sessionID)
+        let graphObserver = Task {
+            guard let updatePipeline else { return }
+            await publishTaskPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID,
+                                          presentation: taskPresentation, pipeline: updatePipeline)
+            for await _ in graphEvents {
+                guard !Task.isCancelled else { return }
+                await publishTaskPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID,
+                                              presentation: taskPresentation, pipeline: updatePipeline)
+            }
+        }
+        func finishTaskPresentation() async {
+            if liveSession(id: sessionID, epoch: epoch)?.promptUpdatePipeline === updatePipeline {
+                let tasklessObserver = sessions[sessionID]?.tasklessObserver
+                sessions[sessionID]?.tasklessObserver = nil
+                sessions[sessionID]?.promptUpdatePipeline = nil
+                tasklessObserver?.cancel()
+                await tasklessObserver?.value
+            }
+            graphObserver.cancel()
+            await graphObserver.value
+            if let updatePipeline {
+                await publishTaskPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID,
+                                              presentation: taskPresentation, pipeline: updatePipeline)
+                await updatePipeline.drain()
+            }
+        }
         let activePromptTask = Task(name: "ZenCODEACPBridge.prompt") {
             await sessionRunner.updatePromptSkillSelection(
                 selectedAgentSkills(for: session.selectedAgent),
@@ -298,6 +333,11 @@ extension ZenCODEACPBridge {
                   currentSession.activePromptID == promptID,
                   currentSession.operationState == .prompting(promptID) else {
                 throw CancellationError()
+            }
+            let commands = availableCommandsUpdate(for: currentSession)
+            if currentSession.presentedCommands != commands {
+                sessions[sessionID]?.presentedCommands = commands
+                await sendPromptUpdate(commands)
             }
             if !currentSession.hasPresentedInitialConfiguration {
                 // Claim before suspending. This flag belongs to this live ACP
@@ -377,15 +417,10 @@ extension ZenCODEACPBridge {
                             )
                         }
                     case let .toolCallStarted(toolCall):
+                        await self.ensureTasklessObserver(sessionID: sessionID, epoch: epoch, promptID: promptID)
                         await assistantBlocks.finishBlock()
                         await sendPromptUpdate(
                             Self.toolCallCreateJSONUpdate(
-                                for: toolCall,
-                                workingDirectory: workspaceURL
-                            )
-                        )
-                        await sendPromptUpdate(
-                            Self.toolCallProgressJSONUpdate(
                                 for: toolCall,
                                 workingDirectory: workspaceURL
                             )
@@ -471,6 +506,7 @@ extension ZenCODEACPBridge {
         }
         guard sessionIsLive, didRegisterPromptTask else {
             activePromptTask.cancel()
+            await finishTaskPresentation()
             throw CancellationError()
         }
 
@@ -492,6 +528,7 @@ extension ZenCODEACPBridge {
                     )
                 )
             }
+            await finishTaskPresentation()
             await flushPromptUpdates()
             await refreshSessionStateIfAvailable(
                 sessionID: sessionID,
@@ -530,6 +567,7 @@ extension ZenCODEACPBridge {
                     promptID: promptID
                 )
             }
+            await finishTaskPresentation()
             await flushPromptUpdates()
             await refreshSessionStateIfAvailable(
                 sessionID: sessionID,
@@ -558,6 +596,7 @@ extension ZenCODEACPBridge {
                     promptID: promptID
                 )
             }
+            await finishTaskPresentation()
             await flushPromptUpdates()
             await refreshSessionStateIfAvailable(
                 sessionID: sessionID,
@@ -693,11 +732,14 @@ extension ZenCODEACPBridge {
         // Drop the session before any suspension so a prompt finishing
         // concurrently cannot restore it through refreshSessionStateIfAvailable.
         let closedSession = sessions.removeValue(forKey: sessionID)
+        closedSession?.tasklessObserver?.cancel()
         // Snapshot before the first suspension. Teardown below awaits several
         // collaborators; a session recreated with this id during that window
         // owns different prompt handlers and must not hold this close hostage.
         let promptHandlersToDrain = promptHandlerTokensSnapshot(sessionID: sessionID)
         await permissionBroker.removeCachedDecisions(sessionID: sessionID)
+        await closedSession?.tasklessObserver?.value
+        await closedSession?.promptUpdatePipeline?.drain()
         closedSession?.activePromptTask?.cancel()
         if let closedEpoch = closedSession?.epoch {
             // Invalidate the lifecycle work bound to the incarnation we are

@@ -104,3 +104,9 @@ extension DirectToolRuntimeBackend {
         await toolExecutor.updateSubAgentToolEventHandler(handler)
     }
 }
+
+extension DirectToolRuntimeBackend {
+    public func subAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]> {
+        await toolExecutor.subAgentSnapshotEvents(rootSessionID: rootSessionID)
+    }
+}

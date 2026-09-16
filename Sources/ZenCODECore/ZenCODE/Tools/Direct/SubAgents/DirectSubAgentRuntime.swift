@@ -120,6 +120,9 @@ public actor DirectSubAgentRuntime {
         /// Monotonic identity of the latest completed response for transient
         /// presentation. Unlike `updatedAt`, this does not change when the agent
         /// is merely closed or otherwise receives a metadata-only update.
+        /// Monotonic identity of the actual runtime turn, not the output history.
+        public var executionRevision: UInt64 = 0
+        public var completedExecutionRevision: UInt64 = 0
         public var latestOutputRevision: UInt64 = 0
         public var accumulatedOutput: String?
         public var latestError: String?
@@ -255,6 +258,8 @@ public actor DirectSubAgentRuntime {
         public let latestContentPreview: String?
         public let latestEventAt: Date?
         public let latestOutput: String?
+        public let executionRevision: UInt64
+        public let completedExecutionRevision: UInt64
         public let latestOutputRevision: UInt64
         public let accumulatedOutput: String?
         public let latestError: String?
@@ -286,6 +291,8 @@ public actor DirectSubAgentRuntime {
             latestContentPreview: String? = nil,
             latestEventAt: Date? = nil,
             latestOutput: String?,
+            executionRevision: UInt64 = 0,
+            completedExecutionRevision: UInt64 = 0,
             latestOutputRevision: UInt64 = 0,
             accumulatedOutput: String? = nil,
             latestError: String?,
@@ -316,6 +323,8 @@ public actor DirectSubAgentRuntime {
             self.latestContentPreview = latestContentPreview
             self.latestEventAt = latestEventAt
             self.latestOutput = latestOutput
+            self.executionRevision = executionRevision
+            self.completedExecutionRevision = completedExecutionRevision
             self.latestOutputRevision = latestOutputRevision
             self.accumulatedOutput = accumulatedOutput
             self.latestError = latestError
@@ -566,12 +575,33 @@ public actor DirectSubAgentRuntime {
     var subAgentToolEventHandler: DirectSubAgentToolEventHandler?
     var subAgentToolEventHandlerRevision: UInt64 = 0
     private var agentStorage: [String: AgentRecord] = [:]
+    private var snapshotObservers: [UUID: (String, AsyncStream<[AgentSnapshot]>.Continuation)] = [:]
+
+    public func snapshotEvents(rootSessionID: String) -> AsyncStream<[AgentSnapshot]> {
+        let token = UUID()
+        let (stream, continuation) = AsyncStream<[AgentSnapshot]>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        snapshotObservers[token] = (rootSessionID, continuation)
+        continuation.yield(agentStorage.values.filter { $0.rootSessionID == rootSessionID }.map { snapshot(from: $0) })
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeSnapshotObserver(token) }
+        }
+        return stream
+    }
+
+    private func removeSnapshotObserver(_ token: UUID) {
+        snapshotObservers.removeValue(forKey: token)
+    }
     /// Lifecycle-transition failures that happen during global shutdown, when
     /// no individual agent record remains available to carry the error.
     public private(set) var lastLifecycleErrors: [String] = []
     var agents: [String: AgentRecord] {
         get { agentStorage }
-        set { agentStorage = newValue }
+        set {
+            agentStorage = newValue
+            for (_, observer) in snapshotObservers {
+                observer.1.yield(newValue.values.filter { $0.rootSessionID == observer.0 }.map { snapshot(from: $0) })
+            }
+        }
     }
     var latestOverviewBatchID: UUID?
     /// One graph-completion observer per root session. Started when the first
