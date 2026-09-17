@@ -172,30 +172,22 @@ extension ZenCODEACPBridge {
             .reduce(into: [String]()) { texts, text in
                 if !texts.contains(text) { texts.append(text) }
             }.joined(separator: "\n\n")
+        var content = [[String: Any]]()
         if !visibleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            update["content"] = [
-                [
-                    "type": "content",
-                    "content": [
-                        "type": "text",
-                        "text": visibleText
-                    ]
-                ]
-            ]
+            content.append(toolCallTextContent(visibleText))
         }
-        var contents = update["content"] as? [[String: Any]] ?? []
         for change in result.fileChanges {
             if let explanation = change.explanation {
-                contents.append(["type": "content", "content": ["type": "text", "text": "\(change.path): \(explanation)"]])
+                content.append(toolCallTextContent("\(change.path): \(explanation)"))
             } else {
-                contents.append([
+                content.append([
                     "type": "diff", "path": change.path,
                     "oldText": change.oldText as Any? ?? NSNull(),
                     "newText": change.newText ?? ""
                 ])
             }
         }
-        if !contents.isEmpty { update["content"] = contents }
+        if !content.isEmpty { update["content"] = content }
         return update
     }
 
@@ -225,6 +217,16 @@ extension ZenCODEACPBridge {
             ),
             "locations": locations,
             "_meta": ["rawInput": toolCall.argumentsObject]
+        ]
+    }
+
+    private static func toolCallTextContent(_ text: String) -> [String: Any] {
+        [
+            "type": "content",
+            "content": [
+                "type": "text",
+                "text": text,
+            ],
         ]
     }
 

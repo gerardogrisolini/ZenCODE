@@ -381,33 +381,94 @@ extension ACPCompatibilityTests {
             argumentsJSON: #"{"command":"swift test","workingDirectory":"Sources"}"#
         )
         let workspace = URL(fileURLWithPath: "/tmp/acp-workspace")
-        let cases: [(output: String, summary: String, status: DirectAgentToolResult.Status, wireStatus: String, content: JSONValue?)] = [
-            ("", "", .completed, "completed", nil),
-            (" \n\t", "No output", .completed, "completed", nil),
-            ("", "", .failed, "failed", nil),
-            (" \n\t", "Denied", .permissionDenied, "failed", nil),
-            (" Done.\n", "Success", .completed, "completed", .array([
+        let cases: [(
+            output: String,
+            summary: String,
+            status: DirectAgentToolResult.Status,
+            wireStatus: String,
+            fileChanges: [OperationFileChange],
+            content: JSONValue?
+        )] = [
+            ("", "", .completed, "completed", [], nil),
+            (" \n\t", "No output", .completed, "completed", [], nil),
+            ("", "", .failed, "failed", [], nil),
+            (" \n\t", "Denied", .permissionDenied, "failed", [], nil),
+            (" Done.\n", "Success", .completed, "completed", [], .array([
                 .object(["type": .string("content"), "content": .object([
                     "type": .string("text"), "text": .string(" Done.\n"),
                 ])]),
             ])),
-            ("Failure details", "Failed", .failed, "failed", .array([
+            ("Failure details", "Failed", .failed, "failed", [], .array([
                 .object(["type": .string("content"), "content": .object([
                     "type": .string("text"), "text": .string("Failure details"),
                 ])]),
             ])),
-            ("Tool error: unavailable", "Error", .completed, "failed", .array([
+            ("Tool error: unavailable", "Error", .completed, "failed", [], .array([
                 .object(["type": .string("content"), "content": .object([
                     "type": .string("text"), "text": .string("Tool error: unavailable"),
                 ])]),
             ])),
+            (
+                "output",
+                "summary",
+                .completed,
+                "completed",
+                [
+                    .init(path: "/tmp/new.swift", oldText: nil, newText: "new"),
+                    .init(
+                        path: "/tmp/fallback.swift",
+                        oldText: nil,
+                        newText: nil,
+                        explanation: "Diff unavailable"
+                    ),
+                    .init(path: "/tmp/old.swift", oldText: "old", newText: nil),
+                ],
+                .array([
+                    .object(["type": .string("content"), "content": .object([
+                        "type": .string("text"), "text": .string("summary\n\noutput"),
+                    ])]),
+                    .object([
+                        "type": .string("diff"),
+                        "path": .string("/tmp/new.swift"),
+                        "oldText": .null,
+                        "newText": .string("new"),
+                    ]),
+                    .object(["type": .string("content"), "content": .object([
+                        "type": .string("text"),
+                        "text": .string("/tmp/fallback.swift: Diff unavailable"),
+                    ])]),
+                    .object([
+                        "type": .string("diff"),
+                        "path": .string("/tmp/old.swift"),
+                        "oldText": .string("old"),
+                        "newText": .string(""),
+                    ]),
+                ])
+            ),
+            (
+                "same",
+                "same",
+                .completed,
+                "completed",
+                [.init(path: "/tmp/fallback.swift", oldText: nil, newText: nil, explanation: "Diff unavailable")],
+                .array([
+                    .object(["type": .string("content"), "content": .object([
+                        "type": .string("text"), "text": .string("same"),
+                    ])]),
+                    .object(["type": .string("content"), "content": .object([
+                        "type": .string("text"),
+                        "text": .string("/tmp/fallback.swift: Diff unavailable"),
+                    ])]),
+                ])
+            ),
         ]
         for fixture in cases {
             let result = DirectAgentToolResult(
                 output: fixture.output,
                 summary: fixture.summary,
                 modelOutput: "Not part of the ACP payload",
-                status: fixture.status
+                status: fixture.status,
+                fileChanges: fixture.fileChanges
             )
             var fields: [String: JSONValue] = [
                 "sessionUpdate": .string("tool_call_update"),

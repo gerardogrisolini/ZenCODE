@@ -343,30 +343,11 @@ extension ZenCODEACPBridge {
         keys: [String]
     ) -> [String: String] {
         for key in keys {
-            if let map = object[key] as? [String: String] {
-                return map
-            }
             if let map = object[key] as? [String: Any] {
                 return map.reduce(into: [String: String]()) { result, pair in
                     if let value = pair.value as? String {
                         result[pair.key] = value
                     }
-                }
-            }
-            if let values = object[key] as? [[String: String]] {
-                return values.reduce(into: [String: String]()) { result, item in
-                    guard let name = item["name"]?.nilIfBlank ?? item["key"]?.nilIfBlank else {
-                        return
-                    }
-                    result[name] = item["value"] ?? ""
-                }
-            }
-            if let values = object[key] as? [[String: Any]] {
-                return values.reduce(into: [String: String]()) { result, item in
-                    guard let name = stringValue(from: item, keys: ["name", "key"]) else {
-                        return
-                    }
-                    result[name] = (item["value"] as? String) ?? ""
                 }
             }
             if let values = object[key] as? [Any] {

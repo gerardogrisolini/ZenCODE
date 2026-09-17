@@ -44,6 +44,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Simplified ACP MCP string-map parsing and tool-completion content assembly without
+  changing accepted input forms, emitted payloads, ordering, or metadata.
 - Subscription setup and reconfiguration discover models through authenticated
   ChatGPT Codex and Anthropic Models endpoints, retaining the last successful
   account/login-scoped catalog on transient failures. Saved model IDs, metadata,

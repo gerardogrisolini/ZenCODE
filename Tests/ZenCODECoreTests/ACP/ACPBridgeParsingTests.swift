@@ -139,6 +139,115 @@ extension ACPCompatibilityTests {
         #expect(definition.configuration.arguments == ["fixture-server"])
     }
 
+    @Test
+    func mcpServerStringMapsAcceptTypedSwiftShapes() throws {
+        let cases: [(name: String, value: Any, expected: [String: String])] = [
+            (
+                "string map",
+                [" HEADER ": " value "] as [String: String],
+                [" HEADER ": " value "]
+            ),
+            (
+                "any map",
+                ["KEEP": " value ", "DROP": 1] as [String: Any],
+                ["KEEP": " value "]
+            ),
+            (
+                "typed entries",
+                [
+                    ["name": " name ", "key": "ignored", "value": " value "],
+                    ["name": "  ", "key": " key ", "value": "from-key"],
+                    ["name": "  ", "key": "\t", "value": "discard"],
+                    ["name": "missing"],
+                    ["name": "duplicate", "value": "first"],
+                    ["key": " duplicate ", "value": "last"],
+                ] as [[String: String]],
+                ["name": " value ", "key": "from-key", "missing": "", "duplicate": "last"]
+            ),
+            (
+                "any entries",
+                [
+                    ["name": " name ", "key": "ignored", "value": " value "],
+                    ["name": "  ", "key": " key ", "value": "from-key"],
+                    ["name": "missing"],
+                    ["name": "non-string", "value": 1],
+                    ["name": 1, "key": 2, "value": "discard"],
+                    ["name": "duplicate", "value": "first"],
+                    ["key": " duplicate ", "value": "last"],
+                ] as [[String: Any]],
+                [
+                    "name": " value ", "key": "from-key", "missing": "",
+                    "non-string": "", "duplicate": "last",
+                ]
+            ),
+            (
+                "heterogeneous entries",
+                [
+                    ["name": " name ", "key": "ignored", "value": " value "] as [String: Any],
+                    ["name": "  ", "key": " key ", "value": "from-key"] as [String: Any],
+                    ["name": "missing"] as [String: Any],
+                    ["name": "non-string", "value": 1] as [String: Any],
+                    ["name": 1, "key": 2, "value": "discard"] as [String: Any],
+                    "malformed",
+                    ["name": "duplicate", "value": "first"] as [String: Any],
+                    ["key": " duplicate ", "value": "last"] as [String: Any],
+                ] as [Any],
+                [
+                    "name": " value ", "key": "from-key", "missing": "",
+                    "non-string": "", "duplicate": "last",
+                ]
+            ),
+        ]
+
+        for fixture in cases {
+            let definition = try #require(ZenCODEACPBridge.mcpServerDefinitions(from: [
+                "mcpServers": [[
+                    "name": fixture.name,
+                    "command": "/usr/bin/env",
+                    "env": fixture.value,
+                ] as [String: Any]],
+            ]).first)
+
+            #expect(definition.configuration.environment == fixture.expected)
+        }
+    }
+
+    @Test
+    func mcpServerStringMapsRespectAliasesAndDecodedInput() throws {
+        let aliases: [(value: Any, expected: [String: String])] = [
+            ([:] as [String: String], [:]),
+            (["DROP": 1] as [String: Any], [:]),
+            (42, ["FALLBACK": "used"]),
+        ]
+        for fixture in aliases {
+            let definition = try #require(ZenCODEACPBridge.mcpServerDefinitions(from: [
+                "mcpServers": [[
+                    "command": "/usr/bin/env",
+                    "env": fixture.value,
+                    "environment": ["FALLBACK": "used"] as [String: String],
+                ] as [String: Any]],
+            ]).first)
+
+            #expect(definition.configuration.environment == fixture.expected)
+        }
+
+        let decoded = try #require(JSONSerialization.jsonObject(with: Data(#"""
+        {"mcpServers":[{"type":"http","name":"Decoded","url":"https://mcp.example.test","headers":[
+            {"name":" Authorization ","value":"Bearer one"},
+            {"name":"Authorization","value":"Bearer two"},
+            {"key":" X-Empty "},
+            {"name":"  ","key":"\t"},
+            {"name":42,"value":"discard"}
+        ]}]}
+        """#.utf8)) as? [String: Any])
+        let definition = try #require(ZenCODEACPBridge.mcpServerDefinitions(from: decoded).first)
+
+        #expect(definition.configuration.httpHeaders == [
+            "Authorization": "Bearer two",
+            "X-Empty": "",
+        ])
+    }
+
     #if os(macOS)
     @Test
     func localMCPTransportResolvesBareExecutableNamesAndKeepsPATH() throws {
