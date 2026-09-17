@@ -317,6 +317,18 @@ private extension OperationFileChangeTests {
         }
     }
 
+    func isCocoaPermissionDeniedByPOSIXAccess(_ error: any Error) -> Bool {
+        let failure = error as NSError
+        // Corelibs stores NSUnderlyingErrorKey as a native POSIXError. Extract
+        // Error first so the subsequent Error-to-NSError bridge is performed.
+        guard failure.domain == NSCocoaErrorDomain, failure.code == 257,
+              let underlyingError = failure.userInfo[NSUnderlyingErrorKey] as? any Error else {
+            return false
+        }
+        let underlyingFailure = underlyingError as NSError
+        return underlyingFailure.domain == NSPOSIXErrorDomain && underlyingFailure.code == Int(EACCES)
+    }
+
     /// Wait for the special-I/O branch, not an arbitrary sleep before the probe.
     func waitForSpecialIO() async throws -> Bool {
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
@@ -329,6 +341,23 @@ private extension OperationFileChangeTests {
 }
 
 extension OperationFileChangeTests {
+    @Test func cocoaPermissionErrorRecognizesNativeAndBridgedUnderlyingPOSIXError() {
+        func failure(underlying: any Error, code: Int = 257) -> NSError {
+            NSError(
+                domain: NSCocoaErrorDomain,
+                code: code,
+                userInfo: [NSUnderlyingErrorKey: underlying]
+            )
+        }
+
+        #expect(isCocoaPermissionDeniedByPOSIXAccess(failure(underlying: POSIXError(.EACCES))))
+        #expect(isCocoaPermissionDeniedByPOSIXAccess(failure(
+            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+        )))
+        #expect(!isCocoaPermissionDeniedByPOSIXAccess(failure(underlying: POSIXError(.EPERM))))
+        #expect(!isCocoaPermissionDeniedByPOSIXAccess(failure(underlying: POSIXError(.EACCES), code: 256)))
+    }
+
     @Test(arguments: [false, true], [false, true])
     func fifoAppendAndPatchDoNotHoldMutationLock(patch: Bool, recording: Bool) async throws {
         let root = try workspace()
@@ -411,16 +440,12 @@ extension OperationFileChangeTests {
         do {
             try await special.value
         } catch {
-            let failure = error as NSError
-            let underlying = failure.userInfo[NSUnderlyingErrorKey] as? NSError
             // Corelibs Foundation on Linux may reject this FIFO symlink read
             // with Cocoa 257 / POSIX EACCES either before a peer is connected
             // or only after its blocking open/read is released. That delivery
             // timing is orthogonal to the lock invariant: normalCompleted was
             // measured before connecting either end of the FIFO.
-            guard patch,
-                  failure.domain == NSCocoaErrorDomain, failure.code == 257,
-                  underlying?.domain == NSPOSIXErrorDomain, underlying?.code == Int(EACCES) else {
+            guard patch, isCocoaPermissionDeniedByPOSIXAccess(error) else {
                 throw error
             }
             rejectedFIFORead = true
