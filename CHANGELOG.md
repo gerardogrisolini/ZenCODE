@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.1.7] - 2026-09-17
+
 ### Added
 
 - Standard ACP task-plan snapshots, separate delegated execution rows, taskless
