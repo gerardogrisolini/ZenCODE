@@ -114,6 +114,9 @@ struct LocalReadFileTool: FeatureTool {
         let url = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
         let offset = input.offset
         let limit = input.limit
+        if let read = ClientTextFileSystem.current?.read {
+            return LocalToolsSupport.renderFileText(try await read(url), offset: offset, limit: limit)
+        }
         return try await LocalIOOffloader.run {
             try LocalToolsSupport.readFile(url, offset: offset, limit: limit)
         }
@@ -151,8 +154,13 @@ struct LocalReadFilesTool: FeatureTool {
             try Task.checkCancellation()
             let url = context.resolvePath(rawPath)
             do {
-                let body = try await LocalIOOffloader.run {
-                    try LocalToolsSupport.readFile(url, offset: offset, limit: limit)
+                let body: String
+                if let read = ClientTextFileSystem.current?.read {
+                    body = LocalToolsSupport.renderFileText(try await read(url), offset: offset, limit: limit)
+                } else {
+                    body = try await LocalIOOffloader.run {
+                        try LocalToolsSupport.readFile(url, offset: offset, limit: limit)
+                    }
                 }
                 sections.append("===== \(url.path) =====\n\(body)")
             } catch is CancellationError {
@@ -211,6 +219,11 @@ struct LocalWriteFileTool: FeatureTool {
         }
         let createDirectories = input.createDirectories == true
         let byteCount = content.utf8.count
+        if let write = ClientTextFileSystem.current?.write {
+            // Parent-directory handling belongs to the client, not local disk.
+            try await write(path, content)
+            return "Wrote \(path.path) (\(byteCount) bytes) through the client."
+        }
         return try await LocalIOOffloader.run {
             if createDirectories {
                 try FileManager.default.createDirectory(
@@ -244,6 +257,13 @@ struct LocalReplaceTool: FeatureTool {
         guard let newText = input.new else {
             throw LocalToolsFeatureError.missingArgument("new")
         }
+        if let edit = ClientTextFileSystem.current?.edit {
+            let result = try await edit(path) { original in
+                try replacingAll(original, oldText: oldText, with: newText,
+                    notFoundMessage: "old text was not found in \(path.path).").contents
+            }
+            return "Replaced \(result.before.ranges(of: oldText).count) occurrence(s) in \(path.path)."
+        }
         return try await LocalIOOffloader.run {
             let original = try String(contentsOf: path, encoding: .utf8)
             let replacement = try replacingAll(
@@ -275,6 +295,16 @@ struct LocalEditFileTool: FeatureTool {
         let oldText = input.old ?? ""
         guard let newText = input.new else {
             throw LocalToolsFeatureError.missingArgument("new")
+        }
+        if let edit = ClientTextFileSystem.current?.edit {
+            _ = try await edit(path) { original in
+                do {
+                    return try LocalFileEditSupport.apply(old: oldText, new: newText, to: original).contents
+                } catch let failure as LocalFileEditFailure {
+                    throw LocalToolsFeatureError.permissionDenied(editFailureMessage(failure, path: path.path))
+                }
+            }
+            return LocalFileEditFeedback.single(path: path.path)
         }
         return try await LocalIOOffloader.run {
             let original = try String(contentsOf: path, encoding: .utf8)
@@ -319,18 +349,34 @@ struct LocalMultiEditTool: FeatureTool {
                 "Multi-edit failed in \(path.path): edits must not be empty. No changes were written."
             )
         }
+        if let edit = ClientTextFileSystem.current?.edit {
+            _ = try await edit(path) { original in
+                try Self.applying(edits, to: original, path: path.path)
+            }
+            return LocalFileEditFeedback.multiple(path: path.path, editCount: edits.count)
+        }
         // Read off the cooperative pool, then validate/transform on it (pure
         // CPU) so a long edit list can be cancelled between edits, then write
         // the result back off the pool.
-        var contents = try await LocalIOOffloader.run {
+        let original = try await LocalIOOffloader.run {
             try String(contentsOf: path, encoding: .utf8)
         }
+        let finalContents = try Self.applying(edits, to: original, path: path.path)
+        try Task.checkCancellation()
+        try await LocalIOOffloader.run {
+            try LocalOperationWrite.write(finalContents, to: path)
+        }
+        return LocalFileEditFeedback.multiple(path: path.path, editCount: edits.count)
+    }
+
+    private static func applying(_ edits: [Edit], to original: String, path: String) throws -> String {
+        var contents = original
         for (index, edit) in edits.enumerated() {
             try Task.checkCancellation()
             let oldText = edit.old ?? ""
             guard let newText = edit.new else {
                 throw LocalToolsFeatureError.permissionDenied(
-                    "Multi-edit failed at edit \(index + 1) of \(edits.count) in \(path.path): new text is required. No changes were written."
+                    "Multi-edit failed at edit \(index + 1) of \(edits.count) in \(path): new text is required. No changes were written."
                 )
             }
             let result: LocalFileEditResult
@@ -342,18 +388,13 @@ struct LocalMultiEditTool: FeatureTool {
                         failure,
                         edit: index + 1,
                         total: edits.count,
-                        path: path.path
+                        path: path
                     )
                 )
             }
             contents = result.contents
         }
-        try Task.checkCancellation()
-        let finalContents = contents
-        try await LocalIOOffloader.run {
-            try LocalOperationWrite.write(finalContents, to: path)
-        }
-        return LocalFileEditFeedback.multiple(path: path.path, editCount: edits.count)
+        return contents
     }
 }
 

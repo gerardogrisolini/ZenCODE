@@ -10,6 +10,8 @@ import ToolCore
 
 extension ZenCODEACPBridge {
     public func initialize(id: JSONValue?, params: [String: Any]) async throws {
+        try ensureNotShutDown()
+        clientFileSystem = ACPClientFileSystem.negotiated(writer: writer, params: params)
         let protocolVersion = 1
         let authMethods = Self.authenticationMethods(from: params)
         advertisedAuthenticationMethodIDs = Set(

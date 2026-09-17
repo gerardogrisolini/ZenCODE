@@ -60,7 +60,10 @@ enum LocalToolsSupport {
     }
 
     static func readFile(_ url: URL, offset: Int?, limit: Int?) throws -> String {
-        let text = try String(contentsOf: url, encoding: .utf8)
+        renderFileText(try String(contentsOf: url, encoding: .utf8), offset: offset, limit: limit)
+    }
+
+    static func renderFileText(_ text: String, offset: Int?, limit: Int?) -> String {
         let lines = text.components(separatedBy: .newlines)
         let requestedOffset = offset ?? 1
         let startIndex = requestedOffset > 1 ? requestedOffset - 1 : 0

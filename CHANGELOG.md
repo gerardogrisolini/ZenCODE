@@ -25,6 +25,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Submitted-prompt turn separators now span the full available terminal width.
+- ACP clients advertising filesystem capabilities now service the existing text
+  read/write/edit tools through standard `fs/read_text_file` and
+  `fs/write_text_file` requests, preserving editor buffers and avoiding silent
+  disk fallback on client errors. Verified client text comparisons use standard
+  ACP diff content; missing preimages or uncertain results keep text fallback.
 - ACP delegated permission routing uses the root session while consent keys remain
   isolated; unoffered allow options and cancelled/teardown-racing decisions fail
   closed. Ordinary tool completions retain their previous output-only content;

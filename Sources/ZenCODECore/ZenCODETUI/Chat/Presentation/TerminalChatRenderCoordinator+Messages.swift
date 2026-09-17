@@ -46,13 +46,12 @@ extension TerminalChatRenderCoordinator {
         renderPendingOverviewsIfIdle()
     }
 
-    /// A terminal-safe visual break between submitted turns. The final column
-    /// stays deliberately unused because auto-wrap at exactly the terminal width
-    /// is terminal-dependent; an interactive input inset is budgeted as well.
+    /// A visual break between submitted turns that fills the terminal row while
+    /// accounting for the interactive input inset applied by `writeChat`.
     private func thematicTurnRule() -> String {
         let contentInsetWidth = TerminalChat.displayWidth(lineInset)
-        let safeWidth = max(1, columnWidthProvider() - contentInsetWidth - 1)
-        let rule = String(repeating: "─", count: safeWidth)
+        let ruleWidth = max(1, columnWidthProvider() - contentInsetWidth)
+        let rule = String(repeating: "─", count: ruleWidth)
         guard standardErrorIsTerminal else {
             return rule
         }

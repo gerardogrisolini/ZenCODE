@@ -419,7 +419,7 @@ public actor DirectToolExecutor {
                 + featureManagementDescriptors
                 + featureDescriptors
                 + lateCoreDescriptors
-        )
+        ).map(Self.clientTextFileDescriptor)
 
         guard await taskToolAdapter.isTaskBound(sessionID: sessionID) else {
             return result

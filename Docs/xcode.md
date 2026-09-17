@@ -86,7 +86,26 @@ from task validation. Failed/blocked/cancelled plan entries are explicitly label
 because ACP's plan status enum has no matching failure values. Taskless idle or
 standby alone is not evidence of successful execution.
 
-Diffs are **per local operation**, not a reconstructed end-of-turn summary. The
+Diffs are **per operation**, not a reconstructed end-of-turn summary. When Xcode
+advertises the standard ACP filesystem capabilities, `local.readFile` /
+`local.readFiles` read client text, and `local.writeFile` / `local.editFile` /
+`local.multiEdit` / `local.replace` write through the client rather than bypassing
+its buffers. The latter three require both read and write capabilities. No extra
+agent, MCP extension or Xcode setting is required. The tool descriptions direct
+text edits to these client-backed tools; project structure, builds, tests and
+diagnostics continue to use the Xcode tools. Other local operations (including
+append, applyPatch, move and delete) retain their filesystem implementation.
+
+For client writes, a complete known preimage is rechecked before the write and the
+acknowledged result is reread before emitting a standard diff. This is not atomic
+against concurrent editor changes: ACP v1 has no revision-conditional write. A
+missing/unreadable preimage is unknown, not proof that a file was absent. Client
+errors never fall back to disk; failed verification after an acknowledged write
+suppresses the diff without falsely reporting that the write failed. Client-owned
+parent-directory handling and actual UI rendering remain client behavior. The
+capabilities are checked on every connection and are not persisted.
+
+Without negotiated client access, diffs are **per local operation**. The
 local write/edit/replace/multiEdit/append/applyPatch/delete/move paths capture
 actual before/committed text; delegated tool rows have agent-qualified IDs. Binary
 or unreadable files, directories, failed/rolled-back operations, and opaque

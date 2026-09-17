@@ -525,3 +525,30 @@ that process: the return of its tool call is not proof that its writers stopped.
 External processes not launched through this executor cannot be synchronized by
 this in-process mechanism. Shell/Git/MCP effects themselves have text fallback,
 not inferred per-operation patches. See `Docs/xcode.md` for host-rendering limits.
+
+### Client-managed text files
+
+When `initialize.clientCapabilities.fs` advertises boolean `readTextFile` and/or
+`writeTextFile`, ACP injects a transient `ClientTextFileSystem` from ToolCore into
+the prompt task. Child tasks inherit the root session's access and epoch fence;
+no ACP types enter the neutral runtime and no new model, feature-process or
+persisted DTO is introduced. DirectToolExecutor still enforces the existing tool
+grants. Read capability routes `local.readFile` and `local.readFiles`; write
+capability routes `local.writeFile`; both are required to route `local.editFile`,
+`local.multiEdit` and `local.replace`. Their model-visible descriptions identify
+them as client-editor tools. Unsupported operations retain the existing local
+implementation; an RPC error never retries the same operation on disk. Directory
+creation for client writes is delegated to the client. Other operations, including
+append, applyPatch, move and delete, are not filesystem ACP operations.
+
+ACP serializes its own client writes per absolute path, rereads a known preimage
+before writing, and verifies the acknowledged text by rereading it. These are
+client-observed comparisons, not the local commit-boundary evidence described
+above: ACP v1 has no compare-and-swap or revision token, so external editor
+changes cannot be excluded atomically. A read failure never implies file absence.
+Only complete known preimages and matching postimages can become standard diff
+content, subject to the existing 64 KiB/text and 256 KiB/emitted-operation budgets,
+binary checks and opaque-operation uncertainty. A successful write with unknown
+or unverifiable content stays successful with explanatory fallback. Timeouts,
+cancellation and expired sessions never enable local fallback; a sent write may
+already have taken effect. Transport shutdown releases outstanding requests.

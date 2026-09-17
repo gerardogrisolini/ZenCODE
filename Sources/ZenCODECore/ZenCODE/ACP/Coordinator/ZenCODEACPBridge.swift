@@ -83,6 +83,7 @@ public actor ZenCODEACPBridge {
     public let configuration: AgentConfiguration
     public let writer: ACPWriter
     public let permissionBroker: ACPPermissionBroker
+    var clientFileSystem: ACPClientFileSystem?
     public let sessionRunner: AgentCoreSessionRunner
     public var sessions: [String: SessionState] = [:]
     private var sessionSleepAssertion: ZenSleepAssertion?

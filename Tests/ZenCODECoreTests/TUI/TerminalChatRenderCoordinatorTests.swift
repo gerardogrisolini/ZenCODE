@@ -3291,9 +3291,9 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func subsequentSubmittedPromptsReceiveOneDimWidthSafeTurnRule() async {
+    func subsequentSubmittedPromptsReceiveOneDimFullWidthTurnRule() async {
         let terminalColumns = 7
-        let rule = String(repeating: "─", count: 5)
+        let rule = String(repeating: "─", count: 6)
         let renderer = makeRenderer(
             stdinIsTerminal: true,
             standardErrorIsTerminal: true,
@@ -3323,7 +3323,7 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(!TerminalANSIText.stripANSI(firstTurn).contains(rule))
         #expect(ruleRows.count == 2)
         #expect(ruleRows.allSatisfy {
-            TerminalChat.displayWidth($0) <= terminalColumns - 1
+            TerminalChat.displayWidth($0) == terminalColumns
         })
         #expect(stderr.components(separatedBy: "\u{1B}[90m\(rule)\u{1B}[0m").count - 1 == 2)
         #expect(stderr.components(separatedBy: "> first turn").count - 1 == 1)

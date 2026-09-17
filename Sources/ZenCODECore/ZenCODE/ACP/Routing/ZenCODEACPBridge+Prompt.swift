@@ -323,171 +323,182 @@ extension ZenCODEACPBridge {
                 await updatePipeline.drain()
             }
         }
+        let clientFiles = clientFileSystem?.access(sessionID: sessionID) { [weak self] in
+            await self?.canUseClientFileSystem(sessionID: sessionID, epoch: epoch) == true
+        }
         let activePromptTask = Task(name: "ZenCODEACPBridge.prompt") {
-            await sessionRunner.updatePromptSkillSelection(
-                selectedAgentSkills(for: session.selectedAgent),
-                sessionID: promptConfiguration.sessionID
-            )
-            try Task.checkCancellation()
-            guard let currentSession = liveSession(id: sessionID, epoch: epoch),
-                  currentSession.activePromptID == promptID,
-                  currentSession.operationState == .prompting(promptID) else {
-                throw CancellationError()
-            }
-            let commands = availableCommandsUpdate(for: currentSession)
-            if currentSession.presentedCommands != commands {
-                sessions[sessionID]?.presentedCommands = commands
-                await sendPromptUpdate(commands)
-            }
-            if !currentSession.hasPresentedInitialConfiguration {
-                // Claim before suspending. This flag belongs to this live ACP
-                // incarnation, not to the backend conversation or its snapshot.
-                sessions[sessionID]?.hasPresentedInitialConfiguration = true
-                await sendPromptUpdate(Self.textChunkJSONUpdate(
-                    kind: "agent_message_chunk",
-                    text: initialConfigurationSummary(for: currentSession)
-                ))
-                // In app mode, do not leave the summary buffered until the
-                // first model event: it must already be visible before generation.
-                await flushPromptUpdates()
-            }
-            try Task.checkCancellation()
-            guard let readySession = liveSession(id: sessionID, epoch: epoch),
-                  readySession.activePromptID == promptID,
-                  readySession.operationState == .prompting(promptID) else {
-                throw CancellationError()
-            }
-            var generationPrompt = modelPromptText
-            var generationAttachments = attachments
-            while true {
-                let response = try await sessionRunner.sendPrompt(
-                    configuration: promptConfiguration,
-                    prompt: generationPrompt,
-                    attachments: generationAttachments,
-                    toolProviders: [],
-                    onEvent: { event in
-                    switch event {
-                    case .status, .diagnostic, .modelLoaded:
-                        // Runtime lifecycle and diagnostics are not model reasoning.
-                        // Model selection is already exposed through ACP configuration.
-                        break
-                    case let .thought(message):
-                        await sendPromptUpdate(
-                            Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: message)
-                        )
-                    case .metrics:
-                        break
-                    case let .contextWindow(status):
-                        if let update = Self.usageJSONUpdate(for: status) {
-                            await sendPromptUpdate(update)
-                        }
-                    case let .subscriptionUsage(status):
-                        if let subscriptionData = Self.subscriptionUsageJSONData(for: status) {
-                            // The custom notification bypasses the buffer. In app
-                            // mode it must share the serialized exit point with
-                            // updates, as a flush-then-notify unit; outside app
-                            // mode there is no buffer and it goes straight out.
-                            if let updatePipeline {
-                                await updatePipeline.enqueue(
-                                    .init(
-                                        kind: .flushThenNotify(
+            try await ClientTextFileSystem.$current.withValue(clientFiles) {
+                await sessionRunner.updatePromptSkillSelection(
+                    selectedAgentSkills(for: session.selectedAgent),
+                    sessionID: promptConfiguration.sessionID
+                )
+                try Task.checkCancellation()
+                guard let currentSession = liveSession(id: sessionID, epoch: epoch),
+                    currentSession.activePromptID == promptID,
+                    currentSession.operationState == .prompting(promptID)
+                else {
+                    throw CancellationError()
+                }
+                let commands = availableCommandsUpdate(for: currentSession)
+                if currentSession.presentedCommands != commands {
+                    sessions[sessionID]?.presentedCommands = commands
+                    await sendPromptUpdate(commands)
+                }
+                if !currentSession.hasPresentedInitialConfiguration {
+                    // Claim before suspending. This flag belongs to this live ACP
+                    // incarnation, not to the backend conversation or its snapshot.
+                    sessions[sessionID]?.hasPresentedInitialConfiguration = true
+                    await sendPromptUpdate(
+                        Self.textChunkJSONUpdate(
+                            kind: "agent_message_chunk",
+                            text: initialConfigurationSummary(for: currentSession)
+                        ))
+                    // In app mode, do not leave the summary buffered until the
+                    // first model event: it must already be visible before generation.
+                    await flushPromptUpdates()
+                }
+                try Task.checkCancellation()
+                guard let readySession = liveSession(id: sessionID, epoch: epoch),
+                    readySession.activePromptID == promptID,
+                    readySession.operationState == .prompting(promptID)
+                else {
+                    throw CancellationError()
+                }
+                var generationPrompt = modelPromptText
+                var generationAttachments = attachments
+                while true {
+                    let response = try await sessionRunner.sendPrompt(
+                        configuration: promptConfiguration,
+                        prompt: generationPrompt,
+                        attachments: generationAttachments,
+                        toolProviders: [],
+                        onEvent: { event in
+                            switch event {
+                            case .status, .diagnostic, .modelLoaded:
+                                // Runtime lifecycle and diagnostics are not model reasoning.
+                                // Model selection is already exposed through ACP configuration.
+                                break
+                            case let .thought(message):
+                                await sendPromptUpdate(
+                                    Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: message)
+                                )
+                            case .metrics:
+                                break
+                            case let .contextWindow(status):
+                                if let update = Self.usageJSONUpdate(for: status) {
+                                    await sendPromptUpdate(update)
+                                }
+                            case let .subscriptionUsage(status):
+                                if let subscriptionData = Self.subscriptionUsageJSONData(for: status) {
+                                    // The custom notification bypasses the buffer. In app
+                                    // mode it must share the serialized exit point with
+                                    // updates, as a flush-then-notify unit; outside app
+                                    // mode there is no buffer and it goes straight out.
+                                    if let updatePipeline {
+                                        await updatePipeline.enqueue(
+                                            .init(
+                                                kind: .flushThenNotify(
+                                                    method: "_zencode/usage/subscription",
+                                                    params: .object([
+                                                        "sessionId": .string(sessionID),
+                                                        "subscription": subscriptionData,
+                                                    ])
+                                                )
+                                            )
+                                        ).value
+                                    } else {
+                                        await writer.sendCustomNotification(
                                             method: "_zencode/usage/subscription",
                                             params: .object([
                                                 "sessionId": .string(sessionID),
-                                                "subscription": subscriptionData
+                                                "subscription": subscriptionData,
                                             ])
                                         )
+                                    }
+                                }
+                            case let .content(content):
+                                await assistantBlocks.append(content)
+                                if !commandPurpose.suppressesCoordinatorContent {
+                                    await sendPromptUpdate(
+                                        Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: content)
                                     )
-                                ).value
-                            } else {
-                                await writer.sendCustomNotification(
-                                    method: "_zencode/usage/subscription",
-                                    params: .object([
-                                        "sessionId": .string(sessionID),
-                                        "subscription": subscriptionData
-                                    ])
+                                }
+                            case let .toolCallStarted(toolCall):
+                                await self.ensureTasklessObserver(
+                                    sessionID: sessionID, epoch: epoch, promptID: promptID)
+                                await assistantBlocks.finishBlock()
+                                await sendPromptUpdate(
+                                    Self.toolCallCreateJSONUpdate(
+                                        for: toolCall,
+                                        workingDirectory: workspaceURL
+                                    )
                                 )
+                            case let .toolCallCompleted(toolCall, result):
+                                if case .planning = commandPurpose {
+                                    let request = DirectTodoTaskRuntime.normalizedToolRequest(
+                                        for: toolCall
+                                    )
+                                    if request.name == "todo.write" {
+                                        let update =
+                                            result.isFailure
+                                            ? nil
+                                            : PlanningCommandKernel.planPointUpdates(from: toolCall)
+                                        await planPointCollector.recordTodoWrite(update)
+                                    }
+                                }
+                                await sendPromptUpdate(
+                                    Self.toolCallCompletionJSONUpdate(
+                                        for: toolCall,
+                                        result: result,
+                                        workingDirectory: workspaceURL
+                                    )
+                                )
+                            case .turnEnded:
+                                if let updatePipeline {
+                                    await updatePipeline.enqueue(.init(kind: .finishThought)).value
+                                }
+                            case .sessionSnapshot:
+                                break
                             }
                         }
-                    case let .content(content):
-                        await assistantBlocks.append(content)
-                        if !commandPurpose.suppressesCoordinatorContent {
-                            await sendPromptUpdate(
-                                Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: content)
-                            )
-                        }
-                    case let .toolCallStarted(toolCall):
-                        await self.ensureTasklessObserver(sessionID: sessionID, epoch: epoch, promptID: promptID)
-                        await assistantBlocks.finishBlock()
-                        await sendPromptUpdate(
-                            Self.toolCallCreateJSONUpdate(
-                                for: toolCall,
-                                workingDirectory: workspaceURL
-                            )
-                        )
-                    case let .toolCallCompleted(toolCall, result):
-                        if case .planning = commandPurpose {
-                            let request = DirectTodoTaskRuntime.normalizedToolRequest(
-                                for: toolCall
-                            )
-                            if request.name == "todo.write" {
-                                let update = result.isFailure
-                                    ? nil
-                                    : PlanningCommandKernel.planPointUpdates(from: toolCall)
-                                await planPointCollector.recordTodoWrite(update)
-                            }
-                        }
-                        await sendPromptUpdate(
-                            Self.toolCallCompletionJSONUpdate(
-                                for: toolCall,
-                                result: result,
-                                workingDirectory: workspaceURL
-                            )
-                        )
-                    case .turnEnded:
-                        if let updatePipeline {
-                            await updatePipeline.enqueue(.init(kind: .finishThought)).value
-                        }
-                    case .sessionSnapshot:
-                        break
-                    }
-                }
-                )
-                // Also covers backends that return without a turnEnded event,
-                // before an automatic workflow continuation starts a new turn.
-                if let updatePipeline {
-                    await updatePipeline.enqueue(.init(kind: .finishThought)).value
-                }
-                let completion = PromptCompletion(
-                    text: response.text,
-                    finalAssistantBlock: await assistantBlocks.lastBlock(),
-                    stopReason: Self.acpStopReason(response.stopReason),
-                    modelID: response.modelID
-                )
-                if case let .workflow(graphID) = commandPurpose {
-                    let graph = try? await sessionRunner.taskGraphSnapshot(
-                        sessionID: sessionID,
-                        graphID: graphID
                     )
-                    let disposition = PlanningCommandKernel.workflowTurnDisposition(
-                        graph: graph,
-                        expectedGraphID: graphID,
-                        coordinatorMessage: completion.finalAssistantBlock
-                    )
-                    if case .continueAutomatically = disposition, let graph {
-                        await assistantBlocks.finishBlock()
-                        let goal = session.workflowContinuation?.graphID == graphID
-                            ? session.workflowContinuation?.goal ?? ""
-                            : ""
-                        generationPrompt = PlanningCommandKernel.workflowAutomaticContinuationPrompt(
-                            goal: goal,
-                            graph: graph
-                        )
-                        generationAttachments = []
-                        continue
+                    // Also covers backends that return without a turnEnded event,
+                    // before an automatic workflow continuation starts a new turn.
+                    if let updatePipeline {
+                        await updatePipeline.enqueue(.init(kind: .finishThought)).value
                     }
+                    let completion = PromptCompletion(
+                        text: response.text,
+                        finalAssistantBlock: await assistantBlocks.lastBlock(),
+                        stopReason: Self.acpStopReason(response.stopReason),
+                        modelID: response.modelID
+                    )
+                    if case let .workflow(graphID) = commandPurpose {
+                        let graph = try? await sessionRunner.taskGraphSnapshot(
+                            sessionID: sessionID,
+                            graphID: graphID
+                        )
+                        let disposition = PlanningCommandKernel.workflowTurnDisposition(
+                            graph: graph,
+                            expectedGraphID: graphID,
+                            coordinatorMessage: completion.finalAssistantBlock
+                        )
+                        if case .continueAutomatically = disposition, let graph {
+                            await assistantBlocks.finishBlock()
+                            let goal =
+                                session.workflowContinuation?.graphID == graphID
+                                ? session.workflowContinuation?.goal ?? ""
+                                : ""
+                            generationPrompt = PlanningCommandKernel.workflowAutomaticContinuationPrompt(
+                                goal: goal,
+                                graph: graph
+                            )
+                            generationAttachments = []
+                            continue
+                        }
+                    }
+                    return completion
                 }
-                return completion
             }
         }
 
