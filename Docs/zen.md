@@ -229,6 +229,30 @@ Use `/setup` to inspect and configure the model bindings of every profile — se
 [bindings.md](bindings.md) for how bindings, capability, and task complexity
 drive delegation, and [agents.md](agents.md) for profile and sub-agent concepts.
 
+## Terminal Prompt Editing
+
+The live prompt supports cursor and word movement, history, multi-line drafts,
+paste, command completion, and the shortcuts shown in its help row.
+
+In the live terminal prompt, holding one of `a e i o u c n s y z` (or its
+uppercase form) opens an inline picker for common accented variants. The original
+letter stays in the draft while the hold is detected. Choose a numbered variant with
+`1`–`8`, move the selection with `←`/`→` or `↑`/`↓`, confirm it with `Enter`, or
+keep the original letter with `Esc`. While this picker is open, `Enter` chooses
+the accent instead of sending the prompt and `Esc` dismisses the picker instead
+of clearing the draft or stopping generation. Any other editing key dismisses
+the picker and then performs its usual action.
+
+This is a conservative fallback for terminal key streams that expose repeated
+characters but no key-release event. It is enabled in every live terminal panel;
+setup prompts and non-panel key reads are unchanged. ZenCODE does not change
+operating-system keyboard preferences. Because timed manual repeats and automatic repeats
+are indistinguishable, unusual typing rhythms can still produce a false positive,
+and input or rendering delays can prevent a hold from being recognized. Repeated
+letters may be briefly visible before detection is confirmed. If key repeat is
+disabled, the stream contains too little information to open the picker. Network
+latency in SSH or tmux sessions can also prevent the timing pattern from matching.
+
 ## Terminal TUI Commands
 
 Commands start with `/`:

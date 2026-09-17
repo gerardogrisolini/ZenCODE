@@ -16,7 +16,7 @@ import os
 #endif
 
 public final class TerminalInteractiveLineReader: Sendable {
-    enum Key: Equatable {
+    enum Key: Equatable, Sendable {
         case character(String)
         case paste(String)
         case enter
@@ -54,10 +54,24 @@ public final class TerminalInteractiveLineReader: Sendable {
         case unknown
     }
 
-    enum KeyReadResult: Equatable {
+    enum KeyReadResult: Equatable, Sendable {
         case key(Key)
+        /// The parser consumed a base repeat behind Esc, not just Esc itself.
+        case pickerEscape(consumedRepeat: Character)
         case timedOut
         case endOfInput
+
+        var consumedPickerRepeat: Character? {
+            guard case let .pickerEscape(base) = self else { return nil }
+            return base
+        }
+    }
+
+    /// A panel read timestamped on the blocking worker before it crosses back to
+    /// the async loop. Uptime milliseconds are monotonic and never persisted.
+    struct TimedPanelKeyReadResult: Sendable {
+        let result: KeyReadResult
+        let timestampMilliseconds: UInt64
     }
 
     /// Poll granularity used by cancellation-aware blocking reads. Short enough
@@ -126,6 +140,8 @@ public final class TerminalInteractiveLineReader: Sendable {
         /// All draft semantics live in the pure reducer; the mutex only owns
         /// the value, never the behaviour.
         var editor = TerminalPromptEditor()
+        /// Every live terminal panel uses the conservative repeat heuristic.
+        var panelSupportsPressAndHold = true
         var panelIsProcessing = false
         var panelQueuedPromptCount = 0
         var panelPendingAttachmentCount = 0
@@ -178,14 +194,20 @@ public final class TerminalInteractiveLineReader: Sendable {
     }
 
     let rawInput: TerminalRawInput
+    let consentInputOwnership: TerminalConsentInputOwnership
     let state = Mutex(State())
 
     public init() {
         rawInput = TerminalRawInput()
+        consentInputOwnership = .shared
     }
 
-    init(rawInput: TerminalRawInput) {
+    init(
+        rawInput: TerminalRawInput,
+        consentInputOwnership: TerminalConsentInputOwnership = .shared
+    ) {
         self.rawInput = rawInput
+        self.consentInputOwnership = consentInputOwnership
     }
 
     func withPanelLock<T: Sendable>(
@@ -241,6 +263,8 @@ public final class TerminalInteractiveLineReader: Sendable {
             switch readResult {
             case let .key(value):
                 key = value
+            case .pickerEscape:
+                key = .cancel
             case .timedOut:
                 continue
             case .endOfInput:
@@ -351,6 +375,8 @@ public final class TerminalInteractiveLineReader: Sendable {
                 ) {
                 case let .key(value):
                     key = value
+                case .pickerEscape:
+                    key = .cancel
                 case .timedOut:
                     continue
                 case .endOfInput:

@@ -24,7 +24,10 @@ extension TerminalInteractiveLineReader {
         return key
     }
 
-    func readKeyResult(pollTimeoutMilliseconds: Int32? = nil) -> KeyReadResult {
+    func readKeyResult(
+        pollTimeoutMilliseconds: Int32? = nil,
+        pickerEscapeBaseByte: UInt8? = nil
+    ) -> KeyReadResult {
         let byte: UInt8
         switch rawInput.readByteResult(timeoutMilliseconds: pollTimeoutMilliseconds) {
         case let .byte(value):
@@ -41,7 +44,7 @@ extension TerminalInteractiveLineReader {
 
         switch byte {
         case 0x1B:
-            return .key(readEscapeKey())
+            return readEscapeKeyResult(pickerEscapeBaseByte: pickerEscapeBaseByte)
         default:
             return .key(decodeCharacter(startingWith: byte).map(Key.character) ?? .unknown)
         }
@@ -73,11 +76,30 @@ extension TerminalInteractiveLineReader {
         }
     }
 
-    func readEscapeKey() -> Key {
+    func readEscapeKeyResult(pickerEscapeBaseByte: UInt8? = nil) -> KeyReadResult {
         guard let secondByte = readByte(timeoutMilliseconds: Self.escapeSequenceInitialTimeout) else {
-            return .cancel
+            return .key(.cancel)
         }
 
+        // Only the live picker supplies a base. Ordinary escape parsing never
+        // speculates or changes its existing Meta/CSI/SS3 semantics.
+        if secondByte == pickerEscapeBaseByte {
+            if secondByte == 0x4F,
+               let continuation = rawInput.readSequenceIfAccepted(
+                   maximumLength: Self.escapeSequenceMaximumLength,
+                   timeoutMilliseconds: Self.escapeSequenceContinuationTimeout,
+                   classify: Self.classifyPickerSS3Continuation
+               ), let finalByte = continuation.last {
+                return .key(Self.ss3Key(finalByte: finalByte))
+            }
+            // A failed O probe has already restored its entire lookahead. Only
+            // this one base byte belongs to the compound dismissal event.
+            return .pickerEscape(consumedRepeat: Character(UnicodeScalar(secondByte)))
+        }
+        return .key(readEscapeKey(secondByte: secondByte))
+    }
+
+    func readEscapeKey(secondByte: UInt8) -> Key {
         switch secondByte {
         case 0x0A, 0x0D:
             // Legacy Option+Enter (ESC+CR) fallback for terminals without an
@@ -179,6 +201,38 @@ extension TerminalInteractiveLineReader {
         return .unknown
     }
 
+    /// Recognizes the terminal's SS3 cursor, function and application-keypad
+    /// encodings, including numeric modifier parameters. A control, malformed
+    /// parameter or unassigned final (notably another O) belongs to the next
+    /// input event instead and must be replayed. Never scan across ESC or CR.
+    static func classifyPickerSS3Continuation(_ bytes: [UInt8]) -> TerminalRawInput.SequenceProbeDecision {
+        guard let byte = bytes.last else { return .needMore }
+        if (0x30...0x39).contains(byte) || byte == 0x3B {
+            return .needMore
+        }
+        guard bytes.dropLast().allSatisfy({ (0x30...0x39).contains($0) || $0 == 0x3B }) else {
+            return .reject
+        }
+        switch byte {
+        case 0x41...0x46, 0x48, 0x4D, 0x50...0x53, 0x58, 0x61...0x64, 0x6A...0x79:
+            return .accept
+        default:
+            return .reject
+        }
+    }
+
+    static func ss3Key(finalByte: UInt8) -> Key {
+        switch finalByte {
+        case 0x41: return .up
+        case 0x42: return .down
+        case 0x43: return .right
+        case 0x44: return .left
+        case 0x46: return .end
+        case 0x48: return .home
+        default: return .unknown
+        }
+    }
+
     func readSS3Key() -> Key {
         var bytes: [UInt8] = []
         while bytes.count < Self.escapeSequenceMaximumLength {
@@ -189,23 +243,7 @@ extension TerminalInteractiveLineReader {
             guard byte >= 0x40 && byte <= 0x7E else {
                 continue
             }
-
-            switch byte {
-            case 0x41:
-                return .up
-            case 0x42:
-                return .down
-            case 0x43:
-                return .right
-            case 0x44:
-                return .left
-            case 0x46:
-                return .end
-            case 0x48:
-                return .home
-            default:
-                return .unknown
-            }
+            return Self.ss3Key(finalByte: byte)
         }
 
         drainPendingEscapeSequence()

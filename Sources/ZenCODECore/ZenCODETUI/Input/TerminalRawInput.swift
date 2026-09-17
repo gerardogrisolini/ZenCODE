@@ -38,6 +38,9 @@ public final class TerminalRawInput: Sendable {
     private let controlFileDescriptor: Int32
     private let shouldCloseControlFileDescriptor: Bool
     private let inputFileDescriptorLabel: String
+    /// Reads and speculative rollback share one lock; no other raw-input
+    /// consumer can observe a probe half-committed or overtake replayed bytes.
+    private let pendingReadBytes = Mutex<[UInt8]>([])
     private let state: Mutex<State>
     public init() {
         if let inputFileDescriptor = Self.openPreferredInputFileDescriptor() {
@@ -476,7 +479,65 @@ public final class TerminalRawInput: Sendable {
         return byte
     }
 
+    enum SequenceProbeDecision: Sendable {
+        case needMore
+        case accept
+        case reject
+    }
+
+    /// Used only for the picker’s ambiguous `ESC O` prefix. Commit a bounded
+    /// continuation if recognized; otherwise replay *every* probed byte before
+    /// the remaining stream, including on timeout, EOF and length exhaustion.
+    /// The classifier is pure and must not recursively read from this input.
+    func readSequenceIfAccepted(
+        maximumLength: Int,
+        timeoutMilliseconds: Int32,
+        classify: @Sendable ([UInt8]) -> SequenceProbeDecision
+    ) -> [UInt8]? {
+        precondition(maximumLength > 0)
+        return pendingReadBytes.withLock { pending in
+            var probed: [UInt8] = []
+            var committed = false
+            defer {
+                if !committed {
+                    pending.insert(contentsOf: probed, at: 0)
+                }
+            }
+            while probed.count < maximumLength {
+                guard case let .byte(byte) = readByteResultLocked(
+                    pending: &pending,
+                    timeoutMilliseconds: timeoutMilliseconds
+                ) else {
+                    return nil
+                }
+                probed.append(byte)
+                switch classify(probed) {
+                case .needMore:
+                    continue
+                case .accept:
+                    committed = true
+                    return probed
+                case .reject:
+                    return nil
+                }
+            }
+            return nil
+        }
+    }
+
     func readByteResult(timeoutMilliseconds: Int32? = nil) -> ByteReadResult {
+        pendingReadBytes.withLock { pending in
+            readByteResultLocked(pending: &pending, timeoutMilliseconds: timeoutMilliseconds)
+        }
+    }
+
+    private func readByteResultLocked(
+        pending: inout [UInt8],
+        timeoutMilliseconds: Int32?
+    ) -> ByteReadResult {
+        if !pending.isEmpty {
+            return .byte(pending.removeFirst())
+        }
         guard fileDescriptor >= 0 else {
             return .endOfInput
         }

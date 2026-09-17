@@ -10,6 +10,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- The live terminal prompt now recognizes conservative press-and-hold
+  key-repeat patterns for supported Latin letters and offers an inline numbered,
+  arrow-navigable accent picker across terminal applications. The deterministic
+  fallback preserves ordinary editing/paste semantics and does not modify
+  operating-system keyboard preferences.
+
 ## [2.1.7] - 2026-09-17
 
 ### Added

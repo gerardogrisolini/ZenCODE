@@ -47,7 +47,12 @@ public actor TerminalStatusBar {
         let modeText: String
         let helpText: String
         let compactHelpText: String?
+        /// Picker selection must survive clipping even when the chat dock has
+        /// degraded to a badge in this same row.
+        var prioritizesModeText = false
         let suggestionLines: [String]
+        /// Relative to `suggestionLines`; nil preserves legacy prefix clipping.
+        let suggestionSelectedIndex: Int?
     }
 
     /// `DispatchSourceSignal` is annotated `Sendable` on Apple platforms but not
@@ -172,7 +177,9 @@ public actor TerminalStatusBar {
         modeText: String,
         helpText: String,
         compactHelpText: String? = nil,
+        prioritizesModeText: Bool = false,
         suggestionLines: [String] = [],
+        suggestionSelectedIndex: Int? = nil,
         revision: UInt64? = nil
     ) {
         withOutputBatch {
@@ -180,13 +187,20 @@ public actor TerminalStatusBar {
                 return
             }
             let boundedCursorIndex = min(max(0, cursorIndex), text.count)
+            let suggestionWindow = Self.inputPanelSuggestionWindow(
+                lines: suggestionLines,
+                selectedIndex: suggestionSelectedIndex,
+                maximumLineCount: 6
+            )
             let nextInputPanelState = InputPanelState(
                 text: text,
                 cursorIndex: boundedCursorIndex,
                 modeText: modeText,
                 helpText: helpText,
                 compactHelpText: compactHelpText,
-                suggestionLines: Array(suggestionLines.prefix(6))
+                prioritizesModeText: prioritizesModeText,
+                suggestionLines: suggestionWindow.lines,
+                suggestionSelectedIndex: suggestionWindow.selectedIndex
             )
             guard state.inputPanelState != nextInputPanelState else {
                 return

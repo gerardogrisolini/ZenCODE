@@ -129,6 +129,7 @@ extension TerminalInteractiveLineReader {
             state.panelStatusBar = statusBar
             state.panelCommandSuggestions = commandSuggestions
             if preservingState {
+                state.editor.resetPressAndHold()
                 state.panelCommandSuggestionIndex = commandSuggestions.isEmpty
                     ? 0
                     : min(state.panelCommandSuggestionIndex, commandSuggestions.count - 1)
@@ -213,6 +214,7 @@ extension TerminalInteractiveLineReader {
             let panelState = (task: state.panelTask, statusBar: state.panelStatusBar)
             state.panelLifecycle = .stopping
             state.panelTask = nil
+            state.editor.resetPressAndHold()
             // Unblock the in-flight terminal read before awaiting the task, so
             // the stop does not wait out the remainder of the read window.
             state.panelReadToken?.cancel()
@@ -376,6 +378,9 @@ extension TerminalInteractiveLineReader {
     ) async {
         withPanelLock { state in
             state.panelOverlayOverride = override
+            if override != nil {
+                state.editor.resetPressAndHold()
+            }
             if let isProcessing {
                 state.panelIsProcessing = isProcessing
             }
@@ -427,26 +432,55 @@ extension TerminalInteractiveLineReader {
         }
 
         while !Task.isCancelled, !token.isCancelled() {
-            let result = await TerminalBlockingRead.run(token: token) { token in
-                Self.readPanelKeyResult(reader: self, token: token)
+            let timedResult = await TerminalBlockingRead.run(token: token) { token in
+                Self.readTimedPanelKeyResult(reader: self, token: token)
             }
-            guard let result else {
+            guard let timedResult else {
                 // Cancelled: the panel is stopping and must not emit further
                 // events for keys read during teardown.
                 return
             }
             let key: Key
-            switch result {
+            switch timedResult.result {
             case let .key(value):
                 key = value
+            case .pickerEscape:
+                key = .cancel
             case .timedOut:
+                if invalidatePanelPressAndHoldForConsentIfNeeded() {
+                    await renderPanel()
+                }
                 continue
             case .endOfInput:
+                _ = withPanelLock { state in
+                    state.editor.resetPressAndHold()
+                }
                 await onEvent(.endOfInput)
                 return
             }
-            await handlePanelKey(key, onEvent: onEvent)
+            await handlePanelKey(
+                key,
+                timestampMilliseconds: timedResult.timestampMilliseconds,
+                consumedPickerRepeat: timedResult.result.consumedPickerRepeat,
+                onEvent: onEvent
+            )
         }
+    }
+
+    /// Associates the result with monotonic time on the blocking worker. Doing
+    /// this before the async hop keeps executor and rendering delays out of the
+    /// repeat intervals observed by the reducer.
+    static func readTimedPanelKeyResult(
+        reader: TerminalInteractiveLineReader,
+        token: TerminalBlockingReadToken
+    ) -> TimedPanelKeyReadResult? {
+        guard let result = readPanelKeyResult(reader: reader, token: token) else {
+            return nil
+        }
+        return TimedPanelKeyReadResult(
+            result: result,
+            timestampMilliseconds: DispatchTime.now().uptimeNanoseconds / 1_000_000
+        )
     }
 
     /// Blocking half of the panel read. Polls in short slices so the loop
@@ -457,13 +491,25 @@ extension TerminalInteractiveLineReader {
         token: TerminalBlockingReadToken
     ) -> KeyReadResult? {
         while !token.isCancelled() {
-            guard let result = TerminalConsentInputOwnership.withBackgroundRead({
+            guard let result = reader.consentInputOwnership.withBackgroundRead({
                 // The test synchronization point is deliberately immediately
                 // before the raw read: publishing the token alone happens
                 // before this dispatch-queue worker is scheduled.
                 token.markBlockingReadEntered()
+                let pickerEscapeBaseByte = reader.withPanelLock { state -> UInt8? in
+                    guard state.panelSupportsPressAndHold,
+                          state.panelOverlayOverride == nil,
+                          !state.panelSharedChatReaderIsOpen,
+                          let base = state.editor.pressAndHoldMenu?.base else {
+                        return nil
+                    }
+                    let bytes = Array(String(base).utf8)
+                    guard bytes.count == 1 else { return nil }
+                    return bytes[0]
+                }
                 return reader.readKeyResult(
-                    pollTimeoutMilliseconds: TerminalInteractiveLineReader.cancellationPollTimeout
+                    pollTimeoutMilliseconds: TerminalInteractiveLineReader.cancellationPollTimeout,
+                    pickerEscapeBaseByte: pickerEscapeBaseByte
                 )
             }) else {
                 // Consent owns the terminal; report a timeout so the loop
@@ -490,6 +536,8 @@ extension TerminalInteractiveLineReader {
     /// the lock has been released.
     func handlePanelKey(
         _ key: Key,
+        timestampMilliseconds: UInt64? = nil,
+        consumedPickerRepeat: Character? = nil,
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
     ) async {
         let readerAction = withPanelLock { state -> TerminalSharedChatReaderAction? in
@@ -509,7 +557,12 @@ extension TerminalInteractiveLineReader {
             return
         }
         let effect = withPanelLock { state -> TerminalPromptEditorEffect in
-            let effect = state.editor.apply(key, context: editorContextLocked(state: state))
+            let effect = state.editor.apply(
+                key,
+                context: editorContextLocked(state: state),
+                timestampMilliseconds: timestampMilliseconds,
+                consumedPickerRepeat: consumedPickerRepeat
+            )
             if case let .submitted(line) = effect {
                 recordHistoryLocked(line, state: &state)
             }
@@ -542,7 +595,25 @@ extension TerminalInteractiveLineReader {
     }
 
     func setSharedChatReaderOpen(_ isOpen: Bool) {
-        withPanelLock { state in state.panelSharedChatReaderIsOpen = isOpen }
+        withPanelLock { state in
+            state.panelSharedChatReaderIsOpen = isOpen
+            if isOpen {
+                state.editor.resetPressAndHold()
+            }
+        }
+    }
+
+    /// A consent prompt owns the TTY while panel reads report timeouts. Only
+    /// that ownership condition invalidates the transient heuristic; ordinary
+    /// polling timeouts never count as hold activity and leave it untouched.
+    @discardableResult
+    func invalidatePanelPressAndHoldForConsentIfNeeded() -> Bool {
+        guard consentInputOwnership.isConsentActive else {
+            return false
+        }
+        return withPanelLock { state in
+            state.editor.resetPressAndHold()
+        }
     }
 
     func editorContextLocked(state: State) -> TerminalPromptEditorContext {
@@ -552,7 +623,9 @@ extension TerminalInteractiveLineReader {
             isOverlayActive: state.panelOverlayOverride != nil,
             isProcessing: state.panelIsProcessing,
             supportsCompletions: true,
-            clearsDraftOnCancel: true
+            clearsDraftOnCancel: true,
+            supportsPressAndHold: state.panelSupportsPressAndHold
+                && !state.panelSharedChatReaderIsOpen
         )
     }
 
@@ -564,10 +637,13 @@ extension TerminalInteractiveLineReader {
             modeText: String,
             helpText: String,
             compactHelpText: String?,
+            prioritizesModeText: Bool,
             suggestionLines: [String],
+            suggestionSelectedIndex: Int?,
             revision: UInt64
         ) in
             state.panelRenderRevision &+= 1
+            let suggestionProjection = panelSuggestionProjectionLocked(state: state)
             return (
                 statusBar: state.panelStatusBar,
                 text: String(state.panelBuffer),
@@ -575,7 +651,9 @@ extension TerminalInteractiveLineReader {
                 modeText: panelModeTextLocked(state: state),
                 helpText: panelHelpTextLocked(state: state),
                 compactHelpText: panelCompactHelpTextLocked(state: state),
-                suggestionLines: panelCommandSuggestionLinesLocked(state: state),
+                prioritizesModeText: state.panelOverlayOverride == nil && state.editor.pressAndHoldMenu != nil,
+                suggestionLines: suggestionProjection.lines,
+                suggestionSelectedIndex: suggestionProjection.selectedIndex,
                 revision: state.panelRenderRevision
             )
         }
@@ -586,7 +664,9 @@ extension TerminalInteractiveLineReader {
             modeText: snapshot.modeText,
             helpText: snapshot.helpText,
             compactHelpText: snapshot.compactHelpText,
+            prioritizesModeText: snapshot.prioritizesModeText,
             suggestionLines: snapshot.suggestionLines,
+            suggestionSelectedIndex: snapshot.suggestionSelectedIndex,
             revision: snapshot.revision
         )
     }
@@ -599,6 +679,9 @@ extension TerminalInteractiveLineReader {
     func panelModeTextLocked(state: State) -> String {
         if let modeText = state.panelOverlayOverride?.modeText {
             return modeText
+        }
+        if let menu = state.editor.pressAndHoldMenu {
+            return "Accent \(menu.base) \(menu.selectedIndex + 1)/\(menu.variants.count) \(menu.selectedVariant)"
         }
         var modeText = state.panelIsProcessing ? "Next prompt" : "Prompt"
         let lineCount = state.editor.logicalLineCount
@@ -620,6 +703,9 @@ extension TerminalInteractiveLineReader {
         if let helpText = state.panelOverlayOverride?.helpText {
             return helpText
         }
+        if state.editor.pressAndHoldMenu != nil {
+            return "1–8 choose · ←/→ ↑/↓ select · Enter choose · Esc dismiss"
+        }
 
         if state.panelIsProcessing {
             if hasActiveCommandSuggestionsLocked(state: state) {
@@ -634,8 +720,13 @@ extension TerminalInteractiveLineReader {
     }
 
     func panelCompactHelpTextLocked(state: State) -> String? {
-        guard state.panelOverlayOverride == nil,
-              !hasActiveCommandSuggestionsLocked(state: state) else {
+        guard state.panelOverlayOverride == nil else {
+            return nil
+        }
+        if state.editor.pressAndHoldMenu != nil {
+            return "1–8 choose · arrows select · Enter choose · Esc dismiss"
+        }
+        guard !hasActiveCommandSuggestionsLocked(state: state) else {
             return nil
         }
         if state.panelIsProcessing {
@@ -652,6 +743,26 @@ extension TerminalInteractiveLineReader {
         state.editor.moveSuggestionSelection(
             delta: delta,
             context: editorContextLocked(state: state)
+        )
+    }
+
+    /// Accent choices precede command completions and carry their selected row
+    /// into the status bar so a height-constrained render can keep it visible.
+    func panelSuggestionProjectionLocked(
+        state: State
+    ) -> (lines: [String], selectedIndex: Int?) {
+        if let menu = state.editor.pressAndHoldMenu {
+            return (
+                lines: menu.variants.enumerated().map { index, variant in
+                    let marker = index == menu.selectedIndex ? "›" : " "
+                    return "\(marker) \(index + 1) \(variant)"
+                },
+                selectedIndex: menu.selectedIndex
+            )
+        }
+        return (
+            lines: panelCommandSuggestionLinesLocked(state: state),
+            selectedIndex: nil
         )
     }
 

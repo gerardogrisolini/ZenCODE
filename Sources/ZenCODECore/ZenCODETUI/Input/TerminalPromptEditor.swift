@@ -41,6 +41,9 @@ struct TerminalPromptEditorContext: Sendable {
     var supportsCompletions = true
     /// The panel clears the draft on `Esc`; the blocking reader keeps it.
     var clearsDraftOnCancel = true
+    /// A live terminal panel can use the conservative repeat heuristic.
+    /// Disabled by default so fallback readers retain their previous semantics.
+    var supportsPressAndHold = false
 
     init(
         history: [String] = [],
@@ -48,7 +51,8 @@ struct TerminalPromptEditorContext: Sendable {
         isOverlayActive: Bool = false,
         isProcessing: Bool = false,
         supportsCompletions: Bool = true,
-        clearsDraftOnCancel: Bool = true
+        clearsDraftOnCancel: Bool = true,
+        supportsPressAndHold: Bool = false
     ) {
         self.history = history
         self.suggestions = suggestions
@@ -56,6 +60,7 @@ struct TerminalPromptEditorContext: Sendable {
         self.isProcessing = isProcessing
         self.supportsCompletions = supportsCompletions
         self.clearsDraftOnCancel = clearsDraftOnCancel
+        self.supportsPressAndHold = supportsPressAndHold
     }
 }
 
@@ -88,6 +93,9 @@ struct TerminalPromptEditor: Equatable, Sendable {
     /// `Esc` hides the completion menu for the current draft revision without
     /// destroying the draft; any edit brings it back.
     var areSuggestionsDismissed = false
+    var pressAndHoldCandidate: TerminalPressAndHold.Candidate?
+    var pressAndHoldMenu: TerminalPressAndHold.Menu?
+    var pressAndHoldSuppression: TerminalPressAndHold.Suppression?
 
     init() {}
 
@@ -100,15 +108,276 @@ struct TerminalPromptEditor: Equatable, Sendable {
     /// range when the match set changed.
     mutating func apply(
         _ key: Key,
-        context: TerminalPromptEditorContext
+        context: TerminalPromptEditorContext,
+        timestampMilliseconds: UInt64? = nil,
+        consumedPickerRepeat: Character? = nil
     ) -> TerminalPromptEditorEffect {
         let previous = self
-        let effect = reduce(key, context: context)
+        let effect: TerminalPromptEditorEffect
+        if context.supportsPressAndHold,
+           !context.isOverlayActive,
+           let timestampMilliseconds {
+            // Esc alone says nothing about current repeat activity. A compound
+            // parser event does: refresh only the matching picker, at the time
+            // that event was read, before cancellation creates suppression.
+            if key == .cancel,
+               let consumedPickerRepeat,
+               pressAndHoldMenu?.base == consumedPickerRepeat {
+                pressAndHoldMenu?.lastRepeatTimestampMilliseconds = timestampMilliseconds
+            }
+            effect = reducePressAndHold(
+                key,
+                context: context,
+                timestampMilliseconds: timestampMilliseconds
+            )
+        } else {
+            resetPressAndHold()
+            effect = reduce(key, context: context)
+        }
         reconcileSuggestionSelection(context: context)
-        if effect == .ignored, self != previous {
+        if effect == .ignored, !isObservablyEqual(to: previous) {
             return .changed
         }
         return effect
+    }
+
+    /// Clears state that is meaningful only while the live panel owns input.
+    /// The return value says whether a visible picker was dismissed.
+    @discardableResult
+    mutating func resetPressAndHold() -> Bool {
+        let dismissedMenu = pressAndHoldMenu != nil
+        pressAndHoldCandidate = nil
+        pressAndHoldMenu = nil
+        pressAndHoldSuppression = nil
+        return dismissedMenu
+    }
+
+    private func isObservablyEqual(to other: Self) -> Bool {
+        let menusMatch: Bool
+        switch (pressAndHoldMenu, other.pressAndHoldMenu) {
+        case (nil, nil):
+            menusMatch = true
+        case let (.some(lhs), .some(rhs)):
+            menusMatch = lhs.isVisuallyEqual(to: rhs)
+        default:
+            menusMatch = false
+        }
+        return buffer == other.buffer
+            && cursorIndex == other.cursorIndex
+            && preferredVisualColumn == other.preferredVisualColumn
+            && historyIndex == other.historyIndex
+            && draftBeforeHistory == other.draftBeforeHistory
+            && suggestionIndex == other.suggestionIndex
+            && areSuggestionsDismissed == other.areSuggestionsDismissed
+            && menusMatch
+    }
+
+    private mutating func reducePressAndHold(
+        _ key: Key,
+        context: TerminalPromptEditorContext,
+        timestampMilliseconds: UInt64
+    ) -> TerminalPromptEditorEffect {
+        if pressAndHoldMenu != nil {
+            return reducePressAndHoldMenu(
+                key,
+                context: context,
+                timestampMilliseconds: timestampMilliseconds
+            )
+        }
+
+        if var suppression = pressAndHoldSuppression {
+            if case let .character(text) = key,
+               Array(text) == [suppression.base],
+               timestampMilliseconds >= suppression.lastRepeatTimestampMilliseconds,
+               timestampMilliseconds - suppression.lastRepeatTimestampMilliseconds
+                   <= TerminalPressAndHold.residualRepeatWindowMilliseconds {
+                suppression.lastRepeatTimestampMilliseconds = timestampMilliseconds
+                pressAndHoldSuppression = suppression
+                return .ignored
+            }
+            pressAndHoldSuppression = nil
+        }
+
+        if case let .character(text) = key {
+            return reducePressAndHoldCharacter(
+                text,
+                timestampMilliseconds: timestampMilliseconds
+            )
+        }
+
+        pressAndHoldCandidate = nil
+        return reduce(key, context: context)
+    }
+
+    private mutating func reducePressAndHoldCharacter(
+        _ text: String,
+        timestampMilliseconds: UInt64
+    ) -> TerminalPromptEditorEffect {
+        let characters = Array(text)
+        guard characters.count == 1,
+              let base = characters.first,
+              let variants = TerminalPressAndHold.variants(for: base) else {
+            pressAndHoldCandidate = nil
+            return insert(characters)
+        }
+
+        let insertionIndex = cursorIndex
+        let effect = insert([base])
+        guard var candidate = pressAndHoldCandidate,
+              candidate.base == base,
+              candidate.insertionIndex + candidate.insertedCount == insertionIndex,
+              timestampMilliseconds >= candidate.lastTimestampMilliseconds,
+              candidate.insertionIndex >= 0,
+              candidate.insertionIndex + candidate.insertedCount <= buffer.count,
+              buffer[candidate.insertionIndex..<(candidate.insertionIndex + candidate.insertedCount)]
+                  .allSatisfy({ $0 == base }) else {
+            pressAndHoldCandidate = TerminalPressAndHold.Candidate(
+                base: base,
+                insertionIndex: insertionIndex,
+                timestampMilliseconds: timestampMilliseconds
+            )
+            return effect
+        }
+
+        let interval = timestampMilliseconds - candidate.lastTimestampMilliseconds
+        candidate.insertedCount += 1
+        candidate.lastTimestampMilliseconds = timestampMilliseconds
+
+        if candidate.isRepeating {
+            guard TerminalPressAndHold.repeatIntervalRange.contains(interval) else {
+                pressAndHoldCandidate = TerminalPressAndHold.Candidate(
+                    base: base,
+                    insertionIndex: insertionIndex,
+                    timestampMilliseconds: timestampMilliseconds
+                )
+                return effect
+            }
+            candidate.repeatIntervalCount += 1
+        } else {
+            guard TerminalPressAndHold.initialDelayRange.contains(interval) else {
+                pressAndHoldCandidate = TerminalPressAndHold.Candidate(
+                    base: base,
+                    insertionIndex: insertionIndex,
+                    timestampMilliseconds: timestampMilliseconds
+                )
+                return effect
+            }
+            candidate.isRepeating = true
+        }
+
+        let duration = timestampMilliseconds - candidate.firstTimestampMilliseconds
+        guard candidate.repeatIntervalCount >= TerminalPressAndHold.minimumRepeatIntervalCount,
+              duration >= TerminalPressAndHold.minimumHoldDurationMilliseconds,
+              candidate.insertionIndex + candidate.insertedCount == cursorIndex,
+              candidate.insertionIndex + candidate.insertedCount <= buffer.count,
+              buffer[candidate.insertionIndex..<cursorIndex].allSatisfy({ $0 == base }) else {
+            pressAndHoldCandidate = candidate
+            return effect
+        }
+
+        buffer.replaceSubrange(
+            candidate.insertionIndex..<cursorIndex,
+            with: [base]
+        )
+        cursorIndex = candidate.insertionIndex + 1
+        didEditBuffer()
+        pressAndHoldCandidate = nil
+        pressAndHoldMenu = TerminalPressAndHold.Menu(
+            base: base,
+            replacementIndex: candidate.insertionIndex,
+            variants: variants,
+            selectedIndex: 0,
+            lastRepeatTimestampMilliseconds: timestampMilliseconds
+        )
+        return .changed
+    }
+
+    private mutating func reducePressAndHoldMenu(
+        _ key: Key,
+        context: TerminalPromptEditorContext,
+        timestampMilliseconds: UInt64
+    ) -> TerminalPromptEditorEffect {
+        guard var menu = pressAndHoldMenu else {
+            return reduce(key, context: context)
+        }
+
+        if case let .character(text) = key,
+           Array(text) == [menu.base],
+           timestampMilliseconds >= menu.lastRepeatTimestampMilliseconds,
+           timestampMilliseconds - menu.lastRepeatTimestampMilliseconds
+               <= TerminalPressAndHold.residualRepeatWindowMilliseconds {
+            menu.lastRepeatTimestampMilliseconds = timestampMilliseconds
+            pressAndHoldMenu = menu
+            return .ignored
+        }
+
+        switch key {
+        case let .character(text):
+            if text.count == 1, let number = Int(text) {
+                guard (1...menu.variants.count).contains(number) else {
+                    return .ignored
+                }
+                menu.selectedIndex = number - 1
+                return choosePressAndHoldVariant(menu)
+            }
+            pressAndHoldMenu = nil
+            return reducePressAndHoldCharacter(
+                text,
+                timestampMilliseconds: timestampMilliseconds
+            )
+        case .enter:
+            return choosePressAndHoldVariant(menu)
+        case .left, .up:
+            menu.selectedIndex = wrappedIndex(
+                menu.selectedIndex - 1,
+                count: menu.variants.count
+            )
+            pressAndHoldMenu = menu
+            return .changed
+        case .right, .down:
+            menu.selectedIndex = wrappedIndex(
+                menu.selectedIndex + 1,
+                count: menu.variants.count
+            )
+            pressAndHoldMenu = menu
+            return .changed
+        case .cancel:
+            pressAndHoldMenu = nil
+            pressAndHoldSuppression = TerminalPressAndHold.Suppression(
+                base: menu.base,
+                lastRepeatTimestampMilliseconds: menu.lastRepeatTimestampMilliseconds
+            )
+            return .changed
+        case .unknown:
+            return .ignored
+        default:
+            pressAndHoldMenu = nil
+            pressAndHoldCandidate = nil
+            return reduce(key, context: context)
+        }
+    }
+
+    private mutating func choosePressAndHoldVariant(
+        _ menu: TerminalPressAndHold.Menu
+    ) -> TerminalPromptEditorEffect {
+        guard buffer.indices.contains(menu.replacementIndex),
+              buffer[menu.replacementIndex] == menu.base else {
+            resetPressAndHold()
+            return .changed
+        }
+        buffer[menu.replacementIndex] = menu.selectedVariant
+        didEditBuffer()
+        pressAndHoldMenu = nil
+        pressAndHoldCandidate = nil
+        pressAndHoldSuppression = TerminalPressAndHold.Suppression(
+            base: menu.base,
+            lastRepeatTimestampMilliseconds: menu.lastRepeatTimestampMilliseconds
+        )
+        return .changed
+    }
+
+    private func wrappedIndex(_ index: Int, count: Int) -> Int {
+        ((index % count) + count) % count
     }
 
     private mutating func reduce(
@@ -409,7 +678,8 @@ struct TerminalPromptEditor: Equatable, Sendable {
     func visibleSuggestions(
         context: TerminalPromptEditorContext
     ) -> [TerminalCommandSuggestion] {
-        guard !context.isOverlayActive,
+        guard pressAndHoldMenu == nil,
+              !context.isOverlayActive,
               !areSuggestionsDismissed,
               context.supportsCompletions else {
             return []

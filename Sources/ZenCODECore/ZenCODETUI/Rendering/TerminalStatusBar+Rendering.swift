@@ -296,7 +296,8 @@ extension TerminalStatusBar {
         )
         let suggestionRows = inputPanelSuggestionRowsLocked(
             state: &state,
-            lines: inputPanelState.suggestionLines
+            lines: inputPanelState.suggestionLines,
+            selectedIndex: inputPanelState.suggestionSelectedIndex
         )
         let modeLine = Self.padded(
             Self.inputPanelModeLineText(
@@ -304,6 +305,7 @@ extension TerminalStatusBar {
                 helpText: inputPanelState.helpText,
                 compactHelpText: inputPanelState.compactHelpText,
                 sharedChatBadge: sharedChatReaderModeRowBadgeLocked(state: &state),
+                prioritizesModeText: inputPanelState.prioritizesModeText,
                 width: contentWidth
             ),
             width: contentWidth
@@ -383,18 +385,26 @@ extension TerminalStatusBar {
         helpText: String,
         compactHelpText: String?,
         sharedChatBadge: String? = nil,
+        prioritizesModeText: Bool = false,
         width: Int
     ) -> String {
-        // When present, the badge is the only remaining shared-chat indicator:
-        // the panel budget could not afford a dock row. It leads the row so the
-        // trailing `fit` truncation can never be what removes it.
-        let badgePrefix = sharedChatBadge.map { "\($0) · " } ?? ""
-        let fullText = "\(badgePrefix)\(modeText) · \(helpText)"
+        // Normally chat leads because this badge is the last indicator when the
+        // dock cannot fit. During the picker the selected accent takes priority:
+        // with zero suggestion rows the mode text is its only visible location.
+        let modeAndBadge: String
+        if let sharedChatBadge {
+            modeAndBadge = prioritizesModeText
+                ? "\(modeText) · \(sharedChatBadge)"
+                : "\(sharedChatBadge) · \(modeText)"
+        } else {
+            modeAndBadge = modeText
+        }
+        let fullText = "\(modeAndBadge) · \(helpText)"
         guard visibleCharacterCount(fullText) > width,
               let compactHelpText else {
             return fit(fullText, width: width)
         }
-        return fit("\(badgePrefix)\(modeText) · \(compactHelpText)", width: width)
+        return fit("\(modeAndBadge) · \(compactHelpText)", width: width)
     }
     
     func statusRenderSequenceLocked(state: inout State) -> String {

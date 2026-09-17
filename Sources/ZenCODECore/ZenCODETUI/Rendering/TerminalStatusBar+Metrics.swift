@@ -252,11 +252,46 @@ extension TerminalStatusBar {
         )
     }
     
-    func inputPanelSuggestionRowsLocked(state: inout State, lines: [String]) -> [String] {
+    func inputPanelSuggestionRowsLocked(
+        state: inout State,
+        lines: [String],
+        selectedIndex: Int?
+    ) -> [String] {
         let contentWidth = statusBoxContentWidthLocked(state: &state)
-        return lines.prefix(inputPanelSuggestionRowCountLocked(state: &state)).map { line in
+        let window = Self.inputPanelSuggestionWindow(
+            lines: lines,
+            selectedIndex: selectedIndex,
+            maximumLineCount: inputPanelSuggestionRowCountLocked(state: &state)
+        )
+        return window.lines.map { line in
             Self.padded(Self.fit(line, width: contentWidth), width: contentWidth)
         }
+    }
+
+    /// Returns a contiguous window which contains the selected row. A nil
+    /// selection intentionally retains the command completion menu's historical
+    /// prefix clipping behaviour.
+    static func inputPanelSuggestionWindow(
+        lines: [String],
+        selectedIndex: Int?,
+        maximumLineCount: Int
+    ) -> (lines: [String], selectedIndex: Int?) {
+        guard maximumLineCount > 0, !lines.isEmpty else {
+            return ([], nil)
+        }
+        let visibleCount = min(maximumLineCount, lines.count)
+        guard let selectedIndex else {
+            return (Array(lines.prefix(visibleCount)), nil)
+        }
+        let boundedSelection = min(max(0, selectedIndex), lines.count - 1)
+        let minimumStart = max(0, boundedSelection - visibleCount + 1)
+        let maximumStart = max(0, lines.count - visibleCount)
+        let start = min(minimumStart, maximumStart)
+        let end = start + visibleCount
+        return (
+            lines: Array(lines[start..<end]),
+            selectedIndex: boundedSelection - start
+        )
     }
     
     func statusBoxHorizontalInsetLocked(state: inout State) -> Int {

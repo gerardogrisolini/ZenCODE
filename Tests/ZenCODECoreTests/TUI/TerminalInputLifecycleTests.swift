@@ -278,10 +278,14 @@ struct TerminalInputLifecycleTests {
             input.pipe.fileHandleForWriting.closeFile()
             input.pipe.fileHandleForReading.closeFile()
         }
-        let reader = TerminalInteractiveLineReader(rawInput: input.rawInput)
+        let ownership = TerminalConsentInputOwnership()
+        let reader = TerminalInteractiveLineReader(
+            rawInput: input.rawInput,
+            consentInputOwnership: ownership
+        )
 
-        await TerminalConsentInputOwnership.beginConsent()
-        defer { TerminalConsentInputOwnership.endConsent() }
+        await ownership.beginConsent()
+        defer { ownership.endConsent() }
 
         let token = TerminalBlockingReadToken()
         // A byte is available, but the panel must not consume it: it belongs to
@@ -465,6 +469,47 @@ struct TerminalInputLifecycleTests {
         #expect(
             TerminalEscapeStopMonitor.startIfNeeded(isEnabled: false, onStop: {}) == nil
         )
+    }
+
+    @Test
+    func consentTimeoutInvalidatesPressAndHoldWithoutTreatingPollingAsARepeat() async {
+        let input = makeIdleInput()
+        defer {
+            input.pipe.fileHandleForWriting.closeFile()
+            input.pipe.fileHandleForReading.closeFile()
+        }
+        let ownership = TerminalConsentInputOwnership()
+        let reader = TerminalInteractiveLineReader(
+            rawInput: input.rawInput,
+            consentInputOwnership: ownership
+        )
+        reader.withPanelLock { state in
+            state.panelSupportsPressAndHold = true
+            let context = reader.editorContextLocked(state: state)
+            for timestamp in [UInt64(0), 500, 550, 600, 650] {
+                _ = state.editor.apply(
+                    .character("a"),
+                    context: context,
+                    timestampMilliseconds: timestamp
+                )
+            }
+        }
+        #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu != nil })
+
+        // Ordinary polling is not repeat activity and must keep the menu. Use
+        // the same isolated arbiter for the read and the consent invalidation.
+        #expect(TerminalInteractiveLineReader.readPanelKeyResult(
+            reader: reader,
+            token: TerminalBlockingReadToken()
+        ) == .timedOut)
+        #expect(!reader.invalidatePanelPressAndHoldForConsentIfNeeded())
+        #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu != nil })
+
+        await ownership.beginConsent()
+        defer { ownership.endConsent() }
+        #expect(reader.invalidatePanelPressAndHoldForConsentIfNeeded())
+        #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu == nil })
+        #expect(reader.withPanelLock { String($0.panelBuffer) } == "a")
     }
 }
 
