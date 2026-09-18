@@ -352,6 +352,311 @@ struct TerminalPromptInputPanelTests {
         #expect(submittedLines == ["à"])
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func slowPanelRenderDoesNotDelayContinuousHoldInput() async {
+        let renderGate = TerminalSlowPanelRenderGate()
+        defer {
+            Task(name: "ZenCODE.Tests.release-slow-panel-render") {
+                await renderGate.release()
+            }
+        }
+
+        let reader = TerminalInteractiveLineReader()
+        let outputWriteCount = Mutex(0)
+        let statusBar = TerminalStatusBar(isEnabled: true) { _ in
+            outputWriteCount.withLock { $0 += 1 }
+        }
+        await statusBar.configureForTesting(row: 14, columns: 80)
+        reader.withPanelLock { state in
+            state.panelStatusBar = statusBar
+            state.panelSupportsPressAndHold = true
+            state.panelRenderBeforeUpdateForTesting = {
+                await renderGate.recordRender()
+            }
+        }
+
+        let input = TerminalTimedPanelKeyFeed(
+            results: [
+                (.key(.character("a")), 0),
+                (.key(.character("a")), 500),
+                (.key(.character("a")), 550),
+                (.key(.character("a")), 600),
+                (.key(.character("a")), 650),
+                (.endOfInput, 700)
+            ],
+            renderGate: renderGate
+        )
+        let events = Mutex<[TerminalPromptInputEvent]>([])
+        let loop = Task(name: "ZenCODE.Tests.continuous-held-panel-input") {
+            await reader.runPanelInputLoop(
+                statusBar: statusBar,
+                onEvent: { event in
+                    events.withLock { $0.append(event) }
+                },
+                readNextTimedResult: { token in
+                    await input.next(token: token)
+                }
+            )
+        }
+
+        // The feed waits for the first renderer suspension before returning the
+        // second read. Therefore loop completion before this release proves the
+        // actual input loop consumed every repeat while its first repaint was
+        // still slow, retaining their source timestamps instead of a burst.
+        await loop.value
+        #expect(await input.readCount == 6)
+        #expect(reader.withPanelLock { String($0.panelBuffer) } == "a")
+        #expect(events.withLock { $0.count } == 1)
+
+        await renderGate.release()
+        await terminalWaitUntil { outputWriteCount.withLock { $0 >= 2 } }
+
+        // End-of-input resets the transient reducer menu but intentionally does
+        // not redraw; the final pending projection is the menu opened by the
+        // valid hold sequence. That makes the render itself evidence that the
+        // repeats were consumed continuously by `runPanelInputLoop`.
+        #expect(await statusBar.state.inputPanelState?.text == "a")
+        #expect(await statusBar.state.inputPanelState?.modeText == "Accent a 1/8 à")
+        #expect(await renderGate.renderCount == 2)
+        #expect(outputWriteCount.withLock { $0 } == 2)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func pickerDismissalReplacesThePendingSlowRenderSnapshot() async {
+        let renderGate = TerminalSlowPanelRenderGate()
+        defer {
+            Task(name: "ZenCODE.Tests.release-dismissed-panel-render") {
+                await renderGate.release()
+            }
+        }
+
+        let reader = TerminalInteractiveLineReader()
+        let outputWriteCount = Mutex(0)
+        let statusBar = TerminalStatusBar(isEnabled: true) { _ in
+            outputWriteCount.withLock { $0 += 1 }
+        }
+        await statusBar.configureForTesting(row: 14, columns: 80)
+        reader.withPanelLock { state in
+            state.panelStatusBar = statusBar
+            state.panelSupportsPressAndHold = true
+            state.panelRenderBeforeUpdateForTesting = {
+                await renderGate.recordRender()
+            }
+        }
+
+        let firstKey = Task(name: "ZenCODE.Tests.first-picker-key") {
+            await reader.handlePanelKey(.character("a"), timestampMilliseconds: 0) { _ in }
+        }
+        await renderGate.waitUntilFirstRenderStarts()
+        for timestamp in [UInt64(500), 550, 600, 650] {
+            await reader.handlePanelKey(.character("a"), timestampMilliseconds: timestamp) { _ in }
+        }
+        #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu?.base } == "a")
+
+        await reader.handlePanelKey(.cancel, timestampMilliseconds: 700) { _ in }
+        #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu == nil })
+        await reader.handlePanelKey(.character("b"), timestampMilliseconds: 710) { _ in }
+
+        await renderGate.release()
+        await firstKey.value
+        await terminalWaitUntil { outputWriteCount.withLock { $0 >= 2 } }
+
+        #expect(await statusBar.state.inputPanelState?.text == "ab")
+        #expect(await statusBar.state.inputPanelState?.modeText == "Prompt")
+        #expect(await renderGate.renderCount == 2)
+        #expect(outputWriteCount.withLock { $0 } == 2)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func stoppingPanelFencesAnInFlightRenderAndDropsThePendingSnapshot() async {
+        let renderGate = TerminalSlowPanelRenderGate()
+        defer {
+            Task(name: "ZenCODE.Tests.release-stopped-panel-render") {
+                await renderGate.release()
+            }
+        }
+
+        let reader = TerminalInteractiveLineReader()
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        reader.withPanelLock { state in
+            state.panelStatusBar = statusBar
+            state.panelBuffer = Array("first")
+            state.panelCursorIndex = 5
+            state.panelRenderBeforeUpdateForTesting = {
+                await renderGate.recordRender()
+            }
+        }
+        reader.finishPanelStart(task: Task(name: "ZenCODE.Tests.completed-panel-loop") {})
+
+        reader.requestPanelRender()
+        await renderGate.waitUntilFirstRenderStarts()
+        reader.withPanelLock { state in
+            state.panelBuffer = Array("pending")
+            state.panelCursorIndex = 7
+        }
+        reader.requestPanelRender()
+
+        let didStop = Mutex(false)
+        let stop = Task(name: "ZenCODE.Tests.stop-panel-with-slow-render") {
+            await reader.stopPanelInput()
+            didStop.withLock { $0 = true }
+        }
+        await terminalWaitUntil {
+            reader.withPanelLock { $0.pendingPanelRender == nil }
+        }
+
+        // Stop discards the queued frame before joining the independently
+        // running renderer. It must not return while that renderer can still
+        // reach the terminal, and the test must not enqueue a replacement frame
+        // merely to observe the drain.
+        #expect(reader.withPanelLock { $0.pendingPanelRender == nil })
+        #expect(!didStop.withLock { $0 })
+
+        await renderGate.release()
+        await stop.value
+        #expect(await statusBar.state.inputPanelState == nil)
+        #expect(reader.withPanelLock { $0.panelLifecycle == .idle })
+        #expect(await renderGate.renderCount == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func preservingStopJoinsTheRendererAndDiscardsItsPendingSnapshot() async {
+        let renderGate = TerminalSlowPanelRenderGate()
+        defer {
+            Task(name: "ZenCODE.Tests.release-preserving-stop-render") {
+                await renderGate.release()
+            }
+        }
+
+        let reader = TerminalInteractiveLineReader()
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        await statusBar.updateInputPanel(
+            text: "preserved",
+            cursorIndex: 9,
+            modeText: "Prompt",
+            helpText: "Enter"
+        )
+        reader.withPanelLock { state in
+            state.panelStatusBar = statusBar
+            state.panelBuffer = Array("in-flight")
+            state.panelCursorIndex = 9
+            state.panelRenderBeforeUpdateForTesting = {
+                await renderGate.recordRender()
+            }
+        }
+        reader.finishPanelStart(task: Task(name: "ZenCODE.Tests.completed-preserved-panel-loop") {})
+
+        reader.requestPanelRender()
+        await renderGate.waitUntilFirstRenderStarts()
+        reader.withPanelLock { state in
+            state.panelBuffer = Array("pending")
+            state.panelCursorIndex = 7
+        }
+        reader.requestPanelRender()
+
+        let didStop = Mutex(false)
+        let stop = Task(name: "ZenCODE.Tests.preserve-panel-with-slow-render") {
+            await reader.stopPanelInput(clearPanel: false)
+            didStop.withLock { $0 = true }
+        }
+        await terminalWaitUntil {
+            reader.withPanelLock { $0.pendingPanelRender == nil }
+        }
+
+        #expect(await statusBar.state.inputPanelState?.text == "preserved")
+        #expect(reader.withPanelLock { $0.pendingPanelRender == nil })
+        #expect(!didStop.withLock { $0 })
+
+        await renderGate.release()
+        await stop.value
+
+        // The already-owned frame completed before the handoff, the queued one
+        // never painted, and `clearPanel: false` retained both display and draft.
+        #expect(await statusBar.state.inputPanelState?.text == "in-flight")
+        #expect(reader.withPanelLock { String($0.panelBuffer) } == "pending")
+        #expect(reader.withPanelLock { $0.panelStatusBar == nil })
+        #expect(reader.withPanelLock { $0.panelLifecycle == .idle })
+        #expect(await renderGate.renderCount == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func explicitRefreshCompletesAfterItsRevisionWhileNewerFramesContinue() async {
+        let renderGate = TerminalSequencedPanelRenderGate()
+        defer {
+            Task(name: "ZenCODE.Tests.release-sequenced-panel-renders") {
+                await renderGate.releaseAll()
+            }
+        }
+
+        let reader = TerminalInteractiveLineReader()
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        reader.withPanelLock { state in
+            state.panelStatusBar = statusBar
+            state.panelBuffer = Array("initial")
+            state.panelCursorIndex = 7
+            state.panelRenderBeforeUpdateForTesting = {
+                await renderGate.recordRender()
+            }
+        }
+
+        reader.requestPanelRender()
+        await renderGate.waitUntilRenderCount(1)
+
+        let didRefresh = Mutex(false)
+        reader.withPanelLock { state in
+            state.panelBuffer = Array("explicit")
+            state.panelCursorIndex = 8
+        }
+        let refresh = Task(name: "ZenCODE.Tests.explicit-panel-refresh") {
+            await reader.renderPanel()
+            didRefresh.withLock { $0 = true }
+        }
+        await terminalWaitUntil {
+            reader.withPanelLock { $0.pendingPanelRender?.text == "explicit" }
+        }
+
+        // Supersede the explicit frame while the first render is held. Its
+        // waiter must be satisfied when this newer revision is applied.
+        reader.withPanelLock { state in
+            state.panelBuffer = Array("superseding")
+            state.panelCursorIndex = 11
+        }
+        reader.requestPanelRender()
+        await renderGate.release(render: 1)
+        await renderGate.waitUntilRenderCount(2)
+
+        // Keep a still-newer frame queued so the renderer cannot become globally
+        // idle after applying the revision that satisfies `refresh`.
+        reader.withPanelLock { state in
+            state.panelBuffer = Array("newer")
+            state.panelCursorIndex = 5
+        }
+        reader.requestPanelRender()
+        await renderGate.release(render: 2)
+        await renderGate.waitUntilRenderCount(3)
+        await terminalWaitUntil { didRefresh.withLock { $0 } }
+
+        #expect(reader.withPanelLock { $0.isPanelRenderInFlight })
+        #expect(didRefresh.withLock { $0 })
+
+        for text in ["continuous-1", "continuous-2"] {
+            reader.withPanelLock { state in
+                state.panelBuffer = Array(text)
+                state.panelCursorIndex = text.count
+            }
+            reader.requestPanelRender()
+        }
+        #expect(reader.withPanelLock { $0.pendingPanelRender?.text == "continuous-2" })
+
+        await renderGate.releaseAll()
+        await refresh.value
+        await terminalWaitUntil {
+            reader.withPanelLock { !$0.isPanelRenderInFlight }
+        }
+        #expect(await statusBar.state.inputPanelState?.text == "continuous-2")
+        #expect(await renderGate.renderCount == 4)
+    }
+
     @Test
     func pickerEscapeFollowedByBaseTraversesRawParserAndDismissesWithoutDraining() async {
         let pipe = Pipe()
@@ -639,6 +944,7 @@ struct TerminalPromptInputPanelTests {
             // Outside the picker the badge retains its original precedence.
             output.withLock { $0 = "" }
             await reader.handlePanelKey(.cancel, timestampMilliseconds: 710) { _ in }
+            await reader.renderPanel()
             #expect(await statusBar.state.inputPanelState?.prioritizesModeText == false)
             #expect(output.withLock { $0.contains("Chat: 1 unread") })
         }
@@ -693,6 +999,139 @@ struct TerminalPromptInputPanelTests {
         _ = reader.takePanelTaskForStop()
         #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu == nil })
         reader.finishPanelStop(clearPanel: false)
+    }
+}
+
+/// Suspends exactly the first renderer task without blocking its executor or
+/// the status-bar actor. The test releases it after proving later input was
+/// reduced, which creates a real happens-before edge rather than a sleep.
+private actor TerminalSlowPanelRenderGate {
+    private(set) var renderCount = 0
+    private var isReleased = false
+    private var firstRenderContinuation: CheckedContinuation<Void, Never>?
+    private var firstRenderWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func recordRender() async {
+        renderCount += 1
+        guard renderCount == 1 else {
+            return
+        }
+        let waiters = firstRenderWaiters
+        firstRenderWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+        guard !isReleased else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            firstRenderContinuation = continuation
+        }
+    }
+
+    func waitUntilFirstRenderStarts() async {
+        guard renderCount == 0 else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            firstRenderWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        isReleased = true
+        firstRenderContinuation?.resume()
+        firstRenderContinuation = nil
+    }
+}
+
+/// Holds each renderer invocation independently so a test can apply one
+/// revision while proving that a newer one still keeps the renderer active.
+private actor TerminalSequencedPanelRenderGate {
+    private(set) var renderCount = 0
+    private var releasesAllRenders = false
+    private var releasedRenders: Set<Int> = []
+    private var renderContinuations: [Int: CheckedContinuation<Void, Never>] = [:]
+    private var countWaiters: [(
+        count: Int,
+        continuation: CheckedContinuation<Void, Never>
+    )] = []
+
+    func recordRender() async {
+        renderCount += 1
+        let currentRender = renderCount
+        let readyWaiters = countWaiters.filter { $0.count <= currentRender }
+        countWaiters.removeAll { $0.count <= currentRender }
+        for waiter in readyWaiters {
+            waiter.continuation.resume()
+        }
+        guard !releasesAllRenders, !releasedRenders.contains(currentRender) else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            renderContinuations[currentRender] = continuation
+        }
+    }
+
+    func waitUntilRenderCount(_ count: Int) async {
+        guard renderCount < count else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            countWaiters.append((count: count, continuation: continuation))
+        }
+    }
+
+    func release(render: Int) {
+        releasedRenders.insert(render)
+        renderContinuations.removeValue(forKey: render)?.resume()
+    }
+
+    func releaseAll() {
+        releasesAllRenders = true
+        let continuations = renderContinuations.values
+        renderContinuations.removeAll()
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
+}
+
+/// A deterministic replacement for the blocking terminal transport. It yields
+/// the first key, then waits until the renderer has suspended before exposing
+/// the remaining already-timestamped keys to the same panel loop.
+private actor TerminalTimedPanelKeyFeed {
+    private let results: [(result: TerminalInteractiveLineReader.KeyReadResult, timestamp: UInt64)]
+    private let renderGate: TerminalSlowPanelRenderGate
+    private var nextIndex = 0
+
+    var readCount: Int {
+        nextIndex
+    }
+
+    init(
+        results: [(TerminalInteractiveLineReader.KeyReadResult, UInt64)],
+        renderGate: TerminalSlowPanelRenderGate
+    ) {
+        self.results = results.map { (result: $0.0, timestamp: $0.1) }
+        self.renderGate = renderGate
+    }
+
+    func next(
+        token: TerminalBlockingReadToken
+    ) async -> TerminalInteractiveLineReader.TimedPanelKeyReadResult? {
+        guard !token.isCancelled(), nextIndex < results.count else {
+            return nil
+        }
+        if nextIndex == 1 {
+            await renderGate.waitUntilFirstRenderStarts()
+        }
+        let next = results[nextIndex]
+        nextIndex += 1
+        return TerminalInteractiveLineReader.TimedPanelKeyReadResult(
+            result: next.result,
+            timestampMilliseconds: next.timestamp
+        )
     }
 }
 

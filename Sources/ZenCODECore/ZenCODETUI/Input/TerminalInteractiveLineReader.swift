@@ -126,6 +126,33 @@ public final class TerminalInteractiveLineReader: Sendable {
         case transitionInFlight
     }
 
+    /// A complete, immutable prompt projection waiting to reach the status bar.
+    ///
+    /// The input reducer publishes these under ``state``'s mutex, while one
+    /// asynchronous render task consumes them outside the mutex. Keeping the whole
+    /// projection together prevents a slow terminal repaint from observing a
+    /// hybrid of two edits.
+    struct PanelRenderSnapshot: Sendable {
+        let statusBar: TerminalStatusBar?
+        let text: String
+        let cursorIndex: Int
+        let modeText: String
+        let helpText: String
+        let compactHelpText: String?
+        let prioritizesModeText: Bool
+        let suggestionLines: [String]
+        let suggestionSelectedIndex: Int?
+        let revision: UInt64
+    }
+
+    /// Completion boundary for one explicit refresh. A newer coalesced frame
+    /// also satisfies an older waiter because it contains a later projection of
+    /// the same reader state.
+    struct PanelRenderWaiter: Sendable {
+        let revision: UInt64
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
     /// All mutable reader state is owned by this mutex. Keeping the input
     /// history together with the panel state is important: raw line reads and
     /// panel reads can both navigate history, and neither may observe a partial
@@ -164,6 +191,23 @@ public final class TerminalInteractiveLineReader: Sendable {
         /// the current read timeout while the caller awaits the task.
         var panelReadToken: TerminalBlockingReadToken?
         var panelRenderRevision: UInt64 = 0
+        /// At most one task sends prompt snapshots to the status-bar actor.
+        /// Producers replace `pendingPanelRender` while that task awaits a slow
+        /// redraw, keeping input acquisition independent of repaint latency.
+        var isPanelRenderInFlight = false
+        var pendingPanelRender: PanelRenderSnapshot?
+        /// Highest revision applied by the renderer, or invalidated by a stop.
+        var completedPanelRenderRevision: UInt64 = 0
+        /// Explicit refresh callers wait only for their own revision (or a newer
+        /// coalesced one), never for the continuously changing queue to go idle.
+        var panelRenderWaiters: [PanelRenderWaiter] = []
+        /// Lifecycle teardown still needs the renderer itself to stop before the
+        /// terminal is handed to another interactive reader.
+        var panelRenderDrainWaiters: [CheckedContinuation<Void, Never>] = []
+        /// Internal asynchronous test seam for a render already dequeued by the
+        /// single-flight task. Production leaves it `nil`; tests use it to hold
+        /// a repaint without blocking the cooperative executor or status actor.
+        var panelRenderBeforeUpdateForTesting: (@Sendable () async -> Void)?
 
         // Projections kept so existing call sites and lifecycle tests keep
         // addressing the draft by name instead of reaching into the reducer.

@@ -20,6 +20,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Live terminal prompt repainting now runs asynchronously with one serialized,
+  coalesced pending snapshot. Slow transcript/status-bar output no longer delays
+  key acquisition or distorts the conservative press-and-hold repeat timing;
+  explicit refresh, submit/dismiss ordering, and stop revision fences remain
+  intact.
 - File-change previews now align with their tool headings without extra left
   padding, including multi-edit diffs and new-file writes in coordinator and
   sub-agent output. Their code background stops at the content boundary instead

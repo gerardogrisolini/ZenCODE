@@ -164,19 +164,45 @@ extension TerminalInteractiveLineReader {
 
         stopState.task?.cancel()
         await stopState.task?.value
-        // Only now is the terminal provably free: the loop has left its blocking
-        // read, so raw mode can be handed back. The panel stays marked
-        // `stopping` until `finishPanelStop`, so no successor can acquire the
-        // TTY before this restore has run.
-        rawInput.restoreRawMode()
+        let revision = invalidatePanelRendersForStop()
         if clearPanel {
-            let revision = withPanelLock { state -> UInt64 in
-                state.panelRenderRevision &+= 1
-                return state.panelRenderRevision
-            }
             await stopState.statusBar?.clearInputPanel(revision: revision)
         }
+        // The panel loop and its renderer are separate tasks. A preserving stop
+        // cannot use a clear revision to fence the status bar, so wait until the
+        // already-dequeued frame has finished before handing the terminal to a
+        // consent prompt. Pending frames were discarded above for both modes.
+        await awaitPanelRenderDrain()
+        // Only now is the terminal provably free: the loop has left its blocking
+        // read and the renderer can no longer write, so raw mode can be handed
+        // back. The panel stays marked `stopping` until `finishPanelStop`, so no
+        // successor can acquire the TTY before this restore has run.
+        rawInput.restoreRawMode()
         finishPanelStop(clearPanel: clearPanel)
+    }
+
+    /// Detaches the stopped session from its status bar, discards its queued
+    /// projection, and releases explicit refreshes whose revisions can no longer
+    /// be applied. The immutable frame already owned by the renderer is joined by
+    /// ``awaitPanelRenderDrain()`` before stop returns.
+    private func invalidatePanelRendersForStop() -> UInt64 {
+        let result = withPanelLock { state -> (
+            revision: UInt64,
+            waiters: [CheckedContinuation<Void, Never>]
+        ) in
+            state.panelRenderRevision &+= 1
+            let revision = state.panelRenderRevision
+            state.pendingPanelRender = nil
+            state.panelStatusBar = nil
+            state.completedPanelRenderRevision = revision
+            let waiters = state.panelRenderWaiters.map(\.continuation)
+            state.panelRenderWaiters.removeAll()
+            return (revision, waiters)
+        }
+        for waiter in result.waiters {
+            waiter.resume()
+        }
+        return result.revision
     }
 
     /// Waits out any in-flight transition, then marks the panel `stopping` and
@@ -225,8 +251,8 @@ extension TerminalInteractiveLineReader {
 
     func finishPanelStop(clearPanel: Bool) {
         resumePanelTransitionWaiters { state in
+            state.panelStatusBar = nil
             if clearPanel {
-                state.panelStatusBar = nil
                 state.panelBuffer.removeAll()
                 state.panelCursorIndex = 0
                 state.panelOverlayOverride = nil
@@ -341,7 +367,7 @@ extension TerminalInteractiveLineReader {
             return true
         }
         guard didChange else { return }
-        await renderPanel()
+        requestPanelRender()
     }
 
     public func setQueuedPromptCount(_ count: Int) async {
@@ -414,8 +440,28 @@ extension TerminalInteractiveLineReader {
     /// `stopPanelInput()` unwinds the loop immediately rather than after the
     /// remainder of a long read window.
     func runPanelInputLoop(
-        statusBar _: TerminalStatusBar,
+        statusBar: TerminalStatusBar,
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
+    ) async {
+        await runPanelInputLoop(
+            statusBar: statusBar,
+            onEvent: onEvent,
+            readNextTimedResult: { token in
+                await TerminalBlockingRead.run(token: token) { token in
+                    Self.readTimedPanelKeyResult(reader: self, token: token)
+                }
+            }
+        )
+    }
+
+    /// Reduces timed panel reads from one serial source. The production entry
+    /// above supplies the cancellation-aware blocking transport; keeping this
+    /// half separate lets lifecycle tests deterministically hold rendering while
+    /// the same live loop consumes a controlled stream of timestamps.
+    func runPanelInputLoop(
+        statusBar _: TerminalStatusBar,
+        onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void,
+        readNextTimedResult: @escaping @Sendable (TerminalBlockingReadToken) async -> TimedPanelKeyReadResult?
     ) async {
         let token = TerminalBlockingReadToken()
         withPanelLock { state in
@@ -432,9 +478,7 @@ extension TerminalInteractiveLineReader {
         }
 
         while !Task.isCancelled, !token.isCancelled() {
-            let timedResult = await TerminalBlockingRead.run(token: token) { token in
-                Self.readTimedPanelKeyResult(reader: self, token: token)
-            }
+            let timedResult = await readNextTimedResult(token)
             guard let timedResult else {
                 // Cancelled: the panel is stopping and must not emit further
                 // events for keys read during teardown.
@@ -448,7 +492,7 @@ extension TerminalInteractiveLineReader {
                 key = .cancel
             case .timedOut:
                 if invalidatePanelPressAndHoldForConsentIfNeeded() {
-                    await renderPanel()
+                    requestPanelRender()
                 }
                 continue
             case .endOfInput:
@@ -532,8 +576,9 @@ extension TerminalInteractiveLineReader {
     /// resulting effect.
     ///
     /// The reducer runs entirely under the panel lock because it is pure and
-    /// cannot suspend; every `await` (rendering, event delivery) happens after
-    /// the lock has been released.
+    /// cannot suspend. Event delivery happens after the lock is released, and
+    /// redraws are only enqueued there so slow terminal output never delays the
+    /// next panel read.
     func handlePanelKey(
         _ key: Key,
         timestampMilliseconds: UInt64? = nil,
@@ -576,21 +621,21 @@ extension TerminalInteractiveLineReader {
             // A mention token asks the chat for the live roster before drawing,
             // so the list is current even when a roster push event was lost.
             await refreshPanelMentionSuggestionsIfNeeded()
-            await renderPanel()
+            requestPanelRender()
         case let .submitted(line):
             await onEvent(.submitted(line))
-            await renderPanel()
+            requestPanelRender()
         case .cancelRequested:
             await onEvent(.cancelRequested)
-            await renderPanel()
+            requestPanelRender()
         case .endOfInput:
             await onEvent(.endOfInput)
         case .toggleAccessMode:
             await onEvent(.toggleAccessModeRequested)
-            await renderPanel()
+            requestPanelRender()
         case .toggleSharedChatReader:
             await onEvent(.toggleSharedChatReaderRequested)
-            await renderPanel()
+            requestPanelRender()
         }
     }
 
@@ -629,22 +674,18 @@ extension TerminalInteractiveLineReader {
         )
     }
 
-    func renderPanel() async {
-        let snapshot = withPanelLock { state -> (
-            statusBar: TerminalStatusBar?,
-            text: String,
-            cursorIndex: Int,
-            modeText: String,
-            helpText: String,
-            compactHelpText: String?,
-            prioritizesModeText: Bool,
-            suggestionLines: [String],
-            suggestionSelectedIndex: Int?,
-            revision: UInt64
-        ) in
+    /// Enqueues a redraw without making the caller wait for terminal I/O.
+    ///
+    /// The input task calls this after reducing every visual change. If the
+    /// status bar is busy repainting the transcript, a newer edit replaces the
+    /// one pending frame rather than creating an unbounded redraw backlog.
+    @discardableResult
+    func requestPanelRender() -> UInt64 {
+        let request = withPanelLock { state -> (revision: UInt64, shouldStart: Bool) in
             state.panelRenderRevision &+= 1
+            let revision = state.panelRenderRevision
             let suggestionProjection = panelSuggestionProjectionLocked(state: state)
-            return (
+            state.pendingPanelRender = PanelRenderSnapshot(
                 statusBar: state.panelStatusBar,
                 text: String(state.panelBuffer),
                 cursorIndex: state.panelCursorIndex,
@@ -654,21 +695,139 @@ extension TerminalInteractiveLineReader {
                 prioritizesModeText: state.panelOverlayOverride == nil && state.editor.pressAndHoldMenu != nil,
                 suggestionLines: suggestionProjection.lines,
                 suggestionSelectedIndex: suggestionProjection.selectedIndex,
-                revision: state.panelRenderRevision
+                revision: revision
             )
+            guard !state.isPanelRenderInFlight else {
+                return (revision, false)
+            }
+            state.isPanelRenderInFlight = true
+            return (revision, true)
         }
 
-        await snapshot.statusBar?.updateInputPanel(
-            text: snapshot.text,
-            cursorIndex: snapshot.cursorIndex,
-            modeText: snapshot.modeText,
-            helpText: snapshot.helpText,
-            compactHelpText: snapshot.compactHelpText,
-            prioritizesModeText: snapshot.prioritizesModeText,
-            suggestionLines: snapshot.suggestionLines,
-            suggestionSelectedIndex: snapshot.suggestionSelectedIndex,
-            revision: snapshot.revision
-        )
+        guard request.shouldStart else {
+            return request.revision
+        }
+        Task(name: "ZenCODE.TUI.panel-render") { [weak self] in
+            guard let self else {
+                return
+            }
+            await self.drainPanelRenders()
+        }
+        return request.revision
+    }
+
+    /// Preserves the completion boundary used by panel start and explicit
+    /// refresh calls. Live key handling deliberately uses
+    /// ``requestPanelRender()`` instead.
+    func renderPanel() async {
+        let revision = requestPanelRender()
+        await awaitPanelRender(revision: revision)
+    }
+
+    private func drainPanelRenders() async {
+        while let snapshot = takeNextPanelRenderSnapshot() {
+            let beforeUpdate = withPanelLock { state in
+                state.panelRenderBeforeUpdateForTesting
+            }
+            await beforeUpdate?()
+            await snapshot.statusBar?.updateInputPanel(
+                text: snapshot.text,
+                cursorIndex: snapshot.cursorIndex,
+                modeText: snapshot.modeText,
+                helpText: snapshot.helpText,
+                compactHelpText: snapshot.compactHelpText,
+                prioritizesModeText: snapshot.prioritizesModeText,
+                suggestionLines: snapshot.suggestionLines,
+                suggestionSelectedIndex: snapshot.suggestionSelectedIndex,
+                revision: snapshot.revision
+            )
+            completePanelRender(revision: snapshot.revision)
+        }
+    }
+
+    /// Removes one immutable frame. Clearing the in-flight flag in the same
+    /// critical section that observes an empty queue prevents a producer from
+    /// leaving a frame stranded between the check and task completion.
+    private func takeNextPanelRenderSnapshot() -> PanelRenderSnapshot? {
+        let result = withPanelLock { state -> (
+            snapshot: PanelRenderSnapshot?,
+            waiters: [CheckedContinuation<Void, Never>]
+        ) in
+            if let snapshot = state.pendingPanelRender {
+                state.pendingPanelRender = nil
+                return (snapshot, [])
+            }
+            state.isPanelRenderInFlight = false
+            let waiters = state.panelRenderDrainWaiters
+            state.panelRenderDrainWaiters.removeAll()
+            return (nil, waiters)
+        }
+        for waiter in result.waiters {
+            waiter.resume()
+        }
+        return result.snapshot
+    }
+
+    /// Marks a snapshot applied and releases only the explicit refreshes that it
+    /// satisfies. A coalesced newer snapshot deliberately completes waiters for
+    /// every older revision it replaced.
+    private func completePanelRender(revision: UInt64) {
+        let waiters = withPanelLock { state -> [CheckedContinuation<Void, Never>] in
+            state.completedPanelRenderRevision = max(
+                state.completedPanelRenderRevision,
+                revision
+            )
+            var remaining: [PanelRenderWaiter] = []
+            var completed: [CheckedContinuation<Void, Never>] = []
+            for waiter in state.panelRenderWaiters {
+                if waiter.revision <= state.completedPanelRenderRevision {
+                    completed.append(waiter.continuation)
+                } else {
+                    remaining.append(waiter)
+                }
+            }
+            state.panelRenderWaiters = remaining
+            return completed
+        }
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    /// Waits until this refresh's revision has been applied or superseded. Newer
+    /// input may keep the renderer busy without delaying this caller.
+    private func awaitPanelRender(revision: UInt64) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let isComplete = withPanelLock { state -> Bool in
+                guard state.completedPanelRenderRevision < revision else {
+                    return true
+                }
+                state.panelRenderWaiters.append(
+                    PanelRenderWaiter(revision: revision, continuation: continuation)
+                )
+                return false
+            }
+            if isComplete {
+                continuation.resume()
+            }
+        }
+    }
+
+    /// Lifecycle-only join for the single renderer task. Unlike explicit refresh
+    /// barriers, stop must know no detached terminal write can occur afterward.
+    private func awaitPanelRenderDrain() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let isDrained = withPanelLock { state -> Bool in
+                guard state.isPanelRenderInFlight || state.pendingPanelRender != nil else {
+                    return true
+                }
+                state.panelRenderDrainWaiters.append(continuation)
+                return false
+            }
+            if isDrained {
+                continuation.resume()
+            }
+        }
     }
 
     /// Compact, single-line status of the draft.
