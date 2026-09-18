@@ -351,6 +351,7 @@ extension TerminalChatRenderCoordinator {
         }
         writeToolBlock(
             renderRows.detailRows,
+            contentWidth: renderRows.detailContentWidth,
             codeLanguage: TerminalChat.codeLanguageHint(for: toolCall)
         )
         if lifecycle.isCompletion {
@@ -374,12 +375,18 @@ extension TerminalChatRenderCoordinator {
 
     private func writeToolBlock(
         _ rows: [TerminalChat.DetailedToolRow],
+        contentWidth: Int,
         codeLanguage: String? = nil
     ) {
         let reset = TerminalStyle.reset
         let text = rows
             .map {
-                "\(lineInset)\(TerminalChat.renderDetailedToolRow($0, codeLanguage: codeLanguage))\(reset)"
+                let rendered = TerminalChat.renderDetailedToolRow(
+                    $0,
+                    codeLanguage: codeLanguage,
+                    contentWidth: contentWidth
+                )
+                return "\(lineInset)\(rendered)\(reset)"
             }
             .joined(separator: "\n")
         writeRawChatError("\(text)\n")

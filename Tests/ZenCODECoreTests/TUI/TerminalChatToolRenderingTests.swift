@@ -201,7 +201,7 @@ extension TerminalChatRenderingTests {
                 "\u{1B}[0m\(TerminalChat.codeAreaBackgroundColor)\(TerminalChat.codeAreaBackgroundColor) "
             )
         )
-        #expect(renderedContinuation.hasSuffix("\(TerminalChat.codeAreaBackgroundColor)\u{1B}[K"))
+        #expect(renderedContinuation.hasSuffix("\(TerminalStyle.reset)\u{1B}[K"))
     }
 
     @Test
@@ -234,6 +234,138 @@ extension TerminalChatRenderingTests {
         #expect(codeLines.dropFirst().allSatisfy { $0.lineNumber.trimmingCharacters(in: .whitespaces).isEmpty })
         #expect(!rows.map(\.plainText).joined().contains("…"))
         #expect(rows.allSatisfy { TerminalChat.displayWidth($0.plainText) <= 79 })
+    }
+
+    @Test(arguments: ["local.writeFile", "local.append", "local.editFile", "local.replace", "local.multiEdit"], [40, 52, 80])
+    func mutationPreviewsUseNoExtraInsetAndPreserveSourceIndentation(
+        toolName: String,
+        columns: Int
+    ) throws {
+        let old = "    let value = 1\n        value()"
+        let new = "    let value = 2\n        value()"
+        var arguments: [String: Any] = ["path": "Sources/Example.swift"]
+        switch toolName {
+        case "local.writeFile", "local.append":
+            arguments["content"] = new
+        case "local.multiEdit":
+            arguments["edits"] = [["old": old, "new": new]]
+        default:
+            arguments["old"] = old
+            arguments["new"] = new
+        }
+        let toolCall = presentedToolCall(
+            id: "aligned-preview",
+            name: toolName,
+            argumentsObject: arguments,
+            argumentsJSON: "{}"
+        )
+        let rows = TerminalChat.toolPresentationRows(
+            for: toolCall,
+            result: nil,
+            statusDetail: nil,
+            contentInsetWidth: 0,
+            columnWidth: columns
+        ).detailRows
+
+        #expect(!rows.isEmpty)
+        for row in rows {
+            switch row {
+            case let .code(line):
+                #expect(line.indentation.isEmpty)
+            case let .diff(cells):
+                #expect(cells.indentation.isEmpty)
+            case let .unifiedDiff(line):
+                #expect(line.indentation.isEmpty)
+            default:
+                Issue.record("Expected a structured source row")
+            }
+            #expect(TerminalChat.displayWidth(row.plainText) <= columns - 1)
+            #expect(TerminalANSIText.stripANSI(
+                TerminalChat.renderDetailedToolRow(row, codeLanguage: "swift")
+            ) == row.plainText)
+        }
+        let text = rows.map(\.plainText).joined(separator: "\n")
+        #expect(text.contains("2 │         value()"))
+        #expect(text.contains("1 │     let value = 2"))
+        if toolName == "local.editFile" || toolName == "local.replace" || toolName == "local.multiEdit" {
+            #expect(text.contains("1 │     let value = 1"))
+            if columns >= 52 {
+                #expect(try #require(rows.first).plainText.hasPrefix("old"))
+                #expect(rows.count == 3)
+            } else {
+                #expect(try #require(rows.first).plainText.hasPrefix("- 1 │ "))
+            }
+        } else {
+            #expect(try #require(rows.first).plainText.hasPrefix("1 │ "))
+        }
+    }
+
+    @Test
+    func newFilePreviewUsesTheRecoveredColumnsBeforeWrapping() {
+        let content = "    " + String(repeating: "x", count: 71)
+        let rows = TerminalChat.safelyWrappedDetailedToolRows(
+            TerminalChat.numberedCodeSnippetRows(content),
+            columnWidth: 80
+        )
+
+        #expect(rows.map(\.plainText) == ["1 │ \(content)"])
+        #expect(TerminalChat.numberedCodeSnippetLines(content) == ["1 │ \(content)"])
+        #expect(TerminalChat.numberedDiffSnippetLines(
+            old: "    old", new: "    new", contentWidth: 51
+        ).first?.hasPrefix("old") == true)
+    }
+
+    @Test(arguments: ["local.writeFile", "local.multiEdit"], [40, 80, 81])
+    func filePreviewBackgroundStopsAtTheSafeContentWidth(toolName: String, columns: Int) {
+        // Exercise blank/short rows, wrapped comments, wide glyphs, empty old
+        // payloads, and both unified and side-by-side diffs on the same surface.
+        let content = "    // " + String(repeating: "界🙂 source ", count: 10)
+            + "\n\n    let value = 1"
+        for inset in [0, 1, 6] {
+            for fileExtension in ["swift", "txt"] {
+                var arguments: [String: Any] = ["path": "Example.\(fileExtension)"]
+                if toolName == "local.writeFile" {
+                    arguments["content"] = content
+                } else {
+                    arguments["edits"] = [["old": "", "new": content]]
+                }
+                let toolCall = presentedToolCall(
+                    id: "bounded-background",
+                    name: toolName,
+                    argumentsObject: arguments,
+                    argumentsJSON: "{}"
+                )
+                let presentation = TerminalChat.toolPresentationRows(
+                    for: toolCall,
+                    result: nil,
+                    statusDetail: nil,
+                    contentInsetWidth: inset,
+                    columnWidth: columns
+                )
+                let width = columns - inset - 1
+                #expect(presentation.detailContentWidth == width)
+                #expect(!presentation.detailRows.isEmpty)
+                for row in presentation.detailRows {
+                    let rendered = TerminalChat.renderDetailedToolRow(
+                        row,
+                        codeLanguage: TerminalChat.codeLanguageHint(for: toolCall),
+                        contentWidth: presentation.detailContentWidth
+                    )
+                    let padding = String(
+                        repeating: " ",
+                        count: max(0, width - TerminalChat.displayWidth(row.plainText))
+                    )
+                    #expect(TerminalANSIText.stripANSI(rendered) == row.plainText + padding)
+                    #expect(TerminalChat.displayWidth(rendered) == width)
+                    #expect(rendered.hasSuffix(
+                        TerminalChat.codeAreaBackgroundColor + padding + TerminalStyle.reset + "\u{1B}[K"
+                    ))
+                    // No earlier erase may fill the rest of the physical line
+                    // with the code background before the reset at the boundary.
+                    #expect(rendered.components(separatedBy: "\u{1B}[K").count == 2)
+                }
+            }
+        }
     }
 
     @Test

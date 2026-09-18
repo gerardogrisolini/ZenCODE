@@ -169,6 +169,106 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(rows.contains { $0.contains("newValue") })
     }
 
+    @Test(arguments: ["local.editFile", "local.multiEdit", "local.writeFile"], [false, true])
+    func filePreviewsAlignWithCoordinatorAndDelegatedToolTitles(
+        toolName: String,
+        stdinIsTerminal: Bool
+    ) async throws {
+        let old = "    let oldValue = 1"
+        let new = "    let newValue = 2"
+        var arguments: [String: Any] = ["path": "/tmp/Example.swift"]
+        switch toolName {
+        case "local.writeFile":
+            arguments["content"] = new
+        case "local.multiEdit":
+            arguments["edits"] = [["old": old, "new": new]]
+        default:
+            arguments["old"] = old
+            arguments["new"] = new
+        }
+        let toolCall = presentedToolCall(
+            id: "aligned-file-preview",
+            name: toolName,
+            argumentsObject: arguments,
+            argumentsJSON: "{}"
+        )
+        let result = DirectAgentToolResult(output: "Updated", summary: "Updated")
+        let renderer = makeRenderer(
+            stdinIsTerminal: stdinIsTerminal,
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { 100 }
+        )
+        await renderer.writeToolCallStarted(toolCall)
+        let startEventCount = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(toolCall, result: result)
+        let coordinatorRawRows = (await renderer.capturedWriteEvents())
+            .dropFirst(startEventCount).map(\.text).joined().components(separatedBy: "\n")
+        let coordinatorRows = coordinatorRawRows.map {
+            TerminalANSIText.stripANSI($0).replacingOccurrences(of: "\r", with: "")
+        }
+        let coordinatorSource = try #require(coordinatorRows.first { $0.contains("newValue") })
+        let inset = stdinIsTerminal ? TerminalChatTextFormatting.chatLineInsetPrefix : ""
+        #expect(coordinatorSource.hasPrefix("\(inset)1 │ "))
+        #expect(coordinatorSource.contains("1 │ \(new)"))
+        #expect(coordinatorRows.contains { $0.hasPrefix("\(inset)🛠️  \(toolName)") })
+        let sourceRows = coordinatorRawRows.filter { $0.contains(TerminalChat.codeAreaBackgroundColor) }
+        #expect(!sourceRows.isEmpty)
+        for row in sourceRows {
+            #expect(TerminalChat.displayWidth(row) == 99)
+            #expect(row.hasSuffix("\(TerminalStyle.reset)\u{1B}[K\(TerminalStyle.reset)"))
+        }
+
+        let delegatedRenderer = makeRenderer(standardErrorIsTerminal: true)
+        let agentSnapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent-worker",
+            name: "worker",
+            role: "",
+            status: .running,
+            pending: true,
+            currentToolName: toolCall.name,
+            currentToolTarget: "/tmp/Example.swift",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        // The delegated overview shows source details both while running and
+        // after completion; neither lifecycle may add a second layout inset.
+        for lifecycle in [DirectSubAgentToolEvent.Lifecycle.started, .completed(result)] {
+            await delegatedRenderer.recordSubAgentToolEvent(
+                DirectSubAgentToolEvent(
+                    agentID: agentSnapshot.id,
+                    agentName: agentSnapshot.name,
+                    toolCall: toolCall,
+                    lifecycle: lifecycle
+                )
+            )
+            let presentations = await delegatedRenderer.subAgentToolPresentationSnapshot()
+            let delegatedRawRows = TerminalChat.renderSubAgentOverviewRowsForTesting(
+                [agentSnapshot],
+                rowBudget: nil,
+                toolPresentationsByAgentID: presentations.presentationsByAgentID
+            )
+            let delegatedRows = delegatedRawRows.map { TerminalANSIText.stripANSI($0) }
+            #expect(delegatedRows.contains { $0.hasPrefix("   🛠️  \(toolName)") })
+            let source = try #require(delegatedRows.first { $0.contains("newValue") })
+            // A narrow terminal may choose unified diff markers instead.
+            #expect(source.hasPrefix("   1 │ ") || source.hasPrefix("   + 1 │ "))
+            #expect(source.contains("1 │ \(new)"))
+            let ansiRows = TerminalChat.renderSubAgentToolRowsForTesting(
+                try #require(presentations.presentationsByAgentID[agentSnapshot.id])
+            )
+            let width = max(40, TerminalChat.terminalColumnCount() - 3)
+            let sourceRows = ansiRows.filter { $0.contains(TerminalChat.codeAreaBackgroundColor) }
+            #expect(!sourceRows.isEmpty)
+            for row in sourceRows {
+                #expect(TerminalChat.displayWidth(row) == width)
+                #expect(row.hasSuffix("\(TerminalStyle.reset)\u{1B}[K\(TerminalStyle.reset)"))
+            }
+        }
+        #expect(await delegatedRenderer.capturedWriteEvents().isEmpty)
+    }
+
     @Test
     func delegatedToolTimingScopesMatchingProviderCallIDsByAgent() async {
         let toolCall = presentedToolCall(

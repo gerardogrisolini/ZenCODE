@@ -70,8 +70,7 @@ extension TerminalChat {
                 sourceChangeRows(
                     old: rawStringArgument(edit, keys: ["old"]),
                     new: rawStringArgument(edit, keys: ["new"]),
-                    contentWidth: contentWidth,
-                    indentation: "    "
+                    contentWidth: contentWidth
                 )
             }
         case "local.applyPatch":
@@ -315,11 +314,11 @@ extension TerminalChat {
 
 
     /// Prefixes each created/inserted source line with a stable, right-aligned
-    /// local number. The indentation keeps it on the existing highlighted code
-    /// area path rather than the metadata-label path.
+    /// local number. Layout inset belongs to the containing tool/agent section;
+    /// source indentation stays unchanged in the content after the gutter.
     nonisolated static func numberedCodeSnippetRows(
         _ text: String,
-        indentation: String = "  "
+        indentation: String = ""
     ) -> [DetailedToolRow] {
         let snippet = detailedToolSnippet(text)
         let numberWidth = String(max(1, snippet.lines.count)).count
@@ -350,7 +349,7 @@ extension TerminalChat {
         old: String,
         new: String,
         contentWidth: Int?,
-        indentation: String = "  "
+        indentation: String = ""
     ) -> [DetailedToolRow] {
         let oldSnippet = detailedToolSnippet(old)
         let newSnippet = detailedToolSnippet(new)
@@ -490,19 +489,17 @@ extension TerminalChat {
     /// coincide with a numbered source line whose literal text is `<empty>`.
     private nonisolated static let detailedToolEmptyPayloadMarker = "<empty>"
 
-    /// Prefixes each created/inserted source line with a stable, right-aligned
-    /// local number. The indentation keeps it on the existing highlighted code
-    /// area path rather than the metadata-label path.
+    /// Plain-text projection of the same flush-aligned, numbered source rows.
     nonisolated static func numberedCodeSnippetLines(
         _ text: String,
-        indentation: String = "  "
+        indentation: String = ""
     ) -> [String] {
         numberedCodeSnippetRows(text, indentation: indentation).map(\.plainText)
     }
 
     /// Minimum useful width for each source cell in a side-by-side expanded
-    /// diff. With the standard two-cell indentation and three-cell divider,
-    /// this documents a 53-cell content-width threshold (2 + 3 + 24 * 2).
+    /// diff. With no additional inset and a three-cell divider, the default
+    /// content-width threshold is 51 cells (3 + 24 * 2).
     /// At or below a smaller budget the renderer uses stacked unified `-` / `+`
     /// rows rather than squeezing source code into unusably narrow columns.
     nonisolated static let detailedToolSideBySideDiffMinimumCellWidth = 24
@@ -515,7 +512,7 @@ extension TerminalChat {
         old: String,
         new: String,
         contentWidth: Int?,
-        indentation: String = "  "
+        indentation: String = ""
     ) -> [String] {
         numberedDiffSnippetRows(
             old: old,

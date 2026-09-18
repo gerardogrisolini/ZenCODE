@@ -18,6 +18,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   fallback preserves ordinary editing/paste semantics and does not modify
   operating-system keyboard preferences.
 
+### Fixed
+
+- File-change previews now align with their tool headings without extra left
+  padding, including multi-edit diffs and new-file writes in coordinator and
+  sub-agent output. Their code background stops at the content boundary instead
+  of spilling into the right terminal padding. Source indentation, line-number
+  gutters, syntax highlighting and safe terminal wrapping are preserved.
+
 ## [2.1.7] - 2026-09-17
 
 ### Added

@@ -330,6 +330,18 @@ extension TerminalChat {
             .filter { !$0.isEmpty }
     }
 
+    /// Exercises the delegated ANSI surface without redirecting process-global
+    /// descriptors: SwiftPM normally captures stderr even when run in a PTY.
+    nonisolated static func renderSubAgentToolRowsForTesting(
+        _ presentation: TerminalChatRenderCoordinator.SubAgentToolPresentation
+    ) -> [String] {
+        subAgentOverviewRows(renderSubAgentToolLines(
+            presentation,
+            density: .full,
+            standardErrorIsTerminal: true
+        ))
+    }
+
     private nonisolated static func subAgentOverviewLines(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         modelTitleResolver: (String) -> String,
@@ -761,7 +773,8 @@ extension TerminalChat {
     /// and the three-column placement owned by the sub-agent section.
     private nonisolated static func renderSubAgentToolLines(
         _ presentation: TerminalChatRenderCoordinator.SubAgentToolPresentation,
-        density: SubAgentOverviewDensity
+        density: SubAgentOverviewDensity,
+        standardErrorIsTerminal: Bool = AgentOutput.standardErrorIsTerminal
     ) -> [SubAgentOverviewLine] {
         guard density == .full || density == .compact else {
             return [
@@ -793,7 +806,7 @@ extension TerminalChat {
         )
         let reset = TerminalStyle.reset
         var lines = rows.compactRows.enumerated().map { index, row in
-            let text = AgentOutput.standardErrorIsTerminal
+            let text = standardErrorIsTerminal
                 ? "\(renderCompactToolLine(row.plainText, isTitle: index == 0))\(reset)"
                 : row.plainText
             return SubAgentOverviewLine.complete(text)
@@ -804,9 +817,16 @@ extension TerminalChat {
 
         let codeLanguage = codeLanguageHint(for: presentation.toolCall)
         lines.append(contentsOf: rows.detailRows.map { row in
-            let text = AgentOutput.standardErrorIsTerminal
-                ? "\(renderDetailedToolRow(row, codeLanguage: codeLanguage))\(reset)"
-                : row.plainText
+            let text: String
+            if standardErrorIsTerminal {
+                text = renderDetailedToolRow(
+                    row,
+                    codeLanguage: codeLanguage,
+                    contentWidth: rows.detailContentWidth
+                ) + reset
+            } else {
+                text = row.plainText
+            }
             return SubAgentOverviewLine.complete(text)
         })
         return lines

@@ -168,6 +168,9 @@ extension TerminalChat {
     struct ToolPresentationRows: Sendable, Equatable {
         var compactRows: [DetailedToolRow]
         var detailRows: [DetailedToolRow]
+        /// The same safe width used to wrap the source rows. Background fill
+        /// must stop here rather than extending into the terminal's right inset.
+        let detailContentWidth: Int
 
         var allRows: [DetailedToolRow] {
             compactRows + detailRows
@@ -216,7 +219,8 @@ extension TerminalChat {
                     columnWidth: columnWidth,
                     codeLanguage: codeLanguageHint(for: toolCall)
                 )
-                : []
+                : [],
+            detailContentWidth: safeContentWidth
         )
     }
 
@@ -846,29 +850,33 @@ extension TerminalChat {
     /// payload sequence can be mistaken for the divider.
     nonisolated static func renderDetailedToolRow(
         _ row: DetailedToolRow,
-        codeLanguage: String? = nil
+        codeLanguage: String? = nil,
+        contentWidth: Int? = nil
     ) -> String {
+        let rendered: String
         switch row {
         case let .text(line):
-            return renderDetailedToolLine(line, codeLanguage: codeLanguage)
+            let text = renderDetailedToolLine(line, codeLanguage: codeLanguage)
+            guard line.hasPrefix("  ") else { return text }
+            rendered = text
         case let .parameter(line, highlightsJSON):
             return renderDetailedToolParameterLine(line, highlightsJSON: highlightsJSON)
         case let .code(line):
-            return renderCodeAreaLine(
+            rendered = renderCodeAreaLine(
                 indentation: line.indentation,
                 lineNumber: line.lineNumber,
                 content: line.content,
                 language: line.contentIsPreHighlighted ? nil : codeLanguage
             )
         case let .diff(cells):
-            return renderDiffCodeAreaLine(
+            rendered = renderDiffCodeAreaLine(
                 indentation: cells.indentation,
                 oldCell: cells.oldCell,
                 newCell: cells.newCell,
                 language: cells.cellsArePreHighlighted ? nil : codeLanguage
             )
         case let .unifiedDiff(line):
-            return renderUnifiedDiffCodeAreaLine(
+            rendered = renderUnifiedDiffCodeAreaLine(
                 indentation: line.indentation,
                 marker: line.marker,
                 lineNumber: line.lineNumber,
@@ -876,6 +884,12 @@ extension TerminalChat {
                 language: line.contentIsPreHighlighted ? nil : codeLanguage
             )
         }
+        // Paint only the source viewport, including short rows and the spare
+        // cell from an odd side-by-side budget. Reset before EL so the reserved
+        // right margin (and any stale background there) uses the host surface.
+        let padding = max(0, (contentWidth ?? 0) - displayWidth(rendered))
+        return rendered + codeAreaBackgroundColor + String(repeating: " ", count: padding)
+            + TerminalStyle.reset + "\u{1B}[K"
     }
 
     /// Renders a source row with a neutral gutter and independently highlighted
@@ -887,12 +901,10 @@ extension TerminalChat {
         content: String,
         language: String?
     ) -> String {
-        let clearToEnd = "\u{1B}[K"
         let codeStyle = "\(codeAreaBackgroundColor)\(TerminalMarkdownPalette.dark.codeForeground)"
         return "\(codeAreaBackgroundColor)\(indentation)"
             + "\(toolCodeGutterColor)\(lineNumber)\(DetailedToolCodeLine.gutter)"
             + "\(codeStyle)\(renderCodeAreaFragment(content, language: language))"
-            + clearToEnd
     }
 
     nonisolated static func renderDetailedToolLine(
@@ -940,18 +952,15 @@ extension TerminalChat {
         return "\(toolParameterBaseColor)\(highlighted)"
     }
 
-    /// Renders a code snippet row of the expanded tool block: the line is
-    /// syntax-highlighted for the target file's language and painted over a
-    /// dark background that extends to the right edge of the terminal, so the
-    /// whole code area reads as one framed block. Highlight resets emitted by
-    /// the code renderer are re-anchored to the background color so token
-    /// colors never punch holes in the frame.
+    /// Renders a code snippet fragment over the code background. The enclosing
+    /// row renderer owns bounded padding and resets before clearing the margin.
+    /// Highlight resets are re-anchored to the background so token colors never
+    /// punch holes in the frame.
     nonisolated static func renderCodeAreaLine(
         _ line: String,
         language: String?
     ) -> String {
-        let clearToEnd = "\u{1B}[K"
-        return "\(codeAreaBackgroundColor)\(renderCodeAreaFragment(line, language: language))\(clearToEnd)"
+        "\(codeAreaBackgroundColor)\(renderCodeAreaFragment(line, language: language))"
     }
 
     /// Renders a single side-by-side diff cell. When the cell carries a
@@ -988,13 +997,11 @@ extension TerminalChat {
         newCell: String,
         language: String?
     ) -> String {
-        let clearToEnd = "\u{1B}[K"
         let divider = DetailedToolDiffCells.divider
         return "\(codeAreaBackgroundColor)\(indentation)"
             + renderDiffCellFragment(oldCell, language: language)
             + "\(codeAreaBackgroundColor)\(divider)"
             + renderDiffCellFragment(newCell, language: language)
-            + "\(codeAreaBackgroundColor)\(clearToEnd)"
     }
 
     /// Renders one stacked unified-diff line inside the same framed code area
@@ -1008,7 +1015,6 @@ extension TerminalChat {
         content: String,
         language: String?
     ) -> String {
-        let clearToEnd = "\u{1B}[K"
         let markerColor: String
         switch marker {
         case "-":
@@ -1018,7 +1024,7 @@ extension TerminalChat {
         default:
             markerColor = codeAreaBackgroundColor
         }
-        return "\(codeAreaBackgroundColor)\(indentation)\(markerColor)\(marker)\(codeAreaBackgroundColor) \(toolCodeGutterColor)\(lineNumber)\(codeAreaBackgroundColor)\(DetailedToolUnifiedDiffLine.gutter)\(renderCodeAreaFragment(content, language: language))\(clearToEnd)"
+        return "\(codeAreaBackgroundColor)\(indentation)\(markerColor)\(marker)\(codeAreaBackgroundColor) \(toolCodeGutterColor)\(lineNumber)\(codeAreaBackgroundColor)\(DetailedToolUnifiedDiffLine.gutter)\(renderCodeAreaFragment(content, language: language))"
     }
 
     private nonisolated static func renderCodeAreaFragment(
