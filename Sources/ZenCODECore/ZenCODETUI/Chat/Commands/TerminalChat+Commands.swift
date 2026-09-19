@@ -241,8 +241,7 @@ extension TerminalChat {
         TerminalChatCommandDescriptor(
             command: "/attach",
             summary: "attach/list/delete files",
-            help: "/attach <file> [file ...] attaches image or video files to the next prompt. /attach list shows pending attachments. /attach delete [all|number] removes pending attachments.",
-            requiresArgument: true
+            help: "/attach opens the terminal picker at the user's home directory when used without arguments, or attaches image/video files from paths. /attach list shows pending attachments. /attach delete [all|number] removes pending attachments."
         ),
                 TerminalChatCommandDescriptor(
             command: "/open",

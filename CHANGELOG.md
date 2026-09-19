@@ -12,6 +12,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- `/attach` without arguments now opens a terminal-native picker at the user's home directory for navigating
+  directories and selecting a supported image or video. Esc/Q cancellation leaves
+  pending attachments unchanged; path-based `/attach`, list, and delete forms are
+  unchanged, and non-interactive input still receives usage without blocking. Inaccessible
+  protected directories are reported as such instead of being shown as empty, and
+  symlinked directories remain navigable.
+
 - The live terminal prompt now recognizes conservative press-and-hold
   key-repeat patterns for supported Latin letters and offers an inline numbered,
   arrow-navigable accent picker across terminal applications. The deterministic

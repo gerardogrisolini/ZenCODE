@@ -277,7 +277,8 @@ Commands start with `/`:
 - `/sessions restore [entry-id]` — restore in-place from a checkpoint, branching from that point; without an argument an interactive picker over the checkpoint entries opens.
 
 **Attachments:**
-- `/attach <file> [file ...]` — attach image/video files to the next prompt.
+- `/attach` — open the terminal picker at the user's home directory to navigate and attach one image/video file to the next prompt. Press Esc or Q to cancel without changing pending attachments.
+- `/attach <file> [file ...]` — attach image/video files from paths to the next prompt.
 - `/attach list` / `/attach delete [all|number]`.
 
 **Files and changes:**
