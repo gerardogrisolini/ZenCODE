@@ -20,6 +20,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Automatic terminal task-graph and sub-agent overview refreshes no longer append
+  after a completed streamed model response or clarification question. Runtime
+  state, linked Telegram mirroring, late delegated-agent completions, and
+  operator-requested task/sub-agent inspection remain current; the next submitted
+  turn re-enables live terminal overview updates.
+
 - Live terminal prompt repainting now runs asynchronously with one serialized,
   coalesced pending snapshot. Slow transcript/status-bar output no longer delays
   key acquisition or distorts the conservative press-and-hold repeat timing;

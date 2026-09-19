@@ -236,6 +236,11 @@ extension TerminalChat {
 
     func runPromptBlocking(_ attempt: TerminalPromptAttempt) async {
         do {
+            // The blocking loop also accepts hidden shared-chat and planner
+            // turns, which bypass `writeSubmittedPrompt`. Reopen the terminal
+            // overview gate at every generation entry, matching the interactive
+            // loop without replaying the preceding turn's withheld summaries.
+            await renderCoordinator.beginTranscriptTurn()
             didRefreshGitStatusDuringCurrentPrompt = false
             await statusBar.beginRequest()
             await statusBar.setProcessing(true)

@@ -227,7 +227,8 @@ extension TerminalChat {
             markdown: Self.taskGraphMarkdown(graph: graph, tasks: views),
             revision: publicationRevision,
             force: true,
-            rememberSignature: false
+            rememberSignature: false,
+            origin: .explicit
         )
     }
 

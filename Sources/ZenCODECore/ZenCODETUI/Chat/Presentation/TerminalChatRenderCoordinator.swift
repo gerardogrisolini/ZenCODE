@@ -22,6 +22,14 @@ actor TerminalChatRenderCoordinator {
         case unchanged
     }
 
+    /// Distinguishes live progress from an operator-requested snapshot. The
+    /// transcript tail fence hides only the former; an explicit inspection must
+    /// remain available even after a model response has completed.
+    enum OverviewPublicationOrigin: Sendable, Equatable {
+        case automatic
+        case explicit
+    }
+
     enum OutputChannel: Sendable, Equatable {
         case standardOutput
         case standardError

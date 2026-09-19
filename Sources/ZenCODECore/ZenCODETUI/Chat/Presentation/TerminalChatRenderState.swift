@@ -33,8 +33,17 @@ struct TerminalOverviewArbitration<Kind: Hashable, Pending> {
     var revisions: [Kind: Int] = [:]
     var publicationCounters: [Kind: Int] = [:]
     var isSuspended = false
+    /// Once an assistant turn has reached its final transcript tail, automatic
+    /// task/sub-agent updates continue through their runtime and mirror paths
+    /// but must not append local terminal text below that response.
+    var isAutomaticTerminalOverviewRenderingSuppressed = false
+    /// Tokens already printed into the local transcript. These stay separate
+    /// from mirrored tokens so a terminal-only tail fence does not make a later
+    /// explicit inspection lose model-authored sub-agent content.
     var consumedResponseTokens = Set<String>()
     var consumedPartialResponseTokens = Set<String>()
+    var mirroredResponseTokens = Set<String>()
+    var mirroredPartialResponseTokens = Set<String>()
 }
 
 /// Actor-confined FIFO mirror queue state. Keeping continuations beside the
@@ -149,6 +158,7 @@ extension TerminalChatRenderCoordinator {
 
     struct PendingOverview: Sendable {
         let kind: OverviewKind
+        let origin: OverviewPublicationOrigin
         let signature: String
         let revision: Int?
         let force: Bool

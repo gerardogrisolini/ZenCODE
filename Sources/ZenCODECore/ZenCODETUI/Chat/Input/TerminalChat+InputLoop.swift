@@ -705,6 +705,10 @@ extension TerminalChat {
         }
 
         func startGeneration(attempt: TerminalPromptAttempt) async {
+            // Hidden/synthetic turns do not necessarily write a submitted
+            // prompt, so every generation entry point reopens automatic local
+            // progress independently of the visible-prompt renderer.
+            await renderCoordinator.beginTranscriptTurn()
             isGenerating = true
             onInteractiveGenerationStateForTesting?(true)
             didRefreshGitStatusDuringCurrentPrompt = false

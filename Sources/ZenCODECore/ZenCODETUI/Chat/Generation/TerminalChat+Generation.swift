@@ -411,6 +411,11 @@ extension TerminalChat {
         switch result {
         case let .success(success):
             let response = success.response
+            // Seal the terminal transcript before flushing the final streamed
+            // response. Task/sub-agent observations still refresh and mirror,
+            // but no automatic terminal overview may overtake the answer (or a
+            // model question) below this point.
+            await renderCoordinator.beginAssistantTranscriptTail()
             await finishStreamingOutput()
             await printModelIfNeeded(response.modelID)
             let responseText = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -443,6 +448,7 @@ extension TerminalChat {
                 await writeFinalFileChangeSummary(summary)
             }
         case let .failure(failure):
+            await renderCoordinator.beginAssistantTranscriptTail()
             await finishStreamingOutput()
             let remoteFailureText: String
             if failure.isCancellation {

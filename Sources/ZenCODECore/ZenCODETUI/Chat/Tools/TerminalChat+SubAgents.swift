@@ -138,7 +138,8 @@ extension TerminalChat {
 
     public func renderSubAgentOverview(
         force: Bool,
-        rememberSignature: Bool = true
+        rememberSignature: Bool = true,
+        isAutomatic: Bool = true
     ) async {
         // Reserve before awaiting the runtime snapshot: a later callback must
         // fence this publication if this snapshot returns after it.
@@ -150,7 +151,8 @@ extension TerminalChat {
         guard force || !snapshots.isEmpty else {
             await renderCoordinator.clearSubAgentOverview(
                 revision: publicationRevision,
-                maximumInPlaceRows: maximumInPlaceRows
+                maximumInPlaceRows: maximumInPlaceRows,
+                origin: isAutomatic ? .automatic : .explicit
             )
             return
         }
@@ -183,6 +185,7 @@ extension TerminalChat {
             revision: publicationRevision,
             force: force,
             rememberSignature: rememberSignature,
+            origin: isAutomatic ? .automatic : .explicit,
             overviewBatchID: overviewBatchID,
             maximumInPlaceRows: maximumInPlaceRows
         )

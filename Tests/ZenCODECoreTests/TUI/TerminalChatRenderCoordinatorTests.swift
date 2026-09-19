@@ -3050,49 +3050,134 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(TerminalANSIText.stripANSI(refreshText).contains("second"))
     }
 
-    /// Characterizes the cross-file seam between the streaming write buffer
-    /// (+Streaming) and deferred overview publication (+Overviews): while a
-    /// thought stream is active the overview defers, and finishing the stream
-    /// must flush the buffered bytes to the terminal before the deferred
-    /// section renders, preserving transcript order.
-    @Test
-    func deferredOverviewRendersAfterBufferedStreamingFlushesInOrder() async {
+    /// Characterizes the terminal transcript-tail contract across streaming and
+    /// overview arbitration: deferred and late automatic snapshots keep their
+    /// remote projection, but cannot land below either a final response or a
+    /// model question. The next submitted turn reopens live terminal progress.
+    @Test(arguments: [
+        "The implementation is complete.",
+        "Which deployment target should I use?"
+    ])
+    func automaticOverviewDoesNotFollowFinalAssistantTranscriptTail(
+        assistantTail: String
+    ) async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
+            standardOutputIsTerminal: true,
             columnWidthProvider: { 80 }
         )
+        let mirrorRecorder = OverviewMirrorRecorder()
+        await renderer.setOverviewMirroringHandler { notification, _ in
+            if case .taskGraph = notification {
+                await mirrorRecorder.record(.taskGraph)
+            }
+        }
 
         // No trailing-edge timer is armed (streamingFlushDelay is nil in this
-        // renderer), so these bytes stay pending inside the coordinator.
-        await renderer.writeThought("still buffered reasoning\n")
+        // renderer), so assistant bytes remain pending until the final flush.
+        await renderer.writeAssistantContent(assistantTail)
         let bufferedEventCount = await renderer.capturedWriteEvents().count
         #expect(bufferedEventCount == 0)
 
-        let result = await renderer.renderSubAgentOverview(
-            signature: "agents:during-stream",
-            text: "\n👥 Sub-Agents:\n   1 total\n   running\n",
-            force: false,
-            rememberSignature: true,
-            overviewBatchID: "wave-with-stream"
+        let deferred = await renderer.renderTaskGraphOverview(
+            signature: "tasks:during-stream",
+            markdown: "## Task graph\n\n- deferred state\n"
         )
-        #expect(result == .deferred)
-        #expect(await renderer.capturedWriteEvents().count == 0)
+        #expect(deferred == .deferred)
 
+        await renderer.beginAssistantTranscriptTail()
         await renderer.finishStreamingOutput()
 
-        let stderr = TerminalANSIText.stripANSI(
+        let lateSubAgent = await renderer.renderSubAgentOverview(
+            signature: "agents:late-close",
+            text: "\n👥 Sub-Agents:\n   1 total\n   completed\n",
+            responses: [
+                .init(
+                    token: "late-close-response",
+                    heading: "   💬 Late worker\n",
+                    markdown: "Useful delegated result."
+                )
+            ],
+            force: false,
+            rememberSignature: true,
+            overviewBatchID: "late-close"
+        )
+        #expect(lateSubAgent == .rendered)
+        await renderer.waitForOverviewMirrorsToDrain()
+
+        let sealedTranscript = TerminalANSIText.stripANSI(
             (await renderer.capturedWriteEvents())
-                .filter { $0.channel == .standardError }
                 .map(\.text)
                 .joined()
         )
-        let bufferedRange = stderr.range(of: "still buffered reasoning")
-        let overviewRange = stderr.range(of: "Sub-Agents")
-        #expect(bufferedRange != nil)
-        #expect(overviewRange != nil)
-        #expect(bufferedRange!.lowerBound < overviewRange!.lowerBound)
-        // The deferred section rendered exactly once, after the flush.
-        #expect(stderr.components(separatedBy: "Sub-Agents").count - 1 == 1)
+        #expect(sealedTranscript.contains(assistantTail))
+        #expect(!sealedTranscript.contains("Task graph"))
+        #expect(!sealedTranscript.contains("Sub-Agents"))
+        #expect(!sealedTranscript.contains("Useful delegated result."))
+        #expect(await mirrorRecorder.recordedKinds() == [.taskGraph])
+
+        // An operator-requested inspection deliberately bypasses the automatic
+        // tail fence and can recover the current late-close content.
+        _ = await renderer.renderSubAgentOverview(
+            signature: "agents:late-close",
+            text: "\n👥 Sub-Agents:\n   1 total\n   completed\n",
+            responses: [
+                .init(
+                    token: "late-close-response",
+                    heading: "   💬 Late worker\n",
+                    markdown: "Useful delegated result."
+                )
+            ],
+            force: true,
+            rememberSignature: false,
+            origin: .explicit,
+            overviewBatchID: "late-close"
+        )
+        let explicitTranscript = TerminalANSIText.stripANSI(
+            (await renderer.capturedWriteEvents()).map(\.text).joined()
+        )
+        #expect(explicitTranscript.contains("Useful delegated result."))
+
+        // A new visible prompt resets only the terminal presentation fence;
+        // a fresh automatic task snapshot is renderable again.
+        await renderer.writeSubmittedPrompt("next turn")
+        let nextTurn = await renderer.renderTaskGraphOverview(
+            signature: "tasks:next-turn",
+            markdown: "## Task graph\n\n- fresh state\n"
+        )
+        #expect(nextTurn == .rendered)
+        let nextTurnTranscript = TerminalANSIText.stripANSI(
+            (await renderer.capturedWriteEvents()).map(\.text).joined()
+        )
+        #expect(nextTurnTranscript.contains("fresh state"))
+    }
+
+    @Test
+    func transcriptTailGateResetsForSyntheticTurnWithoutSubmittedPrompt() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+
+        await renderer.beginAssistantTranscriptTail()
+        let withheld = await renderer.renderTaskGraphOverview(
+            signature: "tasks:between-hidden-turns",
+            markdown: "## Task graph\n\n- withheld below prior tail\n"
+        )
+        #expect(withheld == .rendered)
+        #expect(await renderer.capturedWriteEvents().isEmpty)
+
+        // Hidden shared-chat/planner turns have no submitted-prompt write, but
+        // their generation entry points reopen the same coordinator gate.
+        await renderer.beginTranscriptTurn()
+        let resumed = await renderer.renderTaskGraphOverview(
+            signature: "tasks:hidden-turn-current",
+            markdown: "## Task graph\n\n- current hidden-turn state\n"
+        )
+
+        #expect(resumed == .rendered)
+        let transcript = TerminalANSIText.stripANSI(
+            (await renderer.capturedWriteEvents()).map(\.text).joined()
+        )
+        #expect(!transcript.contains("withheld below prior tail"))
+        #expect(transcript.contains("current hidden-turn state"))
     }
 
     /// Characterizes the mirroring epoch seam: the queue lives as stored

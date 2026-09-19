@@ -109,13 +109,28 @@ extension TerminalChatRenderCoordinator {
         }
     }
 
+    /// Closes the local transcript at an assistant turn's final response. Live
+    /// task/sub-agent progress is still observed and mirrored, but it must not
+    /// append an automatic section beneath that response (or a model question).
+    func beginAssistantTranscriptTail() {
+        overviewState.isAutomaticTerminalOverviewRenderingSuppressed = true
+    }
+
+    /// Reopens local automatic progress for a newly submitted prompt. This is
+    /// deliberately independent of task/sub-agent state, which is owned by the
+    /// runtime and continues to evolve while a prior transcript tail is sealed.
+    func beginTranscriptTurn() {
+        overviewState.isAutomaticTerminalOverviewRenderingSuppressed = false
+    }
+
     @discardableResult
     func renderTaskGraphOverview(
         signature: String,
         markdown: String,
         revision: Int? = nil,
         force: Bool = false,
-        rememberSignature: Bool = true
+        rememberSignature: Bool = true,
+        origin: OverviewPublicationOrigin = .automatic
     ) -> OverviewRenderResult {
         renderOverview(
             kind: .taskGraph,
@@ -123,6 +138,7 @@ extension TerminalChatRenderCoordinator {
             revision: revision,
             force: force,
             rememberSignature: rememberSignature,
+            origin: origin,
             content: .markdown(markdown)
         )
     }
@@ -136,6 +152,7 @@ extension TerminalChatRenderCoordinator {
         revision: Int? = nil,
         force: Bool,
         rememberSignature: Bool,
+        origin: OverviewPublicationOrigin = .automatic,
         overviewBatchID: String? = nil,
         maximumInPlaceRows: Int? = nil
     ) -> OverviewRenderResult {
@@ -158,6 +175,7 @@ extension TerminalChatRenderCoordinator {
             revision: revision,
             force: force,
             rememberSignature: rememberSignature,
+            origin: origin,
             content: .subAgents(
                 text: text,
                 partialResponses: partialResponses,
@@ -175,6 +193,7 @@ extension TerminalChatRenderCoordinator {
         revision: Int?,
         force: Bool,
         rememberSignature: Bool,
+        origin: OverviewPublicationOrigin,
         content: OverviewContent
     ) -> OverviewRenderResult {
         if let revision {
@@ -183,12 +202,13 @@ extension TerminalChatRenderCoordinator {
             }
             overviewState.revisions[kind] = revision
         }
-        guard force || overviewState.signatures[kind] != signature else {
+        guard force || origin == .explicit || overviewState.signatures[kind] != signature else {
             return .unchanged
         }
 
         let overview = PendingOverview(
             kind: kind,
+            origin: origin,
             signature: signature,
             revision: revision,
             force: force,
@@ -198,6 +218,16 @@ extension TerminalChatRenderCoordinator {
             sequence: overviewState.nextSequence
         )
         overviewState.nextSequence &+= 1
+
+        // Do not let a late automatic snapshot overtake an already completed
+        // assistant response in the local terminal. The same data remains
+        // observable by the runtime and is mirrored for the linked Telegram
+        // turn; only the local transcript write is fenced here.
+        if origin == .automatic,
+           overviewState.isAutomaticTerminalOverviewRenderingSuppressed {
+            publishOverviewWithoutLocalTerminalOutput(overview)
+            return .rendered
+        }
 
         // A sub-agent overview may interleave with an active `agent.*` tool
         // block (e.g. agent.wait) so progress stays visible while the blocking
@@ -253,10 +283,48 @@ extension TerminalChatRenderCoordinator {
                revision < (overviewState.revisions[overview.kind] ?? Int.min) {
                 continue
             }
-            guard overview.force || overviewState.signatures[overview.kind] != overview.signature else {
+            guard overview.force
+                || overview.origin == .explicit
+                || overviewState.signatures[overview.kind] != overview.signature else {
                 continue
             }
-            renderOverviewNow(overview)
+            if overview.origin == .automatic,
+               overviewState.isAutomaticTerminalOverviewRenderingSuppressed {
+                publishOverviewWithoutLocalTerminalOutput(overview)
+            } else {
+                renderOverviewNow(overview)
+            }
+        }
+    }
+
+    /// Delivers the mirror projection of an automatic overview that the local
+    /// transcript tail intentionally withholds. Keeping this separate from
+    /// `renderOverviewNow` prevents a terminal-only policy from changing linked
+    /// Telegram delivery or the runtime's current-state observation.
+    private func publishOverviewWithoutLocalTerminalOutput(_ overview: PendingOverview) {
+        if overview.rememberSignature {
+            overviewState.signatures[overview.kind] = overview.rememberedSignature
+        }
+        switch overview.content {
+        case let .markdown(markdown):
+            enqueueMirrorNotification(
+                .taskGraph(signature: overview.signature, markdown: markdown)
+            )
+        case let .subAgents(_, partialResponses, responses, _, _):
+            for response in partialResponses {
+                guard !overviewState.mirroredPartialResponseTokens.contains(response.token) else {
+                    continue
+                }
+                overviewState.mirroredPartialResponseTokens.insert(response.token)
+                enqueueMirrorNotification(.subAgentPartialResponse(response))
+            }
+            for response in responses {
+                guard !overviewState.mirroredResponseTokens.contains(response.token) else {
+                    continue
+                }
+                overviewState.mirroredResponseTokens.insert(response.token)
+                enqueueMirrorNotification(.subAgentResponse(response))
+            }
         }
     }
 
@@ -339,12 +407,14 @@ extension TerminalChatRenderCoordinator {
         activeSubAgentOverviewBlock = nil
 
         // These model-authored blocks are already visible as 💬 rows inside the
-        // overview. Notify remote mirrors only after the local render succeeds,
-        // and consume their stable identities so in-place refreshes cannot resend
-        // the same answer.
+        // overview. Notify remote mirrors only after the local render succeeds.
+        // Local-consumption and mirror identities remain distinct so a response
+        // withheld by the terminal tail can still appear in an explicit view.
         for response in pendingPartialResponses {
             overviewState.consumedPartialResponseTokens.insert(response.token)
-            enqueueMirrorNotification(.subAgentPartialResponse(response))
+            if overviewState.mirroredPartialResponseTokens.insert(response.token).inserted {
+                enqueueMirrorNotification(.subAgentPartialResponse(response))
+            }
         }
 
         guard pendingResponses.isEmpty else {
@@ -363,7 +433,9 @@ extension TerminalChatRenderCoordinator {
                 )
                 writeChat("\n\n", to: .standardError)
                 overviewState.consumedResponseTokens.insert(response.token)
-                enqueueMirrorNotification(.subAgentResponse(response))
+                if overviewState.mirroredResponseTokens.insert(response.token).inserted {
+                    enqueueMirrorNotification(.subAgentResponse(response))
+                }
             }
             return
         }
@@ -571,8 +643,13 @@ extension TerminalChatRenderCoordinator {
     /// region; otherwise state is forgotten append-safely.
     func clearSubAgentOverview(
         revision: Int? = nil,
-        maximumInPlaceRows: Int? = nil
+        maximumInPlaceRows: Int? = nil,
+        origin: OverviewPublicationOrigin = .automatic
     ) {
+        guard origin == .explicit
+            || !overviewState.isAutomaticTerminalOverviewRenderingSuppressed else {
+            return
+        }
         if let revision {
             guard revision >= (overviewState.revisions[.subAgents] ?? Int.min) else {
                 return

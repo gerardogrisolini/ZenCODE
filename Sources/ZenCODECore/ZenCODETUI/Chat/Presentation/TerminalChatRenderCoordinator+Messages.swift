@@ -21,6 +21,10 @@ extension TerminalChatRenderCoordinator {
     }
 
     func writeSubmittedPrompt(_ prompt: String) {
+        // The operator has begun a new visible turn, so live progress may again
+        // use the terminal. This does not replay summaries withheld below the
+        // preceding assistant tail; only newly observed publications render.
+        beginTranscriptTurn()
         interruptActiveToolForInterleavedOutputIfNeeded()
         // A new submitted prompt is a hard transcript boundary. Finalize any
         // preceding streams first so a coalesced assistant tail cannot be lost
