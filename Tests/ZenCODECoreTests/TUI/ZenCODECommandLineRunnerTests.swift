@@ -210,10 +210,15 @@ struct ZenCODECommandLineRunnerTests {
             ["--doctor", "--acp", "-p", "ignored"],
             ["--install-features", "--no-features", "--acp", "-p", "ignored"]
         ]
+        var environment = ProcessInfo.processInfo.environment
+        environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("zencode-meta-command-test-\(UUID().uuidString)", isDirectory: true)
+            .path
 
         for arguments in invocations {
-            let ordinary = try runZen(executable, arguments: arguments)
-            let withJSONL = try runZen(executable, arguments: ["--jsonl"] + arguments)
+            let ordinary = try runZen(executable, arguments: arguments, environment: environment)
+            let withJSONL = try runZen(executable, arguments: ["--jsonl"] + arguments, environment: environment)
             #expect(withJSONL.exitCode == ordinary.exitCode)
             #expect(withJSONL.stdout == ordinary.stdout)
             #expect(withJSONL.stderr == ordinary.stderr)
@@ -534,13 +539,15 @@ struct ZenCODECommandLineRunnerTests {
 
     private func runZen(
         _ executable: URL,
-        arguments: [String]
+        arguments: [String],
+        environment: [String: String]? = nil
     ) throws -> (exitCode: Int32, stdout: Data, stderr: Data) {
         let process = Process()
         let stdout = Pipe()
         let stderr = Pipe()
         process.executableURL = executable
         process.arguments = arguments
+        process.environment = environment
         process.standardOutput = stdout
         process.standardError = stderr
         try process.run()

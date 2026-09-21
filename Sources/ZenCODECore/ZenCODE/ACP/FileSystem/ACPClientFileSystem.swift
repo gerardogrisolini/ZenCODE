@@ -93,7 +93,6 @@ final class ACPClientFileSystem: Sendable {
         _ contents: String, before: String?, path: URL, sessionID: String,
         isValid: @escaping @Sendable () async -> Bool
     ) async throws {
-        let certainty = OperationMutationUncertainty.snapshot
         if let before {
             let current = try await read(path, sessionID: sessionID, isValid: isValid)
             guard current.utf8.elementsEqual(before.utf8) else {
@@ -121,7 +120,6 @@ final class ACPClientFileSystem: Sendable {
         }
         guard let recorder = OperationFileChangeRecorder.current else { return }
         guard let before, verified,
-            let certainty, certainty == OperationMutationUncertainty.snapshot,
             !before.contains("\0"), !contents.contains("\0")
         else {
             recorder.record(
