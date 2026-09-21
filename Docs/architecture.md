@@ -153,14 +153,26 @@ from creation — even with no skills selected — so adding or removing a skill
 updates only the provider snapshot (via `updatePromptSkillSelection`) and never
 the system prompt, allowlist, cache key, history, or remote continuation. The
 model discovers the current selection at runtime through `skills.list` and loads
-guidance through `skills.read`. `skills.read` also accepts an optional relative
-`resource` within the selected skill; the provider resolves it under that skill's
-boundary, never exposes absolute paths, and does not require a filesystem tool.
-Revocation is non-retroactive (it blocks future reads but cannot erase guidance
-already in the conversation without sacrificing the continuation). A session
-persisted with a legacy eager/lazy skill catalog is normalized to the static
-instruction on restore, which is a one-time full replay; subsequent selection
-changes are cache-stable.
+guidance through `skills.read`. `skills.list` remains metadata-only; it never
+includes prompt bodies, source directories, or resource contents. `skills.read`
+returns the normalized absolute installed `sourceDirectoryPath` when available
+so relative resources and script paths can be resolved against the real skill
+directory. That installed path takes precedence over stale/example paths in
+skill guidance. `skills.read` is a reader, not an executor: it cannot access
+arbitrary filesystem paths and accepts only selected-skill guidance or relative
+regular resources within that skill's boundary. For referenced scripts,
+guidance to use `local.exec` is conditional on the tool being available and the
+specific command being authorized by the local-execution permission policy. If
+`local.exec` is unavailable or unauthorized, the model must report a blocker
+rather than inspect the script or infer/invent a path. When no source directory
+is available, the read output says so and likewise requires a blocker instead
+of an invented path. Resource paths remain relative, are resolved under the
+selected skill's boundary, and are rejected when they traverse that boundary
+or are not regular files. Revocation is non-retroactive
+(it blocks future reads but cannot erase guidance already in the conversation
+without sacrificing the continuation). A session persisted with a legacy
+eager/lazy skill catalog is normalized to the static instruction on restore,
+which is a one-time full replay; subsequent selection changes are cache-stable.
 
 Remote generation has one cross-platform transport stack. HTTP/1.1, incremental
 SSE, and ChatGPT Responses WebSockets under `Remote/Generation`, the ChatGPT

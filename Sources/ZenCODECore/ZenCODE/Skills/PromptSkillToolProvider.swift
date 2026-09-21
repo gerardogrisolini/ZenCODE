@@ -39,7 +39,7 @@ public enum PromptSkillToolProvider {
 
     public static let readToolDescriptor = DirectToolDescriptor(
         name: toolName,
-        description: "Loads one page of complete guidance or a resource for a selected prompt skill. Use the id or canonical name returned by skills.list. To read a skill resource, provide its relative path in resource. The tool can read only skills selected for the current session; request the next page with its nextOffset when supplied.",
+        description: "Loads one page of complete guidance or a resource for a selected prompt skill. Use the id or canonical name returned by skills.list. To read a skill resource, provide its relative path in resource. `skills.read` is a reader, not an executor, and cannot access arbitrary filesystem paths; it reads only selected-skill guidance or a relative regular file within that skill's boundary. The tool can read only skills selected for the current session; request the next page with its nextOffset when supplied.",
         inputSchema: #"{"type":"object","properties":{"identifier":{"type":"string","description":"Selected skill id or canonical name from skills.list."},"resource":{"type":"string","description":"Optional relative path to a regular file within the selected skill."},"offset":{"type":"integer","minimum":0,"description":"Zero-based character offset in the selected guidance or resource. Defaults to 0."},"limit":{"type":"integer","minimum":1,"maximum":8000,"description":"Maximum characters to return. Defaults to 6000."}},"required":["identifier"],"additionalProperties":false}"#,
         presentation: .standard(
             title: "Prompt skill",
@@ -235,7 +235,34 @@ public enum PromptSkillToolProvider {
     }
 
     private static func renderedSkillHeader(for skill: PromptSkill) -> String {
-        "Skill: \(skill.title)\nRead any referenced skill file by calling `skills.read` with this identifier and its relative path in resource."
+        let directoryInstructions: String
+        if let sourceDirectoryPath = normalizedSourceDirectoryPath(for: skill) {
+            directoryInstructions = """
+            Skill sourceDirectoryPath: \(sourceDirectoryPath)
+            Resolve relative `resource` paths and referenced script paths from this installed skill directory. If `local.exec` is available and the documented command is authorized, execute a referenced script with the interpreter and arguments documented by the skill. If `local.exec` is unavailable or unauthorized, report a blocker instead of inspecting the script or inventing a path. `skills.read` is a reader, not an executor, and cannot access arbitrary filesystem paths. This installed directory is authoritative and takes precedence over stale or example paths in the guidance.
+            """
+        } else {
+            directoryInstructions = """
+            Skill sourceDirectoryPath: unavailable
+            Blocking instruction: no installed skill directory was provided. Do not infer or invent a path from stale or example guidance, and do not inspect a script with `skills.read`. Report a blocker rather than executing a referenced script until a concrete safe directory is established; even when `local.exec` is available and authorized, its documented interpreter must not be given an invented path.
+            """
+        }
+
+        return """
+        Skill: \(skill.title)
+        \(directoryInstructions)
+        Use `skills.read` with this identifier and its relative path in resource for referenced resource files. `skills.read` is not an executor; if `local.exec` is available and authorized, use it for scripts, otherwise report a blocker.
+        """
+    }
+
+    private static func normalizedSourceDirectoryPath(for skill: PromptSkill) -> String? {
+        guard let sourceDirectoryPath = skill.sourceDirectoryPath?.nilIfBlank else {
+            return nil
+        }
+        return URL(fileURLWithPath: sourceDirectoryPath)
+            .standardizedFileURL
+            .path
+            .nilIfBlank
     }
 
     fileprivate static func request(from argumentsJSON: String) throws -> Request {

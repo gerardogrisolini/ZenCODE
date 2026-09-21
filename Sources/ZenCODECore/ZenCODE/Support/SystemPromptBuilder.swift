@@ -366,7 +366,7 @@ public enum SystemPromptBuilder {
     /// cache prefix. The model discovers the current selection at runtime via
     /// `skills.list` and loads guidance via `skills.read`.
     public static let staticSkillSection = """
-    Prompt skills may change during this session. When a selected skill is relevant, call `skills.list` to see the currently selected skills (id, name, and description), then call `skills.read` with a listed id or canonical name to load that skill's paginated guidance. Only skills selected for this session can be read.
+    Prompt skills may change during this session. When a selected skill is relevant, call `skills.list` to see the currently selected skills (id, name, and description), then call `skills.read` with a listed id or canonical name to load that skill's paginated guidance. Only skills selected for this session can be read. `skills.read` is a reader, not an executor, and cannot access arbitrary filesystem paths; it reads only selected-skill guidance or a relative regular resource within that skill's boundary. For a referenced script, if `local.exec` is available and the documented command is authorized, execute it with the interpreter and arguments documented by the skill. If `local.exec` is unavailable or unauthorized, report a blocker instead of inspecting the script or inventing a path. Resolve relative script and resource paths from the real installed skill directory reported by `skills.read`; that directory takes precedence over stale or example paths in the guidance.
     """
 
     /// Stable opening phrase of `staticSkillSection`, used to detect an already

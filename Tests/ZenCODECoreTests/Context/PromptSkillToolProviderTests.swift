@@ -22,6 +22,13 @@ struct PromptSkillToolProviderTests {
         #expect(section == SystemPromptBuilder.staticSkillSection)
         #expect(section.contains("skills.list"))
         #expect(section.contains("skills.read"))
+        #expect(section.contains("local.exec"))
+        #expect(section.contains("available and the documented command is authorized"))
+        #expect(section.contains("report a blocker instead of inspecting the script"))
+        #expect(section.contains("skills.read` is a reader, not an executor"))
+        #expect(section.contains("arbitrary filesystem paths"))
+        #expect(section.contains("real installed skill directory"))
+        #expect(section.contains("stale or example paths"))
         #expect(!section.contains("Release Review"))
         #expect(!section.contains(skill.id))
         #expect(!section.contains("FULL-SKILL-BODY"))
@@ -86,6 +93,7 @@ struct PromptSkillToolProviderTests {
         #expect(output.range(of: "other-skill")!.lowerBound < output.range(of: "release-review")!.lowerBound)
         #expect(!output.contains("BODY"))
         #expect(!output.contains("/tmp/skills"))
+        #expect(!output.contains("sourceDirectoryPath"))
         #expect(!output.contains("Release Review"))
     }
 
@@ -124,6 +132,8 @@ struct PromptSkillToolProviderTests {
             )
         )
 
+        #expect(firstPage.contains("Skill sourceDirectoryPath:"))
+        #expect(secondPage.contains("Skill sourceDirectoryPath:"))
         #expect(firstPage.contains("Skill: Release Review"))
         #expect(firstPage.contains("offset 6000"))
         #expect(!firstPage.contains("TAIL-MARKER"))
@@ -271,19 +281,59 @@ struct PromptSkillToolProviderTests {
     }
 
     @Test
-    func readWithoutResourceRemainsCompatibleAndDoesNotRevealSourcePath() async throws {
+    func readWithoutResourceShowsNormalizedInstalledSourcePath() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
+        let pathWithDotDot = root.appendingPathComponent("nested/..").path
         let provider = PromptSkillSessionProvider(skills: [
-            skill(promptBody: "LEGACY-GUIDANCE", sourceDirectoryPath: root.path)
+            skill(promptBody: "LEGACY-GUIDANCE", sourceDirectoryPath: pathWithDotDot)
         ])
 
         let output = try await read(provider, arguments: #"{"identifier":"release-review"}"#)
 
         #expect(output.contains("LEGACY-GUIDANCE"))
-        #expect(!output.contains(root.path))
+        #expect(output.contains("Skill sourceDirectoryPath: \(root.path)"))
+        #expect(!output.contains("nested/.."))
+        #expect(output.contains("local.exec"))
+        #expect(output.contains("installed directory is authoritative"))
     }
 
+    @Test
+    func readWithoutResourceUsesSafeFallbackWhenSourceDirectoryIsUnavailable() async throws {
+        let provider = PromptSkillSessionProvider(skills: [
+            skill(promptBody: "GUIDANCE", sourceDirectoryPath: nil)
+        ])
+
+        let output = try await read(provider, arguments: #"{"identifier":"release-review"}"#)
+
+        #expect(output.contains("Skill sourceDirectoryPath: unavailable"))
+        #expect(output.contains("Blocking instruction"))
+        #expect(output.contains("Do not infer or invent a path"))
+        #expect(output.contains("do not inspect a script with `skills.read`"))
+        #expect(output.contains("local.exec"))
+    }
+
+    @Test
+    func readGuidanceUsesInstalledDirectoryForStaleScriptExamples() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let staleScriptPath = "/example/skills/release-review/scripts/check.py"
+        let provider = PromptSkillSessionProvider(skills: [
+            skill(
+                promptBody: "Run `\(staleScriptPath)` with python3.",
+                sourceDirectoryPath: root.path
+            )
+        ])
+
+        let output = try await read(provider, arguments: #"{"identifier":"release-review"}"#)
+
+        #expect(output.contains(staleScriptPath))
+        #expect(output.contains("Skill sourceDirectoryPath: \(root.path)"))
+        #expect(output.contains("installed directory is authoritative"))
+        let installedPathRange = try #require(output.range(of: "Skill sourceDirectoryPath: \(root.path)"))
+        let stalePathRange = try #require(output.range(of: staleScriptPath))
+        #expect(installedPathRange.lowerBound < stalePathRange.lowerBound)
+    }
     @Test
     func readEmptyResourceRemainsCompatibleWithOmittedResource() async throws {
         let provider = PromptSkillSessionProvider(skills: [
@@ -317,7 +367,7 @@ struct PromptSkillToolProviderTests {
 
         #expect(output.contains("Caffè ☕ — risorsa UTF-8"))
         #expect(output.contains("resource `guides/italiano.txt`"))
-        #expect(!output.contains(root.path))
+        #expect(output.contains(root.path))
     }
 
     @Test
@@ -334,6 +384,7 @@ struct PromptSkillToolProviderTests {
         let second = try await read(provider, arguments: #"{"identifier":"release-review","resource":"large.txt","offset":6,"limit":6}"#)
 
         #expect(first.contains("abcdef"))
+        #expect(first.contains("Skill sourceDirectoryPath: \(root.path)"))
         #expect(first.contains("identifier `release-review-hash` and the same resource `large.txt`"))
         #expect(first.contains("offset 6"))
         #expect(!first.contains("TAIL"))
@@ -427,7 +478,7 @@ struct PromptSkillToolProviderTests {
 
     private func skill(
         promptBody: String,
-        sourceDirectoryPath: String = "/tmp/skills/release-review"
+        sourceDirectoryPath: String? = "/tmp/skills/release-review"
     ) -> PromptSkill {
         PromptSkill(
             canonicalName: "release-review",

@@ -25,6 +25,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
   fallback preserves ordinary editing/paste semantics and does not modify
   operating-system keyboard preferences.
 
+### Changed
+
+- Prompt-skill guidance now conditionally permits documented script execution
+  through `local.exec` only when that tool is available and the command is
+  authorized by the local-execution permission policy. If unavailable or
+  unauthorized, guidance requires reporting a blocker instead of inspecting a
+  script or inventing a path. `skills.read` is explicitly a non-executor with
+  no arbitrary filesystem access; it exposes a normalized absolute installed
+  skill directory when available, marks it authoritative over stale example
+  paths, and preserves relative-resource sandboxing, metadata-only
+  `skills.list`, and pagination.
+
 ### Fixed
 
 - Automatic terminal task-graph and sub-agent overview refreshes no longer append
