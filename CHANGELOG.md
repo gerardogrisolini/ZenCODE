@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.1.8] - 2026-09-21
+
 ### Added
 
 - `/attach` without arguments now opens a terminal-native picker at the user's home directory for navigating
