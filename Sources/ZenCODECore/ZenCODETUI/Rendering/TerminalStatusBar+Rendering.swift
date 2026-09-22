@@ -236,15 +236,7 @@ extension TerminalStatusBar {
         let start = statusBoxStartColumnLocked(state: &state)
         let rows = dock.rows(width: width)
         let visible = Array(rows.enumerated().dropFirst(dock.scrollOffset).prefix(viewport))
-        let headerText: String
-        if !dock.isExpanded {
-            let messageLabel = dock.entries.count == 1 ? "message" : "messages"
-            headerText = "Chat · \(dock.entries.count) \(messageLabel) · \(dock.unreadCount) unread"
-        } else if dock.entries.isEmpty {
-            headerText = "Chat · 0 messages"
-        } else {
-            headerText = "Chat · \(dock.selectedIndex + 1)/\(dock.entries.count) · \(dock.unreadCount) unread"
-        }
+        let headerText = "Chat · \(dock.entries.count) msg · \(dock.unreadCount) new"
         guard sharedChatReaderReservedRowsLocked(state: &state) > 0 else { return "" }
         // The collapsed reader keeps the same bordered compact header used by
         // the expanded reader, rather than unframed body-coloured text.
@@ -252,7 +244,7 @@ extension TerminalStatusBar {
         let boxWidth = statusBoxWidthLocked(state: &state)
         let topTitle = Self.fit(headerText, width: max(1, boxWidth - 5))
         let topRule = String(repeating: "─", count: max(0, boxWidth - TerminalChat.displayWidth(topTitle) - 5))
-        let header = "\(palette.border)╭─ \(palette.title)\(topTitle)\(palette.border) \(topRule)╮\(TerminalStyle.reset)"
+        let header = "\(TerminalStyle.sequence(22))\(palette.border)╭─ \(palette.title)\(topTitle)\(palette.border) \(topRule)╮\(TerminalStyle.reset)"
         guard dock.isExpanded else {
             return "\u{1B}7\u{1B}[\(top);\(start)H\u{1B}[2K\(header)\u{1B}8"
         }

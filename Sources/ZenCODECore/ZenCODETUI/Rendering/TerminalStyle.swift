@@ -75,19 +75,17 @@ enum TerminalStyle {
             let body: String
         }
 
-        /// A desaturated slate blue keeps the reader visually distinct from the
-        /// orange application chrome without competing for attention: transient
-        /// agent-to-agent traffic stays visible but quieter than system
-        /// messages. `22` in the border sequence explicitly disables the
-        /// title's bold attribute.
+        /// Shared-chat chrome uses the same success green as completed tasks.
+        /// Rendering explicitly clears bold before applying this color so an
+        /// inherited terminal attribute cannot make the header bold.
         static let darkPalette = Palette(
-            border: TerminalStyle.sequence(22, 38, 5, 60),
-            title: TerminalStyle.sequence(1, 38, 5, 66),
+            border: Status.success,
+            title: Status.success,
             body: Text.secondary
         )
         static let lightPalette = Palette(
-            border: TerminalStyle.sequence(22, 38, 5, 59),
-            title: TerminalStyle.sequence(1, 38, 5, 59),
+            border: Status.success,
+            title: Status.success,
             body: TerminalStyle.sequence(38, 5, 235)
         )
 

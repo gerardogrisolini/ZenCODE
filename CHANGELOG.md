@@ -10,6 +10,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- The shared-chat reader now uses the compact `Chat · N msg · U new` header in both collapsed and expanded states, with the completed-task success green and no bold styling.
+
 ## [2.1.8] - 2026-09-21
 
 ### Added
