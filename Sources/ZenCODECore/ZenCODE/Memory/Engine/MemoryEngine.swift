@@ -418,10 +418,7 @@ actor MemoryEngine {
                 var draft = graph
                 let result = try body(&draft)
                 try await persist(draft)
-                graph = draft
-                needsSave = false
-                pendingRecallMaintenance.removeAll()
-                pendingRecallBaseGraph = nil
+                markDurable(draft)
                 return result
             }
             if let transactionalPersistence = persistence as? any MemoryTransactionalPersistence {
@@ -439,9 +436,7 @@ actor MemoryEngine {
                 }
                 // Even a no-op body may have observed another process's newer
                 // graph; retain that reload locally without causing a save.
-                graph = committed.graph
-                pendingRecallMaintenance.removeAll()
-                pendingRecallBaseGraph = nil
+                markDurable(committed.graph)
                 return committed.result
             }
 
@@ -457,10 +452,7 @@ actor MemoryEngine {
             // own body is idempotent.
             guard draft != graph || !pending.isEmpty else { return result }
             try await persist(draft)
-            graph = draft
-            needsSave = false
-            pendingRecallMaintenance.removeAll()
-            pendingRecallBaseGraph = nil
+            markDurable(draft)
             return result
         }
     }
@@ -699,9 +691,7 @@ actor MemoryEngine {
                 // engine can never report an error for state that is already
                 // durable.
                 if committed.didChange {
-                    graph = committed.graph
-                    pendingRecallMaintenance.removeAll()
-                    pendingRecallBaseGraph = nil
+                    markDurable(committed.graph)
                 } else {
                     // The lock gave us the newest durable graph without a
                     // checkpoint; overlay every pending intent for local reads
@@ -1033,9 +1023,7 @@ actor MemoryEngine {
             // deferred inserts before they reach disk.
             if needsSave {
                 try await persist(graph)
-                needsSave = false
-                pendingRecallMaintenance.removeAll()
-                pendingRecallBaseGraph = nil
+                markDurableState()
             } else if !pendingRecallMaintenance.isEmpty {
                 try await flushPendingRecallMaintenanceLocked()
             }
@@ -1289,18 +1277,30 @@ actor MemoryEngine {
                 try Task.checkCancellation()
                 Self.apply(pending, to: &graph)
             }
-            graph = committed.graph
+            markDurable(committed.graph)
         } else {
             // Same boundary as the transactional branch, as tight as an
             // arbitrary `MemoryPersistence` allows: the engine cannot see
             // inside a foreign store, so this is the last point it controls.
             try Task.checkCancellation()
             try await persist(draftGraph)
-            graph = draftGraph
+            markDurable(draftGraph)
         }
+    }
+
+    /// Records the only state transition allowed after persistence accepts a
+    /// graph. Keeping graph publication and pending-maintenance cleanup together
+    /// prevents future commit paths from clearing only part of the durability
+    /// state.
+    private func markDurable(_ committedGraph: MemoryGraph) {
+        graph = committedGraph
+        markDurableState()
+    }
+
+    private func markDurableState() {
+        needsSave = false
         pendingRecallMaintenance.removeAll()
         pendingRecallBaseGraph = nil
-        needsSave = false
     }
 
     private func persist(_ graph: MemoryGraph) async throws {

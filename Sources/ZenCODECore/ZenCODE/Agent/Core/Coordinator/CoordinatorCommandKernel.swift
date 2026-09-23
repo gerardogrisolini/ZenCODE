@@ -57,38 +57,55 @@ enum CoordinatorCommandFamily: String, CaseIterable, Sendable {
 /// planning replies; those remain owned by their transport-specific routers.
 enum CoordinatorCommandParser {
     static func parse(_ input: String) -> CoordinatorCommand? {
+        guard let invocation = invocation(from: input),
+              let family = CoordinatorCommandFamily(
+                  rawValue: String(invocation.token.dropFirst())
+              ) else {
+            return nil
+        }
+        switch family {
+        case .goal:
+            return .goal(invocation.argument)
+        case .plan:
+            return .plan(planAction(invocation.argument))
+        case .review:
+            return .review(invocation.argument)
+        }
+    }
+
+    static func isSlashCommand(_ input: String) -> Bool {
+        input.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/")
+    }
+
+    private struct Invocation {
+        let token: String
+        let argument: String
+    }
+
+    /// Splits a slash command into its normalized routing token and argument.
+    /// Telegram's optional bot suffix belongs to the token, so it is removed
+    /// before the shared family parser sees the command name.
+    private static func invocation(from input: String) -> Invocation? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("/") else { return nil }
 
         let tokenEnd = trimmed.firstIndex(where: \Character.isWhitespace)
             ?? trimmed.endIndex
         let rawToken = String(trimmed[..<tokenEnd]).lowercased()
-        let token: String
-        if let atSign = rawToken.firstIndex(of: "@"),
-           atSign != rawToken.startIndex,
-           rawToken.index(after: atSign) != rawToken.endIndex {
-            token = String(rawToken[..<atSign])
-        } else {
-            token = rawToken
-        }
-        let argument = String(trimmed[tokenEnd...])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let family = CoordinatorCommandFamily(rawValue: String(token.dropFirst())) else {
-            return nil
-        }
-        switch family {
-        case .goal:
-            return .goal(argument)
-        case .plan:
-            return .plan(planAction(argument))
-        case .review:
-            return .review(argument)
-        }
+        return Invocation(
+            token: routingToken(from: rawToken),
+            argument: String(trimmed[tokenEnd...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 
-    static func isSlashCommand(_ input: String) -> Bool {
-        input.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/")
+    private static func routingToken(from rawToken: String) -> String {
+        guard let atSign = rawToken.firstIndex(of: "@"),
+              atSign != rawToken.startIndex,
+              rawToken.index(after: atSign) != rawToken.endIndex else {
+            return rawToken
+        }
+        return String(rawToken[..<atSign])
     }
 
     private static func planAction(_ argument: String) -> CoordinatorCommand.PlanAction {

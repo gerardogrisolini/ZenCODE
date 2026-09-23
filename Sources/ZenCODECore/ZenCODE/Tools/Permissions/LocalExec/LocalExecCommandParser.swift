@@ -56,7 +56,19 @@ enum LocalExecCommandParser {
     /// (e.g. `'('` inside `$()`) do not corrupt depth tracking.
     static func commandSegments(in command: String) -> [String] {
         let characters = Array(command)
-        let heredocSkipMask = Self.heredocBodySkipMask(in: characters)
+        let heredocScan = scanHeredocs(in: characters)
+        return commandSegments(
+            characters: characters,
+            heredocSkipMask: heredocScan.mask
+        )
+    }
+
+    /// Segments already-scanned input so candidate extraction can reuse the
+    /// heredoc scan when it also needs the expandable bodies.
+    private static func commandSegments(
+        characters: [Character],
+        heredocSkipMask: [Bool]
+    ) -> [String] {
         var segments: [String] = []
         var current = ""
         var quote = Quote.none
@@ -1133,19 +1145,6 @@ enum LocalExecCommandParser {
         var unquotedBodies: [String]
     }
 
-    /// Returns a boolean mask marking character indices that belong to heredoc
-    /// bodies. These characters are skipped during segmentation so that heredoc
-    /// content is not mistaken for executable commands.
-    private static func heredocBodySkipMask(in characters: [Character]) -> [Bool] {
-        scanHeredocs(in: characters).mask
-    }
-
-    /// Returns the bodies of unquoted heredocs, whose command substitutions the
-    /// shell still expands.
-    private static func unquotedHeredocBodies(in command: String) -> [String] {
-        scanHeredocs(in: Array(command)).unquotedBodies
-    }
-
     private static func scanHeredocs(in characters: [Character]) -> HeredocScan {
         var mask = Array(repeating: false, count: characters.count)
         var unquotedBodies: [String] = []
@@ -1369,7 +1368,12 @@ enum LocalExecCommandParser {
             )]
         }
 
-        let segments = commandSegments(in: command)
+        let characters = Array(command)
+        let heredocScan = scanHeredocs(in: characters)
+        let segments = commandSegments(
+            characters: characters,
+            heredocSkipMask: heredocScan.mask
+        )
         guard !segments.isEmpty else {
             return []
         }
@@ -1398,7 +1402,7 @@ enum LocalExecCommandParser {
 
         // Unquoted heredoc bodies are expanded by the shell, so extract command
         // substitutions from them as well (e.g. `cat <<EOF ... $(rm) ... EOF`).
-        for body in unquotedHeredocBodies(in: command) {
+        for body in heredocScan.unquotedBodies {
             if candidates.count >= Self.maxCandidateCount {
                 hitLimit = true
                 break

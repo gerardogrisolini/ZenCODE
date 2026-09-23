@@ -98,6 +98,24 @@ public struct TerminalMarkdownStreamFormatter {
         var digitCount: Int { digits.count }
     }
 
+    /// Collects rendered fragments without repeatedly copying the complete
+    /// response for every line in a multi-line delta. Joining preserves the
+    /// exact fragment order (and therefore the streaming contract) while
+    /// keeping accumulation linear in the amount of output produced by one
+    /// call to `consume` or `finish`.
+    private struct OutputAccumulator {
+        private var fragments: [String] = []
+
+        mutating func append(_ fragment: String) {
+            guard !fragment.isEmpty else { return }
+            fragments.append(fragment)
+        }
+
+        func joined() -> String {
+            fragments.joined()
+        }
+    }
+
     /// Incremental classification of the still-unemitted line start. A line
     /// can only move from an unresolved marker candidate to either a known
     /// block marker or a known-safe prose prefix. Once it is known safe, later
@@ -197,7 +215,7 @@ public struct TerminalMarkdownStreamFormatter {
             return text
         }
 
-        var rendered = ""
+        var output = OutputAccumulator()
 
         // Search only the newly received text for line boundaries. Looking for
         // a newline in the whole accumulated pending line on every micro-delta
@@ -205,7 +223,7 @@ public struct TerminalMarkdownStreamFormatter {
         var segmentStart = text.startIndex
         while let newlineIndex = text[segmentStart...].firstIndex(of: "\n") {
             appendToPendingLine(text[segmentStart..<newlineIndex])
-            rendered += completePendingLine()
+            output.append(completePendingLine())
             segmentStart = text.index(after: newlineIndex)
         }
         appendToPendingLine(text[segmentStart...])
@@ -214,21 +232,21 @@ public struct TerminalMarkdownStreamFormatter {
         // line as soon as it arrives, without waiting for the newline. Only
         // active outside code fences and buffered blocks (lists, blockquotes,
         // tables), which have their own streaming/buffering strategies.
-        rendered += streamPendingLineIfSafe()
+        output.append(streamPendingLineIfSafe())
 
         if pendingLineScalarCount > Self.maxBufferedLineLength {
             if shouldFlushPendingLineForStreaming(pendingLine) {
-                rendered += flushBlock()
+                output.append(flushBlock())
                 // The normal prose tail has not been parsed as a block and can
                 // be emitted directly. Preserve the fact that this logical line
                 // already has output, so the next delta is never reclassified as
                 // a fresh heading/list/quote marker.
                 let tail = pendingLine
-                rendered += tail
-                recordEmittedPendingPrefix(tail)
+                output.append(tail)
+                recordEmittedPendingPrefix()
                 clearPendingTailPreservingLineContext()
             } else if pendingLineScalarCount > Self.maxMarkdownBufferedLineLength {
-                rendered += flushBlock()
+                output.append(flushBlock())
                 let tail = pendingLine
                 let tailRendered: String
                 if hasEmittedPendingPrefix {
@@ -239,13 +257,13 @@ public struct TerminalMarkdownStreamFormatter {
                         appendsNewline: false
                     )
                 }
-                rendered += tailRendered
-                recordEmittedPendingPrefix(tailRendered)
+                output.append(tailRendered)
+                recordEmittedPendingPrefix()
                 clearPendingTailPreservingLineContext()
             }
         }
         
-        return rendered
+        return output.joined()
     }
     
     public mutating func finish() -> String {
@@ -256,19 +274,19 @@ public struct TerminalMarkdownStreamFormatter {
             activeCodeFence = nil
             resetPendingLineState()
         }
-        var rendered = ""
+        var output = OutputAccumulator()
         if !pendingLine.isEmpty {
             if hasEmittedPendingPrefix {
-                rendered += completePartiallyEmittedLine(
+                output.append(completePartiallyEmittedLine(
                     pendingLine,
                     appendsNewline: false
-                )
+                ))
             } else {
-                rendered += handleCompleteLine(pendingLine, appendsNewline: false)
+                output.append(handleCompleteLine(pendingLine, appendsNewline: false))
             }
         }
-        rendered += flushBlock()
-        return rendered
+        output.append(flushBlock())
+        return output.joined()
     }
 
     /// Appends a no-newline input segment and updates all state whose cost must
@@ -323,7 +341,7 @@ public struct TerminalMarkdownStreamFormatter {
             0,
             pendingLineScalarCount - fragment.unicodeScalars.count
         )
-        recordEmittedPendingPrefix(fragment)
+        recordEmittedPendingPrefix()
         return fragment
     }
 
@@ -351,7 +369,7 @@ public struct TerminalMarkdownStreamFormatter {
     /// Marks that part of the current logical line was already emitted as
     /// streamed prose, so the remaining tail is rendered inline rather than as
     /// a fresh block construct.
-    private mutating func recordEmittedPendingPrefix(_ rendered: String) {
+    private mutating func recordEmittedPendingPrefix() {
         hasEmittedPendingPrefix = true
     }
 
