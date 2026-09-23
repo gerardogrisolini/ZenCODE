@@ -12,7 +12,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
-- The shared-chat reader now uses the compact `Chat · N msg · U new` header in both collapsed and expanded states, with the operational blue used by access-mode messages and no bold styling.
+- The shared-chat reader now uses the compact `Chat · N msg · U new` header in both collapsed and expanded states, with the completed-task success green and no bold styling.
 - Remote provider tool catalogs reuse compiled wire definitions across unchanged rounds and retries while retaining current tool presentation metadata.
 
 ### Fixed
