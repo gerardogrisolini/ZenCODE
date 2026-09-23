@@ -75,17 +75,17 @@ enum TerminalStyle {
             let body: String
         }
 
-        /// Shared-chat chrome uses the same success green as completed tasks.
+        /// Shared-chat chrome uses the same operational blue as access-mode messages.
         /// Rendering explicitly clears bold before applying this color so an
         /// inherited terminal attribute cannot make the header bold.
         static let darkPalette = Palette(
-            border: Status.success,
-            title: Status.success,
+            border: Text.operationalMessage,
+            title: Text.operationalMessage,
             body: Text.secondary
         )
         static let lightPalette = Palette(
-            border: Status.success,
-            title: Status.success,
+            border: Text.operationalMessage,
+            title: Text.operationalMessage,
             body: TerminalStyle.sequence(38, 5, 235)
         )
 
