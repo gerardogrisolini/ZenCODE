@@ -260,6 +260,7 @@ extension RemoteGenerationClient {
         allowedToolNames: Set<String>?,
         preferredWorkspaceRootURL: URL?,
         sessionID: String,
+        dialect: RemoteToolWireDialect,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async -> RemoteToolWireCatalog {
         let descriptors = await toolExecutor.descriptors(
@@ -267,7 +268,7 @@ extension RemoteGenerationClient {
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
             sessionID: sessionID
         )
-        return RemoteToolWireCatalog(descriptors: descriptors)
+        return toolCatalogCache.catalog(descriptors: descriptors, dialect: dialect)
     }
 
     // MARK: - Chat Completions
@@ -284,6 +285,7 @@ extension RemoteGenerationClient {
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
             sessionID: sessionID,
+            dialect: .chatCompletions,
             onEvent: onEvent
         )
         let sanitizedMessages = Self.chatCompletionsWireHistoryMessages(
@@ -351,6 +353,7 @@ extension RemoteGenerationClient {
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
             sessionID: sessionID,
+            dialect: .responses,
             onEvent: onEvent
         )
         let normalizedInput = try Self.validatedResponsesInputPayload(

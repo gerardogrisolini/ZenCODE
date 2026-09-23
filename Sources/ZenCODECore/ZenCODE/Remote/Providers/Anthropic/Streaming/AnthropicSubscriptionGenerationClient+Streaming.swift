@@ -48,7 +48,10 @@ extension AnthropicSubscriptionGenerationClient {
         guard let session = currentSession(for: lease) else {
             throw RemoteGenerationClientError.missingSession
         }
-        let toolCatalog = RemoteToolWireCatalog(descriptors: toolDescriptors)
+        let toolCatalog = toolCatalogCache.catalog(
+            descriptors: toolDescriptors,
+            dialect: .anthropicSubscription
+        )
         let maxOutputTokens = resolvedMaxOutputTokens()
         var body: [String: Any] = [
             "model": modelID,

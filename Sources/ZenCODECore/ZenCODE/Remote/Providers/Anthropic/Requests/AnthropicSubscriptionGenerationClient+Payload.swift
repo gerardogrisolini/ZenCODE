@@ -328,19 +328,7 @@ extension AnthropicSubscriptionGenerationClient {
     }
 
     static func anthropicTools(from bindings: [RemoteToolWireCatalog.Binding]) -> [[String: Any]] {
-        bindings.compactMap { binding in
-            guard let schema = binding.descriptor.schemaObject else {
-                return nil
-            }
-            // No cache breakpoint on tools: they precede the system blocks in
-            // Anthropic's cacheable prefix, so the system breakpoint already
-            // covers them.
-            return [
-                "name": binding.wireName,
-                "description": binding.descriptor.description,
-                "eager_input_streaming": true,
-                "input_schema": schema
-            ]
-        }
+        // No cache breakpoint on tools: the system breakpoint covers them.
+        bindings.compactMap(\.anthropicSubscriptionToolPayload)
     }
 }

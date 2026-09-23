@@ -12,8 +12,12 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
     public nonisolated struct Binding: Sendable {
         public let descriptor: DirectToolDescriptor
         public let wireName: String
+        fileprivate var compiledPayload: CompiledPayload? = nil
 
         public var chatCompletionToolPayload: [String: Any]? {
+            if let compiledPayload, compiledPayload.dialect == .chatCompletions {
+                return compiledPayload.value
+            }
             guard let schema = descriptor.schemaObject else {
                 return nil
             }
@@ -30,6 +34,9 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
         }
 
         public var responsesToolPayload: [String: Any]? {
+            if let compiledPayload, compiledPayload.dialect == .responses {
+                return compiledPayload.value
+            }
             guard let schema = descriptor.schemaObject,
                   let parameters = RemoteToolSchemaCompatibility.responsesFunctionParameters(
                       from: schema
@@ -43,68 +50,131 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
                 "parameters": parameters
             ]
         }
+
+        var anthropicMessagesToolPayload: [String: Any]? {
+            if let compiledPayload, compiledPayload.dialect == .anthropicMessages {
+                return compiledPayload.value
+            }
+            guard let function = chatCompletionToolPayload?["function"] as? [String: Any],
+                  let schema = function["parameters"] else { return nil }
+            return [
+                "name": wireName,
+                "description": descriptor.description,
+                "input_schema": schema
+            ]
+        }
+
+        var anthropicSubscriptionToolPayload: [String: Any]? {
+            if let compiledPayload, compiledPayload.dialect == .anthropicSubscription {
+                return compiledPayload.value
+            }
+            guard let schema = descriptor.schemaObject else { return nil }
+            // Subscription tools retain the raw schema and eager streaming;
+            // the generic Anthropic dialect intentionally does neither.
+            return [
+                "name": wireName,
+                "description": descriptor.description,
+                "eager_input_streaming": true,
+                "input_schema": schema
+            ]
+        }
+
+        fileprivate func payload(for dialect: RemoteToolWireDialect) -> [String: Any]? {
+            switch dialect {
+            case .chatCompletions: chatCompletionToolPayload
+            case .responses: responsesToolPayload
+            case .anthropicMessages: anthropicMessagesToolPayload
+            case .anthropicSubscription: anthropicSubscriptionToolPayload
+            }
+        }
+    }
+
+    /// The only unchecked value is private, immutable JSON produced by
+    /// descriptor.schemaObject and our pure schema transforms (Swift value
+    /// dictionaries/arrays/scalars and NSNull). No caller-owned Any or mutable
+    /// Foundation container enters it. Returned Swift dictionaries are
+    /// copy-on-write; the existing provider value types are kept unchanged.
+    fileprivate nonisolated final class CompiledPayload: @unchecked Sendable {
+        let dialect: RemoteToolWireDialect
+        let value: [String: Any]?
+
+        init(binding: Binding, dialect: RemoteToolWireDialect) {
+            self.dialect = dialect
+            self.value = binding.payload(for: dialect)
+        }
+    }
+
+    /// Contains only pure wire artifacts, never descriptors or authorization.
+    fileprivate nonisolated struct Compilation: Sendable {
+        let descriptorOrder: [Int]
+        let wireNames: [String]
+        let payloads: [CompiledPayload?]
+        let localNameLookup: [String: Int]
+        let wireNameLookup: [String: Int]
+        let compatibilityNameLookup: [String: Int]
+
+        init(descriptors: [DirectToolDescriptor], dialect: RemoteToolWireDialect?) {
+            let order = descriptors.indices.sorted {
+                RemoteToolWireCatalog.canonicalDescriptorOrder(descriptors[$0], descriptors[$1])
+            }
+            var usedWireNames: Set<String> = []
+            let bindings = order.map { index in
+                Binding(
+                    descriptor: descriptors[index],
+                    wireName: RemoteToolWireCatalog.uniqueWireName(
+                        for: descriptors[index].name,
+                        usedWireNames: &usedWireNames
+                    )
+                )
+            }
+            var localLookup: [String: Int] = [:]
+            var wireLookup: [String: Int] = [:]
+            var compatibilityLookup: [String: Int] = [:]
+            localLookup.reserveCapacity(bindings.count * 2)
+            wireLookup.reserveCapacity(bindings.count * 2)
+            compatibilityLookup.reserveCapacity(bindings.count * 4)
+            for (index, binding) in bindings.enumerated() {
+                RemoteToolWireCatalog.insert(index, for: binding.descriptor.name, into: &localLookup, overwrite: true)
+                RemoteToolWireCatalog.insert(index, for: binding.wireName, into: &wireLookup, overwrite: true)
+                let sanitized = sanitizedRemoteToolWireName(for: binding.descriptor.name)
+                RemoteToolWireCatalog.insert(index, for: sanitized, into: &compatibilityLookup)
+                if sanitized.hasPrefix("tool_") {
+                    RemoteToolWireCatalog.insert(index, for: String(sanitized.dropFirst("tool_".count)), into: &compatibilityLookup)
+                }
+                let underscoredName = binding.descriptor.name.replacingOccurrences(
+                    of: #"[^A-Za-z0-9_]+"#, with: "_", options: .regularExpression
+                )
+                RemoteToolWireCatalog.insert(index, for: underscoredName, into: &compatibilityLookup)
+            }
+            descriptorOrder = order
+            wireNames = bindings.map(\.wireName)
+            payloads = bindings.map { binding in
+                dialect.map { CompiledPayload(binding: binding, dialect: $0) }
+            }
+            localNameLookup = localLookup
+            wireNameLookup = wireLookup
+            compatibilityNameLookup = compatibilityLookup
+        }
     }
 
     public let bindings: [Binding]
-    private let localNameLookup: [String: Binding]
-    private let wireNameLookup: [String: Binding]
-    private let compatibilityNameLookup: [String: Binding]
+    private let compilation: Compilation
 
     public init(descriptors: [DirectToolDescriptor]) {
-        var usedWireNames: Set<String> = []
-        let bindings = descriptors.sorted(by: Self.canonicalDescriptorOrder).map { descriptor in
+        self.init(descriptors: descriptors, compilation: Compilation(descriptors: descriptors, dialect: nil))
+    }
+
+    fileprivate init(descriptors: [DirectToolDescriptor], compilation: Compilation) {
+        self.compilation = compilation
+        // Rebind on every call, including hits: title/presentation and
+        // output schemas belong to the freshly discovered descriptors.
+        self.bindings = compilation.descriptorOrder.enumerated().map { offset, index in
             Binding(
-                descriptor: descriptor,
-                wireName: Self.uniqueWireName(
-                    for: descriptor.name,
-                    usedWireNames: &usedWireNames
-                )
+                descriptor: descriptors[index],
+                wireName: compilation.wireNames[offset],
+                compiledPayload: compilation.payloads[offset]
             )
         }
-
-        var localLookup: [String: Binding] = [:]
-        var wireLookup: [String: Binding] = [:]
-        var compatibilityLookup: [String: Binding] = [:]
-        localLookup.reserveCapacity(bindings.count * 2)
-        wireLookup.reserveCapacity(bindings.count * 2)
-        compatibilityLookup.reserveCapacity(bindings.count * 4)
-        for binding in bindings {
-            Self.insert(
-                binding,
-                for: binding.descriptor.name,
-                into: &localLookup,
-                overwrite: true
-            )
-            Self.insert(
-                binding,
-                for: binding.wireName,
-                into: &wireLookup,
-                overwrite: true
-            )
-
-            let sanitized = sanitizedRemoteToolWireName(for: binding.descriptor.name)
-            Self.insert(binding, for: sanitized, into: &compatibilityLookup)
-            if sanitized.hasPrefix("tool_") {
-                Self.insert(
-                    binding,
-                    for: String(sanitized.dropFirst("tool_".count)),
-                    into: &compatibilityLookup
-                )
-            }
-
-            let underscoredName = binding.descriptor.name
-                .replacingOccurrences(
-                    of: #"[^A-Za-z0-9_]+"#,
-                    with: "_",
-                    options: .regularExpression
-                )
-            Self.insert(binding, for: underscoredName, into: &compatibilityLookup)
-        }
-
-        self.bindings = bindings
-        self.localNameLookup = localLookup
-        self.wireNameLookup = wireLookup
-        self.compatibilityNameLookup = compatibilityLookup
     }
 
     private static func canonicalDescriptorOrder(
@@ -199,24 +269,27 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
     }
 
     private func bindingForLocalToolName(_ toolName: String) -> Binding? {
-        localNameLookup[toolName]
-            ?? localNameLookup[foldedToolWireName(toolName)]
+        let index = compilation.localNameLookup[toolName]
+            ?? compilation.localNameLookup[foldedToolWireName(toolName)]
+        return index.map { bindings[$0] }
     }
 
     private func bindingForWireToolName(_ toolName: String) -> Binding? {
-        wireNameLookup[toolName]
-            ?? wireNameLookup[foldedToolWireName(toolName)]
+        let index = compilation.wireNameLookup[toolName]
+            ?? compilation.wireNameLookup[foldedToolWireName(toolName)]
+        return index.map { bindings[$0] }
     }
 
     private func bindingForCompatibilityName(_ toolName: String) -> Binding? {
-        if let binding = compatibilityNameLookup[toolName]
-            ?? compatibilityNameLookup[foldedToolWireName(toolName)] {
-            return binding
+        if let index = compilation.compatibilityNameLookup[toolName]
+            ?? compilation.compatibilityNameLookup[foldedToolWireName(toolName)] {
+            return bindings[index]
         }
 
         let sanitizedName = sanitizedRemoteToolWireName(for: toolName)
-        return compatibilityNameLookup[sanitizedName]
-            ?? compatibilityNameLookup[foldedToolWireName(sanitizedName)]
+        let index = compilation.compatibilityNameLookup[sanitizedName]
+            ?? compilation.compatibilityNameLookup[foldedToolWireName(sanitizedName)]
+        return index.map { bindings[$0] }
     }
 
     private static func uniqueWireName(
@@ -237,9 +310,9 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
     }
 
     private static func insert(
-        _ binding: Binding,
+        _ binding: Int,
         for name: String,
-        into lookup: inout [String: Binding],
+        into lookup: inout [String: Int],
         overwrite: Bool = false
     ) {
         guard !name.isEmpty else {
@@ -266,6 +339,65 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
         function["name"] = wireName(forToolName: toolName)
         toolCall["function"] = function
         return toolCall
+    }
+}
+
+/// Dialects are deliberately distinct even where their naming rules coincide.
+nonisolated enum RemoteToolWireDialect: Sendable, Equatable {
+    case chatCompletions
+    case responses
+    case anthropicMessages
+    case anthropicSubscription
+}
+
+/// Actor-owned, single-entry, in-memory cache. Callers must discover descriptors
+/// and resolve grants *before* consulting it. It never caches either operation,
+/// tool execution, session state, or a permission decision.
+nonisolated struct RemoteToolWireCatalogCache: Sendable {
+    private struct Input: Sendable {
+        let name: String
+        let description: String
+        let schema: String
+
+        init(_ descriptor: DirectToolDescriptor) {
+            name = descriptor.name
+            description = descriptor.description
+            schema = descriptor.inputSchema
+        }
+
+        func matches(_ descriptor: DirectToolDescriptor) -> Bool {
+            // String equality is Unicode-canonical, not byte-exact. Do not
+            // reuse a payload whose original wire spelling has changed.
+            name.utf8.elementsEqual(descriptor.name.utf8)
+                && description.utf8.elementsEqual(descriptor.description.utf8)
+                && schema.utf8.elementsEqual(descriptor.inputSchema.utf8)
+        }
+    }
+
+    private struct Entry: Sendable {
+        let inputs: [Input]
+        let dialect: RemoteToolWireDialect
+        let compilation: RemoteToolWireCatalog.Compilation
+    }
+
+    private var entry: Entry?
+    /// Internal deterministic instrumentation; no clocks or global state.
+    private(set) var compilationCount = 0
+
+    mutating func catalog(
+        descriptors: [DirectToolDescriptor],
+        dialect: RemoteToolWireDialect
+    ) -> RemoteToolWireCatalog {
+        if let entry,
+           entry.dialect == dialect,
+           entry.inputs.count == descriptors.count,
+           zip(entry.inputs, descriptors).allSatisfy({ pair in pair.0.matches(pair.1) }) {
+            return RemoteToolWireCatalog(descriptors: descriptors, compilation: entry.compilation)
+        }
+        let compilation = RemoteToolWireCatalog.Compilation(descriptors: descriptors, dialect: dialect)
+        entry = Entry(inputs: descriptors.map(Input.init), dialect: dialect, compilation: compilation)
+        compilationCount += 1
+        return RemoteToolWireCatalog(descriptors: descriptors, compilation: compilation)
     }
 }
 

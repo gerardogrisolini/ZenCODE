@@ -14,6 +14,7 @@ extension RemoteGenerationClient {
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
             sessionID: sessionID,
+            dialect: .anthropicMessages,
             onEvent: onEvent
         )
         let wireMessages = catalog.wireMessages(from: messages)
@@ -73,15 +74,7 @@ extension RemoteGenerationClient {
             "stream": true
         ]
         if let system = converted.system { body["system"] = system }
-        let tools: [[String: Any]] = toolCatalog.bindings.compactMap { binding in
-            guard let function = binding.chatCompletionToolPayload?["function"] as? [String: Any],
-                  let schema = function["parameters"] else { return nil }
-            return [
-                "name": binding.wireName,
-                "description": binding.descriptor.description,
-                "input_schema": schema
-            ]
-        }
+        let tools = toolCatalog.bindings.compactMap(\.anthropicMessagesToolPayload)
         if !tools.isEmpty {
             body["tools"] = tools
             body["tool_choice"] = ["type": "auto"]

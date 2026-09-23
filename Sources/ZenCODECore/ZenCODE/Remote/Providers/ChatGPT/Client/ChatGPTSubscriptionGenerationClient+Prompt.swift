@@ -163,12 +163,14 @@ extension ChatGPTSubscriptionGenerationClient {
                     throw ChatGPTSubscriptionGenerationError.missingSession
                 }
                 session = turnSession
-                let toolCatalog = RemoteToolWireCatalog(
-                    descriptors: await toolExecutor.descriptors(
-                        allowedToolNames: session.allowedToolNames,
-                        preferredWorkspaceRootURL: URL(fileURLWithPath: session.cwd),
-                        sessionID: session.id
-                    )
+                let toolDescriptors = await toolExecutor.descriptors(
+                    allowedToolNames: session.allowedToolNames,
+                    preferredWorkspaceRootURL: URL(fileURLWithPath: session.cwd),
+                    sessionID: session.id
+                )
+                let toolCatalog = toolCatalogCache.catalog(
+                    descriptors: toolDescriptors,
+                    dialect: .responses
                 )
                 guard let latestSession = currentSession(for: lease) else {
                     throw ChatGPTSubscriptionGenerationError.missingSession
@@ -492,29 +494,7 @@ extension ChatGPTSubscriptionGenerationClient {
                     )
                 }
 
-                for toolCall in streamResult.toolCalls {
-                    await onEvent(.toolCallStarted(toolCall))
-                    guard let activeSession = currentSession(for: lease) else {
-                        throw ChatGPTSubscriptionGenerationError.missingSession
-                    }
-                    let result = await toolExecutor.execute(
-                        sessionID: activeSession.id,
-                        toolCall: toolCall,
-                        workingDirectory: URL(fileURLWithPath: activeSession.cwd),
-                        allowedToolNames: activeSession.allowedToolNames
-                    )
-                    await onEvent(.toolCallCompleted(toolCall, result))
-                    guard mutateSession(for: lease, { session in
-                        session.messages.append(
-                            RemoteGenerationClient.toolResultMessage(
-                                toolCall: toolCall,
-                                result: result
-                            )
-                        )
-                    }) else {
-                        throw ChatGPTSubscriptionGenerationError.missingSession
-                    }
-                }
+                try await executeToolBatch(streamResult.toolCalls, lease: lease, onEvent: onEvent)
 
                 if round == configuration.maxToolRounds - 1 {
                     throw ChatGPTSubscriptionGenerationError.tooManyToolRounds(
@@ -525,6 +505,47 @@ extension ChatGPTSubscriptionGenerationClient {
             }
         }
         throw ChatGPTSubscriptionGenerationError.tooManyToolRounds(configuration.maxToolRounds)
+    }
+
+    func executeToolBatch(
+        _ toolCalls: [DirectAgentToolCall],
+        lease: SessionLease,
+        onEvent: @Sendable (DirectAgentEvent) async -> Void
+    ) async throws {
+        try await RemoteToolBatchExecutor.run(
+            toolCalls,
+            isolation: self,
+            validateLease: {
+                guard self.currentSession(for: lease) != nil else {
+                    throw ChatGPTSubscriptionGenerationError.missingSession
+                }
+            },
+            execute: { toolCall in
+                guard let session = self.currentSession(for: lease) else {
+                    throw ChatGPTSubscriptionGenerationError.missingSession
+                }
+                return await self.toolExecutor.execute(
+                    sessionID: session.id,
+                    toolCall: toolCall,
+                    workingDirectory: URL(fileURLWithPath: session.cwd),
+                    allowedToolNames: session.allowedToolNames
+                )
+            },
+            persist: { results in
+                guard self.mutateSession(for: lease, { session in
+                    for (toolCall, result) in results {
+                        session.messages.append(RemoteGenerationClient.toolResultMessage(
+                            toolCall: toolCall, result: result
+                        ))
+                    }
+                    // The response continuation points at the assistant message;
+                    // these results remain the delta for the next request.
+                }) else {
+                    throw ChatGPTSubscriptionGenerationError.missingSession
+                }
+            },
+            onEvent: onEvent
+        )
     }
 
     static func continuationReplayFallbackDiagnostic() -> String {

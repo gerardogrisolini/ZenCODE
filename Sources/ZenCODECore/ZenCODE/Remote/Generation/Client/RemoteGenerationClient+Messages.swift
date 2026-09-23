@@ -27,6 +27,30 @@ extension RemoteGenerationClient {
         history: [AgentRuntimeMessage],
         allowedToolNames: Set<String>?
     ) -> [[String: Any]] {
+        initialMessages(
+            cwd: cwd,
+            systemPrompt: systemPrompt,
+            history: history,
+            allowedToolNames: allowedToolNames,
+            fallbackSections: {
+                AgentStandaloneSystemPrompt.promptSections(
+                    cwd: cwd,
+                    memoryToolEnabled: memoryToolEnabled(allowedToolNames),
+                    allowedToolNames: allowedToolNames
+                )
+            }
+        )
+    }
+
+    /// Internal factory seam keeps the expensive fallback construction lazy and
+    /// makes its evaluation behavior deterministic to test.
+    static func initialMessages(
+        cwd: String,
+        systemPrompt: String?,
+        history: [AgentRuntimeMessage],
+        allowedToolNames: Set<String>?,
+        fallbackSections: () -> SystemPromptSections
+    ) -> [[String: Any]] {
         let seededHistory = history.compactMap(remoteMessage(from:))
         if let firstRole = seededHistory.first?["role"] as? String,
            firstRole.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -36,16 +60,17 @@ extension RemoteGenerationClient {
             return seededHistory
         }
 
-        let fallbackSections = AgentStandaloneSystemPrompt.promptSections(
-            cwd: cwd,
-            memoryToolEnabled: memoryToolEnabled(allowedToolNames),
-            allowedToolNames: allowedToolNames
-        )
-        let resolvedSystemPrompt = systemPrompt?.nilIfBlank
-            ?? fallbackSections.systemPrompt
-        let fallbackContext = systemPrompt?.nilIfBlank == nil
-            ? fallbackSections.dynamicContext
-            : nil
+        let resolvedPrompt = systemPrompt?.nilIfBlank
+        let resolvedSystemPrompt: String
+        let fallbackContext: String?
+        if let resolvedPrompt {
+            resolvedSystemPrompt = resolvedPrompt
+            fallbackContext = nil
+        } else {
+            let sections = fallbackSections()
+            resolvedSystemPrompt = sections.systemPrompt
+            fallbackContext = sections.dynamicContext
+        }
         let contextMessage = AgentRuntimeDynamicContext.message(for: fallbackContext)
             .flatMap(remoteMessage(from:))
         return [

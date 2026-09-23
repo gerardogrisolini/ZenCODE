@@ -208,6 +208,7 @@ public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
 
     let configuration: AgentRuntimeConfiguration
     let toolExecutor: DirectToolExecutor
+    var toolCatalogCache = RemoteToolWireCatalogCache()
     let webSocketPool: ChatGPTSubscriptionWebSocketPool
     let ownsWebSocketPool: Bool
     let connectionScopeID: String?

@@ -186,3 +186,68 @@ private extension ChatGPTSubscriptionGenerationClient {
         sessions[id]?.continuation?.responseID
     }
 }
+
+extension RemoteSessionSnapshotTests {
+    @Test(arguments: [false, true])
+    func subscriptionFinalRoundCancellationPreservesContinuation(cancelAtStart: Bool) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("counter.txt")
+        try Data().write(to: file)
+        let arguments = String(decoding: try JSONSerialization.data(withJSONObject: ["path": file.path, "content": "once"]), as: UTF8.self)
+        let socket = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes:
+            try subscriptionRecoveryFrames(id: "batch", arguments: arguments, appendPath: file.path)
+            + subscriptionRecoveryFrames(id: "resumed", text: "Done", thought: "Next"))
+        let pool = subscriptionRecoveryPool([socket])
+        defer { pool.closeAll() }
+        let client = ChatGPTSubscriptionGenerationClient(
+            configuration: AgentRuntimeConfiguration(
+                modelID: "unit-model", workingDirectory: directory, maxToolRounds: 1,
+                toolAuthorizationHandler: nil
+            ),
+            webSocketPool: pool
+        )
+        await client.createSession(id: "batch", cwd: directory.path, allowedToolNames: ["local.append"])
+        let completions = Mutex(0)
+        let task = Task {
+            try await client.sendPrompt(
+                sessionID: "batch", prompt: "hi", attachments: [],
+                loadCredentials: subscriptionRecoveryCredentials
+            ) { event in
+                switch event {
+                case .toolCallStarted where cancelAtStart:
+                    withUnsafeCurrentTask { $0?.cancel() }
+                case let .toolCallCompleted(call, result):
+                    completions.withLock { $0 += 1 }
+                    let snapshot = await client.snapshotSession(id: "batch")
+                    #expect(snapshot?.history.filter { $0.role == .tool }.compactMap(\.toolCallID) == [call.id])
+                    #expect(result.output.contains("cancelled before dispatch") == cancelAtStart)
+                    if !cancelAtStart { withUnsafeCurrentTask { $0?.cancel() } }
+                default: break
+                }
+            }
+        }
+        do {
+            _ = try await task.value
+            Issue.record("Expected cancellation, not tooManyToolRounds")
+        } catch is CancellationError {}
+        #expect(completions.withLock { $0 } == 1)
+        #expect(await client.subscriptionRecoveryContinuationID("batch") == "batch")
+        #expect(socket.sentMessages.count == 1)
+        let response = try await client.sendPrompt(
+            sessionID: "batch", prompt: "continue", attachments: [],
+            loadCredentials: subscriptionRecoveryCredentials
+        ) { _ in }
+        #expect(response.text == "Done")
+        let requests = try subscriptionRecoveryRequests(socket)
+        #expect(requests.count == 2)
+        #expect(requests.last?["previous_response_id"] as? String == "batch")
+        let input = try #require(requests.last?["input"] as? [[String: Any]])
+        let outputs = input.filter { $0["type"] as? String == "function_call_output" }
+        #expect(outputs.count == 1)
+        #expect(outputs.first?["call_id"] as? String == "call_batch")
+        #expect(try String(contentsOf: file, encoding: .utf8) == (cancelAtStart ? "" : "once"))
+        await client.shutdown()
+    }
+}

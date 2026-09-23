@@ -159,34 +159,7 @@ extension AnthropicSubscriptionGenerationClient {
                     )
                 }
 
-                for toolCall in streamResult.toolCalls {
-                    await onEvent(.toolCallStarted(toolCall))
-                    guard let activeSession = currentSession(for: lease) else {
-                        throw RemoteGenerationClientError.missingSession
-                    }
-                    let result = await toolExecutor.execute(
-                        sessionID: activeSession.id,
-                        toolCall: toolCall,
-                        workingDirectory: activeSession.cwd,
-                        allowedToolNames: activeSession.allowedToolNames
-                    )
-                    await onEvent(.toolCallCompleted(toolCall, result))
-                    guard mutateSession(for: lease, { session in
-                        session.messages.append(
-                            RemoteGenerationClient.toolResultMessage(
-                                toolCall: toolCall,
-                                result: result
-                            )
-                        )
-                    }) else {
-                        throw RemoteGenerationClientError.missingSession
-                    }
-                    // Tool payloads are frequently the largest and most
-                    // escaped part of an Anthropic turn; do not carry their
-                    // predecessor's conversation inflation into the next
-                    // preflight.
-                    invalidateRequestOverhead(sessionID: lease.id)
-                }
+                try await executeToolBatch(streamResult.toolCalls, lease: lease, onEvent: onEvent)
 
                 if round == configuration.maxToolRounds - 1 {
                     throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)
@@ -195,6 +168,48 @@ extension AnthropicSubscriptionGenerationClient {
             }
         }
         throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)
+    }
+
+    func executeToolBatch(
+        _ toolCalls: [DirectAgentToolCall],
+        lease: SessionLease,
+        onEvent: @Sendable (DirectAgentEvent) async -> Void
+    ) async throws {
+        try await RemoteToolBatchExecutor.run(
+            toolCalls,
+            isolation: self,
+            validateLease: {
+                guard self.currentSession(for: lease) != nil else {
+                    throw RemoteGenerationClientError.missingSession
+                }
+            },
+            execute: { toolCall in
+                guard let session = self.currentSession(for: lease) else {
+                    throw RemoteGenerationClientError.missingSession
+                }
+                return await self.toolExecutor.execute(
+                    sessionID: session.id,
+                    toolCall: toolCall,
+                    workingDirectory: session.cwd,
+                    allowedToolNames: session.allowedToolNames
+                )
+            },
+            persist: { results in
+                guard self.mutateSession(for: lease, { session in
+                    for (toolCall, result) in results {
+                        session.messages.append(RemoteGenerationClient.toolResultMessage(
+                            toolCall: toolCall, result: result
+                        ))
+                    }
+                }) else {
+                    throw RemoteGenerationClientError.missingSession
+                }
+                // Invalidate the preceding conversation's inflation before any
+                // callback can reenter preflight, including cancellation results.
+                self.invalidateRequestOverhead(sessionID: lease.id)
+            },
+            onEvent: onEvent
+        )
     }
 
     static func removingThinkingBlocks(

@@ -64,6 +64,48 @@ import Testing
         }
     }
 
+    @Test func runnerExtractsOnlyOrderedToolEvidenceAcrossInterleavedDeltas() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let fix = try toolCall(id: "fix-delta", name: "local.editFile",
+                args: ["path": "Sources/A.swift", "old": "a", "new": "b"])
+            let verify = try toolCall(id: "verify-delta", name: "swift.build",
+                args: ["path": workspace.workspaceURL.path])
+            let events: [DirectAgentEvent] = [
+                .content("ignored transcript claim"),
+                .toolCallStarted(fix),
+                .thought("ignored reasoning"),
+                .toolCallCompleted(fix, .init(output: "Updated.", summary: "Updated.")),
+                .status("ignored status"),
+                .toolCallStarted(verify),
+                .toolCallCompleted(verify, .init(output: "command: swift build\nstatus: success (exit 0)", summary: "Built.")),
+            ]
+            let mock = MemoryProposalMockBackend(rootEvents: events)
+            let runner = AgentCoreSessionRunner(backendFactory: { _, _ in mock })
+            let configuration = AgentCoreSessionConfiguration(sessionID: "root", modelID: "same-model",
+                workingDirectory: workspace.workspaceURL, systemPrompt: nil, cacheKey: nil, history: [],
+                allowedToolNames: ["memory.write"])
+            let callback = RunnerEventOrderCollector()
+
+            _ = try await runner.sendPrompt(configuration: configuration, prompt: "Fix and verify A.swift.", attachments: [], onEvent: { event in
+                await callback.record(event)
+            })
+
+            let requests = await mock.requests
+            #expect(requests.count == 1)
+            #expect(requests[0].prompt.contains("fix-delta"))
+            #expect(requests[0].prompt.contains("verify-delta"))
+            #expect(!requests[0].prompt.contains("ignored transcript claim"))
+            #expect(!requests[0].prompt.contains("ignored reasoning"))
+            #expect(await callback.eventKinds().prefix(events.count).elementsEqual([
+                "content", "toolCallStarted", "thought", "toolCallCompleted", "status",
+                "toolCallStarted", "toolCallCompleted",
+            ]))
+            await runner.shutdown()
+        }
+    }
+
     @Test func isolatedRequestHasNoToolsHistoryRecallOrUserCacheAndCloses() async throws {
         let mock = MemoryProposalMockBackend()
         let core = try await backend(mock)
@@ -354,4 +396,27 @@ extension ConservativeMemoryLearningBackendTests {
 private struct LearningTestEmbeddingProvider: EmbeddingProvider {
     let modelID = "learning-test-embedding"
     func embed(_ text: String) async throws -> [Float] { [1, 0] }
+}
+
+private actor RunnerEventOrderCollector {
+    private var kinds: [String] = []
+
+    func record(_ event: DirectAgentEvent) {
+        switch event {
+        case .content: kinds.append("content")
+        case .toolCallStarted: kinds.append("toolCallStarted")
+        case .thought: kinds.append("thought")
+        case .toolCallCompleted: kinds.append("toolCallCompleted")
+        case .status: kinds.append("status")
+        case .diagnostic: kinds.append("diagnostic")
+        case .modelLoaded: kinds.append("modelLoaded")
+        case .metrics: kinds.append("metrics")
+        case .contextWindow: kinds.append("contextWindow")
+        case .subscriptionUsage: kinds.append("subscriptionUsage")
+        case .sessionSnapshot: kinds.append("sessionSnapshot")
+        case .turnEnded: kinds.append("turnEnded")
+        }
+    }
+
+    func eventKinds() -> [String] { kinds }
 }

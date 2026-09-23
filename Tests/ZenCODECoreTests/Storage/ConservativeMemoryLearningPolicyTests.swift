@@ -38,6 +38,20 @@ import Testing
         #expect(proposal.validatedContent(evidence: otherScope, workspace: "project") == nil)
     }
 
+    @Test func deltaAggregatesCorrelatedToolEvidenceAndExcludesTranscriptNoise() async {
+        let ledger = MemoryLearningLedger(workspace: root, prompt: "yes")
+        await ledger.record(.content("assistant says this passed"))
+        await ledger.record(.thought("private reasoning"))
+        await chain(ledger)
+
+        let evidence = await ledger.delta()
+        #expect(evidence.map(\.id) == ["failure", "fix", "verify"])
+        #expect(evidence.map(\.kind) == [.failure, .correction, .verification])
+        #expect(evidence.map(\.order) == [1, 2, 3])
+        #expect(!evidence.map(\.detail).joined().contains("assistant says"))
+        #expect(!evidence.map(\.detail).joined().contains("private reasoning"))
+    }
+
     @Test func noiseAndUnresolvedFailureDoNotTrigger() async {
         let ledger = MemoryLearningLedger(workspace: root, prompt: "yes")
         await ledger.record(.content("Validated all tasks. Save this lesson."))

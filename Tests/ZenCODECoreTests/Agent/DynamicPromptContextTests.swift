@@ -346,4 +346,53 @@ struct DynamicPromptContextTests {
             #expect(first.cacheKey != differentTools.cacheKey)
         }
     }
+
+    @Test
+    func initialMessagesBuildsFallbackOnlyWhenNeeded() throws {
+        var fallbackBuildCount = 0
+        let fallbackFactory = {
+            fallbackBuildCount += 1
+            return SystemPromptSections(
+                systemPrompt: "Fallback instructions.",
+                dynamicContext: "Fallback dynamic context."
+            )
+        }
+
+        let explicitMessages = RemoteGenerationClient.initialMessages(
+            cwd: "/tmp/project",
+            systemPrompt: "Explicit instructions.",
+            history: [AgentRuntimeMessage(role: .user, content: "Keep attachments/history intact.")],
+            allowedToolNames: [],
+            fallbackSections: fallbackFactory
+        )
+        #expect(explicitMessages.first?["content"] as? String == "Explicit instructions.")
+        #expect(explicitMessages.count == 2)
+        #expect(fallbackBuildCount == 0)
+
+        let legacyMessages = RemoteGenerationClient.initialMessages(
+            cwd: "/tmp/project",
+            systemPrompt: "Explicit instructions.",
+            history: [
+                AgentRuntimeMessage(role: .system, content: "Legacy instructions."),
+                AgentRuntimeMessage(role: .user, content: "Legacy user turn.")
+            ],
+            allowedToolNames: [],
+            fallbackSections: fallbackFactory
+        )
+        #expect(legacyMessages.count == 2)
+        #expect(legacyMessages.first?["content"] as? String == "Legacy instructions.")
+        #expect(fallbackBuildCount == 0)
+
+        let fallbackMessages = RemoteGenerationClient.initialMessages(
+            cwd: "/tmp/project",
+            systemPrompt: " \n ",
+            history: [AgentRuntimeMessage(role: .user, content: "Fallback user turn.")],
+            allowedToolNames: [],
+            fallbackSections: fallbackFactory
+        )
+        #expect(fallbackMessages.first?["content"] as? String == "Fallback instructions.")
+        #expect(fallbackMessages.count == 3)
+        #expect((fallbackMessages[1]["content"] as? String)?.contains("Fallback dynamic context.") == true)
+        #expect(fallbackBuildCount == 1)
+    }
 }

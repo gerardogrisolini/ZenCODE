@@ -50,6 +50,7 @@ public actor AnthropicSubscriptionGenerationClient: DirectToolRuntimeBackend {
     public let transport: RemoteTransportCore
     let ownsTransport: Bool
     public let toolExecutor: DirectToolExecutor
+    var toolCatalogCache = RemoteToolWireCatalogCache()
     /// Session dictionaries contain non-Sendable JSON bridge values. Export
     /// only `AgentRuntimeSessionSnapshot` through `snapshotSession(id:)`.
     var sessions: [String: AgentSession] = [:]

@@ -129,7 +129,12 @@ extension AgentCoreSessionRunner {
                         attachments: attachments,
                         onEvent: { event in
                             await turnRecorder.record(event)
-                            await learningLedger.record(event)
+                            switch event {
+                            case .toolCallStarted, .toolCallCompleted:
+                                await learningLedger.record(event)
+                            default:
+                                break
+                            }
                             if case let .toolCallStarted(toolCall) = event {
                                 await onToolWillExecute?(toolCall)
                             }

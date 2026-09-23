@@ -31,6 +31,7 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
     public let transport: RemoteTransportCore
     private let ownsTransport: Bool
     public let toolExecutor: DirectToolExecutor
+    var toolCatalogCache = RemoteToolWireCatalogCache()
     /// `AgentSession` contains JSON bridge values and must never cross the
     /// actor boundary. Public callers use `snapshotSession(id:)`, whose result
     /// is Sendable, rather than observing this mutable implementation detail.
@@ -430,75 +431,50 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
                 )
             }
 
-            var completedToolCount = 0
-            do {
-                for toolCall in streamResult.toolCalls {
-                    try Task.checkCancellation()
-                    guard currentSession(for: lease) != nil else {
-                        throw RemoteGenerationClientError.missingSession
-                    }
-                    await onEvent(.toolCallStarted(toolCall))
-                    try Task.checkCancellation()
-                    guard let activeSession = currentSession(for: lease) else {
-                        throw RemoteGenerationClientError.missingSession
-                    }
-                    let result = await toolExecutor.execute(
-                        sessionID: activeSession.id,
-                        toolCall: toolCall,
-                        workingDirectory: activeSession.cwd,
-                        allowedToolNames: activeSession.allowedToolNames
-                    )
-                    // Persist an obtained result before a reentrant callback can
-                    // cancel the turn. Never replace an executed tool's result.
-                    guard mutateSession(for: lease, { session in
-                        session.messages.append(
-                            Self.toolResultMessage(toolCall: toolCall, result: result)
-                        )
-                    }) else {
-                        throw RemoteGenerationClientError.missingSession
-                    }
-                    completedToolCount += 1
-                    await onEvent(.toolCallCompleted(toolCall, result))
-                }
-                // Includes cancellation by the final completion callback, even
-                // when this is the last permitted tool round.
-                try Task.checkCancellation()
-                guard currentSession(for: lease) != nil else {
-                    throw RemoteGenerationClientError.missingSession
-                }
-            } catch is CancellationError {
-                let pending = streamResult.toolCalls.dropFirst(completedToolCount)
-                let cancellation = DirectAgentToolResult(
-                    output: "Tool execution cancelled before dispatch.",
-                    summary: "Tool execution cancelled before dispatch.",
-                    status: DirectToolExecutor.toolResultStatus(for: CancellationError())
-                )
-                // Close the entire committed batch without suspension. Completion
-                // callbacks may reset the session, so none may run before all
-                // pending results are appended to the still-valid lease.
-                guard mutateSession(for: lease, { session in
-                    for toolCall in pending {
-                        session.messages.append(
-                            Self.toolResultMessage(toolCall: toolCall, result: cancellation)
-                        )
-                    }
-                }) else {
-                    throw RemoteGenerationClientError.missingSession
-                }
-                for toolCall in pending {
-                    guard currentSession(for: lease) != nil else {
-                        throw RemoteGenerationClientError.missingSession
-                    }
-                    await onEvent(.toolCallCompleted(toolCall, cancellation))
-                }
-                throw CancellationError()
-            }
+            try await executeToolBatch(streamResult.toolCalls, lease: lease, onEvent: onEvent)
 
             if round == configuration.maxToolRounds - 1 {
                 throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)
             }
         }
         throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)
+    }
+
+    private func executeToolBatch(
+        _ toolCalls: [DirectAgentToolCall],
+        lease: SessionLease,
+        onEvent: @Sendable (DirectAgentEvent) async -> Void
+    ) async throws {
+        try await RemoteToolBatchExecutor.run(
+            toolCalls,
+            isolation: self,
+            validateLease: {
+                guard self.currentSession(for: lease) != nil else {
+                    throw RemoteGenerationClientError.missingSession
+                }
+            },
+            execute: { toolCall in
+                guard let session = self.currentSession(for: lease) else {
+                    throw RemoteGenerationClientError.missingSession
+                }
+                return await self.toolExecutor.execute(
+                    sessionID: session.id,
+                    toolCall: toolCall,
+                    workingDirectory: session.cwd,
+                    allowedToolNames: session.allowedToolNames
+                )
+            },
+            persist: { results in
+                guard self.mutateSession(for: lease, { session in
+                    for (toolCall, result) in results {
+                        session.messages.append(Self.toolResultMessage(toolCall: toolCall, result: result))
+                    }
+                }) else {
+                    throw RemoteGenerationClientError.missingSession
+                }
+            },
+            onEvent: onEvent
+        )
     }
 
     private struct SessionLease: Sendable {

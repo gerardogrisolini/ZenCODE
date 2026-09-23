@@ -13,6 +13,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 ### Changed
 
 - The shared-chat reader now uses the compact `Chat · N msg · U new` header in both collapsed and expanded states, with the completed-task success green and no bold styling.
+- Remote provider tool catalogs reuse compiled wire definitions across unchanged rounds and retries while retaining current tool presentation metadata.
+
+### Fixed
+
+- Cancelling a committed batch of remote tool calls preserves results already obtained and records cancellation results for calls not dispatched, including ChatGPT and Anthropic subscription adapters. Completion events are emitted only after the corresponding results are recorded.
+- Remote prompt fallback sections are built only when needed; explicit system prompts and already-seeded system history continue to take precedence.
+- Tool-call learning records now process only tool start and completion events; other turn events remain available to the turn recorder without entering the learning ledger.
 
 ## [2.1.8] - 2026-09-21
 
