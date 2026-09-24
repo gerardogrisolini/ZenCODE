@@ -12,6 +12,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- ACP client filesystem reads now propagate optional `line` and `limit` parameters for partial `fs/read_text_file` requests; legacy reads continue omitting them.
+- ACP now supports the standard JSON-RPC `$/cancel_request` notification: an active `session/prompt` can be cancelled by its original request id, while the existing `session/cancel` remains the session-addressed compatibility operation.
+- ACP now treats conversation history as client-owned: only the ephemeral `session/new`, `session/prompt`, and `session/cancel` runtime methods remain exposed. Session restore, resume, close, list, delete, mode, config, and model mutation requests are no longer part of the ACP wire surface.
 - The shared-chat reader now uses the compact `Chat · N msg · U new` header in both collapsed and expanded states, with the completed-task success green and no bold styling.
 - Remote provider tool catalogs reuse compiled wire definitions across unchanged rounds and retries while retaining current tool presentation metadata.
 

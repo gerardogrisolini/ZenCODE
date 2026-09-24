@@ -28,9 +28,9 @@ public actor ZenCODEACPBridge {
         public let cwd: String
         public let allowedToolNames: Set<String>?
         public let configuration: AgentCoreSessionConfiguration
-        /// Identifies this incarnation of the session. `session/close` and
-        /// `shutdown` drop it, so work started under an older epoch can never
-        /// write state back into a newer session with the same id.
+        /// Identifies this incarnation of the runtime session. Shutdown drops it,
+        /// so work started under an older epoch can never write state back into a
+        /// newer session with the same id.
         public let epoch: UInt64
         public var selectedAgent: AgentProfile?
         /// ACP presentation only: never persisted or added to model history.
@@ -72,12 +72,16 @@ public actor ZenCODEACPBridge {
         public let modelID: String
     }
 
-    /// Identifies the session incarnation a lifecycle operation acts on, so a
-    /// `session/close` can invalidate that operation without touching lifecycle
-    /// work belonging to other sessions or to a newer incarnation.
+    /// Identifies the runtime session incarnation a lifecycle operation acts on.
     struct SessionBinding: Hashable {
         let sessionID: String
         let epoch: UInt64
+    }
+
+    struct ActivePromptRequest: Sendable {
+        let sessionID: String
+        let epoch: UInt64
+        let promptID: UUID
     }
 
     public let configuration: AgentConfiguration
@@ -96,24 +100,19 @@ public actor ZenCODEACPBridge {
     /// values here avoids accepting a method that was never offered to this
     /// client (or one offered to a different initialization request).
     var advertisedAuthenticationMethodIDs: Set<String> = []
-    /// Tokens of lifecycle operations (`session/new`, `load`, `resume`,
-    /// `set_model`, `set_config_option`) that are currently suspended. Cleared
-    /// wholesale by `shutdown()`, which turns every later re-check into a
-    /// `ACPShutdownFenceError`.
+    /// Lifecycle operation tokens currently suspended. Cleared wholesale by
+    /// `shutdown()`, which turns every later re-check into a fence error.
     private var lifecycleOperations: Set<UInt64> = []
-    /// Session incarnation a lifecycle operation acts on, for the handlers that
-    /// mutate an existing session. `session/close` invalidates exactly the
-    /// operations bound to the incarnation it closes, and nothing else.
+    /// Runtime session binding for lifecycle operations that mutate session
+    /// state. Shutdown invalidates bindings without affecting other sessions.
     private var lifecycleOperationBindings: [UInt64: SessionBinding] = [:]
     private var nextLifecycleOperationToken: UInt64 = 1
-    /// `session/prompt` handlers currently running, by session id. This tracks
-    /// the *ACP wrapper* — the task that flushes buffered updates, refreshes
-    /// session state and writes the final `stopReason` reply — which the
-    /// runner's own `promptTaskRegistry` never sees, because that registry
-    /// only covers the backend-side stream tasks. A `session/close` that
-    /// cancelled the backend turn must also wait for this handler to finish,
-    /// or its unwind can reach the wire after the close reply.
+    /// Runtime session prompt handlers currently running, by session id.
     private var promptHandlersInFlight: [String: Set<UUID>] = [:]
+    /// Maps the JSON-RPC id of an active prompt to its runtime reservation.
+    /// `$/cancel_request` uses this table because it carries the original
+    /// request id rather than a session id.
+    var activePromptRequests: [JSONValue: ActivePromptRequest] = [:]
 
     /// Returns the in-flight prompt tokens for the current session incarnation.
     /// Callers that will suspend during teardown use this snapshot to avoid
@@ -157,6 +156,7 @@ public actor ZenCODEACPBridge {
         // answer on the closing transport.
         lifecycleOperations.removeAll()
         lifecycleOperationBindings.removeAll()
+        activePromptRequests.removeAll()
         // Unblock every close currently draining a prompt handler: its prompt
         // is cancelled below (and its late writes are already fenced by the
         // writer), so the close must be free to proceed to its own fenced
@@ -473,22 +473,12 @@ public actor ZenCODEACPBridge {
                 try await preloadModel(id: id, params: params)
             case "session/new":
                 try await newSession(id: id, params: params)
-            case "session/set_mode":
-                try await setMode(id: id, params: params)
-            case "_zencode/session/set_model":
-                try await setModel(id: id, params: params)
-            case "session/set_config_option":
-                try await setConfigOption(id: id, params: params)
             case "session/prompt":
                 try await prompt(id: id, params: params)
             case "session/cancel":
                 try await cancel(id: id, params: params)
-            case "session/close":
-                try await close(id: id, params: params)
-            case "session/load":
-                try await loadSession(id: id, params: params)
-            case "session/resume":
-                try await resumeSession(id: id, params: params)
+            case "$/cancel_request":
+                await cancelRequest(id: message["params"]?.objectValue?["id"])
             default:
                 await writer.sendErrorIfRequest(
                     id: id,

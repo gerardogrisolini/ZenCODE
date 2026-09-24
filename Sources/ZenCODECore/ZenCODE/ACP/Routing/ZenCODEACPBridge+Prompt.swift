@@ -40,6 +40,19 @@ extension ZenCODEACPBridge {
         // (update flush, snapshot refresh, final reply) before answering.
         let promptHandlerToken = enterPromptHandler(sessionID: sessionID)
         defer { leavePromptHandler(sessionID: sessionID, token: promptHandlerToken) }
+        if let requestID = id {
+            activePromptRequests[requestID] = ActivePromptRequest(
+                sessionID: sessionID,
+                epoch: epoch,
+                promptID: promptID
+            )
+        }
+        defer {
+            if let requestID = id,
+               activePromptRequests[requestID]?.promptID == promptID {
+                activePromptRequests.removeValue(forKey: requestID)
+            }
+        }
 
         /// Releases the reservation only when it is still ours and the session
         /// is still the same incarnation.
@@ -57,7 +70,7 @@ extension ZenCODEACPBridge {
                 session.activePromptID = nil
                 session.activeWorkflowPromptID = nil
                 session.activePromptTask = nil
-                session.operationState = .idle
+                session.operationState = ZenCODEACPBridge.SessionOperationState.idle
             }
         }
 
@@ -700,6 +713,31 @@ extension ZenCODEACPBridge {
         default:
             return "end_turn"
         }
+    }
+
+    /// Handles the JSON-RPC cancellation notification for a prompt request.
+    /// Unlike `session/cancel`, this is addressed by the original request id
+    /// and intentionally has no response of its own.
+    public func cancelRequest(id requestID: JSONValue?) async {
+        guard let requestID,
+              let target = activePromptRequests[requestID],
+              var session = sessions[target.sessionID],
+              session.epoch == target.epoch,
+              session.activePromptID == target.promptID else {
+            return
+        }
+
+        session.activePromptTask?.cancel()
+        // If cancellation wins before the backend task is registered, clear the
+        // reservation now. The prompt's registration guard will then observe
+        // the stale reservation and unwind as cancelled instead of losing the
+        // notification in the hand-off window.
+        if session.activePromptTask == nil {
+            session.activePromptID = nil
+            session.activeWorkflowPromptID = nil
+            session.operationState = ZenCODEACPBridge.SessionOperationState.idle
+        }
+        sessions[target.sessionID] = session
     }
 
     public func cancel(id: JSONValue?, params: [String: Any]) async throws {

@@ -29,6 +29,36 @@ struct ACPClientFileSystemTests {
         }
     }
 
+    @Test func partialReadPropagatesOptionalLineAndLimit() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("File.swift")
+        let fixture = FileSystemClientFixture(files: [file.path: "one\ntwo\nthree\n"])
+        let harness = FileSystemHarness(fixture: fixture)
+        defer { harness.stop() }
+
+        _ = try await harness.client.read(
+            path: file, line: 4, limit: 7, sessionID: "root") { true }
+
+        let request = try #require(await fixture.requests.last?.objectValue)
+        let params = try #require(request["params"]?.objectValue)
+        #expect(params["line"] == .number(4))
+        #expect(params["limit"] == .number(7))
+    }
+
+    @Test func defaultReadOmitsOptionalLineAndLimit() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("File.swift")
+        let fixture = FileSystemClientFixture(files: [file.path: "one\ntwo\n"])
+        let harness = FileSystemHarness(fixture: fixture)
+        defer { harness.stop() }
+
+        _ = try await harness.client.read(
+            path: file, sessionID: "root") { true }
+
+        let request = try #require(await fixture.requests.last?.objectValue)
+        let params = try #require(request["params"]?.objectValue)
+        #expect(params["line"] == nil)
+        #expect(params["limit"] == nil)
+    }
+
     @Test func localToolsUseUnsavedClientBuffersAndRecordStandardDiff() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

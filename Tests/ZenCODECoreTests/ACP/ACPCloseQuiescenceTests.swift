@@ -311,6 +311,39 @@ struct ACPCloseQuiescenceTests {
         #expect(await bridge.testRunnerHasSessionEntry(sessionID: sessionID) == false)
     }
 
+    @Test
+    func jsonRPCCancelRequestCancelsPromptByOriginalRequestID() async throws {
+        let transport = CloseQuiescenceTransport()
+        let gate = CloseQuiescenceGate()
+        let backend = CloseQuiescenceBackend(
+            promptGate: gate,
+            bufferedChunk: "buffered-before-request-cancel"
+        )
+        let bridge = try Self.makeBridge(transport: transport, backend: backend)
+
+        try await bridge.newSession(id: .number(1), params: Self.sessionParams())
+        let sessionID = try #require(await bridge.testAnySessionID())
+
+        let promptTask = Task {
+            await bridge.handleLine("""
+            {"jsonrpc":"2.0","id":42,"method":"session/prompt","params":{"sessionId":"\(sessionID)","prompt":"long running"}}
+            """)
+        }
+        await gate.waitUntilReached()
+
+        await bridge.handleLine("""
+        {"jsonrpc":"2.0","method":"$/cancel_request","params":{"id":"unknown-request"}}
+        """)
+        await bridge.handleLine("""
+        {"jsonrpc":"2.0","method":"$/cancel_request","params":{"id":42}}
+        """)
+        gate.open()
+        await promptTask.value
+
+        #expect(transport.responseIndex(id: 42) != nil)
+        #expect(transport.responseIndex(id: 42, stopReason: "cancelled") != nil)
+    }
+
     // MARK: - No deadlock
 
     @Test

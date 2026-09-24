@@ -454,79 +454,26 @@ struct ACPThinkingStreamTests {
         #expect(await fixture.backend.recordedSummaryCounts() == [1])
     }
 
-    @Test
-    func firstSummaryReflectsThinkingReconfigurationBeforeMention() async throws {
-        let fixture = try await Self.makeFixture(
-            sessionID: "acp-summary-current-\(UUID().uuidString)", appMode: false
-        )
-        await fixture.bridge.handleLine("""
-        {"jsonrpc":"2.0","id":1,"method":"session/set_config_option","params":{"sessionId":"\(fixture.sessionID)","configId":"thinking","value":"high"}}
-        """)
-        try await fixture.bridge.prompt(id: .number(2), params: [
-            "sessionId": fixture.sessionID, "prompt": "@Developer explain"
-        ])
-        let summaries = fixture.wire.updateTexts(kind: "agent_message_chunk")
-            .filter { $0.hasPrefix("Agent:") }
-        #expect(summaries == [
-            "Agent: Developer · Model: thinking-model · Thinking: \(AgentThinkingSelection.high.displayTitle)\n\n"
-        ])
-        #expect(await fixture.backend.recordedPrompts() == ["explain"])
-        #expect(await fixture.backend.recordedSummaryCounts() == [1])
-    }
-
-    @Test
-    func mentionAndReconfigurationPreserveSummaryAcrossRefresh() async throws {
-        let fixture = try await Self.makeFixture(
-            sessionID: "acp-summary-refresh-\(UUID().uuidString)", appMode: false
-        )
-        try await fixture.bridge.prompt(id: .number(1), params: [
-            "sessionId": fixture.sessionID, "prompt": "first"
-        ])
-        await fixture.bridge.handleLine("""
-        {"jsonrpc":"2.0","id":2,"method":"session/set_model","params":{"sessionId":"\(fixture.sessionID)","modelId":"thinking-model"}}
-        """)
-        await fixture.bridge.handleLine("""
-        {"jsonrpc":"2.0","id":3,"method":"session/set_config_option","params":{"sessionId":"\(fixture.sessionID)","configId":"thinking","value":"high"}}
-        """)
-        let configured = try #require(await fixture.bridge.initialSummaryStateForTesting(sessionID: fixture.sessionID))
-        #expect(configured.thinkingSelection == .high)
-        #expect(configured.presented)
-        try await fixture.bridge.prompt(id: .number(4), params: [
-            "sessionId": fixture.sessionID, "prompt": "@Developer second"
-        ])
-        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk")
-            .filter { $0.hasPrefix("Agent:") } == [Self.initialSummary])
-        #expect(await fixture.backend.recordedSummaryCounts() == [1, 1])
-    }
-
-    @Test(arguments: ["session/load", "session/resume"])
-    func restoredIncarnationShowsSummaryAgain(method: String) async throws {
+    @Test(arguments: [
+        "session/load", "session/resume", "session/close",
+        "session/set_mode", "session/set_config_option", "_zencode/session/set_model"
+    ])
+    func removedSessionLifecycleMethodsDoNotRestoreOrCloseRuntime(method: String) async throws {
         let fixture = try await Self.makeFixture(
             sessionID: "acp-summary-restore-\(UUID().uuidString)", appMode: false
         )
         try await fixture.bridge.prompt(id: .number(1), params: [
             "sessionId": fixture.sessionID, "prompt": "first"
         ])
-        let original = try #require(await fixture.bridge.initialSummaryStateForTesting(sessionID: fixture.sessionID))
+        let updatesBefore = fixture.wire.trace().count
         await fixture.bridge.handleLine("""
-        {"jsonrpc":"2.0","id":2,"method":"session/close","params":{"sessionId":"\(fixture.sessionID)"}}
+        {"jsonrpc":"2.0","id":2,"method":"\(method)","params":{"sessionId":"\(fixture.sessionID)","history":[{"role":"user","content":"saved question"},{"role":"assistant","content":"saved answer"}],"modelId":"thinking-model","thinkingSelection":"high","mcpServers":[]}}
         """)
-        await fixture.bridge.handleLine("""
-        {"jsonrpc":"2.0","id":3,"method":"\(method)","params":{"sessionId":"\(fixture.sessionID)","history":[{"role":"user","content":"saved question"},{"role":"assistant","content":"saved answer"}],"modelId":"thinking-model","thinkingSelection":"high","mcpServers":[]}}
-        """)
-        let restored = try #require(await fixture.bridge.initialSummaryStateForTesting(sessionID: fixture.sessionID))
-        #expect(restored.epoch != original.epoch)
-        #expect(!restored.presented)
-        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk")
-            .filter { $0.hasPrefix("Agent:") }.count == 1)
-        try await fixture.bridge.prompt(id: .number(4), params: [
-            "sessionId": fixture.sessionID, "prompt": "continue"
-        ])
-        let summaries = fixture.wire.updateTexts(kind: "agent_message_chunk")
-            .filter { $0.hasPrefix("Agent:") }
-        #expect(summaries.count == 2)
-        #expect(summaries.last?.contains("Thinking: \(AgentThinkingSelection.high.displayTitle)") == true)
-        #expect(await fixture.backend.recordedSummaryCounts() == [1, 2])
+        let unchanged = try #require(await fixture.bridge.initialSummaryStateForTesting(
+            sessionID: fixture.sessionID
+        ))
+        #expect(unchanged.epoch == 1)
+        #expect(fixture.wire.trace().count == updatesBefore)
     }
 
     @Test

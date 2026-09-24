@@ -82,6 +82,9 @@ extension ACPCompatibilityTests {
         #expect(response["jsonrpc"] as? String == "2.0")
         let result = try #require(response["result"] as? [String: Any])
         #expect((result["protocolVersion"] as? NSNumber)?.intValue == 1)
+        let agentCapabilities = try #require(result["agentCapabilities"] as? [String: Any])
+        #expect(agentCapabilities["loadSession"] == nil)
+        #expect(agentCapabilities["sessionCapabilities"] == nil)
         let authMethods = try #require(result["authMethods"] as? [[String: Any]])
         #expect(authMethods.count == 1)
         #expect(authMethods.first?["id"] as? String == "zencode-client-compatibility")
@@ -149,6 +152,31 @@ extension ACPCompatibilityTests {
         ])
 
         #expect(transport.errorCode(id: 1) == -32601)
+    }
+
+    @Test
+    func removedSessionPersistenceMethodsAreRejected() async throws {
+        let transport = ACPWireRecordingTransport()
+        let bridge = try makeACPWireBridge(transport: transport)
+
+        for (id, method) in [
+            (1, "session/load"),
+            (2, "session/resume"),
+            (3, "session/close"),
+            (4, "session/list"),
+            (5, "session/delete"),
+            (6, "session/set_mode"),
+            (7, "session/set_config_option"),
+            (8, "_zencode/session/set_model")
+        ] {
+            await bridge.handleMessage([
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method,
+                "params": [:] as [String: Any]
+            ])
+            #expect(transport.errorCode(id: id) == -32601)
+        }
     }
 
     @Test

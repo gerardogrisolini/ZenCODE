@@ -37,14 +37,18 @@ final class ACPClientFileSystem: Sendable {
         isValid: @escaping @Sendable () async -> Bool
     ) -> ClientTextFileSystem {
         let read: ClientTextFileSystem.Read = { path in
-            try await self.read(path, sessionID: sessionID, isValid: isValid)
+            try await self.read(
+                path: path, line: nil, limit: nil,
+                sessionID: sessionID, isValid: isValid)
         }
         let write: ClientTextFileSystem.Write = { path, contents in
             try await self.fileLeases.withLease(sessionID: path.standardizedFileURL.path) {
                 var before: String?
                 if self.canRead {
                     do {
-                        before = try await self.read(path, sessionID: sessionID, isValid: isValid)
+                        before = try await self.read(
+                            path: path, line: nil, limit: nil,
+                            sessionID: sessionID, isValid: isValid)
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch let error as ACPFileSystemTimeout {
@@ -61,7 +65,9 @@ final class ACPClientFileSystem: Sendable {
         }
         let edit: ClientTextFileSystem.Edit = { path, transform in
             try await self.fileLeases.withLease(sessionID: path.standardizedFileURL.path) {
-                let before = try await self.read(path, sessionID: sessionID, isValid: isValid)
+                let before = try await self.read(
+                    path: path, line: nil, limit: nil,
+                    sessionID: sessionID, isValid: isValid)
                 let after = try transform(before)
                 try await self.commit(
                     after, before: before, path: path,
@@ -76,13 +82,13 @@ final class ACPClientFileSystem: Sendable {
         )
     }
 
-    private func read(
-        _ path: URL, sessionID: String,
+    func read(
+        path: URL, line: Int? = nil, limit: Int? = nil, sessionID: String,
         isValid: @escaping @Sendable () async -> Bool
     ) async throws -> String {
         let result = try await request(
-            "fs/read_text_file", path: path, sessionID: sessionID,
-            isValid: isValid)
+            "fs/read_text_file", path: path, line: line, limit: limit,
+            sessionID: sessionID, isValid: isValid)
         guard case .string(let contents)? = result?.objectValue?["content"] else {
             throw ACPError.internalError("ACP client returned invalid text file content.")
         }
@@ -94,7 +100,9 @@ final class ACPClientFileSystem: Sendable {
         isValid: @escaping @Sendable () async -> Bool
     ) async throws {
         if let before {
-            let current = try await read(path, sessionID: sessionID, isValid: isValid)
+            let current = try await read(
+                path: path, line: nil, limit: nil,
+                sessionID: sessionID, isValid: isValid)
             guard current.utf8.elementsEqual(before.utf8) else {
                 throw ACPError.internalError(
                     "The client file changed before the write. Re-read it and retry; nothing was written.")
@@ -112,7 +120,9 @@ final class ACPClientFileSystem: Sendable {
         var verified = false
         if canRead {
             do {
-                let after = try await read(path, sessionID: sessionID, isValid: isValid)
+                let after = try await read(
+                    path: path, line: nil, limit: nil,
+                    sessionID: sessionID, isValid: isValid)
                 verified = after.utf8.elementsEqual(contents.utf8)
             } catch {
                 verified = false
@@ -135,7 +145,8 @@ final class ACPClientFileSystem: Sendable {
     }
 
     private func request(
-        _ method: String, path: URL, contents: String? = nil, sessionID: String,
+        _ method: String, path: URL, line: Int? = nil, limit: Int? = nil,
+        contents: String? = nil, sessionID: String,
         isValid: @escaping @Sendable () async -> Bool
     ) async throws -> JSONValue? {
         try Task.checkCancellation()
@@ -145,6 +156,8 @@ final class ACPClientFileSystem: Sendable {
             throw ACPError.invalidParams("Client file path must be absolute and contain no NUL.")
         }
         var params: [String: JSONValue] = ["sessionId": .string(sessionID), "path": .string(path)]
+        if let line { params["line"] = .number(Double(line)) }
+        if let limit { params["limit"] = .number(Double(limit)) }
         if let contents { params["content"] = .string(contents) }
         let payload = JSONValue.object(params)
         return try await withThrowingTaskGroup(of: JSONValue?.self) { group in

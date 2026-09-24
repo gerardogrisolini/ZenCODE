@@ -20,7 +20,6 @@ extension ZenCODEACPBridge {
         let result: [String: Any] = [
             "protocolVersion": protocolVersion,
             "agentCapabilities": [
-                "loadSession": true,
                 "promptCapabilities": [
                     "image": true,
                     "audio": false,
@@ -29,10 +28,6 @@ extension ZenCODEACPBridge {
                 "mcpCapabilities": [
                     "http": true,
                     "sse": false
-                ],
-                "sessionCapabilities": [
-                    "close": [:],
-                    "resume": [:]
                 ]
             ],
             "configOptions": configOptions(for: configuration.effectiveModelID),
