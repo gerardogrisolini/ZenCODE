@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.1.9] - 2026-09-25
+
 ### Changed
 
 - ACP client filesystem reads now propagate optional `line` and `limit` parameters for partial `fs/read_text_file` requests; legacy reads continue omitting them.
