@@ -180,34 +180,26 @@ extension TerminalTelegramControlService {
             token: token, generation: wireGeneration, fence: fence,
             chatID: chatID, topicID: topicID
         )
-        do {
-            let messageID = try await client.sendRichMessage(
-                document, to: chatID, messageThreadID: topicID, replyMarkup: replyMarkup, governor: rateGovernor
-            )
-            try ensureCurrentWireGeneration(wireGeneration)
-            state.lastError = nil
-            return messageID
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let error as TerminalTelegramRichMessageError {
-            _ = error
-            try ensureCurrentWireGeneration(wireGeneration)
-            let messageID = try await client.sendMessage(
-                document.plainText, to: chatID, messageThreadID: topicID, replyMarkup: replyMarkup, governor: rateGovernor
-            )
-            try ensureCurrentWireGeneration(wireGeneration)
-            state.lastError = nil
-            return messageID
-        } catch let error as TerminalTelegramControlError {
-            guard Self.isRichMessageCompatibilityError(error) else { throw error }
-            try ensureCurrentWireGeneration(wireGeneration)
-            let messageID = try await client.sendMessage(
-                document.plainText, to: chatID, messageThreadID: topicID, replyMarkup: replyMarkup, governor: rateGovernor
-            )
-            try ensureCurrentWireGeneration(wireGeneration)
-            state.lastError = nil
-            return messageID
-        }
+        let messageID = try await withRichMessageFallback(
+            rich: {
+                try await client.sendRichMessage(
+                    document, to: chatID, messageThreadID: topicID,
+                    replyMarkup: replyMarkup, governor: rateGovernor
+                )
+            },
+            fallback: {
+                try await client.sendMessage(
+                    document.plainText, to: chatID, messageThreadID: topicID,
+                    replyMarkup: replyMarkup, governor: rateGovernor
+                )
+            },
+            validateFallback: {
+                try ensureCurrentWireGeneration(wireGeneration)
+            }
+        )
+        try ensureCurrentWireGeneration(wireGeneration)
+        state.lastError = nil
+        return messageID
     }
 
     func sendPlainMessageWithReceipt(
@@ -266,24 +258,21 @@ extension TerminalTelegramControlService {
         let token = try telegramToken(from: settings)
         let document = PresentationDocument(markdown: text)
         let client = wireClient(token: token, generation: wireGeneration, fence: fence, chatID: chatID, topicID: topicID)
-        do {
-            try await client.sendRichMessageDraft(
-                document, to: chatID, draftID: draftID, governor: rateGovernor
-            )
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch is TerminalTelegramRichMessageError {
-            try ensureCurrentWireGeneration(wireGeneration)
-            try await client.sendMessageDraft(
-                document.plainText, to: chatID, draftID: draftID, governor: rateGovernor
-            )
-        } catch let error as TerminalTelegramControlError {
-            guard Self.isRichMessageCompatibilityError(error) else { throw error }
-            try ensureCurrentWireGeneration(wireGeneration)
-            try await client.sendMessageDraft(
-                document.plainText, to: chatID, draftID: draftID, governor: rateGovernor
-            )
-        }
+        try await withRichMessageFallback(
+            rich: {
+                try await client.sendRichMessageDraft(
+                    document, to: chatID, draftID: draftID, governor: rateGovernor
+                )
+            },
+            fallback: {
+                try await client.sendMessageDraft(
+                    document.plainText, to: chatID, draftID: draftID, governor: rateGovernor
+                )
+            },
+            validateFallback: {
+                try ensureCurrentWireGeneration(wireGeneration)
+            }
+        )
         try ensureCurrentWireGeneration(wireGeneration)
     }
 
@@ -345,6 +334,25 @@ extension TerminalTelegramControlService {
             chatID: resolvedChatID, topicID: topicID
         ).answerCallbackQuery(callbackQueryID)
         _ = try? ensureCurrentWireGeneration(wireGeneration)
+    }
+
+    private func withRichMessageFallback<T>(
+        rich: () async throws -> T,
+        fallback: () async throws -> T,
+        validateFallback: () throws -> Void
+    ) async throws -> T {
+        do {
+            return try await rich()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch is TerminalTelegramRichMessageError {
+            try validateFallback()
+            return try await fallback()
+        } catch let error as TerminalTelegramControlError {
+            guard Self.isRichMessageCompatibilityError(error) else { throw error }
+            try validateFallback()
+            return try await fallback()
+        }
     }
 
     private nonisolated static func isMarkdownParsingError(

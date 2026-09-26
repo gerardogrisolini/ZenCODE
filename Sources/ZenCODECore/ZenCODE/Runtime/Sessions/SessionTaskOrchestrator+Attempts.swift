@@ -391,12 +391,14 @@ extension SessionTaskOrchestrator {
             : statusReason
 
         let now = Date()
-        task.attempts[attemptIndex].status = attemptStatus
-        task.attempts[attemptIndex].finishedAt = now
-        task.attempts[attemptIndex].output = output?.nilIfBlank
-            ?? task.attempts[attemptIndex].output
-        task.attempts[attemptIndex].error = error?.nilIfBlank
-        task.activeAttemptID = nil
+        finishActiveAttemptMutation(
+            &task,
+            attemptIndex: attemptIndex,
+            status: attemptStatus,
+            output: output,
+            error: error,
+            at: now
+        )
         task.status = resolvedTaskStatus
         task.statusReason = resolvedStatusReason?.nilIfBlank.map(sanitizedPersistedText)
 

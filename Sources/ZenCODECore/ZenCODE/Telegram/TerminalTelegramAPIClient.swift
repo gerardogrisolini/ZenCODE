@@ -129,26 +129,8 @@ struct TerminalTelegramAPIClient: Sendable {
             )
             return message.messageID
         }
-        guard let governor else {
-            return try await send()
-        }
-        var retryCount = 0
-        while true {
-            if let delay = await governor.reserve(chatID: chatID) {
-                try await Task.sleep(for: delay.duration)
-                continue
-            }
-            do {
-                return try await send()
-            } catch let error as TerminalTelegramControlError {
-                let retryable = await governor.retryAfterFailure(error, chatID: chatID)
-                guard retryable, error.isExplicitRateLimit,
-                      retryCount < TerminalTelegramRateGovernor.maximumRetryCount else {
-                    throw error
-                }
-                retryCount += 1
-                continue
-            }
+        return try await governed(chatID: chatID, governor: governor) {
+            try await send()
         }
     }
 
@@ -176,21 +158,8 @@ struct TerminalTelegramAPIClient: Sendable {
             )
             return message.messageID
         }
-        guard let governor else { return try await send() }
-        var retryCount = 0
-        while true {
-            if let delay = await governor.reserve(chatID: chatID) {
-                try await Task.sleep(for: delay.duration)
-                continue
-            }
-            do {
-                return try await send()
-            } catch let error as TerminalTelegramControlError {
-                guard error.isExplicitRateLimit,
-                      await governor.retryAfterFailure(error, chatID: chatID),
-                      retryCount < TerminalTelegramRateGovernor.maximumRetryCount else { throw error }
-                retryCount += 1
-            }
+        return try await governed(chatID: chatID, governor: governor) {
+            try await send()
         }
     }
 
@@ -245,26 +214,8 @@ struct TerminalTelegramAPIClient: Sendable {
             )
             return message.messageID
         }
-        guard let governor else {
-            return try await send()
-        }
-        var retryCount = 0
-        while true {
-            if let delay = await governor.reserve(chatID: chatID) {
-                try await Task.sleep(for: delay.duration)
-                continue
-            }
-            do {
-                return try await send()
-            } catch let error as TerminalTelegramControlError {
-                let retryable = await governor.retryAfterFailure(error, chatID: chatID)
-                guard retryable, error.isExplicitRateLimit,
-                      retryCount < TerminalTelegramRateGovernor.maximumRetryCount else {
-                    throw error
-                }
-                retryCount += 1
-                continue
-            }
+        return try await governed(chatID: chatID, governor: governor) {
+            try await send()
         }
     }
 
@@ -372,11 +323,11 @@ struct TerminalTelegramAPIClient: Sendable {
         }
     }
 
-    private func governed(
+    private func governed<T>(
         chatID: Int64,
         governor: TerminalTelegramRateGovernor?,
-        operation: () async throws -> Void
-    ) async throws {
+        operation: () async throws -> T
+    ) async throws -> T {
         guard let governor else { return try await operation() }
         var retryCount = 0
         while true {

@@ -868,63 +868,12 @@ extension SwiftFeatureRuntime {
         zenPackagePath: String,
         packageURL: URL
     ) throws -> String {
-        if contents.components(separatedBy: "\n").contains(where: {
-            $0.trimmingCharacters(in: .whitespaces) == zenPackagePathMarker
-        }) {
-            var lines = contents.components(separatedBy: "\n")
-            guard let markerIndex = lines.firstIndex(where: {
-                $0.trimmingCharacters(in: .whitespaces) == zenPackagePathMarker
-            }) else { return contents }
-            var dependencyIndex = markerIndex + 1
-            while dependencyIndex < lines.count,
-                  lines[dependencyIndex].trimmingCharacters(in: .whitespaces).isEmpty {
-                dependencyIndex += 1
-            }
-            guard dependencyIndex < lines.count,
-                  let rewritten = promotionRewrittenPackagePathLine(
-                    lines[dependencyIndex], zenPackagePath: zenPackagePath
-                  ) else {
-                throw DirectToolError.permissionDenied(
-                    "\(packageURL.path) must declare .package(path:) after the package-path marker."
-                )
-            }
-            lines[dependencyIndex] = rewritten
-            return lines.joined(separator: "\n")
-        }
-
-        let pattern = #"(?m)^(\s*)(\.package\(\s*path:\s*\"(?:[^\"\\]|\\.)*\"\s*\).*)$"#
-        guard let expression = try? NSRegularExpression(pattern: pattern) else {
-            throw DirectToolError.permissionDenied("Could not inspect \(packageURL.path).")
-        }
-        let range = NSRange(contents.startIndex..<contents.endIndex, in: contents)
-        let matches = expression.matches(in: contents, range: range)
-        guard matches.count == 1,
-              let match = matches.first,
-              let fullRange = Range(match.range(at: 0), in: contents),
-              let indentRange = Range(match.range(at: 1), in: contents) else {
-            throw DirectToolError.permissionDenied(
-                "\(packageURL.path) must contain the package-path marker or exactly one local .package(path:) dependency."
-            )
-        }
-        let indent = contents[indentRange]
-        let replacement = "\(indent)\(zenPackagePathMarker)\n\(indent).package(name: \"ZenCODE\", path: \(swiftStringLiteral(zenPackagePath)))"
-        return contents.replacingCharacters(in: fullRange, with: replacement)
-    }
-
-    private static func promotionRewrittenPackagePathLine(
-        _ line: String,
-        zenPackagePath: String
-    ) -> String? {
-        let pattern = #"^(\s*)\.package\(\s*(?:name:\s*\"ZenCODE\"\s*,\s*)?path:\s*\"(?:[^\"\\]|\\.)*\"\s*\)(.*)$"#
-        guard let expression = try? NSRegularExpression(pattern: pattern),
-              let match = expression.firstMatch(
-                in: line, range: NSRange(line.startIndex..<line.endIndex, in: line)
-              ),
-              let indentRange = Range(match.range(at: 1), in: line),
-              let trailingRange = Range(match.range(at: 2), in: line) else { return nil }
-        return line[indentRange]
-            + ".package(name: \"ZenCODE\", path: \(swiftStringLiteral(zenPackagePath)))"
-            + line[trailingRange]
+        try SwiftFeaturePackageMaterializer.rewriteZenPackagePath(
+            contents,
+            zenPackagePath: zenPackagePath,
+            packageURL: packageURL,
+            policy: .promotionCompatible
+        )
     }
 
     private static func packageManifestDeclaresProduct(

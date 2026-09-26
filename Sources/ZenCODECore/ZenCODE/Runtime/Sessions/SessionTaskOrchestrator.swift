@@ -735,13 +735,15 @@ public actor SessionTaskOrchestrator {
                 case .cancelled: attemptStatus = .cancelled
                 case .pending, .inProgress: attemptStatus = task.attempts[attemptIndex].status
                 }
-                task.attempts[attemptIndex].status = attemptStatus
-                task.attempts[attemptIndex].finishedAt = now
-                task.attempts[attemptIndex].output = persistedOutput
-                    ?? task.attempts[attemptIndex].output
-                task.attempts[attemptIndex].error = persistedError
-                    ?? update.statusReason?.nilIfBlank.map(sanitizedPersistedText)
-                task.activeAttemptID = nil
+                finishActiveAttemptMutation(
+                    &task,
+                    attemptIndex: attemptIndex,
+                    status: attemptStatus,
+                    output: persistedOutput,
+                    error: persistedError
+                        ?? update.statusReason?.nilIfBlank.map(sanitizedPersistedText),
+                    at: now
+                )
             }
             task.status = newStatus
             if newStatus == .completed || newStatus == .awaitingValidation
@@ -1130,5 +1132,25 @@ public actor SessionTaskOrchestrator {
         if eventContinuations[sessionID]?.isEmpty == true {
             eventContinuations.removeValue(forKey: sessionID)
         }
+    }
+
+    /// Applies the shared terminal mutation to an active attempt. Callers own
+    /// the task-status/result policy; this helper centralizes only the
+    /// attempt-level fencing state that must be identical for coordinator and
+    /// delegated execution paths.
+    func finishActiveAttemptMutation(
+        _ task: inout TaskRecord,
+        attemptIndex: Int,
+        status: TaskAttemptStatus,
+        output: String?,
+        error: String?,
+        at now: Date
+    ) {
+        task.attempts[attemptIndex].status = status
+        task.attempts[attemptIndex].finishedAt = now
+        task.attempts[attemptIndex].output = output?.nilIfBlank
+            ?? task.attempts[attemptIndex].output
+        task.attempts[attemptIndex].error = error?.nilIfBlank
+        task.activeAttemptID = nil
     }
 }

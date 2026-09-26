@@ -871,55 +871,11 @@ extension SwiftFeatureRuntime {
         zenPackagePath: String,
         packageURL: URL
     ) throws -> String {
-        var lines = contents.components(separatedBy: "\n")
-        guard let markerIndex = lines.firstIndex(where: {
-            $0.trimmingCharacters(in: .whitespaces) == zenPackagePathMarker
-        }) else {
-            throw DirectToolError.permissionDenied(
-                """
-                \(packageURL.path) does not declare the '\(zenPackagePathMarker)' marker \
-                before its ZenCODE '.package(path:)' dependency.
-                """
-            )
-        }
-
-        var dependencyIndex = markerIndex + 1
-        while dependencyIndex < lines.count,
-              lines[dependencyIndex].trimmingCharacters(in: .whitespaces).isEmpty {
-            dependencyIndex += 1
-        }
-        guard dependencyIndex < lines.count,
-              let rewritten = rewrittenPackagePathLine(
-                  lines[dependencyIndex],
-                  zenPackagePath: zenPackagePath
-              ) else {
-            throw DirectToolError.permissionDenied(
-                """
-                \(packageURL.path) must declare a '.package(path: "…")' dependency \
-                on the line following '\(zenPackagePathMarker)'.
-                """
-            )
-        }
-        lines[dependencyIndex] = rewritten
-        return lines.joined(separator: "\n")
-    }
-
-    private static func rewrittenPackagePathLine(
-        _ line: String,
-        zenPackagePath: String
-    ) -> String? {
-        let pattern = #"^(\s*)\.package\(\s*path:\s*"(?:[^"\\]|\\.)*"\s*\)(.*)$"#
-        guard let expression = try? NSRegularExpression(pattern: pattern),
-              let match = expression.firstMatch(
-                  in: line,
-                  range: NSRange(line.startIndex..<line.endIndex, in: line)
-              ),
-              let indentRange = Range(match.range(at: 1), in: line),
-              let trailingRange = Range(match.range(at: 2), in: line) else {
-            return nil
-        }
-        return line[indentRange]
-            + ".package(path: \(swiftStringLiteral(zenPackagePath)))"
-            + line[trailingRange]
+        try SwiftFeaturePackageMaterializer.rewriteZenPackagePath(
+            contents,
+            zenPackagePath: zenPackagePath,
+            packageURL: packageURL,
+            policy: .markerRequired
+        )
     }
 }
