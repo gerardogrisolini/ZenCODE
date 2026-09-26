@@ -10,6 +10,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- The shared-chat reader now shows the selected message's one-based position in the retained history alongside its author.
+
 ### Fixed
 
 - ACP tool-call updates now include the standard `name`, `rawInput`, and `rawOutput` fields in addition to the existing `_meta` compatibility values, allowing clients such as Xcode to display file-search terms.

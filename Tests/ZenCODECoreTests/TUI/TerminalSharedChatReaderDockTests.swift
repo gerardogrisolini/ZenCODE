@@ -452,7 +452,7 @@ struct TerminalSharedChatReaderDockTests {
         var dock = TerminalSharedChatReaderDock()
         dock.replace(entries: [entry(1, text: "one two three four five six")], unreadCount: 1)
         let rows = dock.rows(width: 7)
-        #expect(rows.first?.contains("Author: Agent 1") == true)
+        #expect(rows.first?.contains("Message 1 · Author: Agent 1") == true)
         #expect(rows.last == "")
         #expect(rows.count > 1)
 
@@ -461,6 +461,22 @@ struct TerminalSharedChatReaderDockTests {
         dock.navigate(.pageDown, viewportRows: 2, width: 7)
         dock.navigate(.pageDown, viewportRows: 2, width: 7)
         #expect(dock.scrollOffset == max(0, rows.count - 2))
+    }
+
+    @Test
+    func layoutShowsOneBasedMessagePositionForEachSelectedEntry() {
+        var dock = TerminalSharedChatReaderDock()
+        let entries = (1...3).map { entry($0) }
+        dock.replace(entries: entries, unreadCount: entries.count)
+
+        // Opening the reader keeps the previous newest-message behavior.
+        #expect(dock.rows(width: 80).first?.contains("Message 3") == true)
+
+        dock.navigate(.firstMessage, viewportRows: 4, width: 80)
+        #expect(dock.rows(width: 80).first?.contains("Message 1") == true)
+
+        dock.navigate(.nextMessage, viewportRows: 4, width: 80)
+        #expect(dock.rows(width: 80).first?.contains("Message 2") == true)
     }
 
     @Test
@@ -797,7 +813,7 @@ struct TerminalSharedChatReaderDockTests {
         #expect(output.text.contains("\u{1B}[22m\(TerminalStyle.Status.success)╭─ \(TerminalStyle.Status.success)Chat · 2 msg · 0 new"))
         #expect(!output.text.contains("\u{1B}[1mChat · 2 msg · 0 new"))
         #expect(output.text.contains("Author: Agent 2 → Coordinator"))
-        #expect(output.text.contains("\(TerminalStyle.Text.muted)Author: Agent 2 → Coordinator"))
+        #expect(output.text.contains("\(TerminalStyle.Text.muted)Message 2/2 · Author: Agent 2 → Coordinator"))
         #expect(output.text.contains("\(TerminalStyle.Text.primary)body"))
         #expect(output.text.contains("↑/↓ scroll · ←/→ message · Home/End first/last"))
         // A live refresh of an open reader still preserves the reading position.
@@ -1005,7 +1021,7 @@ struct TerminalSharedChatReaderDockTests {
 
         #expect(output.text.contains("\u{1B}[22m\(TerminalStyle.Status.success)╭─ \(TerminalStyle.Status.success)Chat · 1 msg · 1 new"))
         #expect(!output.text.contains("\u{1B}[1mChat · 1 msg · 1 new"))
-        #expect(output.text.contains("\(TerminalStyle.Text.muted)Author: Agent 1 → Coordinator"))
+        #expect(output.text.contains("\(TerminalStyle.Text.muted)Message 1/1 · Author: Agent 1 → Coordinator"))
         #expect(output.text.contains("\(TerminalStyle.Text.primary)body"))
     }
 }

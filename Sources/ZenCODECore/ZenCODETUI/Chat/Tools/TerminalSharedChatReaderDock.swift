@@ -257,7 +257,12 @@ struct TerminalSharedChatReaderDock: Sendable, Equatable {
         guard entries.indices.contains(selectedIndex) else { return [] }
         let entry = entries[selectedIndex]
         let route = TerminalChat.sharedChatTerminalSafeText(entry.route).replacingOccurrences(of: "\n", with: " ")
-        return ["Author: \(route)"]
+        // Keep the position visible while moving through the retained chat
+        // history. The one-based index is intentionally rendered before the
+        // route so it remains visible even when a narrow terminal truncates
+        // the rest of the header row.
+        let messagePosition = "Message \(selectedIndex + 1)"
+        return ["\(messagePosition) · Author: \(route)"]
             + TerminalChat.sharedChatWrappedRows(TerminalChat.sharedChatTerminalSafeText(entry.text), width: max(1, width))
             + [""]
     }
