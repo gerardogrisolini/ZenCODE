@@ -10,6 +10,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- ACP tool-call updates now include the standard `name`, `rawInput`, and `rawOutput` fields in addition to the existing `_meta` compatibility values, allowing clients such as Xcode to display file-search terms.
+
 ## [2.1.9] - 2026-09-25
 
 ### Changed

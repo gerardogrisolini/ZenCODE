@@ -162,10 +162,12 @@ extension ZenCODEACPBridge {
         update["sessionUpdate"] = "tool_call_update"
         update["status"] = result.isFailure ? "failed" : "completed"
         var metadata = update["_meta"] as? [String: Any] ?? [:]
-        metadata["rawOutput"] = [
+        let rawOutput = [
             "output": result.output,
             "summary": result.summary
         ]
+        metadata["rawOutput"] = rawOutput
+        update["rawOutput"] = rawOutput
         update["_meta"] = metadata
         let visibleText = result.fileChanges.isEmpty ? result.output : [result.summary, result.output]
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -210,12 +212,14 @@ extension ZenCODEACPBridge {
         let locations = toolLocations(for: toolCall, workingDirectory: workingDirectory)
         return [
             "toolCallId": toolCall.id,
+            "name": toolCall.name,
             "title": toolTitle(for: toolCall),
             "kind": acpToolKind(
                 ToolCallPresentation.toolKind(for: toolCall),
                 hasFileLocations: !locations.isEmpty
             ),
             "locations": locations,
+            "rawInput": toolCall.argumentsObject,
             "_meta": ["rawInput": toolCall.argumentsObject]
         ]
     }

@@ -359,11 +359,16 @@ extension ACPCompatibilityTests {
         let expected: JSONValue = .object([
             "sessionUpdate": .string("tool_call"),
             "toolCallId": .string("call_wire"),
+            "name": .string("local.exec"),
             "title": .string("local.exec swift test"),
             "kind": .string("execute"),
             "status": .string("pending"),
             "content": .array([]),
             "locations": .array([.object(["path": .string("/tmp/acp-workspace/Sources")])]),
+            "rawInput": .object([
+                "command": .string("swift test"),
+                "workingDirectory": .string("Sources"),
+            ]),
             "_meta": .object([
                 "rawInput": .object([
                     "command": .string("swift test"),
@@ -388,10 +393,12 @@ extension ACPCompatibilityTests {
         let expected: JSONValue = .object([
             "sessionUpdate": .string("tool_call_update"),
             "toolCallId": .string("call_wire"),
+            "name": .string("local.exec"),
             "title": .string("local.exec swift test"),
             "kind": .string("execute"),
             "status": .string("in_progress"),
             "locations": .array([]),
+            "rawInput": .object(["command": .string("swift test")]),
             "_meta": .object(["rawInput": .object(["command": .string("swift test")])]),
         ])
         let update = ZenCODEACPBridge.toolCallProgressUpdate(for: toolCall)
@@ -501,10 +508,19 @@ extension ACPCompatibilityTests {
             var fields: [String: JSONValue] = [
                 "sessionUpdate": .string("tool_call_update"),
                 "toolCallId": .string("call_wire"),
+                "name": .string("local.exec"),
                 "title": .string("local.exec swift test"),
                 "kind": .string("execute"),
                 "status": .string(fixture.wireStatus),
                 "locations": .array([.object(["path": .string("/tmp/acp-workspace/Sources")])]),
+                "rawInput": .object([
+                    "command": .string("swift test"),
+                    "workingDirectory": .string("Sources"),
+                ]),
+                "rawOutput": .object([
+                    "output": .string(fixture.output),
+                    "summary": .string(fixture.summary),
+                ]),
                 "_meta": .object([
                     "rawInput": .object([
                         "command": .string("swift test"),
@@ -546,6 +562,7 @@ extension ACPCompatibilityTests {
         #expect(completion["status"] as? String == "completed")
         #expect(completion["content"] == nil)
         let rawOutput = (completion["_meta"] as? [String: Any])?["rawOutput"] as? [String: Any]
+        #expect(completion["rawOutput"] != nil)
         #expect(rawOutput?["output"] as? String == " \n")
     }
 
@@ -943,7 +960,27 @@ private extension ACPCompatibilityTests {
     // MARK: - ACP v1 extensibility conformance
 
     @Test
-    func toolCallUpdatesCarryRawInputInMetaNotAtRoot() {
+    func searchToolUpdatesExposePatternInStandardACPFields() {
+        let toolCall = presentedToolCall(
+            id: "call_search",
+            name: "search.grep",
+            argumentsObject: [
+                "pattern": "needle",
+                "path": "Sources"
+            ],
+            argumentsJSON: #"{"pattern":"needle","path":"Sources"}"#
+        )
+
+        let update = ZenCODEACPBridge.toolCallCreateUpdate(for: toolCall)
+        #expect(update["name"] as? String == "search.grep")
+        #expect(update["title"] as? String == "search.grep needle")
+        let rawInput = update["rawInput"] as? [String: Any]
+        #expect(rawInput?["pattern"] as? String == "needle")
+        #expect(rawInput?["path"] as? String == "Sources")
+    }
+
+    @Test
+    func toolCallUpdatesCarryStandardRawInputAlongsideCompatibilityMetadata() {
         let toolCall = presentedToolCall(
             id: "call_meta",
             name: "local.exec",
@@ -955,26 +992,26 @@ private extension ACPCompatibilityTests {
         )
 
         let create = ZenCODEACPBridge.toolCallCreateUpdate(for: toolCall)
-        #expect(create["rawInput"] == nil)
+        #expect(create["rawInput"] != nil)
         #expect((create["_meta"] as? [String: Any])?["rawInput"] != nil)
 
         let progress = ZenCODEACPBridge.toolCallProgressUpdate(for: toolCall)
-        #expect(progress["rawInput"] == nil)
+        #expect(progress["rawInput"] != nil)
         #expect((progress["_meta"] as? [String: Any])?["rawInput"] != nil)
 
         let completion = ZenCODEACPBridge.toolCallCompletionUpdate(
             for: toolCall,
             result: DirectAgentToolResult(output: "done", summary: "done")
         )
-        #expect(completion["rawInput"] == nil)
-        #expect(completion["rawOutput"] == nil)
+        #expect(completion["rawInput"] != nil)
+        #expect(completion["rawOutput"] != nil)
         let completionMeta = completion["_meta"] as? [String: Any]
         #expect(completionMeta?["rawInput"] != nil)
         #expect(completionMeta?["rawOutput"] != nil)
     }
 
     @Test
-    func toolCallJSONUpdatesCarryRawInputInMetaNotAtRoot() throws {
+    func toolCallJSONUpdatesCarryStandardRawInputAlongsideCompatibilityMetadata() throws {
         let toolCall = presentedToolCall(
             id: "call_json_meta",
             name: "local.readFile",
@@ -983,19 +1020,19 @@ private extension ACPCompatibilityTests {
         )
 
         let create = ZenCODEACPBridge.toolCallCreateJSONUpdate(for: toolCall)
-        #expect(create.objectValue?["rawInput"] == nil)
+        #expect(create.objectValue?["rawInput"] != nil)
         #expect(create.objectValue?["_meta"]?.objectValue?["rawInput"] != nil)
 
         let progress = ZenCODEACPBridge.toolCallProgressJSONUpdate(for: toolCall)
-        #expect(progress.objectValue?["rawInput"] == nil)
+        #expect(progress.objectValue?["rawInput"] != nil)
         #expect(progress.objectValue?["_meta"]?.objectValue?["rawInput"] != nil)
 
         let completion = ZenCODEACPBridge.toolCallCompletionJSONUpdate(
             for: toolCall,
             result: DirectAgentToolResult(output: "content", summary: "content")
         )
-        #expect(completion.objectValue?["rawInput"] == nil)
-        #expect(completion.objectValue?["rawOutput"] == nil)
+        #expect(completion.objectValue?["rawInput"] != nil)
+        #expect(completion.objectValue?["rawOutput"] != nil)
         let meta = try #require(completion.objectValue?["_meta"]?.objectValue)
         #expect(meta["rawInput"] != nil)
         #expect(meta["rawOutput"] != nil)
