@@ -523,7 +523,9 @@ succeed, never from parsed hunk text or after a successful rollback. Move eviden
 is a source deletion plus destination write. Missing old files use null old text;
 binary/unreadable content and directories have explanatory text instead of a
 fabricated diff. Text summaries accompany actual operation evidence; ordinary tool
-results retain their prior output-only content and `_meta`.
+results retain their prior output-only content and `_meta`. ACP tool-call completions
+also mirror every recorded changed path in standard `locations`, allowing clients to
+expose each file artifact from a multi-file operation.
 
 Capture runs only with an installed operation recorder and verifies regular-file
 identity on the opened descriptor. Each text is limited to 64 KiB; snapshot reads

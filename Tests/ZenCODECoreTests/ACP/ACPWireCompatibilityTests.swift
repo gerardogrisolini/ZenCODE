@@ -476,7 +476,12 @@ extension ACPCompatibilityTests {
                 "title": .string("local.exec swift test"),
                 "kind": .string("execute"),
                 "status": .string(fixture.wireStatus),
-                "locations": .array([.object(["path": .string("/tmp/acp-workspace/Sources")])]),
+                "locations": .array(
+                    (fixture.fileChanges.isEmpty
+                        ? ["/tmp/acp-workspace/Sources"]
+                        : fixture.fileChanges.map(\.path))
+                        .map { .object(["path": .string($0)]) }
+                ),
                 "_meta": .object([
                     "rawInput": .object([
                         "command": .string("swift test"),
@@ -499,6 +504,45 @@ extension ACPCompatibilityTests {
                 for: toolCall, result: result, workingDirectory: workspace
             ) == expected)
         }
+    }
+
+    @Test
+    func completionLocationsIncludeEveryRecordedChangedFile() {
+        let toolCall = presentedToolCall(
+            id: "call_multi_file",
+            name: "local.exec",
+            argumentsObject: [
+                "command": "swiftgen previews",
+                "workingDirectory": "Sources"
+            ],
+            argumentsJSON: #"{"command":"swiftgen previews","workingDirectory":"Sources"}"#
+        )
+        let paths = (1...6).map { "/tmp/acp-workspace/Sources/Preview\($0).swift" }
+        let changes = paths.map { path in
+            OperationFileChange(path: path, oldText: "old\n", newText: "new\n")
+        }
+
+        let update = ZenCODEACPBridge.toolCallCompletionJSONUpdate(
+            for: toolCall,
+            result: DirectAgentToolResult(
+                output: "updated six files",
+                summary: "updated six files",
+                fileChanges: changes
+            ),
+            workingDirectory: URL(fileURLWithPath: "/tmp/acp-workspace")
+        )
+        let locations = update.objectValue?["locations"]?.arrayValue?.compactMap {
+            $0.objectValue?["path"]?.acpStringValue
+        } ?? []
+        let diffPaths = update.objectValue?["content"]?.arrayValue?.compactMap { content -> String? in
+            guard content.objectValue?["type"] == .string("diff") else {
+                return nil
+            }
+            return content.objectValue?["path"]?.acpStringValue
+        } ?? []
+
+        #expect(locations == paths)
+        #expect(diffPaths == paths)
     }
 
     @Test

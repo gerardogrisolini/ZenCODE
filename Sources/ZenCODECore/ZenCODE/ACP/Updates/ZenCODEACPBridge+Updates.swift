@@ -161,6 +161,18 @@ extension ZenCODEACPBridge {
         var update = toolCallCommonFields(for: toolCall, workingDirectory: workingDirectory)
         update["sessionUpdate"] = "tool_call_update"
         update["status"] = result.isFailure ? "failed" : "completed"
+        let resultLocations = fileChangeLocations(
+            for: result.fileChanges,
+            workingDirectory: workingDirectory
+        )
+        if !resultLocations.isEmpty {
+            // The tool arguments describe the requested operation, but the
+            // recorder is authoritative about every file actually changed.
+            // Publish those exact paths on completion so clients that build
+            // their artifact list from `locations` do not collapse a
+            // multi-file operation to its command/workspace target.
+            update["locations"] = resultLocations
+        }
         var metadata = update["_meta"] as? [String: Any] ?? [:]
         metadata["rawOutput"] = [
             "output": result.output,
@@ -201,6 +213,37 @@ extension ZenCODEACPBridge {
             result: result,
             workingDirectory: workingDirectory
         ))
+    }
+
+    private static func fileChangeLocations(
+        for changes: [OperationFileChange],
+        workingDirectory: URL?
+    ) -> [[String: Any]] {
+        var seen = Set<String>()
+        return changes.compactMap { change in
+            let rawPath = NSString(string: change.path)
+                .expandingTildeInPath
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !rawPath.isEmpty else {
+                return nil
+            }
+
+            let path: String
+            if rawPath.hasPrefix("/") {
+                path = URL(fileURLWithPath: rawPath).standardizedFileURL.path
+            } else if let workingDirectory {
+                path = workingDirectory
+                    .appendingPathComponent(rawPath)
+                    .standardizedFileURL
+                    .path
+            } else {
+                path = URL(fileURLWithPath: rawPath).standardizedFileURL.path
+            }
+            guard seen.insert(path).inserted else {
+                return nil
+            }
+            return ["path": path]
+        }
     }
 
     private static func toolCallCommonFields(

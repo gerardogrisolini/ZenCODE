@@ -12,6 +12,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- ACP tool-completion updates now publish every recorded changed file in standard
+  `locations`, alongside the complete per-file diff content, so clients can render
+  multi-file operations as separate artifacts instead of retaining only the
+  command or workspace target.
+
 - Delegated agents created with the coordinator's same resolved profile now inherit
   the coordinator session's effective tool allowlist, preserving session-local tool
   additions and removals. Reviewer, Planner, Minimal, and other different-profile
