@@ -177,6 +177,12 @@ extension TerminalChat {
         }
     }
 
+    /// Tool executions that remain observable to the runtime but have no terminal
+    /// representation. Keep this presentation-only: authorization, dispatch,
+    /// transcript persistence and shared-chat delivery must still see the call.
+    nonisolated static func shouldSuppressToolRendering(for toolName: String) -> Bool {
+        toolName == "agent.message"
+    }
     /// Builds the canonical compact and detailed rows for a tool lifecycle.
     /// Callers provide only their available geometry and placement; coordinator
     /// calls and delegated calls therefore cannot drift in status or diff output.

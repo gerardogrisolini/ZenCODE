@@ -15,6 +15,9 @@ extension TerminalChatRenderCoordinator {
         _ toolCall: DirectAgentToolCall,
         maximumInPlaceRows: Int? = nil
     ) {
+        guard !TerminalChat.shouldSuppressToolRendering(for: toolCall.name) else {
+            return
+        }
         let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
         if isBottomOverlayTransitionActive {
             toolState.startInstants[toolCall.id] = toolNow()
@@ -49,6 +52,9 @@ extension TerminalChatRenderCoordinator {
         result: DirectAgentToolResult,
         maximumInPlaceRows: Int? = nil
     ) {
+        guard !TerminalChat.shouldSuppressToolRendering(for: toolCall.name) else {
+            return
+        }
         let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
         let elapsed = toolState.startInstants.removeValue(forKey: toolCall.id)
             .map { $0.duration(to: toolNow()) }
@@ -94,6 +100,9 @@ extension TerminalChatRenderCoordinator {
     /// standalone transcript block. The next overview publication lays these
     /// calls out with the canonical tool rows inside its single rewrite slot.
     func recordSubAgentToolEvent(_ event: DirectSubAgentToolEvent) {
+        guard !TerminalChat.shouldSuppressToolRendering(for: event.toolCall.name) else {
+            return
+        }
         let executionID = "\u{1E}sub-agent\u{1F}\(event.agentID)\u{1F}\(event.toolCall.id)"
         let lifecycle: ToolBlockLifecycle
         switch event.lifecycle {

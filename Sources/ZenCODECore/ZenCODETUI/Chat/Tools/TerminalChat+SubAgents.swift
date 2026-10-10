@@ -718,7 +718,8 @@ extension TerminalChat {
             }
         }
 
-        if let currentToolName {
+        if let currentToolName,
+           !shouldSuppressToolRendering(for: currentToolName) {
             if let toolPresentation {
                 lines.append(
                     contentsOf: renderSubAgentToolLines(
@@ -765,6 +766,7 @@ extension TerminalChat {
         ]
     ) -> TerminalChatRenderCoordinator.SubAgentToolPresentation? {
         guard let currentToolName = snapshot.currentToolName?.nilIfBlank,
+              !shouldSuppressToolRendering(for: currentToolName),
               let presentation = presentationsByAgentID[snapshot.id],
               presentation.toolCall.name == currentToolName else {
             return nil
@@ -779,6 +781,9 @@ extension TerminalChat {
         density: SubAgentOverviewDensity,
         standardErrorIsTerminal: Bool = AgentOutput.standardErrorIsTerminal
     ) -> [SubAgentOverviewLine] {
+        guard !shouldSuppressToolRendering(for: presentation.toolCall.name) else {
+            return []
+        }
         guard density == .full || density == .compact else {
             return [
                 subAgentToolFallbackLine(

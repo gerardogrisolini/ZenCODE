@@ -54,6 +54,80 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
+    func agentMessageLifecycleDoesNotRenderOrOwnTheMainToolBlock() async {
+        let toolCall = presentedToolCall(
+            id: "hidden-agent-message",
+            name: "agent.message",
+            argumentsObject: [
+                "name": "worker",
+                "message": "please review the diff"
+            ],
+            argumentsJSON: "{}"
+        )
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+
+        await renderer.writeToolCallStarted(toolCall, maximumInPlaceRows: 6)
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "sent", summary: "sent"),
+            maximumInPlaceRows: 6
+        )
+
+        let snapshot = await renderer.snapshot()
+        #expect(await renderer.capturedWriteEvents().isEmpty)
+        #expect(snapshot.activeToolCallID == nil)
+        #expect(snapshot.activeToolRenderedRowCount == 0)
+    }
+
+    @Test
+    func agentMessageDoesNotBecomeSubAgentActivityOrFallbackRow() async {
+        let toolCall = presentedToolCall(
+            id: "hidden-delegated-message",
+            name: "agent.message",
+            argumentsObject: [
+                "name": "worker",
+                "message": "please review the diff"
+            ],
+            argumentsJSON: "{}"
+        )
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        let event = DirectSubAgentToolEvent(
+            agentID: "agent-worker",
+            agentName: "worker",
+            toolCall: toolCall,
+            lifecycle: .started
+        )
+
+        await renderer.recordSubAgentToolEvent(event)
+        let presentationSnapshot = await renderer.subAgentToolPresentationSnapshot()
+        #expect(presentationSnapshot.revision == 0)
+        #expect(presentationSnapshot.presentationsByAgentID.isEmpty)
+
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent-worker",
+            name: "worker",
+            role: "",
+            status: .running,
+            pending: true,
+            currentToolName: toolCall.name,
+            currentToolTarget: "worker: please review the diff",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        let rows = TerminalChat.renderSubAgentOverviewRowsForTesting(
+            [snapshot],
+            rowBudget: nil,
+            toolPresentationsByAgentID: presentationSnapshot.presentationsByAgentID
+        ).map { TerminalANSIText.stripANSI($0) }
+
+        #expect(!rows.contains { $0.contains("agent.message") })
+        #expect(!rows.contains { $0.contains("please review the diff") })
+        #expect(rows.contains { $0.contains("worker") })
+    }
+
+    @Test
     func standardKeepsPendingCompactAndEmitsAllSourceChangesOnCompletion() async {
         let old = (0..<150).map { "let old\($0) = \($0)" }.joined(separator: "\n")
         let new = (0..<150).map { "let new\($0) = \($0)" }.joined(separator: "\n")

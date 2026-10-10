@@ -19,6 +19,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   and applicable task-reporting tools are added, and `agent.create` payloads cannot
   override the grant.
 
+- Terminal chat no longer renders `agent.message` executions as tool blocks or
+  sub-agent activity rows; the tool still executes normally and its shared-chat
+  message remains visible.
+
 ## [2.1.8] - 2026-09-21
 
 ### Added
