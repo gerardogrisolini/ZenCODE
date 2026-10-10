@@ -646,7 +646,7 @@ struct TerminalSharedChatReaderDockTests {
         // The compact header increases the bottom overlay from six to seven rows,
         // so the transcript must be constrained to rows 1...2 on a 9-row terminal.
         #expect(output.text.contains("\u{1B}[1;2r"))
-        #expect(output.text.contains("Chat · 2 messages · 2 unread"))
+        #expect(output.text.contains("Chat · 2 messages · 2 new"))
         #expect(!output.text.contains("Ctrl+Y read"))
         #expect(output.text.contains("╭─ "))
         #expect(output.text.contains("─╮"))
@@ -747,7 +747,7 @@ struct TerminalSharedChatReaderDockTests {
         await statusBar.setSharedChatReader(entries: [entry(1)], unreadCount: 1, isExpanded: false)
 
         #expect(await statusBar.scrollableOutputRowCapacity() == TerminalStatusBar.minimumScrollableRows)
-        #expect(output.text.contains("Chat · 1 message · 1 unread"))
+        #expect(output.text.contains("Chat · 1 message · 1 new"))
         #expect(!output.text.contains("Ctrl+Y read"))
         #expect(!output.text.contains("suggestion"))
         // One reserved row cannot show a payload row, so the transaction must
@@ -856,7 +856,7 @@ struct TerminalSharedChatReaderDockTests {
         // …so the counter degrades into the existing mode row, and leads it so
         // truncation can never be what removes it.
         #expect(output.text.contains("Chat: 2 unread · Ctrl+Y read · Chat · Enter send"))
-        #expect(!output.text.contains("Chat · 2 messages · 2 unread"))
+        #expect(!output.text.contains("Chat · 2 messages · 2 new"))
 
         output.clear()
         await statusBar.setSharedChatReader(entries: [entry(1), entry(2), entry(3)], unreadCount: 3, isExpanded: false)
@@ -927,9 +927,9 @@ struct TerminalSharedChatReaderDockTests {
         #expect(await statusBar.scrollableOutputRowCapacity() == TerminalStatusBar.minimumScrollableRows + 1)
         // …and no residual compact header, indicator or dock box is drawn.
         #expect(output.text.contains("\u{1B}[1;3r"))
-        #expect(!output.text.contains("Chat · 1 message · 0 unread"))
-        #expect(!output.text.contains("Chat: 0 unread"))
-        #expect(!output.text.contains("0 unread"))
+        #expect(!output.text.contains("Chat · 1 message · 0 new"))
+        #expect(!output.text.contains("Chat: 0 new"))
+        #expect(!output.text.contains("0 new"))
         #expect(!output.text.contains("╭─ "))
         #expect(!output.text.contains(TerminalStyle.SharedChat.darkPalette.border))
     }
@@ -955,7 +955,7 @@ struct TerminalSharedChatReaderDockTests {
         #expect(await statusBar.state.sharedChatReaderDock?.unreadCount == 1)
         #expect(await statusBar.reservedRowsForOverlay() == 7)
         #expect(await statusBar.scrollableOutputRowCapacity() == TerminalStatusBar.minimumScrollableRows)
-        #expect(output.text.contains("Chat · 2 messages · 1 unread"))
+        #expect(output.text.contains("Chat · 2 messages · 1 new"))
         #expect(output.text.contains("╭─ "))
         #expect(output.text.contains("─╮"))
     }
@@ -975,8 +975,8 @@ struct TerminalSharedChatReaderDockTests {
 
         await statusBar.setSharedChatReader(entries: [entry(1)], unreadCount: 0, isExpanded: false)
 
-        #expect(!output.text.contains("Chat: 0 unread"))
-        #expect(!output.text.contains("0 unread"))
+        #expect(!output.text.contains("Chat: 0 new"))
+        #expect(!output.text.contains("0 new"))
     }
 
     @Test

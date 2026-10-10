@@ -216,7 +216,7 @@ extension TerminalStatusBar {
               sharedChatReaderReservedRowsLocked(state: &state) == 0,
               // The badge is the same unread notification as the reserved
               // compact header: a fully read compact reader must not degrade
-              // into a permanent "0 unread" fragment of the mode row.
+              // into a permanent "0 new" fragment of the mode row.
               dock.isExpanded || dock.unreadCount > 0 else {
             return nil
         }
@@ -239,11 +239,11 @@ extension TerminalStatusBar {
         let headerText: String
         if !dock.isExpanded {
             let messageLabel = dock.entries.count == 1 ? "message" : "messages"
-            headerText = "Chat · \(dock.entries.count) \(messageLabel) · \(dock.unreadCount) unread"
+            headerText = "Chat · \(dock.entries.count) \(messageLabel) · \(dock.unreadCount) new"
         } else if dock.entries.isEmpty {
             headerText = "Chat · 0 messages"
         } else {
-            headerText = "Chat · \(dock.selectedIndex + 1)/\(dock.entries.count) · \(dock.unreadCount) unread"
+            headerText = "Chat · \(dock.selectedIndex + 1)/\(dock.entries.count) · \(dock.unreadCount) new"
         }
         guard sharedChatReaderReservedRowsLocked(state: &state) > 0 else { return "" }
         // The collapsed reader keeps the same bordered compact header used by

@@ -946,7 +946,7 @@ struct TerminalPromptInputPanelTests {
             await reader.handlePanelKey(.cancel, timestampMilliseconds: 710) { _ in }
             await reader.renderPanel()
             #expect(await statusBar.state.inputPanelState?.prioritizesModeText == false)
-            #expect(output.withLock { $0.contains("Chat: 1 unread") })
+            #expect(output.withLock { $0.contains("Chat: 1 new") })
         }
     }
 
