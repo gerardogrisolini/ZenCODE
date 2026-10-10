@@ -183,7 +183,7 @@ send them.
 
 ### Tool Authority
 
-Write authority comes from the selected profile's configured tools:
+Write authority normally comes from the selected profile's configured tools. A child resolved to the coordinator's same profile instead inherits the coordinator's effective session allowlist; different profiles remain isolated:
 
 - `profile` is required in every model-visible batch item and must resolve to a
   configured profile; otherwise `agent.create` fails. The `agent` name is a
@@ -200,8 +200,7 @@ Write authority comes from the selected profile's configured tools:
   `tasks.cancel` remain restricted.
 - Every child receives the intrinsic `skills.list` and `skills.read` tools.
 
-`/plan`, `/review`, and `/goal` all delegate with the selected profile's own
-tools. Configure each profile with exactly the access required for its role.
+`/plan`, `/review`, and `/goal` delegate with the selected profile's own tools unless that profile is the coordinator's same resolved profile, in which case the coordinator's effective session allowlist is inherited. Different profiles remain isolated; configure each profile with exactly the access required for its role.
 
 ### Model Selection
 

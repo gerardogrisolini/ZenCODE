@@ -1067,7 +1067,8 @@ private actor MemoryObservingBackend: AgentRuntimeBackend {
     func promptCount() -> Int { prompts }
 }
 /// Resolves the built-in profiles, as the live runtime does. Sub-agent creation
-/// requires a profile: the delegated grant comes from it, never from the parent.
+/// requires a profile; its grant normally comes from that profile, while a child
+/// resolved to the coordinator's same profile may inherit the parent's grant.
 private func memoryTestProfileResolver(
     _ payload: DirectSubAgentRuntime.RequestedAgentPayload
 ) -> AgentProfile? {

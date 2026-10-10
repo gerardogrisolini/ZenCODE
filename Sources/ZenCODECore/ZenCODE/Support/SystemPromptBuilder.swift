@@ -330,7 +330,7 @@ public enum SystemPromptBuilder {
         pass the exact `binding:...` value shown after “pass model” as `model`; it is required for those profiles. \
         For profiles without bindings, omit `model` to inherit the main session model and provider. Do not \
         substitute provider names, display names, raw model slugs, or aliases for a binding. Give each sub-agent \
-        an explicit role and scope. The selected profile supplies the child tool grant.
+        an explicit role and scope. Different profiles retain their own tool grant; a child resolved to the coordinator's same profile inherits the coordinator's effective session allowlist, including session-local additions and removals. Child-intrinsic skills, collaboration, and applicable task-reporting tools are added automatically.
         """
     }
 

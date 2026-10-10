@@ -79,6 +79,8 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
             toolExecutionContext: ToolExecutionContext(
                 agentID: configuration.agentID,
                 agentName: configuration.agentName,
+                profileID: configuration.profileID,
+                profileName: configuration.profileName,
                 modelID: configuration.modelID ?? provider.modelID,
                 isSubAgent: sharedChatSenderID != nil
             ),

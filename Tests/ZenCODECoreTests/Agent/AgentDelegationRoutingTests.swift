@@ -706,6 +706,8 @@ struct AgentDelegationRoutingTests {
 
         #expect(resolved.modelID == Self.betaModelID)
         #expect(resolved.modelID != Self.sharedSlug)
+        #expect(resolved.profileID == profile.id)
+        #expect(resolved.profileName == profile.name)
     }
 
     @Test

@@ -383,7 +383,9 @@ public struct AgentConfiguration: Sendable {
         projectedRuntimeConfiguration(
             locksModelToSession: hostedAgentProfiles != nil,
             agentID: selectedAgent?.id,
-            agentName: selectedAgent?.name
+            agentName: selectedAgent?.name,
+            profileID: selectedAgent?.id,
+            profileName: selectedAgent?.name
         )
     }
 

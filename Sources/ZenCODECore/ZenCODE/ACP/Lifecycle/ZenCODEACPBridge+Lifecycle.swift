@@ -183,6 +183,8 @@ extension ZenCODEACPBridge {
             let runnerConfiguration = AgentCoreSessionConfiguration(
                 sessionID: sessionID,
                 modelID: modelID,
+                agentID: selectedAgent?.id,
+                agentName: selectedAgent?.name,
                 workingDirectory: cwd,
                 systemPrompt: promptSections.systemPrompt,
                 dynamicContext: promptSections.dynamicContext,
@@ -746,6 +748,8 @@ extension ZenCODEACPBridge {
         AgentCoreSessionConfiguration(
             sessionID: sessionID,
             modelID: configuration.effectiveModelID,
+            agentID: configuration.selectedAgent?.id,
+            agentName: configuration.selectedAgent?.name,
             workingDirectory: configuration.workingDirectory,
             systemPrompt: nil,
             cacheKey: nil,
@@ -816,6 +820,8 @@ extension ZenCODEACPBridge {
         return AgentCoreSessionConfiguration(
             sessionID: sessionID,
             modelID: modelID,
+            agentID: selectedAgent?.id,
+            agentName: selectedAgent?.name,
             workingDirectory: workingDirectory,
             systemPrompt: promptSections.systemPrompt,
             dynamicContext: promptSections.dynamicContext,

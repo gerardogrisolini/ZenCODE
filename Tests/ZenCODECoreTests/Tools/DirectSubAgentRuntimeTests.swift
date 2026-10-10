@@ -76,7 +76,7 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func agentWithResolvedProfileUsesProfileGrantInsteadOfParentGrant() async throws {
+    func agentWithResolvedProfileWithoutCoordinatorIdentityUsesProfileGrant() async throws {
         let developer = AgentProfile(
             id: "developer-profile",
             name: "Developer",
@@ -106,6 +106,158 @@ struct DirectSubAgentRuntimeTests {
     }
 
     @Test
+    func sameProfileInheritsEffectiveParentGrantAndKeepsOnlyChildIntrinsics() async throws {
+        let developer = AgentProfile(
+            id: "developer-profile",
+            name: "Developer",
+            tools: ["local.readFile", "local.writeFile"]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in developer },
+            parentProfileID: developer.id,
+            parentProfileName: developer.name
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("implementation-worker"),
+                "profile": .string("Developer")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
+            parentAllowedToolNames: [
+                "local.readFile", "external.sessionAddition", "skills.list"
+            ]
+        )
+
+        let session = try #require(await backend.createdSessions().first)
+        #expect(session.allowedToolNames == [
+            "local.readFile", "external.sessionAddition", "skills.list", "skills.read",
+            "agent.list", "agent.get", "agent.message"
+        ])
+        #expect(!session.allowedToolNames!.contains("local.writeFile"))
+        await runtime.shutdown()
+    }
+
+    @Test
+    func sameProfilePreservesNilParentGrantAsUnrestricted() async throws {
+        let developer = AgentProfile(
+            id: "developer-profile",
+            name: "Developer",
+            tools: ["local.readFile", "local.writeFile"]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in developer },
+            parentProfileID: developer.id,
+            parentProfileName: developer.name
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("unrestricted-worker"),
+                "profile": .string("Developer")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
+            parentAllowedToolNames: nil
+        )
+
+        let session = try #require(await backend.createdSessions().first)
+        #expect(session.allowedToolNames == nil)
+        await runtime.shutdown()
+    }
+
+    @Test
+    func profileIDDoesNotCollideWithCoordinatorName() async throws {
+        let profile = AgentProfile(
+            id: "child-profile",
+            name: "coordinator-profile",
+            tools: ["local.writeFile"]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in profile },
+            parentProfileID: "coordinator-profile",
+            parentProfileName: "Developer"
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("isolated-worker"),
+                "profile": .string(profile.name)
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
+            parentAllowedToolNames: ["local.readFile"]
+        )
+
+        let session = try #require(await backend.createdSessions().first)
+        #expect(session.allowedToolNames?.contains("local.writeFile") == true)
+        #expect(session.allowedToolNames?.contains("local.readFile") == false)
+        await runtime.shutdown()
+    }
+
+    @Test
+    func profileNameDoesNotCollideWithCoordinatorID() async throws {
+        let profile = AgentProfile(
+            id: "coordinator-profile",
+            name: "child-profile",
+            tools: ["local.writeFile"]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in profile },
+            parentProfileID: "Developer",
+            parentProfileName: "coordinator-profile"
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("isolated-worker"),
+                "profile": .string(profile.id)
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
+            parentAllowedToolNames: ["local.readFile"]
+        )
+
+        let session = try #require(await backend.createdSessions().first)
+        #expect(session.allowedToolNames?.contains("local.writeFile") == true)
+        #expect(session.allowedToolNames?.contains("local.readFile") == false)
+        await runtime.shutdown()
+    }
+
+    @Test
+    func profileNameIsFallbackWhenCoordinatorIDIsUnavailable() async throws {
+        let developer = AgentProfile(
+            id: "developer-profile",
+            name: "Developer",
+            tools: ["local.writeFile"]
+        )
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: { _ in developer },
+            parentProfileName: developer.name
+        )
+
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("name-matched-worker"),
+                "profile": .string(developer.id)
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
+            parentAllowedToolNames: ["local.readFile"]
+        )
+
+        let session = try #require(await backend.createdSessions().first)
+        #expect(session.allowedToolNames?.contains("local.readFile") == true)
+        #expect(session.allowedToolNames?.contains("local.writeFile") == false)
+        await runtime.shutdown()
+    }
+    @Test
     func resolvedPlannerProfileIsComposedIntoCreatedBackendSystemPrompt() async throws {
         let planner = AgentProfile(
             id: AgentProfileStore.plannerAgentID.uuidString,
@@ -117,7 +269,9 @@ struct DirectSubAgentRuntimeTests {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
-            profileResolver: { _ in planner }
+            profileResolver: { _ in planner },
+            parentProfileID: "developer-profile",
+            parentProfileName: "Developer"
         )
 
         _ = try await runtime.createAgents(
@@ -152,7 +306,9 @@ struct DirectSubAgentRuntimeTests {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
-            profileResolver: { _ in developer }
+            profileResolver: { _ in developer },
+            parentProfileID: developer.id,
+            parentProfileName: developer.name
         )
 
         await #expect(throws: DirectSubAgentRuntimeError.self) {
@@ -181,7 +337,9 @@ struct DirectSubAgentRuntimeTests {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
-            profileResolver: { _ in minimal }
+            profileResolver: { _ in minimal },
+            parentProfileID: "developer-profile",
+            parentProfileName: "Developer"
         )
 
         _ = try await runtime.createAgents(
@@ -269,7 +427,9 @@ struct DirectSubAgentRuntimeTests {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
-            profileResolver: { _ in reviewer }
+            profileResolver: { _ in reviewer },
+            parentProfileID: "developer-profile",
+            parentProfileName: "Developer"
         )
         await runtime.installTaskOrchestrator(orchestrator)
 
@@ -1427,6 +1587,8 @@ struct DirectSubAgentRuntimeTests {
         #expect(!descriptor.description.contains("each item requires profile and model"))
         #expect(descriptor.description.contains("exact profile and binding references"))
         #expect(descriptor.description.contains("taskID is never a root argument"))
+        #expect(descriptor.description.contains("same profile inherits the coordinator's effective session allowlist"))
+        #expect(!descriptor.description.contains("The selected profile owns the child tool grant"))
         #expect(!descriptor.description.contains(TaskRecord.agentSelectionPolicy))
         #expect(!descriptor.inputSchema.contains("\"modelID\""))
         #expect(!descriptor.inputSchema.contains("toolNames"))

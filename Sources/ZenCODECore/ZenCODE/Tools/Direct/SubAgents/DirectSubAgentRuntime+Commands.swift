@@ -201,24 +201,39 @@ extension DirectSubAgentRuntime {
                     )
                 }
 
-                var childAllowedToolNames = item.profile.allowedToolNames()
+                var childAllowedToolNames: Set<String>?
+                if inheritsParentToolGrant(for: item.profile) {
+                    // A child with the same resolved profile inherits the
+                    // coordinator's effective session grant, including
+                    // session-local additions and removals. A nil parent
+                    // allowlist remains nil (unrestricted). Payload toolNames
+                    // is rejected during parsing and never participates here.
+                    childAllowedToolNames = parentAllowedToolNames
+                } else {
+                    // Different profiles retain their own grant boundary;
+                    // especially read-only Reviewer/Planner and Minimal must
+                    // not receive the coordinator's tools accidentally.
+                    childAllowedToolNames = item.profile.allowedToolNames()
+                }
                 if payload.taskID != nil {
                     // Assigned task attempts need these intrinsic reporting tools
                     // even when the selected profile does not coordinate tasks.
-                    childAllowedToolNames.formUnion(["tasks.list", "tasks.get", "tasks.update"])
+                    childAllowedToolNames?.formUnion(["tasks.list", "tasks.get", "tasks.update"])
                 }
                 // Prompt-skill tools are intrinsic and always-on: every
                 // delegated sub-agent must be able to discover and read
                 // selected prompt-skill guidance, mirroring the top-level
                 // session allowlist resolved by AgentCoreAppSessionFactory.
-                childAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
-                childAllowedToolNames = item.profile.resolvedAllowedToolNames(
-                    childAllowedToolNames
-                )
+                childAllowedToolNames?.formUnion(PromptSkillToolProvider.toolNames)
+                if let explicitChildAllowedToolNames = childAllowedToolNames {
+                    childAllowedToolNames = item.profile.resolvedAllowedToolNames(
+                        explicitChildAllowedToolNames
+                    )
+                }
                 // Live collaboration is intrinsic for every delegated agent.
                 // list/get are read-only views of the parent's agent graph;
                 // message mutates only the transient in-memory mailbox.
-                childAllowedToolNames.formUnion([
+                childAllowedToolNames?.formUnion([
                     "agent.list", "agent.get", "agent.message"
                 ])
                 await backend.createSession(
@@ -332,6 +347,31 @@ extension DirectSubAgentRuntime {
             response += "\n" + advisories.joined(separator: "\n")
         }
         return response
+    }
+
+    private func inheritsParentToolGrant(for profile: AgentProfile) -> Bool {
+        let normalizedProfileID = profile.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if let parentProfileID = parentProfileID?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).lowercased(), !parentProfileID.isEmpty {
+            // Stable IDs are authoritative. Never compare a coordinator ID
+            // with a child name (or vice versa), since those namespaces may
+            // legitimately collide.
+            return normalizedProfileID == parentProfileID
+        }
+
+        guard let parentProfileName = parentProfileName?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).lowercased(), !parentProfileName.isEmpty else {
+            return false
+        }
+        // Name matching is only a compatibility fallback when no parent ID is
+        // available; it remains name-to-name to keep profile boundaries intact.
+        let normalizedProfileName = profile.name.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).lowercased()
+        return normalizedProfileName == parentProfileName
     }
 
     func reserveTasklessDelegationReservations(

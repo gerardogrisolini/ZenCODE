@@ -253,7 +253,8 @@ extension DirectSubAgentRuntime {
         if let key = toolOverrideKeys.first(where: { arguments[$0] != nil }) {
             throw DirectSubAgentRuntimeError.invalidArgument(
                 "\(key) is not supported by agent.create; delegated tools are "
-                    + "configured on the selected agent profile"
+                    + "resolved from the selected profile, or inherited from the "
+                    + "coordinator's effective session allowlist for the same profile"
             )
         }
     }

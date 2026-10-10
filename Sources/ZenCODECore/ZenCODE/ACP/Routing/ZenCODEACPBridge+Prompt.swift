@@ -1086,6 +1086,8 @@ extension ZenCODEACPBridge {
         return AgentCoreSessionConfiguration(
             sessionID: baseConfiguration.sessionID,
             modelID: modelID,
+            agentID: agent.id,
+            agentName: agent.name,
             workingDirectory: baseConfiguration.workingDirectory,
             systemPrompt: promptSections.systemPrompt,
             dynamicContext: promptSections.dynamicContext,

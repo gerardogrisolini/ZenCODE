@@ -230,7 +230,9 @@ public actor DirectToolExecutor {
             coordinatesLiveManifestReads: coordinatesLiveManifestReads,
             sharedChat: self.sharedChat,
             sharedChatSenderID: self.sharedChatSenderID,
-            sharedChatRootSessionID: self.sharedChatRootSessionID
+            sharedChatRootSessionID: self.sharedChatRootSessionID,
+            parentProfileID: toolExecutionContext.profileID,
+            parentProfileName: toolExecutionContext.profileName
         )
     }
 

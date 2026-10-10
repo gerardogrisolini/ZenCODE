@@ -36,7 +36,9 @@ extension AgentRuntimeConfigurationProjecting {
         locksModelToSession: Bool = false,
         toolAuthorizationHandler: AgentToolAuthorizationHandler? = nil,
         agentID: String? = nil,
-        agentName: String? = nil
+        agentName: String? = nil,
+        profileID: String? = nil,
+        profileName: String? = nil
     ) -> AgentRuntimeConfiguration {
         AgentRuntimeConfiguration(
             modelID: projectedRuntimeModelID,
@@ -49,7 +51,9 @@ extension AgentRuntimeConfigurationProjecting {
             locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler,
             agentID: agentID,
-            agentName: agentName
+            agentName: agentName,
+            profileID: profileID,
+            profileName: profileName
         )
     }
 }

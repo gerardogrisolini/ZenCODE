@@ -130,7 +130,9 @@ public struct AgentCoreSessionConfiguration: Sendable {
             configuredContextWindowLimit: configuredContextWindowLimit,
             generationParameterOverrides: generationParameterOverrides,
             agentID: agentID,
-            agentName: agentName
+            agentName: agentName,
+            profileID: agentID,
+            profileName: agentName
         )
     }
 

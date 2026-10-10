@@ -562,6 +562,10 @@ public actor DirectSubAgentRuntime {
     /// Shared only with the backend descendants of this runtime; unlike tasks it
     /// is never checkpointed or restored.
     public let sharedChat: AgentSharedChat
+    /// Profile identity of this coordinator. It is intentionally separate from
+    /// the transient agent identity used for collaboration and logging.
+    public let parentProfileID: String?
+    public let parentProfileName: String?
     /// Present in a child executor so `agent.message` has the real author.
     public let sharedChatSenderID: String?
     /// A child uses its parent root room, not its private backend session id.
@@ -663,26 +667,34 @@ public actor DirectSubAgentRuntime {
 
     public init(
         contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
-        profileResolver: @escaping DirectSubAgentProfileResolver
+        profileResolver: @escaping DirectSubAgentProfileResolver,
+        parentProfileID: String? = nil,
+        parentProfileName: String? = nil
     ) {
         self.init(
             contextualBackendFactory: contextualBackendFactory,
             profileResolver: profileResolver,
             modelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
-            coordinatesLiveManifestReads: false
+            coordinatesLiveManifestReads: false,
+            parentProfileID: parentProfileID,
+            parentProfileName: parentProfileName
         )
     }
 
     public init(
         contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
         profileResolver: @escaping DirectSubAgentProfileResolver,
-        modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider
+        modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider,
+        parentProfileID: String? = nil,
+        parentProfileName: String? = nil
     ) {
         self.init(
             contextualBackendFactory: contextualBackendFactory,
             profileResolver: profileResolver,
             modelCatalogProvider: modelCatalogProvider,
-            coordinatesLiveManifestReads: false
+            coordinatesLiveManifestReads: false,
+            parentProfileID: parentProfileID,
+            parentProfileName: parentProfileName
         )
     }
 
@@ -693,7 +705,9 @@ public actor DirectSubAgentRuntime {
         coordinatesLiveManifestReads: Bool,
         sharedChat: AgentSharedChat = AgentSharedChat(),
         sharedChatSenderID: String? = nil,
-        sharedChatRootSessionID: String? = nil
+        sharedChatRootSessionID: String? = nil,
+        parentProfileID: String? = nil,
+        parentProfileName: String? = nil
     ) {
         self.backendFactory = contextualBackendFactory
         self.profileResolver = profileResolver
@@ -702,6 +716,8 @@ public actor DirectSubAgentRuntime {
         self.sharedChat = sharedChat
         self.sharedChatSenderID = sharedChatSenderID?.nilIfBlank
         self.sharedChatRootSessionID = sharedChatRootSessionID?.nilIfBlank
+        self.parentProfileID = parentProfileID?.nilIfBlank
+        self.parentProfileName = parentProfileName?.nilIfBlank
         self.sharedChatMessageAvailableHandler = nil
         self.subAgentToolEventHandler = nil
     }
@@ -895,6 +911,9 @@ extension AgentRuntimeConfiguration {
         let identifiedConfiguration = withToolExecutionIdentity(
             agentID: context.sharedChatSenderID,
             agentName: context.requestedName
+        ).withProfileIdentity(
+            profileID: context.profile?.id,
+            profileName: context.profile?.name
         )
         if locksModelToSession {
             return identifiedConfiguration

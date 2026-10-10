@@ -13,17 +13,23 @@ import ToolCore
 public struct ToolExecutionContext: Sendable, Equatable {
     public let agentID: String?
     public let agentName: String?
+    public let profileID: String?
+    public let profileName: String?
     public let modelID: String?
     public let isSubAgent: Bool
 
     public init(
         agentID: String? = nil,
         agentName: String? = nil,
+        profileID: String? = nil,
+        profileName: String? = nil,
         modelID: String? = nil,
         isSubAgent: Bool = false
     ) {
         self.agentID = agentID?.nilIfBlank
         self.agentName = agentName?.nilIfBlank
+        self.profileID = profileID?.nilIfBlank
+        self.profileName = profileName?.nilIfBlank
         self.modelID = modelID?.nilIfBlank
         self.isSubAgent = isSubAgent
     }
@@ -34,6 +40,8 @@ public struct ToolExecutionContext: Sendable, Equatable {
         return ToolExecutionContext(
             agentID: agentID ?? fallbackAgentID ?? (isSubAgent ? nil : "coordinator"),
             agentName: agentName ?? (isSubAgent ? nil : "coordinator"),
+            profileID: self.profileID,
+            profileName: self.profileName,
             modelID: modelID,
             isSubAgent: isSubAgent
         )

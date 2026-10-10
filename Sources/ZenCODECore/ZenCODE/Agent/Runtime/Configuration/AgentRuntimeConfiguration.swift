@@ -447,6 +447,10 @@ public struct AgentRuntimeConfiguration: Sendable {
     public let toolAuthorizationHandler: AgentToolAuthorizationHandler?
     public let agentID: String?
     public let agentName: String?
+    /// Stable profile identity used to decide whether a delegated child may
+    /// inherit the coordinator's effective session allowlist.
+    public let profileID: String?
+    public let profileName: String?
 
     public init(
         modelID: String?,
@@ -459,7 +463,9 @@ public struct AgentRuntimeConfiguration: Sendable {
         locksModelToSession: Bool = false,
         toolAuthorizationHandler: AgentToolAuthorizationHandler?,
         agentID: String? = nil,
-        agentName: String? = nil
+        agentName: String? = nil,
+        profileID: String? = nil,
+        profileName: String? = nil
     ) {
         self.modelID = modelID?.nilIfBlank
         self.workingDirectory = workingDirectory
@@ -474,6 +480,8 @@ public struct AgentRuntimeConfiguration: Sendable {
         self.toolAuthorizationHandler = toolAuthorizationHandler
         self.agentID = agentID?.nilIfBlank
         self.agentName = agentName?.nilIfBlank
+        self.profileID = profileID?.nilIfBlank
+        self.profileName = profileName?.nilIfBlank
     }
 
     public func withModelID(_ modelID: String?) -> AgentRuntimeConfiguration {
@@ -488,7 +496,9 @@ public struct AgentRuntimeConfiguration: Sendable {
             locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler,
             agentID: agentID,
-            agentName: agentName
+            agentName: agentName,
+            profileID: profileID,
+            profileName: profileName
         )
     }
 
@@ -511,7 +521,9 @@ public struct AgentRuntimeConfiguration: Sendable {
             locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler,
             agentID: agentID,
-            agentName: agentName
+            agentName: agentName,
+            profileID: profileID,
+            profileName: profileName
         )
     }
 
@@ -529,7 +541,30 @@ public struct AgentRuntimeConfiguration: Sendable {
             locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler,
             agentID: agentID,
-            agentName: agentName
+            agentName: agentName,
+            profileID: profileID,
+            profileName: profileName
+        )
+    }
+
+    public func withProfileIdentity(
+        profileID: String?,
+        profileName: String?
+    ) -> AgentRuntimeConfiguration {
+        AgentRuntimeConfiguration(
+            modelID: modelID,
+            workingDirectory: workingDirectory,
+            configuredContextWindowLimit: configuredContextWindowLimit,
+            generationParameterOverrides: generationParameterOverrides,
+            maxToolRounds: maxToolRounds,
+            maxOutputTokens: maxOutputTokens,
+            appMode: appMode,
+            locksModelToSession: locksModelToSession,
+            toolAuthorizationHandler: toolAuthorizationHandler,
+            agentID: agentID,
+            agentName: agentName,
+            profileID: profileID,
+            profileName: profileName
         )
     }
 
@@ -548,7 +583,9 @@ public struct AgentRuntimeConfiguration: Sendable {
             locksModelToSession: locksModelToSession,
             toolAuthorizationHandler: toolAuthorizationHandler,
             agentID: agentID,
-            agentName: agentName
+            agentName: agentName,
+            profileID: profileID,
+            profileName: profileName
         )
     }
 }

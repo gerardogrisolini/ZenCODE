@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 @testable import FeatureMCPBridgeKit
 @testable import ZenCODECore
 import Testing
@@ -46,9 +47,14 @@ extension ACPCompatibilityTests {
             "cwd": "/tmp/acp-agent-routing",
             "agentId": agentA.id
         ])
-        let sessionID = try #require(
-            await bridge.sessionConfigurationsForTesting().first?.sessionID
+        let initialConfiguration = try #require(
+            await bridge.sessionConfigurationsForTesting().first
         )
+        let sessionID = initialConfiguration.sessionID
+        #expect(initialConfiguration.agentID == agentA.id)
+        #expect(initialConfiguration.agentName == agentA.name)
+        #expect(initialConfiguration.runtimeConfiguration.profileID == agentA.id)
+        #expect(initialConfiguration.runtimeConfiguration.profileName == agentA.name)
         #expect(await bridge.selectedAgentIDForTesting(sessionID: sessionID) == agentA.id)
 
         try await bridge.prompt(id: nil, params: [
@@ -60,6 +66,12 @@ extension ACPCompatibilityTests {
             await bridge.sessionConfigurationsForTesting().first
         )
         #expect(await bridge.selectedAgentIDForTesting(sessionID: sessionID) == agentB.id)
+        #expect(routedConfiguration.agentID == agentB.id)
+        #expect(routedConfiguration.agentName == agentB.name)
+        #expect(routedConfiguration.runtimeConfiguration.profileID == agentB.id)
+        #expect(routedConfiguration.runtimeConfiguration.profileName == agentB.name)
+        #expect(await bridge.sessionRunner.sessions[sessionID]?.agentID == agentB.id)
+        #expect(await bridge.sessionRunner.sessions[sessionID]?.agentName == agentB.name)
         #expect(routedConfiguration.systemPrompt?.contains("Instructions for Agent B.") == false)
         #expect(routedConfiguration.dynamicContext?.contains("Instructions for Agent B.") == true)
         #expect(await bridge.lifecycleAgentIDForTesting(sessionID: sessionID) == agentB.id)
@@ -92,12 +104,47 @@ extension ACPCompatibilityTests {
             await restoredBridge.selectedAgentIDForTesting(sessionID: "restored-agent-b")
                 == agentB.id
         )
+        #expect(restoredConfiguration.agentID == agentB.id)
+        #expect(restoredConfiguration.agentName == agentB.name)
+        #expect(restoredConfiguration.runtimeConfiguration.profileID == agentB.id)
+        #expect(restoredConfiguration.runtimeConfiguration.profileName == agentB.name)
         #expect(restoredConfiguration.systemPrompt?.contains("Instructions for Agent B.") == false)
         #expect(restoredConfiguration.dynamicContext?.contains("Instructions for Agent B.") == true)
         #expect(
             await restoredBridge.lifecycleAgentIDForTesting(sessionID: "restored-agent-b")
                 == agentB.id
         )
+    }
+
+    @Test
+    func acpPreloadPreservesSelectedProfileInDefaultRuntimeConfiguration() async throws {
+        let agent = AgentProfile(id: "preload-profile", name: "Preload Profile", tools: [])
+        let runtimeConfigurations = Mutex<[AgentRuntimeConfiguration]>([])
+        let backend = CapturingACPBackend()
+        let bridge = try makeBridge(
+            models: [
+                AgentSettingsModelManifest(
+                    id: "test-model",
+                    kind: .remoteAPI,
+                    modelID: "local/test-model"
+                )
+            ],
+            availableAgents: [agent],
+            agentName: agent.name,
+            backendFactory: { runtimeConfiguration, _ in
+                runtimeConfigurations.withLock { $0.append(runtimeConfiguration) }
+                return backend
+            }
+        )
+
+        try await bridge.preloadModel(id: nil, params: [:])
+
+        let runtimeConfiguration = try #require(runtimeConfigurations.withLock { $0.first })
+        #expect(runtimeConfiguration.agentID == agent.id)
+        #expect(runtimeConfiguration.agentName == agent.name)
+        #expect(runtimeConfiguration.profileID == agent.id)
+        #expect(runtimeConfiguration.profileName == agent.name)
+        await bridge.shutdown()
     }
 
     @Test
@@ -316,6 +363,8 @@ extension ACPCompatibilityTests {
         let configuration = try #require(await bridge.sessionConfigurationsForTesting().first)
 
         #expect(configuration.modelID == model.id)
+        #expect(configuration.agentID == agent.id)
+        #expect(configuration.agentName == agent.name)
         #expect(configuration.thinkingSelection == .high)
     }
 
@@ -339,6 +388,8 @@ extension ACPCompatibilityTests {
         let configuration = AgentCoreSessionConfiguration(
             sessionID: "acp-refresh-state",
             modelID: "test-model",
+            agentID: "acp-refresh-profile",
+            agentName: "ACP Refresh Profile",
             workingDirectory: FileManager.default.temporaryDirectory,
             systemPrompt: "test system prompt",
             cacheKey: "acp-refresh-cache",
@@ -358,6 +409,10 @@ extension ACPCompatibilityTests {
         let refreshed = try #require(
             await bridge.sessionConfigurationsForTesting().first
         )
+        #expect(refreshed.agentID == configuration.agentID)
+        #expect(refreshed.agentName == configuration.agentName)
+        #expect(refreshed.runtimeConfiguration.profileID == configuration.agentID)
+        #expect(refreshed.runtimeConfiguration.profileName == configuration.agentName)
         #expect(refreshed.sessionRevision == configuration.sessionRevision)
         #expect(
             refreshed.configuredContextWindowLimit

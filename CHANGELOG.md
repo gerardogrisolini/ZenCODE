@@ -10,6 +10,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Delegated agents created with the coordinator's same resolved profile now inherit
+  the coordinator session's effective tool allowlist, preserving session-local tool
+  additions and removals. Reviewer, Planner, Minimal, and other different-profile
+  boundaries remain profile-scoped; only child-intrinsic skills, collaboration,
+  and applicable task-reporting tools are added, and `agent.create` payloads cannot
+  override the grant.
+
 ## [2.1.8] - 2026-09-21
 
 ### Added

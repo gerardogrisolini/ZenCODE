@@ -1036,6 +1036,11 @@ struct DelegatableAgentsSectionTests {
         #expect(section.contains("For profiles with configured bindings"))
         #expect(section.contains("For profiles without bindings, omit `model`"))
         #expect(!section.contains("Both fields are required"))
-        #expect(section.contains("selected profile supplies the child tool grant"))
+        #expect(section.contains(
+            "Different profiles retain their own tool grant"
+        ))
+        #expect(section.contains(
+            "same profile inherits the coordinator's effective session allowlist"
+        ))
     }
 }
