@@ -28,6 +28,7 @@ Guides for using, extending, and maintaining ZenCODE. Start with the
 | --- | --- |
 | [xcode.md](xcode.md) | Running `zen` as an ACP coding agent in Xcode 27 |
 | [aion-ui.md](aion-ui.md) | Registering ZenCODE as an Aion UI custom agent |
+| [ds4.md](ds4.md) | Folder-only DS4 setup, compatibility checks, ownership, and supported integration levels |
 
 ## Project and maintenance
 

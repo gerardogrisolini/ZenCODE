@@ -19,14 +19,16 @@ public enum AgentSettingsModelManifestFactory {
         chatEndpoint: AgentRemoteChatEndpoint,
         configuredContextWindowLimit: Int?,
         generationParameterOverrides: AgentGenerationParameterOverrides?,
-        thinkingSupport: ModelThinkingSupport?
+        thinkingSupport: ModelThinkingSupport?,
+        ds4Runtime: AgentDS4RuntimeConfiguration? = nil
     ) -> AgentSettingsModelManifest {
         let provider = AgentRemoteProvider(
             id: providerID,
             name: providerName,
             baseURL: baseURL,
             modelID: modelID,
-            chatEndpoint: chatEndpoint
+            chatEndpoint: chatEndpoint,
+            ds4Runtime: ds4Runtime
         )
         let resolvedManifestID = manifestID?.nilIfBlank
             ?? "remoteapi:\(providerID.uuidString.lowercased()):\(modelID)"

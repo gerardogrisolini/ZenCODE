@@ -66,16 +66,7 @@ public enum AgentDelegationCatalogSnapshot: Sendable {
         }
         let model = binding.model
 
-        let resolvedProvider = AgentRemoteProvider(
-            id: provider.id,
-            name: provider.name,
-            baseURL: provider.baseURL,
-            modelID: rawModelID,
-            chatEndpoint: provider.chatEndpoint,
-            providerProfileID: provider.providerProfileID,
-            protocolProfileID: provider.protocolProfileID,
-            authPolicy: provider.authPolicy
-        )
+        let resolvedProvider = provider.withModelID(rawModelID)
         let apiKey = provider.authPolicy.effectiveAPIKey(
             manifest.remoteAPIKeysByProviderID[
                 provider.id.uuidString.lowercased()
@@ -91,7 +82,8 @@ public enum AgentDelegationCatalogSnapshot: Sendable {
             configuredContextWindowLimit: configuredContextWindowLimit,
             generationParameterOverrides: model.generationParameterOverrides,
             thinkingOptions: model.thinkingOptions,
-            thinkingSelection: model.thinkingSelection(for: binding.thinkingSelection)
+            thinkingSelection: model.thinkingSelection(for: binding.thinkingSelection),
+            ds4Runtime: model.ds4Runtime
         )
     }
 

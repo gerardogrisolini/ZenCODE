@@ -10,6 +10,10 @@ extension RemoteGenerationClient {
         thinkingSelection: AgentThinkingSelection?,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> RemoteStreamResult {
+        try await ensureDS4Ready()
+        guard !isDS4Shutdown else {
+            throw DS4ServerSupervisorError.shutdown
+        }
         let catalog = await remoteToolCatalog(
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
@@ -28,7 +32,8 @@ extension RemoteGenerationClient {
         )
         let request = try RemoteStreamTransport.buildHTTPStreamingRequest(
             path: "/messages", body: body, provider: provider, apiKey: apiKey,
-            endpointBaseURLOverride: streamEndpointBaseURLOverride
+            endpointBaseURLOverride: streamEndpointBaseURLOverride,
+            suppressAPIKey: usesLocalDS4Endpoint
         )
         if !configuration.appMode {
             await onEvent(.diagnostic("Remote request: \(provider.displayTitle) \(provider.modelID)."))

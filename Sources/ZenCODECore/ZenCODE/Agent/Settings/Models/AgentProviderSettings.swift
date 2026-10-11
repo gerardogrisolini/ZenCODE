@@ -132,6 +132,7 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
         case providerProfileID
         case protocolProfileID
         case authPolicy
+        case ds4Runtime
     }
 
     public static let defaultOpenRouterName = "OpenRouter"
@@ -152,6 +153,9 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
     public let providerProfileID: AgentProviderProfileID
     public let protocolProfileID: AgentProtocolProfileID
     public let authPolicy: AgentProviderAuthPolicy
+    /// Optional persisted metadata for a local DS4 runtime. The provider's
+    /// OpenAI-compatible base URL remains unchanged and is still persisted.
+    public let ds4Runtime: AgentDS4RuntimeConfiguration?
 
     public init(
         id: UUID = UUID(),
@@ -161,7 +165,8 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
         chatEndpoint: AgentRemoteChatEndpoint = .chatCompletions,
         providerProfileID: AgentProviderProfileID? = nil,
         protocolProfileID: AgentProtocolProfileID? = nil,
-        authPolicy: AgentProviderAuthPolicy? = nil
+        authPolicy: AgentProviderAuthPolicy? = nil,
+        ds4Runtime: AgentDS4RuntimeConfiguration? = nil
     ) {
         self.id = id
         self.name = Self.normalizedName(name)
@@ -173,6 +178,7 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
         self.protocolProfileID = resolvedProtocolProfileID
         self.authPolicy = authPolicy ?? legacyProfiles.auth
         self.chatEndpoint = resolvedProtocolProfileID.chatEndpoint ?? chatEndpoint
+        self.ds4Runtime = ds4Runtime
     }
 
     public init(from decoder: Decoder) throws {
@@ -185,7 +191,11 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
             chatEndpoint: try container.decode(AgentRemoteChatEndpoint.self, forKey: .chatEndpoint),
             providerProfileID: try container.decodeIfPresent(AgentProviderProfileID.self, forKey: .providerProfileID),
             protocolProfileID: try container.decodeIfPresent(AgentProtocolProfileID.self, forKey: .protocolProfileID),
-            authPolicy: try container.decodeIfPresent(AgentProviderAuthPolicy.self, forKey: .authPolicy)
+            authPolicy: try container.decodeIfPresent(AgentProviderAuthPolicy.self, forKey: .authPolicy),
+            ds4Runtime: try container.decodeIfPresent(
+                AgentDS4RuntimeConfiguration.self,
+                forKey: .ds4Runtime
+            )
         )
         guard hasCompatibleProfiles else {
             throw DecodingError.dataCorruptedError(
@@ -206,6 +216,43 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
         try container.encode(providerProfileID, forKey: .providerProfileID)
         try container.encode(protocolProfileID, forKey: .protocolProfileID)
         try container.encode(authPolicy, forKey: .authPolicy)
+        try container.encodeIfPresent(ds4Runtime, forKey: .ds4Runtime)
+    }
+
+    public var runtime: AgentDS4RuntimeConfiguration? {
+        ds4Runtime
+    }
+
+    /// Rebuilds the provider with a different model while retaining all
+    /// protocol, authentication and DS4 metadata.
+    public func withModelID(_ modelID: String) -> AgentRemoteProvider {
+        AgentRemoteProvider(
+            id: id,
+            name: name,
+            baseURL: baseURL,
+            modelID: modelID,
+            chatEndpoint: chatEndpoint,
+            providerProfileID: providerProfileID,
+            protocolProfileID: protocolProfileID,
+            authPolicy: authPolicy,
+            ds4Runtime: ds4Runtime
+        )
+    }
+
+    public func withDS4Runtime(
+        _ ds4Runtime: AgentDS4RuntimeConfiguration?
+    ) -> AgentRemoteProvider {
+        AgentRemoteProvider(
+            id: id,
+            name: name,
+            baseURL: baseURL,
+            modelID: modelID,
+            chatEndpoint: chatEndpoint,
+            providerProfileID: providerProfileID,
+            protocolProfileID: protocolProfileID,
+            authPolicy: authPolicy,
+            ds4Runtime: ds4Runtime
+        )
     }
 
     public var displayTitle: String {
@@ -429,6 +476,33 @@ public struct AgentModelSelection: Sendable {
     public let generationParameterOverrides: AgentGenerationParameterOverrides?
     public let thinkingOptions: [AgentThinkingSelection]?
     public let thinkingSelection: AgentThinkingSelection?
+    public let ds4Runtime: AgentDS4RuntimeConfiguration?
+
+    public init(
+        providerKind: AgentModelProviderKind,
+        modelID: String,
+        remoteProvider: AgentRemoteProvider?,
+        apiKey: String?,
+        configuredContextWindowLimit: Int?,
+        generationParameterOverrides: AgentGenerationParameterOverrides?,
+        thinkingOptions: [AgentThinkingSelection]? = nil,
+        thinkingSelection: AgentThinkingSelection?,
+        ds4Runtime: AgentDS4RuntimeConfiguration? = nil
+    ) {
+        self.providerKind = providerKind
+        self.modelID = modelID
+        self.remoteProvider = remoteProvider
+        self.apiKey = apiKey
+        self.configuredContextWindowLimit = configuredContextWindowLimit
+        self.generationParameterOverrides = generationParameterOverrides
+        self.thinkingOptions = thinkingOptions
+        self.thinkingSelection = thinkingSelection
+        self.ds4Runtime = ds4Runtime ?? remoteProvider?.ds4Runtime
+    }
+
+    public var runtime: AgentDS4RuntimeConfiguration? {
+        ds4Runtime
+    }
 }
 
 public struct AgentModelProviderGroup: Hashable, Sendable {
@@ -721,16 +795,7 @@ public enum AgentSettingsStore {
                   let modelID = model.modelID.nilIfBlank else {
                 return nil
             }
-            let resolvedProvider = AgentRemoteProvider(
-                id: provider.id,
-                name: provider.name,
-                baseURL: provider.baseURL,
-                modelID: modelID,
-                chatEndpoint: provider.chatEndpoint,
-                providerProfileID: provider.providerProfileID,
-                protocolProfileID: provider.protocolProfileID,
-                authPolicy: provider.authPolicy
-            )
+            let resolvedProvider = provider.withModelID(modelID)
             return AgentModelSelection(
                 providerKind: .remoteAPI,
                 modelID: modelID,
@@ -739,7 +804,8 @@ public enum AgentSettingsStore {
                 configuredContextWindowLimit: model.configuredContextWindowLimit,
                 generationParameterOverrides: model.generationParameterOverrides,
                 thinkingOptions: model.thinkingOptions,
-                thinkingSelection: resolvedThinkingSelection
+                thinkingSelection: resolvedThinkingSelection,
+                ds4Runtime: model.ds4Runtime
             )
         }
     }

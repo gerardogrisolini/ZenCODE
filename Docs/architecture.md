@@ -273,6 +273,122 @@ platform APIs where required, but must not change provider IDs, wire event
 handling, credential persistence, backend selection semantics, or the common
 generation transport.
 
+## DS4 Local Runtime Compatibility, Ownership, and Persistence
+
+DS4 is an optional local OpenAI-compatible provider layered on top of the
+remote-generation contracts. ZenCODE never loads model weights or performs
+inference in `ZenCODECore`: a configured DS4 runtime is a separately managed
+HTTP child reached through loopback. This extension does not change the
+remote-only provider boundary, the `zen` composition-root rule, or the
+provider-agnostic session and checkpoint formats.
+
+### Supported integration levels
+
+The public contract has three user-facing levels:
+
+1. **Folder discovery.** Setup accepts one existing absolute DS4 checkout and
+   performs a read-only scan of only `<root>/*.gguf` and `<root>/gguf/*.gguf`.
+   `DS4InstallationScanner` ignores arbitrary nested project paths, symlinked
+   directories/files, non-regular artifacts, and unavailable sizes.
+2. **Compatibility and staged setup.** `DS4ModelCatalog` is static,
+   evidence-backed metadata for artifact paths, download identities, resource
+   estimates, and supported backends. `DS4HardwareProbe` is bounded and
+   diagnostic-only; `DS4CompatibilityAdvisor` may propose an operational model
+   only when an installed catalog artifact and a proven backend/memory profile
+   agree. Setup never downloads, builds, parses GGUF headers, starts DS4, or
+   infers CPU as an operational backend. The resulting provider/model is staged
+   and reaches settings only through the normal setup transaction.
+3. **Managed local runtime.** On first model use, `DS4ServerSupervisor` launches
+   the existing checkout executable, binds a loopback address, waits for the
+   OpenAI-compatible `/v1/models` response, and then lets the common remote
+   client send generation requests to the ready endpoint.
+
+A ready endpoint injected by a composition root or test is a fourth, internal
+integration seam. Its embedding owner is responsible for the external process
+and readiness; it is not a user-facing setup mode. Downloading weights,
+building DS4, launching a server during setup, embedding a model, and running
+inference in ZenCODE remain explicit non-goals. The complete operational guide
+and level table are in [ds4.md](ds4.md).
+
+### Compatibility and identity rules
+
+The checkout's catalog/download identity and the server's wire model identity
+are separate compatibility surfaces. A catalog entry exposes `apiModelID`,
+which maps a download/quantization key to the canonical ID emitted by the
+checked-out DS4 server. Fresh setup may retain a stable ZenCODE selection key
+such as `ds4:<catalog-id>`, but provider payloads and supervisor readiness use
+that canonical API ID. The supervisor accepts readiness only when `/v1/models`
+advertises the expected ID; it does not invent an alias or accept an unrelated
+model.
+
+The setup-created provider uses the ordinary OpenAI-compatible Chat Completions
+profile and a loopback base URL. The runtime permits only loopback hosts,
+canonical model paths below the configured root, regular non-symlink model
+files, bounded readiness/output bodies, and direct argv. Supervisor-owned
+flags (host, port, model path, working directory, backend, context, and
+related server/security flags) cannot be replaced by `additionalArguments`.
+Operational recommendations represent proven Metal, CUDA, or ROCm backends;
+CPU remains diagnostic/reference-only. SSD streaming and batching are
+compatibility options only when the catalog and host evidence support them.
+
+### Ownership and lifecycle
+
+`ZenCODECore` owns the DS4 scanner, catalog/advisor, setup integration,
+persisted DTOs, remote-client endpoint adaptation, and
+`DS4ServerSupervisor`. `zen` remains the only composition root that selects and
+injects a backend. Terminal UI, Telegram, ACP, and delegated-agent presentation
+layers do not own DS4 processes.
+
+A supervisor is an actor-isolated owner for one child and its readiness state.
+Startup is single-flight: concurrent callers share one launch/readiness attempt;
+a cancelled waiter cannot cancel a launch still needed by another waiter.
+`stop()` reaps only that supervisor's child and leaves it reusable. `shutdown()`
+is a terminal fence that cancels pending startup, reaps the owned child, closes
+an owned transport when applicable, and rejects late resurrection. A
+factory-created supervisor belongs to its backend incarnation, so backend
+replacement shuts down the old owner before a replacement can start. A
+`RemoteGenerationClient` may borrow a supervisor or ready endpoint without
+owning it when the composition root says so.
+
+Delegated clients borrow the root owner only while retaining the same DS4
+provider/model selection (or while model selection is locked to the session). A
+child that selects a different provider is an ordinary remote client and must
+not inherit the root supervisor, loopback endpoint, or local credential policy.
+When a local endpoint is active, the transport suppresses persisted credentials
+for that loopback request; the provider's remote authentication behavior is
+unchanged when no local DS4 endpoint is active.
+
+### Persistence boundary
+
+`ds4Runtime` is an additive optional field in provider and model manifests.
+Provider metadata is authoritative once a model is linked to a provider; the
+model-level copy exists for standalone/staged model records and round-trips for
+compatibility. Manifests without this field remain decodable. The persisted
+runtime contract contains only:
+
+- canonical absolute `rootDirectory`;
+- relative `modelRelativePath` below that root;
+- `backend`;
+- `contextWindow` and `batchedSessions`; and
+- `ssdStreaming`, cache-expert/cache-byte, preload, and cold-streaming options.
+
+Path validation canonicalizes the root and rejects absolute/traversal model
+paths, escapes, symlink components, missing required files, and non-regular
+files. The manifest deliberately excludes process IDs, ports, endpoint URLs
+selected at runtime, executable discovery, readiness/diagnostic state, process
+handles, and hardware snapshots. The persisted provider URL is a capability
+placeholder (the setup default is `http://127.0.0.1/v1`); the supervisor's
+actual free loopback port and endpoint are transient.
+
+Setup stages a complete candidate and commits it only through the existing
+cooperative manifest transaction. A failed scan, compatibility decision,
+validation, cancellation, or declined confirmation returns the prior manifest;
+non-DS4 providers, models, credentials, and unrelated settings are retained.
+Runtime process state is reconstructed lazily from the persisted metadata after
+backend creation and is not part of session snapshots, task checkpoints, cache
+keys, or any other durable session state. See [ds4.md](ds4.md) for the
+folder-only operator flow and supported levels.
+
 `SensitiveManifestCoordination` is the cross-process ownership boundary for
 cooperative writes and destructive reset of application-support manifests.
 Setup captures a read-only compare-and-swap baseline, validates the final

@@ -369,7 +369,8 @@ extension ZenCODESetupRunner {
         chatEndpoint: AgentRemoteChatEndpoint,
         providerProfileID: AgentProviderProfileID? = nil,
         protocolProfileID: AgentProtocolProfileID? = nil,
-        authPolicy: AgentProviderAuthPolicy? = nil
+        authPolicy: AgentProviderAuthPolicy? = nil,
+        ds4Runtime: AgentDS4RuntimeConfiguration? = nil
     ) -> AgentSettingsModelManifest {
         AgentSettingsModelManifest(
             id: model.id,
@@ -386,7 +387,8 @@ extension ZenCODESetupRunner {
                 chatEndpoint: chatEndpoint,
                 providerProfileID: providerProfileID,
                 protocolProfileID: protocolProfileID,
-                authPolicy: authPolicy
+                authPolicy: authPolicy,
+                ds4Runtime: ds4Runtime ?? model.ds4Runtime
             ),
             configuredContextWindowLimit: model.configuredContextWindowLimit,
             generationParameterOverrides: model.generationParameterOverrides,

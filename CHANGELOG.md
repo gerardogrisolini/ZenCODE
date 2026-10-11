@@ -10,6 +10,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Optional folder-only DS4 setup now discovers existing local GGUF artifacts,
+  reports evidence-backed hardware/model compatibility, and stages a loopback
+  OpenAI-compatible provider without downloading, building, starting DS4, or
+  persisting process state. The new [DS4 setup guide](Docs/ds4.md) documents
+  supported discovery, staged setup, managed-runtime, and internal endpoint
+  integration levels.
+
 ### Changed
 
 - ACP tool-completion updates now publish every recorded changed file in standard

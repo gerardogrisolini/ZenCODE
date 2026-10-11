@@ -28,7 +28,8 @@ extension ZenCODESetupRunner {
                 chatEndpoint: input.chatEndpoint,
                 providerProfileID: input.providerProfileID,
                 protocolProfileID: input.protocolProfileID,
-                authPolicy: input.authPolicy
+                authPolicy: input.authPolicy,
+                ds4Runtime: input.ds4Runtime
             )
         }
         let models = providerInputs.flatMap(\.models)
@@ -259,6 +260,7 @@ extension ZenCODESetupRunner {
             providerProfileID: provider.providerProfileID,
             protocolProfileID: provider.protocolProfileID,
             authPolicy: provider.authPolicy,
+            ds4Runtime: provider.ds4Runtime,
             apiKey: apiKey,
             models: models,
             chatGPTSubscriptionCredentials: chatGPTSubscriptionCredentials,
@@ -274,7 +276,8 @@ extension ZenCODESetupRunner {
             chatEndpoint: input.chatEndpoint,
             providerProfileID: input.providerProfileID,
             protocolProfileID: input.protocolProfileID,
-            authPolicy: input.authPolicy
+            authPolicy: input.authPolicy,
+            ds4Runtime: input.ds4Runtime
         )
     }
 
@@ -376,7 +379,8 @@ extension ZenCODESetupRunner {
                 chatEndpoint: chatEndpoint,
                 providerProfileID: providerProfileID,
                 protocolProfileID: protocolProfileID,
-                authPolicy: authPolicy
+                authPolicy: authPolicy,
+                ds4Runtime: existingProvider?.ds4Runtime
             )
         }
         return SetupProviderInput(
@@ -387,6 +391,7 @@ extension ZenCODESetupRunner {
             providerProfileID: providerProfileID,
             protocolProfileID: protocolProfileID,
             authPolicy: authPolicy,
+            ds4Runtime: existingProvider?.ds4Runtime,
             apiKey: apiKey.nilIfBlank,
             models: profiledModels
         )

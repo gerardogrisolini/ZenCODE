@@ -250,6 +250,10 @@ public enum ZenCODESetupRunner {
             )
         case .dataManagement, .resetRemoteConfiguration, .finish, .cancel:
             return SetupSectionConfigurationResult(manifest: manifest)
+        case .ds4Runtime:
+            return SetupSectionConfigurationResult(
+                manifest: try await configureDS4Runtime(existingManifest: manifest)
+            )
         }
     }
 }
