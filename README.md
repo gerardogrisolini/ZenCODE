@@ -7,15 +7,18 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **ZenCODE** is a fast, native-Swift coding agent for the terminal and ACP. Bring any
-OpenAI-compatible API key or sign in with your existing ChatGPT or Claude subscription —
-no API key required. One compiled binary, no Node runtime, running on macOS, Linux, and
-Windows (via WSL), all the way down to a Raspberry Pi.
+OpenAI-compatible API key, use an existing local DS4 checkout as an optional
+OpenAI-compatible provider, or sign in with your existing ChatGPT or Claude
+subscription — no API key required. ZenCODE itself is one compiled binary with no
+Node runtime, running on macOS, Linux, and Windows (via WSL), all the way down to a
+Raspberry Pi.
 
 ## Highlights
 
 - **Provider-agnostic** — any OpenAI-compatible endpoint (OpenRouter, local servers, any `/v1` API), or a browser sign-in with your ChatGPT or Claude subscription.
+- **Optional local DS4 runtime** — use an existing checkout through `/setup` and keep the DS4 server separate from ZenCODE; see the [DS4 setup guide](Docs/ds4.md).
 - **Native Swift, small footprint** — a single compiled binary with no interpreter or Node event loop, suitable for constrained ARM boards.
-- **Runs everywhere** — macOS, Linux, and Windows (via WSL); model inference stays on the remote provider, so even a single-board computer can host the agent.
+- **Runs everywhere** — the agent runs on macOS, Linux, and Windows (via WSL); cloud and subscription inference stays on the remote provider, while optional DS4 inference runs through a separate OpenAI-compatible loopback server only on compatible hardware.
 - **Automation-friendly** — run a one-shot prompt as plain text or consume the versioned `--jsonl` lifecycle stream from scripts and CI.
 - **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, as a native coding agent.
 - **Agentic workflows** — dependency-aware task graph with `/plan`, `/goal`, and `/review`; `/plan save` and `/plan load` hand plans between sessions of the same project, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
@@ -34,6 +37,11 @@ ZenCODE supports several ways to run the model, all selected during automatic fi
 - **Cloud API providers** — bring an API key for any OpenAI-compatible endpoint, including OpenRouter, local servers, and any `/v1`-compatible provider.
 - **ChatGPT Subscription** — sign in with your existing ChatGPT subscription through the browser. No API key required.
 - **Claude Subscription** — sign in with your existing Claude (Anthropic) subscription through the browser. No API key required.
+- **DS4 local runtime** — use an existing DS4 checkout with a catalog-supported
+  GGUF, a runnable DS4 executable, and compatible GPU hardware. Select **DS4 local
+  runtime** in `/setup` to configure its separate OpenAI-compatible loopback
+  provider; setup does not download a checkout or models, build DS4, or start the
+  server. See the [DS4 setup guide](Docs/ds4.md).
 
 ## Run
 
@@ -50,7 +58,7 @@ ZenCODE supports several ways to run the model, all selected during automatic fi
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh" \
-  | bash -s -- --ref v2.1.8
+  | bash -s -- --ref v2.2.0
 ```
 
 `--ref` pins the source checkout to the release tag. Replace it with the latest
@@ -72,7 +80,7 @@ Xcode or the Apple command line tools.
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh" \
-  | bash -s -- --ref v2.1.8
+  | bash -s -- --ref v2.2.0
 ```
 
 For a development build from the moving `main` branch:
@@ -82,12 +90,12 @@ curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scri
   | bash
 ```
 
-Drive the agent through configured remote providers. Running `zen` opens setup
-automatically when configuration is missing or invalid; use `/setup` later to
-reconfigure it without leaving the TUI. The standalone agent, TUI, and ACP bridge
-work normally. Optional Swift feature packages are selected from the Features
-step of `/setup`, or installed later with `zen --install-features`; they are
-compiled on demand under
+Drive the agent through configured cloud, subscription, or optional local DS4
+providers. Running `zen` opens setup automatically when configuration is missing
+or invalid; use `/setup` later to reconfigure it without leaving the TUI. The
+standalone agent, TUI, and ACP bridge work normally. Optional Swift feature
+packages are selected from the Features step of `/setup`, or installed later with
+`zen --install-features`; they are compiled on demand under
 `~/.zencode/features/<id>/`, not distributed as executables next to `zen`.
 
 Windows is supported through WSL. Install Ubuntu first, then run the Linux
@@ -108,8 +116,9 @@ HTTP/SSE generation, uses the shared cross-platform SwiftNIO transport.
 
 ## Quick Start
 
-Choose how ZenCODE runs — a cloud API provider, or a ChatGPT or Claude
-subscription — in the setup that opens automatically on first launch:
+Choose a cloud API provider, a ChatGPT or Claude subscription, or the optional
+**DS4 local runtime** on compatible hardware in the setup that opens automatically
+on first launch:
 
 ```bash
 zen

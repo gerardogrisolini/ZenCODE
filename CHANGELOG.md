@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-11
+
 ### Added
 
 - Optional folder-only DS4 setup now discovers existing local GGUF artifacts,
