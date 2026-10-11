@@ -58,6 +58,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Linux builds now normalize POSIX `SOCK_STREAM` values for DS4 loopback
   reservations and test fixtures.
 
+- macOS DS4 hardware probing now treats `system_profiler` as the primary GPU
+  source and uses Metal enumeration only as a fallback, avoiding duplicate GPU
+  entries when both sources report the same device.
+
 ## [2.1.8] - 2026-09-21
 
 ### Added

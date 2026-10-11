@@ -309,13 +309,8 @@ public struct DS4HardwareProbe: @unchecked Sendable {
 
 
 #if canImport(Metal)
-        let metalDevices = Self.probeMetalAPI()
         if devices.isEmpty {
-            devices = metalDevices
-        } else {
-            for device in metalDevices where !devices.contains(where: { $0.name == device.name }) {
-                devices.append(device)
-            }
+            devices = Self.probeMetalAPI()
         }
 #endif
 
