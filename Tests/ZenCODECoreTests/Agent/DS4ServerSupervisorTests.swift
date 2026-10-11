@@ -138,6 +138,11 @@ struct DS4ServerSupervisorTests {
         #expect(firstEndpoint.baseURL.path == "/v1")
         #expect(firstEndpoint.modelsURL.path == "/v1/models")
         #expect(!(await supervisor.launchArguments.contains("-server")))
+        #expect(await supervisor.launchArguments.contains("--ctx"))
+        #expect(await supervisor.launchArguments.contains("1024"))
+        #expect(await supervisor.launchArguments.contains("--power"))
+        #expect(await supervisor.launchArguments.contains("100"))
+        #expect(!(await supervisor.launchArguments.contains("--mtp")))
         #expect(await supervisor.launchArguments.contains("--host"))
         #expect(await supervisor.launchArguments.contains("127.0.0.1"))
         #expect(await supervisor.launchArguments.contains("-m"))
@@ -158,6 +163,74 @@ struct DS4ServerSupervisorTests {
         await #expect(throws: DS4ServerSupervisorError.shutdown) {
             try await supervisor.start()
         }
+    }
+
+    @Test
+    func readinessUsesMTPAndConfiguredPowerArguments() async throws {
+        let fixture = try Fixture.make(mode: "ready")
+        defer { fixture.remove() }
+        let supervisor = try fixture.supervisor(
+            timeout: .seconds(2),
+            mtp: true,
+            power: 37
+        )
+
+        _ = try await supervisor.start()
+        let arguments = await supervisor.launchArguments
+        #expect(arguments.contains("--mtp"))
+        #expect(arguments.contains("--power"))
+        #expect(arguments.contains("37"))
+        await supervisor.shutdown()
+    }
+
+    @Test
+    func ssdStreamingArgumentsAreGatedAndAvailableAfterReenable() async throws {
+        let fixture = try Fixture.make(mode: "ready")
+        defer { fixture.remove() }
+
+        let off = try fixture.supervisor(
+            timeout: .seconds(2),
+            ssdStreaming: false,
+            ssdStreamingCacheExperts: 8,
+            ssdStreamingCacheBytes: 4_000_000_000,
+            ssdStreamingPreloadExperts: 2,
+            ssdStreamingCold: true
+        )
+        _ = try await off.start()
+        let offArguments = await off.launchArguments
+        #expect(!offArguments.contains("--ssd-streaming"))
+        #expect(!offArguments.contains("--ssd-streaming-cold"))
+        #expect(!offArguments.contains("--ssd-streaming-cache-experts"))
+        #expect(!offArguments.contains("--ssd-streaming-preload-experts"))
+        await off.shutdown()
+
+        let on = try fixture.supervisor(
+            timeout: .seconds(2),
+            ssdStreaming: true,
+            ssdStreamingCacheExperts: 8,
+            ssdStreamingPreloadExperts: 2,
+            ssdStreamingCold: true
+        )
+        _ = try await on.start()
+        let onArguments = await on.launchArguments
+        #expect(onArguments.contains("--ssd-streaming"))
+        #expect(onArguments.contains("--ssd-streaming-cold"))
+        #expect(onArguments.contains("--ssd-streaming-cache-experts"))
+        #expect(onArguments.contains("8"))
+        #expect(onArguments.contains("--ssd-streaming-preload-experts"))
+        #expect(onArguments.contains("2"))
+        await on.shutdown()
+
+        let onByteCache = try fixture.supervisor(
+            timeout: .seconds(2),
+            ssdStreaming: true,
+            ssdStreamingCacheBytes: 4_000_000_000
+        )
+        _ = try await onByteCache.start()
+        let onByteCacheArguments = await onByteCache.launchArguments
+        #expect(onByteCacheArguments.contains("--ssd-streaming-cache-experts"))
+        #expect(onByteCacheArguments.contains("4GB"))
+        await onByteCache.shutdown()
     }
 
     @Test
@@ -236,6 +309,23 @@ struct DS4ServerSupervisorTests {
         await supervisor.shutdown()
     }
 
+    @Test
+    func reservedMTPAndPowerArgumentsCannotBeOverridden() async throws {
+        let fixture = try Fixture.make(mode: "ready")
+        defer { fixture.remove() }
+
+        for argument in ["--mtp", "--power", "--power=50"] {
+            let supervisor = try fixture.supervisor(
+                timeout: .seconds(2),
+                additionalArguments: [argument]
+            )
+            await #expect(throws: DS4ServerSupervisorError.reservedArgument(argument)) {
+                _ = try await supervisor.start()
+            }
+            await supervisor.shutdown()
+        }
+    }
+
     private struct Fixture {
         let root: URL
         let executable: URL
@@ -258,21 +348,54 @@ struct DS4ServerSupervisorTests {
             return Fixture(root: root, executable: executable, model: model)
         }
 
-        func manifest(model: Bool) throws -> AgentDS4RuntimeManifest {
+        func manifest(
+            model: Bool,
+            contextWindow: Int = 1024,
+            mtp: Bool = false,
+            power: Int = 100,
+            ssdStreaming: Bool = false,
+            ssdStreamingCacheExperts: UInt32? = nil,
+            ssdStreamingCacheBytes: UInt64? = nil,
+            ssdStreamingPreloadExperts: UInt32? = nil,
+            ssdStreamingCold: Bool = false
+        ) throws -> AgentDS4RuntimeManifest {
             try AgentDS4RuntimeManifest(
                 rootDirectory: root.path,
                 modelRelativePath: model ? "models/model with spaces.gguf" : nil,
-                contextWindow: 1024
+                contextWindow: contextWindow,
+                ssdStreaming: ssdStreaming,
+                ssdStreamingCacheExperts: ssdStreamingCacheExperts,
+                ssdStreamingCacheBytes: ssdStreamingCacheBytes,
+                ssdStreamingPreloadExperts: ssdStreamingPreloadExperts,
+                ssdStreamingCold: ssdStreamingCold,
+                mtp: mtp,
+                power: power
             )
         }
 
         func supervisor(
             timeout: Duration,
             maximumBodyBytes: Int = DS4ServerSupervisor.defaultMaximumReadinessBodyBytes,
-            additionalArguments: [String] = []
+            additionalArguments: [String] = [],
+            mtp: Bool = false,
+            power: Int = 100,
+            ssdStreaming: Bool = false,
+            ssdStreamingCacheExperts: UInt32? = nil,
+            ssdStreamingCacheBytes: UInt64? = nil,
+            ssdStreamingPreloadExperts: UInt32? = nil,
+            ssdStreamingCold: Bool = false
         ) throws -> DS4ServerSupervisor {
             DS4ServerSupervisor(
-                manifest: try manifest(model: true),
+                manifest: try manifest(
+                    model: true,
+                    mtp: mtp,
+                    power: power,
+                    ssdStreaming: ssdStreaming,
+                    ssdStreamingCacheExperts: ssdStreamingCacheExperts,
+                    ssdStreamingCacheBytes: ssdStreamingCacheBytes,
+                    ssdStreamingPreloadExperts: ssdStreamingPreloadExperts,
+                    ssdStreamingCold: ssdStreamingCold
+                ),
                 executableURL: executable,
                 modelAlias: "fixture-model",
                 readinessTimeout: timeout,

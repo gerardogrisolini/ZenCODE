@@ -325,8 +325,9 @@ The setup-created provider uses the ordinary OpenAI-compatible Chat Completions
 profile and a loopback base URL. The runtime permits only loopback hosts,
 canonical model paths below the configured root, regular non-symlink model
 files, bounded readiness/output bodies, and direct argv. Supervisor-owned
-flags (host, port, model path, working directory, backend, context, and
-related server/security flags) cannot be replaced by `additionalArguments`.
+flags (host, port, model path, working directory, backend, context, SSD
+streaming, MTP, power, and related server/security flags) cannot be replaced by
+`additionalArguments`.
 Operational recommendations represent proven Metal, CUDA, or ROCm backends;
 CPU remains diagnostic/reference-only. SSD streaming and batching are
 compatibility options only when the catalog and host evidence support them.
@@ -369,8 +370,9 @@ runtime contract contains only:
 - canonical absolute `rootDirectory`;
 - relative `modelRelativePath` below that root;
 - `backend`;
-- `contextWindow` and `batchedSessions`; and
-- `ssdStreaming`, cache-expert/cache-byte, preload, and cold-streaming options.
+- `contextWindow` and `batchedSessions`;
+- SSD streaming, MTP, and power tuning, including cache-expert/cache-byte,
+  preload, and cold-streaming options.
 
 Path validation canonicalizes the root and rejects absolute/traversal model
 paths, escapes, symlink components, missing required files, and non-regular

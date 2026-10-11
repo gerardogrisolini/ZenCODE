@@ -68,11 +68,14 @@ public typealias AgentDS4PathGuardError = AgentDS4PathValidationError
 
 public enum AgentDS4RuntimeConfigurationError: LocalizedError, Equatable, Sendable {
     case invalidContextWindow(Int)
+    case invalidPower(Int)
 
     public var errorDescription: String? {
         switch self {
         case let .invalidContextWindow(value):
             return "The DS4 context window must be between 1 and 1048576 tokens (got \(value))."
+        case let .invalidPower(value):
+            return "The DS4 power must be between 1 and 100 (got \(value))."
         }
     }
 }
@@ -226,6 +229,30 @@ public enum AgentDS4PathGuard {
     }
 }
 
+/// Setup values for the dedicated DS4 runtime tuning options.
+///
+/// The setup runner uses this value both for the defaults shown to the user
+/// and as a test seam, while ``AgentDS4RuntimeManifest`` remains the persisted
+/// source of truth.
+public struct AgentDS4RuntimeTuning: Codable, Equatable, Hashable, Sendable {
+    public let contextWindow: Int
+    public let ssdStreaming: Bool
+    public let mtp: Bool
+    public let power: Int
+
+    public init(
+        contextWindow: Int = 65_536,
+        ssdStreaming: Bool = false,
+        mtp: Bool = false,
+        power: Int = 100
+    ) {
+        self.contextWindow = contextWindow
+        self.ssdStreaming = ssdStreaming
+        self.mtp = mtp
+        self.power = power
+    }
+}
+
 /// Persisted configuration for the optional local DS4 runtime.
 ///
 /// The root is canonicalized at construction time. The model, when present,
@@ -245,6 +272,8 @@ public struct AgentDS4RuntimeManifest: Codable, Equatable, Hashable, Sendable {
         case ssdStreamingCacheBytes
         case ssdStreamingPreloadExperts
         case ssdStreamingCold
+        case mtp
+        case power
     }
 
     public let rootDirectory: String
@@ -257,6 +286,8 @@ public struct AgentDS4RuntimeManifest: Codable, Equatable, Hashable, Sendable {
     public let ssdStreamingCacheBytes: UInt64?
     public let ssdStreamingPreloadExperts: UInt32?
     public let ssdStreamingCold: Bool
+    public let mtp: Bool
+    public let power: Int
 
     public init(
         rootDirectory: String,
@@ -269,10 +300,15 @@ public struct AgentDS4RuntimeManifest: Codable, Equatable, Hashable, Sendable {
         ssdStreamingCacheBytes: UInt64? = nil,
         ssdStreamingPreloadExperts: UInt32? = nil,
         ssdStreamingCold: Bool = false,
+        mtp: Bool = false,
+        power: Int = 100,
         fileManager: FileManager = .default
     ) throws {
         guard (1...1_048_576).contains(contextWindow) else {
             throw AgentDS4RuntimeConfigurationError.invalidContextWindow(contextWindow)
+        }
+        guard (1...100).contains(power) else {
+            throw AgentDS4RuntimeConfigurationError.invalidPower(power)
         }
 
         let canonicalRoot = try AgentDS4PathGuard.canonicalRootDirectory(
@@ -293,6 +329,8 @@ public struct AgentDS4RuntimeManifest: Codable, Equatable, Hashable, Sendable {
         self.ssdStreamingCacheBytes = ssdStreamingCacheBytes
         self.ssdStreamingPreloadExperts = ssdStreamingPreloadExperts
         self.ssdStreamingCold = ssdStreamingCold
+        self.mtp = mtp
+        self.power = power
 
         // Validate every existing path component even before a selected model
         // is materialized. Runtime resolution remains strict about existence.
@@ -330,7 +368,9 @@ public struct AgentDS4RuntimeManifest: Codable, Equatable, Hashable, Sendable {
                 UInt32.self,
                 forKey: .ssdStreamingPreloadExperts
             ),
-            ssdStreamingCold: try container.decodeIfPresent(Bool.self, forKey: .ssdStreamingCold) ?? false
+            ssdStreamingCold: try container.decodeIfPresent(Bool.self, forKey: .ssdStreamingCold) ?? false,
+            mtp: try container.decodeIfPresent(Bool.self, forKey: .mtp) ?? false,
+            power: try container.decodeIfPresent(Int.self, forKey: .power) ?? 100
         )
     }
 
@@ -346,6 +386,8 @@ public struct AgentDS4RuntimeManifest: Codable, Equatable, Hashable, Sendable {
         try container.encodeIfPresent(ssdStreamingCacheBytes, forKey: .ssdStreamingCacheBytes)
         try container.encodeIfPresent(ssdStreamingPreloadExperts, forKey: .ssdStreamingPreloadExperts)
         try container.encode(ssdStreamingCold, forKey: .ssdStreamingCold)
+        try container.encode(mtp, forKey: .mtp)
+        try container.encode(power, forKey: .power)
     }
 
     /// Resolves the configured model when one is selected. Resolution is

@@ -754,7 +754,8 @@ public actor DS4ServerSupervisor {
         var arguments = [
             "--host", configuration.host,
             "--port", String(port),
-            "--ctx", String(configuration.manifest.contextWindow)
+            "--ctx", String(configuration.manifest.contextWindow),
+            "--power", String(configuration.manifest.power)
         ]
         if let modelURL {
             arguments += ["-m", modelURL.path]
@@ -774,24 +775,27 @@ public actor DS4ServerSupervisor {
         }
         if configuration.manifest.ssdStreaming {
             arguments.append("--ssd-streaming")
+            if configuration.manifest.ssdStreamingCold {
+                arguments.append("--ssd-streaming-cold")
+            }
+            if let cacheExperts = configuration.manifest.ssdStreamingCacheExperts {
+                arguments += ["--ssd-streaming-cache-experts", String(cacheExperts)]
+            } else if let cacheBytes = configuration.manifest.ssdStreamingCacheBytes {
+                // ds4 accepts a decimal GB suffix for byte-sized SSD caches.
+                let bytesPerGigabyte: UInt64 = 1_073_741_824
+                let gigabytes = max(
+                    UInt64(1),
+                    cacheBytes / bytesPerGigabyte
+                        + (cacheBytes % bytesPerGigabyte == 0 ? 0 : 1)
+                )
+                arguments += ["--ssd-streaming-cache-experts", "\(gigabytes)GB"]
+            }
+            if let preloadExperts = configuration.manifest.ssdStreamingPreloadExperts {
+                arguments += ["--ssd-streaming-preload-experts", String(preloadExperts)]
+            }
         }
-        if configuration.manifest.ssdStreamingCold {
-            arguments.append("--ssd-streaming-cold")
-        }
-        if let cacheExperts = configuration.manifest.ssdStreamingCacheExperts {
-            arguments += ["--ssd-streaming-cache-experts", String(cacheExperts)]
-        } else if let cacheBytes = configuration.manifest.ssdStreamingCacheBytes {
-            // ds4 accepts a decimal GB suffix for byte-sized SSD caches.
-            let bytesPerGigabyte: UInt64 = 1_073_741_824
-            let gigabytes = max(
-                UInt64(1),
-                cacheBytes / bytesPerGigabyte
-                    + (cacheBytes % bytesPerGigabyte == 0 ? 0 : 1)
-            )
-            arguments += ["--ssd-streaming-cache-experts", "\(gigabytes)GB"]
-        }
-        if let preloadExperts = configuration.manifest.ssdStreamingPreloadExperts {
-            arguments += ["--ssd-streaming-preload-experts", String(preloadExperts)]
+        if configuration.manifest.mtp {
+            arguments.append("--mtp")
         }
         // Additional arguments are still individual argv entries; they are
         // never interpolated into a shell command. Supervisor-owned flags are
@@ -813,6 +817,7 @@ public actor DS4ServerSupervisor {
         "--chdir", "--cwd", "--workdir", "--working-directory",
         "--root", "--root-directory",
         "-c", "--ctx", "--context", "--context-size",
+        "--mtp", "--power",
         "--trace", "--kv-disk-dir", "--dir-steering-file",
         "--backend", "--metal", "--cuda", "--rocm", "--cpu",
         "--batched-session", "--ssd-streaming", "--ssd-streaming-cold",

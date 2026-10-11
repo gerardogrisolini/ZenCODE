@@ -62,6 +62,8 @@ struct AgentDS4RuntimeManifestTests {
             ssdStreamingCacheBytes: 4_000_000_000,
             ssdStreamingPreloadExperts: 2,
             ssdStreamingCold: true,
+            mtp: true,
+            power: 37,
             fileManager: fileManager
         )
         let provider = AgentRemoteProvider(
@@ -91,6 +93,8 @@ struct AgentDS4RuntimeManifestTests {
         let json = try #require(String(data: encoded, encoding: .utf8))
         #expect(json.contains("\"version\":14"))
         #expect(json.contains("\"ds4Runtime\""))
+        #expect(json.contains("\"mtp\":true"))
+        #expect(json.contains("\"power\":37"))
         #expect(!json.localizedCaseInsensitiveContains("pid"))
         #expect(!json.localizedCaseInsensitiveContains("port"))
         #expect(!json.localizedCaseInsensitiveContains("hardware"))
@@ -115,6 +119,43 @@ struct AgentDS4RuntimeManifestTests {
             thinkingSelection: nil
         )
         #expect(selection.ds4Runtime == runtime)
+    }
+
+    @Test
+    func legacyRuntimeDefaultsNewTuningFields() throws {
+        let data = Data(
+            """
+            {
+              "rootDirectory": "/tmp",
+              "backend": "metal",
+              "contextWindow": 65536,
+              "batchedSessions": false,
+              "ssdStreaming": false,
+              "ssdStreamingCold": false
+            }
+            """.utf8
+        )
+
+        let runtime = try JSONDecoder().decode(AgentDS4RuntimeManifest.self, from: data)
+        #expect(runtime.contextWindow == 65_536)
+        #expect(!runtime.mtp)
+        #expect(runtime.power == 100)
+    }
+
+    @Test
+    func contextAndPowerAreValidatedAgainstUpstreamRanges() {
+        #expect(throws: AgentDS4RuntimeConfigurationError.invalidContextWindow(0)) {
+            try AgentDS4RuntimeManifest(rootDirectory: "/tmp", contextWindow: 0)
+        }
+        #expect(throws: AgentDS4RuntimeConfigurationError.invalidContextWindow(1_048_577)) {
+            try AgentDS4RuntimeManifest(rootDirectory: "/tmp", contextWindow: 1_048_577)
+        }
+        #expect(throws: AgentDS4RuntimeConfigurationError.invalidPower(0)) {
+            try AgentDS4RuntimeManifest(rootDirectory: "/tmp", power: 0)
+        }
+        #expect(throws: AgentDS4RuntimeConfigurationError.invalidPower(101)) {
+            try AgentDS4RuntimeManifest(rootDirectory: "/tmp", power: 101)
+        }
     }
 
     @Test

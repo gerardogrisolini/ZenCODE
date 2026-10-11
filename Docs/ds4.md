@@ -63,7 +63,14 @@ never becomes a positive compatibility claim.
    `http://127.0.0.1/v1`; it does not start DS4. Cancelling, declining,
    supplying an invalid folder, finding no GGUF, or finding no operational
    proposal leaves the existing manifest unchanged.
-6. Finish setup normally. Only the final setup transaction writes settings.
+6. After confirming the proposal, choose the managed runtime tuning values:
+   context window (`--ctx`, default 65,536 tokens), SSD streaming
+   (`--ssd-streaming`, defaulting to the prior value or the compatibility
+   proposal), embedded MTP (`--mtp`, off by default), and GPU duty-cycle power
+   (`--power`, 1–100, default 100). Existing values are offered again when
+   reconfiguring the same DS4 runtime; cancelling any tuning prompt leaves the
+   manifest unchanged.
+7. Finish setup normally. Only the final setup transaction writes settings.
    Existing non-DS4 providers, models, API-key entries, and unrelated settings
    are retained. Re-running the section updates the existing DS4 entry and
    retains its runtime tuning where possible.
@@ -82,8 +89,9 @@ manifests that have no DS4 section. It records:
 - the canonical absolute checkout root;
 - the model path relative to that root;
 - the selected backend (`metal`, `cuda`, `rocm`, or `cpu`);
-- context-window and batching settings; and
-- SSD-streaming settings and cache/preload tuning when selected.
+- context-window and batching settings;
+- runtime tuning for `--ssd-streaming`, `--mtp`, and `--power` (with SSD
+  cache/preload tuning when selected).
 
 It never records a PID, listening port, endpoint URL discovered at runtime,
 readiness state, process handle, hardware snapshot, or diagnostic output. The
@@ -101,9 +109,9 @@ sent to the loopback child.
 - The supervisor starts lazily on preload/first generation, binds only a
   loopback host, chooses or validates a loopback port, constructs direct argv,
   verifies readiness through `/v1/models`, and checks the expected API model ID.
-  It bounds readiness/output data and rejects additional arguments that could
-  override host, port, model path, working directory, backend, or related
-  security-sensitive flags.
+  The supervisor owns the managed values for host, port, model path, working
+  directory, backend, context, SSD streaming, MTP, power, and related
+  server/security flags; arbitrary additional arguments cannot override them.
 - `stop` reaps the child while keeping the supervisor reusable. `shutdown` is a
   terminal fence: it cancels pending startup, stops the child owned by that
   supervisor, and prevents a late task from resurrecting it. A factory-created

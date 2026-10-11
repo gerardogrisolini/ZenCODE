@@ -21,6 +21,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- DS4 setup now exposes and persists the managed `--ctx`, `--ssd-streaming`,
+  `--mtp`, and `--power` runtime options, reusing existing values on
+  reconfiguration and applying them to the supervised server argv.
+
 - ACP tool-completion updates now publish every recorded changed file in standard
   `locations`, alongside the complete per-file diff content, so clients can render
   multi-file operations as separate artifacts instead of retaining only the

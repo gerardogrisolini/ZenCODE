@@ -35,7 +35,8 @@ extension ZenCODESetupRunner {
         hardwareProbe: (@Sendable () async -> DS4HardwareSnapshot)? = nil,
         promptFolder: ((String?) throws -> String?)? = nil,
         confirmProposal: ((DS4CompatibilityProposal) throws -> Bool)? = nil,
-        selectProposal: (([DS4CompatibilityProposal], DS4CompatibilityProposal) throws -> DS4CompatibilityProposal?)? = nil
+        selectProposal: (([DS4CompatibilityProposal], DS4CompatibilityProposal) throws -> DS4CompatibilityProposal?)? = nil,
+        promptTuning: ((AgentDS4RuntimeTuning) throws -> AgentDS4RuntimeTuning)? = nil
     ) async throws -> AgentSettingsManifest? {
         do {
             let previousRuntime = existingDS4Runtime(in: existingManifest)
@@ -149,18 +150,30 @@ extension ZenCODESetupRunner {
                 return existingManifest
             }
 
+            let tuningDefaults = AgentDS4RuntimeTuning(
+                contextWindow: previousRuntime?.contextWindow ?? 65_536,
+                ssdStreaming: previousRuntime?.ssdStreaming ?? (proposal.mode == .ssdStreaming),
+                mtp: previousRuntime?.mtp ?? false,
+                power: previousRuntime?.power ?? 100
+            )
+            let tuning = if let promptTuning {
+                try promptTuning(tuningDefaults)
+            } else {
+                try promptDS4RuntimeTuning(defaults: tuningDefaults)
+            }
             let runtime = try AgentDS4RuntimeManifest(
                 rootDirectory: installation.rootDirectory,
                 modelRelativePath: artifact.relativePath,
                 backend: proposal.backend ?? .cpu,
-                contextWindow: previousRuntime?.contextWindow ?? 65_536,
+                contextWindow: tuning.contextWindow,
                 batchedSessions: previousRuntime?.batchedSessions ?? false,
-                ssdStreaming: proposal.mode == .ssdStreaming
-                    || (previousRuntime?.ssdStreaming ?? false),
+                ssdStreaming: tuning.ssdStreaming,
                 ssdStreamingCacheExperts: previousRuntime?.ssdStreamingCacheExperts,
                 ssdStreamingCacheBytes: previousRuntime?.ssdStreamingCacheBytes,
                 ssdStreamingPreloadExperts: previousRuntime?.ssdStreamingPreloadExperts,
-                ssdStreamingCold: previousRuntime?.ssdStreamingCold ?? false
+                ssdStreamingCold: previousRuntime?.ssdStreamingCold ?? false,
+                mtp: tuning.mtp,
+                power: tuning.power
             )
             return manifestByApplyingDS4(
                 existingManifest,
@@ -288,8 +301,7 @@ extension ZenCODESetupRunner {
             modelID: apiModelID,
             providerID: providerID,
             provider: remoteProvider,
-            configuredContextWindowLimit: previousModel?.configuredContextWindowLimit
-                ?? runtime.contextWindow,
+            configuredContextWindowLimit: runtime.contextWindow,
             generationParameterOverrides: previousModel?.generationParameterOverrides,
             thinkingOptions: previousModel?.thinkingOptions,
             defaultThinkingSelection: previousModel?.defaultThinkingSelection,
@@ -343,7 +355,69 @@ extension ZenCODESetupRunner {
         if runtime.ssdStreaming {
             parts.append("SSD streaming")
         }
+        if runtime.mtp {
+            parts.append("MTP")
+        }
+        parts.append("power \(runtime.power)")
+        parts.append("ctx \(runtime.contextWindow)")
         return parts.joined(separator: " · ")
+    }
+
+    private static func promptDS4RuntimeTuning(
+        defaults: AgentDS4RuntimeTuning
+    ) throws -> AgentDS4RuntimeTuning {
+        let contextWindow = try promptDS4Integer(
+            "DS4 context window (--ctx)",
+            defaultValue: defaults.contextWindow,
+            range: 1...1_048_576,
+            help: "Enter the DS4 context window in tokens (1...1048576)."
+        )
+        let ssdStreaming = try promptYesNo(
+            "Enable DS4 SSD streaming (--ssd-streaming)?",
+            defaultValue: defaults.ssdStreaming,
+            help: "Streams experts from SSD instead of keeping all experts resident."
+        )
+        let mtp = try promptYesNo(
+            "Enable DS4 MTP (--mtp)?",
+            defaultValue: defaults.mtp,
+            help: "Passes the upstream DS4 MTP flag without changing catalog capabilities."
+        )
+        let power = try promptDS4Integer(
+            "DS4 power (--power)",
+            defaultValue: defaults.power,
+            range: 1...100,
+            help: "Enter the DS4 power value (1...100; upstream default is 100)."
+        )
+        return AgentDS4RuntimeTuning(
+            contextWindow: contextWindow,
+            ssdStreaming: ssdStreaming,
+            mtp: mtp,
+            power: power
+        )
+    }
+
+    private static func promptDS4Integer(
+        _ label: String,
+        defaultValue: Int,
+        range: ClosedRange<Int>,
+        help: String
+    ) throws -> Int {
+        while true {
+            let rawValue = try promptString(
+                label,
+                defaultValue: String(defaultValue),
+                allowEmpty: false,
+                help: help
+            )
+            guard let value = Int(rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+                  range.contains(value) else {
+                AgentOutput.standardError.writeString(
+                    "\(label) must be between \(range.lowerBound) and \(range.upperBound). Enter ? for help.\n"
+                )
+                continue
+            }
+            return value
+        }
     }
 
     private static func printDS4CompatibilitySummary(

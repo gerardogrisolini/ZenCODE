@@ -25,6 +25,12 @@ struct ZenCODESetupDS4Tests {
                 #expect(proposal.installationState == .installed)
                 #expect(proposal.status == .ready)
                 return true
+            },
+            promptTuning: { defaults in
+                #expect(defaults.contextWindow == 65_536)
+                #expect(!defaults.mtp)
+                #expect(defaults.power == 100)
+                return defaults
             }
         )
 
@@ -59,7 +65,8 @@ struct ZenCODESetupDS4Tests {
             confirmProposal: { proposal in
                 #expect(proposal.model.id == fixture.entry.id)
                 return true
-            }
+            },
+            promptTuning: { $0 }
         )
 
         let manifest = try #require(result)
@@ -85,7 +92,9 @@ struct ZenCODESetupDS4Tests {
             ssdStreamingCacheExperts: 8,
             ssdStreamingCacheBytes: 4_000_000_000,
             ssdStreamingPreloadExperts: 2,
-            ssdStreamingCold: true
+            ssdStreamingCold: true,
+            mtp: true,
+            power: 73
         )
         let ds4ProviderID = UUID()
         let ds4Provider = AgentRemoteProvider(
@@ -122,7 +131,19 @@ struct ZenCODESetupDS4Tests {
             catalog: fixture.catalog,
             hardwareProbe: { fixture.hardware },
             promptFolder: { _ in fixture.root.path },
-            confirmProposal: { _ in true }
+            confirmProposal: { _ in true },
+            promptTuning: { defaults in
+                #expect(defaults.contextWindow == previousRuntime.contextWindow)
+                #expect(defaults.ssdStreaming)
+                #expect(defaults.mtp == previousRuntime.mtp)
+                #expect(defaults.power == previousRuntime.power)
+                return AgentDS4RuntimeTuning(
+                    contextWindow: 65_536,
+                    ssdStreaming: defaults.ssdStreaming,
+                    mtp: defaults.mtp,
+                    power: defaults.power
+                )
+            }
         )
 
         let updated = try #require(result)
@@ -130,16 +151,91 @@ struct ZenCODESetupDS4Tests {
             updated.providers.first { $0.id == ds4ProviderID }
         )
         let runtime = try #require(updatedProvider.ds4Runtime)
-        #expect(runtime.contextWindow == previousRuntime.contextWindow)
+        #expect(runtime.contextWindow == 65_536)
         #expect(runtime.batchedSessions == previousRuntime.batchedSessions)
         #expect(runtime.ssdStreaming)
         #expect(runtime.ssdStreamingCacheExperts == previousRuntime.ssdStreamingCacheExperts)
         #expect(runtime.ssdStreamingCacheBytes == previousRuntime.ssdStreamingCacheBytes)
         #expect(runtime.ssdStreamingPreloadExperts == previousRuntime.ssdStreamingPreloadExperts)
         #expect(runtime.ssdStreamingCold == previousRuntime.ssdStreamingCold)
+        #expect(runtime.mtp == previousRuntime.mtp)
+        #expect(runtime.power == previousRuntime.power)
+        let updatedModel = try #require(
+            updated.models.first { $0.id == oldDS4Model.id }
+        )
+        #expect(updatedModel.configuredContextWindowLimit == runtime.contextWindow)
         #expect(updated.providers.contains { $0.id == remote.providers[0].id })
         #expect(updated.models.contains { $0.id == remote.models[0].id })
         #expect(updated.selectedModelID == "old-ds4-manifest")
+    }
+
+    @Test
+    func rerunPreservesExplicitlyDisabledSSDStreamingWhenProposalRecommendsIt() async throws {
+        let fixture = try Fixture.make(streamingRecommended: true)
+        defer { fixture.remove() }
+
+        let previousRuntime = try AgentDS4RuntimeManifest(
+            rootDirectory: fixture.root.path,
+            modelRelativePath: fixture.entry.artifacts[0].relativePath,
+            backend: .metal,
+            contextWindow: 131_072,
+            ssdStreaming: false,
+            ssdStreamingCacheExperts: 8,
+            ssdStreamingPreloadExperts: 2,
+            ssdStreamingCold: true
+        )
+        let ds4ProviderID = UUID()
+        let ds4Provider = AgentRemoteProvider(
+            id: ds4ProviderID,
+            name: "Existing DS4",
+            baseURL: "http://127.0.0.1/v1",
+            modelID: "old-ds4",
+            chatEndpoint: .chatCompletions,
+            providerProfileID: .custom,
+            protocolProfileID: .openAIChatCompletions,
+            authPolicy: .noAuthentication,
+            ds4Runtime: previousRuntime
+        )
+        let oldDS4Model = AgentSettingsModelManifest(
+            id: "old-ds4-manifest",
+            kind: .remoteAPI,
+            title: "Old DS4",
+            modelID: "old-ds4",
+            providerID: ds4ProviderID,
+            provider: ds4Provider,
+            configuredContextWindowLimit: previousRuntime.contextWindow,
+            ds4Runtime: previousRuntime
+        )
+        let existing = AgentSettingsManifest(
+            providers: [AgentSettingsProviderManifest(provider: ds4Provider)],
+            models: [oldDS4Model],
+            selectedModelID: oldDS4Model.id
+        )
+
+        let result = try await ZenCODESetupRunner.configureDS4Runtime(
+            existingManifest: existing,
+            catalog: fixture.catalog,
+            hardwareProbe: { fixture.hardware },
+            promptFolder: { _ in fixture.root.path },
+            confirmProposal: { proposal in
+                #expect(proposal.mode == .ssdStreaming)
+                return true
+            },
+            promptTuning: { defaults in
+                #expect(!defaults.ssdStreaming)
+                return defaults
+            }
+        )
+
+        let updated = try #require(result)
+        let updatedProvider = try #require(
+            updated.providers.first { $0.id == ds4ProviderID }
+        )
+        let runtime = try #require(updatedProvider.ds4Runtime)
+        #expect(!runtime.ssdStreaming)
+        #expect(runtime.ssdStreamingCacheExperts == previousRuntime.ssdStreamingCacheExperts)
+        #expect(runtime.ssdStreamingPreloadExperts == previousRuntime.ssdStreamingPreloadExperts)
+        #expect(runtime.ssdStreamingCold == previousRuntime.ssdStreamingCold)
     }
 
     @Test
@@ -204,6 +300,49 @@ struct ZenCODESetupDS4Tests {
         )
 
         #expect(result == nil)
+    }
+
+    @Test
+    func cancellationDuringTuningLeavesOriginalManifestUnchanged() async throws {
+        let fixture = try Fixture.make()
+        defer { fixture.remove() }
+        let original = Self.remoteManifest()
+        var didPrompt = false
+
+        let result = try await ZenCODESetupRunner.configureDS4Runtime(
+            existingManifest: original,
+            catalog: fixture.catalog,
+            hardwareProbe: { fixture.hardware },
+            promptFolder: { _ in fixture.root.path },
+            confirmProposal: { _ in true },
+            promptTuning: { _ in
+                didPrompt = true
+                throw ZenCODESetupError.cancelled
+            }
+        )
+
+        #expect(didPrompt)
+        #expect(result == original)
+    }
+
+    @Test
+    func tuningErrorLeavesOriginalManifestUnchanged() async throws {
+        let fixture = try Fixture.make()
+        defer { fixture.remove() }
+        let original = Self.remoteManifest()
+
+        let result = try await ZenCODESetupRunner.configureDS4Runtime(
+            existingManifest: original,
+            catalog: fixture.catalog,
+            hardwareProbe: { fixture.hardware },
+            promptFolder: { _ in fixture.root.path },
+            confirmProposal: { _ in true },
+            promptTuning: { _ in
+                throw AgentDS4RuntimeConfigurationError.invalidPower(0)
+            }
+        )
+
+        #expect(result == original)
     }
 
     @Test
@@ -274,7 +413,10 @@ struct ZenCODESetupDS4Tests {
         let catalog: DS4ModelCatalog
         let hardware: DS4HardwareSnapshot
 
-        static func make(writeModel: Bool = true) throws -> Fixture {
+        static func make(
+            writeModel: Bool = true,
+            streamingRecommended: Bool = false
+        ) throws -> Fixture {
             let fileManager = FileManager.default
             let root = fileManager.temporaryDirectory
                 .appendingPathComponent("zencode-ds4-setup-")
@@ -297,9 +439,15 @@ struct ZenCODESetupDS4Tests {
                 artifacts: [DS4ModelArtifact(relativePath: "gguf/fixture.gguf")],
                 resources: DS4ModelResourceEstimate(
                     diskBytes: 16,
-                    residentMemoryBytes: 8 * 1024 * 1024 * 1024
+                    residentMemoryBytes: streamingRecommended
+                        ? 32 * 1024 * 1024 * 1024
+                        : 8 * 1024 * 1024 * 1024,
+                    streamingMemoryBytes: streamingRecommended
+                        ? 8 * 1024 * 1024 * 1024
+                        : nil
                 ),
-                supportedBackends: [.metal]
+                supportedBackends: [.metal],
+                supportsSSDStreaming: streamingRecommended
             )
             let hardware = DS4HardwareSnapshot(
                 platform: .macOS,
