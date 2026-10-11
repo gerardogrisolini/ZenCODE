@@ -24,7 +24,7 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         case memoryEmbedding
     }
 
-    public static let currentVersion = 13
+    public static let currentVersion = 14
     public static let minimumSupportedVersion = 4
 
     public let version: Int
@@ -245,11 +245,17 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         var providersByID: [UUID: AgentSettingsProviderManifest] = [:]
         for model in models {
             if let provider = model.provider {
-                providersByID[provider.id] = AgentSettingsProviderManifest(provider: provider)
+                let runtime = provider.ds4Runtime ?? model.ds4Runtime
+                providersByID[provider.id] = AgentSettingsProviderManifest(
+                    provider: provider.withDS4Runtime(runtime)
+                )
             }
         }
         for provider in providers {
-            providersByID[provider.id] = provider
+            let inheritedRuntime = providersByID[provider.id]?.ds4Runtime
+            providersByID[provider.id] = provider.ds4Runtime == nil
+                ? provider.withDS4Runtime(inheritedRuntime)
+                : provider
         }
         return providersByID.values.sorted {
             let comparison = $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle)

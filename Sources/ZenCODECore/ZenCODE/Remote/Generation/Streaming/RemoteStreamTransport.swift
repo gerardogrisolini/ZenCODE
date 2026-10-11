@@ -51,14 +51,16 @@ public enum RemoteStreamTransport {
         body: [String: Any],
         provider: AgentRemoteProvider,
         apiKey: String?,
-        endpointBaseURLOverride: URL? = nil
+        endpointBaseURLOverride: URL? = nil,
+        suppressAPIKey: Bool = false
     ) throws -> RemoteHTTPStreamingRequest {
         let components = try streamRequestComponents(
             path: path,
             body: body,
             provider: provider,
             apiKey: apiKey,
-            endpointBaseURLOverride: endpointBaseURLOverride
+            endpointBaseURLOverride: endpointBaseURLOverride,
+            suppressAPIKey: suppressAPIKey
         )
         return RemoteHTTPStreamingRequest(
             url: components.url,
@@ -74,7 +76,8 @@ public enum RemoteStreamTransport {
         body: [String: Any],
         provider: AgentRemoteProvider,
         apiKey: String?,
-        endpointBaseURLOverride: URL? = nil
+        endpointBaseURLOverride: URL? = nil,
+        suppressAPIKey: Bool = false
     ) throws -> StreamRequestComponents {
         let baseURL = endpointBaseURLOverride?.absoluteString ?? provider.baseURL
         var headers = [
@@ -84,10 +87,12 @@ public enum RemoteStreamTransport {
         // Anthropic Messages Direct authentication is intentionally isolated
         // from OAuth/Subscription and from OpenAI-compatible Bearer policy.
         if provider.protocolProfileID == .anthropicMessages {
-            guard let effectiveAPIKey = provider.authPolicy.effectiveAPIKey(apiKey) else {
-                throw RemoteGenerationClientError.missingAPIKey(provider.displayTitle)
+            if !suppressAPIKey {
+                guard let effectiveAPIKey = provider.authPolicy.effectiveAPIKey(apiKey) else {
+                    throw RemoteGenerationClientError.missingAPIKey(provider.displayTitle)
+                }
+                headers.append(RemoteHTTPHeader(name: "x-api-key", value: effectiveAPIKey))
             }
-            headers.append(RemoteHTTPHeader(name: "x-api-key", value: effectiveAPIKey))
             headers.append(RemoteHTTPHeader(name: "anthropic-version", value: "2023-06-01"))
             if requiresAnthropicInterleavedThinkingBeta(body: body) {
                 headers.append(RemoteHTTPHeader(
@@ -95,7 +100,8 @@ public enum RemoteStreamTransport {
                     value: "interleaved-thinking-2025-05-14"
                 ))
             }
-        } else if let effectiveAPIKey = provider.authPolicy.effectiveAPIKey(apiKey) {
+        } else if !suppressAPIKey,
+                  let effectiveAPIKey = provider.authPolicy.effectiveAPIKey(apiKey) {
             // The shared policy gate suppresses a residual persisted key without
             // mutating settings; optional and required policies retain it.
             headers.append(

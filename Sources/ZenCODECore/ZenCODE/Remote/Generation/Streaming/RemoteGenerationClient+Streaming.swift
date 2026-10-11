@@ -12,10 +12,11 @@ extension RemoteGenerationClient {
     // MARK: - Configuration helpers
 
     public func validateConfiguration() throws {
-        guard URL(string: provider.baseURL) != nil else {
-            throw RemoteGenerationClientError.invalidBaseURL(provider.baseURL)
+        let baseURL = streamEndpointBaseURLOverride?.absoluteString ?? provider.baseURL
+        guard URL(string: baseURL) != nil else {
+            throw RemoteGenerationClientError.invalidBaseURL(baseURL)
         }
-        if provider.requiresAPIKey, apiKey == nil {
+        if provider.requiresAPIKey, apiKey == nil, !usesLocalDS4Endpoint {
             throw RemoteGenerationClientError.missingAPIKey(provider.displayTitle)
         }
     }
@@ -415,12 +416,17 @@ extension RemoteGenerationClient {
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void,
         eventParser: @escaping ([String: Any]) -> [ParsedRemoteStreamEvent]
     ) async throws -> RemoteStreamResult {
+        try await ensureDS4Ready()
+        guard !isDS4Shutdown else {
+            throw DS4ServerSupervisorError.shutdown
+        }
         let request = try RemoteStreamTransport.buildHTTPStreamingRequest(
             path: path,
             body: body,
             provider: provider,
             apiKey: apiKey,
-            endpointBaseURLOverride: streamEndpointBaseURLOverride
+            endpointBaseURLOverride: streamEndpointBaseURLOverride,
+            suppressAPIKey: usesLocalDS4Endpoint
         )
 
         if !configuration.appMode {

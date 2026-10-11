@@ -10,7 +10,28 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Optional folder-only DS4 setup now discovers existing local GGUF artifacts,
+  reports evidence-backed hardware/model compatibility, and stages a loopback
+  OpenAI-compatible provider without downloading, building, starting DS4, or
+  persisting process state. The new [DS4 setup guide](Docs/ds4.md) documents
+  supported discovery, staged setup, managed-runtime, and internal endpoint
+  integration levels.
+
 ### Changed
+
+- DS4 setup now exposes and persists the managed `--ctx`, `--ssd-streaming`,
+  `--mtp`, and `--power` runtime options, reusing existing values on
+  reconfiguration and applying them to the supervised server argv.
+
+- DS4 startup now probes the explicit loopback convention `127.0.0.1:8000`
+  (or the configured provider port) and adopts a ready `/v1/models` endpoint
+  only when the requested model alias is advertised. Adopted endpoints are
+  explicitly external and are never terminated by ZenCODE; when no compatible
+  listener exists, the supervisor launches its managed child with the existing
+  dynamic-port fallback. Backend reset and full shutdown continue to stop only
+  managed children, while logical session close leaves the runtime alive.
 
 - ACP tool-completion updates now publish every recorded changed file in standard
   `locations`, alongside the complete per-file diff content, so clients can render

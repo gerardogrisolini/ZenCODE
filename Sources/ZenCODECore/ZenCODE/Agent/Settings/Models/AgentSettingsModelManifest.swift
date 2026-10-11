@@ -20,6 +20,7 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
         case context
         case generation
         case thinking
+        case ds4Runtime
     }
 
     private struct ContextManifest: Codable, Hashable, Sendable {
@@ -88,6 +89,9 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
     public let apiKey: String?
     public let thinkingOptions: [AgentThinkingSelection]?
     public let defaultThinkingSelection: AgentThinkingSelection?
+    /// Explicit model-level runtime metadata when no provider record has yet
+    /// been attached. Once resolved, provider metadata is authoritative.
+    public let ds4Runtime: AgentDS4RuntimeConfiguration?
 
     public init(
         id: String? = nil,
@@ -101,7 +105,8 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
         generationParameterOverrides: AgentGenerationParameterOverrides? = nil,
         apiKey: String? = nil,
         thinkingOptions: [AgentThinkingSelection]? = nil,
-        defaultThinkingSelection: AgentThinkingSelection? = nil
+        defaultThinkingSelection: AgentThinkingSelection? = nil,
+        ds4Runtime: AgentDS4RuntimeConfiguration? = nil
     ) {
         let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedLLMID = llmID?.nilIfBlank
@@ -130,6 +135,7 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
         self.apiKey = apiKey?.nilIfBlank
         self.thinkingOptions = normalizedThinkingOptions.isEmpty ? nil : normalizedThinkingOptions
         self.defaultThinkingSelection = normalizedDefaultThinkingSelection
+        self.ds4Runtime = ds4Runtime ?? provider?.ds4Runtime
     }
 
     public init(from decoder: Decoder) throws {
@@ -155,7 +161,11 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
             generationParameterOverrides: generation?.overrides,
             apiKey: nil,
             thinkingOptions: thinking?.options,
-            defaultThinkingSelection: thinking?.defaultSelection
+            defaultThinkingSelection: thinking?.defaultSelection,
+            ds4Runtime: try container.decodeIfPresent(
+                AgentDS4RuntimeConfiguration.self,
+                forKey: .ds4Runtime
+            )
         )
     }
 
@@ -191,6 +201,13 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
         if !thinking.isEmpty {
             try container.encode(thinking, forKey: .thinking)
         }
+        // DS4 metadata also round-trips standalone model manifests. The top
+        // level provider manifest keeps the authoritative copy in settings.
+        try container.encodeIfPresent(ds4Runtime, forKey: .ds4Runtime)
+    }
+
+    public var runtime: AgentDS4RuntimeConfiguration? {
+        ds4Runtime
     }
 
     public var displayTitle: String {
@@ -253,8 +270,17 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
               !modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
-        let resolvedProvider = provider
+        var resolvedProvider = provider
             ?? providerID.flatMap { providersByID[$0]?.remoteProvider(modelID: modelID) }
+        let providerIDForRuntime: UUID? = resolvedProvider?.id ?? providerID
+        let resolvedRuntime = resolvedProvider?.ds4Runtime
+            ?? providerIDForRuntime.flatMap { providersByID[$0]?.ds4Runtime }
+            ?? ds4Runtime
+        if let existingProvider = resolvedProvider,
+           existingProvider.ds4Runtime == nil,
+           resolvedRuntime != nil {
+            resolvedProvider = existingProvider.withDS4Runtime(resolvedRuntime)
+        }
         if kind == .remoteAPI,
            resolvedProvider == nil {
             return nil
@@ -271,7 +297,8 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
             generationParameterOverrides: generationParameterOverrides,
             apiKey: apiKey,
             thinkingOptions: thinkingOptions,
-            defaultThinkingSelection: defaultThinkingSelection
+            defaultThinkingSelection: defaultThinkingSelection,
+            ds4Runtime: resolvedRuntime
         )
     }
 

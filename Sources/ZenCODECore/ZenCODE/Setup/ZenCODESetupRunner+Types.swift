@@ -169,8 +169,13 @@ struct SetupSession {
 enum SetupSection: Equatable, Hashable {
     case providersAndModels
     case telegram, features, agents, agentModels, responseLanguage, memoryEmbedding
+    case ds4Runtime
     case dataManagement
     case resetRemoteConfiguration, finish, cancel
+
+    /// Short compatibility spelling used by callers that refer to the local
+    /// runtime simply as "DS4".
+    static var ds4: SetupSection { .ds4Runtime }
 
     private struct Descriptor {
         let title: String
@@ -187,6 +192,7 @@ enum SetupSection: Equatable, Hashable {
         .agentModels: .init(title: "Agent model bindings", category: .recommended, requiresConfiguredModels: true, aliases: ["agent models", "agent model bindings", "agent bindings", "agent capability", "models", "capability", "agent models & capability"]),
         .responseLanguage: .init(title: "Response language", category: .recommended, requiresConfiguredModels: false, aliases: ["language", "response language", "locale", "response_language"]),
         .memoryEmbedding: .init(title: "Memory embeddings", category: .recommended, requiresConfiguredModels: false, aliases: ["memory embeddings", "memory embedding", "embeddings", "embedding", "bm25"]),
+        .ds4Runtime: .init(title: "DS4 local runtime", category: .optional, requiresConfiguredModels: false, aliases: ["ds4", "ds4 runtime", "ds4 setup", "local ds4", "local runtime"]),
         .dataManagement: .init(title: "Data management", category: .optional, requiresConfiguredModels: false, aliases: ["data", "data management", "backup", "backups", "export", "import", "transfer", "manage data"]),
         .resetRemoteConfiguration: .init(title: "Reset remote configuration", category: .optional, requiresConfiguredModels: false, aliases: ["reset", "reset remote configuration", "reset configuration"]),
         .finish: .init(title: "Finish setup", category: .finish, requiresConfiguredModels: false, aliases: ["finish", "done", "exit", "quit", "end", "stop"]),
@@ -208,6 +214,7 @@ struct SetupProviderInput {
     let providerProfileID: AgentProviderProfileID
     let protocolProfileID: AgentProtocolProfileID
     let authPolicy: AgentProviderAuthPolicy
+    let ds4Runtime: AgentDS4RuntimeConfiguration?
     let apiKey: String?
     let models: [AgentSettingsModelManifest]
     let chatGPTSubscriptionCredentials: CodexAgentCredentials?
@@ -221,6 +228,7 @@ struct SetupProviderInput {
         providerProfileID: AgentProviderProfileID? = nil,
         protocolProfileID: AgentProtocolProfileID? = nil,
         authPolicy: AgentProviderAuthPolicy? = nil,
+        ds4Runtime: AgentDS4RuntimeConfiguration? = nil,
         apiKey: String?,
         models: [AgentSettingsModelManifest],
         chatGPTSubscriptionCredentials: CodexAgentCredentials? = nil,
@@ -238,6 +246,7 @@ struct SetupProviderInput {
         self.providerProfileID = providerProfileID ?? legacyProfiles.provider
         self.protocolProfileID = protocolProfileID ?? legacyProfiles.protocolProfile
         self.authPolicy = authPolicy ?? legacyProfiles.auth
+        self.ds4Runtime = ds4Runtime
         self.apiKey = apiKey
         self.models = models
         self.chatGPTSubscriptionCredentials = chatGPTSubscriptionCredentials

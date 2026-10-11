@@ -17,6 +17,7 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
         case providerProfileID
         case protocolProfileID
         case authPolicy
+        case ds4Runtime
     }
 
     public let id: UUID
@@ -26,6 +27,7 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
     public let providerProfileID: AgentProviderProfileID
     public let protocolProfileID: AgentProtocolProfileID
     public let authPolicy: AgentProviderAuthPolicy
+    public let ds4Runtime: AgentDS4RuntimeConfiguration?
 
     public init(
         id: UUID,
@@ -34,7 +36,8 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
         chatEndpoint: AgentRemoteChatEndpoint,
         providerProfileID: AgentProviderProfileID? = nil,
         protocolProfileID: AgentProtocolProfileID? = nil,
-        authPolicy: AgentProviderAuthPolicy? = nil
+        authPolicy: AgentProviderAuthPolicy? = nil,
+        ds4Runtime: AgentDS4RuntimeConfiguration? = nil
     ) {
         self.id = id
         self.name = AgentRemoteProvider.normalizedName(name)
@@ -49,6 +52,7 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
         self.protocolProfileID = resolvedProtocolProfileID
         self.authPolicy = authPolicy ?? legacyProfiles.auth
         self.chatEndpoint = resolvedProtocolProfileID.chatEndpoint ?? chatEndpoint
+        self.ds4Runtime = ds4Runtime
     }
 
     public init(provider: AgentRemoteProvider) {
@@ -59,7 +63,8 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
             chatEndpoint: provider.chatEndpoint,
             providerProfileID: provider.providerProfileID,
             protocolProfileID: provider.protocolProfileID,
-            authPolicy: provider.authPolicy
+            authPolicy: provider.authPolicy,
+            ds4Runtime: provider.ds4Runtime
         )
     }
 
@@ -77,7 +82,11 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
             ) ?? .chatCompletions,
             providerProfileID: try container.decodeIfPresent(AgentProviderProfileID.self, forKey: .providerProfileID),
             protocolProfileID: try container.decodeIfPresent(AgentProtocolProfileID.self, forKey: .protocolProfileID),
-            authPolicy: try container.decodeIfPresent(AgentProviderAuthPolicy.self, forKey: .authPolicy)
+            authPolicy: try container.decodeIfPresent(AgentProviderAuthPolicy.self, forKey: .authPolicy),
+            ds4Runtime: try container.decodeIfPresent(
+                AgentDS4RuntimeConfiguration.self,
+                forKey: .ds4Runtime
+            )
         )
         guard remoteProvider(modelID: "validation").hasCompatibleProfiles else {
             throw DecodingError.dataCorruptedError(
@@ -97,10 +106,30 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
         try container.encode(providerProfileID, forKey: .providerProfileID)
         try container.encode(protocolProfileID, forKey: .protocolProfileID)
         try container.encode(authPolicy, forKey: .authPolicy)
+        try container.encodeIfPresent(ds4Runtime, forKey: .ds4Runtime)
+    }
+
+    public var runtime: AgentDS4RuntimeConfiguration? {
+        ds4Runtime
     }
 
     public var displayTitle: String {
         AgentRemoteProvider.normalizedName(name)
+    }
+
+    public func withDS4Runtime(
+        _ ds4Runtime: AgentDS4RuntimeConfiguration?
+    ) -> AgentSettingsProviderManifest {
+        AgentSettingsProviderManifest(
+            id: id,
+            name: name,
+            baseURL: baseURL,
+            chatEndpoint: chatEndpoint,
+            providerProfileID: providerProfileID,
+            protocolProfileID: protocolProfileID,
+            authPolicy: authPolicy,
+            ds4Runtime: ds4Runtime
+        )
     }
 
     public func remoteProvider(modelID: String) -> AgentRemoteProvider {
@@ -112,7 +141,8 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
             chatEndpoint: chatEndpoint,
             providerProfileID: providerProfileID,
             protocolProfileID: protocolProfileID,
-            authPolicy: authPolicy
+            authPolicy: authPolicy,
+            ds4Runtime: ds4Runtime
         )
     }
 }

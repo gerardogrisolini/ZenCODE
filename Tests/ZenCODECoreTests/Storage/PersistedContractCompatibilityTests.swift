@@ -209,7 +209,7 @@ struct PersistedContractCompatibilityTests {
     }
 
     @Test
-    func providerProfilesRoundTripInV13AndInvalidCombinationsFailClosed() throws {
+    func providerProfilesRoundTripInCurrentManifestVersionAndInvalidCombinationsFailClosed() throws {
         let provider = AgentSettingsProviderManifest(
             id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
             name: "Local responses",
@@ -226,7 +226,7 @@ struct PersistedContractCompatibilityTests {
         let encodedProvider = try #require(encodedProviders.first)
         let reloaded = try JSONDecoder().decode(AgentSettingsManifest.self, from: encoded)
 
-        #expect(object["version"] as? Int == 13)
+        #expect(object["version"] as? Int == AgentSettingsManifest.currentVersion)
         #expect(encodedProvider["providerProfileID"] as? String == "custom")
         #expect(encodedProvider["protocolProfileID"] as? String == "openai.responses")
         #expect(encodedProvider["authPolicy"] as? String == "none")

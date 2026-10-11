@@ -41,7 +41,18 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
     private var sessionGenerations: [String: UInt64] = [:]
     private var nextSessionGeneration: UInt64 = 0
     public var didEmitLoadedModel = false
-    let streamEndpointBaseURLOverride: URL?
+    /// Endpoint used for requests after a local DS4 supervisor becomes ready.
+    /// The provider's persisted base URL remains the capability/payload source;
+    /// this value only changes where the HTTP request is sent.
+    public private(set) var streamEndpointBaseURLOverride: URL?
+    public private(set) var ds4Endpoint: DS4ServerEndpoint?
+    private let ds4Supervisor: DS4ServerSupervisor?
+    /// This flag owns the supervisor actor reference for the backend
+    /// incarnation; it is intentionally not process ownership. The supervisor
+    /// carries `DS4ServerEndpointOwnership` and only terminates a child it
+    /// launched itself (an adopted endpoint is always detached safely).
+    private let ownsDS4Supervisor: Bool
+    private var ds4Shutdown = false
 
     public init(
         configuration: AgentRuntimeConfiguration,
@@ -53,6 +64,9 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         /// and loopback tests. Provider capability decisions continue to use
         /// `provider.baseURL`, so the request payload remains provider-accurate.
         streamEndpointBaseURLOverride: URL? = nil,
+        ds4Supervisor: DS4ServerSupervisor? = nil,
+        ds4Endpoint: DS4ServerEndpoint? = nil,
+        ownsDS4Supervisor: Bool = false,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
         sharedChat: AgentSharedChat? = nil,
@@ -67,7 +81,10 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         let resolvedTransport = transport ?? RemoteTransportCore()
         self.transport = resolvedTransport
         ownsTransport = transport == nil
-        self.streamEndpointBaseURLOverride = streamEndpointBaseURLOverride
+        self.ds4Supervisor = ds4Supervisor
+        self.ds4Endpoint = ds4Endpoint
+        self.ownsDS4Supervisor = ds4Supervisor != nil && ownsDS4Supervisor
+        self.streamEndpointBaseURLOverride = streamEndpointBaseURLOverride ?? ds4Endpoint?.baseURL
         self.toolExecutor = DirectToolExecutor(
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
@@ -170,17 +187,59 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
     }
 
     public func shutdown() async {
+        ds4Shutdown = true
+        // Drop endpoint state as part of the terminal transition. A later
+        // caller cannot accidentally reuse a stale local override, even when
+        // this client borrowed an endpoint without owning its supervisor.
+        streamEndpointBaseURLOverride = nil
+        ds4Endpoint = nil
         sessions.removeAll()
         sessionGenerations.removeAll()
         await toolExecutor.shutdown()
+        if ownsDS4Supervisor, let ds4Supervisor {
+            await ds4Supervisor.shutdown()
+        }
         if ownsTransport {
             try? await transport.shutdown()
         }
     }
 
+    /// Whether this client is bound to a local DS4 endpoint. This is kept
+    /// separate from the provider's persisted base URL so an ordinary remote
+    /// provider redirected to a test endpoint keeps its normal auth behavior.
+    var usesLocalDS4Endpoint: Bool {
+        ds4Supervisor != nil || ds4Endpoint != nil || provider.ds4Runtime != nil
+    }
+
+    var isDS4Shutdown: Bool {
+        ds4Shutdown
+    }
+
+    /// Opens a local DS4 server only when a caller actually needs the model.
+    /// A concrete endpoint injection remains useful for composition roots that
+    /// own readiness themselves; in that case no supervisor call is required.
+    func ensureDS4Ready() async throws {
+        guard !ds4Shutdown else {
+            throw DS4ServerSupervisorError.shutdown
+        }
+        guard let ds4Supervisor else {
+            return
+        }
+        let endpoint = try await ds4Supervisor.ensureRunning()
+        guard !ds4Shutdown else {
+            throw DS4ServerSupervisorError.shutdown
+        }
+        ds4Endpoint = endpoint
+        streamEndpointBaseURLOverride = endpoint.baseURL
+    }
+
     public func preloadModel(
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> String {
+        try await ensureDS4Ready()
+        guard !ds4Shutdown else {
+            throw DS4ServerSupervisorError.shutdown
+        }
         try validateConfiguration()
         if !didEmitLoadedModel {
             didEmitLoadedModel = true
@@ -265,6 +324,9 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         attachments: [AgentRuntimeAttachment],
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
+        guard !ds4Shutdown else {
+            throw DS4ServerSupervisorError.shutdown
+        }
         if sessions[sessionID] == nil {
             guard !MemoryConsolidationContext.isIsolated else { throw CancellationError() }
             createSession(id: sessionID, cwd: configuration.workingDirectory.path)

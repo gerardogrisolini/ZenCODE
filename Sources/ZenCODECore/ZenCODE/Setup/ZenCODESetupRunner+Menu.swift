@@ -104,6 +104,8 @@ extension ZenCODESetupRunner {
             return setupStatusMarker(featuresAreEnabled(), optional: true)
         case .memoryEmbedding:
             return setupStatusMarker(manifest?.memoryEmbedding != nil, optional: true)
+        case .ds4Runtime:
+            return setupStatusMarker(ds4RuntimeSetupDetail(manifest) != "not configured", optional: true)
         case .dataManagement, .resetRemoteConfiguration, .finish, .cancel, .responseLanguage:
             return nil
         }
@@ -136,6 +138,10 @@ extension ZenCODESetupRunner {
             SetupSectionOption(
                 section: .memoryEmbedding,
                 detail: memoryEmbeddingSetupDetail(manifest)
+            ),
+            SetupSectionOption(
+                section: .ds4Runtime,
+                detail: ds4RuntimeSetupDetail(manifest)
             ),
             SetupSectionOption(
                 section: .telegram,

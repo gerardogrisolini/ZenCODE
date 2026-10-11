@@ -195,7 +195,7 @@ struct ZenCODESetupSessionTests {
         #expect(sections == [
             .providersAndModels, .agents,
             .agentModels, .responseLanguage, .features, .memoryEmbedding,
-            .telegram, .dataManagement,
+            .ds4Runtime, .telegram, .dataManagement,
             .finish, .cancel,
         ])
         for alias in ["default", "default model", "selected model", "thinking", "default thinking"] {
@@ -242,7 +242,9 @@ struct ZenCODESetupSessionTests {
         let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
 
         #expect(options.contains { $0.section == .responseLanguage })
+        #expect(options.contains { $0.section == .ds4Runtime })
         #expect(!SetupSection.responseLanguage.requiresConfiguredModels)
+        #expect(SetupSection.ds4.title == "DS4 local runtime")
         #expect(SetupSection.responseLanguage.category == .recommended)
         #expect(SetupSection.responseLanguage.title == "Response language")
         // A configured language is reflected in the menu detail.
