@@ -1190,7 +1190,11 @@ private final class DS4PortReservation: @unchecked Sendable {
         if host.lowercased() == "::1" {
             return try bindIPv6(requestedPort: requestedPort)
         }
+        #if os(Linux)
+        let fileDescriptor = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
+        #else
         let fileDescriptor = socket(AF_INET, SOCK_STREAM, 0)
+        #endif
         guard fileDescriptor >= 0 else { throw POSIXPortError.bindFailed }
         var address = sockaddr_in()
         #if os(macOS)
@@ -1242,7 +1246,11 @@ private final class DS4PortReservation: @unchecked Sendable {
 
     #if os(macOS) || os(Linux)
     private static func bindIPv6(requestedPort: Int?) throws -> DS4PortReservation {
+        #if os(Linux)
+        let fileDescriptor = socket(AF_INET6, Int32(SOCK_STREAM.rawValue), 0)
+        #else
         let fileDescriptor = socket(AF_INET6, SOCK_STREAM, 0)
+        #endif
         guard fileDescriptor >= 0 else { throw POSIXPortError.bindFailed }
         var address = sockaddr_in6()
         #if os(macOS)

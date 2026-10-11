@@ -22,10 +22,13 @@ struct ACPStandardPresentationTests {
         let projection = ACPTaskPresentation()
         let graph = TaskGraphSnapshot(id: "g", source: .manual, state: .active,
                                       tasks: [TaskRecord(id: "t", title: "Task", order: 0)])
-        #expect(await projection.updates(for: graph).count == 1)
+        let initial = await projection.updates(for: graph)
+        #expect(initial.count == 1)
+        for update in initial { await projection.acknowledge(update) }
         #expect(await projection.updates(for: graph).isEmpty)
         let cleared = await projection.updates(for: nil)
         #expect(cleared.first?.objectValue?["entries"] == .array([]))
+        for update in cleared { await projection.acknowledge(update) }
         #expect(await projection.updates(for: nil).isEmpty)
     }
 
@@ -96,6 +99,67 @@ extension ACPStandardPresentationTests {
         #expect(third.first?.objectValue?["status"] == .string("in_progress"))
         let response = await projection.updates([snapshot(.idle, execution: 3, completed: 3)])
         #expect(response.first?.objectValue?["status"] == .string("completed"))
+    }
+
+    @Test func taskAttemptTerminalAfterTeardownUsesUpdateInNextPrompt() async throws {
+        let projection = ACPTaskPresentation()
+        let startedAt = Date(timeIntervalSince1970: 1)
+        func graph(status: TaskAttemptStatus, output: String? = nil) -> TaskGraphSnapshot {
+            let attempt = TaskAttempt(id: "attempt", ordinal: 1, agentID: "worker", executor: .subAgent,
+                                      status: status, startedAt: startedAt,
+                                      finishedAt: status == .completed ? Date(timeIntervalSince1970: 2) : nil,
+                                      output: output)
+            return TaskGraphSnapshot(id: "graph", source: .manual, state: .active, tasks: [
+                TaskRecord(id: "task", title: "Work", order: 0,
+                           status: status == .completed ? .completed : .inProgress,
+                           attempts: [attempt])
+            ])
+        }
+
+        // Prompt A emits and admits the running attempt before its teardown.
+        let promptA = await projection.updates(for: graph(status: .running))
+        let start = try #require(promptA.first {
+            $0.objectValue?["toolCallId"] == .string("acp:work:graph:task:attempt")
+        })
+        #expect(start.objectValue?["sessionUpdate"] == .string("tool_call"))
+        for update in promptA { await projection.acknowledge(update) }
+
+        // The terminal graph arrives after teardown; prompt B must continue the
+        // already admitted row instead of opening a second tool call.
+        let promptB = await projection.updates(for: graph(status: .completed, output: "done"))
+        let terminal = try #require(promptB.first {
+            $0.objectValue?["toolCallId"] == .string("acp:work:graph:task:attempt")
+        })
+        #expect(promptB.filter { $0.objectValue?["toolCallId"] == .string("acp:work:graph:task:attempt") }.count == 1)
+        #expect(terminal.objectValue?["sessionUpdate"] == .string("tool_call_update"))
+        #expect(terminal.objectValue?["status"] == .string("completed"))
+        await projection.acknowledge(terminal)
+        let terminalReplay = (await projection.updates(for: graph(status: .completed, output: "done"))).filter {
+            $0.objectValue?["toolCallId"] == .string("acp:work:graph:task:attempt")
+        }
+        #expect(terminalReplay.isEmpty)
+    }
+
+    @Test func taskAttemptDedupCommitsOnlyAfterAcceptance() async throws {
+        let projection = ACPTaskPresentation()
+        let attempt = TaskAttempt(id: "attempt", ordinal: 1, agentID: "worker", executor: .subAgent,
+                                  status: .running, startedAt: .now)
+        let graph = TaskGraphSnapshot(id: "graph", source: .manual, state: .active, tasks: [
+            TaskRecord(id: "task", title: "Work", order: 0, status: .inProgress, attempts: [attempt])
+        ])
+        let prepared = try #require(await projection.updates(for: graph).first {
+            $0.objectValue?["toolCallId"] == .string("acp:work:graph:task:attempt")
+        })
+        let nextAttempt = await projection.updates(for: graph)
+        #expect(nextAttempt.contains {
+            $0.objectValue?["sessionUpdate"] == .string("tool_call")
+        })
+        await projection.acknowledge(prepared)
+        let replay = await projection.updates(for: graph)
+        let replayForAttempt = replay.filter {
+            $0.objectValue?["toolCallId"] == .string("acp:work:graph:task:attempt")
+        }
+        #expect(replayForAttempt.isEmpty)
     }
 
     @Test func retriesHaveSeparateAttemptToolIDs() async {

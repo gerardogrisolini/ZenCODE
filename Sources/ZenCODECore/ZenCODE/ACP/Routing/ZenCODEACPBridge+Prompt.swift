@@ -295,7 +295,7 @@ extension ZenCODEACPBridge {
         }
         let planPointCollector = PlanningPointCollector()
         let assistantBlocks = ACPAssistantBlockCollector()
-        let taskPresentation = ACPTaskPresentation()
+        let taskPresentation = session.taskPresentation
         let graphEvents = await sessionRunner.taskOrchestrator.events(sessionID: sessionID)
         let graphObserver = Task {
             guard let updatePipeline else { return }

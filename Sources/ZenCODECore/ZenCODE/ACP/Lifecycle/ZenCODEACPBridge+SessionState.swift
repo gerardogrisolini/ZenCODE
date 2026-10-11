@@ -153,6 +153,9 @@ extension ZenCODEACPBridge {
             tasklessPresentation: epoch.flatMap { expectedEpoch in
                 sessions[configuration.sessionID].flatMap { $0.epoch == expectedEpoch ? $0.tasklessPresentation : nil }
             } ?? ACPTasklessPresentation(),
+            taskPresentation: epoch.flatMap { expectedEpoch in
+                sessions[configuration.sessionID].flatMap { $0.epoch == expectedEpoch ? $0.taskPresentation : nil }
+            } ?? ACPTaskPresentation(),
             activePromptID: activePromptID,
             activePromptTask: activePromptTask,
             operationState: operationState,

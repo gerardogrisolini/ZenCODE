@@ -41,6 +41,7 @@ public actor ZenCODEACPBridge {
         var delegatedToolNotifications = Set<String>()
         var tasklessObserver: Task<Void, Never>?
         var tasklessPresentation = ACPTasklessPresentation()
+        var taskPresentation = ACPTaskPresentation()
         /// Reserved synchronously by `session/prompt` before its first `await`,
         /// making one prompt per session atomically exclusive even when several
         /// requests are dispatched concurrently.

@@ -1,7 +1,8 @@
 import Foundation
 import ToolCore
 
-/// Ephemeral projection only. The orchestrator remains the sole DAG owner.
+/// Runtime projection only; the session owns one instance per incarnation and
+/// the orchestrator remains the sole DAG owner.
 actor ACPTaskPresentation {
     private var lastPlan: JSONValue?
     private var attempts: [String: JSONValue] = [:]
@@ -16,7 +17,6 @@ actor ACPTaskPresentation {
         ])
         var updates: [JSONValue] = []
         if lastPlan != plan {
-            lastPlan = plan
             updates.append(plan)
         }
         guard let graph else { return updates }
@@ -48,11 +48,25 @@ actor ACPTaskPresentation {
                 guard attempts[id] != snapshot else { continue }
                 var update = fields
                 update["sessionUpdate"] = .string(attempts[id] == nil ? "tool_call" : "tool_call_update")
-                attempts[id] = snapshot
                 updates.append(.object(update))
             }
         }
         return updates
+    }
+
+    /// Called only for units accepted by the owning prompt pipeline. Preparing
+    /// an update must not commit deduplication state: a cancelled observer or
+    /// a rejected pipeline unit has to be replayable by the next prompt.
+    func acknowledge(_ update: JSONValue) {
+        guard let object = update.objectValue else { return }
+        if object["sessionUpdate"] == .string("plan") {
+            lastPlan = update
+            return
+        }
+        var fields = object
+        guard let id = fields["toolCallId"]?.acpStringValue else { return }
+        fields.removeValue(forKey: "sessionUpdate")
+        attempts[id] = .object(fields)
     }
 
     static func entry(_ task: TaskRecord) -> JSONValue {
@@ -96,7 +110,9 @@ extension ZenCODEACPBridge {
         for update in updates {
             guard !Task.isCancelled,
                   isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
-            await pipeline.enqueue(.init(kind: .consume(update))).value
+            await pipeline.enqueue(.init(kind: .consume(update)), onAccepted: {
+                await presentation.acknowledge(update)
+            }).value
         }
     }
 }

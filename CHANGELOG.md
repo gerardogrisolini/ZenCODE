@@ -49,6 +49,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
   sub-agent activity rows; the tool still executes normally and its shared-chat
   message remains visible.
 
+### Fixed
+
+- ACP delegated task presentations now persist across prompt lifecycles, delivering
+  terminal updates after teardown without replaying already presented attempts on
+  later text-only prompts.
+
+- Linux builds now normalize POSIX `SOCK_STREAM` values for DS4 loopback
+  reservations and test fixtures.
+
 ## [2.1.8] - 2026-09-21
 
 ### Added

@@ -51,6 +51,105 @@ struct ACPPresentationLifecycleIntegrationTests {
         messages.finish()
     }
 
+    @Test(arguments: [false, true])
+    func textOnlyPromptsHandleTaskAttemptCompletionAcrossTeardown(completionBeforeTeardown: Bool) async throws {
+        let (wire, messages) = AsyncStream<JSONValue>.makeStream()
+        let output = Mutex<[JSONValue]>([])
+        let backend = PresentationLifecycleBackend()
+        let configuration = try AgentConfiguration(
+            hostedModelID: "test-model",
+            availableModels: [.init(id: "test-model", kind: .remoteAPI, modelID: "local/test-model")],
+            runMode: .acp, workingDirectory: FileManager.default.temporaryDirectory, appMode: false
+        )
+        let bridge = ZenCODEACPBridge(configuration: configuration, writer: ACPWriter { data in
+            if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
+                output.withLock { $0.append(value) }
+                messages.yield(value)
+            }
+        }, backendFactory: { _, _ in backend })
+        try await bridge.newSession(id: .number(1), params: ["cwd": "/tmp", "allowedTools": [String]()])
+        let sessionID = try #require(await bridge.testAnySessionID())
+        let epoch = await bridge.presentationEpoch(sessionID: sessionID)
+        let orchestrator = await bridge.sessionRunner.taskOrchestrator
+        _ = try await orchestrator.createGraph(sessionID: sessionID, id: "graph", source: .manual, state: .active,
+            tasks: [.init(id: "task", title: "Work", execution: .init(executor: .subAgent))])
+        let receipt = try #require(try await orchestrator.claimTasks(sessionID: sessionID, claims: [
+            .init(taskID: "task", agentID: "worker", executor: .subAgent)
+        ]).first)
+        _ = try await orchestrator.markAttemptRunning(sessionID: sessionID, taskID: "task", attemptID: receipt.attemptID)
+        let workID = "acp:work:graph:task:\(receipt.attemptID)"
+        var iterator = wire.makeAsyncIterator()
+        func nextStatus(_ status: String, _ iterator: inout AsyncStream<JSONValue>.Iterator) async -> JSONValue? {
+            while let message = await iterator.next() {
+                let update = message.objectValue?["params"]?.objectValue?["update"]
+                if update?.objectValue?["toolCallId"] == .string(workID),
+                   update?.objectValue?["status"] == .string(status) { return update }
+            }
+            return nil
+        }
+        func workUpdates() -> [JSONValue] {
+            output.withLock { values in values.compactMap {
+                let update = $0.objectValue?["params"]?.objectValue?["update"]
+                return update?.objectValue?["toolCallId"] == .string(workID) ? update : nil
+            } }
+        }
+
+        let first = Task { try await bridge.prompt(id: .number(2), params: ["sessionId": sessionID, "prompt": "first"]) }
+        let running = try #require(await nextStatus("in_progress", &iterator))
+        #expect(running.objectValue?["sessionUpdate"] == .string("tool_call"))
+        if completionBeforeTeardown {
+            _ = try await orchestrator.completeAttempt(sessionID: sessionID, taskID: "task", attemptID: receipt.attemptID,
+                                                      output: "Done before teardown", requiresValidation: true)
+            let completed = try #require(await nextStatus("completed", &iterator))
+            #expect(completed.objectValue?["sessionUpdate"] == .string("tool_call_update"))
+            #expect(completed.objectValue?["toolCallId"] == running.objectValue?["toolCallId"])
+            #expect(workUpdates().count == 2)
+        }
+        while await backend.promptCount < 1 { await Task.yield() }
+        await backend.releasePrompt()
+        try await first.value
+        #expect(workUpdates().count == (completionBeforeTeardown ? 2 : 1))
+
+        if !completionBeforeTeardown {
+            // This completion is authoritative only after prompt A's observers
+            // and pipeline have been torn down, so B must read it from the graph.
+            _ = try await orchestrator.completeAttempt(sessionID: sessionID, taskID: "task", attemptID: receipt.attemptID,
+                                                      output: "Done after teardown", requiresValidation: true)
+            #expect(workUpdates().count == 1)
+        }
+        let workCountBeforeSecond = workUpdates().count
+        let second = Task { try await bridge.prompt(id: .number(3), params: ["sessionId": sessionID, "prompt": "text only"]) }
+        if completionBeforeTeardown {
+            while await backend.promptCount < 2 { await Task.yield() }
+            await backend.releasePrompt()
+            try await second.value
+            #expect(workUpdates().count == workCountBeforeSecond)
+        } else {
+            let completed = try #require(await nextStatus("completed", &iterator))
+            #expect(completed.objectValue?["sessionUpdate"] == .string("tool_call_update"))
+            #expect(completed.objectValue?["toolCallId"] == running.objectValue?["toolCallId"])
+            while await backend.promptCount < 2 { await Task.yield() }
+            await backend.releasePrompt()
+            try await second.value
+            #expect(workUpdates().count == 2)
+        }
+        #expect(await bridge.presentationEpoch(sessionID: sessionID) == epoch)
+        let updatesAfterSecond = workUpdates()
+        #expect(updatesAfterSecond.count == 2)
+        let completedUpdates = updatesAfterSecond.filter { $0.objectValue?["status"] == .string("completed") }
+        #expect(completedUpdates.count == 1)
+        let createUpdates = updatesAfterSecond.filter { $0.objectValue?["sessionUpdate"] == .string("tool_call") }
+        #expect(createUpdates.count == 1)
+
+        let third = Task { try await bridge.prompt(id: .number(4), params: ["sessionId": sessionID, "prompt": "again"]) }
+        while await backend.promptCount < 3 { await Task.yield() }
+        await backend.releasePrompt()
+        try await third.value
+        #expect(workUpdates().count == 2)
+        await bridge.shutdown()
+        messages.finish()
+    }
+
     @Test func replacedIncarnationRejectsBufferedAndSuspendedOldProducer() async throws {
         let output = Mutex<[JSONValue]>([])
         let configuration = try AgentConfiguration(
@@ -208,7 +307,9 @@ extension ACPPresentationLifecycleIntegrationTests {
             _ = try #require(await events.next())
             let graph = try await orchestrator.graphSnapshot(sessionID: "root")
             for update in await projection.updates(for: graph) {
-                await pipeline.enqueue(.init(kind: .consume(update))).value
+                await pipeline.enqueue(.init(kind: .consume(update)), onAccepted: {
+                    await projection.acknowledge(update)
+                }).value
             }
             await pipeline.drain()
         }
