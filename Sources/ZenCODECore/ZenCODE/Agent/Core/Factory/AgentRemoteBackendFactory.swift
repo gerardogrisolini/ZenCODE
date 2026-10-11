@@ -175,11 +175,14 @@ public enum AgentRemoteBackendFactory {
         } else if let resolvedDS4Runtime {
             resolvedDS4Supervisor = DS4ServerSupervisor(
                 manifest: resolvedDS4Runtime,
-                modelAlias: effectiveConfiguration.modelID?.nilIfBlank ?? effectiveProvider.modelID
+                modelAlias: effectiveConfiguration.modelID?.nilIfBlank ?? effectiveProvider.modelID,
+                adoptionPort: ds4AdoptionPort(from: effectiveProvider.baseURL)
             )
-            // A factory-created owner is tied to this backend incarnation. A
-            // reset creates a new backend and the old client shuts this owner
-            // down before the replacement can start it.
+            // This ownership bit belongs to the supervisor actor lifecycle,
+            // not to the process behind its endpoint. The supervisor marks an
+            // adopted endpoint as external and will only stop a child it
+            // launched itself. A factory-created owner is tied to this backend
+            // incarnation; reset shuts it down before replacement.
             resolvedDS4SupervisorOwnership = true
         } else {
             resolvedDS4Supervisor = nil
@@ -277,5 +280,21 @@ public enum AgentRemoteBackendFactory {
                 sharedChatRootSessionID: context.sharedChatRoomID
             )
         }
+    }
+
+    /// The persisted DS4 provider URL is an explicit 127.0.0.1 adoption hint.
+    /// A missing port retains the upstream conventional `8000` candidate;
+    /// malformed, non-HTTP, or non-127.0.0.1 URLs disable adoption rather than
+    /// silently probing a different host.
+    private static func ds4AdoptionPort(from baseURL: String) -> Int? {
+        guard let url = URL(string: baseURL),
+              url.scheme?.lowercased() == "http",
+              url.host?.lowercased() == DS4ServerSupervisor.defaultHost else {
+            return nil
+        }
+        guard let port = url.port else {
+            return DS4ServerSupervisor.defaultConventionalPort
+        }
+        return (1...65_535).contains(port) ? port : nil
     }
 }

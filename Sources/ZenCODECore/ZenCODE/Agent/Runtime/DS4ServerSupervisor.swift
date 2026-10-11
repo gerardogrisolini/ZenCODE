@@ -2,10 +2,9 @@
 //  DS4ServerSupervisor.swift
 //  ZenCODE
 //
-//  Owns the optional local ds4 HTTP server. The supervisor deliberately keeps
-//  the process and transport policy here instead of leaking it into settings:
-//  a persisted manifest contains only canonical model metadata, while a live
-//  server owns its port, process and readiness state.
+//  Coordinates an optional local ds4 HTTP server. The supervisor may adopt a
+//  compatible, explicitly-candidate loopback endpoint, but only owns and stops
+//  children it launched itself.
 //
 
 import FeatureKit
@@ -17,6 +16,18 @@ import Darwin
 import Glibc
 #endif
 
+/// Identifies who is allowed to terminate the process behind an endpoint.
+///
+/// An adopted endpoint is deliberately process-less: ZenCODE may use and
+/// detach from it, but it must never infer a killable process from a port or a
+/// PID returned by an HTTP probe.
+public enum DS4ServerEndpointOwnership: String, Equatable, Sendable {
+    /// The endpoint belongs to a child started by this supervisor.
+    case managed
+    /// The endpoint was already listening before this supervisor started.
+    case adopted
+}
+
 /// The endpoint returned after a ds4 child has answered its model catalogue
 /// request. `baseURL` is the OpenAI-compatible `/v1` root.
 public struct DS4ServerEndpoint: Equatable, Sendable {
@@ -26,6 +37,7 @@ public struct DS4ServerEndpoint: Equatable, Sendable {
     public let port: Int
     public let modelID: String
     public let processIdentifier: Int32?
+    public let ownership: DS4ServerEndpointOwnership
 
     public init(
         baseURL: URL,
@@ -33,7 +45,8 @@ public struct DS4ServerEndpoint: Equatable, Sendable {
         host: String,
         port: Int,
         modelID: String,
-        processIdentifier: Int32? = nil
+        processIdentifier: Int32? = nil,
+        ownership: DS4ServerEndpointOwnership = .managed
     ) {
         self.baseURL = baseURL
         self.modelsURL = modelsURL
@@ -41,6 +54,7 @@ public struct DS4ServerEndpoint: Equatable, Sendable {
         self.port = port
         self.modelID = modelID
         self.processIdentifier = processIdentifier
+        self.ownership = ownership
     }
 
     /// Compatibility spelling for clients that call the advertised id an alias.
@@ -48,6 +62,12 @@ public struct DS4ServerEndpoint: Equatable, Sendable {
 
     /// Compatibility spelling for clients that need the process-backed URL.
     public var url: URL { baseURL }
+
+    /// Whether this endpoint was discovered on a pre-existing listener.
+    public var isAdopted: Bool { ownership == .adopted }
+
+    /// Whether ZenCODE launched and can safely terminate the process.
+    public var isManaged: Bool { ownership == .managed }
 }
 
 /// Failures raised while starting or fencing a local ds4 HTTP child.
@@ -129,18 +149,26 @@ public enum DS4ServerSupervisorError: LocalizedError, Equatable, Sendable {
     }
 }
 
-/// Actor-isolated owner for one local ds4 HTTP child.
+/// Actor-isolated lifecycle coordinator for one local ds4 HTTP endpoint.
 ///
-/// `start()` is single-flight: concurrent callers share one launch/readiness
-/// attempt and receive the same endpoint or error. `stop()` is reusable, while
-/// `shutdown()` permanently fences the actor so a cancelled or stale launch can
-/// never resurrect a child after its owner has gone away.
+/// The supervisor may adopt one compatible endpoint from its explicit loopback
+/// candidate before launching a child. `start()` is single-flight: concurrent
+/// callers share one launch/readiness attempt and receive the same endpoint.
+/// `stop()` is reusable, while `shutdown()` permanently fences the actor so a
+/// cancelled or stale launch can never resurrect a child after its owner has
+/// gone away. Adopted endpoints are detached without a process kill.
 public actor DS4ServerSupervisor {
     public typealias Error = DS4ServerSupervisorError
     public typealias Endpoint = DS4ServerEndpoint
     public typealias RunningServer = DS4ServerEndpoint
 
     public static let defaultHost = "127.0.0.1"
+    /// The upstream ds4-server default loopback port. This is an adoption
+    /// candidate, not a forced launch port; a managed child still falls back
+    /// to an ephemeral port when no compatible listener is present.
+    public static let defaultConventionalPort = 8_000
+    public static let defaultPort = defaultConventionalPort
+    public static let defaultAdoptionProbeTimeout: Duration = .milliseconds(250)
     public static let defaultReadinessTimeout: Duration = .seconds(10)
     public static let defaultReadinessPollInterval: Duration = .milliseconds(100)
     public static let defaultMaximumReadinessBodyBytes = 64 * 1_024
@@ -156,6 +184,11 @@ public actor DS4ServerSupervisor {
         /// `nil` or zero selects a free loopback port. A positive value is
         /// reserved and validated before a child is launched.
         public let port: Int?
+        /// A bounded, explicit loopback candidate to probe before launching a
+        /// child. `nil` disables adoption; by default ds4's conventional port
+        /// is probed. This is intentionally not a port scan.
+        public let adoptionPort: Int?
+        public let adoptionProbeTimeout: Duration
         public let readinessTimeout: Duration
         public let readinessPollInterval: Duration
         public let maximumReadinessBodyBytes: Int
@@ -174,13 +207,17 @@ public actor DS4ServerSupervisor {
             maximumReadinessBodyBytes: Int = DS4ServerSupervisor.defaultMaximumReadinessBodyBytes,
             maximumOutputBytesPerStream: Int = DS4ServerSupervisor.defaultMaximumOutputBytesPerStream,
             terminationGracePeriod: TimeInterval = 2,
-            additionalArguments: [String] = []
+            additionalArguments: [String] = [],
+            adoptionPort: Int? = DS4ServerSupervisor.defaultConventionalPort,
+            adoptionProbeTimeout: Duration = DS4ServerSupervisor.defaultAdoptionProbeTimeout
         ) {
             self.manifest = manifest
             self.executableURL = executableURL
             self.modelAlias = modelAlias?.trimmingCharacters(in: .whitespacesAndNewlines)
             self.host = host.trimmingCharacters(in: .whitespacesAndNewlines)
             self.port = port
+            self.adoptionPort = adoptionPort
+            self.adoptionProbeTimeout = adoptionProbeTimeout
             self.readinessTimeout = readinessTimeout
             self.readinessPollInterval = readinessPollInterval
             self.maximumReadinessBodyBytes = max(1, maximumReadinessBodyBytes)
@@ -202,7 +239,9 @@ public actor DS4ServerSupervisor {
             maximumReadinessBodyBytes: Int = DS4ServerSupervisor.defaultMaximumReadinessBodyBytes,
             maximumOutputBytesPerStream: Int = DS4ServerSupervisor.defaultMaximumOutputBytesPerStream,
             terminationGracePeriod: TimeInterval = 2,
-            additionalArguments: [String] = []
+            additionalArguments: [String] = [],
+            adoptionPort: Int? = DS4ServerSupervisor.defaultConventionalPort,
+            adoptionProbeTimeout: Duration = DS4ServerSupervisor.defaultAdoptionProbeTimeout
         ) {
             self.init(
                 manifest: manifest,
@@ -215,14 +254,18 @@ public actor DS4ServerSupervisor {
                 maximumReadinessBodyBytes: maximumReadinessBodyBytes,
                 maximumOutputBytesPerStream: maximumOutputBytesPerStream,
                 terminationGracePeriod: terminationGracePeriod,
-                additionalArguments: additionalArguments
+                additionalArguments: additionalArguments,
+                adoptionPort: adoptionPort,
+                adoptionProbeTimeout: adoptionProbeTimeout
             )
         }
     }
 
     private struct LaunchResult: Sendable {
         let endpoint: DS4ServerEndpoint
-        let process: FeatureManagedProcess
+        /// `nil` means the endpoint was adopted and is not killable by
+        /// ZenCODE. Never reconstruct a process owner from its port/PID.
+        let process: FeatureManagedProcess?
         let launchArguments: [String]
     }
 
@@ -272,7 +315,9 @@ public actor DS4ServerSupervisor {
         maximumOutputBytesPerStream: Int = DS4ServerSupervisor.defaultMaximumOutputBytesPerStream,
         terminationGracePeriod: TimeInterval = 2,
         additionalArguments: [String] = [],
-        transport: RemoteTransportCore? = nil
+        transport: RemoteTransportCore? = nil,
+        adoptionPort: Int? = DS4ServerSupervisor.defaultConventionalPort,
+        adoptionProbeTimeout: Duration = DS4ServerSupervisor.defaultAdoptionProbeTimeout
     ) {
         self.init(
             configuration: Configuration(
@@ -286,7 +331,9 @@ public actor DS4ServerSupervisor {
                 maximumReadinessBodyBytes: maximumReadinessBodyBytes,
                 maximumOutputBytesPerStream: maximumOutputBytesPerStream,
                 terminationGracePeriod: terminationGracePeriod,
-                additionalArguments: additionalArguments
+                additionalArguments: additionalArguments,
+                adoptionPort: adoptionPort,
+                adoptionProbeTimeout: adoptionProbeTimeout
             ),
             transport: transport
         )
@@ -305,7 +352,9 @@ public actor DS4ServerSupervisor {
         maximumOutputBytesPerStream: Int = DS4ServerSupervisor.defaultMaximumOutputBytesPerStream,
         terminationGracePeriod: TimeInterval = 2,
         additionalArguments: [String] = [],
-        transport: RemoteTransportCore? = nil
+        transport: RemoteTransportCore? = nil,
+        adoptionPort: Int? = DS4ServerSupervisor.defaultConventionalPort,
+        adoptionProbeTimeout: Duration = DS4ServerSupervisor.defaultAdoptionProbeTimeout
     ) {
         self.init(
             configuration: Configuration(
@@ -319,7 +368,9 @@ public actor DS4ServerSupervisor {
                 maximumReadinessBodyBytes: maximumReadinessBodyBytes,
                 maximumOutputBytesPerStream: maximumOutputBytesPerStream,
                 terminationGracePeriod: terminationGracePeriod,
-                additionalArguments: additionalArguments
+                additionalArguments: additionalArguments,
+                adoptionPort: adoptionPort,
+                adoptionProbeTimeout: adoptionProbeTimeout
             ),
             transport: transport
         )
@@ -360,15 +411,21 @@ public actor DS4ServerSupervisor {
         guard !shutdownRequested else { throw DS4ServerSupervisorError.shutdown }
 
         if let running {
-            if await running.process.isRunning {
+            if let process = running.process, await process.isRunning {
                 return running.endpoint
             }
-            let exit = await running.process.waitUntilExit()
-            self.running = nil
-            throw DS4ServerSupervisorError.processExited(
-                exitCode: exit.exitCode,
-                diagnostics: exit.stderr
-            )
+            if let process = running.process {
+                let exit = await process.waitUntilExit()
+                self.running = nil
+                throw DS4ServerSupervisorError.processExited(
+                    exitCode: exit.exitCode,
+                    diagnostics: exit.stderr
+                )
+            }
+            // An adopted endpoint has no process handle that ZenCODE can
+            // inspect or terminate. It remains reusable until an explicit
+            // stop/shutdown detaches this supervisor from it.
+            return running.endpoint
         }
 
         if let startTask {
@@ -424,7 +481,9 @@ public actor DS4ServerSupervisor {
         do {
             let result = try await task.value
             guard !shutdownRequested, generation == launchGeneration else {
-                await result.process.stop()
+                if let process = result.process {
+                    await process.stop()
+                }
                 startWaiterCount = max(0, startWaiterCount - 1)
                 didReleaseWaiter = true
                 throw DS4ServerSupervisorError.shutdown
@@ -450,7 +509,9 @@ public actor DS4ServerSupervisor {
                 // that kept the shared startup alive.
                 if startWaiterCount == 0, !startHasSuccessfulWaiter, let running,
                    running.endpoint == result.endpoint {
-                    await running.process.stop()
+                    if let process = running.process {
+                        await process.stop()
+                    }
                     self.running = nil
                 }
                 throw CancellationError()
@@ -487,7 +548,9 @@ public actor DS4ServerSupervisor {
         startTask = nil
 
         if let running {
-            await running.process.stop()
+            if let process = running.process {
+                await process.stop()
+            }
             self.running = nil
         }
     }
@@ -510,7 +573,9 @@ public actor DS4ServerSupervisor {
         startTask = nil
 
         if let running {
-            await running.process.stop()
+            if let process = running.process {
+                await process.stop()
+            }
             self.running = nil
         }
         if ownsTransport {
@@ -529,8 +594,65 @@ public actor DS4ServerSupervisor {
         try Task.checkCancellation()
         try validateHost(configuration.host)
         try validatePort(configuration.port)
+        try validatePort(configuration.adoptionPort)
         guard configuration.readinessTimeout > .zero else {
             throw DS4ServerSupervisorError.readinessTimedOut(url: "/v1/models", diagnostics: "")
+        }
+
+        // Resolve the alias before executable/model validation whenever the
+        // caller supplied one. An already-running compatible server must be
+        // adoptable even when its original local checkout is unavailable.
+        let alias: String
+        if let configuredAlias = configuration.modelAlias, !configuredAlias.isEmpty {
+            alias = try expectedAlias(configuration.modelAlias, modelURL: nil)
+        } else {
+            let modelURL: URL?
+            if configuration.manifest.modelRelativePath == nil {
+                modelURL = nil
+            } else {
+                modelURL = try configuration.manifest.requiredModelURL()
+            }
+            alias = try expectedAlias(configuration.modelAlias, modelURL: modelURL)
+        }
+
+        // Adoption is deliberately limited to the configured candidate and,
+        // when different, the explicit launch port. There is no listener/PID
+        // scan. A probe failure simply means the managed fallback may launch.
+        for candidatePort in adoptionCandidates(configuration) {
+            do {
+                let endpoint = try await probeEndpoint(
+                    process: nil,
+                    transport: transport,
+                    host: configuration.host,
+                    port: candidatePort,
+                    alias: alias,
+                    timeout: configuration.adoptionProbeTimeout,
+                    pollInterval: configuration.readinessPollInterval,
+                    maximumBodyBytes: configuration.maximumReadinessBodyBytes
+                )
+                return LaunchResult(
+                    endpoint: DS4ServerEndpoint(
+                        baseURL: endpoint.baseURL,
+                        modelsURL: endpoint.modelsURL,
+                        host: endpoint.host,
+                        port: endpoint.port,
+                        modelID: endpoint.modelID,
+                        ownership: .adopted
+                    ),
+                    process: nil,
+                    launchArguments: []
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as RemoteTransportError {
+                if case .shutdown = error {
+                    throw error
+                }
+            } catch {
+                // An incompatible, malformed, or unavailable listener is not
+                // adopted. If the launch port is occupied, the normal bind
+                // path below still reports a collision without killing it.
+            }
         }
 
         let executableURL = try canonicalExecutableURL(
@@ -543,7 +665,6 @@ public actor DS4ServerSupervisor {
         } else {
             modelURL = try configuration.manifest.requiredModelURL()
         }
-        let alias = try expectedAlias(configuration.modelAlias, modelURL: modelURL)
 
         // A dynamic port can be retried after an immediate EADDRINUSE crash;
         // fixed ports are deliberately attempted once so callers get a clear
@@ -585,7 +706,7 @@ public actor DS4ServerSupervisor {
 
             do {
                 try await process.start()
-                let endpoint = try await waitUntilReady(
+                let endpoint = try await probeEndpoint(
                     process: process,
                     transport: transport,
                     host: configuration.host,
@@ -602,7 +723,8 @@ public actor DS4ServerSupervisor {
                         host: endpoint.host,
                         port: endpoint.port,
                         modelID: endpoint.modelID,
-                        processIdentifier: await process.processIdentifier
+                        processIdentifier: await process.processIdentifier,
+                        ownership: .managed
                     ),
                     process: process,
                     launchArguments: arguments
@@ -629,8 +751,8 @@ public actor DS4ServerSupervisor {
         throw lastFailure ?? DS4ServerSupervisorError.portUnavailable(0)
     }
 
-    private static func waitUntilReady(
-        process: FeatureManagedProcess,
+    private static func probeEndpoint(
+        process: FeatureManagedProcess?,
         transport: RemoteTransportCore,
         host: String,
         port: Int,
@@ -647,12 +769,14 @@ public actor DS4ServerSupervisor {
 
         while ContinuousClock.now < deadline {
             try Task.checkCancellation()
-            if !(await process.isRunning) {
-                let exit = await process.waitUntilExit()
-                throw DS4ServerSupervisorError.processExited(
-                    exitCode: exit.exitCode,
-                    diagnostics: exit.stderr
-                )
+            if let process {
+                if !(await process.isRunning) {
+                    let exit = await process.waitUntilExit()
+                    throw DS4ServerSupervisorError.processExited(
+                        exitCode: exit.exitCode,
+                        diagnostics: exit.stderr
+                    )
+                }
             }
 
             let remaining = deadline - .now
@@ -665,22 +789,12 @@ public actor DS4ServerSupervisor {
                     )
                 )
                 if response.status == 200 {
-                    var body = Data()
-                    var iterator = response.body.makeAsyncIterator()
-                    while let chunk = try await iterator.next(
-                        idleTimeoutNanoseconds: idleNanoseconds
-                    ) {
-                        // Check the incoming chunk before subtracting from the
-                        // limit. A single oversized chunk must report the
-                        // bounded-body error, never trap from Int underflow.
-                        guard chunk.count <= maximumBodyBytes else {
-                            throw DS4ServerSupervisorError.readinessResponseTooLarge(maximumBodyBytes)
-                        }
-                        guard body.count <= maximumBodyBytes - chunk.count else {
-                            throw DS4ServerSupervisorError.readinessResponseTooLarge(maximumBodyBytes)
-                        }
-                        body.append(chunk)
-                    }
+                    let body = try await collectProbeBody(
+                        response.body,
+                        deadline: deadline,
+                        idleNanoseconds: idleNanoseconds,
+                        maximumBodyBytes: maximumBodyBytes
+                    )
                     let advertised = try decodeModelIDs(body)
                     guard advertised.contains(alias) else {
                         throw DS4ServerSupervisorError.modelAliasMismatch(
@@ -717,19 +831,105 @@ public actor DS4ServerSupervisor {
                 // the same bounded deadline; process stderr remains diagnostic.
             }
 
-            if poll > .zero {
+            if poll > .zero, ContinuousClock.now < deadline {
                 do {
-                    try await Task.sleep(for: poll)
+                    let remaining = deadline - .now
+                    let sleepDuration = remaining < poll ? remaining : poll
+                    guard sleepDuration > .zero else { break }
+                    try await Task.sleep(for: sleepDuration)
                 } catch {
                     throw CancellationError()
                 }
             }
         }
 
+        let diagnostics = if let process {
+            await process.diagnostics()
+        } else {
+            ""
+        }
         throw DS4ServerSupervisorError.readinessTimedOut(
             url: modelsURL.absoluteString,
-            diagnostics: await process.diagnostics()
+            diagnostics: diagnostics
         )
+    }
+
+    /// Drains one readiness response under the probe's absolute wall-clock
+    /// deadline. The transport request timeout only covers response-head
+    /// acquisition, and the body's idle watchdog alone can be defeated by a
+    /// listener that sends a trickle of bytes before each idle interval.
+    /// Racing the complete drain against the remaining deadline keeps that
+    /// listener from extending a probe indefinitely. Cancelling the body on
+    /// every terminal path releases its channel/lifetime even when the read
+    /// task is still parked in NIO.
+    private static func collectProbeBody(
+        _ body: RemoteHTTPBody,
+        deadline: ContinuousClock.Instant,
+        idleNanoseconds: UInt64,
+        maximumBodyBytes: Int
+    ) async throws -> Data {
+        let remaining = deadline - .now
+        guard remaining > .zero else {
+            body.cancel()
+            throw RemoteTransportError.timeout
+        }
+
+        do {
+            return try await withThrowingTaskGroup(of: Data.self) { group in
+                group.addTask {
+                    var collected = Data()
+                    var iterator = body.makeAsyncIterator()
+                    while let chunk = try await iterator.next(
+                        idleTimeoutNanoseconds: idleNanoseconds
+                    ) {
+                        // Check the incoming chunk before subtracting from the
+                        // limit. A single oversized chunk must report the
+                        // bounded-body error, never trap from Int underflow.
+                        guard chunk.count <= maximumBodyBytes else {
+                            throw DS4ServerSupervisorError.readinessResponseTooLarge(
+                                maximumBodyBytes
+                            )
+                        }
+                        guard collected.count <= maximumBodyBytes - chunk.count else {
+                            throw DS4ServerSupervisorError.readinessResponseTooLarge(
+                                maximumBodyBytes
+                            )
+                        }
+                        collected.append(chunk)
+                    }
+                    return collected
+                }
+                group.addTask {
+                    try await Task.sleep(for: remaining)
+                    throw RemoteTransportError.timeout
+                }
+                defer { group.cancelAll() }
+                guard let result = try await group.next() else {
+                    throw RemoteTransportError.timeout
+                }
+                return result
+            }
+        } catch {
+            // `RemoteHTTPBody.AsyncIterator.next` also reacts to task
+            // cancellation, but invalidate explicitly so no copied response
+            // handle can keep the timed-out channel alive.
+            body.cancel()
+            throw error
+        }
+    }
+
+    private static func adoptionCandidates(_ configuration: Configuration) -> [Int] {
+        guard configuration.adoptionPort != nil else {
+            return []
+        }
+        var candidates: [Int] = []
+        if let adoptionPort = normalizedPort(configuration.adoptionPort) {
+            candidates.append(adoptionPort)
+        }
+        if let launchPort = normalizedPort(configuration.port), !candidates.contains(launchPort) {
+            candidates.append(launchPort)
+        }
+        return candidates
     }
 
     private static func decodeModelIDs(_ body: Data) throws -> [String] {

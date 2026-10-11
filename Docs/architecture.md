@@ -378,9 +378,12 @@ Path validation canonicalizes the root and rejects absolute/traversal model
 paths, escapes, symlink components, missing required files, and non-regular
 files. The manifest deliberately excludes process IDs, ports, endpoint URLs
 selected at runtime, executable discovery, readiness/diagnostic state, process
-handles, and hardware snapshots. The persisted provider URL is a capability
-placeholder (the setup default is `http://127.0.0.1/v1`); the supervisor's
-actual free loopback port and endpoint are transient.
+handles, and hardware snapshots. The persisted provider URL is an explicit
+loopback adoption hint (the setup default is `http://127.0.0.1:8000/v1`,
+matching ds4-server's conventional port). The supervisor first probes that
+bounded candidate and verifies `/v1/models` plus the expected model alias. If no
+compatible listener answers, it falls back to a dynamically reserved loopback
+port for a child it starts; runtime endpoint/port state remains transient.
 
 Setup stages a complete candidate and commits it only through the existing
 cooperative manifest transaction. A failed scan, compatibility decision,

@@ -47,6 +47,10 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
     public private(set) var streamEndpointBaseURLOverride: URL?
     public private(set) var ds4Endpoint: DS4ServerEndpoint?
     private let ds4Supervisor: DS4ServerSupervisor?
+    /// This flag owns the supervisor actor reference for the backend
+    /// incarnation; it is intentionally not process ownership. The supervisor
+    /// carries `DS4ServerEndpointOwnership` and only terminates a child it
+    /// launched itself (an adopted endpoint is always detached safely).
     private let ownsDS4Supervisor: Bool
     private var ds4Shutdown = false
 

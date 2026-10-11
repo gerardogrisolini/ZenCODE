@@ -15,7 +15,7 @@ extension ZenCODESetupRunner {
         uuidString: "00000000-0000-0000-0000-000000000005"
     )!
 
-    static let ds4SetupProviderBaseURL = "http://127.0.0.1/v1"
+    static let ds4SetupProviderBaseURL = "http://127.0.0.1:8000/v1"
     static let ds4SetupProviderName = "DS4 (local)"
 
     /// Configures the optional local DS4 provider without touching the DS4

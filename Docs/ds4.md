@@ -60,9 +60,13 @@ never becomes a positive compatibility claim.
    single-artifact model with a proven operational backend. Shard-only or
    multi-artifact proposals are not reduced to their first file.
 5. Confirm the proposal. Setup stages a local provider at
-   `http://127.0.0.1/v1`; it does not start DS4. Cancelling, declining,
-   supplying an invalid folder, finding no GGUF, or finding no operational
-   proposal leaves the existing manifest unchanged.
+   `http://127.0.0.1:8000/v1`, the conventional ds4-server loopback endpoint;
+   runtime first probes this bounded candidate and verifies the requested model
+   alias before adopting it. If no compatible listener is active, ZenCODE
+   starts its own child on a dynamically reserved loopback port. Setup itself
+   still does not start DS4. Cancelling, declining, supplying an invalid folder,
+   finding no GGUF, or finding no operational proposal leaves the existing
+   manifest unchanged.
 6. After confirming the proposal, choose the managed runtime tuning values:
    context window (`--ctx`, default 65,536 tokens), SSD streaming
    (`--ssd-streaming`, defaulting to the prior value or the compatibility
@@ -95,10 +99,11 @@ manifests that have no DS4 section. It records:
 
 It never records a PID, listening port, endpoint URL discovered at runtime,
 readiness state, process handle, hardware snapshot, or diagnostic output. The
-provider's loopback base URL is a persisted capability placeholder; the actual
-port and endpoint are transient. API-key storage remains governed by the normal
-provider credential contract, and local DS4 requests suppress credentials when
-sent to the loopback child.
+provider's loopback URL is an adoption hint: setup defaults to
+`http://127.0.0.1:8000/v1`, while a managed child may use a transient dynamic
+port when that candidate is absent or incompatible. API-key storage remains
+governed by the normal provider credential contract, and local DS4 requests
+suppress credentials when sent to the loopback child.
 
 ## Runtime ownership and lifecycle
 
@@ -106,22 +111,28 @@ sent to the loopback child.
   DTOs, remote client adaptation, and `DS4ServerSupervisor`. `zen` remains the
   composition root; terminal, Telegram, and ACP layers do not own DS4
   processes.
-- The supervisor starts lazily on preload/first generation, binds only a
-  loopback host, chooses or validates a loopback port, constructs direct argv,
-  verifies readiness through `/v1/models`, and checks the expected API model ID.
-  The supervisor owns the managed values for host, port, model path, working
-  directory, backend, context, SSD streaming, MTP, power, and related
+- The supervisor starts lazily on preload/first generation. Before launching,
+  it probes only the explicit loopback adoption candidate (the conventional
+  `127.0.0.1:8000`, or the configured provider port), checks `/v1/models`, and
+  verifies the expected API model ID. A compatible listener is represented as
+  an adopted endpoint and is never terminated by ZenCODE. If adoption fails,
+  the supervisor chooses or validates a loopback launch port for its own child,
+  constructs direct argv, verifies readiness, and checks the same model ID.
+  The supervisor owns the managed values for host, launch port, model path,
+  working directory, backend, context, SSD streaming, MTP, power, and related
   server/security flags; arbitrary additional arguments cannot override them.
-- `stop` reaps the child while keeping the supervisor reusable. `shutdown` is a
-  terminal fence: it cancels pending startup, stops the child owned by that
-  supervisor, and prevents a late task from resurrecting it. A factory-created
-  supervisor belongs to that backend incarnation and is shut down before a
-  replacement backend takes over.
+- `stop` detaches an adopted endpoint or reaps a managed child while keeping
+  the supervisor reusable. `shutdown` is a terminal fence: it cancels pending
+  startup, stops only the child owned by that supervisor, and prevents a late
+  task from resurrecting it. A factory-created supervisor belongs to that
+  backend incarnation and is shut down before a replacement backend takes
+  over.
 - A delegated client may borrow the root DS4 owner only when it keeps the same
   DS4 provider/model selection. A child that selects another provider receives
   neither the root supervisor nor its loopback endpoint.
 - An injected endpoint is an internal test/composition seam. ZenCODE does not
-  discover or terminate an unrelated process by PID or port.
+  discover or terminate an unrelated process by PID or port; adopted endpoints
+  are explicitly external and are never killed on backend reset or full exit.
 
 ## Troubleshooting boundaries
 

@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import FeatureKit
 import Testing
 @testable import ZenCODECore
 
@@ -166,6 +167,77 @@ struct DS4ServerSupervisorTests {
     }
 
     @Test
+    func compatibleExistingServerIsAdoptedAndNeverTerminated() async throws {
+        let fixture = try Fixture.make(mode: "ready")
+        defer { fixture.remove() }
+        let blocker = try PortBlocker()
+        let port = blocker.port
+        blocker.close()
+
+        let external = FeatureManagedProcess(
+            executableURL: fixture.executable,
+            arguments: ["--host", "127.0.0.1", "--port", String(port)],
+            terminationGracePeriod: 0.05
+        )
+        try await external.start()
+
+        let missing = fixture.root.appendingPathComponent("missing-ds4")
+        let supervisor = DS4ServerSupervisor(
+            manifest: try fixture.manifest(model: true),
+            executableURL: missing,
+            modelAlias: "fixture-model",
+            readinessTimeout: .seconds(1),
+            readinessPollInterval: .milliseconds(25),
+            terminationGracePeriod: 0.05,
+            adoptionPort: port,
+            adoptionProbeTimeout: .seconds(1)
+        )
+
+        let endpoint = try await supervisor.start()
+        #expect(endpoint.ownership == .adopted)
+        #expect(endpoint.isAdopted)
+        #expect(endpoint.processIdentifier == nil)
+        #expect(await supervisor.processIdentifier == nil)
+        #expect(await supervisor.launchArguments.isEmpty)
+
+        // A reusable stop detaches and allows adoption again; it still cannot
+        // turn the external process into a ZenCODE-owned child.
+        await supervisor.stop()
+        #expect(await external.isRunning)
+        let adoptedAgain = try await supervisor.start()
+        #expect(adoptedAgain.ownership == .adopted)
+        await supervisor.shutdown()
+        #expect(await external.isRunning)
+        await external.stop()
+        #expect(!(await external.isRunning))
+    }
+
+    @Test
+    func shutdownStopsOnlyAChildStartedByTheSupervisor() async throws {
+        let fixture = try Fixture.make(mode: "ready")
+        defer { fixture.remove() }
+
+        let supervisor = DS4ServerSupervisor(
+            manifest: try fixture.manifest(model: true),
+            executableURL: fixture.executable,
+            modelAlias: "fixture-model",
+            readinessTimeout: .seconds(1),
+            readinessPollInterval: .milliseconds(25),
+            terminationGracePeriod: 0.05,
+            adoptionPort: nil
+        )
+        let endpoint = try await supervisor.start()
+        #expect(endpoint.ownership == .managed)
+        #expect(endpoint.processIdentifier != nil)
+        guard let processIdentifier = endpoint.processIdentifier else { return }
+        #expect(Self.isProcessRunning(processIdentifier))
+
+        await supervisor.shutdown()
+        #expect(!(await supervisor.isRunning))
+        #expect(!Self.isProcessRunning(processIdentifier))
+    }
+
+    @Test
     func readinessUsesMTPAndConfiguredPowerArguments() async throws {
         let fixture = try Fixture.make(mode: "ready")
         defer { fixture.remove() }
@@ -278,6 +350,25 @@ struct DS4ServerSupervisorTests {
     }
 
     @Test
+    func trickleBodyCannotExtendTheReadinessDeadline() async throws {
+        let fixture = try Fixture.make(mode: "trickle")
+        defer { fixture.remove() }
+        let supervisor = try fixture.supervisor(timeout: .milliseconds(180))
+
+        do {
+            _ = try await supervisor.start()
+            Issue.record("A trickling readiness body unexpectedly completed after the deadline.")
+        } catch let error as DS4ServerSupervisorError {
+            guard case .readinessTimedOut = error else {
+                Issue.record("Unexpected supervisor error: \(error)")
+                return
+            }
+        }
+        #expect(!(await supervisor.isRunning))
+        await supervisor.shutdown()
+    }
+
+    @Test
     func oversizedSingleReadChunkReturnsBoundedErrorWithoutUnderflow() async throws {
         let fixture = try Fixture.make(mode: "oversized")
         defer { fixture.remove() }
@@ -324,6 +415,14 @@ struct DS4ServerSupervisorTests {
             }
             await supervisor.shutdown()
         }
+    }
+
+    private static func isProcessRunning(_ processIdentifier: Int32) -> Bool {
+        #if os(macOS) || os(Linux)
+        return kill(processIdentifier, 0) == 0
+        #else
+        return false
+        #endif
     }
 
     private struct Fixture {
@@ -402,7 +501,8 @@ struct DS4ServerSupervisorTests {
                 readinessPollInterval: .milliseconds(25),
                 maximumReadinessBodyBytes: maximumBodyBytes,
                 terminationGracePeriod: 0.05,
-                additionalArguments: additionalArguments
+                additionalArguments: additionalArguments,
+                adoptionPort: nil
             )
         }
 
@@ -454,7 +554,14 @@ struct DS4ServerSupervisorTests {
                     else:
                         body = b"{}"
                         response = b"HTTP/1.1 404 Not Found\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\n{}"
-                    connection.sendall(response)
+                    if mode == "trickle":
+                        header = b"HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nContent-Length: " + str(len(body)).encode() + b"\\r\\nConnection: close\\r\\n\\r\\n"
+                        connection.sendall(header)
+                        for byte in body:
+                            connection.sendall(bytes([byte]))
+                            time.sleep(0.01)
+                    else:
+                        connection.sendall(response)
                 finally:
                     connection.close()
             """
