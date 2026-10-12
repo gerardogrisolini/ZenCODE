@@ -25,6 +25,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
   evidence limits, and fallback semantics through a backend-neutral mapper.
   Normal tool blocks remain compact; detailed source evidence is available on
   demand through `/artifacts`.
+- `/artifacts` now renders file names prominently and formats source evidence in fenced code blocks with syntax highlighting selected from each file extension; unknown extensions remain neutral.
 - Existing `Summary`, `/changes`, `/changes diff`, `/undo`, saved snapshots,
   checkpoints, transcripts, and ACP wire formats remain unchanged.
 

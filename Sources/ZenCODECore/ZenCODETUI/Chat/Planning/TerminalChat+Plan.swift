@@ -76,7 +76,7 @@ extension TerminalChat {
                 await writeFailureMessage(Self.planDiscussionBlocksMutationMessage)
                 return .continueChat
             }
-            guard var plan = activePlan,
+            guard let plan = activePlan,
                   !plan.consolidatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 await writeFailureMessage(Self.planUnavailableForApprovalMessage)
                 return .continueChat

@@ -58,10 +58,14 @@ extension TerminalChat {
             await writeSystemMessage("No file artifacts in the current session.\n")
             return
         }
-        await writePreformattedMessage(Self.renderFileArtifacts(
-            turns, columnWidth: Self.terminalColumnCount(),
-            isEnabled: AgentOutput.standardErrorIsTerminal
-        ))
+        await renderCoordinator.writeMarkdownMessage(
+            Self.renderFileArtifacts(
+                turns,
+                columnWidth: Self.terminalColumnCount(),
+                isEnabled: AgentOutput.standardErrorIsTerminal
+            ),
+            to: .standardError
+        )
     }
 
     public nonisolated static func renderFileArtifacts(
@@ -69,58 +73,116 @@ extension TerminalChat {
         columnWidth: Int = 100,
         isEnabled: Bool = false
     ) -> String {
+        // The source is intentionally emitted as Markdown and rendered by the
+        // same formatter as assistant output. Keep these parameters for source
+        // compatibility with callers that used the preformatted renderer; the
+        // Markdown formatter owns terminal width and ANSI capability now.
+        _ = columnWidth
+        _ = isEnabled
+
         var lines = ["", "🪬 Artifacts"]
-        let width = max(1, columnWidth - 1)
-        func appendText(_ text: String) {
-            lines.append(contentsOf: safelyWrappedDetailedToolRows(
-                [.text(terminalSafeSnippetLine(text))], columnWidth: columnWidth
-            ).map(\.plainText))
-        }
         for turn in turns {
             let count = turn.artifacts.count == 1 ? "1 file" : "\(turn.artifacts.count) files"
             lines.append("")
-            appendText("Turn \(turn.number) — \(count)")
+            lines.append("### Turn \(turn.number) — \(count)")
             for artifact in turn.artifacts {
-                let counts = "+\(artifact.additions) -\(artifact.deletions)"
-                let binary = artifact.isBinary ? " (binary)" : ""
-                appendText("  \(artifact.status.rawValue) \(artifact.displayPath)  \(counts)\(binary)")
-                if let explanation = artifact.explanation {
-                    appendText("    \(explanation)")
+                lines.append("")
+                lines.append(renderFileArtifactMetadata(artifact))
+
+                if let explanation = artifact.explanation?.nilIfBlank {
+                    lines.append("Explanation: \(explanation)")
+                }
+
+                guard !artifact.isBinary else {
                     continue
                 }
-                let language = codeLanguageHint(forPath: artifact.displayPath)
-                let rows: [DetailedToolRow]
+
+                let languagePath = artifact.displayPath.nilIfBlank ?? artifact.absolutePath
+                let language = codeLanguageHint(forPath: languagePath)
                 if let oldText = artifact.oldText, let newText = artifact.newText {
-                    rows = numberedDiffSnippetRows(old: oldText, new: newText, contentWidth: width)
-                } else if let text = artifact.newText ?? artifact.oldText {
-                    rows = numberedDiffSnippetRows(
-                        old: artifact.status == .deleted ? text : "",
-                        new: artifact.status == .deleted ? "" : text,
-                        contentWidth: width
+                    lines.append("**Before**")
+                    appendMarkdownCodeBlock(
+                        oldText,
+                        language: language,
+                        to: &lines
                     )
-                } else if let patch = artifact.patch {
-                    for line in patch.components(separatedBy: "\n") {
-                        let fragments = safelyWrappedDetailedToolRows(
-                            [.text(terminalSafeSnippetLine(line))], columnWidth: columnWidth
-                        ).map(\.plainText)
-                        for fragment in fragments {
-                            lines.append(renderFileChangeDiffPatch(fragment, isEnabled: isEnabled))
-                        }
-                    }
-                    continue
-                } else {
-                    continue
+                    lines.append("**After**")
+                    appendMarkdownCodeBlock(
+                        newText,
+                        language: language,
+                        to: &lines
+                    )
+                } else if let text = artifact.newText ?? artifact.oldText {
+                    appendMarkdownCodeBlock(
+                        text,
+                        language: language,
+                        to: &lines
+                    )
+                } else if let patch = artifact.patch?.nilIfBlank {
+                    lines.append("**Patch**")
+                    appendMarkdownCodeBlock(
+                        patch,
+                        language: language,
+                        to: &lines
+                    )
                 }
-                lines.append(contentsOf: safelyWrappedDetailedToolRows(
-                    rows, columnWidth: columnWidth, codeLanguage: isEnabled ? language : nil
-                ).map {
-                    isEnabled
-                        ? renderDetailedToolRow($0, codeLanguage: language, contentWidth: width)
-                        : $0.plainText
-                })
             }
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    private nonisolated static func renderFileArtifactMetadata(
+        _ artifact: FileChangeArtifact
+    ) -> String {
+        let path = artifact.displayPath.nilIfBlank ?? artifact.absolutePath
+        let displayedPath = path.nilIfBlank ?? "(unknown path)"
+        let counts = "+\(artifact.additions) -\(artifact.deletions)"
+        let binary = artifact.isBinary ? " (binary)" : ""
+        return "**\(artifact.status.rawValue) `\(markdownInlineCode(displayedPath))`**  \(counts)\(binary)"
+    }
+
+    private nonisolated static func appendMarkdownCodeBlock(
+        _ text: String,
+        language: String?,
+        to lines: inout [String]
+    ) {
+        let fence = markdownCodeFence(for: text, language: language)
+        lines.append(fence)
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        var contentLines = normalized
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        // The separator before the closing fence represents the source's
+        // trailing newline; do not turn it into an extra blank source line.
+        if normalized.hasSuffix("\n"), !contentLines.isEmpty {
+            contentLines.removeLast()
+        }
+        lines.append(contentsOf: contentLines)
+        lines.append(String(repeating: "`", count: fence.prefix(while: { $0 == "`" }).count))
+    }
+
+    private nonisolated static func markdownCodeFence(
+        for text: String,
+        language: String?
+    ) -> String {
+        var longestBacktickRun = 0
+        var currentBacktickRun = 0
+        for character in text {
+            if character == "`" {
+                currentBacktickRun += 1
+                longestBacktickRun = max(longestBacktickRun, currentBacktickRun)
+            } else {
+                currentBacktickRun = 0
+            }
+        }
+        let length = max(3, longestBacktickRun + 1)
+        return String(repeating: "`", count: length) + (language ?? "")
+    }
+
+    private nonisolated static func markdownInlineCode(_ text: String) -> String {
+        text.replacingOccurrences(of: "`", with: "\\`")
     }
 
     public func handleChangesCommand(_ command: String) async {

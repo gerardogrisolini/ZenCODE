@@ -102,11 +102,14 @@ extension TerminalChatRenderCoordinator {
         ) }
     }
 
-    func writeMarkdownMessage(_ markdown: String) {
+    func writeMarkdownMessage(
+        _ markdown: String,
+        to channel: OutputChannel = .standardOutput
+    ) {
         interruptActiveToolForInterleavedOutputIfNeeded()
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
-        renderMarkdownMessage(markdown)
+        renderMarkdownMessage(markdown, to: channel)
         renderPendingOverviewsIfIdle()
     }
 
