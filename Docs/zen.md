@@ -15,6 +15,21 @@ Standalone `zen` uses providers/models from `~/.zencode/settings.json`.
 Headless JSONL mode is documented in the dedicated
 [protocol guide](jsonl.md).
 
+## Session File Artifacts
+
+During the active terminal session, ZenCODE keeps an in-memory history
+of effective file mutations, grouped by turn. Use `/artifacts` without arguments
+to show the complete history, including text evidence, patches, and explicit
+fallbacks for binary, uncertain, or over-budget evidence (64 KiB per text and
+256 KiB per turn). Normal tool blocks remain compact without code or diffs.
+The history is scoped to the active
+session and is cleared by `/sessions new`, loading/restoring a session, and
+`/setup`; it is never written to saved snapshots, checkpoints, transcripts, or
+ACP wire messages. `/changes`, `/changes diff`, `/undo`, the final `Summary`,
+and the ACP standard `locations`/`diff` updates keep their existing contracts.
+TUI and ACP use the same path normalization and evidence mapper; only their
+presentation renderer differs.
+
 ## Recovering Incomplete Tasks at Startup
 
 When standalone `zen` starts in an interactive terminal, it scans the current

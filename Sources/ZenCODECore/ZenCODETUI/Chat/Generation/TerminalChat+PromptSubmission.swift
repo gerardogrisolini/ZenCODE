@@ -180,6 +180,17 @@ extension TerminalChat {
                 case let command where command == "/open" || command.hasPrefix("/open "):
             await handleOpenCommand(command)
             return .continueChat
+        case let command where command == "/artifacts" || command.hasPrefix("/artifacts "):
+            let arguments = Self.slashCommandArguments(
+                from: command,
+                commandPrefix: "/artifacts"
+            )
+            if arguments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                await handleArtifactsCommand()
+            } else {
+                await writeFailureMessage("ZenCODE: /artifacts does not accept arguments.\n")
+            }
+            return .continueChat
         case let command where command == "/changes" || command.hasPrefix("/changes "):
             await handleChangesCommand(command)
             return .continueChat

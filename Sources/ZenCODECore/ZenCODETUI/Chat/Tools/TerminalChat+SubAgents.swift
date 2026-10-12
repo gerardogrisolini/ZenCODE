@@ -810,7 +810,8 @@ extension TerminalChat {
             statusDetail: presentation.lifecycle.compactStatusDetail,
             contentInsetWidth: 0,
             // The canonical renderer reserves its own final safety column.
-            columnWidth: wrapWidth + 1
+            columnWidth: wrapWidth + 1,
+            includesSourceChanges: false
         )
         let reset = TerminalStyle.reset
         var lines = rows.compactRows.enumerated().map { index, row in

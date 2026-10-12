@@ -60,6 +60,17 @@ deterministic plain-text projection; ambiguous transport/server outcomes never
 trigger a second final send. The tree is not persisted, so settings, session,
 checkpoint and transcript formats remain unchanged.
 
+The transient presentation rule also covers file-change evidence.
+`FileChangeArtifactMapper` provides the backend-neutral projection consumed by
+both TUI and ACP, while `SessionFileArtifactHistory` keeps the complete,
+session-scoped turn history used by `/artifacts` only in memory. It is cleared at
+new/load/restore/setup boundaries and is excluded from saved sessions,
+checkpoint trees, transcripts, snapshots, and ACP wire formats. TUI and ACP may
+render the shared evidence differently, but path normalization, ordering,
+deduplication, byte-budget fallback, and binary/uncertain evidence semantics
+remain shared. The existing `Summary`, `/changes`, `/changes diff`, `/undo`,
+and ACP wire contracts remain unchanged.
+
 Optional feature packages are not executables distributed beside `zen`. The
 installer and `zen --install-features` copy a package to
 `~/.zencode/features/<id>/`, generate the same manifest shape used by a local

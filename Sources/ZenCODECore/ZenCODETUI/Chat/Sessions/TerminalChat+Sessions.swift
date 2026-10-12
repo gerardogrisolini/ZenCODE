@@ -51,6 +51,7 @@ extension TerminalChat {
             await abandonPlanBrainstorming()
             await sessionRunner.resetSession(id: sessionID)
             sessionID = Self.newTerminalSessionID()
+            resetFileArtifactState()
             activeSessionCacheKey = nil
             activeSessionHistory = []
             replaceActiveSessionTranscript(with: [])
@@ -322,6 +323,7 @@ extension TerminalChat {
         activeWorkflow = nil
         await sessionRunner.resetSession(id: sessionID)
         sessionID = savedSession.sessionID
+        resetFileArtifactState()
         activeSessionCacheKey = savedSession.cacheKey
         activeSessionHistory = restoredMessages
         replaceActiveSessionTranscript(with: restoredTranscript)

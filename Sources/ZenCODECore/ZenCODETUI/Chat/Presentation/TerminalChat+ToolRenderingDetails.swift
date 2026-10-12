@@ -434,6 +434,10 @@ extension TerminalChat {
             ? patchTargetPath(arguments)
             : targetPath(arguments)
         guard let path else { return nil }
+        return codeLanguageHint(forPath: path)
+    }
+
+    nonisolated static func codeLanguageHint(forPath path: String) -> String? {
         switch URL(fileURLWithPath: path).pathExtension.lowercased() {
         case "swift": return "swift"
         case "c", "h": return "c"
@@ -732,7 +736,7 @@ extension TerminalChat {
     /// arbitrary escape sequence into the rendered row. Expansion happens only
     /// for presentation; LCS keeps comparing the original source lines,
     /// preserving a tab-vs-space edit.
-    private nonisolated static func terminalSafeSnippetLine(_ line: String) -> String {
+    nonisolated static func terminalSafeSnippetLine(_ line: String) -> String {
         let tabWidth = 4
         var rendered = ""
         var currentWidth = 0

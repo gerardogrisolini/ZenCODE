@@ -38,6 +38,22 @@ struct TerminalPromptEditorTests {
     // MARK: - Line and buffer motion
 
     @Test
+    func artifactsCommandHasHelpRecognitionAndArgumentFreeCompletion() throws {
+        let descriptor = try #require(TerminalChat.visibleCommandDescriptors(
+            builderAgentEnabled: false, telegramEnabled: false
+        ).first { $0.command == "/artifacts" })
+        #expect(descriptor.help.contains("grouped by turn"))
+        #expect(!descriptor.requiresArgument)
+        #expect(TerminalChat.isKnownSlashCommand("/artifacts"))
+        #expect(TerminalPromptCompletionCatalog.argumentSuggestions(for: "/artifacts").isEmpty)
+        var editor = makeEditor("/art")
+        let context = TerminalPromptEditorContext(suggestions: [
+            TerminalCommandSuggestion(command: descriptor.command, summary: descriptor.summary)
+        ])
+        #expect(editor.apply(.enter, context: context) == .submitted("/artifacts"))
+    }
+
+    @Test
     func homeAndEndActOnTheLogicalLineWhileBufferShortcutsSpanTheDraft() {
         var editor = makeEditor("one\ntwo\nthree", cursorIndex: 5)
         let context = TerminalPromptEditorContext()

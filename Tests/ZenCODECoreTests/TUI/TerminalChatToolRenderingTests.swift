@@ -36,6 +36,47 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
+    func artifactsRenderingGroupsEveryTurnAndIncludesTextEvidence() {
+        let turns = [
+            SessionFileArtifactHistory.Turn(
+                number: 1,
+                artifacts: [
+                    FileChangeArtifact(
+                        absolutePath: "/tmp/one.swift",
+                        displayPath: "Sources/One.swift",
+                        status: .added,
+                        additions: 1,
+                        newText: "let one = 1\n"
+                    )
+                ]
+            ),
+            SessionFileArtifactHistory.Turn(
+                number: 2,
+                artifacts: [
+                    FileChangeArtifact(
+                        absolutePath: "/tmp/two.swift",
+                        displayPath: "Sources/Two.swift",
+                        status: .modified,
+                        additions: 1,
+                        deletions: 1,
+                        oldText: "let value = 1\n",
+                        newText: "let value = 2\n"
+                    )
+                ]
+            )
+        ]
+
+        let rendered = TerminalANSIText.stripANSI(TerminalChat.renderFileArtifacts(turns))
+
+        #expect(rendered.contains("Turn 1 — 1 file"))
+        #expect(rendered.contains("Turn 2 — 1 file"))
+        #expect(rendered.contains("Sources/One.swift"))
+        #expect(rendered.contains("Sources/Two.swift"))
+        #expect(rendered.contains("let value = 1"))
+        #expect(rendered.contains("let value = 2"))
+    }
+
+    @Test
     func fileChangeSummaryColoringHighlightsNonBlankLines() {
         let rendered = TerminalChatTextFormatting.fileChangeSummaryColorApplied(
             to: "\n🪬 Summary: 1 modified file  +12 -2\n  modified Sources/App.swift  +12 -2\nUse /undo to revert, /changes diff to show patches.\n",

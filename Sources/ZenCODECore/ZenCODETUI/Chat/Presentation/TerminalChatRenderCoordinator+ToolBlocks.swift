@@ -340,9 +340,9 @@ extension TerminalChatRenderCoordinator {
             statusDetail: lifecycle.compactStatusDetail,
             contentInsetWidth: contentInsetWidth,
             columnWidth: columnWidth,
-            // Pending blocks stay compact and therefore cursor-rewritable.
-            // Source changes are emitted once, in full, by the completion.
-            includesSourceChanges: lifecycle.isCompletion
+            // Both lifecycles stay compact. Captured source evidence is shown
+            // only on demand by /artifacts, never from mutation arguments.
+            includesSourceChanges: false
         )
     }
 

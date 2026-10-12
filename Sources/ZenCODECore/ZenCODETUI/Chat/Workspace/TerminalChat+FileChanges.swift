@@ -6,8 +6,15 @@
 //
 
 import Foundation
+import ToolCore
 
 extension TerminalChat {
+    /// Replacing the actor also fences restores that reuse the same session ID.
+    func resetFileArtifactState() {
+        lastFileChangeSummary = nil
+        fileArtifactHistory = SessionFileArtifactHistory(sessionID: sessionID)
+    }
+
     public func publishFileChangeSummaryIfNeeded(
         from coordinator: TurnFileChangeCoordinator
     ) async -> TurnFileChangeSummary? {
@@ -20,14 +27,100 @@ extension TerminalChat {
     }
 
     public func collectFileChangeSummaryIfNeeded(
-        from coordinator: TurnFileChangeCoordinator
+        from coordinator: TurnFileChangeCoordinator,
+        sessionID expectedSessionID: String? = nil,
+        history expectedHistory: SessionFileArtifactHistory? = nil
     ) async -> TurnFileChangeSummary? {
+        let observedSessionID = expectedSessionID ?? sessionID
+        let history = expectedHistory ?? fileArtifactHistory
         guard let summary = await coordinator.publishSummaryIfNeeded() else {
             return nil
         }
-
+        // A session switch may race the final reconciliation of an old turn.
+        // Keep both the latest-summary slot and the runtime artifact history
+        // fenced to the session that started the turn.
+        guard sessionID == observedSessionID, fileArtifactHistory === history else {
+            return nil
+        }
         lastFileChangeSummary = summary
+        await history.append(
+            summary: summary,
+            sessionID: observedSessionID,
+            workingDirectory: configuration.workingDirectory
+        )
+        guard sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
         return summary
+    }
+
+    public func handleArtifactsCommand() async {
+        let turns = await fileArtifactHistory.snapshot()
+        guard !turns.isEmpty else {
+            await writeSystemMessage("No file artifacts in the current session.\n")
+            return
+        }
+        await writePreformattedMessage(Self.renderFileArtifacts(
+            turns, columnWidth: Self.terminalColumnCount(),
+            isEnabled: AgentOutput.standardErrorIsTerminal
+        ))
+    }
+
+    public nonisolated static func renderFileArtifacts(
+        _ turns: [SessionFileArtifactHistory.Turn],
+        columnWidth: Int = 100,
+        isEnabled: Bool = false
+    ) -> String {
+        var lines = ["", "🪬 Artifacts"]
+        let width = max(1, columnWidth - 1)
+        func appendText(_ text: String) {
+            lines.append(contentsOf: safelyWrappedDetailedToolRows(
+                [.text(terminalSafeSnippetLine(text))], columnWidth: columnWidth
+            ).map(\.plainText))
+        }
+        for turn in turns {
+            let count = turn.artifacts.count == 1 ? "1 file" : "\(turn.artifacts.count) files"
+            lines.append("")
+            appendText("Turn \(turn.number) — \(count)")
+            for artifact in turn.artifacts {
+                let counts = "+\(artifact.additions) -\(artifact.deletions)"
+                let binary = artifact.isBinary ? " (binary)" : ""
+                appendText("  \(artifact.status.rawValue) \(artifact.displayPath)  \(counts)\(binary)")
+                if let explanation = artifact.explanation {
+                    appendText("    \(explanation)")
+                    continue
+                }
+                let language = codeLanguageHint(forPath: artifact.displayPath)
+                let rows: [DetailedToolRow]
+                if let oldText = artifact.oldText, let newText = artifact.newText {
+                    rows = numberedDiffSnippetRows(old: oldText, new: newText, contentWidth: width)
+                } else if let text = artifact.newText ?? artifact.oldText {
+                    rows = numberedDiffSnippetRows(
+                        old: artifact.status == .deleted ? text : "",
+                        new: artifact.status == .deleted ? "" : text,
+                        contentWidth: width
+                    )
+                } else if let patch = artifact.patch {
+                    for line in patch.components(separatedBy: "\n") {
+                        let fragments = safelyWrappedDetailedToolRows(
+                            [.text(terminalSafeSnippetLine(line))], columnWidth: columnWidth
+                        ).map(\.plainText)
+                        for fragment in fragments {
+                            lines.append(renderFileChangeDiffPatch(fragment, isEnabled: isEnabled))
+                        }
+                    }
+                    continue
+                } else {
+                    continue
+                }
+                lines.append(contentsOf: safelyWrappedDetailedToolRows(
+                    rows, columnWidth: columnWidth, codeLanguage: isEnabled ? language : nil
+                ).map {
+                    isEnabled
+                        ? renderDetailedToolRow($0, codeLanguage: language, contentWidth: width)
+                        : $0.plainText
+                })
+            }
+        }
+        return lines.joined(separator: "\n") + "\n"
     }
 
     public func handleChangesCommand(_ command: String) async {

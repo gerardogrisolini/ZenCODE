@@ -126,7 +126,7 @@ public actor TurnFileChangeTracker {
         #endif
 
         var entries: [TurnFileChangeSummary.Entry] = []
-        for snapshot in snapshotsByPath.values {
+        for snapshot in snapshotsByPath.values.sorted(by: { $0.displayPath < $1.displayPath }) {
             var isDirectory: ObjCBool = false
             let existsNow = fileManager.fileExists(
                 atPath: snapshot.absolutePath,

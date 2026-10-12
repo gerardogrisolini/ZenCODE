@@ -62,6 +62,8 @@ public final class TerminalChat {
     public var selectedSkillIDs = Set<String>()
     public var pendingAttachments: [AgentRuntimeAttachment] = []
     public var lastFileChangeSummary: TurnFileChangeSummary?
+    /// Runtime-only artifact history. It is never serialized with a session.
+    var fileArtifactHistory = SessionFileArtifactHistory()
     public var activePlan: TerminalSessionPlan?
     /// Ephemeral `/plan` clarification state. Never copy this into snapshots or
     /// persisted session models.
@@ -463,6 +465,7 @@ public final class TerminalChat {
             ? await applyResumableTaskGraphSessionIfNeeded()
             : nil
 
+        resetFileArtifactState()
         try await createCurrentSession()
         await refreshInitialStatusBarContextWindow()
         _ = try await preloadCurrentModel(emitStatus: configuration.hostedModels != nil)

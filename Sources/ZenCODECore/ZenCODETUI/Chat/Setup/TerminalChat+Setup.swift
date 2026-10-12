@@ -24,6 +24,7 @@ extension TerminalChat {
             return
         }
         sessionID = snapshot.sessionID
+        resetFileArtifactState()
         activeSessionCacheKey = snapshot.cacheKey
         activeSessionHistory = snapshot.history
         replaceActiveSessionTranscript(with: snapshot.transcriptHistory)

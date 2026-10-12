@@ -12,7 +12,7 @@ import ToolCore
 struct TerminalChatRenderCoordinatorTests {
 
     @Test
-    func standardPreservesCompactANSICompletionBeforeAppendingSourceChanges() async {
+    func standardPreservesCompactANSICompletionWithoutSourceChanges() async {
         let toolCall = presentedToolCall(
             id: "standard-ansi-edit",
             name: "local.editFile",
@@ -49,8 +49,8 @@ struct TerminalChatRenderCoordinatorTests {
         )
 
         #expect(completion.contains(compactCompletion))
-        #expect(completion.contains("oldValue"))
-        #expect(completion.contains("newValue"))
+        #expect(!completion.contains("oldValue"))
+        #expect(!completion.contains("newValue"))
     }
 
     @Test
@@ -128,7 +128,7 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func standardKeepsPendingCompactAndEmitsAllSourceChangesOnCompletion() async {
+    func standardKeepsPendingAndCompletionCompact() async {
         let old = (0..<150).map { "let old\($0) = \($0)" }.joined(separator: "\n")
         let new = (0..<150).map { "let new\($0) = \($0)" }.joined(separator: "\n")
         let toolCall = presentedToolCall(
@@ -164,8 +164,8 @@ struct TerminalChatRenderCoordinatorTests {
                 .joined()
         )
 
-        #expect(completionText.contains("old149"))
-        #expect(completionText.contains("new149"))
+        #expect(!completionText.contains("old149"))
+        #expect(!completionText.contains("new149"))
         #expect(!completionText.contains("truncated"))
     }
 
@@ -236,15 +236,15 @@ struct TerminalChatRenderCoordinatorTests {
         // Recording delegated tools updates only the live overview model. It
         // must never append a coordinator-looking block to the transcript.
         #expect(await delegatedRenderer.capturedWriteEvents().isEmpty)
-        #expect(toolRows.count >= 3)
+        #expect(toolRows.count >= 2)
         #expect(toolRows.allSatisfy { $0.hasPrefix("   ") })
         #expect(rows.contains { $0.contains("✅ 1.20s") })
-        #expect(rows.contains { $0.contains("oldValue") })
-        #expect(rows.contains { $0.contains("newValue") })
+        #expect(!rows.contains { $0.contains("oldValue") })
+        #expect(!rows.contains { $0.contains("newValue") })
     }
 
     @Test(arguments: ["local.editFile", "local.multiEdit", "local.writeFile"], [false, true])
-    func filePreviewsAlignWithCoordinatorAndDelegatedToolTitles(
+    func coordinatorAndDelegatedToolsOmitSourcePreviews(
         toolName: String,
         stdinIsTerminal: Bool
     ) async throws {
@@ -280,17 +280,11 @@ struct TerminalChatRenderCoordinatorTests {
         let coordinatorRows = coordinatorRawRows.map {
             TerminalANSIText.stripANSI($0).replacingOccurrences(of: "\r", with: "")
         }
-        let coordinatorSource = try #require(coordinatorRows.first { $0.contains("newValue") })
         let inset = stdinIsTerminal ? TerminalChatTextFormatting.chatLineInsetPrefix : ""
-        #expect(coordinatorSource.hasPrefix("\(inset)1 │ "))
-        #expect(coordinatorSource.contains("1 │ \(new)"))
+        #expect(!coordinatorRows.contains { $0.contains("newValue") || $0.contains("oldValue") })
         #expect(coordinatorRows.contains { $0.hasPrefix("\(inset)🛠️  \(toolName)") })
         let sourceRows = coordinatorRawRows.filter { $0.contains(TerminalChat.codeAreaBackgroundColor) }
-        #expect(!sourceRows.isEmpty)
-        for row in sourceRows {
-            #expect(TerminalChat.displayWidth(row) == 99)
-            #expect(row.hasSuffix("\(TerminalStyle.reset)\u{1B}[K\(TerminalStyle.reset)"))
-        }
+        #expect(sourceRows.isEmpty)
 
         let delegatedRenderer = makeRenderer(standardErrorIsTerminal: true)
         let agentSnapshot = DirectSubAgentRuntime.AgentSnapshot(
@@ -306,8 +300,7 @@ struct TerminalChatRenderCoordinatorTests {
             createdAt: Date(),
             updatedAt: Date()
         )
-        // The delegated overview shows source details both while running and
-        // after completion; neither lifecycle may add a second layout inset.
+        // Delegated tool activity stays compact for both lifecycles as well.
         for lifecycle in [DirectSubAgentToolEvent.Lifecycle.started, .completed(result)] {
             await delegatedRenderer.recordSubAgentToolEvent(
                 DirectSubAgentToolEvent(
@@ -325,20 +318,12 @@ struct TerminalChatRenderCoordinatorTests {
             )
             let delegatedRows = delegatedRawRows.map { TerminalANSIText.stripANSI($0) }
             #expect(delegatedRows.contains { $0.hasPrefix("   🛠️  \(toolName)") })
-            let source = try #require(delegatedRows.first { $0.contains("newValue") })
-            // A narrow terminal may choose unified diff markers instead.
-            #expect(source.hasPrefix("   1 │ ") || source.hasPrefix("   + 1 │ "))
-            #expect(source.contains("1 │ \(new)"))
+            #expect(!delegatedRows.contains { $0.contains("newValue") || $0.contains("oldValue") })
             let ansiRows = TerminalChat.renderSubAgentToolRowsForTesting(
                 try #require(presentations.presentationsByAgentID[agentSnapshot.id])
             )
-            let width = max(40, TerminalChat.terminalColumnCount() - 3)
             let sourceRows = ansiRows.filter { $0.contains(TerminalChat.codeAreaBackgroundColor) }
-            #expect(!sourceRows.isEmpty)
-            for row in sourceRows {
-                #expect(TerminalChat.displayWidth(row) == width)
-                #expect(row.hasSuffix("\(TerminalStyle.reset)\u{1B}[K\(TerminalStyle.reset)"))
-            }
+            #expect(sourceRows.isEmpty)
         }
         #expect(await delegatedRenderer.capturedWriteEvents().isEmpty)
     }
@@ -579,8 +564,8 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(refresh.hasPrefix("\u{1B}[\(ownedRows)A\r"))
         #expect(refresh.components(separatedBy: "\u{1B}[2K").count - 1 == ownedRows)
         #expect(visibleRefresh.contains("✅"))
-        #expect(visibleRefresh.contains("oldValue"))
-        #expect(visibleRefresh.contains("newValue"))
+        #expect(!visibleRefresh.contains("oldValue"))
+        #expect(!visibleRefresh.contains("newValue"))
     }
 
     @Test
@@ -820,7 +805,7 @@ struct TerminalChatRenderCoordinatorTests {
     /// block followed only by the source appendix. Anything preceding the shared
     /// compact bytes must be pure cursor control, never printable text.
     @Test
-    func standardCompletionIsCompactBytesFollowedOnlyBySourceAppendix() async throws {
+    func standardCompletionHasNoSourceAppendix() async throws {
         let toolCall = presentedToolCall(
             id: "standard-characterization-edit",
             name: "local.editFile",
@@ -858,12 +843,11 @@ struct TerminalChatRenderCoordinatorTests {
         let appendix = String(completion[compactRange.upperBound...])
 
         #expect(TerminalANSIText.stripANSI(controlPrefix).allSatisfy { $0 == "\r" || $0 == "\n" })
-        #expect(TerminalANSIText.stripANSI(appendix).contains("oldValue"))
-        #expect(TerminalANSIText.stripANSI(appendix).contains("newValue"))
+        #expect(!TerminalANSIText.stripANSI(appendix).contains("oldValue"))
+        #expect(!TerminalANSIText.stripANSI(appendix).contains("newValue"))
         // The appendix never repeats the compact prefix content.
         #expect(!TerminalANSIText.stripANSI(appendix).contains("local.editFile"))
-        // Block terminator: the appendix newline plus the blank separator row.
-        #expect(appendix.hasSuffix("\n\n"))
+        // No blank source appendix is emitted; the block is compact only.
     }
 
     /// Characterization: without source rows the standard block degenerates to
@@ -905,7 +889,7 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func standardShowsCompactStatusAndMutationSource() async {
+    func standardShowsCompactStatusWithoutMutationSource() async {
         let toolCall = presentedToolCall(
             id: "standard-edit",
             name: "local.editFile",
@@ -925,8 +909,8 @@ struct TerminalChatRenderCoordinatorTests {
         let standardText = TerminalANSIText.stripANSI(
             await standard.capturedWriteEvents().map(\.text).joined()
         )
-        #expect(standardText.contains("oldValue"))
-        #expect(standardText.contains("newValue"))
+        #expect(!standardText.contains("oldValue"))
+        #expect(!standardText.contains("newValue"))
         #expect(standardText.contains("local.editFile"))
         #expect(standardText.contains("/tmp/Example.swift"))
         #expect(standardText.contains("✅"))
@@ -1364,10 +1348,10 @@ struct TerminalChatRenderCoordinatorTests {
         )
         #expect(completionText.components(separatedBy: "local.multiEdit").count - 1 == 1)
         #expect(!completionText.contains("parameters:"))
-        #expect(completionText.contains("old"))
-        #expect(completionText.contains("new"))
-        #expect(completionText.contains("let old = 1"))
-        #expect(completionText.contains("let new = 2"))
+        #expect(!completionText.contains("old"))
+        #expect(!completionText.contains("new"))
+        #expect(!completionText.contains("let old = 1"))
+        #expect(!completionText.contains("let new = 2"))
     }
 
 
@@ -4327,12 +4311,7 @@ struct TerminalChatRenderCoordinatorTests {
             $0.contains("// removed") && $0.contains("let newValue = 2")
         }
 
-        #expect(sideBySideRows.count == 1)
-        #expect(sideBySideRows.allSatisfy { TerminalChat.displayWidth($0) <= 80 })
-        #expect(sideBySideRows.allSatisfy { !$0.contains("\r") && !$0.contains("\t") })
-        // `let` comes after a comment on the old side, so this color can only
-        // appear when the coordinator renders the new column independently.
-        #expect(completionText.contains("\u{1B}[38;5;141mlet"))
+        #expect(sideBySideRows.isEmpty)
     }
 
     @Test
@@ -4374,9 +4353,7 @@ struct TerminalChatRenderCoordinatorTests {
             $0.contains("let injected = 1") && $0.contains("let replacement = 2")
         }
 
-        #expect(diffRows.count == 1)
-        #expect(diffRows.allSatisfy { $0.contains("let replacement = 2") })
-        #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 120 })
+        #expect(diffRows.isEmpty)
     }
 
 

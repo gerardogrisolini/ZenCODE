@@ -16,9 +16,10 @@ extension TerminalChat {
     func generateResponse(
         attempt: TerminalPromptAttempt
     ) async throws -> TerminalChatGenerationSuccess {
+        let turnSessionID = sessionID
+        let turnArtifactHistory = fileArtifactHistory
         await installSubAgentToolEventHandlerIfNeeded()
         let planPointCollector = TerminalPlanPointCollector()
-        let turnSessionID = sessionID
         let plannerTurnBaseline: PlannerTurnBaseline?
         let planningCollectionID: UUID?
         if case .plan = attempt.purpose {
@@ -294,7 +295,10 @@ extension TerminalChat {
             appendActiveSessionTranscript(
                 contentsOf: await transcriptTurn.messages(finalResponseText: response.text)
             )
-            let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
+            let fileChangeSummary = await collectFileChangeSummaryIfNeeded(
+                from: fileChanges, sessionID: turnSessionID,
+                history: turnArtifactHistory
+            )
             await stopSubAgentOverviewRefresh()
             await renderCoordinator.waitForOverviewMirrorsToDrain()
             if case .plan = attempt.purpose {
@@ -335,7 +339,10 @@ extension TerminalChat {
                 )
             }
             appendActiveSessionTranscript(contentsOf: await transcriptTurn.messages())
-            let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
+            let fileChangeSummary = await collectFileChangeSummaryIfNeeded(
+                from: fileChanges, sessionID: turnSessionID,
+                history: turnArtifactHistory
+            )
             await stopSubAgentOverviewRefresh()
             await renderCoordinator.waitForOverviewMirrorsToDrain()
             throw TerminalChatGenerationRunError(

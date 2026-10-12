@@ -249,6 +249,11 @@ extension TerminalChat {
                         help: "/open lists files, URLs, and attachments from the conversation (newest first) to open, or use /open <file-or-url> directly."
         ),
         TerminalChatCommandDescriptor(
+            command: "/artifacts",
+            summary: "show session file artifacts",
+            help: "/artifacts shows all file artifacts from the current session, grouped by turn. It accepts no arguments."
+        ),
+        TerminalChatCommandDescriptor(
             command: "/changes",
             summary: "show last file changes",
             help: "/changes shows the most recent file change summary. Use /changes diff to include patches."

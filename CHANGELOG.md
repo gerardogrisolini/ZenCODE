@@ -10,6 +10,23 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- `/artifacts` now shows the complete in-memory file-artifact history for the
+  active session, grouped by turn, with shared text/patch evidence and explicit
+  binary or uncertain-evidence fallbacks. The history is presentation-only and
+  is cleared when a session is created, loaded/restored, or rebuilt by setup.
+
+### Changed
+
+- TUI and ACP now share file-change normalization, deduplication, ordering,
+  evidence limits, and fallback semantics through a backend-neutral mapper.
+  Normal tool blocks remain compact; detailed source evidence is available on
+  demand through `/artifacts`.
+- Existing `Summary`, `/changes`, `/changes diff`, `/undo`, saved snapshots,
+  checkpoints, transcripts, and ACP wire formats remain unchanged.
+
+
 ## [2.2.0] - 2026-10-11
 
 ### Added
