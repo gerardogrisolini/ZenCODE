@@ -32,6 +32,7 @@ extension TerminalChat {
         // A setup restart restores persisted session data only, never an
         // unfinished conversational planning exchange.
         planBrainstorming = nil
+        pendingPlanApprovalPlanID = nil
         activeCheckpointTree = snapshot.checkpointTree
         activeSavedSessionName = snapshot.savedSessionName
         activeSessionSystemPromptOverride = nil

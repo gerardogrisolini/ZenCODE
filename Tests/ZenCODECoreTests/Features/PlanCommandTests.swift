@@ -50,7 +50,7 @@ struct PlanCommandTests {
         #expect(descriptor.help.contains("/plan delete"))
         #expect(descriptor.help.contains("/plan status"))
         #expect(descriptor.help.contains("/plan approve"))
-        #expect(descriptor.help.contains("start implementation immediately"))
+        #expect(descriptor.help.contains("descriptive Goal"))
         #expect(descriptor.help.contains("/plan clear"))
         #expect(!descriptor.help.contains("/plan [goal]"))
     }
@@ -531,7 +531,8 @@ struct PlanCommandTests {
         #expect(terminal.activePlan?.id == promoted.id)
         #expect(terminal.activePlan?.points.isEmpty == true)
 
-        let approval = await terminal.handlePlanCommand("/plan approve")
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan approve")))
+        let approval = await terminal.submittedLineAction("Execute the migration safely")
         guard case let .runHiddenPrompt(prompt, purpose) = approval else {
             Issue.record("Approval should materialize a loaded text-only plan")
             return
@@ -549,9 +550,12 @@ struct PlanCommandTests {
         #expect(graph.state == .active)
         #expect(graph.source == .plan(planID: promoted.id))
         #expect(graph.tasks.map(\.id) == [taskID])
-        #expect(graph.tasks.map(\.title) == ["Implement approved plan: Design the migration"])
+        #expect(graph.tasks.map(\.title) == ["Implement approved plan: Execute the migration safely"])
+        #expect(terminal.activePlan?.originalGoal == "Execute the migration safely")
         #expect(terminal.activePlan?.isApproved == true)
         #expect(terminal.activePlan?.points.map(\.id) == [taskID])
+        #expect(await runner.savedTaskPlans(workingDirectory: workingDirectory).first?.snapshot.plan.originalGoal
+            == "Execute the migration safely")
     }
 
     @Test
@@ -1195,8 +1199,12 @@ struct PlanCommandTests {
             ]
         ))
 
-        let approvalAction = await terminal.handlePlanCommand("/plan approve")
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan approve")))
+        let approvalAction = await terminal.submittedLineAction(
+            "Implement the first migration safely"
+        )
         #expect(terminal.activePlan?.isApproved == true)
+        #expect(terminal.activePlan?.originalGoal == "Implement the first migration safely")
         guard case let .runHiddenPrompt(prompt, purpose) = approvalAction else {
             Issue.record("/plan approve should start implementation immediately")
             return
@@ -1335,14 +1343,16 @@ struct PlanCommandTests {
             originalGoal: "goal",
             consolidatedText: "plan"
         )
-        let approvalAction = await terminal.handlePlanCommand("/plan approve")
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan approve")))
+        let approvalAction = await terminal.submittedLineAction("Ship the planned work")
         #expect(terminal.activePlan?.isApproved == true)
+        #expect(terminal.activePlan?.originalGoal == "Ship the planned work")
         guard case let .runHiddenPrompt(prompt, purpose) = approvalAction else {
             Issue.record("/plan approve should start implementation immediately")
             return
         }
         #expect(purpose == .normal)
-        #expect(prompt.contains("Goal: goal"))
+        #expect(prompt.contains("Goal: Ship the planned work"))
         #expect(prompt.contains("Approved plan:\nplan"))
 
         #expect(isContinueChat(await terminal.handlePlanCommand("/plan clear")))
@@ -1686,7 +1696,8 @@ struct PlanCommandTests {
         ) == nil)
         #expect(terminal.activePlan?.id == "plan-graph")
 
-        let approval = await terminal.handlePlanCommand("/plan approve")
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan approve")))
+        let approval = await terminal.submittedLineAction("Ship graph execution")
         guard case .runHiddenPrompt = approval else {
             Issue.record("Approval should create and activate the task graph")
             return
@@ -1735,7 +1746,8 @@ struct PlanCommandTests {
         )
         terminal.activePlan = plan
 
-        let approval = await terminal.handlePlanCommand("/plan approve")
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan approve")))
+        let approval = await terminal.submittedLineAction("Keep the full plan title")
 
         guard case .runHiddenPrompt = approval else {
             Issue.record("Approval should accept a plan task title longer than 512 characters")
@@ -1784,7 +1796,8 @@ struct PlanCommandTests {
         ) == nil)
 
         // Approval fails because the graph cannot be created with a missing dependency.
-        _ = await terminal.handlePlanCommand("/plan approve")
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan approve")))
+        _ = await terminal.submittedLineAction("Validate the invalid dependency plan")
         #expect(terminal.activePlan?.isApproved == false)
     }
 
@@ -1820,7 +1833,8 @@ struct PlanCommandTests {
 
         // Approving must create a graph that reflects the final (revised) tasks,
         // not the original ones.
-        let approval = await terminal.handlePlanCommand("/plan approve")
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan approve")))
+        let approval = await terminal.submittedLineAction("Revise the implementation plan")
         guard case .runHiddenPrompt = approval else {
             Issue.record("Approval should start implementation")
             return
@@ -2135,7 +2149,13 @@ struct PlanApprovalResponseLanguageTests {
         )
 
         #expect(!terminal.didLockResponseLanguage)
-        guard case .runHiddenPrompt = await terminal.handlePlanCommand("/plan approve") else {
+        guard case .continueChat = await terminal.handlePlanCommand("/plan approve") else {
+            Issue.record("Approval should first request a Goal")
+            return
+        }
+        guard case .runHiddenPrompt = await terminal.submittedLineAction(
+            "Correggere la lingua del piano in modo affidabile"
+        ) else {
             Issue.record("Approval should start the internal implementation prompt")
             return
         }

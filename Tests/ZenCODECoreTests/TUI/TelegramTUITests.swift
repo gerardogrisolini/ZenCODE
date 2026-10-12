@@ -528,6 +528,42 @@ struct TelegramTUITests {
     }
 
     @Test
+    func telegramPlanApprovalConsumesTheDescriptiveGoalReply() async throws {
+        let terminal = TerminalChat(configuration: try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("ZenCODE-telegram-plan-\(UUID().uuidString)", isDirectory: true)
+        ), stdinIsTerminal: false)
+        let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
+        terminal.telegramControlState.isActive = true
+        terminal.telegramControlState.wireLifecycleEpoch = UUID()
+        let origin = TerminalPromptOrigin.telegramLease(lease)
+        terminal.activePlan = TerminalSessionPlan(
+            originalGoal: "old planner goal",
+            consolidatedText: "Implement the Telegram plan approval flow."
+        )
+
+        guard case .continueChat = await terminal.submittedTelegramLineAction(
+            "/plan approve", origin: origin
+        ) else {
+            Issue.record("Telegram /plan approve should first request a Goal")
+            return
+        }
+        guard case let .runHiddenPrompt(prompt, purpose) =
+            await terminal.submittedTelegramLineAction(
+                "Keep the approved plan's objective explicit", origin: origin
+            ) else {
+            Issue.record("Telegram should consume the Goal reply and start implementation")
+            return
+        }
+        #expect(purpose == .normal)
+        #expect(prompt.contains("Goal: Keep the approved plan's objective explicit"))
+        #expect(terminal.activePlan?.originalGoal == "Keep the approved plan's objective explicit")
+        #expect(terminal.activePlan?.isApproved == true)
+    }
+
+    @Test
     func telegramProgressReporterRequiresActiveTelegramSession() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let lease = try #require(terminal.telegramActiveRouteLease)

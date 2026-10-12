@@ -131,6 +131,7 @@ extension ZenCODEACPBridge {
         operationState: SessionOperationState = .idle,
         activePlan: TerminalSessionPlan? = nil,
         planBrainstorming: PlanningCommandRuntimeState? = nil,
+        pendingPlanApprovalPlanID: String? = nil,
         workflowContinuation: WorkflowCommandRuntimeState? = nil
     ) -> SessionState {
         SessionState(
@@ -161,6 +162,11 @@ extension ZenCODEACPBridge {
             operationState: operationState,
             activePlan: activePlan,
             planBrainstorming: planBrainstorming,
+            pendingPlanApprovalPlanID: pendingPlanApprovalPlanID ?? epoch.flatMap { expectedEpoch in
+                sessions[configuration.sessionID].flatMap {
+                    $0.epoch == expectedEpoch ? $0.pendingPlanApprovalPlanID : nil
+                }
+            },
             workflowContinuation: workflowContinuation
         )
     }

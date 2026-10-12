@@ -90,6 +90,16 @@ extension ZenCODEACPBridge {
                   !CoordinatorCommandParser.isSlashCommand(routedPromptText) else {
                 return .generate(prompt: routedPromptText, purpose: .normal)
             }
+            if let pendingPlanApprovalPlanID = session.pendingPlanApprovalPlanID,
+               let goal = routedPromptText.nilIfBlank {
+                return await approveACPPlan(
+                    originalGoal: goal,
+                    planID: pendingPlanApprovalPlanID,
+                    sessionID: sessionID,
+                    epoch: epoch,
+                    promptID: promptID
+                )
+            }
             if var brainstorming = session.planBrainstorming,
                brainstorming.isAwaitingReply,
                brainstorming.recordReply(routedPromptText) {
@@ -448,7 +458,7 @@ extension ZenCODEACPBridge {
                 sessionID: sessionID,
                 epoch: epoch,
                 promptID: promptID,
-                { $0.planBrainstorming = brainstorming }
+                { $0.planBrainstorming = brainstorming; $0.pendingPlanApprovalPlanID = nil }
             ) else {
                 throw CancellationError()
             }
@@ -460,7 +470,8 @@ extension ZenCODEACPBridge {
                 )
             )
         case .save:
-            guard session.planBrainstorming == nil else {
+            guard session.planBrainstorming == nil,
+                  session.pendingPlanApprovalPlanID == nil else {
                 return .immediate(acpPlanningMutationBlockedMessage)
             }
             return .immediate(
@@ -471,7 +482,8 @@ extension ZenCODEACPBridge {
                 )
             )
         case .load:
-            guard session.planBrainstorming == nil else {
+            guard session.planBrainstorming == nil,
+                  session.pendingPlanApprovalPlanID == nil else {
                 return .immediate(acpPlanningMutationBlockedMessage)
             }
             return .immediate(
@@ -488,10 +500,11 @@ extension ZenCODEACPBridge {
         case .status:
             return .immediate(await acpPlanStatus(session: session))
         case .approve:
-            guard session.planBrainstorming == nil else {
+            guard session.planBrainstorming == nil,
+                  session.pendingPlanApprovalPlanID == nil else {
                 return .immediate(acpPlanningMutationBlockedMessage)
             }
-            return await approveACPPlan(
+            return await requestACPPlanApprovalGoal(
                 sessionID: sessionID,
                 epoch: epoch,
                 promptID: promptID
@@ -863,6 +876,11 @@ extension ZenCODEACPBridge {
         if let brainstorming = session.planBrainstorming {
             sections.append("Planner clarification is active for: \(brainstorming.goal)")
         }
+        if session.pendingPlanApprovalPlanID != nil {
+            sections.append(
+                "A descriptive Goal is required before plan approval can continue."
+            )
+        }
         guard let plan = session.activePlan else {
             sections.append("No active plan.")
             return sections.joined(separator: "\n\n")
@@ -876,7 +894,7 @@ extension ZenCODEACPBridge {
         return sections.joined(separator: "\n\n")
     }
 
-    private func approveACPPlan(
+    private func requestACPPlanApprovalGoal(
         sessionID: String,
         epoch: UInt64,
         promptID: UUID
@@ -885,12 +903,76 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             epoch: epoch,
             promptID: promptID
-        ), var plan = session.activePlan,
+        ), let plan = session.activePlan,
            plan.consolidatedText.nilIfBlank != nil else {
             return .immediate(
                 "ZenCODE: no completed plan is available to approve. Run /plan <goal> first."
             )
         }
+        guard updateReservedPromptSession(
+            sessionID: sessionID,
+            epoch: epoch,
+            promptID: promptID,
+            { $0.pendingPlanApprovalPlanID = plan.id }
+        ) else {
+            return .immediate("ZenCODE: the ACP session changed before plan approval started.")
+        }
+        return .immediate(
+            "Before approving this plan, provide a descriptive Goal for the work it represents."
+        )
+    }
+
+    private func persistACPPlanGoal(
+        _ plan: TerminalSessionPlan,
+        workingDirectory: URL
+    ) async throws {
+        let savedPlans = await sessionRunner.savedTaskPlans(
+            workingDirectory: workingDirectory
+        )
+        guard let saved = savedPlans.first(where: { $0.graph.id == plan.id }) else {
+            return
+        }
+        let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
+            for: workingDirectory
+        )
+        let storedPlan = PlanningCommandKernel.planPreparedForSaving(plan)
+        let savedCopy = TaskGraphSavedPlan(
+            plan: storedPlan,
+            savedAt: saved.snapshot.savedAt,
+            savingAgentID: saved.snapshot.savingAgentID,
+            savingAgentName: saved.snapshot.savingAgentName
+        )
+        try await sessionRunner.taskOrchestrator.registerSession(
+            id: librarySessionID,
+            workingDirectory: workingDirectory
+        )
+        _ = try await sessionRunner.taskOrchestrator.savePlanDraft(
+            savedCopy,
+            sessionID: librarySessionID,
+            tasks: PlanningCommandKernel.taskDefinitions(for: storedPlan.points)
+        )
+    }
+
+    private func approveACPPlan(
+        originalGoal: String,
+        planID: String,
+        sessionID: String,
+        epoch: UInt64,
+        promptID: UUID
+    ) async -> ACPCommandTurnRoute {
+        guard let session = reservedPromptSession(
+            sessionID: sessionID,
+            epoch: epoch,
+            promptID: promptID
+        ), session.pendingPlanApprovalPlanID == planID,
+           let sourcePlan = session.activePlan,
+           sourcePlan.id == planID else {
+            return .immediate("ZenCODE: no pending plan approval is available.")
+        }
+        guard sourcePlan.consolidatedText.nilIfBlank != nil else {
+            return .immediate("ZenCODE: no completed plan is available to approve.")
+        }
+        var plan = sourcePlan
         guard let runnerGeneration = await sessionRunner.currentSessionGeneration(
             for: sessionID
         ), reservedPromptSession(
@@ -900,6 +982,22 @@ extension ZenCODEACPBridge {
         ) != nil else {
             return .immediate("ZenCODE: the ACP session changed before plan approval completed.")
         }
+        guard updateReservedPromptSession(
+            sessionID: sessionID,
+            epoch: epoch,
+            promptID: promptID,
+            { $0.pendingPlanApprovalPlanID = nil }
+        ) else {
+            return .immediate("ZenCODE: the ACP session changed before plan approval completed.")
+        }
+        plan = TerminalSessionPlan(
+            id: plan.id,
+            originalGoal: originalGoal,
+            consolidatedText: plan.consolidatedText,
+            createdAt: plan.createdAt,
+            isApproved: plan.isApproved,
+            points: plan.points
+        )
         plan = PlanningCommandKernel.planMaterializedForApproval(plan)
         var previousGraph: TaskGraphSnapshot?
         var graphWasMutated = false
@@ -948,7 +1046,10 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             epoch: epoch,
             promptID: promptID,
-            { $0.activePlan = plan }
+            {
+                $0.activePlan = plan
+                $0.pendingPlanApprovalPlanID = nil
+            }
         ) else {
             await rollbackACPTaskGraph(
                 previousGraph,
@@ -957,6 +1058,29 @@ extension ZenCODEACPBridge {
                 expectedRunnerGeneration: runnerGeneration
             )
             return .immediate("ZenCODE: the ACP session changed before plan approval completed.")
+        }
+        do {
+            // Update the saved-plan library only after the active graph and
+            // active session plan are valid. If persistence fails, the catch
+            // below restores both to their pre-approval state.
+            try await persistACPPlanGoal(
+                plan,
+                workingDirectory: URL(fileURLWithPath: session.cwd)
+            )
+        } catch {
+            await rollbackACPTaskGraph(
+                previousGraph,
+                graphID: plan.id,
+                sessionID: sessionID,
+                expectedRunnerGeneration: runnerGeneration
+            )
+            _ = updateReservedPromptSession(
+                sessionID: sessionID,
+                epoch: epoch,
+                promptID: promptID,
+                { $0.activePlan = sourcePlan }
+            )
+            return .immediate("ZenCODE: \(error.localizedDescription)")
         }
         return .generate(
             prompt: PlanningCommandKernel.planImplementationPrompt(for: plan),
@@ -1046,7 +1170,7 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             epoch: epoch,
             promptID: promptID,
-            { $0.activePlan = nil }
+            { $0.activePlan = nil; $0.pendingPlanApprovalPlanID = nil }
         ) else {
             await rollbackACPTaskGraph(
                 previousGraph,

@@ -19,6 +19,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- `/plan approve` now asks for a descriptive Goal before activating implementation. The reply is consumed as transient control input, propagated to the active and saved plan, and shown by `/plan list` across TUI, Telegram, and ACP flows.
+- TUI and ACP clear pending plan-approval state at session restore boundaries and roll back graph changes when approval persistence fails.
 - TUI and ACP now share file-change normalization, deduplication, ordering,
   evidence limits, and fallback semantics through a backend-neutral mapper.
   Normal tool blocks remain compact; detailed source evidence is available on

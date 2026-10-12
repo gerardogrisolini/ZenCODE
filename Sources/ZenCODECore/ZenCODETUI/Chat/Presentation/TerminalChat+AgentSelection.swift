@@ -68,6 +68,7 @@ extension TerminalChat {
         await applyAgentProfile(agent)
         activeSessionSystemPromptOverride = nil
         activePlan = nil
+        pendingPlanApprovalPlanID = nil
         resetResponseLanguageLock()
         // A model explicitly chosen through `/models` is session state, not a
         // property of the selected agent. Retain it across profile changes;

@@ -431,8 +431,13 @@ struct ACPCommandRoutingTests {
             "sessionId": sessionID,
             "prompt": "/plan approve",
         ])
+        try await bridge.prompt(id: .number(7), params: [
+            "sessionId": sessionID,
+            "prompt": "Unify ACP and Telegram plan execution",
+        ])
         state = await bridge.planStateForTesting(sessionID: sessionID)
         #expect(state.activePlan?.isApproved == true)
+        #expect(state.activePlan?.originalGoal == "Unify ACP and Telegram plan execution")
         let planGraph = try #require(
             try await bridge.sessionRunner.taskGraphSnapshot(
                 sessionID: sessionID,
@@ -445,7 +450,7 @@ struct ACPCommandRoutingTests {
             "Implement the active approved plan now"
         ) == true)
 
-        try await bridge.prompt(id: .number(7), params: [
+        try await bridge.prompt(id: .number(8), params: [
             "sessionId": sessionID,
             "prompt": "/plan clear",
         ])
@@ -453,7 +458,7 @@ struct ACPCommandRoutingTests {
         #expect(state.activePlan == nil)
         #expect(state.brainstorming == nil)
 
-        try await bridge.prompt(id: .number(8), params: [
+        try await bridge.prompt(id: .number(9), params: [
             "sessionId": sessionID,
             "prompt": "/plan load",
         ])
@@ -464,11 +469,11 @@ struct ACPCommandRoutingTests {
             await bridge.sessionRunner.snapshotSession(id: sessionID)
         ).history.contains { $0.content.contains("[Saved plan handoff]") })
 
-        try await bridge.prompt(id: .number(9), params: [
+        try await bridge.prompt(id: .number(10), params: [
             "sessionId": sessionID,
             "prompt": "/plan clear",
         ])
-        try await bridge.prompt(id: .number(10), params: [
+        try await bridge.prompt(id: .number(11), params: [
             "sessionId": sessionID,
             "prompt": "/goal validate shared workflow routing",
         ])
@@ -489,7 +494,7 @@ struct ACPCommandRoutingTests {
             "/goal validate shared workflow routing",
         ])
 
-        try await bridge.prompt(id: .number(11), params: [
+        try await bridge.prompt(id: .number(12), params: [
             "sessionId": sessionID,
             "prompt": "/review focus on ACP routing",
         ])

@@ -61,6 +61,7 @@ extension TerminalChat {
             activeSavedSessionName = nil
             activeCheckpointTree = nil
             activePlan = nil
+            pendingPlanApprovalPlanID = nil
             try await createCurrentSession()
             await statusBar.reset()
             await refreshInitialStatusBarContextWindow()
@@ -332,6 +333,7 @@ extension TerminalChat {
         activePlan = savedSession.activePlan
         // Deliberately absent from TerminalSavedSession; abandonment above closes
         // the runtime Planner before the restored state is installed.
+        pendingPlanApprovalPlanID = nil
         activeCheckpointTree = workingTree
         resetResponseLanguageLock()
         activeSavedSessionName = savedSession.name

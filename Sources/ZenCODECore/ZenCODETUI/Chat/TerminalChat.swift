@@ -68,6 +68,10 @@ public final class TerminalChat {
     /// Ephemeral `/plan` clarification state. Never copy this into snapshots or
     /// persisted session models.
     var planBrainstorming: TerminalPlanBrainstormingState?
+    /// Ephemeral `/plan` approval state. It records only the plan being confirmed;
+    /// the requested Goal itself is consumed immediately and never enters a
+    /// checkpoint or persisted session model.
+    var pendingPlanApprovalPlanID: String?
     /// Ephemeral `/goal` workflow state used to continue the same workflow graph.
     /// It captures the next message only when an explicit signal armed it: the
     /// coordinator's `Workflow question` block, a graph resumed from a previous

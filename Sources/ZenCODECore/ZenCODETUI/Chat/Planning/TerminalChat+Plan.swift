@@ -18,7 +18,7 @@ extension TerminalChat {
         switch action {
         case .save:
             await writeSubmittedPrompt(command)
-            guard planBrainstorming == nil else {
+            guard planBrainstorming == nil, pendingPlanApprovalPlanID == nil else {
                 await writeFailureMessage(Self.planDiscussionBlocksMutationMessage)
                 return .continueChat
             }
@@ -26,7 +26,7 @@ extension TerminalChat {
             return .continueChat
         case .load:
             await writeSubmittedPrompt(command)
-            guard planBrainstorming == nil else {
+            guard planBrainstorming == nil, pendingPlanApprovalPlanID == nil else {
                 await writeFailureMessage(Self.planDiscussionBlocksMutationMessage)
                 return .continueChat
             }
@@ -49,6 +49,11 @@ extension TerminalChat {
                     "Planner clarification is active for: \(planBrainstorming.goal)\n"
                 )
             }
+            if pendingPlanApprovalPlanID != nil {
+                await writeSystemMessage(
+                    "A descriptive Goal is required before plan approval can continue.\n"
+                )
+            }
             guard let activePlan else {
                 if planBrainstorming == nil {
                     await writeSystemMessage("No active plan.\n")
@@ -67,7 +72,7 @@ extension TerminalChat {
             return .continueChat
         case .approve:
             await writeSubmittedPrompt(command)
-            guard planBrainstorming == nil else {
+            guard planBrainstorming == nil, pendingPlanApprovalPlanID == nil else {
                 await writeFailureMessage(Self.planDiscussionBlocksMutationMessage)
                 return .continueChat
             }
@@ -76,58 +81,16 @@ extension TerminalChat {
                 await writeFailureMessage(Self.planUnavailableForApprovalMessage)
                 return .continueChat
             }
-            plan = Self.planMaterializedForApproval(plan)
-            do {
-                // The task graph is created exclusively at approval time so that
-                // changes made to the plan before approval are always reflected.
-                // On first approval, remove any stale graph and (re)create it from
-                // the current plan points. On re-approval, preserve progress.
-                let existingGraph = try await sessionRunner.taskGraphSnapshot(
-                    sessionID: sessionID,
-                    graphID: plan.id
-                )
-                if !plan.isApproved || existingGraph == nil || existingGraph?.tasks.isEmpty == true {
-                    if existingGraph != nil {
-                        _ = try await sessionRunner.removeTaskGraph(
-                            id: plan.id,
-                            sessionID: sessionID
-                        )
-                    }
-                    _ = try await sessionRunner.taskOrchestrator.createGraph(
-                        sessionID: sessionID,
-                        id: plan.id,
-                        source: .plan(planID: plan.id),
-                        state: .draft,
-                        tasks: Self.taskDefinitions(for: plan.points),
-                        makeCurrent: true,
-                        archivePreviousCurrent: true
-                    )
-                }
-                _ = try await sessionRunner.activateTaskGraph(
-                    id: plan.id,
-                    sessionID: sessionID
-                )
-            } catch {
-                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-                return .continueChat
-            }
-            plan.isApproved = true
-            activePlan = plan
-            // A loaded plan can be the first turn in a new session. Lock the
-            // configured/system response language before its internal English
-            // implementation prompt is sent to the model.
-            lockResponseLanguageIfNeeded()
+            pendingPlanApprovalPlanID = plan.id
             await writeSystemMessage(
-                "Approved the active plan and activated its task graph. Starting implementation now; /review will verify task claims against real files.\n\n"
+                "Before approving this plan, enter a descriptive Goal for the work it represents.\n"
             )
-            return .runHiddenPrompt(
-                Self.planImplementationPrompt(for: plan),
-                purpose: .normal
-            )
+            return .continueChat
         case .clear:
             await writeSubmittedPrompt(command)
             let hadDiscussion = planBrainstorming != nil
             await abandonPlanBrainstorming()
+            pendingPlanApprovalPlanID = nil
             guard let plan = activePlan else {
                 await writeSystemMessage(
                     hadDiscussion
@@ -176,6 +139,7 @@ extension TerminalChat {
             // A new goal abandons the previous collection and closes its author,
             // but the completed active plan remains until a fresh final plan is valid.
             await abandonPlanBrainstorming(closeAllPlanAuthors: true)
+            pendingPlanApprovalPlanID = nil
             planBrainstorming = TerminalPlanBrainstormingState(goal: goal)
 
             return .runHiddenPrompt(
@@ -186,6 +150,140 @@ extension TerminalChat {
                 purpose: .plan(originalGoal: goal)
             )
         }
+    }
+
+    /// Consumes the Goal requested by `/plan approve`. The reply is deliberately
+    /// handled as control input: it is not submitted to the model and therefore
+    /// cannot become part of a conversation checkpoint.
+    func handlePlanApprovalGoalReply(
+        _ reply: String
+    ) async -> TerminalSubmittedLineAction? {
+        guard let pendingPlanApprovalPlanID,
+              let goal = reply.nilIfBlank else {
+            return nil
+        }
+        guard let plan = activePlan, plan.id == pendingPlanApprovalPlanID else {
+            self.pendingPlanApprovalPlanID = nil
+            await writeFailureMessage(Self.planUnavailableForApprovalMessage)
+            return .continueChat
+        }
+        self.pendingPlanApprovalPlanID = nil
+        return await approveActivePlan(plan, originalGoal: goal)
+    }
+
+    private func approveActivePlan(
+        _ sourcePlan: TerminalSessionPlan,
+        originalGoal: String
+    ) async -> TerminalSubmittedLineAction {
+        var plan = TerminalSessionPlan(
+            id: sourcePlan.id,
+            originalGoal: originalGoal,
+            consolidatedText: sourcePlan.consolidatedText,
+            createdAt: sourcePlan.createdAt,
+            isApproved: sourcePlan.isApproved,
+            points: sourcePlan.points
+        )
+        var previousGraph: TaskGraphSnapshot?
+        var graphWasMutated = false
+        do {
+            plan = Self.planMaterializedForApproval(plan)
+            // The task graph is created exclusively at approval time so that
+            // changes made to the plan before approval are always reflected.
+            previousGraph = try await sessionRunner.taskGraphSnapshot(
+                sessionID: sessionID,
+                graphID: plan.id
+            )
+            if !plan.isApproved || previousGraph == nil || previousGraph?.tasks.isEmpty == true {
+                if previousGraph != nil {
+                    graphWasMutated = true
+                    _ = try await sessionRunner.removeTaskGraph(
+                        id: plan.id,
+                        sessionID: sessionID
+                    )
+                }
+                _ = try await sessionRunner.taskOrchestrator.createGraph(
+                    sessionID: sessionID,
+                    id: plan.id,
+                    source: .plan(planID: plan.id),
+                    state: .draft,
+                    tasks: Self.taskDefinitions(for: plan.points),
+                    makeCurrent: true,
+                    archivePreviousCurrent: true
+                )
+            }
+            graphWasMutated = true
+            _ = try await sessionRunner.activateTaskGraph(
+                id: plan.id,
+                sessionID: sessionID
+            )
+            // Keep the project-library copy authoritative only after the
+            // active graph is valid. A persistence failure is handled by the
+            // same rollback path so `/plan list` and the active plan cannot
+            // disagree about the Goal.
+            try await persistSavedPlanGoal(plan)
+        } catch {
+            if graphWasMutated {
+                if (try? await sessionRunner.taskGraphSnapshot(
+                    sessionID: sessionID,
+                    graphID: plan.id
+                )) != nil {
+                    _ = try? await sessionRunner.removeTaskGraph(
+                        id: plan.id,
+                        sessionID: sessionID
+                    )
+                }
+                if let previousGraph {
+                    _ = try? await sessionRunner.restoreTaskGraph(
+                        previousGraph,
+                        sessionID: sessionID
+                    )
+                }
+            }
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            return .continueChat
+        }
+        plan.isApproved = true
+        activePlan = plan
+        // A loaded plan can be the first turn in a new session. Lock the
+        // configured/system response language before its internal English
+        // implementation prompt is sent to the model.
+        lockResponseLanguageIfNeeded()
+        await writeSystemMessage(
+            "Approved the active plan and activated its task graph. Starting implementation now; /review will verify task claims against real files.\n\n"
+        )
+        return .runHiddenPrompt(
+            Self.planImplementationPrompt(for: plan),
+            purpose: .normal
+        )
+    }
+
+    private func persistSavedPlanGoal(_ plan: TerminalSessionPlan) async throws {
+        let savedPlans = await sessionRunner.savedTaskPlans(
+            workingDirectory: configuration.workingDirectory
+        )
+        guard let saved = savedPlans.first(where: { $0.graph.id == plan.id }) else {
+            return
+        }
+        let workingDirectory = configuration.workingDirectory
+        let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
+            for: workingDirectory
+        )
+        let storedPlan = Self.planPreparedForSaving(plan)
+        let savedCopy = TaskGraphSavedPlan(
+            plan: storedPlan,
+            savedAt: saved.snapshot.savedAt,
+            savingAgentID: saved.snapshot.savingAgentID,
+            savingAgentName: saved.snapshot.savingAgentName
+        )
+        try await sessionRunner.taskOrchestrator.registerSession(
+            id: librarySessionID,
+            workingDirectory: workingDirectory
+        )
+        _ = try await sessionRunner.taskOrchestrator.savePlanDraft(
+            savedCopy,
+            sessionID: librarySessionID,
+            tasks: Self.taskDefinitions(for: storedPlan.points)
+        )
     }
 
     /// Routes plain text received while the Planner is collecting decisions.
@@ -244,7 +342,7 @@ extension TerminalChat {
         + "Run /plan <goal> and wait for it to finish successfully.\n"
 
     nonisolated static let planDiscussionBlocksMutationMessage =
-        "ZenCODE: finish the current Planner clarification or use /plan clear before "
+        "ZenCODE: finish the current Planner clarification or Goal request, or use /plan clear before "
         + "approving, saving, or loading a plan.\n"
 
     nonisolated static let planUnavailableForSavingMessage =
