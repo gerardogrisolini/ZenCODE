@@ -265,6 +265,7 @@ extension TerminalChatRenderCoordinator {
                 return block.id == toolCall.id
                     && standardErrorIsTerminal
                     && block.writeSequence == emittedWriteCount
+                    && ownsScreenReceipt(block.screenAnchor)
                     && block.columnWidth == columnWidth
                     && block.rows <= maximumReplaceableRows
             } ?? false
@@ -283,8 +284,8 @@ extension TerminalChatRenderCoordinator {
                 toolState.activeBlockIsSubAgentTool = false
             }
 
-            if shouldRewriteActiveBlock, let activeBlock {
-                clearOwnedRows(activeBlock.rows)
+            if shouldRewriteActiveBlock, let activeBlock,
+               clearOwnedRows(activeBlock.rows, expectedAnchor: activeBlock.screenAnchor) {
                 restoreCursorState(
                     activeBlock.cursorStateBeforeRender,
                     for: .standardError
@@ -305,7 +306,8 @@ extension TerminalChatRenderCoordinator {
                 columnWidth: columnWidth,
                 maximumInPlaceRows: maximumInPlaceRows,
                 cursorStateBeforeRender: pendingOwnership.cursorState,
-                writeSequence: emittedWriteCount
+                writeSequence: emittedWriteCount,
+                screenAnchor: lastScreenReceipt
             )
         }
     }
@@ -340,9 +342,9 @@ extension TerminalChatRenderCoordinator {
             statusDetail: lifecycle.compactStatusDetail,
             contentInsetWidth: contentInsetWidth,
             columnWidth: columnWidth,
-            // Pending blocks stay compact and therefore cursor-rewritable.
-            // Source changes are emitted once, in full, by the completion.
-            includesSourceChanges: lifecycle.isCompletion
+            // Both lifecycles stay compact. Captured source evidence is shown
+            // only on demand by /artifacts, never from mutation arguments.
+            includesSourceChanges: false
         )
     }
 
@@ -351,20 +353,18 @@ extension TerminalChatRenderCoordinator {
         for toolCall: DirectAgentToolCall,
         lifecycle: ToolBlockLifecycle
     ) {
-        writeCompactToolLines(
-            renderRows.compactRows.map(\.plainText),
-            newline: lifecycle.isCompletion && renderRows.detailRows.isEmpty
-        )
-        guard !renderRows.detailRows.isEmpty else {
-            return
-        }
-        writeToolBlock(
-            renderRows.detailRows,
-            contentWidth: renderRows.detailContentWidth,
-            codeLanguage: TerminalChat.codeLanguageHint(for: toolCall)
-        )
-        if lifecycle.isCompletion {
-            writeChat("\n", to: .standardError)
+        TerminalOutputSynchronization.withTransaction {
+            writeCompactToolLines(
+                renderRows.compactRows.map(\.plainText),
+                newline: lifecycle.isCompletion && renderRows.detailRows.isEmpty
+            )
+            guard !renderRows.detailRows.isEmpty else { return }
+            writeToolBlock(
+                renderRows.detailRows,
+                contentWidth: renderRows.detailContentWidth,
+                codeLanguage: TerminalChat.codeLanguageHint(for: toolCall)
+            )
+            if lifecycle.isCompletion { writeChat("\n", to: .standardError) }
         }
     }
 
@@ -404,8 +404,16 @@ extension TerminalChatRenderCoordinator {
     /// Removes only the rows occupied by a block this coordinator owns before
     /// redrawing it. `CSI J` would erase from the transcript into the reserved
     /// input panel.
-    func clearOwnedRows(_ rowCount: Int) {
+    @discardableResult
+    func clearOwnedRows(_ rowCount: Int, expectedAnchor: TerminalPrimaryScreen.Anchor? = nil) -> Bool {
         let count = max(1, rowCount)
+        if let screen = primaryScreen(for: .standardError) {
+            flushPendingStreamingWrites()
+            emittedWriteCount &+= 1
+            let removed = screen.removeOwnedTail(rows: count + ownedTailGapRows, expectedAnchor: expectedAnchor)
+            ownedTailGapRows = 0
+            return removed
+        }
         var sequence = "\u{1B}[\(count)A\r"
 
         for row in 0..<count {
@@ -419,6 +427,7 @@ extension TerminalChatRenderCoordinator {
         }
 
         writeDirect(sequence, to: .standardError)
+        return true
     }
 
     func interruptActiveToolForInterleavedOutputIfNeeded() {
@@ -459,6 +468,7 @@ extension TerminalChatRenderCoordinator {
             replaceableToolRowCapacity(maximumInPlaceRows) ?? Int.max
         )
         guard standardErrorIsTerminal,
+              ownsScreenReceipt(block.screenAnchor),
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth,
               block.rows <= maximumReplaceableRows else {
@@ -467,7 +477,7 @@ extension TerminalChatRenderCoordinator {
             // content with a speculative cursor movement.
             return
         }
-        clearOwnedRows(block.rows)
+        guard clearOwnedRows(block.rows, expectedAnchor: block.screenAnchor) else { return }
         restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
     }
 
@@ -487,6 +497,7 @@ extension TerminalChatRenderCoordinator {
             replaceableToolRowCapacity(maximumInPlaceRows) ?? Int.max
         )
         guard standardErrorIsTerminal,
+              ownsScreenReceipt(block.screenAnchor),
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth,
               block.rows <= maximumReplaceableRows else {
@@ -495,7 +506,7 @@ extension TerminalChatRenderCoordinator {
             return
         }
 
-        clearOwnedRows(block.rows)
+        guard clearOwnedRows(block.rows, expectedAnchor: block.screenAnchor) else { return }
         restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
         bottomOverlayDeferredToolRenders.append(
             DeferredToolRender(
@@ -562,6 +573,7 @@ extension TerminalChatRenderCoordinator {
             replaceableToolRowCapacity(maximumInPlaceRows) ?? Int.max
         )
         guard standardErrorIsTerminal,
+              ownsScreenReceipt(block.screenAnchor),
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth,
               block.rows <= maximumReplaceableRows else {
@@ -570,7 +582,7 @@ extension TerminalChatRenderCoordinator {
             writeChat("\n", to: .standardError)
             return
         }
-        clearOwnedRows(block.rows)
+        guard clearOwnedRows(block.rows, expectedAnchor: block.screenAnchor) else { return }
         restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
     }
 

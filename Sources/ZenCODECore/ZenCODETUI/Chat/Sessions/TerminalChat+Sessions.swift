@@ -51,6 +51,7 @@ extension TerminalChat {
             await abandonPlanBrainstorming()
             await sessionRunner.resetSession(id: sessionID)
             sessionID = Self.newTerminalSessionID()
+            resetFileArtifactState()
             activeSessionCacheKey = nil
             activeSessionHistory = []
             replaceActiveSessionTranscript(with: [])
@@ -60,6 +61,7 @@ extension TerminalChat {
             activeSavedSessionName = nil
             activeCheckpointTree = nil
             activePlan = nil
+            pendingPlanApprovalPlanID = nil
             try await createCurrentSession()
             await statusBar.reset()
             await refreshInitialStatusBarContextWindow()
@@ -322,6 +324,7 @@ extension TerminalChat {
         activeWorkflow = nil
         await sessionRunner.resetSession(id: sessionID)
         sessionID = savedSession.sessionID
+        resetFileArtifactState()
         activeSessionCacheKey = savedSession.cacheKey
         activeSessionHistory = restoredMessages
         replaceActiveSessionTranscript(with: restoredTranscript)
@@ -330,6 +333,7 @@ extension TerminalChat {
         activePlan = savedSession.activePlan
         // Deliberately absent from TerminalSavedSession; abandonment above closes
         // the runtime Planner before the restored state is installed.
+        pendingPlanApprovalPlanID = nil
         activeCheckpointTree = workingTree
         resetResponseLanguageLock()
         activeSavedSessionName = savedSession.name

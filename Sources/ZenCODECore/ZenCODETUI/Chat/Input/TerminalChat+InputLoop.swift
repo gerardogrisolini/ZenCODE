@@ -700,6 +700,21 @@ extension TerminalChat {
             return true
         }
 
+        func resumePanelInput() async -> Bool {
+            if bypassInteractivePanelInputForTesting { return true }
+            let didStart = await interactiveReader.resumePanelInput(
+                statusBar: statusBar,
+                commandSuggestions: await panelSuggestionsForCurrentAgent()
+            ) { event in
+                _ = await eventQueue.sendWithBackpressure(.input(event))
+            }
+            guard didStart else { return false }
+            await interactiveReader.setPanelProcessing(isGenerating)
+            await interactiveReader.setQueuedPromptCount(queuedPrompts.count)
+            await synchronizePanelPendingAttachmentCount()
+            return true
+        }
+
         func stopPanelInput(clearPanel: Bool = true) async {
             await interactiveReader.stopPanelInput(clearPanel: clearPanel)
         }
@@ -812,7 +827,7 @@ extension TerminalChat {
             switch action {
             case .continueChat:
                 if shouldSuspendPanel {
-                    _ = await startPanelInput()
+                    _ = await resumePanelInput()
                 }
                 return true
             case .exitChat:
@@ -824,7 +839,7 @@ extension TerminalChat {
                 return false
             case let .runPrompt(prompt):
                 if shouldSuspendPanel {
-                    _ = await startPanelInput()
+                    _ = await resumePanelInput()
                 }
                 let attempt = promptAttempt(prompt: prompt, origin: origin)
                 if origin == .local {
@@ -836,7 +851,7 @@ extension TerminalChat {
                 return true
             case let .runHiddenPrompt(prompt, purpose):
                 if shouldSuspendPanel {
-                    _ = await startPanelInput()
+                    _ = await resumePanelInput()
                 }
                 await startGeneration(
                     attempt: promptAttempt(
@@ -849,7 +864,7 @@ extension TerminalChat {
                 return true
             case let .prefillPrompt(prompt):
                 if shouldSuspendPanel {
-                    _ = await startPanelInput()
+                    _ = await resumePanelInput()
                 }
                 await interactiveReader.setPanelText(prompt)
                 return true

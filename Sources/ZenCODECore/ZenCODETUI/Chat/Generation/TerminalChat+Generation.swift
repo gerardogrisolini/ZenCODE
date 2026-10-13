@@ -16,9 +16,11 @@ extension TerminalChat {
     func generateResponse(
         attempt: TerminalPromptAttempt
     ) async throws -> TerminalChatGenerationSuccess {
+        let turnSessionID = sessionID
+        let turnArtifactHistory = fileArtifactHistory
+        let artifactTurn = await beginFileArtifactTurn()
         await installSubAgentToolEventHandlerIfNeeded()
         let planPointCollector = TerminalPlanPointCollector()
-        let turnSessionID = sessionID
         let plannerTurnBaseline: PlannerTurnBaseline?
         let planningCollectionID: UUID?
         if case .plan = attempt.purpose {
@@ -135,6 +137,9 @@ extension TerminalChat {
                     case let .toolCallCompleted(toolCall, result):
                         await transcriptTurn.appendToolCallCompleted(toolCall, result: result)
                         await self.writeToolCallCompleted(toolCall, result: result)
+                        await self.publishLiveFileArtifacts(
+                            result, callID: toolCall.id, context: artifactTurn
+                        )
                         let planPointUpdate = result.isFailure
                             ? nil
                             : Self.planPointUpdates(from: toolCall)
@@ -294,7 +299,10 @@ extension TerminalChat {
             appendActiveSessionTranscript(
                 contentsOf: await transcriptTurn.messages(finalResponseText: response.text)
             )
-            let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
+            let fileChangeSummary = await collectFileChangeSummaryIfNeeded(
+                from: fileChanges, sessionID: turnSessionID,
+                history: turnArtifactHistory, turnID: artifactTurn?.id
+            )
             await stopSubAgentOverviewRefresh()
             await renderCoordinator.waitForOverviewMirrorsToDrain()
             if case .plan = attempt.purpose {
@@ -335,7 +343,10 @@ extension TerminalChat {
                 )
             }
             appendActiveSessionTranscript(contentsOf: await transcriptTurn.messages())
-            let fileChangeSummary = await collectFileChangeSummaryIfNeeded(from: fileChanges)
+            let fileChangeSummary = await collectFileChangeSummaryIfNeeded(
+                from: fileChanges, sessionID: turnSessionID,
+                history: turnArtifactHistory, turnID: artifactTurn?.id
+            )
             await stopSubAgentOverviewRefresh()
             await renderCoordinator.waitForOverviewMirrorsToDrain()
             throw TerminalChatGenerationRunError(

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 public actor TurnFileChangeCoordinator {
     private let tracker: TurnFileChangeTracker
@@ -37,14 +38,20 @@ public actor TurnFileChangeCoordinator {
     }
 
     @discardableResult
-    public func publishSummaryIfNeeded() async -> TurnFileChangeSummary? {
+    public func publishSummaryIfNeeded(
+        matching liveChanges: [OperationFileChange] = []
+    ) async -> TurnFileChangeSummary? {
         guard !didPublishSummary else {
             return nil
         }
 
         didPublishSummary = true
-        latestSummary = await tracker.makeSummary()
+        latestSummary = await tracker.makeSummary(matching: liveChanges)
         return latestSummary
+    }
+
+    func matchingLiveArtifactPaths() async -> Set<String> {
+        await tracker.matchingLiveArtifactPaths
     }
 
     public func latestFileChangeSummary() -> TurnFileChangeSummary? {

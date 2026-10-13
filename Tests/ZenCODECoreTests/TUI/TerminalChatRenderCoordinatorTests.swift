@@ -12,7 +12,76 @@ import ToolCore
 struct TerminalChatRenderCoordinatorTests {
 
     @Test
-    func standardPreservesCompactANSICompletionBeforeAppendingSourceChanges() async {
+    func markdownMessageCanRenderOnStandardErrorForOperatorCommands() async {
+        let renderer = makeRenderer(standardErrorIsTerminal: false)
+
+        await renderer.writeMarkdownMessage(
+            "**Artifacts**\n\n```swift\nlet value = 1\n```\n",
+            to: .standardError
+        )
+
+        let events = await renderer.capturedWriteEvents()
+        #expect(!events.isEmpty)
+        #expect(events.allSatisfy { $0.channel == .standardError })
+        #expect(events.map(\.text).joined().contains("let value = 1"))
+    }
+
+    @Test(arguments: ["thought", "assistant", "tool"])
+    func liveArtifactsInterruptStreamingAndToolsBeforeDeferredOverviews(_ active: String) async throws {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true, standardOutputIsTerminal: true,
+            columnWidthProvider: { 100 }
+        )
+        let call = presentedToolCall(
+            id: "artifact-interleave", name: "local.exec",
+            argumentsObject: ["command": "work"], argumentsJSON: "{}"
+        )
+        switch active {
+        case "thought": await renderer.writeThought("thinking before artifact")
+        case "assistant": await renderer.writeAssistantContent("assistant before artifact")
+        default: await renderer.writeToolCallStarted(call)
+        }
+        let deferred = await renderer.renderTaskGraphOverview(
+            signature: "artifact-graph", markdown: "## Deferred artifact overview\n"
+        )
+        #expect(deferred == .deferred)
+        let artifacts = FileChangeArtifactMapper.artifacts(
+            from: [.init(path: "Example.swift", oldText: "let x = 1\n", newText: "let x = 2\n")],
+            workingDirectory: URL(fileURLWithPath: "/tmp")
+        )
+        await renderer.writeMarkdownMessage(
+            TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)]),
+            to: .standardError,
+            preservingStreamingContext: true
+        )
+        let afterArtifact = await renderer.capturedWriteEvents()
+        let output = TerminalANSIText.stripANSI(afterArtifact.map(\.text).joined())
+        let artifactStart = try #require(output.range(of: "🪬 Artifacts"))
+        let source = try #require(output.range(of: "let x = 2"))
+        let overview = try #require(output.range(of: "Deferred artifact overview"))
+        #expect(artifactStart.lowerBound < source.lowerBound)
+        #expect(source.lowerBound < overview.lowerBound)
+        let snapshot = await renderer.snapshot()
+        #expect(snapshot.isStreamingThoughtOutput == (active == "thought"))
+        #expect(snapshot.activeToolCallID == nil)
+        #expect(!snapshot.deferredTaskGraphOverviewRender)
+        if active == "tool" {
+            await renderer.writeToolCallCompleted(call, result: .init(output: "done", summary: "done"))
+        } else {
+            if active == "thought" {
+                await renderer.writeThought("thinking after artifact")
+            } else {
+                await renderer.writeAssistantContent("assistant after artifact")
+            }
+            await renderer.finishStreamingOutput()
+        }
+        let continuation = await renderer.capturedWriteEvents().dropFirst(afterArtifact.count).map(\.text).joined()
+        #expect(!containsCursorUpSequence(continuation))
+        #expect(!continuation.contains("🪬 Artifacts"))
+    }
+
+    @Test
+    func standardPreservesCompactANSICompletionWithoutSourceChanges() async {
         let toolCall = presentedToolCall(
             id: "standard-ansi-edit",
             name: "local.editFile",
@@ -49,8 +118,8 @@ struct TerminalChatRenderCoordinatorTests {
         )
 
         #expect(completion.contains(compactCompletion))
-        #expect(completion.contains("oldValue"))
-        #expect(completion.contains("newValue"))
+        #expect(!completion.contains("oldValue"))
+        #expect(!completion.contains("newValue"))
     }
 
     @Test
@@ -128,7 +197,7 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func standardKeepsPendingCompactAndEmitsAllSourceChangesOnCompletion() async {
+    func standardKeepsPendingAndCompletionCompact() async {
         let old = (0..<150).map { "let old\($0) = \($0)" }.joined(separator: "\n")
         let new = (0..<150).map { "let new\($0) = \($0)" }.joined(separator: "\n")
         let toolCall = presentedToolCall(
@@ -164,8 +233,8 @@ struct TerminalChatRenderCoordinatorTests {
                 .joined()
         )
 
-        #expect(completionText.contains("old149"))
-        #expect(completionText.contains("new149"))
+        #expect(!completionText.contains("old149"))
+        #expect(!completionText.contains("new149"))
         #expect(!completionText.contains("truncated"))
     }
 
@@ -236,15 +305,15 @@ struct TerminalChatRenderCoordinatorTests {
         // Recording delegated tools updates only the live overview model. It
         // must never append a coordinator-looking block to the transcript.
         #expect(await delegatedRenderer.capturedWriteEvents().isEmpty)
-        #expect(toolRows.count >= 3)
+        #expect(toolRows.count >= 2)
         #expect(toolRows.allSatisfy { $0.hasPrefix("   ") })
         #expect(rows.contains { $0.contains("✅ 1.20s") })
-        #expect(rows.contains { $0.contains("oldValue") })
-        #expect(rows.contains { $0.contains("newValue") })
+        #expect(!rows.contains { $0.contains("oldValue") })
+        #expect(!rows.contains { $0.contains("newValue") })
     }
 
     @Test(arguments: ["local.editFile", "local.multiEdit", "local.writeFile"], [false, true])
-    func filePreviewsAlignWithCoordinatorAndDelegatedToolTitles(
+    func coordinatorAndDelegatedToolsOmitSourcePreviews(
         toolName: String,
         stdinIsTerminal: Bool
     ) async throws {
@@ -280,17 +349,11 @@ struct TerminalChatRenderCoordinatorTests {
         let coordinatorRows = coordinatorRawRows.map {
             TerminalANSIText.stripANSI($0).replacingOccurrences(of: "\r", with: "")
         }
-        let coordinatorSource = try #require(coordinatorRows.first { $0.contains("newValue") })
         let inset = stdinIsTerminal ? TerminalChatTextFormatting.chatLineInsetPrefix : ""
-        #expect(coordinatorSource.hasPrefix("\(inset)1 │ "))
-        #expect(coordinatorSource.contains("1 │ \(new)"))
+        #expect(!coordinatorRows.contains { $0.contains("newValue") || $0.contains("oldValue") })
         #expect(coordinatorRows.contains { $0.hasPrefix("\(inset)🛠️  \(toolName)") })
         let sourceRows = coordinatorRawRows.filter { $0.contains(TerminalChat.codeAreaBackgroundColor) }
-        #expect(!sourceRows.isEmpty)
-        for row in sourceRows {
-            #expect(TerminalChat.displayWidth(row) == 99)
-            #expect(row.hasSuffix("\(TerminalStyle.reset)\u{1B}[K\(TerminalStyle.reset)"))
-        }
+        #expect(sourceRows.isEmpty)
 
         let delegatedRenderer = makeRenderer(standardErrorIsTerminal: true)
         let agentSnapshot = DirectSubAgentRuntime.AgentSnapshot(
@@ -306,8 +369,7 @@ struct TerminalChatRenderCoordinatorTests {
             createdAt: Date(),
             updatedAt: Date()
         )
-        // The delegated overview shows source details both while running and
-        // after completion; neither lifecycle may add a second layout inset.
+        // Delegated tool activity stays compact for both lifecycles as well.
         for lifecycle in [DirectSubAgentToolEvent.Lifecycle.started, .completed(result)] {
             await delegatedRenderer.recordSubAgentToolEvent(
                 DirectSubAgentToolEvent(
@@ -325,20 +387,12 @@ struct TerminalChatRenderCoordinatorTests {
             )
             let delegatedRows = delegatedRawRows.map { TerminalANSIText.stripANSI($0) }
             #expect(delegatedRows.contains { $0.hasPrefix("   🛠️  \(toolName)") })
-            let source = try #require(delegatedRows.first { $0.contains("newValue") })
-            // A narrow terminal may choose unified diff markers instead.
-            #expect(source.hasPrefix("   1 │ ") || source.hasPrefix("   + 1 │ "))
-            #expect(source.contains("1 │ \(new)"))
+            #expect(!delegatedRows.contains { $0.contains("newValue") || $0.contains("oldValue") })
             let ansiRows = TerminalChat.renderSubAgentToolRowsForTesting(
                 try #require(presentations.presentationsByAgentID[agentSnapshot.id])
             )
-            let width = max(40, TerminalChat.terminalColumnCount() - 3)
             let sourceRows = ansiRows.filter { $0.contains(TerminalChat.codeAreaBackgroundColor) }
-            #expect(!sourceRows.isEmpty)
-            for row in sourceRows {
-                #expect(TerminalChat.displayWidth(row) == width)
-                #expect(row.hasSuffix("\(TerminalStyle.reset)\u{1B}[K\(TerminalStyle.reset)"))
-            }
+            #expect(sourceRows.isEmpty)
         }
         #expect(await delegatedRenderer.capturedWriteEvents().isEmpty)
     }
@@ -579,8 +633,8 @@ struct TerminalChatRenderCoordinatorTests {
         #expect(refresh.hasPrefix("\u{1B}[\(ownedRows)A\r"))
         #expect(refresh.components(separatedBy: "\u{1B}[2K").count - 1 == ownedRows)
         #expect(visibleRefresh.contains("✅"))
-        #expect(visibleRefresh.contains("oldValue"))
-        #expect(visibleRefresh.contains("newValue"))
+        #expect(!visibleRefresh.contains("oldValue"))
+        #expect(!visibleRefresh.contains("newValue"))
     }
 
     @Test
@@ -820,7 +874,7 @@ struct TerminalChatRenderCoordinatorTests {
     /// block followed only by the source appendix. Anything preceding the shared
     /// compact bytes must be pure cursor control, never printable text.
     @Test
-    func standardCompletionIsCompactBytesFollowedOnlyBySourceAppendix() async throws {
+    func standardCompletionHasNoSourceAppendix() async throws {
         let toolCall = presentedToolCall(
             id: "standard-characterization-edit",
             name: "local.editFile",
@@ -858,12 +912,11 @@ struct TerminalChatRenderCoordinatorTests {
         let appendix = String(completion[compactRange.upperBound...])
 
         #expect(TerminalANSIText.stripANSI(controlPrefix).allSatisfy { $0 == "\r" || $0 == "\n" })
-        #expect(TerminalANSIText.stripANSI(appendix).contains("oldValue"))
-        #expect(TerminalANSIText.stripANSI(appendix).contains("newValue"))
+        #expect(!TerminalANSIText.stripANSI(appendix).contains("oldValue"))
+        #expect(!TerminalANSIText.stripANSI(appendix).contains("newValue"))
         // The appendix never repeats the compact prefix content.
         #expect(!TerminalANSIText.stripANSI(appendix).contains("local.editFile"))
-        // Block terminator: the appendix newline plus the blank separator row.
-        #expect(appendix.hasSuffix("\n\n"))
+        // No blank source appendix is emitted; the block is compact only.
     }
 
     /// Characterization: without source rows the standard block degenerates to
@@ -905,7 +958,7 @@ struct TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func standardShowsCompactStatusAndMutationSource() async {
+    func standardShowsCompactStatusWithoutMutationSource() async {
         let toolCall = presentedToolCall(
             id: "standard-edit",
             name: "local.editFile",
@@ -925,8 +978,8 @@ struct TerminalChatRenderCoordinatorTests {
         let standardText = TerminalANSIText.stripANSI(
             await standard.capturedWriteEvents().map(\.text).joined()
         )
-        #expect(standardText.contains("oldValue"))
-        #expect(standardText.contains("newValue"))
+        #expect(!standardText.contains("oldValue"))
+        #expect(!standardText.contains("newValue"))
         #expect(standardText.contains("local.editFile"))
         #expect(standardText.contains("/tmp/Example.swift"))
         #expect(standardText.contains("✅"))
@@ -1364,10 +1417,10 @@ struct TerminalChatRenderCoordinatorTests {
         )
         #expect(completionText.components(separatedBy: "local.multiEdit").count - 1 == 1)
         #expect(!completionText.contains("parameters:"))
-        #expect(completionText.contains("old"))
-        #expect(completionText.contains("new"))
-        #expect(completionText.contains("let old = 1"))
-        #expect(completionText.contains("let new = 2"))
+        #expect(!completionText.contains("old"))
+        #expect(!completionText.contains("new"))
+        #expect(!completionText.contains("let old = 1"))
+        #expect(!completionText.contains("let new = 2"))
     }
 
 
@@ -2715,12 +2768,14 @@ struct TerminalChatRenderCoordinatorTests {
         await statusBar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: false)
         let initialCapacity = try #require(await statusBar.scrollableOutputRowCapacity())
         #expect(initialCapacity == 24)
-        sink.write(Data("\u{1B}[1;1H".utf8))
+        let primaryScreen = await statusBar.primaryScreen
+        await renderer.usePrimaryScreenForTesting(primaryScreen)
+        primaryScreen.positionOutputForTesting(row: 1)
         // Keep the short transcript above the dock's maximum growth; a separate
         // cursor-edge fixture below exercises clamping at row one.
         let transcriptRows = full ? initialCapacity - 3 : 8
         for index in 0..<transcriptRows {
-            sink.write(Data("PERMANENT-\(index)\r\n".utf8))
+            primaryScreen.append("PERMANENT-\(index)\r\n")
         }
         let marker = tool ? "local.readFile" : "AGENT-ANCHOR"
         let call = presentedToolCall(
@@ -2738,7 +2793,9 @@ struct TerminalChatRenderCoordinatorTests {
         }
         func screen() throws -> [String] {
             let text = String(decoding: try Data(contentsOf: url), as: UTF8.self)
-            return terminalScreenText(text, height: height, width: 80).components(separatedBy: "\n")
+            var terminal = PrimaryScreenTerminalModel(rows: height, columns: 80)
+            terminal.write(text)
+            return terminal.visibleText.components(separatedBy: "\n")
         }
         var entries: [TerminalSharedChatReaderEntry] = []
         // Empty -> first unread -> same-height arrivals -> open -> close -> last
@@ -2747,6 +2804,9 @@ struct TerminalChatRenderCoordinatorTests {
             let before = try screen()
             let oldMarkerRow = try #require(before.firstIndex { $0.contains(marker) })
             let oldPermanentRow = try #require(before.firstIndex { $0.contains("PERMANENT-\(transcriptRows - 1)") })
+            // The compositor moves only the rows actually displaced by growth;
+            // a blank gap above the dock does not force transcript scrolling.
+            let oldInsertionRow = primaryScreen.outputRowForTesting
             let oldCapacity = try #require(await statusBar.scrollableOutputRowCapacity())
             let eventOffset = try Data(contentsOf: url).count
             await renderer.beginBottomOverlayTransition(maximumInPlaceRows: oldCapacity)
@@ -2770,7 +2830,7 @@ struct TerminalChatRenderCoordinatorTests {
                 )
             }
             let after = try screen()
-            let scroll = max(0, oldCapacity - newCapacity)
+            let scroll = max(0, oldInsertionRow - newCapacity)
             #expect(after.firstIndex { $0.contains(marker) } == max(0, oldMarkerRow - scroll))
             if oldPermanentRow >= scroll {
                 #expect(after.firstIndex { $0.contains("PERMANENT-\(transcriptRows - 1)") } == oldPermanentRow - scroll)
@@ -2797,6 +2857,7 @@ struct TerminalChatRenderCoordinatorTests {
         let bar = TerminalStatusBar(isEnabled: true) { sink.write(Data($0.utf8)) }
         await bar.configureForTesting(row: height, columns: 80)
         await bar.updateInputPanel(text: draft, cursorIndex: draft.count, modeText: "Chat", helpText: "Enter")
+        let primaryScreen = await bar.primaryScreen
         let entries = [TerminalSharedChatReaderEntry(id: UUID(), route: "worker", text: "Ready")]
         // At 8 rows the dock folds into the existing mode row; a tall draft
         // shares the same measured budget rather than an assumed dock height.
@@ -2805,7 +2866,7 @@ struct TerminalChatRenderCoordinatorTests {
             #expect(oldCapacity >= 2)
             if scenario == 0 { #expect(oldCapacity == 2) }
             let cursorRow = bottom ? oldCapacity : 1
-            sink.write(Data("\u{1B}[\(cursorRow);1H".utf8))
+            primaryScreen.positionOutputForTesting(row: cursorRow)
             switch phase {
             case 0, 1:
                 await bar.setSharedChatReader(entries: entries, unreadCount: 1, isExpanded: false)
@@ -2821,15 +2882,17 @@ struct TerminalChatRenderCoordinatorTests {
                 await bar.removeSharedChatReader()
             }
             let capacity = try #require(await bar.scrollableOutputRowCapacity())
-            let expectedRow = max(1, cursorRow - max(0, oldCapacity - capacity))
-            sink.write(Data("CURSOR-\(phase)".utf8))
+            let expectedRow = min(cursorRow, capacity)
+            primaryScreen.append("CURSOR-\(phase)")
             let text = String(decoding: try Data(contentsOf: url), as: UTF8.self)
-            let rows = terminalScreenText(text, height: height, width: 80).components(separatedBy: "\n")
+            var terminal = PrimaryScreenTerminalModel(rows: height, columns: 80)
+            terminal.write(text)
+            let rows = terminal.visibleText.components(separatedBy: "\n")
             #expect(rows[expectedRow - 1].hasPrefix("CURSOR-\(phase)"))
             #expect(expectedRow <= capacity)
             // Remove the probe without changing the cursor position used by the
             // next independently positioned phase.
-            sink.write(Data("\r\u{1B}[2K".utf8))
+            primaryScreen.clearOutputRowForTesting()
         }
     }
 
@@ -4327,12 +4390,7 @@ struct TerminalChatRenderCoordinatorTests {
             $0.contains("// removed") && $0.contains("let newValue = 2")
         }
 
-        #expect(sideBySideRows.count == 1)
-        #expect(sideBySideRows.allSatisfy { TerminalChat.displayWidth($0) <= 80 })
-        #expect(sideBySideRows.allSatisfy { !$0.contains("\r") && !$0.contains("\t") })
-        // `let` comes after a comment on the old side, so this color can only
-        // appear when the coordinator renders the new column independently.
-        #expect(completionText.contains("\u{1B}[38;5;141mlet"))
+        #expect(sideBySideRows.isEmpty)
     }
 
     @Test
@@ -4374,9 +4432,7 @@ struct TerminalChatRenderCoordinatorTests {
             $0.contains("let injected = 1") && $0.contains("let replacement = 2")
         }
 
-        #expect(diffRows.count == 1)
-        #expect(diffRows.allSatisfy { $0.contains("let replacement = 2") })
-        #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 120 })
+        #expect(diffRows.isEmpty)
     }
 
 

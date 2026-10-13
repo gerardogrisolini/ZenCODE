@@ -479,7 +479,7 @@ enum TerminalANSIText {
     }
     
     
-    private static func endOfEscapeSequence(
+    static func endOfEscapeSequence(
         in text: String,
         from start: String.Index
     ) -> String.Index {

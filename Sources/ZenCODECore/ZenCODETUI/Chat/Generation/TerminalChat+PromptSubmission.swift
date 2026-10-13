@@ -82,6 +82,13 @@ extension TerminalChat {
             break
         }
 
+        // A plain message supplies the Goal requested by `/plan approve` and is
+        // consumed as transient control input before planner/workflow routing.
+        if Self.commandToken(from: prompt) == nil,
+           let action = await handlePlanApprovalGoalReply(prompt) {
+            return action
+        }
+
         // A plain message is a clarification reply only while a Planner
         // explicitly has an unfinished question block.  This sits after live
         // mention routing and before slash processing so neither is absorbed.
@@ -179,6 +186,17 @@ extension TerminalChat {
             return .continueChat
                 case let command where command == "/open" || command.hasPrefix("/open "):
             await handleOpenCommand(command)
+            return .continueChat
+        case let command where command == "/artifacts" || command.hasPrefix("/artifacts "):
+            let arguments = Self.slashCommandArguments(
+                from: command,
+                commandPrefix: "/artifacts"
+            )
+            if arguments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                await handleArtifactsCommand()
+            } else {
+                await writeFailureMessage("ZenCODE: /artifacts does not accept arguments.\n")
+            }
             return .continueChat
         case let command where command == "/changes" || command.hasPrefix("/changes "):
             await handleChangesCommand(command)

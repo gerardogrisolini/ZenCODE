@@ -58,6 +58,9 @@ public actor ZenCODEACPBridge {
         /// represented by ACP resume history or a task checkpoint.
         var activePlan: TerminalSessionPlan?
         var planBrainstorming: PlanningCommandRuntimeState?
+        /// Transient approval handshake; it is never represented by ACP resume
+        /// history or a task checkpoint.
+        var pendingPlanApprovalPlanID: String?
         /// Ephemeral `/goal` continuation state, armed only by the explicit
         /// `Workflow question` block or by an interrupted turn that preserved a
         /// non-empty graph. It is never persisted or replayed.

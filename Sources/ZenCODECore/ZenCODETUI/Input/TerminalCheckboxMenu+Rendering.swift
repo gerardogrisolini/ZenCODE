@@ -11,14 +11,14 @@ import Glibc
 import Foundation
 
 extension TerminalCheckboxMenu {
-    static func renderMenu<Value: Hashable>(
+    static func renderMenuSequence<Value: Hashable>(
         title: String,
         items: [TerminalCheckboxMenuItem<Value>],
         selection: SelectionState<Value>,
         focusedIndex: Int,
         reservedBottomRows: Int,
         reserveSpaceBeforeDrawing: Bool
-    ) -> RenderedFrame {
+    ) -> (frame: RenderedFrame, sequence: String) {
         let itemLines = groupedItemLines(items: items) { offset, item in
             let focus = offset == focusedIndex ? ">" : " "
             let marker: String
@@ -30,28 +30,11 @@ extension TerminalCheckboxMenu {
             }
             return "\(focus) \(marker) \(item.title)\(detailSuffix(for: item))"
         }
-        return renderFrame(
+        return renderFrameSequence(
             title: title,
             helpLines: selection.helpLines,
             itemLines: itemLines,
             focusedIndex: focusedIndex,
-            reservedBottomRows: reservedBottomRows,
-            reserveSpaceBeforeDrawing: reserveSpaceBeforeDrawing
-        )
-    }
-
-    static func renderInput(
-        title: String,
-        prompt: String,
-        help: String?,
-        reservedBottomRows: Int,
-        reserveSpaceBeforeDrawing: Bool
-    ) -> RenderedFrame {
-        renderFrame(
-            title: title,
-            helpLines: inputHelpLines(help),
-            itemLines: [RenderedMenuLine(text: prompt, itemIndex: nil)],
-            focusedIndex: 0,
             reservedBottomRows: reservedBottomRows,
             reserveSpaceBeforeDrawing: reserveSpaceBeforeDrawing
         )
@@ -80,14 +63,14 @@ extension TerminalCheckboxMenu {
         return lines
     }
 
-    static func renderFrame(
+    static func renderFrameSequence(
         title: String,
         helpLines: [String],
         itemLines: [RenderedMenuLine],
         focusedIndex: Int,
         reservedBottomRows: Int,
         reserveSpaceBeforeDrawing: Bool
-    ) -> RenderedFrame {
+    ) -> (frame: RenderedFrame, sequence: String) {
         let geometry = terminalGeometry()
         let availableRows = max(3, geometry.rows - max(0, reservedBottomRows))
         let fixedLines = [title] + helpLines + [""]
@@ -108,25 +91,33 @@ extension TerminalCheckboxMenu {
         let resetColor = TerminalStyle.reset
         let horizontalRule = String(repeating: "─", count: max(0, boxWidth - 2))
 
-        if reserveSpaceBeforeDrawing {
-            AgentOutput.standardError.writeString(String(repeating: "\n", count: frameHeight))
-        }
-
-        writeLine(
+        var sequence = reserveSpaceBeforeDrawing
+            ? String(repeating: "\n", count: frameHeight)
+            : ""
+        sequence += terminalLine(
             row: startRow,
             text: "\(borderColor)╭\(horizontalRule)╮\(resetColor)"
         )
         for (offset, line) in renderedLines.enumerated() {
-            writeLine(
+            sequence += terminalLine(
                 row: startRow + offset + 1,
                 text: "\(borderColor)│\(resetColor) \(line) \(borderColor)│\(resetColor)"
             )
         }
-        writeLine(
+        sequence += terminalLine(
             row: startRow + frameHeight - 1,
             text: "\(borderColor)╰\(horizontalRule)╯\(resetColor)"
         )
-        return RenderedFrame(row: startRow, height: frameHeight)
+        return (
+            frame: RenderedFrame(
+                row: startRow,
+                height: frameHeight,
+                terminalRows: geometry.rows,
+                terminalColumns: boxWidth,
+                reservedBottomRows: reservedBottomRows
+            ),
+            sequence: sequence
+        )
     }
 
     static func visibleItemLines(
@@ -215,40 +206,39 @@ extension TerminalCheckboxMenu {
         let singleLine = text
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard width > 3, singleLine.count > width else {
-            return singleLine
-        }
-        return String(singleLine.prefix(width - 3)) + "..."
+        guard TerminalANSIText.visibleWidth(singleLine) > width else { return singleLine }
+        guard width > 3 else { return TerminalANSIText.truncate(singleLine, to: max(0, width)) }
+        return TerminalANSIText.truncate(singleLine, to: width - 3) + "..."
     }
 
     static func padded(_ text: String, width: Int) -> String {
-        guard text.count < width else {
-            return text
-        }
-        return text + String(repeating: " ", count: width - text.count)
+        text + String(repeating: " ", count: max(0, width - TerminalANSIText.visibleWidth(text)))
     }
 
-    static func clear(frame: RenderedFrame?) {
-        guard let frame else {
-            return
-        }
-        AgentOutput.standardError.writeString(
-            clearFrameSequence(
-                frame: frame,
-                terminalRows: terminalGeometry().rows
-            )
-        )
-    }
-
-    static func clearFrameSequence(frame: RenderedFrame, terminalRows: Int) -> String {
+    static func clearFrameSequence(
+        frame: RenderedFrame,
+        terminalRows: Int,
+        terminalColumns: Int? = nil,
+        transcriptBottomRow: Int? = nil
+    ) -> String {
         guard frame.height > 0, terminalRows > 0 else {
             return ""
         }
 
-        let firstRow = min(max(1, frame.row), terminalRows)
+        let currentWidth = max(1, terminalColumns ?? terminalGeometry().columns)
+        let frameWidth = frame.terminalColumns > 0 ? frame.terminalColumns : currentWidth
+        let physicalRowsPerFrameRow = frameWidth > currentWidth
+            ? (frameWidth + currentWidth - 1) / currentWidth
+            : 1
+        let rowsToClear = frame.height * physicalRowsPerFrameRow
+        let maximumRow = min(terminalRows, transcriptBottomRow ?? terminalRows)
+        guard maximumRow > 0, frame.row <= maximumRow else {
+            return ""
+        }
+        let firstRow = min(max(1, frame.row), maximumRow)
         let lastRow = min(
-            terminalRows,
-            max(firstRow, frame.row + frame.height - 1)
+            maximumRow,
+            max(firstRow, frame.row + rowsToClear - 1)
         )
         var sequence = ""
         for row in firstRow...lastRow {
@@ -258,7 +248,11 @@ extension TerminalCheckboxMenu {
         return sequence
     }
 
-    static func writeLine(row: Int, text: String) {
-        AgentOutput.standardError.writeString("\u{1B}[\(row);1H\u{1B}[2K\(text)")
+    static func terminalLine(row: Int, text: String) -> String {
+        "\u{1B}[\(row);1H\u{1B}[2K\(text)"
+    }
+
+    static func writeTerminal(_ text: String) {
+        TerminalOutputSynchronization.writeOverlay(text, to: AgentOutput.standardError)
     }
 }

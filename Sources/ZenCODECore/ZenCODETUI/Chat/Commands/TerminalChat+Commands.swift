@@ -249,6 +249,11 @@ extension TerminalChat {
                         help: "/open lists files, URLs, and attachments from the conversation (newest first) to open, or use /open <file-or-url> directly."
         ),
         TerminalChatCommandDescriptor(
+            command: "/artifacts",
+            summary: "show session file artifacts",
+            help: "/artifacts shows all file artifacts from the current session, grouped by turn. It accepts no arguments."
+        ),
+        TerminalChatCommandDescriptor(
             command: "/changes",
             summary: "show last file changes",
             help: "/changes shows the most recent file change summary. Use /changes diff to include patches."
@@ -266,7 +271,7 @@ extension TerminalChat {
         TerminalChatCommandDescriptor(
             command: "/plan",
             summary: "plan work via sub-agents",
-            help: "/plan <goal> creates a new unapproved plan. Use /plan save to persist its todo-derived graph for this project, /plan load in a new session to restore the newest saved draft as unapproved, /plan list to review saved plans, /plan delete <plan|prefix|all> to remove saved plans from the project library, /plan status to show item progress, /plan approve to approve it and start implementation immediately, or /plan clear to discard the active plan in this session (saved copies are kept).",
+            help: "/plan <goal> creates a new unapproved plan. Use /plan save to persist its todo-derived graph for this project, /plan load in a new session to restore the newest saved draft as unapproved, /plan list to review saved plans, /plan delete <plan|prefix|all> to remove saved plans from the project library, /plan status to show item progress, /plan approve to provide a descriptive Goal, approve it, and start implementation, or /plan clear to discard the active plan in this session (saved copies are kept).",
             requiresArgument: true
         ),
         TerminalChatCommandDescriptor(

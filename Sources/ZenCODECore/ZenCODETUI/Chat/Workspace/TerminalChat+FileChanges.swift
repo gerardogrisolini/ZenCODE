@@ -6,8 +6,50 @@
 //
 
 import Foundation
+import ToolCore
 
 extension TerminalChat {
+    struct FileArtifactTurnContext: Sendable {
+        let id: UUID
+        let sessionID: String
+        let history: SessionFileArtifactHistory
+    }
+
+    func beginFileArtifactTurn() async -> FileArtifactTurnContext? {
+        let observedSessionID = sessionID
+        let history = fileArtifactHistory
+        guard let id = await history.beginTurn(sessionID: observedSessionID),
+              sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
+        let context = FileArtifactTurnContext(id: id, sessionID: observedSessionID, history: history)
+        activeFileArtifactTurn = context
+        return context
+    }
+
+    func publishLiveFileArtifacts(
+        _ result: DirectAgentToolResult,
+        callID: String,
+        agentID: String? = nil,
+        context: FileArtifactTurnContext?
+    ) async {
+        guard let context, sessionID == context.sessionID,
+              fileArtifactHistory === context.history,
+              activeFileArtifactTurn?.id == context.id else { return }
+        guard let turn = await context.history.recordLive(
+            result.fileChanges, agentID: agentID, callID: callID,
+            turnID: context.id, workingDirectory: configuration.workingDirectory
+        ) else { return }
+        guard sessionID == context.sessionID, fileArtifactHistory === context.history else { return }
+        await writeFileArtifacts([turn], preservingStreamingContext: true)
+    }
+
+    /// Replacing the actor also fences restores that reuse the same session ID.
+    func resetFileArtifactState() {
+        lastFileChangeSummary = nil
+        activeFileArtifactTurn = nil
+        fileArtifactHistory = SessionFileArtifactHistory(sessionID: sessionID)
+        didInstallSubAgentToolEventHandler = false
+    }
+
     public func publishFileChangeSummaryIfNeeded(
         from coordinator: TurnFileChangeCoordinator
     ) async -> TurnFileChangeSummary? {
@@ -20,14 +62,190 @@ extension TerminalChat {
     }
 
     public func collectFileChangeSummaryIfNeeded(
-        from coordinator: TurnFileChangeCoordinator
+        from coordinator: TurnFileChangeCoordinator,
+        sessionID expectedSessionID: String? = nil,
+        history expectedHistory: SessionFileArtifactHistory? = nil,
+        turnID: UUID? = nil
     ) async -> TurnFileChangeSummary? {
-        guard let summary = await coordinator.publishSummaryIfNeeded() else {
+        let observedSessionID = expectedSessionID ?? sessionID
+        let history = expectedHistory ?? fileArtifactHistory
+        if let turnID, activeFileArtifactTurn?.id == turnID {
+            activeFileArtifactTurn = nil
+        }
+        let liveChanges: [OperationFileChange]
+        if let turnID {
+            liveChanges = await history.sealTurn(turnID)
+        } else {
+            liveChanges = []
+        }
+        let summary = await coordinator.publishSummaryIfNeeded(matching: liveChanges)
+        // A session switch may race the final reconciliation of an old turn.
+        // Keep both the latest-summary slot and the runtime artifact history
+        // fenced to the session that started the turn.
+        guard sessionID == observedSessionID, fileArtifactHistory === history else {
             return nil
         }
-
-        lastFileChangeSummary = summary
+        let unseen: SessionFileArtifactHistory.Turn?
+        if let turnID {
+            let matchingPaths = await coordinator.matchingLiveArtifactPaths()
+            unseen = await history.finishTurn(
+                turnID, summary: summary, matchingLivePaths: matchingPaths,
+                workingDirectory: configuration.workingDirectory
+            )
+        } else if let summary {
+            unseen = await history.append(
+                summary: summary, sessionID: observedSessionID,
+                workingDirectory: configuration.workingDirectory
+            )
+        } else {
+            unseen = nil
+        }
+        guard sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
+        if let summary { lastFileChangeSummary = summary }
+        if let unseen { await writeFileArtifacts([unseen]) }
+        guard sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
         return summary
+    }
+
+    public func handleArtifactsCommand() async {
+        let turns = await fileArtifactHistory.snapshot()
+        guard !turns.isEmpty else {
+            await writeSystemMessage("No file artifacts in the current session.\n")
+            return
+        }
+        await writeFileArtifacts(turns)
+    }
+
+    private func writeFileArtifacts(
+        _ turns: [SessionFileArtifactHistory.Turn],
+        preservingStreamingContext: Bool = false
+    ) async {
+        await renderCoordinator.writeMarkdownMessage(
+            Self.renderFileArtifacts(
+                turns,
+                columnWidth: Self.terminalColumnCount(),
+                isEnabled: AgentOutput.standardErrorIsTerminal
+            ),
+            to: .standardError,
+            preservingStreamingContext: preservingStreamingContext
+        )
+    }
+
+    public nonisolated static func renderFileArtifacts(
+        _ turns: [SessionFileArtifactHistory.Turn],
+        columnWidth: Int = 100,
+        isEnabled: Bool = false
+    ) -> String {
+        // The source is intentionally emitted as Markdown and rendered by the
+        // same formatter as assistant output. Keep these parameters for source
+        // compatibility with callers that used the preformatted renderer; the
+        // Markdown formatter owns terminal width and ANSI capability now.
+        _ = columnWidth
+        _ = isEnabled
+
+        var lines = ["", "🪬 Artifacts"]
+        for turn in turns {
+            let count = turn.artifacts.count == 1 ? "1 file" : "\(turn.artifacts.count) files"
+            lines.append("")
+            lines.append("### Turn \(turn.number) — \(count)")
+            for artifact in turn.artifacts {
+                lines.append("")
+                lines.append(renderFileArtifactMetadata(artifact))
+
+                if let explanation = artifact.explanation?.nilIfBlank {
+                    lines.append("Explanation: \(explanation)")
+                }
+
+                guard !artifact.isBinary else {
+                    continue
+                }
+
+                let languagePath = artifact.displayPath.nilIfBlank ?? artifact.absolutePath
+                let language = codeLanguageHint(forPath: languagePath)
+                if let oldText = artifact.oldText, let newText = artifact.newText {
+                    lines.append("**Before**")
+                    appendMarkdownCodeBlock(
+                        oldText,
+                        language: language,
+                        to: &lines
+                    )
+                    lines.append("**After**")
+                    appendMarkdownCodeBlock(
+                        newText,
+                        language: language,
+                        to: &lines
+                    )
+                } else if let text = artifact.newText ?? artifact.oldText {
+                    appendMarkdownCodeBlock(
+                        text,
+                        language: language,
+                        to: &lines
+                    )
+                } else if let patch = artifact.patch?.nilIfBlank {
+                    lines.append("**Patch**")
+                    appendMarkdownCodeBlock(
+                        patch,
+                        language: language,
+                        to: &lines
+                    )
+                }
+            }
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private nonisolated static func renderFileArtifactMetadata(
+        _ artifact: FileChangeArtifact
+    ) -> String {
+        let path = artifact.displayPath.nilIfBlank ?? artifact.absolutePath
+        let displayedPath = path.nilIfBlank ?? "(unknown path)"
+        let counts = "+\(artifact.additions) -\(artifact.deletions)"
+        let binary = artifact.isBinary ? " (binary)" : ""
+        return "**\(artifact.status.rawValue) `\(markdownInlineCode(displayedPath))`**  \(counts)\(binary)"
+    }
+
+    private nonisolated static func appendMarkdownCodeBlock(
+        _ text: String,
+        language: String?,
+        to lines: inout [String]
+    ) {
+        let fence = markdownCodeFence(for: text, language: language)
+        lines.append(fence)
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        var contentLines = normalized
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        // The separator before the closing fence represents the source's
+        // trailing newline; do not turn it into an extra blank source line.
+        if normalized.hasSuffix("\n"), !contentLines.isEmpty {
+            contentLines.removeLast()
+        }
+        lines.append(contentsOf: contentLines)
+        lines.append(String(repeating: "`", count: fence.prefix(while: { $0 == "`" }).count))
+    }
+
+    private nonisolated static func markdownCodeFence(
+        for text: String,
+        language: String?
+    ) -> String {
+        var longestBacktickRun = 0
+        var currentBacktickRun = 0
+        for character in text {
+            if character == "`" {
+                currentBacktickRun += 1
+                longestBacktickRun = max(longestBacktickRun, currentBacktickRun)
+            } else {
+                currentBacktickRun = 0
+            }
+        }
+        let length = max(3, longestBacktickRun + 1)
+        return String(repeating: "`", count: length) + (language ?? "")
+    }
+
+    private nonisolated static func markdownInlineCode(_ text: String) -> String {
+        text.replacingOccurrences(of: "`", with: "\\`")
     }
 
     public func handleChangesCommand(_ command: String) async {

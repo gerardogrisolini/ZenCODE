@@ -113,6 +113,7 @@ extension TerminalChatRenderCoordinator {
         let maximumInPlaceRows: Int?
         let cursorStateBeforeRender: CursorState
         let writeSequence: UInt64
+        var screenAnchor: TerminalPrimaryScreen.Anchor? = nil
     }
 
     struct DeferredToolRender: Sendable {
@@ -143,6 +144,7 @@ extension TerminalChatRenderCoordinator {
         let maximumInPlaceRows: Int?
         let cursorStateBeforeRender: CursorState
         let writeSequence: UInt64
+        var screenAnchor: TerminalPrimaryScreen.Anchor? = nil
     }
 
     enum OverviewContent: Sendable {

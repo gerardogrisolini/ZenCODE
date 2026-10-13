@@ -8,6 +8,7 @@
 import Foundation
 @testable import ZenCODECore
 import Testing
+import ToolCore
 
 @Suite(.serialized)
 struct TurnFileChangeCoordinatorTests {
@@ -207,6 +208,35 @@ struct TurnFileChangeCoordinatorTests {
         // No further change during the turn.
         let summary = await coordinator.publishSummaryIfNeeded()
         #expect(summary == nil)
+    }
+
+    @Test
+    func finalReconciliationComparesTheLatestLivePostimageNotJustThePath() async throws {
+        let repository = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repository) }
+        for name in ["same.txt", "opaque.txt", "deleted.txt"] {
+            try Data("before\n".utf8).write(to: repository.appendingPathComponent(name))
+        }
+        try initializeGitRepository(at: repository)
+        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
+        await coordinator.prepareForTurn()
+        try Data("live\n".utf8).write(to: repository.appendingPathComponent("same.txt"))
+        try Data("shell after live\n".utf8).write(to: repository.appendingPathComponent("opaque.txt"))
+        try Data("final only\n".utf8).write(to: repository.appendingPathComponent("shell.txt"))
+        try FileManager.default.removeItem(at: repository.appendingPathComponent("deleted.txt"))
+        let changes = [
+            OperationFileChange(path: "same.txt", oldText: "before\n", newText: "live\n"),
+            OperationFileChange(path: "opaque.txt", oldText: "before\n", newText: "live\n"),
+            OperationFileChange(path: "deleted.txt", oldText: "before\n", newText: nil)
+        ]
+        let summary = try #require(await coordinator.publishSummaryIfNeeded(matching: changes))
+        #expect(Set(summary.entries.map(\.path)) == ["same.txt", "opaque.txt", "shell.txt", "deleted.txt"])
+        #expect(await coordinator.matchingLiveArtifactPaths() == [
+            repository.appendingPathComponent("same.txt").path,
+            repository.appendingPathComponent("deleted.txt").path
+        ])
+        #expect(await coordinator.publishSummaryIfNeeded(matching: changes) == nil)
+        #expect(await coordinator.latestFileChangeSummary() == summary)
     }
 
     private func initializeGitRepository(at directory: URL) throws {

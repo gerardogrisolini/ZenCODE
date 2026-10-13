@@ -394,8 +394,9 @@ extension TerminalChatRenderCoordinator {
         // the cursor moved back up.
         if let reusableBlock {
             moveCursorAboveBottomOverlayGap(reusableBlock.cursorGapRows)
-            clearOwnedRows(reusableBlock.rows)
-            restoreCursorState(reusableBlock.cursorStateBeforeRender, for: .standardError)
+            if clearOwnedRows(reusableBlock.rows, expectedAnchor: reusableBlock.screenAnchor) {
+                restoreCursorState(reusableBlock.cursorStateBeforeRender, for: .standardError)
+            }
         }
 
         // Only a section that starts on a fresh row owns whole physical rows.
@@ -456,7 +457,8 @@ extension TerminalChatRenderCoordinator {
             columnWidth: columnWidth,
             maximumInPlaceRows: maximumInPlaceRows,
             cursorStateBeforeRender: cursorStateBeforeRender,
-            writeSequence: emittedWriteCount
+            writeSequence: emittedWriteCount,
+            screenAnchor: lastScreenReceipt
         )
     }
 
@@ -496,6 +498,7 @@ extension TerminalChatRenderCoordinator {
         guard standardErrorIsTerminal,
               anchorID != nil,
               let block = activeSubAgentOverviewBlock,
+              ownsScreenReceipt(block.screenAnchor),
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth else {
             return nil
@@ -517,6 +520,7 @@ extension TerminalChatRenderCoordinator {
     /// Zero once any other output has been written after it.
     var ownedSubAgentOverviewRowCount: Int {
         guard let block = activeSubAgentOverviewBlock,
+              ownsScreenReceipt(block.screenAnchor),
               block.writeSequence == emittedWriteCount else {
             return 0
         }
@@ -560,6 +564,10 @@ extension TerminalChatRenderCoordinator {
     }
 
     private func moveCursorAboveBottomOverlayGap(_ rowCount: Int) {
+        if primaryScreen(for: .standardError) != nil {
+            ownedTailGapRows = max(0, rowCount)
+            return
+        }
         guard rowCount > 0 else { return }
         writeDirect("\u{1B}[\(rowCount)A\r", to: .standardError)
     }
@@ -589,13 +597,14 @@ extension TerminalChatRenderCoordinator {
             maximumInPlaceRows ?? Int.max
         )
         guard standardErrorIsTerminal,
+              ownsScreenReceipt(block.screenAnchor),
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth,
               block.rows + block.cursorGapRows <= maximumSafeRows else {
             return
         }
         moveCursorAboveBottomOverlayGap(block.cursorGapRows)
-        clearOwnedRows(block.rows)
+        guard clearOwnedRows(block.rows, expectedAnchor: block.screenAnchor) else { return }
         restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
     }
 
@@ -615,6 +624,7 @@ extension TerminalChatRenderCoordinator {
 
         let columnWidth = freshColumnWidthProvider()
         guard standardErrorIsTerminal,
+              ownsScreenReceipt(block.screenAnchor),
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth,
               block.rows + block.cursorGapRows
@@ -626,7 +636,7 @@ extension TerminalChatRenderCoordinator {
         }
 
         moveCursorAboveBottomOverlayGap(block.cursorGapRows)
-        clearOwnedRows(block.rows)
+        guard clearOwnedRows(block.rows, expectedAnchor: block.screenAnchor) else { return }
         restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
 
         guard let parkedOverview else { return }
@@ -665,6 +675,7 @@ extension TerminalChatRenderCoordinator {
         activeSubAgentOverviewBlock = nil
         let columnWidth = freshColumnWidthProvider()
         guard standardErrorIsTerminal,
+              ownsScreenReceipt(block.screenAnchor),
               block.writeSequence == emittedWriteCount,
               block.columnWidth == columnWidth,
               block.rows + block.cursorGapRows <= min(
@@ -674,7 +685,7 @@ extension TerminalChatRenderCoordinator {
             return
         }
         moveCursorAboveBottomOverlayGap(block.cursorGapRows)
-        clearOwnedRows(block.rows)
+        guard clearOwnedRows(block.rows, expectedAnchor: block.screenAnchor) else { return }
         restoreCursorState(block.cursorStateBeforeRender, for: .standardError)
     }
 

@@ -102,11 +102,41 @@ extension TerminalChatRenderCoordinator {
         ) }
     }
 
-    func writeMarkdownMessage(_ markdown: String) {
+    func writeMarkdownMessage(
+        _ markdown: String,
+        to channel: OutputChannel = .standardOutput,
+        preservingStreamingContext: Bool = false
+    ) {
         interruptActiveToolForInterleavedOutputIfNeeded()
-        finishThoughtOutputIfNeeded()
-        finishAssistantContentFormatting()
-        renderMarkdownMessage(markdown)
+        let wasStreamingThought = thoughtStreamingState.isStreaming
+        let wasStreamingAssistant = assistantStreamingState.isStreaming
+        defer {
+            if preservingStreamingContext {
+                thoughtStreamingState.isStreaming = wasStreamingThought
+                assistantStreamingState.isStreaming = wasStreamingAssistant
+            }
+        }
+        if preservingStreamingContext {
+            // A live artifact is a physical transcript insertion, not an end of
+            // the model's Markdown stream. Keep the formatters, buffered source,
+            // bold-break state and assistant prefix untouched for the next delta.
+            if wasStreamingThought {
+                writeStreamingChat("\n\n", to: .standardError)
+            }
+            if wasStreamingAssistant, standardOutputIsTerminal,
+               currentOutputTrailingNewlineCount == 0 {
+                writeStreamingChat("\n", to: .standardOutput)
+            }
+            flushPendingStreamingWrites()
+            // Let deferred overviews follow the artifact while presentation is
+            // suspended. This entire insertion is synchronous on the actor.
+            thoughtStreamingState.isStreaming = false
+            assistantStreamingState.isStreaming = false
+        } else {
+            finishThoughtOutputIfNeeded()
+            finishAssistantContentFormatting()
+        }
+        renderMarkdownMessage(markdown, to: channel)
         renderPendingOverviewsIfIdle()
     }
 
@@ -177,9 +207,11 @@ extension TerminalChatRenderCoordinator {
         // newline, and the caller adds a second boundary newline before ending
         // this phase. Format deferred output against that future cursor state,
         // not against the rows just removed above.
-        var postPromptCursorState = CursorState()
-        postPromptCursorState.spacing.trailingNewlineCount = 2
-        restoreCursorState(postPromptCursorState, for: .standardError)
+        if primaryScreen(for: .standardError) == nil {
+            var postPromptCursorState = CursorState()
+            postPromptCursorState.spacing.trailingNewlineCount = 2
+            restoreCursorState(postPromptCursorState, for: .standardError)
+        }
         externalTerminalPromptDepth = 1
     }
 

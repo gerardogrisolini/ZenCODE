@@ -62,10 +62,17 @@ public final class TerminalChat {
     public var selectedSkillIDs = Set<String>()
     public var pendingAttachments: [AgentRuntimeAttachment] = []
     public var lastFileChangeSummary: TurnFileChangeSummary?
+    /// Runtime-only artifact history. It is never serialized with a session.
+    var fileArtifactHistory = SessionFileArtifactHistory()
+    var activeFileArtifactTurn: FileArtifactTurnContext?
     public var activePlan: TerminalSessionPlan?
     /// Ephemeral `/plan` clarification state. Never copy this into snapshots or
     /// persisted session models.
     var planBrainstorming: TerminalPlanBrainstormingState?
+    /// Ephemeral `/plan` approval state. It records only the plan being confirmed;
+    /// the requested Goal itself is consumed immediately and never enters a
+    /// checkpoint or persisted session model.
+    var pendingPlanApprovalPlanID: String?
     /// Ephemeral `/goal` workflow state used to continue the same workflow graph.
     /// It captures the next message only when an explicit signal armed it: the
     /// coordinator's `Workflow question` block, a graph resumed from a previous
@@ -81,8 +88,8 @@ public final class TerminalChat {
     /// `agent.*` tool call (e.g. `agent.wait`) is executing. Started from
     /// `.toolCallStarted` and stopped from `.toolCallCompleted` / end-of-turn.
     var subAgentOverviewRefreshTask: Task<Void, Never>?
-    /// The runner retains this handler across backend rebuilds, so each terminal
-    /// installs it once and delegated tools can outlive their spawning turn.
+    /// The runner retains this handler across backend rebuilds. Install once
+    /// per artifact-history lifetime so a reset fences callbacks from old sessions.
     var didInstallSubAgentToolEventHandler = false
     /// Interval between automatic sub-agent overview refreshes. Exposed as a
     /// mutable instance property so tests can shorten it.
@@ -258,21 +265,21 @@ public final class TerminalChat {
         )
     }
 
-    /// Internal seam: lets a test drive the production Telegram transport
-    /// stack (polling, filtering, sending) through a fake HTTP transport while
-    /// every other subsystem stays the real one.
+    /// Internal seams for deterministic transport and terminal-output tests;
+    /// production keeps the real transport and render coordinator.
     init(
         configuration: AgentConfiguration,
         stdinIsTerminal: Bool,
         sessionRunner: AgentCoreSessionRunner? = nil,
         permissionAuthorizer: LocalExecPermissionAuthorizer? = nil,
         runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot? = nil,
-        telegramTransportFactory: (@Sendable () -> any TelegramHTTPTransport)?
+        telegramTransportFactory: (@Sendable () -> any TelegramHTTPTransport)?,
+        renderCoordinator: TerminalChatRenderCoordinator? = nil
     ) {
         self.configuration = configuration
         self.stdinIsTerminal = stdinIsTerminal
         self.runtimeSetupResumeSnapshot = runtimeSetupResumeSnapshot
-        self.renderCoordinator = TerminalChatRenderCoordinator(
+        self.renderCoordinator = renderCoordinator ?? TerminalChatRenderCoordinator(
             stdinIsTerminal: stdinIsTerminal
         )
         self.statusBar = TerminalStatusBar(
@@ -463,6 +470,7 @@ public final class TerminalChat {
             ? await applyResumableTaskGraphSessionIfNeeded()
             : nil
 
+        resetFileArtifactState()
         try await createCurrentSession()
         await refreshInitialStatusBarContextWindow()
         _ = try await preloadCurrentModel(emitStatus: configuration.hostedModels != nil)
@@ -470,6 +478,9 @@ public final class TerminalChat {
         if stdinIsTerminal {
             AgentOutput.clearTerminalScreenIfNeeded()
         }
+        // Capture startup and restored presentation before any resize can
+        // rebuild the viewport; semantic session history is not a screen replay.
+        let statusBarStarted = await statusBar.start()
         await printStartupSummary()
         if let resumedTaskGraph {
             await writeResumedTaskGraphNotice(resumedTaskGraph)
@@ -479,7 +490,6 @@ public final class TerminalChat {
             await writeSystemMessage("Session restored after setup.\n")
         }
 
-        let statusBarStarted = await statusBar.start()
         await refreshStatusBarGitStatusSummary()
         do {
             if stdinIsTerminal, statusBarStarted {

@@ -41,8 +41,10 @@ public final class TerminalRawInput: Sendable {
     /// Reads and speculative rollback share one lock; no other raw-input
     /// consumer can observe a probe half-committed or overtake replayed bytes.
     private let pendingReadBytes = Mutex<[UInt8]>([])
+    private let cursorReports: TerminalCursorReport
     private let state: Mutex<State>
     public init() {
+        cursorReports = .shared
         if let inputFileDescriptor = Self.openPreferredInputFileDescriptor() {
             let controlFileDescriptor = Self.openTerminalControlFileDescriptor(
                 inputFileDescriptor: inputFileDescriptor
@@ -68,8 +70,10 @@ public final class TerminalRawInput: Sendable {
         fileDescriptor: Int32,
         controlFileDescriptor: Int32 = -1,
         ownsFileDescriptors: Bool = false,
-        inputLabel: String = "injected"
+        inputLabel: String = "injected",
+        cursorReports: TerminalCursorReport = TerminalCursorReport()
     ) {
+        self.cursorReports = cursorReports
         self.fileDescriptor = fileDescriptor
         self.shouldCloseFileDescriptor = ownsFileDescriptors
         self.controlFileDescriptor = controlFileDescriptor
@@ -328,6 +332,7 @@ public final class TerminalRawInput: Sendable {
         }
 
         state.originalAttributes = attributes
+        cursorReports.recordDiagnostic("raw.activated fd=\(fileDescriptor) lflag=\(rawAttributes.c_lflag) iflag=\(rawAttributes.c_iflag)")
         requestEnhancedKeyboardProtocolLocked(state: &state)
         enableBracketedPasteLocked(state: &state)
         return true
@@ -351,6 +356,8 @@ public final class TerminalRawInput: Sendable {
     }
 
     public func restoreRawMode() {
+        cursorReports.recordDiagnostic("raw.restore.begin fd=\(fileDescriptor)")
+        if cursorReports.isHoldingInput { cursorReports.cancel() }
         state.withLock { state in
             guard var attributes = state.originalAttributes else {
                 return
@@ -360,6 +367,7 @@ public final class TerminalRawInput: Sendable {
             let didRestoreAttributes = Self.withSIGTTOUBlocked {
                 tcsetattr(fileDescriptor, TCSANOW, &attributes) == 0
             } ?? false
+            cursorReports.recordDiagnostic("raw.restore.end success=\(didRestoreAttributes)")
             if didRestoreAttributes {
                 state.originalAttributes = nil
             }
@@ -526,19 +534,52 @@ public final class TerminalRawInput: Sendable {
     }
 
     func readByteResult(timeoutMilliseconds: Int32? = nil) -> ByteReadResult {
-        pendingReadBytes.withLock { pending in
+        cursorReports.recordDiagnostic("raw.read.begin timeout=\(timeoutMilliseconds.map(String.init) ?? "none")")
+        let result = pendingReadBytes.withLock { pending in
             readByteResultLocked(pending: &pending, timeoutMilliseconds: timeoutMilliseconds)
         }
+        cursorReports.recordDiagnostic("raw.read.end result=\(result)")
+        return result
     }
 
     private func readByteResultLocked(
         pending: inout [UInt8],
         timeoutMilliseconds: Int32?
     ) -> ByteReadResult {
+        if cursorReports.isHoldingInput, !pending.isEmpty {
+            cursorReports.deferKeys(pending)
+            pending.removeAll(keepingCapacity: true)
+        }
+        pending += cursorReports.takeDeferredKeys()
         if !pending.isEmpty {
             return .byte(pending.removeFirst())
         }
+        let deadline = timeoutMilliseconds.map { DispatchTime.now().uptimeNanoseconds + UInt64(max(0, $0)) * 1_000_000 }
+        while true {
+            // Bound speculative ESC/CSI reads even for an unbounded key read.
+            let now = DispatchTime.now().uptimeNanoseconds
+            let remaining = deadline.map { Int32(clamping: ($0 > now ? $0 - now : 0) / 1_000_000) }
+            pending += cursorReports.takeDeferredKeys()
+            if !pending.isEmpty { return .byte(pending.removeFirst()) }
+            let result = readDeviceByte(timeoutMilliseconds: min(remaining ?? 50, 50))
+            switch result {
+            case let .byte(byte):
+                cursorReports.recordDiagnostic("raw.device.byte=\(byte)")
+                pending += cursorReports.consume(byte)
+            case .timedOut:
+                pending += cursorReports.releaseOrdinaryPrefix()
+            case .endOfInput:
+                pending += cursorReports.releaseOrdinaryPrefix()
+                if pending.isEmpty { return .endOfInput }
+            }
+            if !pending.isEmpty { return .byte(pending.removeFirst()) }
+            if let deadline, DispatchTime.now().uptimeNanoseconds >= deadline { return .timedOut }
+        }
+    }
+
+    private func readDeviceByte(timeoutMilliseconds: Int32?) -> ByteReadResult {
         guard fileDescriptor >= 0 else {
+            cursorReports.recordDiagnostic("raw.device.invalidFD")
             return .endOfInput
         }
         var didAttemptForegroundRecovery = false
@@ -552,6 +593,7 @@ public final class TerminalRawInput: Sendable {
                 }
                 if pollResult < 0 {
                     let pollError = errno
+                    cursorReports.recordDiagnostic("raw.poll.error errno=\(pollError)")
                     if pollError == EINTR {
                         continue
                     }
@@ -567,6 +609,7 @@ public final class TerminalRawInput: Sendable {
                     return .endOfInput
                 }
                 guard (descriptor.revents & Int16(POLLIN)) != 0 else {
+                    cursorReports.recordDiagnostic("raw.poll.end revents=\(descriptor.revents)")
                     // POLLHUP/POLLERR/POLLNVAL without readable buffered data is
                     // a real end condition. Do not reinterpret it as job control.
                     return .endOfInput
@@ -583,6 +626,7 @@ public final class TerminalRawInput: Sendable {
             }
             if readCount < 0 {
                 let readError = errno
+                cursorReports.recordDiagnostic("raw.device.error errno=\(readError)")
                 if readError == EINTR {
                     continue
                 }
@@ -596,6 +640,7 @@ public final class TerminalRawInput: Sendable {
                     }
                 }
             }
+            if readCount == 0 { cursorReports.recordDiagnostic("raw.device.eof") }
             return .endOfInput
         }
     }

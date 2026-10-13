@@ -161,10 +161,11 @@ extension ZenCODEACPBridge {
         var update = toolCallCommonFields(for: toolCall, workingDirectory: workingDirectory)
         update["sessionUpdate"] = "tool_call_update"
         update["status"] = result.isFailure ? "failed" : "completed"
-        let resultLocations = fileChangeLocations(
-            for: result.fileChanges,
+        let artifacts = FileChangeArtifactMapper.artifacts(
+            from: result.fileChanges,
             workingDirectory: workingDirectory
         )
+        let resultLocations = artifacts.map { ["path": $0.absolutePath] }
         if !resultLocations.isEmpty {
             // The tool arguments describe the requested operation, but the
             // recorder is authoritative about every file actually changed.
@@ -188,14 +189,14 @@ extension ZenCODEACPBridge {
         if !visibleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             content.append(toolCallTextContent(visibleText))
         }
-        for change in result.fileChanges {
-            if let explanation = change.explanation {
-                content.append(toolCallTextContent("\(change.path): \(explanation)"))
+        for artifact in artifacts {
+            if let explanation = artifact.explanation {
+                content.append(toolCallTextContent("\(artifact.absolutePath): \(explanation)"))
             } else {
                 content.append([
-                    "type": "diff", "path": change.path,
-                    "oldText": change.oldText as Any? ?? NSNull(),
-                    "newText": change.newText ?? ""
+                    "type": "diff", "path": artifact.absolutePath,
+                    "oldText": artifact.oldText as Any? ?? NSNull(),
+                    "newText": artifact.newText ?? ""
                 ])
             }
         }
@@ -213,37 +214,6 @@ extension ZenCODEACPBridge {
             result: result,
             workingDirectory: workingDirectory
         ))
-    }
-
-    private static func fileChangeLocations(
-        for changes: [OperationFileChange],
-        workingDirectory: URL?
-    ) -> [[String: Any]] {
-        var seen = Set<String>()
-        return changes.compactMap { change in
-            let rawPath = NSString(string: change.path)
-                .expandingTildeInPath
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !rawPath.isEmpty else {
-                return nil
-            }
-
-            let path: String
-            if rawPath.hasPrefix("/") {
-                path = URL(fileURLWithPath: rawPath).standardizedFileURL.path
-            } else if let workingDirectory {
-                path = workingDirectory
-                    .appendingPathComponent(rawPath)
-                    .standardizedFileURL
-                    .path
-            } else {
-                path = URL(fileURLWithPath: rawPath).standardizedFileURL.path
-            }
-            guard seen.insert(path).inserted else {
-                return nil
-            }
-            return ["path": path]
-        }
     }
 
     private static func toolCallCommonFields(

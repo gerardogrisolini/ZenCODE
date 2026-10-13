@@ -84,6 +84,10 @@ extension TerminalChat {
                 break
             }
 
+            if !CoordinatorCommandParser.isSlashCommand(prompt),
+               let action = await handlePlanApprovalGoalReply(prompt) {
+                return action
+            }
             if let coordinatorCommand = CoordinatorCommandParser.parse(prompt) {
                 telegramImmediateCommandOutput = []
                 let action: TerminalSubmittedLineAction = switch coordinatorCommand {

@@ -36,6 +36,113 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
+    func artifactsRenderingGroupsEveryTurnAndIncludesTextEvidence() {
+        let turns = [
+            SessionFileArtifactHistory.Turn(
+                number: 1,
+                artifacts: [
+                    FileChangeArtifact(
+                        absolutePath: "/tmp/one.swift",
+                        displayPath: "Sources/One.swift",
+                        status: .added,
+                        additions: 1,
+                        newText: "let one = 1\n"
+                    )
+                ]
+            ),
+            SessionFileArtifactHistory.Turn(
+                number: 2,
+                artifacts: [
+                    FileChangeArtifact(
+                        absolutePath: "/tmp/two.swift",
+                        displayPath: "Sources/Two.swift",
+                        status: .modified,
+                        additions: 1,
+                        deletions: 1,
+                        oldText: "let value = 1\n",
+                        newText: "let value = 2\n"
+                    )
+                ]
+            )
+        ]
+
+        let rendered = TerminalANSIText.stripANSI(TerminalChat.renderFileArtifacts(turns))
+
+        #expect(rendered.contains("Turn 1 — 1 file"))
+        #expect(rendered.contains("Turn 2 — 1 file"))
+        #expect(rendered.contains("Sources/One.swift"))
+        #expect(rendered.contains("Sources/Two.swift"))
+        #expect(rendered.contains("let value = 1"))
+        #expect(rendered.contains("let value = 2"))
+    }
+
+    @Test
+    func artifactsRenderingUsesTypedAndNeutralFencedEvidence() {
+        let turns = [
+            SessionFileArtifactHistory.Turn(
+                number: 3,
+                artifacts: [
+                    FileChangeArtifact(
+                        absolutePath: "/tmp/typed.swift",
+                        displayPath: "Sources/Typed.swift",
+                        status: .modified,
+                        additions: 1,
+                        deletions: 1,
+                        oldText: "let value = 1\n",
+                        newText: "let value = 2\n"
+                    ),
+                    FileChangeArtifact(
+                        absolutePath: "/tmp/unknown.custom",
+                        displayPath: "Data/evidence.custom",
+                        status: .unknown,
+                        patch: "@@ -1 +1 @@\n-old\n+new\n"
+                    ),
+                    FileChangeArtifact(
+                        absolutePath: "/tmp/image.bin",
+                        displayPath: "Assets/image.bin",
+                        status: .unknown,
+                        isBinary: true,
+                        explanation: "Diff unavailable: binary file evidence."
+                    )
+                ]
+            )
+        ]
+
+        let rendered = TerminalChat.renderFileArtifacts(turns)
+
+        #expect(rendered.contains("### Turn 3 — 3 files"))
+        #expect(rendered.contains("**modified `Sources/Typed.swift`**  +1 -1"))
+        #expect(rendered.contains("**Before**\n```swift\nlet value = 1\n```"))
+        #expect(rendered.contains("**After**\n```swift\nlet value = 2\n```"))
+        #expect(rendered.contains("**unknown `Data/evidence.custom`**  +0 -0"))
+        #expect(rendered.contains("**Patch**\n```\n@@ -1 +1 @@\n-old\n+new\n```"))
+        #expect(rendered.contains("**unknown `Assets/image.bin`**  +0 -0 (binary)"))
+        #expect(rendered.contains("Explanation: Diff unavailable: binary file evidence."))
+    }
+
+    @Test
+    func artifactsRenderingKeepsFenceNeutralWhenPathHasNoExtension() {
+        let turn = SessionFileArtifactHistory.Turn(
+            number: 1,
+            artifacts: [
+                FileChangeArtifact(
+                    absolutePath: "/tmp/README",
+                    displayPath: "README",
+                    status: .added,
+                    additions: 1,
+                    newText: "plain text\n"
+                )
+            ]
+        )
+
+        let rendered = TerminalChat.renderFileArtifacts([turn])
+
+        #expect(rendered.contains("**added `README`**  +1 -0"))
+        #expect(rendered.contains("```\nplain text\n```"))
+        #expect(!rendered.contains("```text"))
+    }
+
+    @Test
     func fileChangeSummaryColoringHighlightsNonBlankLines() {
         let rendered = TerminalChatTextFormatting.fileChangeSummaryColorApplied(
             to: "\n🪬 Summary: 1 modified file  +12 -2\n  modified Sources/App.swift  +12 -2\nUse /undo to revert, /changes diff to show patches.\n",

@@ -55,14 +55,11 @@ public actor TerminalStatusBar {
         let suggestionSelectedIndex: Int?
     }
 
-    /// `DispatchSourceSignal` is annotated `Sendable` on Apple platforms but not
-    /// in the Linux corelibs libdispatch. The resize signal source is created,
-    /// resumed, cancelled, and released exclusively from this actor's isolation
-    /// domain — the event handler hops back through `await` — so a thin
-    /// `@unchecked Sendable` box restores cross-platform conformance without
-    /// weakening the actor's invariants.
+    /// The process-wide resize broker owns SIGWINCH. Keeping only its
+    /// subscription here lets the status bar share the signal with blocking
+    /// menus and prompts without installing a competing signal source.
     struct ResizeSignalSourceBox: @unchecked Sendable {
-        let source: any DispatchSourceSignal
+        let subscription: TerminalResizeCoordinator.Subscription
     }
 
     struct State: Sendable {
@@ -81,6 +78,7 @@ public actor TerminalStatusBar {
         var resizeTask: Task<Void, Never>?
         var resizeGeneration = 0
         var isResizePending = false
+        var needsViewportRebuild = false
         var inputPanelRevision: UInt64 = 0
         var inputPanelState: InputPanelState?
         var sharedChatReaderDock: TerminalSharedChatReaderDock?
@@ -106,6 +104,7 @@ public actor TerminalStatusBar {
 
     nonisolated let isEnabled: Bool
     let output: FileHandle?
+    let primaryScreen: TerminalPrimaryScreen
     /// Injectable write sink used in place of `output?.writeString` when set.
     /// Production code leaves this nil; tests supply a closure to observe output.
     var outputSink: (@Sendable (String) -> Void)?
@@ -125,16 +124,24 @@ public actor TerminalStatusBar {
 
     public init(isEnabled: Bool) {
         self.isEnabled = isEnabled
-        self.output = Self.openControllingTerminal()
+        let output = Self.openControllingTerminal()
+        self.output = output
+        self.primaryScreen = TerminalPrimaryScreen { text in
+            TerminalOutputSynchronization.write(text, output: output, sink: nil)
+        }
     }
 
     /// Internal initializer for tests: accepts a write sink closure instead of
     /// opening the controlling terminal. When `outputSink` is set, all writes go
     /// through the closure, allowing tests to assert on emitted sequences.
-    init(isEnabled: Bool, outputSink: @escaping @Sendable (String) -> Void) {
+    init(isEnabled: Bool, cursorReports: TerminalCursorReport = TerminalCursorReport(),
+         resizeGeneration: @escaping @Sendable () -> UInt64 = { 0 },
+         outputSink: @escaping @Sendable (String) -> Void) {
         self.isEnabled = isEnabled
         self.output = nil
         self.outputSink = outputSink
+        self.primaryScreen = TerminalPrimaryScreen(reports: cursorReports,
+            resizeGeneration: resizeGeneration, output: outputSink)
     }
 
     @discardableResult
@@ -147,8 +154,13 @@ public actor TerminalStatusBar {
                 return false
             }
             state.isStarted = true
+            primaryScreen.prepareSession()
+            if let output { primaryScreen.activate(fileDescriptor: output.fileDescriptor) }
             writeLocked("\u{1B}[?25l")
             startResizeSignalSourceLocked(state: &state)
+            TerminalResizeCoordinator.shared.publishLayout(
+                reservedBottomRows: reservedBottomRowsLocked(state: &state)
+            )
             if state.isProcessing {
                 startSpinnerTaskLocked(state: &state)
             }
@@ -164,8 +176,8 @@ public actor TerminalStatusBar {
             }
             stopSpinnerTaskLocked(state: &state)
             stopResizeSignalSourceLocked(state: &state)
-            clearLocked(state: &state)
-            writeLocked("\u{1B}[r\u{1B}[?25h")
+            primaryScreen.stop()
+            TerminalResizeCoordinator.shared.publishLayout(reservedBottomRows: nil)
             state.lastStatusRender = nil
             state.isStarted = false
         }
@@ -187,6 +199,7 @@ public actor TerminalStatusBar {
                 return
             }
             let boundedCursorIndex = min(max(0, cursorIndex), text.count)
+            primaryScreen.rememberInput(text: text, cursorIndex: boundedCursorIndex)
             let suggestionWindow = Self.inputPanelSuggestionWindow(
                 lines: suggestionLines,
                 selectedIndex: suggestionSelectedIndex,
@@ -206,26 +219,9 @@ public actor TerminalStatusBar {
                 return
             }
 
-            let hadInputPanel = state.inputPanelState != nil
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
             state.inputPanelState = nextInputPanelState
             guard state.isStarted else {
                 return
-            }
-            let newReservedRows = reservedBottomRowsLocked(state: &state)
-            if !hadInputPanel || oldReservedRows != newReservedRows {
-                if hadInputPanel, newReservedRows > oldReservedRows {
-                    scrollOutputRegionUpLocked(
-                        state: &state,
-                        by: newReservedRows - oldReservedRows,
-                        reservedRows: oldReservedRows
-                    )
-                }
-                clearReservedRowsLocked(
-                    state: &state,
-                    count: max(oldReservedRows, newReservedRows)
-                )
-                writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
             }
             renderLocked(state: &state)
         }
@@ -242,7 +238,6 @@ public actor TerminalStatusBar {
         availableTranscriptGapRows: Int = 0
     ) {
         withOutputBatch {
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
             if entries.isEmpty, !isExpanded {
                 // A closed reader with no history has no visible state. An open
                 // empty reader is retained so Ctrl+Y can still paint its compact
@@ -258,11 +253,7 @@ public actor TerminalStatusBar {
                 state.sharedChatReaderObservationID = observationID
             }
             guard state.isStarted else { return }
-            repaintSharedChatLayoutLocked(
-                state: &state,
-                oldReservedRows: oldReservedRows,
-                availableTranscriptGapRows: availableTranscriptGapRows
-            )
+            repaintSharedChatLayoutLocked(state: &state)
         }
     }
 
@@ -282,11 +273,10 @@ public actor TerminalStatusBar {
                 return
             }
             guard state.sharedChatReaderDock != nil || state.sharedChatReaderObservationID != nil else { return }
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
             state.sharedChatReaderDock = nil
             state.sharedChatReaderObservationID = nil
             guard state.isStarted else { return }
-            repaintSharedChatLayoutLocked(state: &state, oldReservedRows: oldReservedRows)
+            repaintSharedChatLayoutLocked(state: &state)
         }
     }
 
@@ -305,11 +295,10 @@ public actor TerminalStatusBar {
                   dock.isExpanded else {
                 return
             }
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
             dock.isExpanded = false
             state.sharedChatReaderDock = dock
             guard state.isStarted else { return }
-            repaintSharedChatLayoutLocked(state: &state, oldReservedRows: oldReservedRows)
+            repaintSharedChatLayoutLocked(state: &state)
         }
     }
 
@@ -345,7 +334,6 @@ public actor TerminalStatusBar {
         withOutputBatch {
             let previousDock = state.sharedChatReaderDock
             let previousObservationID = state.sharedChatReaderObservationID
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
             var dock = previousDock ?? TerminalSharedChatReaderDock()
             dock.replace(entries: entries, unreadCount: unreadCount, selection: selection)
             dock.isExpanded = true
@@ -370,11 +358,7 @@ public actor TerminalStatusBar {
                 state.sharedChatReaderObservationID = previousObservationID
                 return false
             }
-            repaintSharedChatLayoutLocked(
-                state: &state,
-                oldReservedRows: oldReservedRows,
-                availableTranscriptGapRows: availableTranscriptGapRows
-            )
+            repaintSharedChatLayoutLocked(state: &state)
             return true
         }
     }
@@ -382,12 +366,11 @@ public actor TerminalStatusBar {
     func navigateSharedChatReader(_ action: TerminalSharedChatReaderAction) {
         withOutputBatch {
             guard var dock = state.sharedChatReaderDock else { return }
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
             let width = statusBoxContentWidthLocked(state: &state)
             dock.navigate(action, viewportRows: sharedChatReaderViewportRowsLocked(state: &state), width: width)
             state.sharedChatReaderDock = dock
             guard state.isStarted else { return }
-            repaintSharedChatLayoutLocked(state: &state, oldReservedRows: oldReservedRows)
+            repaintSharedChatLayoutLocked(state: &state)
         }
     }
 
@@ -399,13 +382,10 @@ public actor TerminalStatusBar {
             guard state.inputPanelState != nil else {
                 return
             }
-            let oldReservedRows = reservedBottomRowsLocked(state: &state)
             state.inputPanelState = nil
             guard state.isStarted else {
                 return
             }
-            clearReservedRowsLocked(state: &state, count: oldReservedRows)
-            writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
             renderLocked(state: &state)
         }
     }

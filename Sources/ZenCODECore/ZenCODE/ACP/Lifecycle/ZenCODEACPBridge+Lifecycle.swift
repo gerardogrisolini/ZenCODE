@@ -580,6 +580,9 @@ extension ZenCODEACPBridge {
             // an already-live id. Never infer an unfinished Planner exchange
             // from replayed chat history.
             await clearACPPlanBrainstorming(sessionID: sessionID, epoch: session.epoch)
+            _ = updateLiveSession(id: sessionID, epoch: session.epoch) {
+                $0.pendingPlanApprovalPlanID = nil
+            }
             try ensureLifecycleOperationLive(operation)
             // The remaining replay belongs to the same fenced incarnation.
             if replayHistory,

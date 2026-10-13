@@ -277,7 +277,17 @@ public final class TerminalInteractiveLineReader: Sendable {
         prompt: String,
         shouldCancel: (@Sendable () -> Bool)?
     ) -> String? {
-        AgentOutput.standardError.writeString(prompt)
+        let modal = TerminalPrimaryScreen.active == nil ? nil : TerminalModalSession()
+        defer { modal?.close() }
+        let promptLines = prompt.split(separator: "\n", omittingEmptySubsequences: false)
+            .enumerated().map { TerminalCheckboxMenu.RenderedMenuLine(text: String($0.element), itemIndex: $0.offset) }
+        if let modal {
+            modal.update(.init(title: "", help: [], lines: promptLines,
+                               focusedIndex: max(0, promptLines.count - 1)))
+        } else { AgentOutput.standardError.writeString(prompt) }
+        func echo(_ text: String) {
+            if modal == nil { AgentOutput.standardError.writeString(text) }
+        }
 
         // Raw mode is what makes this a *single-key* read. When it cannot be
         // enabled the terminal stays canonical and delivers nothing until Enter,
@@ -296,12 +306,12 @@ public final class TerminalInteractiveLineReader: Sendable {
         }
 
         while true {
-            if shouldCancel?() == true {
-                AgentOutput.standardError.writeString("\n")
+            if modal?.isCancelled == true || shouldCancel?() == true {
+                echo("\n")
                 return nil
             }
             let readResult = readKeyResult(
-                pollTimeoutMilliseconds: shouldCancel == nil ? nil : 100
+                pollTimeoutMilliseconds: (shouldCancel == nil && modal == nil) ? nil : 100
             )
             let key: Key
             switch readResult {
@@ -312,26 +322,30 @@ public final class TerminalInteractiveLineReader: Sendable {
             case .timedOut:
                 continue
             case .endOfInput:
-                AgentOutput.standardError.writeString("\n")
+                echo("\n")
                 return nil
             }
 
+            guard modal?.isCancelled != true else { return nil }
             switch key {
             case let .character(text):
-                AgentOutput.standardError.writeString("\(text)\n")
+                echo("\(text)\n")
+                if let modal { return modal.accepted(text) }
                 return text
             case let .paste(text):
                 guard let firstCharacter = text.first else {
                     continue
                 }
                 let value = String(firstCharacter)
-                AgentOutput.standardError.writeString("\(value)\n")
+                echo("\(value)\n")
+                if let modal { return modal.accepted(value) }
                 return value
             case .enter:
-                AgentOutput.standardError.writeString("\n")
+                echo("\n")
+                if let modal { return modal.accepted("") }
                 return ""
             case .endOfInput:
-                AgentOutput.standardError.writeString("\n")
+                echo("\n")
                 return nil
             default:
                 continue
@@ -360,6 +374,9 @@ public final class TerminalInteractiveLineReader: Sendable {
         prompt: String,
         shouldCancel: (@Sendable () -> Bool)?
     ) -> String? {
+        if TerminalPrimaryScreen.active != nil {
+            return readCompositedLine(prompt: prompt, shouldCancel: shouldCancel)
+        }
         // The fallback reader owns a private editor value: it runs only when
         // the panel cannot, and sharing the reducer here is what keeps a single
         // definition of motion, word edits and history for both paths.

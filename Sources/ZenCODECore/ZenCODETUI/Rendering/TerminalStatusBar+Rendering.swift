@@ -17,7 +17,7 @@ import os
 #endif
 
 extension TerminalStatusBar {
-    func configureTerminalLocked(state: inout State, moveCursorToPrompt: Bool = true) -> Bool {
+    func configureTerminalLocked(state: inout State) -> Bool {
         let fileDescriptor = output?.fileDescriptor ?? 1
         guard let geometry = Self.currentTerminalGeometry(fileDescriptor: fileDescriptor),
               geometry.rows >= minimumRowsLocked(state: &state),
@@ -27,14 +27,14 @@ extension TerminalStatusBar {
         
         state.row = geometry.rows
         state.columns = geometry.columns
-        writeScrollRegionLocked(state: &state, moveCursorToPrompt: moveCursorToPrompt)
         return true
     }
     
-    func refreshTerminalGeometryLocked(state: inout State) -> Bool {
-        let fileDescriptor = output?.fileDescriptor ?? 1
-        guard let geometry = Self.currentTerminalGeometry(fileDescriptor: fileDescriptor)
-        else {
+    func refreshTerminalGeometryLocked(
+        state: inout State,
+        geometry: (rows: Int, columns: Int)?
+    ) -> Bool {
+        guard let geometry else {
             invalidateTerminalGeometryLocked(state: &state)
             return false
         }
@@ -43,28 +43,12 @@ extension TerminalStatusBar {
             invalidateTerminalGeometryLocked(state: &state)
             return false
         }
-        guard geometry.rows != state.row || geometry.columns != state.columns else {
-            return true
-        }
-        
-        let oldColumns = state.columns
-        let oldReservedRows = reservedBottomRowsLocked(state: &state)
         state.row = geometry.rows
         state.columns = geometry.columns
-        // Geometry changed: invalidate the status cache so the next render is not suppressed.
+        // A resize event invalidates the viewport even if coalesced signals end
+        // at the original dimensions. Never infer the old chrome's location.
+        state.needsViewportRebuild = true
         state.lastStatusRender = nil
-        let newReservedRows = reservedBottomRowsLocked(state: &state)
-        let oldRowWrapFactor = max(1, (oldColumns + geometry.columns - 1) / geometry.columns)
-        let rowsToClear = min(
-            state.row,
-            max(newReservedRows, oldReservedRows * oldRowWrapFactor) + 2
-        )
-        clearReservedRowsLocked(
-            state: &state,
-            count: rowsToClear,
-            bottomRow: state.row
-        )
-        writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
         return true
     }
 
@@ -72,68 +56,22 @@ extension TerminalStatusBar {
         state.row = 0
         state.columns = 0
         state.lastStatusRender = nil
-        writeLocked("\u{1B}[r\u{1B}[?25h")
-    }
-    
-    func writeScrollRegionLocked(state: inout State, moveCursorToPrompt: Bool) {
-        let reservedRows = reservedBottomRowsLocked(state: &state)
-        let scrollBottom = max(1, state.row - reservedRows)
-        let scrollTop = 1
-        var sequence = "\u{1B}[\(scrollTop);\(scrollBottom)r"
-        if moveCursorToPrompt {
-            sequence += "\u{1B}[\(scrollBottom);1H"
-        }
-        writeLocked(sequence)
+        primaryScreen.enterAppendOnly(reason: "cursor layout unavailable at terminal geometry")
     }
     
     /// Repaints only the Chat-owned layout. A margin write homes the cursor,
     /// even when DECSTBM repeats the current margins, so ordinary unread and
     /// selection refreshes must not write it at all.
-    func repaintSharedChatLayoutLocked(
-        state: inout State,
-        oldReservedRows: Int,
-        availableTranscriptGapRows: Int = 0
-    ) {
+    func repaintSharedChatLayoutLocked(state: inout State) {
         guard state.row > 0, state.columns > 0, !state.isResizePending else { return }
-        let newReservedRows = reservedBottomRowsLocked(state: &state)
-        if newReservedRows != oldReservedRows {
-            let scrolledRows = max(
-                0, newReservedRows - oldReservedRows - max(0, availableTranscriptGapRows)
-            )
-            // Save only around the margin/scroll commands: the clearing and
-            // painting helpers use the SAME single DECSC slot, not a stack.
-            writeLocked("\u{1B}7")
-            scrollOutputRegionUpLocked(
-                state: &state, by: scrolledRows, reservedRows: oldReservedRows
-            )
-            writeScrollRegionLocked(state: &state, moveCursorToPrompt: false)
-            writeLocked("\u{1B}8")
-            if scrolledRows > 0 {
-                // Restoring gives the old physical row; the transcript moved
-                // up by this amount. CUU also safely clamps at the first row.
-                writeLocked("\u{1B}[\(scrolledRows)A")
-            }
-            clearReservedRowsLocked(state: &state, count: max(oldReservedRows, newReservedRows))
-        }
         renderLocked(state: &state)
     }
 
-    func scrollOutputRegionUpLocked(state: inout State, by count: Int, reservedRows: Int) {
-        guard count > 0, state.row > reservedRows else {
-            return
-        }
-        
-        let scrollBottom = max(1, state.row - reservedRows)
-        let scrollTop = 1
-        let newlines = String(repeating: "\n", count: count)
-        writeLocked(
-            "\u{1B}[\(scrollTop);\(scrollBottom)r"
-            + "\u{1B}[\(scrollBottom);1H"
-            + newlines
-        )
-    }
-    
     func renderLocked(state: inout State) {
+        if let panel = state.inputPanelState {
+            primaryScreen.rememberInput(text: panel.text, cursorIndex: panel.cursorIndex)
+        }
+        guard !primaryScreen.isAppendOnly else { return }
         guard state.row > 0, state.columns > 0, !state.isResizePending else {
             return
         }
@@ -144,7 +82,13 @@ extension TerminalStatusBar {
         // renders with identical content will be suppressed.
         state.lastStatusRender = statusSequence
         let sequence = "\u{1B}[?25l" + sharedChatReaderRenderSequenceLocked(state: &state) + inputPanelRenderSequenceLocked(state: &state) + statusSequence
-        writeLocked(sequence)
+        primaryScreen.commitFooter(
+            geometry: .init(rows: state.row, columns: state.columns),
+            reservedRows: reservedBottomRowsLocked(state: &state),
+            sequence: sequence,
+            rebuild: state.needsViewportRebuild
+        )
+        state.needsViewportRebuild = false
     }
 
     /// Status-only invalidation used by spinner and metrics updates. The input
@@ -158,8 +102,7 @@ extension TerminalStatusBar {
         guard state.lastStatusRender != sequence else {
             return
         }
-        state.lastStatusRender = sequence
-        writeLocked(sequence)
+        renderLocked(state: &state)
     }
     
     func sharedChatReaderViewportRowsLocked(state: inout State) -> Int {
@@ -201,7 +144,7 @@ extension TerminalStatusBar {
         guard dock.isExpanded else { return 1 }
         let fullDockRows = min(
             8,
-            dock.rows(width: statusBoxContentWidthLocked(state: &state)).count + 2,
+            max(1, dock.rows(width: statusBoxContentWidthLocked(state: &state)).count) + 2,
             available
         )
         return fullDockRows >= 3 ? fullDockRows : 1
@@ -457,32 +400,6 @@ extension TerminalStatusBar {
         + reset
         + "\u{1B}8"
         return sequence
-    }
-    
-    func clearLocked(state: inout State) {
-        clearLocked(state: &state, row: state.row)
-    }
-    
-    func clearLocked(state: inout State, row: Int) {
-        guard row > 0 else {
-            return
-        }
-        let reservedRows = reservedBottomRowsLocked(state: &state)
-        clearReservedRowsLocked(state: &state, count: reservedRows, bottomRow: row)
-    }
-    
-    func clearReservedRowsLocked(state: inout State, count: Int, bottomRow: Int? = nil) {
-        let resolvedBottomRow = bottomRow ?? state.row
-        guard resolvedBottomRow > 0, count > 0 else {
-            return
-        }
-        let firstRow = max(1, resolvedBottomRow - count + 1)
-        var sequence = "\u{1B}7"
-        for rowIndex in firstRow...resolvedBottomRow {
-            sequence += "\u{1B}[\(rowIndex);1H\u{1B}[2K"
-        }
-        sequence += "\u{1B}8"
-        writeLocked(sequence)
     }
     
     func reservedBottomRowsLocked(state: inout State) -> Int {

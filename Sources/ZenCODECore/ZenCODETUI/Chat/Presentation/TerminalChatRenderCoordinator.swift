@@ -111,6 +111,11 @@ actor TerminalChatRenderCoordinator {
     /// use it to detect output scheduled after their section, which makes an
     /// in-place rewrite unsafe.
     var emittedWriteCount: UInt64 = 0
+    /// Receipt returned by the physical write transaction, never sampled later.
+    var lastScreenReceipt: TerminalPrimaryScreen.Anchor?
+    var injectedPrimaryScreen: TerminalPrimaryScreen?
+    func usePrimaryScreenForTesting(_ screen: TerminalPrimaryScreen) { injectedPrimaryScreen = screen }
+    var ownedTailGapRows = 0
     var capturedWrites: [WriteEvent] = []
     var pendingStreamingWrites: [PendingWrite] = []
     var pendingStreamingByteCount = 0
