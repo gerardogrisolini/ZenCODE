@@ -133,6 +133,25 @@ extension TerminalChatRenderCoordinator {
         subAgentToolState.revision &+= 1
     }
 
+    /// A delegated artifact is permanent transcript output. Remove the live
+    /// overview while its pending tool rows are still owned, before inserting
+    /// the artifact; the caller then republishes the completed tool snapshot.
+    /// Keep both operations synchronous on this actor so a periodic refresh
+    /// cannot reintroduce the pending overview between the clear and the write.
+    func writeSubAgentFileArtifactMessage(
+        _ markdown: String,
+        maximumInPlaceRows: Int?
+    ) {
+        clearOwnedSubAgentOverviewBeforeInterleavedOutput(
+            maximumInPlaceRows: maximumInPlaceRows
+        )
+        writeMarkdownMessage(
+            markdown,
+            to: .standardError,
+            preservingStreamingContext: true
+        )
+    }
+
     func subAgentToolPresentationSnapshot() -> SubAgentToolPresentationSnapshot {
         SubAgentToolPresentationSnapshot(
             revision: subAgentToolState.revision,

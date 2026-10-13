@@ -60,6 +60,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Newly recorded delegated file artifacts now clear a still-owned live Sub-Agents
+  overview before inserting permanent output, so the completed tool row replaces
+  its pending presentation. Root artifacts and history rendering are unchanged;
+  lost ownership or unsafe geometry retains the append-only fallback.
+- File-artifact metadata now colors `+n` counts green and `-n` counts red in both
+  complete and streamed terminal rendering, without recoloring ordinary prose
+  or changing plain Markdown and wire formats.
+- Artifact diff source-line numbers and wrapped continuation gutters now use
+  neutral gray, preserving source syntax colors, diff backgrounds and numbering.
 - Terminal authorization now uses a dedicated single-key dialog presentation
   instead of the menu renderer, preserving the original Authorization card
   without a second border. Dialogs share the primary-screen stack and lifecycle,

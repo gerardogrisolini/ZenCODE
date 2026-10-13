@@ -108,7 +108,43 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     }
 
     mutating func visitParagraph(_ paragraph: Paragraph) -> String {
-        renderChildren(of: paragraph)
+        guard let counts = artifactMetadataCounts(in: paragraph) else {
+            return renderChildren(of: paragraph)
+        }
+        return paragraph.children.enumerated().map { index, child in
+            index == 1 ? counts : visit(child)
+        }.joined()
+    }
+
+    /// Artifact metadata stays ordinary Markdown at the transport boundary.
+    /// Recognize only its canonical first line, leaving other prose and code alone.
+    private func artifactMetadataCounts(in paragraph: Paragraph) -> String? {
+        guard paragraph.parent is Document else { return nil }
+        let children = Array(paragraph.children)
+        guard children.count >= 2,
+              let metadata = children[0] as? Strong,
+              let text = children[1] as? Text,
+              children.count == 2 || children[2] is SoftBreak || children[2] is LineBreak else {
+            return nil
+        }
+        let label = Array(metadata.children)
+        guard label.count == 2, label[1] is InlineCode,
+              let status = label[0] as? Text,
+              ["added ", "modified ", "deleted ", "unknown "].contains(status.string) else {
+            return nil
+        }
+        let tokens = text.string.split(separator: " ")
+        guard tokens.count == 2 || (tokens.count == 3 && tokens[2] == "(binary)"),
+              tokens[0].first == "+", tokens[1].first == "-",
+              tokens.prefix(2).allSatisfy({ token in
+                  !token.dropFirst().isEmpty && token.dropFirst().utf8.allSatisfy { (48...57).contains($0) }
+              }) else {
+            return nil
+        }
+        let suffix = tokens.count == 3 ? " (binary)" : ""
+        guard text.string == "  \(tokens[0]) \(tokens[1])\(suffix)" else { return nil }
+        return "  \(palette.diffAddition)\(tokens[0])\(Self.reset) "
+            + "\(palette.diffRemoval)\(tokens[1])\(Self.reset)\(suffix)"
     }
 
     mutating func visitHeading(_ heading: Heading) -> String {

@@ -39,7 +39,12 @@ extension TerminalChat {
             turnID: context.id, workingDirectory: configuration.workingDirectory
         ) else { return }
         guard sessionID == context.sessionID, fileArtifactHistory === context.history else { return }
-        await writeFileArtifacts([turn], includeHistoryHeadings: false, preservingStreamingContext: true)
+        await writeFileArtifacts(
+            [turn],
+            includeHistoryHeadings: false,
+            preservingStreamingContext: true,
+            replacingSubAgentOverviewFor: agentID == nil ? nil : context
+        )
     }
 
     /// Replacing the actor also fences restores that reuse the same session ID.
@@ -119,18 +124,33 @@ extension TerminalChat {
     private func writeFileArtifacts(
         _ turns: [SessionFileArtifactHistory.Turn],
         includeHistoryHeadings: Bool,
-        preservingStreamingContext: Bool = false
+        preservingStreamingContext: Bool = false,
+        replacingSubAgentOverviewFor context: FileArtifactTurnContext? = nil
     ) async {
-        await renderCoordinator.writeMarkdownMessage(
-            Self.renderFileArtifacts(
-                turns,
-                includeHistoryHeadings: includeHistoryHeadings,
-                columnWidth: Self.terminalColumnCount(),
-                isEnabled: AgentOutput.standardErrorIsTerminal
-            ),
-            to: .standardError,
-            preservingStreamingContext: preservingStreamingContext
+        let markdown = Self.renderFileArtifacts(
+            turns,
+            includeHistoryHeadings: includeHistoryHeadings,
+            columnWidth: Self.terminalColumnCount(),
+            isEnabled: AgentOutput.standardErrorIsTerminal
         )
+        if let context {
+            let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
+            guard sessionID == context.sessionID,
+                  fileArtifactHistory === context.history,
+                  activeFileArtifactTurn?.id == context.id else { return }
+            // Only a newly recorded delegated artifact removes the pending
+            // overview. The coordinator clears and inserts without suspension.
+            await renderCoordinator.writeSubAgentFileArtifactMessage(
+                markdown,
+                maximumInPlaceRows: maximumInPlaceRows
+            )
+        } else {
+            await renderCoordinator.writeMarkdownMessage(
+                markdown,
+                to: .standardError,
+                preservingStreamingContext: preservingStreamingContext
+            )
+        }
     }
 
     public nonisolated static func renderFileArtifacts(

@@ -143,7 +143,7 @@ enum TerminalCodeBlockRenderer {
         let continuationPrefix = showsGutter
             ? String(repeating: " ", count: gutterWidth - 3) + " │ " : ""
         func styledPrefix(_ prefix: String) -> String {
-            prefix.isEmpty ? "" : "\(palette.diffHeader)\(prefix)\(reset)"
+            prefix.isEmpty ? "" : "\(palette.syntaxComment)\(prefix)\(reset)"
         }
         guard width > 0 else {
             return [renderBackgroundRow(styledPrefix(firstPrefix) + highlighted, width: 0, style: rowStyle)]
