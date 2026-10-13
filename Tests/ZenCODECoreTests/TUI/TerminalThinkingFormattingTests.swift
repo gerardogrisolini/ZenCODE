@@ -64,6 +64,60 @@ struct TerminalThinkingFormattingTests {
     }
 
     @Test
+    func subAgentThinkingPreservesTabIndentedNestedListsLikeTheMainFormatter() throws {
+        let source = "- outer\n\t- inner\n\t\t- deepest\n"
+        let rendered = try #require(TerminalChat.renderSubAgentThinkingMarkdown(
+            source,
+            standardErrorIsTerminal: true,
+            renderWidth: 80
+        ))
+        let plain = TerminalANSIText.stripANSI(rendered)
+
+        #expect(rendered == mainThinkingMarkdown(source))
+        #expect(plain.contains("• outer\n  ◦ inner\n    ▪ deepest"))
+        #expect(!rendered.contains("\t"))
+        #expect(!containsBoldSGR(rendered))
+    }
+
+    @Test
+    func subAgentThinkingPreservesFencedCodeTabStopsLikeTheMainFormatter() throws {
+        let source = "```swift\n\tlet text = \"**literal**\"\n \tprint(text)\nlet\tvalue = 1\n```\n"
+        let rendered = try #require(TerminalChat.renderSubAgentThinkingMarkdown(
+            source,
+            standardErrorIsTerminal: true,
+            renderWidth: 80
+        ))
+        let plain = TerminalANSIText.stripANSI(rendered)
+
+        #expect(rendered == mainThinkingMarkdown(source))
+        #expect(plain.contains("Code · Swift"))
+        #expect(plain.contains("    let text = \"**literal**\""))
+        #expect(plain.contains("    print(text)"))
+        #expect(plain.contains("let value = 1"))
+        #expect(!rendered.contains("\t"))
+        #expect(!containsBoldSGR(rendered))
+    }
+
+    @Test
+    func subAgentThinkingPreservesTabIndentedCodeLikeTheMainFormatter() throws {
+        // Use a structured block the main stream already parses as Markdown,
+        // without changing its existing handling of top-level indentation.
+        let source = "> \t\tlet text = \"**literal**\"\n"
+        let rendered = try #require(TerminalChat.renderSubAgentThinkingMarkdown(
+            source,
+            standardErrorIsTerminal: true,
+            renderWidth: 80
+        ))
+        let plain = TerminalANSIText.stripANSI(rendered)
+
+        #expect(rendered == mainThinkingMarkdown(source))
+        #expect(plain.contains("Code"))
+        #expect(plain.contains("let text = \"**literal**\""))
+        #expect(!rendered.contains("\t"))
+        #expect(!containsBoldSGR(rendered))
+    }
+
+    @Test
     func subAgentThinkingRendersStructuredBlocksAndLiteralCode() throws {
         let source = """
         ```swift
@@ -100,6 +154,7 @@ struct TerminalThinkingFormattingTests {
         "**safe** \u{1B}[2J\u{1B}]52;c;payload\u{7}\u{1B}]8;;https://example.com\u{1B}\\link\u{1B}]8;;\u{1B}\\\u{9B}2J\u{85}\u{202E}\u{200B}\u{200D}\r\tend",
         "**safe** &#27;[2J &#27;]52;c;payload&#7; &#x202e;&#x200b;&#x200d; end",
         "**safe** [link](https://example.com) end",
+        "**safe**\t&#9;&#x09; end",
     ])
     func subAgentThinkingCannotInjectTerminalControls(_ source: String) throws {
         let rendered = try #require(TerminalChat.renderSubAgentThinkingMarkdown(
@@ -201,6 +256,22 @@ struct TerminalThinkingFormattingTests {
         #expect(replacement.contains("Replacement paragraph"))
         #expect(!replacement.contains("Step"))
         #expect(replacement.components(separatedBy: TerminalChat.thinkingPlaceholder).count - 1 == 1)
+    }
+
+    private func mainThinkingMarkdown(_ source: String, renderWidth: Int = 80) -> String {
+        var state = TerminalChatBoldBreakState()
+        var normalized = TerminalChatTextFormatting.normalizedBoldSectionBreak(source, state: &state)
+        normalized += TerminalChatTextFormatting.flushBoldSectionBreak(state: &state)
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: true,
+            renderWidth: renderWidth,
+            supportsHyperlinks: false,
+            removesUnbalancedStrongMarkers: true
+        )
+        return TerminalChatTextFormatting.renderThoughtMarkdown(
+            formatter.consume(normalized) + formatter.finish(),
+            standardErrorIsTerminal: true
+        )
     }
 
     private func containsBoldSGR(_ text: String) -> Bool {

@@ -763,7 +763,7 @@ extension TerminalChat {
         standardErrorIsTerminal: Bool = AgentOutput.standardErrorIsTerminal,
         renderWidth: Int? = nil
     ) -> String? {
-        let sanitized = sanitizedSubAgentThinkingText(source)
+        let sanitized = sanitizedSubAgentThinkingText(source, preservingTabs: true)
         guard !sanitized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
@@ -792,10 +792,12 @@ extension TerminalChat {
 
     private nonisolated static func sanitizedSubAgentThinkingText(
         _ source: String,
+        preservingTabs: Bool = false,
         preservingSGR: Bool = false
     ) -> String {
-        // Match metadata neutralization except for structural LF. Retaining
-        // indentation and line breaks lets lists and fenced code stay Markdown.
+        // Preserve structural LF, and TAB only before Markdown so the shared
+        // parser and code renderer own indentation and tab-stop expansion.
+        // The post-parse safety pass still neutralizes any remaining TAB.
         let source = source.replacingOccurrences(of: "\r\n", with: "\n")
         var sanitized = ""
         sanitized.reserveCapacity(source.count)
@@ -813,7 +815,8 @@ extension TerminalChat {
                 }
             }
             let character = source[cursor]
-            let isControl = character != "\n" && character.unicodeScalars.contains { scalar in
+            let isStructuralWhitespace = character == "\n" || (preservingTabs && character == "\t")
+            let isControl = !isStructuralWhitespace && character.unicodeScalars.contains { scalar in
                 CharacterSet.controlCharacters.contains(scalar)
                     || scalar.properties.isBidiControl
                     || scalar.properties.isJoinControl
