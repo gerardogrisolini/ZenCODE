@@ -25,6 +25,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Removed unused internal terminal rendering and input helpers left behind by
+  the compositor integration, without changing public APIs or terminal behavior.
 - `/plan approve` now asks for a descriptive Goal before activating implementation. The reply is consumed as transient control input, propagated to the active and saved plan, and shown by `/plan list` across TUI, Telegram, and ACP flows.
 - TUI and ACP clear pending plan-approval state at session restore boundaries and roll back graph changes when approval persistence fails.
 - TUI and ACP now share file-change normalization, deduplication, ordering,

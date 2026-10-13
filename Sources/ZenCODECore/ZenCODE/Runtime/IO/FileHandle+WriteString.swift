@@ -22,20 +22,12 @@ enum TerminalOutputSynchronization {
         return body()
     }
 
-    static func withLock(_ body: @Sendable () -> Void) { withTransaction(body) }
-
     static func write(_ string: String, to fileHandle: FileHandle) {
         withTransaction {
             let handler = writer.withLock { $0 }
             if handler?(string, fileHandle) == true { return }
             fileHandle.write(Data(string.utf8))
         }
-    }
-
-    static func write(_ data: Data, to fileHandle: FileHandle) {
-        guard !data.isEmpty else { return }
-        if let text = String(data: data, encoding: .utf8) { write(text, to: fileHandle) }
-        else { withTransaction { fileHandle.write(data) } }
     }
 
     /// Already-composed output bypasses the frontend writer, not the lock.

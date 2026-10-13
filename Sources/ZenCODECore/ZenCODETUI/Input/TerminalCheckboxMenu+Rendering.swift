@@ -11,26 +11,6 @@ import Glibc
 import Foundation
 
 extension TerminalCheckboxMenu {
-    static func renderMenu<Value: Hashable>(
-        title: String,
-        items: [TerminalCheckboxMenuItem<Value>],
-        selection: SelectionState<Value>,
-        focusedIndex: Int,
-        reservedBottomRows: Int,
-        reserveSpaceBeforeDrawing: Bool
-    ) -> RenderedFrame {
-        let rendered = renderMenuSequence(
-            title: title,
-            items: items,
-            selection: selection,
-            focusedIndex: focusedIndex,
-            reservedBottomRows: reservedBottomRows,
-            reserveSpaceBeforeDrawing: reserveSpaceBeforeDrawing
-        )
-        writeTerminal(rendered.sequence)
-        return rendered.frame
-    }
-
     static func renderMenuSequence<Value: Hashable>(
         title: String,
         items: [TerminalCheckboxMenuItem<Value>],
@@ -60,41 +40,6 @@ extension TerminalCheckboxMenu {
         )
     }
 
-    static func renderInput(
-        title: String,
-        prompt: String,
-        help: String?,
-        reservedBottomRows: Int,
-        reserveSpaceBeforeDrawing: Bool
-    ) -> RenderedFrame {
-        let rendered = renderInputSequence(
-            title: title,
-            prompt: prompt,
-            help: help,
-            reservedBottomRows: reservedBottomRows,
-            reserveSpaceBeforeDrawing: reserveSpaceBeforeDrawing
-        )
-        writeTerminal(rendered.sequence)
-        return rendered.frame
-    }
-
-    static func renderInputSequence(
-        title: String,
-        prompt: String,
-        help: String?,
-        reservedBottomRows: Int,
-        reserveSpaceBeforeDrawing: Bool
-    ) -> (frame: RenderedFrame, sequence: String) {
-        renderFrameSequence(
-            title: title,
-            helpLines: inputHelpLines(help),
-            itemLines: [RenderedMenuLine(text: prompt, itemIndex: nil)],
-            focusedIndex: 0,
-            reservedBottomRows: reservedBottomRows,
-            reserveSpaceBeforeDrawing: reserveSpaceBeforeDrawing
-        )
-    }
-
     static func groupedItemLines<Value: Hashable>(
         items: [TerminalCheckboxMenuItem<Value>],
         itemLine: (Int, TerminalCheckboxMenuItem<Value>) -> String
@@ -116,26 +61,6 @@ extension TerminalCheckboxMenu {
         }
 
         return lines
-    }
-
-    static func renderFrame(
-        title: String,
-        helpLines: [String],
-        itemLines: [RenderedMenuLine],
-        focusedIndex: Int,
-        reservedBottomRows: Int,
-        reserveSpaceBeforeDrawing: Bool
-    ) -> RenderedFrame {
-        let rendered = renderFrameSequence(
-            title: title,
-            helpLines: helpLines,
-            itemLines: itemLines,
-            focusedIndex: focusedIndex,
-            reservedBottomRows: reservedBottomRows,
-            reserveSpaceBeforeDrawing: reserveSpaceBeforeDrawing
-        )
-        writeTerminal(rendered.sequence)
-        return rendered.frame
     }
 
     static func renderFrameSequence(
@@ -288,31 +213,6 @@ extension TerminalCheckboxMenu {
 
     static func padded(_ text: String, width: Int) -> String {
         text + String(repeating: " ", count: max(0, width - TerminalANSIText.visibleWidth(text)))
-    }
-
-    static func clear(frame: RenderedFrame?, reservedBottomRows: Int? = nil) {
-        guard let frame else {
-            return
-        }
-        let geometry = terminalGeometry()
-        let terminalRows = geometry.rows > 0
-            ? geometry.rows
-            : (frame.terminalRows > 0 ? frame.terminalRows : 0)
-        let currentReservation = max(
-            0,
-            reservedBottomRows
-                ?? TerminalResizeCoordinator.shared.reservedBottomRows(
-                    fallback: frame.reservedBottomRows
-                )
-        )
-        writeTerminal(
-            clearFrameSequence(
-                frame: frame,
-                terminalRows: terminalRows,
-                terminalColumns: geometry.columns,
-                transcriptBottomRow: terminalRows - currentReservation
-            )
-        )
     }
 
     static func clearFrameSequence(

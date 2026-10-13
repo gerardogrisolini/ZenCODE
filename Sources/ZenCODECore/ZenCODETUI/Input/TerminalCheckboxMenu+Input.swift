@@ -174,19 +174,6 @@ extension TerminalCheckboxMenu {
         }
     }
 
-    static func readByte(rawInput: TerminalRawInput) -> UInt8? {
-        readByte(rawInput: rawInput, shouldCancel: nil)
-    }
-
-    static func removeLastUTF8Character(from bytes: inout [UInt8]) {
-        repeat {
-            let removedByte = bytes.removeLast()
-            if removedByte < 0x80 || (removedByte & 0xC0) != 0x80 {
-                return
-            }
-        } while !bytes.isEmpty
-    }
-
     static func writeRawOutputByte(_ byte: UInt8) {
         TerminalOutputSynchronization.writeOverlay(
             Data([byte]),
@@ -245,10 +232,6 @@ extension TerminalCheckboxMenu {
         }
     }
 
-    static func readEscapeKey(rawInput: TerminalRawInput) -> Key {
-        readEscapeKey(rawInput: rawInput, resizeGeneration: nil)
-    }
-
     static func readEscapeKey(rawInput: TerminalRawInput, resizeGeneration: UInt64?) -> Key {
         let secondByte: UInt8
         switch readByteEvent(
@@ -276,10 +259,6 @@ extension TerminalCheckboxMenu {
         }
     }
 
-    static func readCSIKey(rawInput: TerminalRawInput) -> Key {
-        readCSIKey(rawInput: rawInput, resizeGeneration: nil)
-    }
-
     static func readCSIKey(rawInput: TerminalRawInput, resizeGeneration: UInt64?) -> Key {
         var bytes: [UInt8] = []
         while bytes.count < escapeSequenceMaximumLength {
@@ -303,10 +282,6 @@ extension TerminalCheckboxMenu {
 
         drainPendingEscapeSequence(rawInput: rawInput)
         return .unknown
-    }
-
-    static func readSS3Key(rawInput: TerminalRawInput) -> Key {
-        readSS3Key(rawInput: rawInput, resizeGeneration: nil)
     }
 
     static func readSS3Key(rawInput: TerminalRawInput, resizeGeneration: UInt64?) -> Key {

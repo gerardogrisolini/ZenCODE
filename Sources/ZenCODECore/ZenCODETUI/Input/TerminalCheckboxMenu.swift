@@ -420,7 +420,6 @@ public enum TerminalCheckboxMenu {
         allowEmpty: Bool,
         help: String?,
         reservedBottomRows: Int,
-        reservedBottomRowsProvider: (() -> Int)? = nil,
         screen: TerminalPrimaryScreen? = nil,
         read: () -> InputLineReadResult
     ) -> String? {

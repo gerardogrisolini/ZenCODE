@@ -17,7 +17,7 @@ import os
 #endif
 
 extension TerminalStatusBar {
-    func configureTerminalLocked(state: inout State, moveCursorToPrompt: Bool = true) -> Bool {
+    func configureTerminalLocked(state: inout State) -> Bool {
         let fileDescriptor = output?.fileDescriptor ?? 1
         guard let geometry = Self.currentTerminalGeometry(fileDescriptor: fileDescriptor),
               geometry.rows >= minimumRowsLocked(state: &state),
@@ -30,12 +30,6 @@ extension TerminalStatusBar {
         return true
     }
     
-    func refreshTerminalGeometryLocked(state: inout State) -> Bool {
-        let fileDescriptor = output?.fileDescriptor ?? 1
-        let geometry = Self.currentTerminalGeometry(fileDescriptor: fileDescriptor)
-        return refreshTerminalGeometryLocked(state: &state, geometry: geometry)
-    }
-
     func refreshTerminalGeometryLocked(
         state: inout State,
         geometry: (rows: Int, columns: Int)?
@@ -65,27 +59,14 @@ extension TerminalStatusBar {
         primaryScreen.enterAppendOnly(reason: "cursor layout unavailable at terminal geometry")
     }
     
-    func writeScrollRegionLocked(state: inout State, moveCursorToPrompt: Bool) {
-        // Margins and insertion point belong to the next compositor commit.
-    }
-    
     /// Repaints only the Chat-owned layout. A margin write homes the cursor,
     /// even when DECSTBM repeats the current margins, so ordinary unread and
     /// selection refreshes must not write it at all.
-    func repaintSharedChatLayoutLocked(
-        state: inout State,
-        oldReservedRows: Int,
-        availableTranscriptGapRows: Int = 0
-    ) {
+    func repaintSharedChatLayoutLocked(state: inout State) {
         guard state.row > 0, state.columns > 0, !state.isResizePending else { return }
         renderLocked(state: &state)
     }
 
-    func scrollOutputRegionUpLocked(state: inout State, by count: Int, reservedRows: Int) {
-        // The compositor preserves displaced transcript rows before growing
-        // the footer. No independently saved physical cursor is used.
-    }
-    
     func renderLocked(state: inout State) {
         if let panel = state.inputPanelState {
             primaryScreen.rememberInput(text: panel.text, cursorIndex: panel.cursorIndex)
@@ -419,41 +400,6 @@ extension TerminalStatusBar {
         + reset
         + "\u{1B}8"
         return sequence
-    }
-    
-    func clearLocked(state: inout State) {
-        clearLocked(state: &state, row: state.row)
-    }
-    
-    func clearLocked(state: inout State, row: Int) {
-        guard row > 0 else {
-            return
-        }
-        let reservedRows = reservedBottomRowsLocked(state: &state)
-        clearReservedRowsLocked(state: &state, count: reservedRows, bottomRow: row)
-    }
-    
-    func clearRowsLocked(
-        state: inout State,
-        firstRow: Int,
-        count: Int,
-        bottomRow: Int? = nil
-    ) {
-        // Clearing a previous footprint is deliberately not a physical output
-        // operation. The next semantic layout commit replaces the viewport.
-    }
-
-    func clearReservedRowsLocked(state: inout State, count: Int, bottomRow: Int? = nil) {
-        let resolvedBottomRow = bottomRow ?? state.row
-        guard resolvedBottomRow > 0, count > 0 else {
-            return
-        }
-        clearRowsLocked(
-            state: &state,
-            firstRow: resolvedBottomRow - count + 1,
-            count: count,
-            bottomRow: resolvedBottomRow
-        )
     }
     
     func reservedBottomRowsLocked(state: inout State) -> Int {

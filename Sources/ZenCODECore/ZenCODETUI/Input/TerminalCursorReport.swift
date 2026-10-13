@@ -6,7 +6,7 @@ import Synchronization
 
 final class TerminalCursorReport: Sendable {
     struct Position: Equatable, Sendable { let row: Int; let column: Int }
-    enum Failure: Error, Equatable, Sendable { case timeout, cancelled, rejected, fenced }
+    enum Failure: Error, Equatable, Sendable { case timeout, cancelled, rejected }
     typealias Completion = @Sendable (Result<Position, Failure>) -> Void
     private struct State {
         var pending: (id: UUID, completion: Completion)?

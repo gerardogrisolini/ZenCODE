@@ -22,7 +22,6 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
     }
     private static let registered = Mutex<TerminalPrimaryScreen?>(nil)
     static var active: TerminalPrimaryScreen? { registered.withLock { $0 } }
-    static var currentAnchor: Anchor? { active?.usableAnchor }
     private let id = UUID()
     private let output: @Sendable (String) -> Void
     private let reports: TerminalCursorReport
@@ -47,7 +46,6 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
     private var subscription: TerminalResizeCoordinator.Subscription?
     private var chromeTop: Int { max(2, min(geometry.rows, geometry.rows - reservedRows + 1)) }
     private var height: Int { chromeTop - 1 }
-    var generation: UInt64 { TerminalOutputSynchronization.withTransaction { revision } }
     var isAppendOnly: Bool { TerminalOutputSynchronization.withTransaction { disabled } }
     var anchor: Anchor { TerminalOutputSynchronization.withTransaction {
         Anchor(screenID: id, revision: revision, resizeGeneration: resizeGeneration())

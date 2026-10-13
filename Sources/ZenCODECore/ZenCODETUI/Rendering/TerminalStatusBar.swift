@@ -219,26 +219,9 @@ public actor TerminalStatusBar {
                 return
             }
 
-            let hadInputPanel = state.inputPanelState != nil
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
             state.inputPanelState = nextInputPanelState
             guard state.isStarted else {
                 return
-            }
-            let newReservedRows = reservedBottomRowsLocked(state: &state)
-            if !hadInputPanel || oldReservedRows != newReservedRows {
-                if hadInputPanel, newReservedRows > oldReservedRows {
-                    scrollOutputRegionUpLocked(
-                        state: &state,
-                        by: newReservedRows - oldReservedRows,
-                        reservedRows: oldReservedRows
-                    )
-                }
-                clearReservedRowsLocked(
-                    state: &state,
-                    count: max(oldReservedRows, newReservedRows)
-                )
-                writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
             }
             renderLocked(state: &state)
         }
@@ -255,7 +238,6 @@ public actor TerminalStatusBar {
         availableTranscriptGapRows: Int = 0
     ) {
         withOutputBatch {
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
             if entries.isEmpty, !isExpanded {
                 // A closed reader with no history has no visible state. An open
                 // empty reader is retained so Ctrl+Y can still paint its compact
@@ -271,11 +253,7 @@ public actor TerminalStatusBar {
                 state.sharedChatReaderObservationID = observationID
             }
             guard state.isStarted else { return }
-            repaintSharedChatLayoutLocked(
-                state: &state,
-                oldReservedRows: oldReservedRows,
-                availableTranscriptGapRows: availableTranscriptGapRows
-            )
+            repaintSharedChatLayoutLocked(state: &state)
         }
     }
 
@@ -295,11 +273,10 @@ public actor TerminalStatusBar {
                 return
             }
             guard state.sharedChatReaderDock != nil || state.sharedChatReaderObservationID != nil else { return }
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
             state.sharedChatReaderDock = nil
             state.sharedChatReaderObservationID = nil
             guard state.isStarted else { return }
-            repaintSharedChatLayoutLocked(state: &state, oldReservedRows: oldReservedRows)
+            repaintSharedChatLayoutLocked(state: &state)
         }
     }
 
@@ -318,11 +295,10 @@ public actor TerminalStatusBar {
                   dock.isExpanded else {
                 return
             }
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
             dock.isExpanded = false
             state.sharedChatReaderDock = dock
             guard state.isStarted else { return }
-            repaintSharedChatLayoutLocked(state: &state, oldReservedRows: oldReservedRows)
+            repaintSharedChatLayoutLocked(state: &state)
         }
     }
 
@@ -358,7 +334,6 @@ public actor TerminalStatusBar {
         withOutputBatch {
             let previousDock = state.sharedChatReaderDock
             let previousObservationID = state.sharedChatReaderObservationID
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
             var dock = previousDock ?? TerminalSharedChatReaderDock()
             dock.replace(entries: entries, unreadCount: unreadCount, selection: selection)
             dock.isExpanded = true
@@ -383,11 +358,7 @@ public actor TerminalStatusBar {
                 state.sharedChatReaderObservationID = previousObservationID
                 return false
             }
-            repaintSharedChatLayoutLocked(
-                state: &state,
-                oldReservedRows: oldReservedRows,
-                availableTranscriptGapRows: availableTranscriptGapRows
-            )
+            repaintSharedChatLayoutLocked(state: &state)
             return true
         }
     }
@@ -395,12 +366,11 @@ public actor TerminalStatusBar {
     func navigateSharedChatReader(_ action: TerminalSharedChatReaderAction) {
         withOutputBatch {
             guard var dock = state.sharedChatReaderDock else { return }
-            let oldReservedRows = state.isStarted ? reservedBottomRowsLocked(state: &state) : 0
             let width = statusBoxContentWidthLocked(state: &state)
             dock.navigate(action, viewportRows: sharedChatReaderViewportRowsLocked(state: &state), width: width)
             state.sharedChatReaderDock = dock
             guard state.isStarted else { return }
-            repaintSharedChatLayoutLocked(state: &state, oldReservedRows: oldReservedRows)
+            repaintSharedChatLayoutLocked(state: &state)
         }
     }
 
@@ -412,13 +382,10 @@ public actor TerminalStatusBar {
             guard state.inputPanelState != nil else {
                 return
             }
-            let oldReservedRows = reservedBottomRowsLocked(state: &state)
             state.inputPanelState = nil
             guard state.isStarted else {
                 return
             }
-            clearReservedRowsLocked(state: &state, count: oldReservedRows)
-            writeScrollRegionLocked(state: &state, moveCursorToPrompt: true)
             renderLocked(state: &state)
         }
     }
