@@ -60,6 +60,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Terminal authorization now uses a dedicated single-key dialog presentation
+  instead of the menu renderer, preserving the original Authorization card
+  without a second border. Dialogs share the primary-screen stack and lifecycle,
+  use the full available width, and retain trailing consent actions on short
+  terminals without covering prompt/status; menu and text-input framing and
+  run-once/always/cancel behavior are unchanged.
 - Live file artifacts and `/artifacts` again show a single source-line-number
   column: removals use the old position, additions and context use the new one.
   Hunk offsets are preserved, metadata and wrapped continuations stay unnumbered,

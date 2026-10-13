@@ -15,6 +15,10 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         var input: String? = nil
         var inputCursor: Int? = nil
     }
+    private enum Presentation: Equatable, Sendable {
+        case menu(Modal)
+        case dialog(TerminalDialogPresentation)
+    }
     struct Anchor: Equatable, Sendable {
         var screenID: UUID
         var revision: UInt64
@@ -31,7 +35,7 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
     private var footerRows = 0
     private var footer = ""
     private var reservedRows = 0
-    private var modals: [(id: UUID, value: Modal?)] = []
+    private var modals: [(id: UUID, value: Presentation?)] = []
     private var revision: UInt64 = 0
     private var installed = false
     private var standalone = false
@@ -309,6 +313,12 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         }
     }
     func updateModal(_ id: UUID, value: Modal) {
+        updatePresentation(id, value: .menu(value))
+    }
+    func updateDialog(_ id: UUID, value: TerminalDialogPresentation) {
+        updatePresentation(id, value: .dialog(value))
+    }
+    private func updatePresentation(_ id: UUID, value: Presentation) {
         TerminalOutputSynchronization.withTransaction {
             guard !disabled, let index = modals.firstIndex(where: { $0.id == id }), modals[index].value != value else { return }
             let oldTop = chromeTop
@@ -426,7 +436,7 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
     }
     private func surfaces() -> String { "\u{1B}[?7l" + footer + modalSequence() + "\u{1B}[0m\u{1B}[?7h" }
     private func modalLines() -> [String] {
-        guard let modal = modals.last?.value else { return [] }
+        guard let presentation = modals.last?.value, case let .menu(modal) = presentation else { return [] }
         let width = max(1, geometry.columns - 4)
         var items = modal.lines
         var focusedIndex = modal.focusedIndex
@@ -442,12 +452,30 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         let selected = TerminalCheckboxMenu.visibleItemLines(items, focusedIndex: focusedIndex, capacity: max(1, capacity - fixed.count))
         return Array(fixed.prefix(max(0, capacity - selected.count))) + selected
     }
+    private func dialogLines(_ dialog: TerminalDialogPresentation) -> [String] {
+        dialog.visibleLines(columns: geometry.columns, capacity: max(0, geometry.rows - footerRows - 2))
+    }
     private func modalRowCount() -> Int {
-        guard modals.last?.value != nil else { return 0 }
-        return min(max(0, geometry.rows - footerRows - 2), modalLines().count + 2)
+        guard let presentation = modals.last?.value else { return 0 }
+        switch presentation {
+        case .menu:
+            return min(max(0, geometry.rows - footerRows - 2), modalLines().count + 2)
+        case let .dialog(dialog):
+            return dialogLines(dialog).count
+        }
     }
     private func modalSequence() -> String {
-        guard modals.last?.value != nil else { return "" }
+        guard let presentation = modals.last?.value else { return "" }
+        switch presentation {
+        case .menu:
+            return menuSequence()
+        case let .dialog(dialog):
+            return dialogLines(dialog).enumerated().map {
+                cup(chromeTop + $0.offset) + "\u{1B}[2K" + $0.element
+            }.joined()
+        }
+    }
+    private func menuSequence() -> String {
         let width = max(1, geometry.columns - 4)
         let border = TerminalStyle.Chrome.border, reset = TerminalStyle.reset
         let rule = String(repeating: "─", count: max(0, geometry.columns - 2))

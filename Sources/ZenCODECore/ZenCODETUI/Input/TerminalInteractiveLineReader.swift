@@ -261,22 +261,21 @@ public final class TerminalInteractiveLineReader: Sendable {
 
     func readSingleKey(
         prompt: String,
-        shouldCancel: @escaping @Sendable () -> Bool
+        shouldCancel: @escaping @Sendable () -> Bool,
+        screen: TerminalPrimaryScreen? = nil
     ) -> String? {
-        readSingleKeyInternal(prompt: prompt, shouldCancel: shouldCancel)
+        readSingleKeyInternal(prompt: prompt, shouldCancel: shouldCancel, screen: screen)
     }
 
     private func readSingleKeyInternal(
         prompt: String,
-        shouldCancel: (@Sendable () -> Bool)?
+        shouldCancel: (@Sendable () -> Bool)?,
+        screen injectedScreen: TerminalPrimaryScreen? = nil
     ) -> String? {
-        let modal = TerminalPrimaryScreen.active == nil ? nil : TerminalModalSession()
+        let modal = (injectedScreen ?? TerminalPrimaryScreen.active).map { TerminalModalSession(screen: $0) }
         defer { modal?.close() }
-        let promptLines = prompt.split(separator: "\n", omittingEmptySubsequences: false)
-            .enumerated().map { TerminalCheckboxMenu.RenderedMenuLine(text: String($0.element), itemIndex: $0.offset) }
         if let modal {
-            modal.update(.init(title: "", help: [], lines: promptLines,
-                               focusedIndex: max(0, promptLines.count - 1)))
+            modal.updateDialog(TerminalDialogPresentation(prompt: prompt))
         } else { AgentOutput.standardError.writeString(prompt) }
         func echo(_ text: String) {
             if modal == nil { AgentOutput.standardError.writeString(text) }

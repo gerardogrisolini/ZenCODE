@@ -50,14 +50,24 @@ final class TerminalModalSession {
     }
 
     func update(_ value: TerminalPrimaryScreen.Modal) {
-        guard !isClosed else { return }
+        guard prepareUpdate() else { return }
+        screen.updateModal(id, value: value)
+    }
+
+    func updateDialog(_ value: TerminalDialogPresentation) {
+        guard prepareUpdate() else { return }
+        screen.updateDialog(id, value: value)
+    }
+
+    private func prepareUpdate() -> Bool {
+        guard !isClosed else { return false }
         let generation = TerminalResizeCoordinator.shared.currentGeneration()
         if ownsScreen, generation != resizeGeneration {
             let geometry = TerminalCheckboxMenu.terminalGeometry()
             screen.resizeStandalone(.init(rows: geometry.rows, columns: geometry.columns))
         }
         resizeGeneration = generation
-        screen.updateModal(id, value: value)
+        return true
     }
 
     func close() {
