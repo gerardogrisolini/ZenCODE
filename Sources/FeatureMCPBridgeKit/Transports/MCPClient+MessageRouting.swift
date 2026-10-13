@@ -33,14 +33,12 @@ extension MCPClient {
             return
         }
 
-        var parsedMessageCount = 0
         parseLoop: while true {
             switch MCPTransportCodec.nextMessage(from: &buffer) {
             case let .message(body):
                 guard !body.isEmpty else {
                     continue
                 }
-                parsedMessageCount += 1
                 handleMessage(body)
             case .needMoreData:
                 break parseLoop
@@ -49,11 +47,6 @@ extension MCPClient {
                 return
             }
         }
-
-        if parsedMessageCount == 0, !buffer.isEmpty {
-            logBufferedPrefixIfNeeded()
-        }
-
     }
 
     private func handleMalformedTransport(_ error: MCPTransportCodecError) {
@@ -67,7 +60,6 @@ extension MCPClient {
     }
 
     func handleMessage(_ body: Data) {
-        log("message <- \(String(data: body, encoding: .utf8) ?? "<non-utf8>")")
         guard let message = try? JSONDecoder().decode(MCPIncomingMessage.self, from: body) else {
             if let error = classifiedPolicyError(
                 kind: .invalidMessage,
@@ -76,7 +68,6 @@ extension MCPClient {
                 applyClassifiedPolicyError(error)
                 resumeAllPending(with: error)
             }
-            log("Failed to decode incoming MCP message")
             return
         }
 
@@ -104,7 +95,6 @@ extension MCPClient {
         }
 
         if let error = message.error {
-            log("Request \(requestID) failed with server error \(error.code): \(error.message)")
             if let policyError = classifiedPolicyError(
                 kind: .serverError,
                 message: error.message,
@@ -125,7 +115,6 @@ extension MCPClient {
         }
 
         guard let result = message.result else {
-            log("Request \(requestID) failed: missing result")
             if let error = classifiedPolicyError(
                 kind: .missingResult,
                 requestMethod: method
@@ -138,7 +127,6 @@ extension MCPClient {
             return
         }
 
-        log("Request \(requestID) completed successfully")
         continuation.resume(returning: result)
     }
 

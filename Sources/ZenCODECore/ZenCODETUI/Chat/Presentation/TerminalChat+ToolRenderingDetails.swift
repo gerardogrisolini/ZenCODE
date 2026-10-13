@@ -130,22 +130,6 @@ extension TerminalChat {
 
 
 
-    nonisolated static func multiEditHasSourceChanges(
-        _ arguments: [String: Any]
-    ) -> Bool {
-        arrayObjectArgument(arguments, keys: ["edits"]).contains { edit in
-            rawStringArgument(edit, keys: ["old"]) != nil
-                || rawStringArgument(edit, keys: ["new"]) != nil
-        }
-    }
-
-    nonisolated static func editFileHasSourceChanges(
-        _ arguments: [String: Any]
-    ) -> Bool {
-        rawStringArgument(arguments, keys: ["old"]) != nil
-            || rawStringArgument(arguments, keys: ["new"]) != nil
-    }
-
 
 
     nonisolated static func isFileMutationTool(_ toolName: String) -> Bool {
@@ -250,28 +234,6 @@ extension TerminalChat {
         return nil
     }
 
-    nonisolated static func stringArgument(
-        _ arguments: [String: Any],
-        keys: [String]
-    ) -> String? {
-        rawStringArgument(arguments, keys: keys)
-    }
-
-    nonisolated static func boolArgument(
-        _ arguments: [String: Any],
-        keys: [String]
-    ) -> Bool? {
-        for key in keys {
-            if let value = arguments[key] as? Bool {
-                return value
-            }
-            if let value = arguments[key] as? JSONValue {
-                return value.boolValue
-            }
-        }
-        return nil
-    }
-
     nonisolated static func arrayObjectArgument(
         _ arguments: [String: Any],
         keys: [String]
@@ -294,21 +256,6 @@ extension TerminalChat {
             }
         }
         return []
-    }
-
-    nonisolated static func compactSummaryLine(_ text: String) -> String? {
-        let summary = text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .components(separatedBy: .newlines)
-            .first?
-            .nilIfBlank
-        guard let summary else {
-            return nil
-        }
-        // Count-based inline truncation (see `truncatedByCount`): the 160 budget
-        // is a grapheme-cluster count, matching `truncatedInline` rather than the
-        // visible-width `fitDisplayWidth` family.
-        return truncatedByCount(summary, limit: 160)
     }
 
 

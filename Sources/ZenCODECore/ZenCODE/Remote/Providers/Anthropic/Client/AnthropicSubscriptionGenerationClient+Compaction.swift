@@ -269,10 +269,6 @@ extension AnthropicSubscriptionGenerationClient {
         )
     }
 
-    static func conversationMessageCount(in messages: [[String: Any]]) -> Int {
-        SubscriptionCompactionSupport.conversationMessageCount(in: messages)
-    }
-
     static func compactionDiagnostic(
         from result: AgentConversationCompactionResult
     ) -> String {

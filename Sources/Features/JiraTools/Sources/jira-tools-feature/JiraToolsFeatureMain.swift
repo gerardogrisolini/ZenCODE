@@ -3,16 +3,6 @@
 //  jira-tools-feature
 //
 
-import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
-#if os(macOS)
-import Darwin
-import Security
-#elseif os(Linux)
-import Glibc
-#endif
 import FeatureKit
 import ToolCore
 

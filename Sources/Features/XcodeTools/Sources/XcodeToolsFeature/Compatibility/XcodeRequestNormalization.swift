@@ -17,31 +17,6 @@ nonisolated func normalizedXcodeSnippetString(
     )
 }
 
-nonisolated func normalizedTextEditOperations(
-    _ rawValue: JSONValue
-) -> JSONValue {
-    switch rawValue {
-    case let .array(items):
-        return .array(items.map(normalizedTextEditOperations))
-    case let .object(object):
-        let normalizedObject = object.reduce(into: [String: JSONValue]()) { partialResult, entry in
-            switch entry.key {
-            case "oldString", "old_string", "newString", "new_string":
-                if let stringValue = entry.value.stringValue {
-                    partialResult[entry.key] = .string(normalizedXcodeSnippetString(stringValue))
-                } else {
-                    partialResult[entry.key] = entry.value
-                }
-            default:
-                partialResult[entry.key] = normalizedTextEditOperations(entry.value)
-            }
-        }
-        return .object(normalizedObject)
-    default:
-        return rawValue
-    }
-}
-
 nonisolated func normalizedXcodeTestSpecifiers(
     _ rawValue: JSONValue
 ) -> JSONValue? {

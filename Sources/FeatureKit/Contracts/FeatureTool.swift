@@ -3,7 +3,6 @@
 //  ZenCODE
 //
 
-import Foundation
 import ToolCore
 
 public protocol FeatureTool: Sendable {

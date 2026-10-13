@@ -3015,21 +3015,6 @@ final class ChatGPTSubscriptionTestWebSocketTask:
         waiter?.resume(throwing: CancellationError())
     }
 
-    func enqueueReceive(
-        _ result: Result<ChatGPTSubscriptionWebSocketMessage, Error>
-    ) {
-        let waiter = stateStorage.withLock {
-            state -> CheckedContinuation<ChatGPTSubscriptionWebSocketMessage, Error>? in
-            if let waiter = state.receiveWaiter {
-                state.receiveWaiter = nil
-                return waiter
-            }
-            state.receiveOutcomes.append(result)
-            return nil
-        }
-        waiter?.resume(with: result)
-    }
-
     func waitForSend() async {
         if !stateStorage.withLock(\.sentMessages).isEmpty {
             return

@@ -95,8 +95,6 @@ public actor TerminalTelegramControlService {
     private var pollingTask: Task<Void, Never>?
     private var commandMenuTask: Task<Void, Never>?
     private var dispatcherSubscription: TerminalTelegramBotDispatcher.Subscription?
-    private var linkedChatID: Int64?
-    private var botID: Int64?
     /// Message-send rate governor shared by every outbound path of this
     /// service instance. See ``TerminalTelegramRateGovernor``.
     let rateGovernor = TerminalTelegramRateGovernor()
@@ -205,11 +203,9 @@ public actor TerminalTelegramControlService {
         // of resurrecting polling.
         try ensureCurrentGeneration(generation)
 
-        guard let configuredChatID = settings.linkedChatID else {
+        guard settings.linkedChatID != nil else {
             throw TerminalTelegramControlError.missingConfiguration
         }
-        linkedChatID = configuredChatID
-        botID = bot.id
 
         state = TerminalTelegramControlState(
             isConfigured: true,
@@ -252,8 +248,6 @@ public actor TerminalTelegramControlService {
         menuTask?.cancel()
         await menuTask?.value
         await waitForWireQuiescence()
-        linkedChatID = nil
-        botID = nil
         // Cleanup is part of the stop barrier. Once this method returns, no
         // previous-generation lease, consent or inbound temporary survives.
         await presenceLeaseManager.releaseAll()

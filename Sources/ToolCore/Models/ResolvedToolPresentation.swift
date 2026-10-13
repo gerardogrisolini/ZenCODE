@@ -3,8 +3,6 @@
 //  ZenCODE
 //
 
-import Foundation
-
 /// A resolved metadata entry. Values remain untrusted text; renderers must
 /// sanitize and bound them before display.
 public nonisolated struct ToolPresentationMetadata: Hashable, Sendable {

@@ -17,8 +17,6 @@ import Synchronization
 @testable import ZenCODECore
 import Testing
 import ToolCore
-#if os(macOS)
-#endif
 
 extension RemoteSessionSnapshotTests {
     func remoteHistory() -> [AgentRuntimeMessage] {
@@ -320,24 +318,6 @@ final class CapturedDirectAgentEvents: Sendable {
     }
 }
 
-/// Captures loosely typed JSON dictionaries from subscription events; access is protected by `lock`.
-final class CapturedSubscriptionEvents: @unchecked Sendable {
-    private let lock = NSLock()
-    private var objects: [[String: Any]] = []
-
-    func append(_ object: [String: Any]) {
-        lock.lock()
-        objects.append(object)
-        lock.unlock()
-    }
-
-    func all() -> [[String: Any]] {
-        lock.lock()
-        defer { lock.unlock() }
-        return objects
-    }
-}
-
 struct CapturedRemoteRequest: Sendable {
     let request: URLRequest
     let body: Data
@@ -360,120 +340,9 @@ struct CapturedRemoteRequest: Sendable {
     }
 }
 
-/// URLProtocol subclasses are invoked by URLSession across threads; static test state is protected by `lock`.
-final class RemoteRequestCapturingURLProtocol: URLProtocol {
-    nonisolated(unsafe) private static var responseBody = Data()
-    nonisolated(unsafe) private static var failuresBeforeResponse: [URLError.Code] = []
-    nonisolated(unsafe) private static var failureAfterResponse: URLError.Code?
-    nonisolated(unsafe) private static var requests: [CapturedRemoteRequest] = []
-    private static let lock = NSLock()
-
-    /// Carries the non-Sendable `URLProtocolClient`/`self` references into a
-    /// `@Sendable` dispatch closure to simulate a delayed mid-stream failure.
-    private struct DelayedFailureDelivery: @unchecked Sendable {
-        let client: URLProtocolClient?
-        let owner: RemoteRequestCapturingURLProtocol
-    }
-
-    static func urlSession(
-        responseBody: Data,
-        failuresBeforeResponse: [URLError.Code] = [],
-        failureAfterResponse: URLError.Code? = nil
-    ) -> URLSession {
-        lock.lock()
-        self.responseBody = responseBody
-        self.failuresBeforeResponse = failuresBeforeResponse
-        self.failureAfterResponse = failureAfterResponse
-        requests = []
-        lock.unlock()
-
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [RemoteRequestCapturingURLProtocol.self]
-        return URLSession(configuration: configuration)
-    }
-
-    static func capturedRequests() -> [CapturedRemoteRequest] {
-        lock.lock()
-        defer { lock.unlock() }
-        return requests
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool {
-        true
-    }
-
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
-        request
-    }
-
-    override func startLoading() {
-        let body = Self.bodyData(from: request) ?? Data()
-        Self.lock.lock()
-        Self.requests.append(CapturedRemoteRequest(request: request, body: body))
-        let responseBody = Self.responseBody
-        let failureCode = Self.failuresBeforeResponse.isEmpty
-            ? nil
-            : Self.failuresBeforeResponse.removeFirst()
-        let failureAfterResponse = Self.failureAfterResponse
-        Self.lock.unlock()
-
-        if let failureCode {
-            client?.urlProtocol(self, didFailWithError: URLError(failureCode))
-            return
-        }
-
-        let response = HTTPURLResponse(
-            url: request.url ?? URL(string: "https://unit.test")!,
-            statusCode: 200,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "text/event-stream"]
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: responseBody)
-        if let failureAfterResponse {
-            let delivery = DelayedFailureDelivery(client: client, owner: self)
-            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) {
-                delivery.client?.urlProtocol(
-                    delivery.owner,
-                    didFailWithError: URLError(failureAfterResponse)
-                )
-            }
-        } else {
-            client?.urlProtocolDidFinishLoading(self)
-        }
-    }
-
-    override func stopLoading() {}
-
-    private static func bodyData(from request: URLRequest) -> Data? {
-        if let body = request.httpBody {
-            return body
-        }
-        guard let stream = request.httpBodyStream else {
-            return nil
-        }
-
-        stream.open()
-        defer { stream.close() }
-
-        var data = Data()
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while stream.hasBytesAvailable {
-            let read = stream.read(&buffer, maxLength: buffer.count)
-            guard read > 0 else {
-                break
-            }
-            data.append(buffer, count: read)
-        }
-        return data
-    }
-}
-
-
 /// Deterministic loopback HTTP fixture for the NIO generation-provider tests.
 ///
-/// This deliberately does not reuse `RemoteRequestCapturingURLProtocol`: the
-/// provider clients must exercise `RemoteTransportCore` over a real NIO socket.
+/// Provider clients exercise `RemoteTransportCore` over a real NIO socket.
 /// It retains full request-header order (including duplicates) alongside a
 /// convenient `URLRequest` projection for existing payload assertions.
 final class RemoteNIOStreamingFixture: @unchecked Sendable {

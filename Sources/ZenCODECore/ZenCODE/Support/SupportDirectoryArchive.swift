@@ -140,13 +140,6 @@ enum SupportDirectoryArchive {
             payloadEntryPrefix + path
         }
 
-        /// Relative payload path of an archive member, when it is a payload
-        /// entry (as opposed to the manifest itself).
-        static func payloadPath(ofArchivePath archivePath: String) -> String? {
-            guard archivePath.hasPrefix(payloadEntryPrefix) else { return nil }
-            return String(archivePath.dropFirst(payloadEntryPrefix.count))
-        }
-
         /// Overflow-safe sum of the declared entry sizes.
         static func totalSize(of entries: [ManifestEntry]) throws -> UInt64 {
             var total: UInt64 = 0
@@ -622,13 +615,6 @@ enum SupportDirectoryArchive {
             SensitiveManifestCoordination.lockFileURL(in: sourceURL),
             SensitiveManifestCoordination.journalFileURL(in: sourceURL)
         ]
-    }
-
-    /// The staging directories an import creates next to a destination
-    /// directory, exposed so export can exclude them from a snapshot taken
-    /// while an import into the same location is running.
-    static func importStagingDirectoryNames() -> Set<String> {
-        [importStagingNamePrefix + "staging", importStagingNamePrefix + "quarantine"]
     }
 
     private static let importStagingNamePrefix = ".zencode-import-"

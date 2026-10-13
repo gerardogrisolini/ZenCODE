@@ -73,30 +73,9 @@ private final class CloseQuiescenceTransport: Sendable {
         }
     }
 
-    private struct SessionUpdate {
-        let sessionID: String
-        let updateText: String
-    }
-
-    private var sessionUpdates: [SessionUpdate] {
-        decoded.compactMap { message in
-            guard message["method"] as? String == "session/update",
-                  let params = message["params"] as? [String: Any],
-                  let sessionID = params["sessionId"] as? String else {
-                return nil
-            }
-            // The update subtree is re-serialized so a needle matches at any
-            // nesting depth without depending on JSON escaping.
-            let updateText = (try? JSONSerialization.data(withJSONObject: params["update"] ?? [:]))
-                .flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            return SessionUpdate(sessionID: sessionID, updateText: updateText)
-        }
-    }
-
     /// Index of the first `session/update` notification for this session whose
     /// update payload contains `needle`, among *all* wire messages.
     func sessionUpdateIndex(sessionID: String, containing needle: String) -> Int? {
-        var updateIndex = 0
         var wireIndex = 0
         for message in decoded {
             guard message["method"] as? String == "session/update",
@@ -110,7 +89,6 @@ private final class CloseQuiescenceTransport: Sendable {
                 if updateText.contains(needle) {
                     return wireIndex
                 }
-                updateIndex += 1
             }
             wireIndex += 1
         }

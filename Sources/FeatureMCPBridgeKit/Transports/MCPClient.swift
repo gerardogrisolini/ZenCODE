@@ -41,8 +41,6 @@ public actor MCPClient {
     var terminatingConnectionID: UUID?
     var nextRequestID = 1
     var pendingResponses: [Int: CheckedContinuation<JSONValue, Error>] = [:]
-    let buildMarker = "MCPClient build marker: optimistic-handshake-ndjson-v5"
-    var lastBufferedPrefixSnapshot = ""
     var pendingRequestMethods: [Int: String] = [:]
     let localTransportPolicy: LocalMCPTransportPolicy
     /// Coalesces concurrent local process handshakes and fences a late handshake

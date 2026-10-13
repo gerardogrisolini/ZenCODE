@@ -69,7 +69,6 @@ extension MCPClient {
             ? "The local MCP server exited without diagnostics."
             : stderrMessage
 
-        log("Bridge exited with status \(process.terminationStatus). stderr: \(message)")
         return .serverExited(status: process.terminationStatus, message: message)
     }
 
@@ -125,7 +124,6 @@ extension MCPClient {
         }
 
         if process.isRunning {
-            importantLog("Terminating local MCP process after a classified transport error.")
             FeatureProcessTreeSupervisor.send(
                 SIGKILL,
                 to: process,

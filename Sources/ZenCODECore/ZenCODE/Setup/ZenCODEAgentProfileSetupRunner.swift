@@ -9,12 +9,6 @@ import Foundation
 import ToolCore
 
 public enum ZenCODEAgentProfileSetupRunner {
-    struct AgentSetupModelSelection {
-        let modelID: String
-        let modelProvider: String?
-        let thinkingSelection: AgentThinkingSelection?
-    }
-
     enum AgentSetupModelChoice: Hashable {
         case noDedicatedModel
         case configuredModel(String)

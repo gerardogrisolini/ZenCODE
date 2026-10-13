@@ -5,8 +5,6 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-import Foundation
-
 public enum AgentThinkingSelection: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
     case off
     case enabled

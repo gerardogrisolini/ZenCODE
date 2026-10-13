@@ -122,23 +122,6 @@ extension RemoteGenerationClient {
         return updated
     }
 
-    private static func appendingTaskWorkflowPolicy(
-        to message: [String: Any],
-        allowedToolNames: Set<String>?
-    ) -> [String: Any] {
-        guard let existingContent = contentString(from: message["content"]),
-              let updatedContent = SystemPromptBuilder.appendingTaskOrchestrationSection(
-                to: existingContent,
-                allowedToolNames: allowedToolNames
-              ),
-              updatedContent != existingContent else {
-            return message
-        }
-        var updatedMessage = message
-        updatedMessage["content"] = updatedContent
-        return updatedMessage
-    }
-
     public static func replacingSystemPrompt(
         in messages: [[String: Any]],
         cwd: String,

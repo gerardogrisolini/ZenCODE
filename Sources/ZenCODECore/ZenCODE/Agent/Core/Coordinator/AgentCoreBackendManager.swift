@@ -33,8 +33,4 @@ struct AgentCoreBackendManager {
     func isCurrent(generation expected: UInt64) -> Bool {
         expected == generation
     }
-
-    func verifyShutdown(generation expected: UInt64) throws {
-        guard expected == shutdownGeneration else { throw InvalidatedError() }
-    }
 }

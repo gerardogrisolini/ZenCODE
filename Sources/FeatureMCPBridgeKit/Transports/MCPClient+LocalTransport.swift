@@ -48,12 +48,6 @@ extension MCPClient {
         let environment = Self.resolvedEnvironment(for: configuration)
         process.environment = environment
 
-        log(buildMarker)
-        log("Launching MCP bridge: \(executableURL.path) \(configuration.arguments.joined(separator: " "))")
-        if !configuration.environment.isEmpty {
-            log("Bridge environment overrides: \(ToolSecretRedactor.redactedEnvironmentDescription(configuration.environment))")
-        }
-
         let standardInput = Pipe()
         let standardOutput = Pipe()
         let standardError = Pipe()
@@ -164,11 +158,6 @@ extension MCPClient {
                 let initializedPayload = try JSONEncoder().encode(initializedNotification)
                 let handshakeWriteHandle = MCPCancellableTaskHandle()
 
-                log("Sending initialize request (optimistic local transport handshake)")
-                log(
-                    "Request \(initializeRequestID) -> initialize: " +
-                    (String(data: initializePayload, encoding: .utf8) ?? "<non-utf8>")
-                )
                 _ = try await withTaskCancellationHandler {
                     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<JSONValue, Error>) in
                         pendingResponses[initializeRequestID] = continuation
@@ -186,7 +175,6 @@ extension MCPClient {
                             Task(name: "MCP local initialize write") { [self] in
                                 do {
                                     try await self.write(initializePayload)
-                                    self.log("Sending initialized notification early")
                                     try await self.write(initializedPayload)
                                 } catch {
                                     self.claimAndResumeResponse(
@@ -203,21 +191,15 @@ extension MCPClient {
                         await self.cancelPendingResponse(id: initializeRequestID)
                     }
                 }
-                importantLog("Initialize completed successfully for request \(initializeRequestID).")
-                log("MCP bridge connected successfully")
                 return
             }
 
-            log("Sending initialize request")
             _ = try await request(
                 method: "initialize",
                 params: initializeParams
             )
 
-            log("Sending initialized notification")
             try await notify(method: "notifications/initialized", params: JSONValue.object([:]))
-
-            log("MCP bridge connected successfully")
         } catch {
             // process.run() has already launched the bridge and its detached
             // readers. On handshake failure or cancellation tear everything down
@@ -326,7 +308,6 @@ extension MCPClient {
         do {
             try monitorProcess.run()
         } catch {
-            log("Unable to start local MCP diagnostic monitor: \(error.localizedDescription)")
             return
         }
 
@@ -342,7 +323,6 @@ extension MCPClient {
                     processGroupLeader: FeatureProcessTreeSupervisor.isProcessGroupLeader(monitorProcess)
                 )
             }
-            log("Unable to prepare local MCP diagnostic monitor: \(error.localizedDescription)")
             return
         }
 
@@ -423,7 +403,6 @@ extension MCPClient {
         }
 
         try await connect()
-        log("Starting tools/list request")
         let response = try await request(method: "tools/list", params: JSONValue.object([:]))
         return try response.decode(MCPListToolsResult.self)
     }
@@ -463,7 +442,6 @@ extension MCPClient {
         )
 
         let payload = try JSONEncoder().encode(request)
-        log("Request \(requestID) -> \(method): \(String(data: payload, encoding: .utf8) ?? "<non-utf8>")")
 
         let writeHandle = MCPCancellableTaskHandle()
 
@@ -510,7 +488,6 @@ extension MCPClient {
         )
 
         let payload = try JSONEncoder().encode(notification)
-        log("Notification -> \(method): \(String(data: payload, encoding: .utf8) ?? "<non-utf8>")")
         try await write(payload)
     }
 
@@ -542,7 +519,6 @@ extension MCPClient {
             // Don't mask cooperative cancellation as a bridge-exit error.
             throw CancellationError()
         } catch {
-            log("Write failed: \(error.localizedDescription)")
             throw exitError(for: process)
         }
     }

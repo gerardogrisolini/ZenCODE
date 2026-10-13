@@ -175,21 +175,6 @@ extension ChatGPTSubscriptionResponsesClient {
         return nil
     }
 
-    static func isRetryable(
-        status: Int,
-        output: String
-    ) -> Bool {
-        if [429, 500, 502, 503, 504].contains(status) {
-            return true
-        }
-        let normalizedOutput = output.lowercased()
-        return normalizedOutput.contains("rate limit")
-            || normalizedOutput.contains("overloaded")
-            || normalizedOutput.contains("service unavailable")
-            || normalizedOutput.contains("upstream connect")
-            || normalizedOutput.contains("connection refused")
-    }
-
     static func isRetryableTransportError(_ error: Error) -> Bool {
         if isWebSocketConnectionLimitError(error) {
             return true

@@ -198,10 +198,6 @@ extension TerminalCheckboxMenu {
         return (24, 100)
     }
 
-    static func longestLineLength(in lines: [String]) -> Int {
-        lines.map(\.count).max() ?? 0
-    }
-
     static func fitLine(_ text: String, width: Int) -> String {
         let singleLine = text
             .replacingOccurrences(of: "\n", with: " ")

@@ -127,12 +127,11 @@ extension ZenCODEACPBridge {
 
 actor CapturingACPBackend: AgentRuntimeBackend {
     private var allowedToolNames: Set<String>?
-    private var systemPrompt: String?
 
     func createSession(
         id _: String,
         cwd _: String,
-        systemPrompt: String?,
+        systemPrompt _: String?,
         history _: [AgentRuntimeMessage],
         cacheKey _: String?,
         allowedToolNames: Set<String>?,
@@ -140,7 +139,6 @@ actor CapturingACPBackend: AgentRuntimeBackend {
         preserveThinking _: Bool
     ) {
         self.allowedToolNames = allowedToolNames
-        self.systemPrompt = systemPrompt
     }
 
     func createSessionIfNeeded(
@@ -167,13 +165,12 @@ actor CapturingACPBackend: AgentRuntimeBackend {
 
     func updateSessionOptions(
         id _: String,
-        systemPrompt: String?,
+        systemPrompt _: String?,
         allowedToolNames: Set<String>?,
         thinkingSelection _: AgentThinkingSelection?,
         preserveThinking _: Bool
     ) {
         self.allowedToolNames = allowedToolNames
-        self.systemPrompt = systemPrompt
     }
 
     func closeSession(id _: String) {}
@@ -201,10 +198,6 @@ actor CapturingACPBackend: AgentRuntimeBackend {
 
         func createdAllowedToolNames() -> Set<String>? {
         allowedToolNames
-    }
-
-    func createdSystemPrompt() -> String? {
-        systemPrompt
     }
 }
 

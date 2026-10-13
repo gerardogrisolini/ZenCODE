@@ -90,65 +90,6 @@ extension ZenCODEAgentProfileSetupRunner {
         return availableItems + missingItems
     }
 
-    static func promptModelSelection(
-        title: String,
-        defaultAgent: AgentProfile?
-    ) -> AgentSetupModelSelection? {
-        let models = AgentModelCatalogPresentation.sorted(
-            AgentSettingsStore.availableModels()
-        )
-        guard !models.isEmpty else {
-            if let modelID = defaultAgent?.modelID?.nilIfBlank {
-                        AgentOutput.standardError.writeString(
-                    "No configured models found. Preserving saved model: \(modelID)\n"
-                )
-                return AgentSetupModelSelection(
-                    modelID: modelID,
-                    modelProvider: defaultAgent?.modelProvider,
-                    thinkingSelection: defaultAgent?.thinkingSelection
-                )
-            }
-            AgentOutput.standardError.writeString("No configured models found for dedicated agent selection.\n")
-            return nil
-        }
-
-        let existingModelID = defaultAgent?.modelID?.nilIfBlank
-        let initialChoice = existingModelID.map { modelID in
-            models.first(where: { $0.matches(modelID) })
-                .map { AgentSetupModelChoice.configuredModel($0.id) }
-                ?? .configuredModel(modelID)
-        } ?? .noDedicatedModel
-        let choice = TerminalCheckboxMenu.selectOne(
-            title: title,
-            items: modelChoiceItems(
-                models: models,
-                existingModelID: existingModelID
-            ),
-            selected: initialChoice
-        ) ?? initialChoice
-
-        switch choice {
-        case .noDedicatedModel:
-            return nil
-        case let .configuredModel(modelID):
-            guard let model = models.first(where: { $0.matches(modelID) }) else {
-                return AgentSetupModelSelection(
-                    modelID: modelID,
-                    modelProvider: defaultAgent?.modelProvider,
-                    thinkingSelection: defaultAgent?.thinkingSelection
-                )
-            }
-            return AgentSetupModelSelection(
-                modelID: model.id,
-                modelProvider: modelProviderTitle(for: model),
-                thinkingSelection: promptThinkingSelection(
-                    for: model,
-                    defaultSelection: defaultAgent?.thinkingSelection
-                )
-            )
-        }
-    }
-
     static func modelChoiceItems(
         models: [AgentSettingsModelManifest],
         existingModelID: String?

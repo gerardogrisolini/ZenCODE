@@ -740,37 +740,6 @@ extension SwiftFeatureRuntime {
         return record
     }
 
-    private func promotionDistributionCatalogContents(
-        _ contents: String,
-        metadata: PromotionCatalogMetadata,
-        overwrite: Bool
-    ) throws -> String {
-        if contents.contains("id: \"\(metadata.id)\"") {
-            if overwrite {
-                throw DirectToolError.permissionDenied(
-                    "Replacing an existing Swift catalog entry is not supported safely; choose a new feature id."
-                )
-            }
-            throw DirectToolError.permissionDenied(
-                "Distribution catalog already contains '\(metadata.id)'."
-            )
-        }
-        let marker = "    ]\n\n    public static func feature"
-        guard let range = contents.range(of: marker) else {
-            throw DirectToolError.permissionDenied("Could not find distribution catalog insertion point.")
-        }
-        let entry = """
-            ,
-                    ZenBundledFeatureMetadata(
-                        id: \(Self.swiftLiteral(metadata.id)),
-                        productName: \(Self.swiftLiteral(metadata.productName)),
-                        sourceRelativePath: \(Self.swiftLiteral(metadata.sourceRelativePath)),
-                        isInstalledOnLinux: \(metadata.isInstalledOnLinux),
-                    )
-            """
-        return contents.replacingCharacters(in: range, with: entry + String(contents[range.lowerBound...]))
-    }
-
     private func promotionRuntimeCatalogContents(
         _ contents: String,
         metadata: PromotionCatalogMetadata,

@@ -5,12 +5,7 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
-#if canImport(Darwin)
-
-import Darwin
-#endif
 import Foundation
-import Synchronization
 
 #if os(macOS)
 /// Detached readers for the local bridge's streams. Every reader is a thin
@@ -110,9 +105,6 @@ extension MCPClient {
             },
             shouldStop: {
                 await client.shouldStopDiagnosticMonitor(connectionID: connectionID)
-            },
-            onReadFailure: { error in
-                await client.handleDiagnosticReadFailure(error, connectionID: connectionID)
             }
         )
     }

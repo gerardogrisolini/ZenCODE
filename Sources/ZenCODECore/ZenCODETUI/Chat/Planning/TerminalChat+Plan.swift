@@ -655,10 +655,6 @@ extension TerminalChat {
         PlanningCommandKernel.plan(plan, applying: graph)
     }
 
-    nonisolated static func planPointStatus(for status: TaskStatus) -> TerminalSessionPlanPointStatus {
-        PlanningCommandKernel.planPointStatus(for: status)
-    }
-
     nonisolated static func taskDefinitions(
         for points: [TerminalSessionPlanPoint]
     ) -> [TaskDefinition] {

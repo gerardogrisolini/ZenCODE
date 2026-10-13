@@ -11,8 +11,6 @@ import Synchronization
 @testable import ZenCODECore
 import Testing
 import ToolCore
-#if os(macOS)
-#endif
 
 extension ACPCompatibilityTests {
     @Test

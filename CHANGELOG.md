@@ -28,6 +28,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Removed confirmed unused internal helpers, orphaned test fixtures, redundant
+  imports and no-op MCP logging work across the runtime, TUI and optional features,
+  preserving public APIs, wire and persisted formats, and transport lifecycle behavior.
 - Automatic file artifacts in chat now start with the file metadata, without the
   `Artifacts` banner or `Turn N — M file(s)` heading, including final reconciliation.
   `/artifacts` keeps its banner and turn grouping; diff evidence, source line

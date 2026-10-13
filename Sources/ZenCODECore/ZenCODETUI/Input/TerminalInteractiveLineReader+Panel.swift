@@ -898,13 +898,6 @@ extension TerminalInteractiveLineReader {
         !activeCommandSuggestionsLocked(state: state).isEmpty
     }
 
-    func movePanelCommandSuggestionSelectionLocked(delta: Int, state: inout State) {
-        state.editor.moveSuggestionSelection(
-            delta: delta,
-            context: editorContextLocked(state: state)
-        )
-    }
-
     /// Accent choices precede command completions and carry their selected row
     /// into the status bar so a height-constrained render can keep it visible.
     func panelSuggestionProjectionLocked(
@@ -994,22 +987,6 @@ extension TerminalInteractiveLineReader {
 
     func activeCommandSuggestionsLocked(state: State) -> [TerminalCommandSuggestion] {
         state.editor.visibleSuggestions(context: editorContextLocked(state: state))
-    }
-
-    /// Text matched against the completion catalogue.
-    ///
-    /// It stops at the cursor rather than at the end of the token: with
-    /// `/fea|ture` the operator is narrowing `/fea`, and matching the whole
-    /// token would keep offering only what is already typed.
-    static func commandPrefixForSuggestions(
-        text: String,
-        cursorIndex: Int
-    ) -> String? {
-        let prefix = TerminalPromptCompletion.completion(
-            buffer: Array(text),
-            cursorIndex: cursorIndex
-        )?.prefix
-        return (prefix?.isEmpty ?? true) ? nil : prefix
     }
 
 }

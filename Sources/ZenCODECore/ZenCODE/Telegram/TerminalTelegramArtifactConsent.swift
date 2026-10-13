@@ -139,12 +139,6 @@ public actor TerminalTelegramArtifactConsentBroker {
         return offer
     }
 
-    func pendingOfferIDs(chatID: Int64) -> [String] {
-        offers
-            .filter { $0.chatID == chatID }
-            .map(\.id)
-    }
-
     /// The still-pending offer with this id, if any.
     func pendingOffer(offerID: String, chatID: Int64) -> Offer? {
         offers.first { $0.id == offerID && $0.chatID == chatID }

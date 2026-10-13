@@ -11,7 +11,6 @@ import Darwin
 #endif
 import Foundation
 import FeatureKit
-import ToolCore
 
 #if os(macOS)
 /// Connection-scoped stdout/stderr/diagnostic events delivered by the shared
@@ -24,7 +23,6 @@ extension MCPClient {
     // MARK: - stdout
 
     func handleStdoutChunk(_ chunk: Data) {
-        log("stdout <- \(chunk.count) bytes")
         append(chunk)
     }
 
@@ -36,7 +34,6 @@ extension MCPClient {
     }
 
     func handleStdoutReadFailure(_ error: Error) {
-        log("stdout read failed: \(error.localizedDescription)")
         guard terminatingConnectionID == nil else {
             return
         }
@@ -51,7 +48,6 @@ extension MCPClient {
     }
 
     func handleStdoutClosed() {
-        log("stdout closed")
         guard terminatingConnectionID == nil else {
             return
         }
@@ -105,11 +101,6 @@ extension MCPClient {
 
     func handleStderrChunk(_ chunk: Data) {
         appendDiagnostic(chunk, to: &stderrBuffer)
-        if let text = String(data: chunk, encoding: .utf8), !text.isEmpty {
-            log("stderr <- \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
-        } else {
-            log("stderr <- \(chunk.count) bytes")
-        }
 
         guard terminalBridgeError == nil else {
             return
@@ -124,7 +115,6 @@ extension MCPClient {
             return
         }
 
-        importantLog("Detected local MCP transport policy error from stderr: \(stderrMessage)")
         applyClassifiedPolicyError(detectedError)
         resumeAllPending(with: detectedError)
     }
@@ -138,7 +128,6 @@ extension MCPClient {
 
     func handleStderrReadFailure(_ error: Error) {
         appendDiagnostic(Data(error.localizedDescription.utf8), to: &stderrBuffer)
-        log("stderr read failed: \(error.localizedDescription)")
     }
 
     func handleStderrReadFailure(_ error: Error, connectionID: UUID) {
@@ -158,7 +147,6 @@ extension MCPClient {
             return
         }
 
-        log("Detected local MCP transport policy error from diagnostic output: \(line)")
         applyClassifiedPolicyError(policyError)
         resumeAllPending(with: policyError)
     }
@@ -170,14 +158,6 @@ extension MCPClient {
             return
         }
         handleDiagnosticLine(line)
-    }
-
-    func handleDiagnosticReadFailure(_ error: Error, connectionID: UUID) {
-        guard activeConnectionID == connectionID,
-              diagnosticMonitorConnectionID == connectionID else {
-            return
-        }
-        log("diagnostic monitor read failed: \(error.localizedDescription)")
     }
 
     // MARK: - Reader stop predicates

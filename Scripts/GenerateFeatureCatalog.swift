@@ -1,7 +1,6 @@
 import Foundation
 
 enum GenerateFeatureCatalog {
-    struct Catalog: Codable { let schemaVersion: Int; let features: [Feature] }
     struct Feature: Codable {
         let id: String
         let productName: String

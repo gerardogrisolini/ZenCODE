@@ -283,26 +283,3 @@ private actor DispatcherOneShotCancellationTelegramTransport: TelegramHTTPTransp
         throw CancellationError()
     }
 }
-
-private actor WireFenceValidationGate {
-    private var entered = false
-    private var entryWaiter: CheckedContinuation<Void, Never>?
-    private var releaseWaiter: CheckedContinuation<Void, Never>?
-
-    func validate() async {
-        entered = true
-        entryWaiter?.resume()
-        entryWaiter = nil
-        await withCheckedContinuation { releaseWaiter = $0 }
-    }
-
-    func waitUntilEntered() async {
-        if entered { return }
-        await withCheckedContinuation { entryWaiter = $0 }
-    }
-
-    func release() {
-        releaseWaiter?.resume()
-        releaseWaiter = nil
-    }
-}

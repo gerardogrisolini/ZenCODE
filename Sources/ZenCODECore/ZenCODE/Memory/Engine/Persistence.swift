@@ -392,14 +392,3 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         let graphVersion: UInt32?
     }
 }
-
-actor InMemoryPersistence: MemoryPersistence {
-    private var graph: MemoryGraph
-
-    public init(graph: MemoryGraph = MemoryGraph()) {
-        self.graph = graph
-    }
-
-    public func load() async throws -> MemoryGraph { graph }
-    public func save(_ graph: MemoryGraph) async throws { self.graph = graph }
-}

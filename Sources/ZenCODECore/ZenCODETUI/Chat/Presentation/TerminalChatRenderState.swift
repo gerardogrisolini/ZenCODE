@@ -3,8 +3,6 @@
 //  ZenCODE
 //
 
-import Foundation
-
 /// Actor-confined bookkeeping for tool-row ownership and lifecycle timing.
 /// The coordinator remains the sole mutator; this value only groups invariants
 /// that must advance together when ownership transfers between tool calls.

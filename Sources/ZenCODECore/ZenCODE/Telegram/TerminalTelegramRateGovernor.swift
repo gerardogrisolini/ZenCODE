@@ -125,15 +125,6 @@ actor TerminalTelegramRateGovernor {
         }
     }
 
-    /// Convenience: checks, and records only when legal now.
-    func tryRecord(chatID: Int64) -> Bool {
-        guard delay(forChat: chatID) == nil else {
-            return false
-        }
-        record(chatID: chatID)
-        return true
-    }
-
     /// Reports a failed send attempt to the governor.
     ///
     /// Returns `true` only for an explicit 429 with a decodable

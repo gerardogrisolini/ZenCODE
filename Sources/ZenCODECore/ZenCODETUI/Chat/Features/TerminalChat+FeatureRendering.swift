@@ -384,20 +384,6 @@ extension TerminalChat {
         return lines.joined(separator: "\n") + "\n\n"
     }
 
-    nonisolated static func renderFeatureAdoptReport(
-        _ report: SwiftFeatureAdoptReport
-    ) -> String {
-        guard report.ok else {
-            return "Could not create a local copy for Swift feature '\(report.id)'.\n"
-        }
-        return """
-        Created local editable copy of Swift feature '\(report.id)' from bundled feature '\(report.adoptedFrom)'.
-          Destination: \(report.destinationPath)
-          Manifest: \(report.manifestPath)
-
-        """
-    }
-
     nonisolated static func renderFeatureEditReport(
         _ report: SwiftFeatureEditReport
     ) -> String {

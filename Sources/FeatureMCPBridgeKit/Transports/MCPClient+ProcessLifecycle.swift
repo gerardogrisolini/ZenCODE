@@ -90,8 +90,6 @@ extension MCPClient {
         currentInputHandle?.closeFile()
         currentOutputHandle?.closeFile()
         currentErrorHandle?.closeFile()
-        importantLog("MCP bridge terminated with error: \(detectedError.localizedDescription)")
-        log("process terminated with error: \(detectedError.localizedDescription)")
         resumeAllPending(with: detectedError)
     }
 }

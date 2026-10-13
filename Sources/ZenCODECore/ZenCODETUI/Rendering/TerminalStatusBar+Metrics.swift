@@ -194,25 +194,6 @@ extension TerminalStatusBar {
         TerminalANSIText.visibleWidth(text)
     }
     
-    static func ansiEscapeSequenceEnd(in text: String, from start: String.Index) -> String.Index? {
-        guard start < text.endIndex,
-              text[start] == "\u{1B}",
-              text.index(after: start) < text.endIndex,
-              text[text.index(after: start)] == "[" else {
-            return nil
-        }
-        
-        var index = text.index(start, offsetBy: 2)
-        while index < text.endIndex {
-            let character = text[index]
-            if character.isLetter || character == "~" {
-                return index
-            }
-            index = text.index(after: index)
-        }
-        return nil
-    }
-    
     static func fit(_ text: String, width: Int) -> String {
         guard width > 3, visibleCharacterCount(text) > width else {
             return text

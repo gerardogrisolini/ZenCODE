@@ -193,14 +193,6 @@ extension ZenCODESetupRunner {
         }
     }
 
-    /// Short alias for callers that use the menu label rather than the
-    /// persisted runtime terminology.
-    static func configureDS4(
-        existingManifest: AgentSettingsManifest?
-    ) async throws -> AgentSettingsManifest? {
-        try await configureDS4Runtime(existingManifest: existingManifest)
-    }
-
     static func existingDS4Runtime(
         in manifest: AgentSettingsManifest?
     ) -> AgentDS4RuntimeManifest? {

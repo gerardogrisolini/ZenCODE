@@ -152,8 +152,4 @@ extension ZenCODESetupRunner {
         )
     }
 
-    static func newTelegramPairingCode() -> String {
-        String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)).uppercased()
-    }
-
 }

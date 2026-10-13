@@ -3,8 +3,6 @@
 //  ZenCODE
 //
 
-import Foundation
-
 /// Test and diagnostics snapshots, capture retrieval, and flush barriers.
 extension TerminalChatRenderCoordinator {
     // MARK: - Test and diagnostics snapshots

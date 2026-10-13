@@ -119,20 +119,6 @@ extension ChatGPTSubscriptionGenerationClient {
         return text.nilIfBlank
     }
 
-    static func responseUsageObject(from object: [String: Any]) -> [String: Any]? {
-        usageObject(from: object)
-            ?? (object["response"] as? [String: Any]).flatMap(usageObject(from:))
-    }
-
-    static func usageObject(from object: [String: Any]) -> [String: Any]? {
-        for key in ["usage", "token_usage", "tokenUsage", "tokens"] {
-            if let usage = object[key] as? [String: Any] {
-                return usage
-            }
-        }
-        return nil
-    }
-
     /// Parses Codex `rate_limits` (primary/secondary windows) into a subscription usage status.
     /// The wider window maps to the weekly usage and the narrower window maps to the daily (5h) usage.
     static func subscriptionUsage(from object: [String: Any]) -> DirectAgentSubscriptionUsageStatus? {

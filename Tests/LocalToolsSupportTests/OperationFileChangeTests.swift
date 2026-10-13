@@ -328,16 +328,6 @@ private extension OperationFileChangeTests {
         let underlyingFailure = underlyingError as NSError
         return underlyingFailure.domain == NSPOSIXErrorDomain && underlyingFailure.code == Int(EACCES)
     }
-
-    /// Wait for the special-I/O branch, not an arbitrary sleep before the probe.
-    func waitForSpecialIO() async throws -> Bool {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while ContinuousClock.now < deadline {
-            if OperationMutationUncertainty.snapshot == nil { return true }
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        return false
-    }
 }
 
 extension OperationFileChangeTests {

@@ -223,11 +223,6 @@ final class ChromeBrowserManager: Sendable {
         )
     }
 
-    /// Checks whether a trusted CDP endpoint is currently available.
-    func isCDPAlive() async -> Bool {
-        await discoverLivePort() != nil
-    }
-
     private func acquireSpawnLease() -> Bool {
         state.withLock { state in
             guard !state.spawnInFlight else { return false }
