@@ -295,13 +295,30 @@ extension TerminalChat {
         return origin
     }
 
-    /// Builds the route label shown for a reader entry from the message's
-    /// sender and resolved recipients. Uses short display names only.
+    /// Formats the original send instant in the local time zone, independently
+    /// of the user's 12/24-hour clock preference. A value-style formatter avoids
+    /// shared mutable state when reader entries are rebuilt.
+    nonisolated static func sharedChatTimestamp(
+        _ sentAt: Date,
+        timeZone: TimeZone = .current
+    ) -> String {
+        sentAt.formatted(
+            Date.VerbatimFormatStyle(
+                format: "\(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)):\(minute: .twoDigits):\(second: .twoDigits)",
+                locale: Locale(identifier: "en_US_POSIX"),
+                timeZone: timeZone,
+                calendar: Calendar(identifier: .gregorian)
+            )
+        )
+    }
+
+    /// Builds the reader's author label from the sender, original send time and
+    /// resolved recipients. Participant identities and delivery stay unchanged.
     nonisolated static func sharedChatIncomingCardRoute(
         for message: AgentSharedChat.Message,
         participantMap: [String: AgentSharedChat.Participant] = [:]
     ) -> String {
-        let senderName = AgentSharedChat.displayName(for: message.sender)
+        let senderName = "\(AgentSharedChat.displayName(for: message.sender)) [\(sharedChatTimestamp(message.sentAt))]"
         let coordinatorID = AgentSharedChat.coordinatorID(for: message.roomID)
         if message.recipientIDs.contains(coordinatorID) {
             return "\(senderName) → Coordinator"

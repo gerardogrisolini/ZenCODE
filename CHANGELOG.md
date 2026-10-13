@@ -12,6 +12,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- Terminal shared-chat messages now show their local send time as `HH:mm:ss`
+  beside the sender in the `Chat` reader, preserving the original timestamp
+  across reader refreshes.
 - File artifacts now appear automatically in chat when root or delegated tools
   complete, using the same Markdown layout and source formatting as `/artifacts`.
   Turn numbers are reserved at the first live or final artifact and remain stable;

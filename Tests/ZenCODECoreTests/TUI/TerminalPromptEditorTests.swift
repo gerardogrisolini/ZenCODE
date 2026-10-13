@@ -729,9 +729,9 @@ struct TerminalPromptEditorTests {
         let humanRoute = TerminalChat.sharedChatIncomingCardRoute(for: humanMessage)
         let agentRoute = TerminalChat.sharedChatIncomingCardRoute(for: agentMessage)
 
-        // Routes use short display names only.
-        #expect(humanRoute == "operator → Coordinator")
-        #expect(agentRoute == "operator → Coordinator")
+        // Labels keep short display names, with each message's original send time.
+        #expect(humanRoute == "operator [\(TerminalChat.sharedChatTimestamp(humanMessage.sentAt))] → Coordinator")
+        #expect(agentRoute == "operator [\(TerminalChat.sharedChatTimestamp(agentMessage.sentAt))] → Coordinator")
     }
 
     @Test
