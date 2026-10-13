@@ -180,9 +180,11 @@ extension TerminalChatRenderCoordinator {
         // newline, and the caller adds a second boundary newline before ending
         // this phase. Format deferred output against that future cursor state,
         // not against the rows just removed above.
-        var postPromptCursorState = CursorState()
-        postPromptCursorState.spacing.trailingNewlineCount = 2
-        restoreCursorState(postPromptCursorState, for: .standardError)
+        if primaryScreen(for: .standardError) == nil {
+            var postPromptCursorState = CursorState()
+            postPromptCursorState.spacing.trailingNewlineCount = 2
+            restoreCursorState(postPromptCursorState, for: .standardError)
+        }
         externalTerminalPromptDepth = 1
     }
 

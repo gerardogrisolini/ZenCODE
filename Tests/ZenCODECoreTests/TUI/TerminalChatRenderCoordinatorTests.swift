@@ -2714,12 +2714,14 @@ struct TerminalChatRenderCoordinatorTests {
         await statusBar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: false)
         let initialCapacity = try #require(await statusBar.scrollableOutputRowCapacity())
         #expect(initialCapacity == 24)
-        sink.write(Data("\u{1B}[1;1H".utf8))
+        let primaryScreen = await statusBar.primaryScreen
+        await renderer.usePrimaryScreenForTesting(primaryScreen)
+        primaryScreen.positionOutputForTesting(row: 1)
         // Keep the short transcript above the dock's maximum growth; a separate
         // cursor-edge fixture below exercises clamping at row one.
         let transcriptRows = full ? initialCapacity - 3 : 8
         for index in 0..<transcriptRows {
-            sink.write(Data("PERMANENT-\(index)\r\n".utf8))
+            primaryScreen.append("PERMANENT-\(index)\r\n")
         }
         let marker = tool ? "local.readFile" : "AGENT-ANCHOR"
         let call = presentedToolCall(
@@ -2737,7 +2739,9 @@ struct TerminalChatRenderCoordinatorTests {
         }
         func screen() throws -> [String] {
             let text = String(decoding: try Data(contentsOf: url), as: UTF8.self)
-            return terminalScreenText(text, height: height, width: 80).components(separatedBy: "\n")
+            var terminal = PrimaryScreenTerminalModel(rows: height, columns: 80)
+            terminal.write(text)
+            return terminal.visibleText.components(separatedBy: "\n")
         }
         var entries: [TerminalSharedChatReaderEntry] = []
         // Empty -> first unread -> same-height arrivals -> open -> close -> last
@@ -2746,6 +2750,9 @@ struct TerminalChatRenderCoordinatorTests {
             let before = try screen()
             let oldMarkerRow = try #require(before.firstIndex { $0.contains(marker) })
             let oldPermanentRow = try #require(before.firstIndex { $0.contains("PERMANENT-\(transcriptRows - 1)") })
+            // The compositor moves only the rows actually displaced by growth;
+            // a blank gap above the dock does not force transcript scrolling.
+            let oldInsertionRow = primaryScreen.outputRowForTesting
             let oldCapacity = try #require(await statusBar.scrollableOutputRowCapacity())
             let eventOffset = try Data(contentsOf: url).count
             await renderer.beginBottomOverlayTransition(maximumInPlaceRows: oldCapacity)
@@ -2769,7 +2776,7 @@ struct TerminalChatRenderCoordinatorTests {
                 )
             }
             let after = try screen()
-            let scroll = max(0, oldCapacity - newCapacity)
+            let scroll = max(0, oldInsertionRow - newCapacity)
             #expect(after.firstIndex { $0.contains(marker) } == max(0, oldMarkerRow - scroll))
             if oldPermanentRow >= scroll {
                 #expect(after.firstIndex { $0.contains("PERMANENT-\(transcriptRows - 1)") } == oldPermanentRow - scroll)
@@ -2796,6 +2803,7 @@ struct TerminalChatRenderCoordinatorTests {
         let bar = TerminalStatusBar(isEnabled: true) { sink.write(Data($0.utf8)) }
         await bar.configureForTesting(row: height, columns: 80)
         await bar.updateInputPanel(text: draft, cursorIndex: draft.count, modeText: "Chat", helpText: "Enter")
+        let primaryScreen = await bar.primaryScreen
         let entries = [TerminalSharedChatReaderEntry(id: UUID(), route: "worker", text: "Ready")]
         // At 8 rows the dock folds into the existing mode row; a tall draft
         // shares the same measured budget rather than an assumed dock height.
@@ -2804,7 +2812,7 @@ struct TerminalChatRenderCoordinatorTests {
             #expect(oldCapacity >= 2)
             if scenario == 0 { #expect(oldCapacity == 2) }
             let cursorRow = bottom ? oldCapacity : 1
-            sink.write(Data("\u{1B}[\(cursorRow);1H".utf8))
+            primaryScreen.positionOutputForTesting(row: cursorRow)
             switch phase {
             case 0, 1:
                 await bar.setSharedChatReader(entries: entries, unreadCount: 1, isExpanded: false)
@@ -2820,15 +2828,17 @@ struct TerminalChatRenderCoordinatorTests {
                 await bar.removeSharedChatReader()
             }
             let capacity = try #require(await bar.scrollableOutputRowCapacity())
-            let expectedRow = max(1, cursorRow - max(0, oldCapacity - capacity))
-            sink.write(Data("CURSOR-\(phase)".utf8))
+            let expectedRow = min(cursorRow, capacity)
+            primaryScreen.append("CURSOR-\(phase)")
             let text = String(decoding: try Data(contentsOf: url), as: UTF8.self)
-            let rows = terminalScreenText(text, height: height, width: 80).components(separatedBy: "\n")
+            var terminal = PrimaryScreenTerminalModel(rows: height, columns: 80)
+            terminal.write(text)
+            let rows = terminal.visibleText.components(separatedBy: "\n")
             #expect(rows[expectedRow - 1].hasPrefix("CURSOR-\(phase)"))
             #expect(expectedRow <= capacity)
             // Remove the probe without changing the cursor position used by the
             // next independently positioned phase.
-            sink.write(Data("\r\u{1B}[2K".utf8))
+            primaryScreen.clearOutputRowForTesting()
         }
     }
 

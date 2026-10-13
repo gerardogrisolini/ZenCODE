@@ -477,6 +477,9 @@ public final class TerminalChat {
         if stdinIsTerminal {
             AgentOutput.clearTerminalScreenIfNeeded()
         }
+        // Capture startup and restored presentation before any resize can
+        // rebuild the viewport; semantic session history is not a screen replay.
+        let statusBarStarted = await statusBar.start()
         await printStartupSummary()
         if let resumedTaskGraph {
             await writeResumedTaskGraphNotice(resumedTaskGraph)
@@ -486,7 +489,6 @@ public final class TerminalChat {
             await writeSystemMessage("Session restored after setup.\n")
         }
 
-        let statusBarStarted = await statusBar.start()
         await refreshStatusBarGitStatusSummary()
         do {
             if stdinIsTerminal, statusBarStarted {

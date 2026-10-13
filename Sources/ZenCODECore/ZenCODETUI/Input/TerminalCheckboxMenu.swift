@@ -41,9 +41,35 @@ public enum TerminalCheckboxMenu {
     struct RenderedFrame {
         let row: Int
         let height: Int
+        /// Terminal height used to calculate `row`. Keeping it with the frame
+        /// lets resize cleanup target the old geometry instead of clamping it
+        /// against the already-shrunk terminal.
+        let terminalRows: Int
+        /// Terminal width used to render the frame. A zero value denotes a frame
+        /// created by an older caller that did not retain width information.
+        let terminalColumns: Int
+        /// Status-bar rows that were reserved when this frame was painted. The
+        /// value is used as a fallback when a resize happens before the status
+        /// bar has published its new layout, so cleanup remains in the
+        /// transcript viewport instead of erasing the bottom overlay.
+        let reservedBottomRows: Int
+
+        init(
+            row: Int,
+            height: Int,
+            terminalRows: Int = 0,
+            terminalColumns: Int = 0,
+            reservedBottomRows: Int = 0
+        ) {
+            self.row = row
+            self.height = height
+            self.terminalRows = terminalRows
+            self.terminalColumns = terminalColumns
+            self.reservedBottomRows = max(0, reservedBottomRows)
+        }
     }
 
-    struct RenderedMenuLine {
+    struct RenderedMenuLine: Equatable, Sendable {
         let text: String
         let itemIndex: Int?
     }
@@ -56,11 +82,13 @@ public enum TerminalCheckboxMenu {
         case cancel
         case selectAll
         case selectNone
+        case resize
         case unknown
     }
 
     enum InputLineReadResult {
         case submitted(String)
+        case resized(String)
         case cancel
         case endOfInput
     }
@@ -218,35 +246,40 @@ public enum TerminalCheckboxMenu {
         initialState: SelectionState<Value>,
         focusedIndex initialFocusedIndex: Int,
         reservedBottomRows: Int,
-        shouldCancel: (@Sendable () -> Bool)?
+        shouldCancel: (@Sendable () -> Bool)?,
+        rawInput injectedRawInput: TerminalRawInput? = nil,
+        screen: TerminalPrimaryScreen? = nil
     ) -> SelectionState<Value>? {
         var state = initialState
         var focusedIndex = initialFocusedIndex
-        var renderedFrame: RenderedFrame?
-        AgentOutput.standardError.writeString("\u{1B}[?25l")
-        defer { AgentOutput.standardError.writeString("\u{1B}[?25h") }
-
-        let rawInput = TerminalRawInput()
+        let modal = TerminalModalSession(screen: screen)
+        defer { modal.close() }
+        let layoutCancelled = modal.cancellationCheck
+        let cancel: @Sendable () -> Bool = { layoutCancelled() || shouldCancel?() == true }
+        let rawInput = injectedRawInput ?? TerminalRawInput()
         return rawInput.withRawTerminal {
             while true {
-                clear(frame: renderedFrame)
-                renderedFrame = renderMenu(
-                    title: title, items: items, selection: state, focusedIndex: focusedIndex,
-                    reservedBottomRows: reservedBottomRows,
-                    reserveSpaceBeforeDrawing: renderedFrame == nil
-                )
-                guard let key = readKey(rawInput: rawInput, shouldCancel: shouldCancel) else {
-                    clear(frame: renderedFrame)
-                    return nil
+                if cancel() { return nil }
+                let resizeGeneration = TerminalResizeCoordinator.shared.currentGeneration()
+                let lines = groupedItemLines(items: items) { offset, item in
+                    let focus = offset == focusedIndex ? ">" : " "
+                    let marker: String
+                    switch state {
+                    case let .multiple(values): marker = values.contains(item.value) ? "[x]" : "[ ]"
+                    case let .single(value): marker = value == item.value ? "(x)" : "( )"
+                    }
+                    return "\(focus) \(marker) \(item.title)\(detailSuffix(for: item))"
                 }
+                modal.update(.init(title: title, help: state.helpLines, lines: lines, focusedIndex: focusedIndex))
+                guard let key = readKey(
+                    rawInput: rawInput,
+                    shouldCancel: cancel,
+                    resizeGeneration: resizeGeneration
+                ), !cancel() else { return nil }
                 switch apply(key: key, items: items, state: &state, focusedIndex: &focusedIndex) {
                 case .continue: continue
-                case .submit:
-                    clear(frame: renderedFrame)
-                    return state
-                case .cancel:
-                    clear(frame: renderedFrame)
-                    return nil
+                case .submit: return modal.accepted(state)
+                case .cancel: return nil
                 }
             }
         }
@@ -286,6 +319,8 @@ public enum TerminalCheckboxMenu {
             return .submit
         case .cancel:
             return .cancel
+        case .resize:
+            break
         case .unknown:
             break
         }
@@ -327,11 +362,39 @@ public enum TerminalCheckboxMenu {
                 allowEmpty: allowEmpty, help: help, reservedBottomRows: reservedBottomRows
             )
         }
-        defer { rawInput.restoreRawMode() }
-        return readPromptLine(
-            title: title, prompt: prompt, defaultValue: defaultValue,
-            allowEmpty: allowEmpty, help: help, reservedBottomRows: reservedBottomRows
-        ) { readInputLine(rawInput: rawInput, shouldCancel: shouldCancel) }
+        let modal = TerminalModalSession()
+        let layoutCancelled = modal.cancellationCheck
+        let cancel: @Sendable () -> Bool = { layoutCancelled() || shouldCancel?() == true }
+        var inputBuffer = ""
+        defer {
+            rawInput.restoreRawMode()
+            modal.close()
+        }
+        let suffix = defaultValue.map { " [\($0)]" } ?? ""
+        func repaint(_ value: String) {
+            modal.update(.init(title: title, help: inputHelpLines(help),
+                lines: [.init(text: "\(prompt)\(suffix): ", itemIndex: 0)],
+                focusedIndex: 0, input: value))
+        }
+        while true {
+            if cancel() { return nil }
+            let generation = TerminalResizeCoordinator.shared.currentGeneration()
+            repaint(inputBuffer)
+            switch readInputLine(rawInput: rawInput, shouldCancel: cancel,
+                                 initialValue: inputBuffer, resizeGeneration: generation,
+                                 onChange: repaint) {
+            case let .resized(value): inputBuffer = value
+            case let .submitted(rawValue):
+                guard !modal.isCancelled else { return nil }
+                let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                inputBuffer = ""
+                if value == "?", help != nil { continue }
+                if value.isEmpty, let defaultValue { return modal.accepted(defaultValue) }
+                if value.isEmpty, allowEmpty { return modal.accepted("") }
+                if !value.isEmpty { return modal.accepted(value) }
+            case .cancel, .endOfInput: return nil
+            }
+        }
     }
 
     static func fallbackPromptLine(
@@ -357,37 +420,30 @@ public enum TerminalCheckboxMenu {
         allowEmpty: Bool,
         help: String?,
         reservedBottomRows: Int,
+        reservedBottomRowsProvider: (() -> Int)? = nil,
+        screen: TerminalPrimaryScreen? = nil,
         read: () -> InputLineReadResult
     ) -> String? {
-        var didReserveFrameSpace = false
+        let modal = TerminalModalSession(screen: screen)
+        defer { modal.close() }
+        var inputBuffer = ""
         while true {
+            guard !modal.isCancelled else { return nil }
             let suffix = defaultValue.map { " [\($0)]" } ?? ""
-            let promptText = "\(prompt)\(suffix): "
-            let helpLines = inputHelpLines(help)
-            let renderedFrame = renderInput(
-                title: title, prompt: promptText, help: help,
-                reservedBottomRows: reservedBottomRows,
-                reserveSpaceBeforeDrawing: !didReserveFrameSpace
-            )
-            didReserveFrameSpace = true
-            let inputRow = renderedFrame.row + helpLines.count + 3
-            let inputColumn = min(3 + promptText.count, terminalGeometry().columns)
-            AgentOutput.standardError.writeString("\u{1B}[?25h\u{1B}[\(inputRow);\(inputColumn)H")
-
+            modal.update(.init(title: title, help: inputHelpLines(help),
+                lines: [.init(text: "\(prompt)\(suffix): ", itemIndex: 0)],
+                focusedIndex: 0, input: inputBuffer))
             switch read() {
             case let .submitted(rawValue):
-                clear(frame: renderedFrame)
+                guard !modal.isCancelled else { return nil }
+                inputBuffer = ""
                 let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                if value == "?", let help {
-                    AgentOutput.standardError.writeString("\(help)\n")
-                    continue
-                }
-                if value.isEmpty, let defaultValue { return defaultValue }
-                if value.isEmpty, allowEmpty { return "" }
-                if !value.isEmpty { return value }
-            case .cancel, .endOfInput:
-                clear(frame: renderedFrame)
-                return nil
+                if value == "?", help != nil { continue }
+                if value.isEmpty, let defaultValue { return modal.accepted(defaultValue) }
+                if value.isEmpty, allowEmpty { return modal.accepted("") }
+                if !value.isEmpty { return modal.accepted(value) }
+            case let .resized(value): inputBuffer = value
+            case .cancel, .endOfInput: return nil
             }
         }
     }

@@ -58,18 +58,12 @@ extension TerminalStatusBar {
         guard state.resizeSignalSource == nil else {
             return
         }
-        signal(SIGWINCH, SIG_IGN)
-        let source = DispatchSource.makeSignalSource(
-            signal: SIGWINCH,
-            queue: .global(qos: .userInteractive)
-        )
-        source.setEventHandler { [weak self] in
+        let subscription = TerminalResizeCoordinator.shared.subscribe { [weak self] in
             Task(name: "ZenCODE.TUI.terminal-resize-signal") {
                 await self?.scheduleTerminalResize()
             }
         }
-        state.resizeSignalSource = ResizeSignalSourceBox(source: source)
-        source.resume()
+        state.resizeSignalSource = ResizeSignalSourceBox(subscription: subscription)
     }
     
     func stopResizeSignalSourceLocked(state: inout State) {
@@ -77,8 +71,7 @@ extension TerminalStatusBar {
         state.isResizePending = false
         state.resizeTask?.cancel()
         state.resizeTask = nil
-        state.resizeSignalSource?.source.setEventHandler {}
-        state.resizeSignalSource?.source.cancel()
+        state.resizeSignalSource?.subscription.cancel()
         state.resizeSignalSource = nil
     }
     
@@ -104,6 +97,20 @@ extension TerminalStatusBar {
     }
 
     func handleTerminalResize(generation: Int) async {
+        let fileDescriptor = output?.fileDescriptor ?? 1
+        guard let geometry = Self.currentTerminalGeometry(fileDescriptor: fileDescriptor) else {
+            await handleTerminalResize(generation: generation, geometry: nil)
+            return
+        }
+        await handleTerminalResize(generation: generation, geometry: geometry)
+    }
+
+    /// Explicit geometry seam for independent resize tests. Modal surfaces are
+    /// rebuilt by the same compositor commit as the footer.
+    func handleTerminalResize(
+        generation: Int,
+        geometry: (rows: Int, columns: Int)?
+    ) async {
         var collapsedObservationID: UUID?
         var collapseHandler: (@Sendable (UUID?) async -> Void)?
         withOutputBatch {
@@ -111,8 +118,11 @@ extension TerminalStatusBar {
                 return
             }
             state.resizeTask = nil
-            guard refreshTerminalGeometryLocked(state: &state) else {
+            guard let geometry,
+                  refreshTerminalGeometryLocked(state: &state, geometry: geometry)
+            else {
                 state.isResizePending = false
+                TerminalResizeCoordinator.shared.publishLayout(reservedBottomRows: nil)
                 return
             }
             state.isResizePending = false
@@ -121,10 +131,7 @@ extension TerminalStatusBar {
             // row, then let the runtime FIFO close its matching input/buffer
             // reader states. Keeping the dock preserves its unread badge.
             if var dock = state.sharedChatReaderDock, dock.isExpanded {
-                let payloadRows = min(
-                    sharedChatReaderViewportRowsLocked(state: &state),
-                    dock.rows(width: statusBoxContentWidthLocked(state: &state)).count
-                )
+                let payloadRows = sharedChatReaderViewportRowsLocked(state: &state)
                 if payloadRows < 1 {
                     dock.isExpanded = false
                     state.sharedChatReaderDock = dock
@@ -132,11 +139,27 @@ extension TerminalStatusBar {
                     collapseHandler = sharedChatReaderCollapseHandler
                 }
             }
+            TerminalResizeCoordinator.shared.publishLayout(
+                reservedBottomRows: reservedBottomRowsLocked(state: &state)
+            )
             renderLocked(state: &state)
         }
         if let collapsedObservationID {
             await collapseHandler?(collapsedObservationID)
         }
+    }
+
+    /// Test seam for resize lifecycle tests; production obtains geometry from
+    /// the controlling terminal before reaching the shared implementation.
+    func handleTerminalResizeForTesting(
+        generation: Int = 0,
+        rows: Int,
+        columns: Int
+    ) async {
+        await handleTerminalResize(
+            generation: generation,
+            geometry: (rows: rows, columns: columns)
+        )
     }
     
     static func currentTerminalGeometry(
@@ -173,11 +196,7 @@ extension TerminalStatusBar {
     /// Writes text to the terminal output. Uses the injected `outputSink` when
     /// set (testing), otherwise writes to the controlling-terminal FileHandle.
     func performOutput(_ text: String) {
-        if let outputSink {
-            outputSink(text)
-        } else {
-            output?.writeString(text)
-        }
+        TerminalOutputSynchronization.write(text, output: output, sink: outputSink)
     }
 
     func writeLocked(_ text: String) {
@@ -192,16 +211,21 @@ extension TerminalStatusBar {
     }
 
     func withOutputBatch<T>(_ body: () -> T) -> T {
-        outputBatchDepth += 1
-        defer {
-            outputBatchDepth -= 1
-            if outputBatchDepth == 0, !batchedOutput.isEmpty {
-                let text = batchedOutput
-                batchedOutput.removeAll(keepingCapacity: true)
-                performOutput(text)
+        // A resize publishes the new reservation inside body. Keep that commit
+        // and the physical flush under the same lock as menu cleanup/repaint:
+        // an overlay must never paint from the new layout before this batch.
+        TerminalOutputSynchronization.withTransaction {
+            outputBatchDepth += 1
+            defer {
+                outputBatchDepth -= 1
+                if outputBatchDepth == 0, !batchedOutput.isEmpty {
+                    let text = batchedOutput
+                    batchedOutput.removeAll(keepingCapacity: true)
+                    performOutput(text)
+                }
             }
+            return body()
         }
-        return body()
     }
     
     static func positiveInt(_ rawValue: String?) -> Int? {

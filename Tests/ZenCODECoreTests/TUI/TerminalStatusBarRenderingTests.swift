@@ -35,7 +35,8 @@ private final class CapturedOutput: Sendable {
     }
 }
 
-@Suite struct TerminalStatusBarRenderingTests {
+@Suite(.serialized)
+struct TerminalStatusBarRenderingTests {
 
     // MARK: - Border appearance
 
@@ -104,7 +105,57 @@ private final class CapturedOutput: Sendable {
         #expect(await bar.scrollableOutputRowCapacity() == 18)
     }
 
-    // MARK: - Render cache
+    @Test
+    func resizeInvalidatesWholeViewportInsteadOfGuessingOldFooterRows() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 24, columns: 100)
+        await bar.updateInputPanel(
+            text: "draft",
+            cursorIndex: 5,
+            modeText: "Prompt",
+            helpText: "Enter"
+        )
+        captured.clear()
+
+        await bar.handleTerminalResizeForTesting(rows: 24, columns: 40)
+
+        let output = captured.combined
+        // Before CPR, no cursor motion or erase is permitted after reflow.
+        #expect(output == "\u{1B}[6n")
+        #expect(!output.contains("\u{1B}[2J"))
+        #expect(!output.contains("\u{1B}[3J"))
+    }
+
+    @Test
+    func resizeRebuildsPrimaryViewportAndKeepsModalWithFooter() async throws {
+        let captured = CapturedOutput()
+        let reports = TerminalCursorReport()
+        let bar = TerminalStatusBar(isEnabled: true, cursorReports: reports) { captured.append($0) }
+        await bar.configureForTesting(row: 24, columns: 80)
+        await bar.updateInputPanel(text: "draft", cursorIndex: 5, modeText: "Prompt", helpText: "Enter")
+        let screen = await bar.primaryScreen
+        let modal = screen.beginModal()
+        screen.updateModal(modal, value: .init(title: "Menu", help: [],
+            lines: [.init(text: "> selected", itemIndex: 0)], focusedIndex: 0))
+        captured.clear()
+
+        await bar.handleTerminalResizeForTesting(rows: 30, columns: 40)
+
+        #expect(await bar.state.row == 30)
+        #expect(await bar.state.columns == 40)
+        #expect(captured.combined == "\u{1B}[6n")
+        for byte in "\u{1B}[14;1R".utf8 { _ = reports.consume(byte) }
+        for _ in 0..<200 where reports.isHoldingInput { try await Task.sleep(for: .milliseconds(2)) }
+        #expect(captured.combined.contains("\u{1B}[0J"))
+        #expect(!captured.combined.contains("\u{1B}[2J"))
+        #expect(captured.combined.contains("Menu"))
+        #expect(captured.combined.contains("draft"))
+        #expect(!captured.combined.contains("\u{1B}[3J"))
+        #expect(!captured.combined.contains("?1049"))
+        screen.endModal(modal)
+    }
+
 
     @Test
     func identicalStatusRendersAreSuppressedByCache() async {
@@ -198,16 +249,16 @@ private final class CapturedOutput: Sendable {
     // MARK: - Cursor-hide placement
 
     @Test
-    func statusOnlyRenderOmitsCursorHide() async {
+    func statusOnlyRenderUsesCompositorCursorPolicy() async {
         let captured = CapturedOutput()
         let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
         await bar.configureForTesting(row: 24, columns: 100, modelID: "test-model")
 
         await bar.renderStatusOverlay()
 
-        // ESC[?25l (cursor hide) must NOT appear in status-only updates.
+        // The compositor owns cursor visibility for every surface commit.
         let cursorHide = "\u{1B}[?25l"
-        #expect(!captured.combined.contains(cursorHide))
+        #expect(captured.combined.contains(cursorHide))
     }
 
     @Test
@@ -239,7 +290,7 @@ private final class CapturedOutput: Sendable {
     }
 
     @Test
-    func ordinaryStatusUpdateViaPublicAPIOmitsCursorHide() async {
+    func ordinaryStatusUpdateViaPublicAPIUsesCompositor() async {
         let captured = CapturedOutput()
         let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
 
@@ -254,7 +305,7 @@ private final class CapturedOutput: Sendable {
         _ = await bar.update(modelID: "second-model")
 
         let cursorHide = "\u{1B}[?25l"
-        #expect(!captured.combined.contains(cursorHide))
+        #expect(captured.combined.contains(cursorHide))
     }
 
     // MARK: - Spinner animation

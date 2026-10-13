@@ -274,6 +274,22 @@ extension TerminalChatRenderCoordinator {
 
     // MARK: - Direct terminal writes
 
+    func ownsScreenReceipt(_ receipt: TerminalPrimaryScreen.Anchor?) -> Bool {
+        if let screen = injectedPrimaryScreen ?? TerminalPrimaryScreen.active {
+            guard let receipt else { return false }
+            return receipt == screen.validReceipt
+        }
+        return receipt == nil
+    }
+
+    func primaryScreen(for channel: OutputChannel) -> TerminalPrimaryScreen? {
+        if let injectedPrimaryScreen { return injectedPrimaryScreen }
+        let handle = channel == .standardOutput ? standardOutput : standardError
+        guard let handle, let screen = TerminalPrimaryScreen.active,
+              screen.handles(handle) else { return nil }
+        return screen
+    }
+
     func writeDirect(_ text: String, to channel: OutputChannel) {
         flushPendingStreamingWrites()
         emitDirect(text, to: channel)
@@ -284,7 +300,7 @@ extension TerminalChatRenderCoordinator {
             return
         }
         emittedWriteCount &+= 1
-        guard externalTerminalPromptDepth == 0 else {
+        guard externalTerminalPromptDepth == 0 || primaryScreen(for: channel) != nil else {
             externalTerminalPromptWrites.append(
                 PendingWrite(channel: channel, text: text)
             )
@@ -307,6 +323,13 @@ extension TerminalChatRenderCoordinator {
             )
             nextWriteSequence += 1
         }
+        // Presentation text reaches the viewport before VT serialization. Owned
+        // replacements have a separate operation and never pass through here.
+        if let screen = primaryScreen(for: channel) {
+            lastScreenReceipt = screen.append(text)
+            return
+        }
+        lastScreenReceipt = nil
         switch channel {
         case .standardOutput:
             standardOutput?.writeString(text)

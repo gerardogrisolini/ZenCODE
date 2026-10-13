@@ -901,7 +901,9 @@ struct TerminalSharedChatReaderDockTests {
 
         let newReservedRows = await statusBar.reservedRowsForOverlay()
         #expect(newReservedRows > oldReservedRows)
-        #expect(output.text.contains(String(repeating: "\n", count: newReservedRows - oldReservedRows)))
+        // This sink captures raw VT bytes (no termios ONLCR translation).
+        // Each new row must include CR so scrolling also starts at column one.
+        #expect(output.text.contains(String(repeating: "\r\n", count: newReservedRows - oldReservedRows)))
         #expect(output.text.contains("\u{1B}[1;\(16 - newReservedRows)r"))
     }
 

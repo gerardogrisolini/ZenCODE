@@ -29,6 +29,40 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Existing `Summary`, `/changes`, `/changes diff`, `/undo`, saved snapshots,
   checkpoints, transcripts, and ACP wire formats remain unchanged.
 
+### Fixed
+
+- Active terminal chat reserves a dedicated menu area above prompt/status;
+  normal output continues through native terminal scrolling instead of painting
+  over hidden transcript rows. The inactive prompt retains its editor draft.
+- Resize now requests a cursor-position report before moving the parked chrome
+  cursor. `TerminalRawInput` demultiplexes fragmented CPR replies and preserves
+  ordinary keys and bracketed paste; output and presentation snapshots wait for
+  the report. Transcript/history are never reconstructed with ED2 or replay.
+- Failed, cancelled, stale or timed-out cursor reports cancel open menus and
+  prompts without applying selections or accepting defaults. The session stays
+  append-only, with no fixed footer and a visible editable draft projection;
+  anonymous CPR retries are fenced. Standalone menus retain their existing
+  alternate-screen presentation outside an active chat.
+- Live tool/overview ownership receipts are captured inside their output
+  transaction, so an intervening diagnostic cannot be erased as an owned tail.
+  Streaming tracks unfinished text, split graphemes and escape sequences without
+  waiting for a complete line.
+- CPR queries no longer split a buffered paste delimiter; timeout grace applies
+  only to an already-started report prefix, not newly pressed Escape keys.
+  Append-only fallback uses the current clamped terminal bottom rather than stale
+  geometry, and stop/restart drains resize-queued output once even before query
+  debounce completes. Focused regressions cover all four cases; the raw-VT dock
+  fixture now expects CRLF row allocation rather than normalized LF text.
+- The opt-in CPR harness opens and verifies its foreground controlling tty via
+  `/dev/tty`, without relying on SwiftPM stdin forwarding. It requires a unique
+  claimed UUID temporary root and isolated support directory; repaired behavior
+  still awaits independent automated and real-terminal validation.
+- Added isolated CPR/input/ownership regressions and an opt-in Swift harness for
+  a fresh real Terminal window (`Docs/terminal-cpr-validation.md`). Its terminal
+  reflow, short-window and Unicode behavior still requires independent build,
+  test and real-terminal validation; these entries do not claim that validation
+  has passed or that existing native scrollback chrome copies are removed.
+
 
 ## [2.2.0] - 2026-10-11
 
