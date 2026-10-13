@@ -163,13 +163,37 @@ struct TerminalPickerEscapeReplayTests {
             let reachedEOF = Mutex(false)
             pipe.fileHandleForWriting.write(Data(testCase.bytes))
             pipe.fileHandleForWriting.closeFile()
-            await reader.runPanelInputLoop(statusBar: TerminalStatusBar(isEnabled: false)) { event in
-                switch event {
-                case let .submitted(line): submitted.withLock { $0.append(line) }
-                case .endOfInput: reachedEOF.withLock { $0 = true }
-                default: Issue.record("Unexpected panel action")
+            // The bytes model one queued burst, not new typing after the
+            // residual-repeat window. Keep the real pipe/parser/blocking bridge
+            // but supply logical read times: executor contention between reads
+            // must not turn this fixture into a pause exceeding 220 ms.
+            let nextTimestamp = Mutex<UInt64>(4_000)
+            await reader.runPanelInputLoop(
+                statusBar: TerminalStatusBar(isEnabled: false),
+                onEvent: { event in
+                    switch event {
+                    case let .submitted(line): submitted.withLock { $0.append(line) }
+                    case .endOfInput: reachedEOF.withLock { $0 = true }
+                    default: Issue.record("Unexpected panel action")
+                    }
+                },
+                readNextTimedResult: { token in
+                    await TerminalBlockingRead.run(token: token) { token in
+                        guard let result = TerminalInteractiveLineReader.readPanelKeyResult(
+                            reader: reader,
+                            token: token
+                        ) else { return nil }
+                        let timestamp = nextTimestamp.withLock { value in
+                            defer { value += 10 }
+                            return value
+                        }
+                        return TerminalInteractiveLineReader.TimedPanelKeyReadResult(
+                            result: result,
+                            timestampMilliseconds: timestamp
+                        )
+                    }
                 }
-            }
+            )
             #expect(reachedEOF.withLock { $0 })
             #expect(submitted.withLock { $0 } == testCase.submitted)
             #expect(reader.withPanelLock { String($0.panelBuffer) } == testCase.draft)

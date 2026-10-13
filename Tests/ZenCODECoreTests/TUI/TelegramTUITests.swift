@@ -780,22 +780,27 @@ struct TelegramTUITests {
 
     /// A locally submitted turn must send an actionable Telegram request too;
     /// answering the terminal dialog first cancels the remote wait and continues.
-    @Test
+    @Test(.timeLimit(.minutes(1)))
     func mirroredLocalTurnCanBeAuthorizedFromTerminal() async throws {
+        let consent = AsyncStream<String>.makeStream()
+        let messages = AsyncStream<String>.makeStream()
+        defer {
+            consent.continuation.finish()
+            messages.continuation.finish()
+        }
         let authorizer = LocalExecPermissionAuthorizer()
         await authorizer.setConsentReader { _ in
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            return Task.isCancelled ? nil : "r"
+            var answers = consent.stream.makeAsyncIterator()
+            return await answers.next()
         }
         let terminal = try await Self.activeTelegramTerminal(permissionAuthorizer: authorizer)
         let origin = TerminalPromptOrigin.telegramLease(
             try #require(terminal.telegramActiveRouteLease)
         )
-        let collector = TelegramTestMessageCollector()
         terminal.activeTelegramProgressReporter = TerminalTelegramTurnProgressReporter(
             chatID: 42
         ) { message, _ in
-            await collector.append(message)
+            messages.continuation.yield(message)
             return true
         }
         let request = Self.authorizationRequest(
@@ -805,14 +810,22 @@ struct TelegramTUITests {
             command: "delete Sources/Terminal.swift"
         )
 
-        let authorization = Task {
+        let authorization = Task(name: "ZenCODE.Tests.terminal-telegram-authorization") {
             await terminal.authorizeTelegramToolRequest(request, origin: origin)
         }
-        let telegramRequest = await collector.firstMessage()
+        defer { authorization.cancel() }
+        var deliveredMessages = messages.stream.makeAsyncIterator()
+        let telegramRequest = try #require(await deliveredMessages.next())
 
         #expect(telegramRequest.contains("Permission required"))
         #expect(telegramRequest.contains("/allow"))
+        // The operator answers only after the mirrored request is observable.
+        // A fixed delay races Telegram delivery when the full suite is busy.
+        consent.continuation.yield("r")
+        consent.continuation.finish()
         #expect(await authorization.value)
+        let terminalConfirmation = try #require(await deliveredMessages.next())
+        #expect(terminalConfirmation.contains("Permission granted in the terminal for local.delete"))
     }
 
     /// The same coordinated request can be resolved from Telegram while the

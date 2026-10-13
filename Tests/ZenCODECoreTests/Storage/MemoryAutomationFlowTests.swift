@@ -308,20 +308,19 @@ struct MemoryAutomationFlowTests {
             )
             try await JSONMemoryPersistence(url: graphURL).save(graph)
 
-            await scopedEnv([
+            try await scopedEnv([
                 MemoryAutomationSettings.environmentAutoRecallKey: "1",
                 MemoryAutomationSettings.environmentRecallTimeoutKey: "100"
             ]) {
-                await MemoryEmbedding.withProvider(
+                try await MemoryEmbedding.withProvider(
                     DelayedMemoryEmbeddingProvider(delay: .seconds(2))
                 ) {
-                    // Open and retain the reader through the registry while its
-                    // resident graph still contains the entry.
-                    let initial = await MemoryTurnCoordinator.shared.memoryBlock(
-                        sessionID: "stale-reader-\(UUID().uuidString)",
-                        workspaceRootURL: workspace.workspaceURL,
-                        prompt: "quantum flange"
-                    )
+                    // Retain the reader while its resident graph still contains
+                    // the entry. This is fixture preparation, not the deadline
+                    // under test: a cold open may legitimately take over 100 ms
+                    // under contention, in which case memoryBlock returns nil.
+                    let reader = try await MemoryGraphStoreRegistry.shared.store(graphURL: graphURL)
+                    let initial = try await reader.lexicalFallbackContext(for: "quantum flange")
                     #expect(initial?.contains("obsolete quantum flange") == true)
 
                     // A separate engine represents another ZenCODE process.
@@ -341,6 +340,12 @@ struct MemoryAutomationFlowTests {
                         Issue.record("Could not archive the stale memory: \(error)")
                         return
                     }
+
+                    // Await this same reader's fallback explicitly as well: the
+                    // coordinator's nil alone could pass if its deadline fired
+                    // before any fallback was ready, hiding a stale-cache bug.
+                    let archivedFallback = try await reader.lexicalFallbackContext(for: "quantum flange")
+                    #expect(archivedFallback == "")
 
                     let fallback = await MemoryTurnCoordinator.shared.memoryBlock(
                         sessionID: "stale-fallback-\(UUID().uuidString)",

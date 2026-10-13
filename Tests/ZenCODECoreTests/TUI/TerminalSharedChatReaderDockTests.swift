@@ -204,28 +204,52 @@ struct TerminalSharedChatReaderDockTests {
         #expect(await supervisor.recoveryCount == 0)
     }
 
-    @Test
-    func blockingObservationSupervisorPacesStreamsThatEndImmediately() async {
+    @Test(.timeLimit(.minutes(1)))
+    func blockingObservationSupervisorPacesStreamsThatEndImmediately() async throws {
         let harness = SharedChatObservationHarness()
         await harness.setFinishesImmediately(true)
+        let backoffs = AsyncStream<Int>.makeStream()
+        let releases = AsyncStream<Void>.makeStream()
+        let stopped = AsyncStream<Void>.makeStream()
+        defer {
+            backoffs.continuation.finish()
+            releases.continuation.finish()
+            stopped.continuation.finish()
+        }
         let box = SharedChatSupervisorBox()
         let supervisor = harnessSupervisor(roomID: "room-a", harness: harness) { attempt in
             await harness.recordBackoff(attempt)
-            // Third strike: stop instead of pausing. This keeps the test fast
-            // and proves the pause is the only thing between re-attachments.
-            if attempt >= 3 {
+            backoffs.continuation.yield(attempt)
+            // Hold each retry until the test observes the detached subscription.
+            // The test drives progress; elapsed wall time is only an anti-hang guard.
+            var permits = releases.stream.makeAsyncIterator()
+            _ = await permits.next()
+            if attempt >= 3 || Task.isCancelled {
                 await box.stop()
+                stopped.continuation.yield(())
+                stopped.continuation.finish()
             }
         }
         await box.set(supervisor)
 
         await supervisor.start()
+        var attempts = backoffs.stream.makeAsyncIterator()
+        for expectedAttempt in 1...3 {
+            let attempt = try #require(await attempts.next())
+            #expect(attempt == expectedAttempt)
+            // A replacement cannot attach until this backoff is released.
+            #expect(await harness.attachedIDs.count == expectedAttempt)
+            #expect(await harness.detachedIDs.count == expectedAttempt)
+            #expect(await supervisor.currentObservation() == nil)
+            releases.continuation.yield(())
+        }
+        var completion = stopped.stream.makeAsyncIterator()
+        try #require(await completion.next() != nil)
 
-        #expect(await waitUntil { await harness.backoffAttempts.count == 3 })
-        try? await Task.sleep(for: .milliseconds(30))
         #expect(await harness.backoffAttempts == [1, 2, 3])
         #expect(await harness.attachedIDs.count == 3)
         #expect(await harness.detachedIDs.count == 3)
+        #expect(await supervisor.recoveryCount == 2)
         #expect(await supervisor.currentObservation() == nil)
     }
 
