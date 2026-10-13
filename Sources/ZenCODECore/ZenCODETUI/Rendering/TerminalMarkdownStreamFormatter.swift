@@ -375,7 +375,9 @@ public struct TerminalMarkdownStreamFormatter {
                 return flushBlock() + newline
             }
             let diffKind = TerminalCodeBlockRenderer.isDiffLanguage(activeCodeFence.language)
-                ? activeCodeFence.diffState.classify(line) : nil
+                ? activeCodeFence.diffState.classify(
+                    TerminalCodeBlockRenderer.diffSourceLine(line, language: activeCodeFence.language)
+                ) : nil
             self.activeCodeFence = activeCodeFence
             return TerminalCodeBlockRenderer.renderCodeLine(
                 line,

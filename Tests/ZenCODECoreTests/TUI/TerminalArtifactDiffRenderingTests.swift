@@ -15,7 +15,7 @@ struct TerminalArtifactDiffRenderingTests {
             newText: "struct File {\n\tlet value = 2\n\n}\n"
         )
         let markdown = render(artifact)
-        #expect(markdown.contains("```diff-swift\n@@ -1,4 +1,4 @@\n struct File {\n-\tlet value = 1\n+\tlet value = 2\n \n }\n```"))
+        #expect(markdown.contains("```artifact-diff-swift\n  │ @@ -1,4 +1,4 @@\n1 │  struct File {\n2 │ -\tlet value = 1\n2 │ +\tlet value = 2\n3 │  \n4 │  }\n```"))
         #expect(markdown.components(separatedBy: "struct File {").count - 1 == 1)
         #expect(!markdown.contains("Before"))
         #expect(!markdown.contains("After"))
@@ -27,17 +27,17 @@ struct TerminalArtifactDiffRenderingTests {
             absolutePath: "/tmp/a.txt", displayPath: "a.txt", status: .added,
             newText: "first\n\nlast\n"
         ))
-        #expect(added.contains("@@ -0,0 +1,3 @@\n+first\n+\n+last"))
+        #expect(added.contains("  │ @@ -0,0 +1,3 @@\n1 │ +first\n2 │ +\n3 │ +last"))
         let deleted = render(.init(
             absolutePath: "/tmp/a.txt", displayPath: "a.txt", status: .deleted,
             oldText: "first\nlast"
         ))
-        #expect(deleted.contains("@@ -1,2 +0,0 @@\n-first\n-last\n\\ No newline at end of file"))
+        #expect(deleted.contains("  │ @@ -1,2 +0,0 @@\n1 │ -first\n2 │ -last\n  │ \\ No newline at end of file"))
         let newlineOnly = render(.init(
             absolutePath: "/tmp/a.txt", displayPath: "a.txt", status: .modified,
             oldText: "value", newText: "value\n"
         ))
-        #expect(newlineOnly.contains("-value\n\\ No newline at end of file\n+value"))
+        #expect(newlineOnly.contains("1 │ -value\n  │ \\ No newline at end of file\n1 │ +value"))
         let empty = render(.init(
             absolutePath: "/tmp/empty.txt", displayPath: "empty.txt", status: .added,
             newText: ""
@@ -54,8 +54,8 @@ struct TerminalArtifactDiffRenderingTests {
             patch: "--- a/File.swift\n+++ b/File.swift\n@@ -2 +2 @@\n-old\n+new\n"
         ))
         #expect(!markdown.contains("unrelated old snapshot"))
-        #expect(markdown.contains("```diff-swift\n--- a/File.swift\n+++ b/File.swift"))
-        #expect(markdown.contains("-old\n+new"))
+        #expect(markdown.contains("```artifact-diff-swift\n  │ --- a/File.swift\n  │ +++ b/File.swift"))
+        #expect(markdown.contains("2 │ -old\n2 │ +new"))
     }
 
     @Test
@@ -65,12 +65,38 @@ struct TerminalArtifactDiffRenderingTests {
             oldText: "```swift\nlet value = 1\n```\n",
             newText: "```swift\nlet value = 2\n```\n"
         ))
-        #expect(markdown.contains("````diff\n"))
-        #expect(markdown.contains(" ```swift\n-let value = 1\n+let value = 2\n ```\n````"))
+        #expect(markdown.contains("````artifact-diff\n"))
+        #expect(markdown.contains("1 │  ```swift\n2 │ -let value = 1\n2 │ +let value = 2\n3 │  ```\n````"))
         var formatter = TerminalMarkdownStreamFormatter(isEnabled: false)
         let plain = formatter.consume(markdown) + formatter.finish()
-        #expect(plain.contains("-let value = 1\n+let value = 2"))
+        #expect(plain.contains("2 │ -let value = 1\n2 │ +let value = 2"))
         #expect(!plain.contains("\u{1B}"))
+        var renderer = TerminalSwiftMarkdownRenderer(
+            supportsHyperlinks: false, renderWidth: 0, palette: .dark
+        )
+        let complete = TerminalANSIText.stripANSI(renderer.visit(Document(parsing: markdown)))
+        var coloredStream = TerminalMarkdownStreamFormatter(
+            isEnabled: true, renderWidth: 0, supportsHyperlinks: false, palette: .dark
+        )
+        var streamed = ""
+        for character in markdown { streamed += coloredStream.consume(String(character)) }
+        streamed += coloredStream.finish()
+        for visible in [complete, TerminalANSIText.stripANSI(streamed)] {
+            #expect(visible.components(separatedBy: "Code · Diff").count - 1 == 1)
+            #expect(visible.contains("1 │  ```swift"))
+            #expect(visible.contains("2 │ -let value = 1\n2 │ +let value = 2\n3 │  ```"))
+        }
+    }
+
+    @Test
+    func diffBackgroundsUseMutedTruecolorInDarkAndPreserveLightContrast() {
+        let dark = TerminalMarkdownPalette.dark
+        #expect(dark.diffAdditionBackground == "\u{1B}[48;2;30;48;36m")
+        #expect(dark.diffRemovalBackground == "\u{1B}[48;2;55;32;35m")
+        let light = TerminalMarkdownPalette.light
+        #expect(light.codeForeground == "\u{1B}[38;5;235m")
+        #expect(light.diffAdditionBackground == "\u{1B}[48;5;194m")
+        #expect(light.diffRemovalBackground == "\u{1B}[48;5;224m")
     }
 
     @Test(arguments: [TerminalMarkdownPalette.dark, .light])

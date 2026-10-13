@@ -68,6 +68,7 @@ extension TerminalChatRenderingTests {
 
         let rendered = TerminalANSIText.stripANSI(TerminalChat.renderFileArtifacts(turns))
 
+        #expect(rendered.hasPrefix("\n🪬 Artifacts\n"))
         #expect(rendered.contains("Turn 1 — 1 file"))
         #expect(rendered.contains("Turn 2 — 1 file"))
         #expect(rendered.contains("Sources/One.swift"))
@@ -109,14 +110,19 @@ extension TerminalChatRenderingTests {
         ]
 
         let rendered = TerminalChat.renderFileArtifacts(turns)
+        let automatic = TerminalChat.renderFileArtifacts(turns, includeHistoryHeadings: false)
 
+        #expect(automatic.hasPrefix("\n**modified `Sources/Typed.swift`**  +1 -1\n"))
+        #expect(!automatic.contains("🪬 Artifacts"))
+        #expect(!automatic.contains("### Turn"))
+        #expect(rendered == "\n🪬 Artifacts\n\n### Turn 3 — 3 files\n" + automatic)
         #expect(rendered.contains("### Turn 3 — 3 files"))
         #expect(rendered.contains("**modified `Sources/Typed.swift`**  +1 -1"))
-        #expect(rendered.contains("```diff-swift\n@@ -1,1 +1,1 @@\n-let value = 1\n+let value = 2\n```"))
+        #expect(rendered.contains("```artifact-diff-swift\n  │ @@ -1,1 +1,1 @@\n1 │ -let value = 1\n1 │ +let value = 2\n```"))
         #expect(!rendered.contains("**Before**"))
         #expect(!rendered.contains("**After**"))
         #expect(rendered.contains("**unknown `Data/evidence.custom`**  +0 -0"))
-        #expect(rendered.contains("```diff\n@@ -1 +1 @@\n-old\n+new\n```"))
+        #expect(rendered.contains("```artifact-diff\n  │ @@ -1 +1 @@\n1 │ -old\n1 │ +new\n```"))
         #expect(rendered.contains("**unknown `Assets/image.bin`**  +0 -0 (binary)"))
         #expect(rendered.contains("Explanation: Diff unavailable: binary file evidence."))
     }
@@ -139,7 +145,7 @@ extension TerminalChatRenderingTests {
         let rendered = TerminalChat.renderFileArtifacts([turn])
 
         #expect(rendered.contains("**added `README`**  +1 -0"))
-        #expect(rendered.contains("```diff\n@@ -0,0 +1,1 @@\n+plain text\n```"))
+        #expect(rendered.contains("```artifact-diff\n  │ @@ -0,0 +1,1 @@\n1 │ +plain text\n```"))
         #expect(!rendered.contains("```text"))
     }
 

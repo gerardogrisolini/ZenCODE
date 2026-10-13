@@ -70,7 +70,8 @@ enum TerminalCodeBlockRenderer {
                     language: language,
                     width: width,
                     palette: palette,
-                    diffKind: isDiffLanguage(language) ? diffState.classify(String(line)) : nil
+                    diffKind: isDiffLanguage(language)
+                        ? diffState.classify(diffSourceLine(String(line), language: language)) : nil
                 )
             }
         return ([renderHeader(language: language, width: width, palette: palette)] + body)
@@ -111,12 +112,14 @@ enum TerminalCodeBlockRenderer {
         palette: TerminalMarkdownPalette,
         diffKind: DiffLineKind? = nil
     ) -> [String] {
+        let artifactRow = artifactDiffRow(line, language: language)
+        let sourceLine = artifactRow?.source ?? line
         let highlighted: String
         let background: String
         if isDiffLanguage(language) {
-            let kind = diffKind ?? diffLineKind(line)
+            let kind = diffKind ?? diffLineKind(sourceLine)
             highlighted = renderDiffLine(
-                line,
+                sourceLine,
                 sourceLanguage: diffSourceLanguage(language),
                 kind: kind,
                 palette: palette
@@ -131,19 +134,31 @@ enum TerminalCodeBlockRenderer {
             background = palette.codeBackground
         }
         let rowStyle = "\(palette.codeForeground)\(background)"
+        // Keep the gutter outside syntax highlighting and wrapping. Tiny surfaces
+        // that cannot fit a gutter plus a wide grapheme prioritize the source.
+        let gutter = artifactRow?.gutter ?? ""
+        let gutterWidth = TerminalANSIText.visibleWidth(gutter)
+        let showsGutter = !gutter.isEmpty && (width == 0 || width >= gutterWidth + 2)
+        let firstPrefix = showsGutter ? gutter : ""
+        let continuationPrefix = showsGutter
+            ? String(repeating: " ", count: gutterWidth - 3) + " │ " : ""
+        func styledPrefix(_ prefix: String) -> String {
+            prefix.isEmpty ? "" : "\(palette.diffHeader)\(prefix)\(reset)"
+        }
         guard width > 0 else {
-            return [renderBackgroundRow(highlighted, width: 0, style: rowStyle)]
+            return [renderBackgroundRow(styledPrefix(firstPrefix) + highlighted, width: 0, style: rowStyle)]
         }
 
-        let continuation = width >= 4 ? "↳ " : "›"
+        let sourceWidth = width - (showsGutter ? gutterWidth : 0)
+        let continuation = sourceWidth >= 4 ? "↳ " : "›"
         let rows = TerminalANSIText.wrapPreservingWhitespace(
             highlighted,
-            width: width,
+            width: sourceWidth,
             hangingIndent: continuation
         )
-        return rows.map {
+        return rows.enumerated().map { index, row in
             renderBackgroundRow(
-                $0,
+                styledPrefix(index == 0 ? firstPrefix : continuationPrefix) + row,
                 width: width,
                 style: rowStyle
             )

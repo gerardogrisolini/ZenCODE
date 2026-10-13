@@ -28,6 +28,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Automatic file artifacts in chat now start with the file metadata, without the
+  `Artifacts` banner or `Turn N — M file(s)` heading, including final reconciliation.
+  `/artifacts` keeps its banner and turn grouping; diff evidence, source line
+  numbers, syntax highlighting and backgrounds remain unchanged.
+- Dark-theme diff backgrounds now use muted forest green (`#1E3024`) and
+  burgundy (`#372023`); light-theme backgrounds remain unchanged.
 - Live file artifacts and `/artifacts` now show one unified `+`/`-` diff instead
   of separate Before/After files. Added and removed rows use full-width green
   and red backgrounds while retaining source-language syntax highlighting;
@@ -51,6 +57,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Live file artifacts and `/artifacts` again show a single source-line-number
+  column: removals use the old position, additions and context use the new one.
+  Hunk offsets are preserved, metadata and wrapped continuations stay unnumbered,
+  and plain output retains the same numbers and `+`/`-` markers.
 - Recalling prompt history keeps completion menus from intercepting ↑/↓ or Enter:
   arrows traverse prior inputs and return to the empty draft, and Enter submits
   the recalled line unchanged. Editing the recalled text restores normal

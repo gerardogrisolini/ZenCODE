@@ -39,7 +39,7 @@ extension TerminalChat {
             turnID: context.id, workingDirectory: configuration.workingDirectory
         ) else { return }
         guard sessionID == context.sessionID, fileArtifactHistory === context.history else { return }
-        await writeFileArtifacts([turn], preservingStreamingContext: true)
+        await writeFileArtifacts([turn], includeHistoryHeadings: false, preservingStreamingContext: true)
     }
 
     /// Replacing the actor also fences restores that reuse the same session ID.
@@ -102,7 +102,7 @@ extension TerminalChat {
         }
         guard sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
         if let summary { lastFileChangeSummary = summary }
-        if let unseen { await writeFileArtifacts([unseen]) }
+        if let unseen { await writeFileArtifacts([unseen], includeHistoryHeadings: false) }
         guard sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
         return summary
     }
@@ -113,16 +113,18 @@ extension TerminalChat {
             await writeSystemMessage("No file artifacts in the current session.\n")
             return
         }
-        await writeFileArtifacts(turns)
+        await writeFileArtifacts(turns, includeHistoryHeadings: true)
     }
 
     private func writeFileArtifacts(
         _ turns: [SessionFileArtifactHistory.Turn],
+        includeHistoryHeadings: Bool,
         preservingStreamingContext: Bool = false
     ) async {
         await renderCoordinator.writeMarkdownMessage(
             Self.renderFileArtifacts(
                 turns,
+                includeHistoryHeadings: includeHistoryHeadings,
                 columnWidth: Self.terminalColumnCount(),
                 isEnabled: AgentOutput.standardErrorIsTerminal
             ),
@@ -136,6 +138,18 @@ extension TerminalChat {
         columnWidth: Int = 100,
         isEnabled: Bool = false
     ) -> String {
+        renderFileArtifacts(
+            turns, includeHistoryHeadings: true,
+            columnWidth: columnWidth, isEnabled: isEnabled
+        )
+    }
+
+    nonisolated static func renderFileArtifacts(
+        _ turns: [SessionFileArtifactHistory.Turn],
+        includeHistoryHeadings: Bool,
+        columnWidth: Int = 100,
+        isEnabled: Bool = false
+    ) -> String {
         // The source is intentionally emitted as Markdown and rendered by the
         // same formatter as assistant output. Keep these parameters for source
         // compatibility with callers that used the preformatted renderer; the
@@ -143,11 +157,14 @@ extension TerminalChat {
         _ = columnWidth
         _ = isEnabled
 
-        var lines = ["", "🪬 Artifacts"]
+        // Automatic chat output starts at file metadata; only /artifacts groups turns.
+        var lines = includeHistoryHeadings ? ["", "🪬 Artifacts"] : []
         for turn in turns {
-            let count = turn.artifacts.count == 1 ? "1 file" : "\(turn.artifacts.count) files"
-            lines.append("")
-            lines.append("### Turn \(turn.number) — \(count)")
+            if includeHistoryHeadings {
+                let count = turn.artifacts.count == 1 ? "1 file" : "\(turn.artifacts.count) files"
+                lines.append("")
+                lines.append("### Turn \(turn.number) — \(count)")
+            }
             for artifact in turn.artifacts {
                 lines.append("")
                 lines.append(renderFileArtifactMetadata(artifact))
@@ -164,8 +181,8 @@ extension TerminalChat {
                 let language = codeLanguageHint(forPath: languagePath)
                 if let diff = fileArtifactDiff(artifact) {
                     appendMarkdownCodeBlock(
-                        diff,
-                        language: language.map { "diff-\($0)" } ?? "diff",
+                        TerminalCodeBlockRenderer.numberedArtifactDiff(diff),
+                        language: language.map { "artifact-diff-\($0)" } ?? "artifact-diff",
                         to: &lines
                     )
                 }

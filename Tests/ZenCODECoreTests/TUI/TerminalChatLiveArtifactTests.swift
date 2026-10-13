@@ -17,12 +17,12 @@ struct TerminalChatLiveArtifactTests {
                 let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
                 let terminal = try makeTerminal(directory, renderer: renderer, runner: runner)
                 await backend.setProbe {
-                    let output = await renderer.capturedWriteEvents().map(\.text).joined()
-                    #expect(output.components(separatedBy: "🪬 Artifacts").count - 1 == 3)
-                    #expect(output.components(separatedBy: "Turn 1").count - 1 == 3)
-                    #expect(output.contains("root source"))
-                    #expect(output.contains("delegated source"))
-                    #expect(output.contains("next source"))
+                    let output = TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().map(\.text).joined())
+                    for row in ["1 │ +root source", "1 │ +delegated source", "1 │ +next source"] {
+                        #expect(output.components(separatedBy: row).count - 1 == 1)
+                    }
+                    #expect(!output.contains("🪬 Artifacts"))
+                    #expect(!output.contains("Turn 1 —"))
                     // The fake model has not returned its response yet.
                     #expect(!output.contains("generation ended"))
                     let history = await terminal.fileArtifactHistory
@@ -34,8 +34,12 @@ struct TerminalChatLiveArtifactTests {
                 ))
                 #expect(success.response.text == "generation ended")
                 #expect(await backend.didProbeBeforeReturning())
-                let output = await renderer.capturedWriteEvents().map(\.text).joined()
-                #expect(output.components(separatedBy: "🪬 Artifacts").count - 1 == 3)
+                let output = TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().map(\.text).joined())
+                for row in ["1 │ +root source", "1 │ +delegated source", "1 │ +next source"] {
+                    #expect(output.components(separatedBy: row).count - 1 == 1)
+                }
+                #expect(!output.contains("🪬 Artifacts"))
+                #expect(!output.contains("Turn 1 —"))
                 #expect(terminal.activeFileArtifactTurn == nil)
                 await runner.shutdown()
             }.value
@@ -53,6 +57,11 @@ struct TerminalChatLiveArtifactTests {
         await terminal.publishLiveFileArtifacts(result([change]), callID: "delete", context: context)
         let liveEvents = await renderer.capturedWriteEvents()
         #expect(liveEvents.allSatisfy { $0.channel == .standardError })
+        let live = liveEvents.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(live.hasPrefix("**deleted `Deleted.swift`**  +0 -1"))
+        #expect(live.contains("1 │ -let removed = 1"))
+        #expect(!live.contains("🪬 Artifacts"))
+        #expect(!live.contains("Turn 1 —"))
         let summary = TurnFileChangeSummary(entries: [
             .init(path: "Deleted.swift", additions: 0, deletions: 1, status: .deleted,
                   isBinary: false, existedBefore: true,
@@ -63,8 +72,10 @@ struct TerminalChatLiveArtifactTests {
         await terminal.handleArtifactsCommand()
         let commandEvents = await renderer.capturedWriteEvents().dropFirst(liveEvents.count)
         #expect(commandEvents.allSatisfy { $0.channel == .standardError })
-        #expect(liveEvents.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
-            == commandEvents.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines))
+        let command = commandEvents.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(command.hasPrefix("🪬 Artifacts"))
+        #expect(command.contains("### Turn 1 — 1 file"))
+        #expect(command.hasSuffix(live))
     }
 
     @Test(arguments: [false, true])
@@ -94,12 +105,20 @@ struct TerminalChatLiveArtifactTests {
         )
         await terminal.handleArtifactsCommand()
         let history = await renderer.capturedWriteEvents().dropFirst(liveEvents.count).map(\.text).joined()
-        #expect(live.trimmingCharacters(in: .whitespacesAndNewlines)
-            == history.trimmingCharacters(in: .whitespacesAndNewlines))
+        let liveBodyStart = try #require(live.range(of: "modified")).lowerBound
+        let historyBodyStart = try #require(history.range(of: "modified")).lowerBound
+        #expect(live[liveBodyStart...].trimmingCharacters(in: .whitespacesAndNewlines)
+            == history[historyBodyStart...].trimmingCharacters(in: .whitespacesAndNewlines))
+        let visibleLive = TerminalANSIText.stripANSI(live)
+        let visibleHistory = TerminalANSIText.stripANSI(history)
+        #expect(!visibleLive.contains("🪬 Artifacts"))
+        #expect(!visibleLive.contains("Turn 1 —"))
+        #expect(visibleHistory.contains("🪬 Artifacts"))
+        #expect(visibleHistory.contains("Turn 1 — 1 file"))
         for output in [live, history] {
             let visible = TerminalANSIText.stripANSI(output)
-            #expect(visible.contains("-let value = 1"))
-            #expect(visible.contains("+let value = 2"))
+            #expect(visible.contains("1 │ -let value = 1"))
+            #expect(visible.contains("1 │ +let value = 2"))
             #expect(!visible.contains("Before"))
             #expect(!visible.contains("After"))
             if isTerminal {
@@ -151,12 +170,14 @@ struct TerminalChatLiveArtifactTests {
         )
         let afterArtifact = await renderer.capturedWriteEvents()
         let visibleBeforeContinuation = TerminalANSIText.stripANSI(afterArtifact.map(\.text).joined())
-        let artifactPosition = try #require(visibleBeforeContinuation.range(of: "🪬 Artifacts"))
+        let artifactPosition = try #require(visibleBeforeContinuation.range(of: "added Artifact.swift"))
         let firstCodePosition = try #require(visibleBeforeContinuation.range(of: "let first = 1"))
         let overviewPosition = try #require(visibleBeforeContinuation.range(of: "Deferred fence overview"))
         #expect(firstCodePosition.lowerBound < artifactPosition.lowerBound)
         #expect(artifactPosition.lowerBound < overviewPosition.lowerBound)
-        #expect(visibleBeforeContinuation.contains("let artifact = 42"))
+        #expect(visibleBeforeContinuation.contains("1 │ +let artifact = 42"))
+        #expect(!visibleBeforeContinuation.contains("🪬 Artifacts"))
+        #expect(!visibleBeforeContinuation.contains("Turn 1 —"))
         #expect(!visibleBeforeContinuation.contains("Prose after fence"))
         #expect(await context.history.snapshot().isEmpty)
 
@@ -208,11 +229,13 @@ struct TerminalChatLiveArtifactTests {
         )
         #expect(summary?.fileCount == 3)
         let fallback = await renderer.capturedWriteEvents().dropFirst(liveCount).map(\.text).joined()
-        #expect(fallback.contains("Turn 1"))
+        #expect(!fallback.contains("🪬 Artifacts"))
+        #expect(!fallback.contains("Turn 1 —"))
         #expect(!fallback.contains("same.txt"))
         #expect(fallback.contains("later.txt"))
         #expect(fallback.contains("opaque after live"))
         #expect(fallback.contains("final.txt"))
+        #expect(fallback.contains("1 │ +final only"))
         let turns = await terminal.fileArtifactHistory.snapshot()
         #expect(turns.count == 1)
         #expect(turns.first?.number == 1)
@@ -250,7 +273,11 @@ struct TerminalChatLiveArtifactTests {
         #expect(terminal.lastFileChangeSummary == nil)
         #expect(await terminal.fileArtifactHistory.snapshot().isEmpty)
         await terminal.publishLiveFileArtifacts(evidence, callID: "call", context: current)
-        #expect(await renderer.capturedWriteEvents().map(\.text).joined().contains("Turn 1"))
+        let output = await renderer.capturedWriteEvents().map(\.text).joined()
+        #expect(output.contains("**added `stale.txt`**  +1 -0"))
+        #expect(output.contains("1 │ +stale"))
+        #expect(!output.contains("🪬 Artifacts"))
+        #expect(!output.contains("Turn 1 —"))
     }
 
     private func makeRenderer(isTerminal: Bool = false) -> TerminalChatRenderCoordinator {

@@ -173,8 +173,8 @@ enum TerminalStyle {
             syntaxProperty: TerminalStyle.sequence(38, 5, 109),
             diffAddition: TerminalStyle.sequence(38, 5, 114),
             diffRemoval: TerminalStyle.sequence(38, 5, 210),
-            diffAdditionBackground: TerminalStyle.sequence(48, 5, 22),
-            diffRemovalBackground: TerminalStyle.sequence(48, 5, 52),
+            diffAdditionBackground: TerminalStyle.sequence(48, 2, 30, 48, 36),
+            diffRemovalBackground: TerminalStyle.sequence(48, 2, 55, 32, 35),
             diffHunk: TerminalStyle.sequence(1, 38, 5, 81),
             diffHeader: TerminalStyle.sequence(38, 5, 180)
         )

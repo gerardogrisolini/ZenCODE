@@ -50,17 +50,23 @@ struct TerminalChatRenderCoordinatorTests {
             workingDirectory: URL(fileURLWithPath: "/tmp")
         )
         await renderer.writeMarkdownMessage(
-            TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)]),
+            TerminalChat.renderFileArtifacts(
+                [.init(number: 1, artifacts: artifacts)], includeHistoryHeadings: false
+            ),
             to: .standardError,
             preservingStreamingContext: true
         )
         let afterArtifact = await renderer.capturedWriteEvents()
         let output = TerminalANSIText.stripANSI(afterArtifact.map(\.text).joined())
-        let artifactStart = try #require(output.range(of: "🪬 Artifacts"))
+        let artifactStart = try #require(output.range(of: "modified Example.swift"))
         let source = try #require(output.range(of: "let x = 2"))
         let overview = try #require(output.range(of: "Deferred artifact overview"))
         #expect(artifactStart.lowerBound < source.lowerBound)
         #expect(source.lowerBound < overview.lowerBound)
+        #expect(!output.contains("🪬 Artifacts"))
+        #expect(!output.contains("Turn 1 —"))
+        #expect(output.contains("1 │ -let x = 1"))
+        #expect(output.contains("1 │ +let x = 2"))
         let snapshot = await renderer.snapshot()
         #expect(snapshot.isStreamingThoughtOutput == (active == "thought"))
         #expect(snapshot.activeToolCallID == nil)
@@ -78,6 +84,7 @@ struct TerminalChatRenderCoordinatorTests {
         let continuation = await renderer.capturedWriteEvents().dropFirst(afterArtifact.count).map(\.text).joined()
         #expect(!containsCursorUpSequence(continuation))
         #expect(!continuation.contains("🪬 Artifacts"))
+        #expect(!continuation.contains("let x = 2"))
     }
 
     @Test
