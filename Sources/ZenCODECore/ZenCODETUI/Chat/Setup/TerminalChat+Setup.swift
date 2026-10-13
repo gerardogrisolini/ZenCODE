@@ -15,7 +15,8 @@ extension TerminalChat {
             transcriptHistory: activeSessionTranscript,
             activePlan: activePlan,
             checkpointTree: activeCheckpointTree,
-            savedSessionName: activeSavedSessionName
+            savedSessionName: activeSavedSessionName,
+            commandHistory: interactiveReader.commandHistory
         )
     }
 
@@ -24,6 +25,7 @@ extension TerminalChat {
             return
         }
         sessionID = snapshot.sessionID
+        interactiveReader.restoreCommandHistory(snapshot.commandHistory)
         resetFileArtifactState()
         activeSessionCacheKey = snapshot.cacheKey
         activeSessionHistory = snapshot.history

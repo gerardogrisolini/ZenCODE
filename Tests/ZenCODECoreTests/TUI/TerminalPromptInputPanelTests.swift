@@ -270,18 +270,97 @@ struct TerminalPromptInputPanelTests {
     }
 
     @Test
-    func historyIsCappedAndDropsTheOldestEntriesFirst() {
+    func historyRetainsAllSubmissionsBeyondTwoHundredIncludingRepeats() {
         let reader = TerminalInteractiveLineReader()
-        let cap = TerminalInteractiveLineReader.maximumHistoryEntryCount
+        let submissions = (0..<512).map { "prompt \($0)" } + ["/new", "/new", "/setup"]
 
-        for index in 0..<(cap + 10) {
-            reader.recordHistory("prompt \(index)")
+        reader.recordHistory(" \n\t")
+        for line in submissions {
+            reader.recordHistory(line)
         }
 
-        let history = reader.withPanelLock { $0.history }
-        #expect(history.count == cap)
-        #expect(history.first == "prompt 10")
-        #expect(history.last == "prompt \(cap + 9)")
+        #expect(reader.commandHistory == submissions)
+        var editor = TerminalPromptEditor()
+        let context = TerminalPromptEditorContext(history: reader.commandHistory)
+        for line in submissions.reversed() {
+            #expect(editor.apply(.up, context: context) == .changed)
+            #expect(String(editor.buffer) == line)
+        }
+        #expect(editor.historyIndex == 0)
+        #expect(String(editor.buffer) == "prompt 0")
+        #expect(TerminalInteractiveLineReader().commandHistory.isEmpty)
+    }
+
+    @Test
+    func panelRecordsSlashInputsBeforeDispatchAndRecallsThemWithoutMenus() async {
+        let reader = TerminalInteractiveLineReader()
+        reader.withPanelLock { state in
+            state.panelCommandSuggestions = [
+                TerminalCommandSuggestion(command: "/new", summary: "new conversation"),
+                TerminalCommandSuggestion(command: "/plan", summary: "plan work", requiresArgument: true)
+            ]
+        }
+        let submissions = ["a prompt", "/new", "/plan"]
+        let events = Mutex<[String]>([])
+        let historyAtDispatch = Mutex<[[String]]>([])
+        let onEvent: @Sendable (TerminalPromptInputEvent) async -> Void = { event in
+            guard case let .submitted(line) = event else { return }
+            events.withLock { $0.append(line) }
+            historyAtDispatch.withLock { $0.append(reader.commandHistory) }
+        }
+
+        for line in submissions {
+            await reader.handlePanelKey(.paste(line), onEvent: onEvent)
+            // A dismissed menu allows even an incomplete slash command to be
+            // submitted; recalling it must not silently complete it later.
+            if line.hasPrefix("/") {
+                await reader.handlePanelKey(.cancel, onEvent: onEvent)
+            }
+            await reader.handlePanelKey(.enter, onEvent: onEvent)
+        }
+        #expect(events.withLock { $0 } == submissions)
+        #expect(historyAtDispatch.withLock { $0 } == [
+            ["a prompt"], ["a prompt", "/new"], submissions
+        ])
+
+        for line in submissions.reversed() {
+            await reader.handlePanelKey(.up, onEvent: onEvent)
+            #expect(reader.withPanelLock { String($0.panelBuffer) } == line)
+            #expect(reader.withPanelLock { reader.panelCommandSuggestionLinesLocked(state: $0) }.isEmpty)
+        }
+        for line in submissions.dropFirst() {
+            await reader.handlePanelKey(.down, onEvent: onEvent)
+            #expect(reader.withPanelLock { String($0.panelBuffer) } == line)
+        }
+        await reader.handlePanelKey(.down, onEvent: onEvent)
+        #expect(reader.withPanelLock { $0.panelBuffer.isEmpty })
+
+        await reader.handlePanelKey(.up, onEvent: onEvent)
+        await reader.handlePanelKey(.enter, onEvent: onEvent)
+        #expect(events.withLock { $0 } == submissions + ["/plan"])
+        #expect(reader.commandHistory == submissions + ["/plan"])
+        #expect(reader.withPanelLock { $0.panelBuffer.isEmpty })
+    }
+
+    @Test
+    func panelRestartPreservesHistoryWithoutPreservingTheDraft() {
+        let reader = TerminalInteractiveLineReader()
+        reader.recordHistory("/new")
+        reader.recordHistory("a prompt")
+        reader.withPanelLock { state in
+            state.panelBuffer = Array("unfinished")
+            state.panelCursorIndex = state.panelBuffer.count
+        }
+        reader.finishPanelStop(clearPanel: true)
+
+        #expect(reader.preparePanelForStart(
+            statusBar: TerminalStatusBar(isEnabled: false),
+            commandSuggestions: [],
+            preservingState: false
+        ) == .admitted)
+        #expect(reader.commandHistory == ["/new", "a prompt"])
+        #expect(reader.withPanelLock { $0.panelBuffer.isEmpty })
+        reader.finishPanelStop(clearPanel: true)
     }
 
     @Test

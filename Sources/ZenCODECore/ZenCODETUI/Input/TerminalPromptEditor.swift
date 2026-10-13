@@ -673,12 +673,14 @@ struct TerminalPromptEditor: Equatable, Sendable {
 
     /// Completion matches that are currently on screen.
     ///
-    /// Empty while an overlay owns the line or after
-    /// `Esc` dismissed the menu for this revision.
+    /// Empty during history recall, while an overlay owns the line, or after
+    /// `Esc` dismissed the menu for this revision. Editing a recalled entry
+    /// clears `historyIndex` and restores ordinary completion semantics.
     func visibleSuggestions(
         context: TerminalPromptEditorContext
     ) -> [TerminalCommandSuggestion] {
-        guard pressAndHoldMenu == nil,
+        guard historyIndex == nil,
+              pressAndHoldMenu == nil,
               !context.isOverlayActive,
               !areSuggestionsDismissed,
               context.supportsCompletions else {

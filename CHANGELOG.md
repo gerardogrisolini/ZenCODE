@@ -25,6 +25,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Terminal prompt history now retains every non-empty submission, including slash
+  commands and consecutive repeats, for the entire `zen` process without the
+  previous 200-entry limit. It survives `/new`, conversation loading and `/setup`
+  in memory only, and starts empty on the next launch.
 - Removed unused internal terminal rendering and input helpers left behind by
   the compositor integration, without changing public APIs or terminal behavior.
 - `/plan approve` now asks for a descriptive Goal before activating implementation. The reply is consumed as transient control input, propagated to the active and saved plan, and shown by `/plan list` across TUI, Telegram, and ACP flows.
@@ -39,6 +43,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Recalling prompt history keeps completion menus from intercepting ↑/↓ or Enter:
+  arrows traverse prior inputs and return to the empty draft, and Enter submits
+  the recalled line unchanged. Editing the recalled text restores normal
+  completion and multiline editing behavior.
 - Active terminal chat reserves a dedicated menu area above prompt/status;
   normal output continues through native terminal scrolling instead of painting
   over hidden transcript rows. The inactive prompt retains its editor draft.

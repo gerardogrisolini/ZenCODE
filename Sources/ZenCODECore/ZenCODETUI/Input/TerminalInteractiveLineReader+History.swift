@@ -21,23 +21,29 @@ extension TerminalInteractiveLineReader {
         }
     }
 
+    /// Oldest-first prompt input retained only for this execution of `zen`.
+    /// `/setup` transfers this value to the replacement reader in memory;
+    /// conversation creation/loading never replaces it.
+    var commandHistory: [String] {
+        withPanelLock { $0.history }
+    }
+
+    func restoreCommandHistory(_ history: [String]) {
+        withPanelLock { state in
+            state.history = history
+            state.historyIndex = nil
+            state.draftBeforeHistory.removeAll()
+        }
+    }
+
     func recordHistoryLocked(_ line: String, state: inout State) {
         let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedLine.isEmpty,
-              state.history.last != trimmedLine else {
+        guard !trimmedLine.isEmpty else {
             return
         }
+        // Retain every submission, including repeats, until the process exits.
+        // Array's copy-on-write storage keeps editor context snapshots cheap.
         state.history.append(trimmedLine)
-        // The history outlives every prompt and is copied into the editor
-        // context on each keystroke, so it is bounded rather than allowed to
-        // grow for the lifetime of the process.
-        if state.history.count > Self.maximumHistoryEntryCount {
-            let overflow = state.history.count - Self.maximumHistoryEntryCount
-            state.history.removeFirst(overflow)
-            if let index = state.historyIndex {
-                state.historyIndex = index >= overflow ? index - overflow : nil
-            }
-        }
     }
 
     /// Line-scoped `Home`/`End` targets, shared with the reducer's geometry so

@@ -149,6 +149,110 @@ struct TerminalPromptEditorTests {
         #expect(String(editor.buffer) == "only line")
     }
 
+    // MARK: - History recall
+
+    @Test
+    func historyFromEmptyPromptTraversesSlashAndMultilineEntriesThenReturnsToEmpty() {
+        var editor = TerminalPromptEditor()
+        let history = ["first\nsecond", "/feature", "/plan", "/tasks"]
+        let context = TerminalPromptEditorContext(
+            history: history,
+            suggestions: commandCatalog
+        )
+
+        #expect(editor.apply(.down, context: context) == .ignored)
+        for index in history.indices.reversed() {
+            #expect(editor.apply(.up, context: context) == .changed)
+            #expect(String(editor.buffer) == history[index])
+            #expect(editor.historyIndex == index)
+            #expect(editor.cursorIndex == editor.buffer.count)
+            #expect(editor.visibleSuggestions(context: context).isEmpty)
+        }
+
+        _ = editor.apply(.up, context: context)
+        #expect(String(editor.buffer) == history[0])
+        #expect(editor.historyIndex == 0)
+
+        for index in history.indices.dropFirst() {
+            #expect(editor.apply(.down, context: context) == .changed)
+            #expect(String(editor.buffer) == history[index])
+            #expect(editor.visibleSuggestions(context: context).isEmpty)
+        }
+        #expect(editor.apply(.down, context: context) == .changed)
+        #expect(editor.buffer.isEmpty)
+        #expect(editor.cursorIndex == 0)
+        #expect(editor.historyIndex == nil)
+        #expect(editor.apply(.down, context: context) == .ignored)
+    }
+
+    @Test(arguments: ["/tasks", "/plan", "/fea", "/feature l", "/plan inspect this", "first\nsecond"], [true, false])
+    func enterSubmitsRecalledInputWithoutAcceptingCompletion(line: String, supportsCompletions: Bool) {
+        var editor = TerminalPromptEditor()
+        let context = TerminalPromptEditorContext(
+            history: [line],
+            suggestions: commandCatalog,
+            supportsCompletions: supportsCompletions
+        )
+
+        #expect(editor.apply(.up, context: context) == .changed)
+        #expect(editor.visibleSuggestions(context: context).isEmpty)
+        #expect(editor.apply(.enter, context: context) == .submitted(line))
+        #expect(editor.buffer.isEmpty)
+        #expect(editor.historyIndex == nil)
+        #expect(editor.draftBeforeHistory.isEmpty)
+    }
+
+    @Test
+    func cursorMotionDuringRecallDoesNotReactivateCompletion() {
+        var editor = TerminalPromptEditor()
+        let context = TerminalPromptEditorContext(
+            history: ["/plan inspect this"],
+            suggestions: commandCatalog
+        )
+
+        _ = editor.apply(.up, context: context)
+        _ = editor.apply(.home, context: context)
+        #expect(editor.historyIndex == 0)
+        #expect(editor.visibleSuggestions(context: context).isEmpty)
+        #expect(editor.apply(.tab, context: context) == .ignored)
+        #expect(editor.apply(.enter, context: context) == .submitted("/plan inspect this"))
+    }
+
+    @Test
+    func editingRecalledSlashCommandRestoresOrdinaryCompletionNavigation() {
+        var editor = TerminalPromptEditor()
+        let context = TerminalPromptEditorContext(
+            history: ["older", "/featurex"],
+            suggestions: commandCatalog
+        )
+
+        _ = editor.apply(.up, context: context)
+        #expect(editor.apply(.backspace, context: context) == .changed)
+        #expect(editor.historyIndex == nil)
+        #expect(String(editor.buffer) == "/feature")
+        #expect(editor.visibleSuggestions(context: context).map(\.command) == ["/feature", "/featurex"])
+
+        #expect(editor.apply(.down, context: context) == .changed)
+        #expect(editor.suggestionIndex == 1)
+        #expect(String(editor.buffer) == "/feature")
+        #expect(editor.apply(.enter, context: context) == .submitted("/featurex"))
+    }
+
+    @Test
+    func newlineInRecalledEntryRestoresMultilineEditing() {
+        var editor = TerminalPromptEditor()
+        let context = TerminalPromptEditorContext(history: ["older", "/plan"])
+
+        _ = editor.apply(.up, context: context)
+        #expect(editor.apply(.newline, context: context) == .changed)
+        #expect(editor.historyIndex == nil)
+        #expect(String(editor.buffer) == "/plan\n")
+        #expect(editor.apply(.up, context: context) == .changed)
+        #expect(String(editor.buffer) == "/plan\n")
+        #expect(editor.cursorIndex == 0)
+        #expect(editor.historyIndex == nil)
+    }
+
     // MARK: - Word motion and deletion
 
     @Test

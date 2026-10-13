@@ -17,7 +17,8 @@ enum TerminalSubmittedLineAction {
 /// In-memory state carried across the coarse runtime restart requested by
 /// `/setup`. Configuration-derived state is intentionally absent: the relaunched
 /// chat must use the providers, model, agent, tools, and skills just written by
-/// setup rather than restoring their previous values.
+/// setup rather than restoring their previous values. Prompt history travels
+/// here only; it is never part of a persisted conversation snapshot.
 public struct TerminalChatResumeSnapshot: Sendable {
     public let sessionID: String
     public let cacheKey: String?
@@ -26,6 +27,8 @@ public struct TerminalChatResumeSnapshot: Sendable {
     public let activePlan: TerminalSessionPlan?
     public let checkpointTree: SessionCheckpointTree?
     public let savedSessionName: String?
+    /// Prompt submissions for this process, separate from saved conversation data.
+    public let commandHistory: [String]
 
     public init(
         sessionID: String,
@@ -34,7 +37,8 @@ public struct TerminalChatResumeSnapshot: Sendable {
         transcriptHistory: [AgentRuntimeMessage],
         activePlan: TerminalSessionPlan?,
         checkpointTree: SessionCheckpointTree?,
-        savedSessionName: String?
+        savedSessionName: String?,
+        commandHistory: [String] = []
     ) {
         self.sessionID = sessionID
         self.cacheKey = cacheKey
@@ -43,6 +47,7 @@ public struct TerminalChatResumeSnapshot: Sendable {
         self.activePlan = activePlan
         self.checkpointTree = checkpointTree
         self.savedSessionName = savedSessionName
+        self.commandHistory = commandHistory
     }
 }
 

@@ -84,13 +84,6 @@ public final class TerminalInteractiveLineReader: Sendable {
     static let bracketedPasteByteTimeout: Int32 = 2000
     static let escapeSequenceMaximumLength = 24
     static let maximumPanelCommandSuggestionLines = 6
-    /// Upper bound on retained history entries.
-    ///
-    /// The history lives for the whole process and is copied into the editor
-    /// context on every keystroke, so it must not grow without limit in a long
-    /// session. Two hundred entries cover realistic recall while keeping the
-    /// copy cheap.
-    static let maximumHistoryEntryCount = 200
 
     /// Ownership of the terminal by the input panel.
     ///
