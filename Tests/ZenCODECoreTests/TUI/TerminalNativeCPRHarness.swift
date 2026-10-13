@@ -13,7 +13,7 @@ import Testing
         var name = [CChar](repeating: 0, count: 1024)
         guard isatty(tty) == 1, tcgetpgrp(tty) == getpgrp(),
               ttyname_r(tty, &name, 1024) == 0 else { return false }
-        let actualPath = String(cString: name)
+        let actualPath = String(decoding: name.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
         guard actualPath == expectedPath || actualPath == "/dev/tty" else { return false }
         // /dev/tty may be reported as the alias, rather than its underlying PTY.
         // Verify the explicit device also names our foreground process group;
@@ -24,7 +24,7 @@ import Testing
         defer { close(namedTTY) }
         guard isatty(namedTTY) == 1, tcgetpgrp(namedTTY) == getpgrp(),
               ttyname_r(namedTTY, &name, 1024) == 0 else { return false }
-        return String(cString: name) == expectedPath
+        return String(decoding: name.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self) == expectedPath
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["ZENCODE_CPR_HARNESS_DIR"] != nil))
@@ -104,7 +104,7 @@ import Testing
                 }
                 TerminalOutputSynchronization.writeOverlay(text, to: output)
             }
-        let size = try #require(await TerminalStatusBar.currentTerminalGeometry(fileDescriptor: tty))
+        let size = try #require(TerminalStatusBar.currentTerminalGeometry(fileDescriptor: tty))
         await bar.configureForTesting(row: size.rows, columns: size.columns, modelID: "CPR-HARNESS")
         let screen = await bar.primaryScreen
         screen.activate(fileDescriptor: tty)
@@ -152,7 +152,7 @@ import Testing
                 switch command["op"] as? String {
                 case "append": screen.append(command["text"] as? String ?? "")
                 case "resize":
-                    let geometry = try #require(await TerminalStatusBar.currentTerminalGeometry(fileDescriptor: tty))
+                    let geometry = try #require(TerminalStatusBar.currentTerminalGeometry(fileDescriptor: tty))
                     await bar.handleTerminalResizeForTesting(rows: geometry.rows, columns: geometry.columns)
                     paintMenu()
                 case "menu":

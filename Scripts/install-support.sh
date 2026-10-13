@@ -2,7 +2,7 @@
 
 # Shared installation helpers for the macOS and Linux/WSL installers.
 
-# Returns success when a `swift --version` line identifies Swift 6.3 or newer.
+# Returns success when a `swift --version` line identifies Swift 6.4 or newer.
 # The comparison is numeric rather than lexicographic, so future major and
 # two-digit minor versions remain valid on the Bash 3.2 shipped by macOS.
 zencode_swift_version_is_supported() {
@@ -24,7 +24,7 @@ zencode_swift_version_is_supported() {
 
     major="${parsed%% *}"
     minor="${parsed#* }"
-    [ "$major" -gt 6 ] || { [ "$major" -eq 6 ] && [ "$minor" -ge 3 ]; }
+    [ "$major" -gt 6 ] || { [ "$major" -eq 6 ] && [ "$minor" -ge 4 ]; }
 }
 
 zencode_require_supported_swift() {
@@ -35,7 +35,7 @@ zencode_require_supported_swift() {
     fi
     printf '%s\n' "$version_output"
     if ! zencode_swift_version_is_supported "$version_output"; then
-        echo "Error: ZenCODE requires Swift 6.3 or newer." >&2
+        echo "Error: ZenCODE requires Swift 6.4 or newer." >&2
         return 1
     fi
 }

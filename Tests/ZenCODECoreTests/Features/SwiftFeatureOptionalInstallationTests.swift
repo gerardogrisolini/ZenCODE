@@ -15,7 +15,7 @@ struct SwiftFeatureOptionalInstallationTests {
     @Test
     func rewritingReplacesOnlyTheMarkedDependencyPreservingLayout() throws {
         let contents = """
-        // swift-tools-version: 6.3
+        // swift-tools-version: 6.4
         import PackageDescription
 
         let package = Package(
@@ -47,7 +47,7 @@ struct SwiftFeatureOptionalInstallationTests {
     @Test
     func rewritingFailsWithAnActionableErrorWhenTheMarkerIsMissing() throws {
         let contents = """
-        // swift-tools-version: 6.3
+        // swift-tools-version: 6.4
         let package = Package(
             dependencies: [
                 .package(path: "../../..")
@@ -67,7 +67,7 @@ struct SwiftFeatureOptionalInstallationTests {
     @Test
     func rewritingFailsWhenTheMarkedLineIsNotAPackagePathDependency() throws {
         let contents = """
-        // swift-tools-version: 6.3
+        // swift-tools-version: 6.4
         let package = Package(
             dependencies: [
                 // zencode:package-path
@@ -188,7 +188,7 @@ struct SwiftFeatureOptionalInstallationTests {
         // copy is touched.
         let brokenSourceURL = rootURL.appendingPathComponent("Broken", isDirectory: true)
         try FileManager.default.createDirectory(at: brokenSourceURL, withIntermediateDirectories: true)
-        try "// swift-tools-version: 6.3\n".write(
+        try "// swift-tools-version: 6.4\n".write(
             to: brokenSourceURL.appendingPathComponent("Package.swift"),
             atomically: true,
             encoding: .utf8
@@ -557,7 +557,7 @@ struct SwiftFeatureOptionalInstallationTests {
             try? FileManager.default.removeItem(at: rootURL)
         }
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        try "// swift-tools-version: 6.3\n".write(
+        try "// swift-tools-version: 6.4\n".write(
             to: rootURL.appendingPathComponent("Package.swift"),
             atomically: true,
             encoding: .utf8
@@ -591,7 +591,7 @@ struct SwiftFeatureOptionalInstallationTests {
             withIntermediateDirectories: true
         )
         try """
-        // swift-tools-version: 6.3
+        // swift-tools-version: 6.4
 
         import PackageDescription
 
@@ -623,7 +623,7 @@ struct SwiftFeatureOptionalInstallationTests {
     private static func writeZenPackageRoot(at directoryURL: URL) throws {
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         try """
-        // swift-tools-version: 6.3
+        // swift-tools-version: 6.4
 
         import PackageDescription
 

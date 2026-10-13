@@ -395,7 +395,7 @@ source "${SCRIPT_DIR}/install-support.sh"
 
 echo "Swift toolchain:"
 if ! zencode_require_supported_swift; then
-    echo "Install or select a Swift 6.3+ toolchain; see https://www.swift.org/install/linux/." >&2
+    echo "Install or select a Swift 6.4+ toolchain; see https://www.swift.org/install/linux/." >&2
     exit 1
 fi
 echo ""

@@ -3,8 +3,45 @@
 //  ZenCODE
 //
 
+import Dispatch
 import Foundation
 import Synchronization
+import Testing
+@testable import ZenCODECore
+
+/// Runs synchronous pipe/PTY fixtures off Swift's cooperative pool while
+/// preserving Swift Testing's task-local context. Keep query arming and byte
+/// production on the same executor rather than spending the CPR budget waiting
+/// to dispatch the fixture's reader after the query was already armed.
+struct TerminalBlockingTestScope: TestTrait, SuiteTrait, TestScoping {
+    var isRecursive: Bool { true }
+
+    func provideScope(
+        for test: Test,
+        testCase: Test.Case?,
+        performing function: @Sendable () async throws -> Void
+    ) async throws {
+        try await withTaskExecutorPreference(TerminalTestExecutor.shared) {
+            try await function()
+        }
+    }
+}
+
+private final class TerminalTestExecutor: TaskExecutor {
+    static let shared = TerminalTestExecutor()
+    private let queue = DispatchQueue(
+        label: "zencode.tests.terminal-blocking",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
+    func enqueue(_ job: consuming ExecutorJob) {
+        let unownedJob = UnownedJob(job)
+        queue.async { [self] in
+            unownedJob.runSynchronously(on: asUnownedTaskExecutor())
+        }
+    }
+}
 
 /// One-shot signal used to express happens-before between a thread running
 /// outside the cooperative pool and an awaiting test.
@@ -82,6 +119,17 @@ final class TerminalTestFlag: Sendable {
     func set(_ newValue: Bool) {
         state.withLock { $0 = newValue }
     }
+}
+
+/// Waits for the real CPR callback to finish, including release of deferred keys.
+/// The deadline is a test watchdog, not a change to the report's own timeout.
+/// Cancellation and a missing callback fail the test rather than hanging the suite.
+func terminalWaitForCursorReport(_ reports: TerminalCursorReport) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while reports.isHoldingInput, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    try #require(!reports.isHoldingInput, "Cursor report delivery did not release input")
 }
 
 /// Suspends until `condition` holds, without assuming how long that takes.

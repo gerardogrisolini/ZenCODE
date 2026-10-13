@@ -97,7 +97,7 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
-    func featureScaffoldCreatesSwift63PackageBuildsAndEnables() async throws {
+    func featureScaffoldCreatesSwift64PackageBuildsAndEnables() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-feature-scaffold-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -133,7 +133,7 @@ extension SwiftFeatureRuntimeTests {
             contentsOf: URL(fileURLWithPath: scaffold.sourcePath),
             encoding: .utf8
         )
-        #expect(packageContents.components(separatedBy: .newlines).first == "// swift-tools-version: 6.3")
+        #expect(packageContents.components(separatedBy: .newlines).first == "// swift-tools-version: 6.4")
         #expect(packageContents.contains(#".product(name: "FeatureKit", package: "ZenCODE")"#))
         #expect(packageContents.contains(#".product(name: "ToolCore", package: "ZenCODE")"#))
         #expect(sourceContents.contains("GeneratedEchoTool: FeatureTool"))
@@ -320,7 +320,7 @@ extension SwiftFeatureRuntimeTests {
             )
         )
 
-        #expect(packageContents.components(separatedBy: .newlines).first == "// swift-tools-version: 6.3")
+        #expect(packageContents.components(separatedBy: .newlines).first == "// swift-tools-version: 6.4")
         #expect(!packageContents.contains(#".product(name: "ZenCODECore", package: "ZenCODE")"#))
         #expect(packageContents.contains(#".product(name: "FeatureMCPBridgeKit", package: "ZenCODE")"#))
         #expect(sourceContents.contains("RemoteMCPToolExecutor"))
@@ -572,7 +572,7 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
-    func featureValidateRejectsNonSwift63Package() async throws {
+    func featureValidateRejectsNonSwift64Package() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-feature-swift-version-\(UUID().uuidString)", isDirectory: true)
         defer {
@@ -604,7 +604,7 @@ extension SwiftFeatureRuntimeTests {
             encoding: .utf8
         )
         packageContents = packageContents.replacingOccurrences(
-            of: "// swift-tools-version: 6.3",
+            of: "// swift-tools-version: 6.4",
             with: "// swift-tools-version: 6.2"
         )
         try packageContents.write(
@@ -627,7 +627,7 @@ extension SwiftFeatureRuntimeTests {
         )
 
         #expect(!validation.ok)
-        #expect(validation.errors.contains { $0.contains("Swift tools 6.3") })
+        #expect(validation.errors.contains { $0.contains("Swift tools 6.4") })
     }
 
     @Test

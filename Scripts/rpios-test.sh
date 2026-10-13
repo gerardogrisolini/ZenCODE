@@ -3,6 +3,10 @@
 # container machine (Debian 13 trixie, arm64) before publishing a release.
 #
 # Prerequisites (one-time setup):
+#   The image recipe targets Swift 6.4. Existing images/machines are not upgraded
+#   by editing the recipe; check `container machine run -n zencode-rpios -- swift --version`
+#   and explicitly rebuild/recreate or upgrade an older machine before validation.
+#
 #   container build -t local/rpios-trixie-swift:latest \
 #       -f Scripts/rpios-trixie/Containerfile Scripts/rpios-trixie/
 #   container machine create local/rpios-trixie-swift:latest \

@@ -1,8 +1,8 @@
-// swift-tools-version: 6.3
+// swift-tools-version: 6.4
 
 import PackageDescription
 
-/// Swift 6.3 `MemberImportVisibility` requires every file to import the modules
+/// Swift 6.4 `MemberImportVisibility` requires every file to import the modules
 /// that define the members it uses, instead of relying on transitively visible
 /// members. Enable it uniformly for every local Swift target and combine it with
 /// any target-specific settings rather than replacing them.

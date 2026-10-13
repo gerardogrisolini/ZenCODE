@@ -129,7 +129,9 @@ jobs:
           SWIFT
 
   macos:
-    name: macOS 26 (Swift 6.3)
+    name: macOS 26 (Swift 6.4 required)
+    # Swift 6.4 runner selection is pending; macos-26 currently documents Xcode 26.x.
+    # See Docs/release.md before treating this lane as a supported release gate.
     runs-on: macos-26
     timeout-minutes: 60
     steps:
@@ -224,7 +226,7 @@ jobs:
           overwrite: true
 
   linux:
-    name: Ubuntu 24.04 ${{ matrix.arch }} (Swift 6.3)
+    name: Ubuntu 24.04 ${{ matrix.arch }} (Swift 6.4)
     strategy:
       fail-fast: false
       matrix:
@@ -237,7 +239,7 @@ jobs:
             platform: linux-arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
-    container: swift:6.3-noble
+    container: swift:6.4-noble
     steps:
       - name: Checkout
         uses: actions/checkout@v6

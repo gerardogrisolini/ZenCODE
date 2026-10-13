@@ -2124,48 +2124,44 @@ struct PlanApprovalResponseLanguageTests {
             at: workingDirectory,
             withIntermediateDirectories: true
         )
-        AppStorageDirectory.configureSupportDirectoryURL(supportDirectory)
-        AgentSettingsManifestStore.resetDefaultCacheForTesting()
-        defer {
-            AppStorageDirectory.configureSupportDirectoryURL(nil)
-            AgentSettingsManifestStore.resetDefaultCacheForTesting()
-            try? FileManager.default.removeItem(at: root)
-        }
-        try AgentSettingsManifestStore.save(
-            AgentSettingsManifest(models: [], responseLanguage: "it")
-        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await AppStorageDirectory.withSupportDirectoryURL(supportDirectory) { @Sendable @TerminalChatActor in
+            try AgentSettingsManifestStore.save(
+                AgentSettingsManifest(models: [], responseLanguage: "it")
+            )
 
-        let terminal = TerminalChat(
-            configuration: try AgentConfiguration(
-                hostedModelID: "remote-community/test",
-                availableAgents: AgentProfileStore.defaultProfiles(),
-                workingDirectory: workingDirectory
-            ),
-            stdinIsTerminal: false
-        )
-        terminal.activePlan = TerminalSessionPlan(
-            originalGoal: "Correggere la lingua del piano",
-            consolidatedText: "Implementa e valida la correzione."
-        )
+            let terminal = TerminalChat(
+                configuration: try AgentConfiguration(
+                    hostedModelID: "remote-community/test",
+                    availableAgents: AgentProfileStore.defaultProfiles(),
+                    workingDirectory: workingDirectory
+                ),
+                stdinIsTerminal: false
+            )
+            terminal.activePlan = TerminalSessionPlan(
+                originalGoal: "Correggere la lingua del piano",
+                consolidatedText: "Implementa e valida la correzione."
+            )
 
-        #expect(!terminal.didLockResponseLanguage)
-        guard case .continueChat = await terminal.handlePlanCommand("/plan approve") else {
-            Issue.record("Approval should first request a Goal")
-            return
-        }
-        guard case .runHiddenPrompt = await terminal.submittedLineAction(
-            "Correggere la lingua del piano in modo affidabile"
-        ) else {
-            Issue.record("Approval should start the internal implementation prompt")
-            return
-        }
+            #expect(!terminal.didLockResponseLanguage)
+            guard case .continueChat = await terminal.handlePlanCommand("/plan approve") else {
+                Issue.record("Approval should first request a Goal")
+                return
+            }
+            guard case .runHiddenPrompt = await terminal.submittedLineAction(
+                "Correggere la lingua del piano in modo affidabile"
+            ) else {
+                Issue.record("Approval should start the internal implementation prompt")
+                return
+            }
 
-        #expect(terminal.didLockResponseLanguage)
-        #expect(terminal.activeResponseLanguageName == "Italian")
-        let systemPrompt = try #require(
-            terminal.currentSessionConfiguration(allowedToolNames: []).systemPrompt
-        )
-        #expect(systemPrompt.contains("locked to Italian"))
-        #expect(systemPrompt.contains("Use Italian for all natural-language replies"))
+            #expect(terminal.didLockResponseLanguage)
+            #expect(terminal.activeResponseLanguageName == "Italian")
+            let systemPrompt = try #require(
+                terminal.currentSessionConfiguration(allowedToolNames: []).systemPrompt
+            )
+            #expect(systemPrompt.contains("locked to Italian"))
+            #expect(systemPrompt.contains("Use Italian for all natural-language replies"))
+        }
     }
 }

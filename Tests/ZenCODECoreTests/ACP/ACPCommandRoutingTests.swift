@@ -308,7 +308,27 @@ actor ScriptedACPCommandBackend: AgentRuntimeBackend {
     }
 }
 
-@Suite(.serialized)
+/// Scope the complete test (not just fixture construction): checkpoint writes
+/// resolve the support directory again after every suspension.
+private struct ACPCommandStorageScope: TestTrait, SuiteTrait, TestScoping {
+    var isRecursive: Bool { true }
+
+    func provideScope(
+        for test: Test,
+        testCase: Test.Case?,
+        performing function: @Sendable () async throws -> Void
+    ) async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("acp-command-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await AppStorageDirectory.withSupportDirectoryURL(root) {
+            try await function()
+        }
+    }
+}
+
+@Suite(.serialized, ACPCommandStorageScope())
 struct ACPCommandRoutingTests {
     @Test
     func acpResolvesAgentMentionBeforePlanCommandButKeepsOriginalCommandVisible() async throws {
@@ -817,7 +837,7 @@ struct ACPCommandRoutingTests {
         wire: ACPCommandWire,
         sessionID: String
     ) {
-        let workingDirectory = FileManager.default.temporaryDirectory
+        let workingDirectory = AppStorageDirectory.appSupportDirectoryURL()
             .appendingPathComponent(sessionID, isDirectory: true)
         let backend = ScriptedACPCommandBackend()
         let wire = ACPCommandWire()

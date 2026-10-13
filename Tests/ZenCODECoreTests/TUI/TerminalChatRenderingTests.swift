@@ -1969,9 +1969,9 @@ struct TerminalChatRenderingTests {
             reset: "\u{1B}[0m"
         )
 
-        // Bold is preserved and the bright heading accent is remapped to the
+        // Bold is removed while the bright heading accent is remapped to the
         // muted steel-teal (109) used inside the dimmed thinking stream.
-        #expect(dimmed == "\u{1B}[1;38;5;109m")
+        #expect(dimmed == "\u{1B}[38;5;109m")
     }
 
     @Test

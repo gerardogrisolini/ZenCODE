@@ -129,7 +129,7 @@ struct SwiftFeaturePromotionTests {
         let sourceTarget = source.appendingPathComponent("Sources/promotion-fixture", isDirectory: true)
         try fileManager.createDirectory(at: sourceTarget, withIntermediateDirectories: true)
         try """
-        // swift-tools-version: 6.3
+        // swift-tools-version: 6.4
 
         import PackageDescription
 
@@ -234,7 +234,7 @@ struct SwiftFeaturePromotionTests {
             )
         }
         try """
-        // swift-tools-version: 6.3
+        // swift-tools-version: 6.4
         import PackageDescription
         let package = Package(
             name: "ZenCODE",

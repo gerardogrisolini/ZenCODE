@@ -524,7 +524,9 @@ enum TerminalChatTextFormatting {
                 index += 1
                 continue
             }
-            if [1, 2, 3, 4, 9].contains(code) {
+            // Strong markers still delimit Markdown spans, but thinking never
+            // enables bold. Keep the other attributes and muted accents intact.
+            if [2, 3, 4, 9].contains(code) {
                 preservedCodes.append(code)
             }
             index += 1

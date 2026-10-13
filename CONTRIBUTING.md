@@ -6,10 +6,12 @@ preserve.
 
 ## Requirements
 
-- Swift 6.3 toolchain.
-- **macOS**: macOS 26 (Tahoe) on Apple Silicon, with the toolchain from Xcode or
-  the Apple command line tools.
-- **Linux / WSL**: a Swift 6.3 toolchain on `PATH`, or install one with
+- Swift 6.4 or newer toolchain.
+- **macOS**: macOS 26 (Tahoe) or newer on Apple Silicon, with a compatible Xcode
+  or Apple command line tools installation that provides Swift 6.4 or newer.
+  The compiler may require a newer host OS than the package deployment minimum;
+  confirm the selected toolchain with `swift --version`.
+- **Linux / WSL**: a Swift 6.4 or newer toolchain on `PATH`, or install one with
   [Swiftly](https://www.swift.org/install/linux/).
 
 ## Getting started

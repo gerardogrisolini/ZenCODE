@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/gerardogrisolini/ZenCODE/actions/workflows/ci.yml/badge.svg)](https://github.com/gerardogrisolini/ZenCODE/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/gerardogrisolini/ZenCODE?sort=semver)](https://github.com/gerardogrisolini/ZenCODE/releases)
-[![Swift 6.3](https://img.shields.io/badge/Swift-6.3-F05138?logo=swift&logoColor=white)](https://www.swift.org)
+[![Swift 6.4](https://img.shields.io/badge/Swift-6.4-F05138?logo=swift&logoColor=white)](https://www.swift.org)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20WSL-blue)](#install)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -73,8 +73,10 @@ curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scri
 The installer labels a moving ref clearly as a development build. See
 [release and reproducibility](Docs/release.md) for the full release procedure.
 
-Requires macOS 26 (Tahoe), Apple Silicon, Git, and the Swift toolchain from
-Xcode or the Apple command line tools.
+Requires macOS 26 (Tahoe) or newer, Apple Silicon, Git, and a Swift 6.4 or
+newer toolchain from a compatible Xcode or Apple command line tools installation.
+The package's macOS deployment minimum is separate from the toolchain's host OS
+requirements; confirm the selected compiler with `swift --version`.
 
 ### Linux and Windows via WSL
 
@@ -105,9 +107,11 @@ installer inside the Ubuntu shell:
 wsl --install -d Ubuntu
 ```
 
-The installer reuses a Swift toolchain already available on `PATH`. If Swift is
-missing, it automatically installs the latest stable toolchain with Swiftly,
-following the [official Linux installation instructions](https://www.swift.org/install/linux/).
+The installer requires Swift 6.4 or newer and reuses a supported toolchain already
+available on `PATH`. If Swift is missing, it automatically installs the latest
+stable toolchain with Swiftly, following the
+[official Linux installation instructions](https://www.swift.org/install/linux/).
+An existing older toolchain is rejected rather than silently replaced.
 
 `/setup` supports both subscription logins on Linux: ChatGPT uses the
 device-code page and Claude asks for the authorization code shown by its hosted

@@ -29,12 +29,11 @@ final class PrimaryScreenCapture: Sendable {
     func answerReport() async throws {
         let response = terminal.withLock { $0.cursorReport }
         for byte in response.utf8 { _ = reports.consume(byte) }
-        for _ in 0..<200 where reports.isHoldingInput { try await Task.sleep(for: .milliseconds(2)) }
-        #expect(!reports.isHoldingInput)
+        try await terminalWaitForCursorReport(reports)
     }
 }
 
-@Suite struct TerminalPrimaryScreenTests {
+@Suite(TerminalBlockingTestScope()) struct TerminalPrimaryScreenTests {
     private func footer(rows: Int, columns: Int) -> String {
         ["PROMPT| draft 界🙂", "draft second line", "DOCK| 2 unread", "STATUS| ready"].enumerated().map {
             "\u{1B}[\(rows - 3 + $0.offset);1H\u{1B}[2K" + $0.element

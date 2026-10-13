@@ -2,7 +2,7 @@
 
 ## Project
 
-- ZenCODE is a Swift 6.3 package whose main executable is `zen`; it runs on macOS, Linux, and WSL with remote model providers.
+- ZenCODE is a Swift 6.4 package whose main executable is `zen`; it runs on macOS, Linux, and WSL with remote model providers.
 - `Package.swift` is authoritative for the root products, target dependencies, platforms, and build settings. The packages under `Sources/Features` have their own manifests and are outside the root graph.
 - `Docs/architecture.md` is the compatibility and dependency-direction contract. Preserve public modules, executable names, wire formats, persisted formats, feature identities, and task-graph ownership unless an explicit migration changes them.
 - Update `CHANGELOG.md` whenever a change is user-visible or otherwise warrants a release note.
@@ -34,7 +34,7 @@
 
 ## Linux Validation
 
-- A prebuilt container machine provides the local Linux toolchain: `zencode-rpios` (Raspberry Pi OS / Debian 13 trixie, arm64, Swift 6.3). Its image is defined by `Scripts/rpios-trixie/Containerfile` and driven by `Scripts/rpios-test.sh`.
+- The local Linux validation machine is `zencode-rpios` (Raspberry Pi OS / Debian 13 trixie, arm64), driven by `Scripts/rpios-test.sh`. `Scripts/rpios-trixie/Containerfile` targets Swift 6.4; changing that recipe does not update an existing image or machine. Before validation, check its actual toolchain with `container machine run -n zencode-rpios -- swift --version`; an older machine must be rebuilt/recreated or upgraded explicitly before it can build this checkout.
 - Reproduce Linux-only CI failures here instead of inferring them from workflow status. macOS alone cannot confirm a Linux gate failure, and a green macOS run is not evidence that the Linux gate passes.
 - Entry point: `Scripts/rpios-test.sh [build|test|shell|all]`. For targeted runs, invoke the machine directly: `container machine run -n zencode-rpios -w "$PWD" -- swift test --build-path /tmp/zencode-build [--filter <suite-or-test>]`.
 - Always pass `--build-path /tmp/zencode-build`. The repository `.build` directory is shared with macOS and holds incompatible artifacts.

@@ -11,7 +11,7 @@ import ToolCore
 
 public actor SwiftFeatureRuntime {
     public static let featurePackageToolsAllowedName = "feature.tools"
-    public static let generatedSwiftToolsVersion = "6.3"
+    public static let generatedSwiftToolsVersion = "6.4"
 
     public static func isFeatureManagementToolName(_ toolName: String) -> Bool {
         switch toolName {

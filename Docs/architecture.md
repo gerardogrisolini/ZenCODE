@@ -10,7 +10,7 @@ or build variant.
 The following surface is stable unless a separately announced compatibility
 migration says otherwise:
 
-- package identity `ZenCODE` and Swift tools version 6.3;
+- package identity `ZenCODE` and Swift tools version 6.4;
 - library products and imports `ZenCODECore`, `FeatureKit`, `ToolCore`,
   `FeatureMCPBridgeKit`, and `LocalToolsSupport`;
 - executable `zen` and its ACP entry point;

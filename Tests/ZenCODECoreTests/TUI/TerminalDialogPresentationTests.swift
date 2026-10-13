@@ -4,7 +4,7 @@ import Synchronization
 import Testing
 @testable import ZenCODECore
 
-@Suite struct TerminalDialogPresentationTests {
+@Suite(TerminalBlockingTestScope()) struct TerminalDialogPresentationTests {
     private let footerLines = ["PROMPT| draft 界🙂", "draft second line", "DOCK| 2 unread", "STATUS| ready"]
 
     private func install(_ screen: TerminalPrimaryScreen, rows: Int = 24, columns: Int = 100) {

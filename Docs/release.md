@@ -48,13 +48,40 @@ but it is not a reproducible release input.
    macOS arm64, Linux x86_64, and Linux arm64 archives plus their SHA-256
    checksums.
 
-The regular **CI** workflow runs on macOS 26 arm64 and Ubuntu 24.04 on both
-x86_64 and arm64 with Swift 6.3.0, uses the resolved lockfile without updating
-it, runs the full non-live test suite, builds `ZenCODECore` and the release `zen`
-product, checks shell syntax, and rejects whitespace errors. Provider-backed
-checks remain opt-in and are not run by CI. Every successful platform job also
-uploads its release binary as a downloadable workflow artifact retained for 30
-days.
+The **CI** and **Release** workflows require Swift 6.4 or newer. Linux jobs use
+Ubuntu 24.04 on x86_64 and arm64 with `swift:6.4-noble`; that published image tag
+has both architectures. The macOS runner migration is still pending: the
+configured `macos-26` image documents Xcode 26.x, not the Swift 6.4 toolchain.
+GitHub publishes the arm64 `xcode-27` label as a preview, but adopting that runner
+requires an explicit decision. Until a compatible runner is selected and its
+gates pass, macOS CI and release builds must not be considered validated.
+
+The platform gates use the resolved lockfile without updating it, run the full
+non-live test suite, and build `ZenCODECore` and the release `zen` product. CI also
+checks shell syntax and rejects whitespace errors. Provider-backed checks remain
+opt-in and are not run by CI. Every successful CI platform job uploads its release
+binary as a downloadable workflow artifact retained for 30 days.
+
+### Swift 6.4 infrastructure evidence
+
+Availability checked on 2026-10-13, without pulling images, installing toolchains,
+or running a hosted workflow:
+
+- [Docker Hub `swift:6.4-noble` metadata](https://hub.docker.com/v2/repositories/library/swift/tags/6.4-noble)
+  lists active Linux amd64 and arm64 images. The minor-version tag can advance to
+  newer 6.4 patches; availability is not evidence that ZenCODE's Linux gate passes.
+- [The `macos-26` software inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md)
+  lists Xcode 26.6 as its default. The separate
+  [`xcode-27` inventory](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md)
+  lists Xcode 27.0 (build `27A266a`) as its default on macOS 27.0.1.
+  [GitHub's announcement](https://github.com/actions/runner-images/issues/14404)
+  documents the `xcode-27` label and its preview status, including possible capacity
+  and stability limitations. No `macos-27` label or custom Xcode path is assumed.
+- [Swift release metadata](https://www.swift.org/api/v1/install/releases.json)
+  lists Swift 6.4.0 and 6.4.1 for Debian 12/aarch64. The local Raspberry Pi image
+  recipe and an already-created `zencode-rpios` machine are separate: check the
+  machine's actual `swift --version` before using it to validate this checkout.
+  A recipe change alone never upgrades that machine.
 
 ## Download a prebuilt binary
 

@@ -8,6 +8,53 @@ import Testing
 
 @Suite
 struct InstallerAtomicReplacementTests {
+    @Test(arguments: [
+        ("Swift version 6.3", false),
+        ("Swift version 6.3.3 (swift-6.3.3-RELEASE)", false),
+        ("Apple Swift version 6.3.3 (swiftlang-6.3.3)", false),
+        ("Swift version 6.4", true),
+        ("Apple Swift version 6.4 (swiftlang-6.4)", true),
+        ("Swift version 6.4.1 (swift-6.4.1-RELEASE)\nTarget: x86_64-unknown-linux-gnu", true),
+        ("Swift version 6.10", true),
+        ("Swift version 7.0", true),
+        ("", false),
+        ("not a Swift version", false),
+    ])
+    func swiftVersionSupportRequiresSwift64OrNewer(
+        versionOutput: String,
+        expectedSupported: Bool
+    ) throws {
+        let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
+        let helperURL = packageRoot.appendingPathComponent("Scripts/install-support.sh")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [
+            "-c",
+            """
+            set -euo pipefail
+            source "$1"
+            zencode_swift_version_is_supported "$2"
+            """,
+            "zencode-installer-swift-version-test",
+            helperURL.path,
+            versionOutput,
+        ]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        let standardError = Pipe()
+        process.standardError = standardError
+
+        try process.run()
+        process.waitUntilExit()
+
+        let errorData = standardError.fileHandleForReading.readDataToEndOfFile()
+        let errorText = String(decoding: errorData, as: UTF8.self)
+        #expect(
+            process.terminationStatus == (expectedSupported ? 0 : 1),
+            "Unexpected installer Swift version support for \(versionOutput): \(errorText)"
+        )
+    }
+
     @Test
     func executableReplacementPreservesTheInodeHeldByARunningProcess() throws {
         let fileManager = FileManager.default

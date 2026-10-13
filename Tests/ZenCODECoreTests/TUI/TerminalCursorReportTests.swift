@@ -4,11 +4,15 @@ import Synchronization
 import Testing
 @testable import ZenCODECore
 
-@Suite
+@Suite(TerminalBlockingTestScope())
 struct TerminalCursorReportTests {
     private func drain(_ input: TerminalRawInput, count: Int) -> String {
         var bytes: [UInt8] = []
-        for _ in 0..<count {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        // A poll may time out while the CPR callback still owns the input.
+        // Count delivered bytes, not poll attempts, so that handoff cannot
+        // silently consume one of the expected key slots.
+        while bytes.count < count, ContinuousClock.now < deadline {
             if let byte = input.readByte(timeoutMilliseconds: 100) { bytes.append(byte) }
         }
         return String(decoding: bytes, as: UTF8.self)
@@ -43,7 +47,7 @@ struct TerminalCursorReportTests {
         })
         pipe.fileHandleForWriting.write(Data("x\u{1B}[19;".utf8))
         _ = input.readByteResult(timeoutMilliseconds: 5)
-        try await Task.sleep(for: .milliseconds(40))
+        try await terminalWaitForCursorReport(reports)
         #expect(failure.withLock { $0 } == .timeout)
         #expect(!reports.request { _ in Issue.record("anonymous retry must not be armed") })
         pipe.fileHandleForWriting.write(Data("1Ry\u{1B}[1;2R".utf8))
@@ -73,7 +77,7 @@ struct TerminalCursorReportTests {
         #expect(reports.request(timeout: 0.02) { result in
             if case .failure(.timeout) = result { timedOut.withLock { $0 = true } }
         })
-        for _ in 0..<100 where reports.isHoldingInput { try await Task.sleep(for: .milliseconds(2)) }
+        try await terminalWaitForCursorReport(reports)
         #expect(timedOut.withLock { $0 })
         pipe.fileHandleForWriting.write(Data([27]))
         #expect(reader.readKeyResult(pollTimeoutMilliseconds: 100) == .key(.cancel))
@@ -117,7 +121,7 @@ struct TerminalCursorReportTests {
             })
             if rejected { for byte in "\u{1B}[0;1R".utf8 { _ = reports.consume(byte) } }
             else { reports.cancel() }
-            for _ in 0..<30 where reports.isHoldingInput { try await Task.sleep(for: .milliseconds(2)) }
+            try await terminalWaitForCursorReport(reports)
             #expect(result.withLock { $0 } == (rejected ? .rejected : .cancelled))
             #expect(reports.isFenced)
             #expect(!reports.request { _ in })

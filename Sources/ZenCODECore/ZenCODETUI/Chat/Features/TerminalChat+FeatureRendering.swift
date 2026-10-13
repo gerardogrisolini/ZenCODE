@@ -85,7 +85,7 @@ extension TerminalChat {
             - Tool: \(toolName)
 
             Work on the existing Swift package using the available file/text tools.
-            Keep Swift tools 6.3 and preserve the feature id. Implement the requested behavior, tool description, input schema, output contract, and presentation metadata before building.
+            Keep Swift tools 6.4 and preserve the feature id. Implement the requested behavior, tool description, input schema, output contract, and presentation metadata before building.
             Run `feature.validate` for `\(id)` and fix every error. Then run `feature.build` and fix any build failure. Do not enable or expose placeholder, incomplete, invalid, or unbuilt code.
             `feature.build` reloads the feature runtime after success; do not call `feature.reload` unless files changed outside the build flow or runtime discovery must be refreshed.
             \(activationInstruction)

@@ -43,7 +43,8 @@ RUN apt-get update && \
         libpython3-dev curl gnupg && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# --- swiftly + Swift 6.3.3 toolchain ---
+# --- swiftly + Swift 6.4 toolchain (latest available 6.4 patch) ---
+# This is the target for newly built images, not the state of an existing machine.
 # swiftly is used to install and manage the toolchain, but we symlink the
 # REAL toolchain binaries to /usr/local/bin so subprocesses (and tests)
 # resolve them directly without going through the swiftly proxy, which
@@ -57,7 +58,8 @@ RUN mkdir -p /opt/swiftly/bin && \
     cd /tmp && \
     curl -fLO "https://download.swift.org/swiftly/linux/swiftly-${SWIFTLY_VERSION}-aarch64.tar.gz" && \
     tar -zxf "swiftly-${SWIFTLY_VERSION}-aarch64.tar.gz" && \
-    ./swiftly init --assume-yes --platform "${SWIFT_PLATFORM}" && \
+    ./swiftly init --assume-yes --skip-install --platform "${SWIFT_PLATFORM}" && \
+    /opt/swiftly/bin/swiftly install 6.4 --use --assume-yes && \
     rm -f "swiftly-${SWIFTLY_VERSION}-aarch64.tar.gz" swiftly && \
     chmod -R a+rX /opt/swiftly
 

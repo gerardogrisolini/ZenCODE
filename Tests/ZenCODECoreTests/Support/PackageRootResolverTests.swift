@@ -17,7 +17,7 @@ struct PackageRootResolverTests {
             at: sourceURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try "// swift-tools-version: 6.3".write(
+        try "// swift-tools-version: 6.4".write(
             to: rootURL.appendingPathComponent("Package.swift"),
             atomically: true,
             encoding: .utf8

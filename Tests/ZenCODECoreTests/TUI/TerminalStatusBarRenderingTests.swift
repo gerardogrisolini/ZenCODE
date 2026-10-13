@@ -35,7 +35,7 @@ private final class CapturedOutput: Sendable {
     }
 }
 
-@Suite(.serialized)
+@Suite(.serialized, TerminalBlockingTestScope())
 struct TerminalStatusBarRenderingTests {
 
     // MARK: - Border appearance
@@ -146,7 +146,7 @@ struct TerminalStatusBarRenderingTests {
         #expect(await bar.state.columns == 40)
         #expect(captured.combined == "\u{1B}[6n")
         for byte in "\u{1B}[14;1R".utf8 { _ = reports.consume(byte) }
-        for _ in 0..<200 where reports.isHoldingInput { try await Task.sleep(for: .milliseconds(2)) }
+        try await terminalWaitForCursorReport(reports)
         #expect(captured.combined.contains("\u{1B}[0J"))
         #expect(!captured.combined.contains("\u{1B}[2J"))
         #expect(captured.combined.contains("Menu"))

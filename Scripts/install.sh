@@ -318,7 +318,7 @@ echo ""
 
 echo "Swift toolchain:"
 if ! zencode_require_supported_swift; then
-    echo "Install or select a Swift 6.3+ toolchain, then retry." >&2
+    echo "Install or select a Swift 6.4+ toolchain, then retry." >&2
     exit 1
 fi
 echo ""

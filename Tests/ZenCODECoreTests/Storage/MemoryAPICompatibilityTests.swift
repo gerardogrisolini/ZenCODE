@@ -13,7 +13,11 @@ import ToolCore
 @testable import ZenCODECore
 import Testing
 
-@Suite
+// These compatibility tests deliberately call blocking legacy bridges, including
+// from async contexts. Running all of them together parks the cooperative pool
+// and starves unrelated callback/deadline tests. Concurrent legacy calls are
+// covered separately by LegacyMemoryBridgeContentionTests on a dedicated executor.
+@Suite(.serialized)
 struct MemoryAPICompatibilityTests {
 
     // MARK: - MemoryEntry DTO contract

@@ -86,7 +86,7 @@ extension SwiftFeatureRuntimeTests {
             "scripted.reverse"
         ])
         #expect(reverseOutput == "stressed")
-        #expect(packageFirstLine == "// swift-tools-version: 6.3")
+        #expect(packageFirstLine == "// swift-tools-version: 6.4")
     }
 }
 

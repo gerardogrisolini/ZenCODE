@@ -267,24 +267,31 @@ struct MemoryAutomationFlowTests {
                 MemoryAutomationSettings.environmentAutoRecallKey: "1",
                 MemoryAutomationSettings.environmentRecallTimeoutKey: "100"
             ]) {
-                let started = ContinuousClock.now
-                let block = await MemoryEmbedding.withProvider(
+                try await MemoryEmbedding.withProvider(
                     DelayedMemoryEmbeddingProvider(delay: .seconds(2))
                 ) {
-                    await MemoryTurnCoordinator.shared.memoryBlock(
+                    // This case measures a prepared lexical fallback, not cold
+                    // database opening under concurrent suite load. Retain the
+                    // reader just as in the stale-fallback case below.
+                    let reader = try await MemoryGraphStoreRegistry.shared.store(graphURL: workspace.graphURL())
+                    let initial = try await reader.lexicalFallbackContext(for: "how do I calibrate the frobnicator")
+                    #expect(initial?.contains("quantum flange") == true)
+
+                    let started = ContinuousClock.now
+                    let block = await MemoryTurnCoordinator.shared.memoryBlock(
                         sessionID: "slow-semantic-\(UUID().uuidString)",
                         workspaceRootURL: workspace.workspaceURL,
                         prompt: "how do I calibrate the frobnicator"
                     )
-                }
-                let elapsed = started.duration(to: ContinuousClock.now)
+                    let elapsed = started.duration(to: ContinuousClock.now)
 
-                let resolved = try #require(block)
-                #expect(resolved.contains("<project-memory>"))
-                #expect(resolved.contains("quantum flange"))
-                // The endpoint's two-second response is not awaited. The
-                // configured 100 ms deadline releases the turn with BM25 text.
-                #expect(elapsed < .seconds(1))
+                    let resolved = try #require(block)
+                    #expect(resolved.contains("<project-memory>"))
+                    #expect(resolved.contains("quantum flange"))
+                    // The endpoint's two-second response is not awaited. The
+                    // configured 100 ms deadline releases the turn with BM25 text.
+                    #expect(elapsed < .seconds(1))
+                }
             }
             await MemoryGraphStoreRegistry.shared.reset()
         }

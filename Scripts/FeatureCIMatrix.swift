@@ -23,6 +23,7 @@ enum FeatureCIMatrix {
                     feature: feature.id,
                     product: feature.productName,
                     packagePath: feature.sourceRelativePath,
+                    // Swift 6.4 macOS runner selection is pending; see Docs/release.md.
                     os: "macos-26",
                     platform: "macos",
                     container: ""
@@ -36,7 +37,7 @@ enum FeatureCIMatrix {
                         packagePath: feature.sourceRelativePath,
                         os: "ubuntu-24.04",
                         platform: "linux",
-                        container: "swift:6.3-noble"
+                        container: "swift:6.4-noble"
                     )
                 )
             }

@@ -40,7 +40,7 @@ Package.swift
 Sources/<FeatureTarget>/main.swift
 ```
 
-Generated packages are plain Swift 6.3 packages. They run out of process: the kernel starts the executable, sends JSON on stdin, expects JSON on stdout.
+Generated packages are plain Swift 6.4 packages. They run out of process: the kernel starts the executable, sends JSON on stdin, expects JSON on stdout.
 
 Generated tools use the same contracts as bundled tools: basic scaffolds conform
 to `FeatureTool` and run through `FeatureRunner`, while every tool publishes an

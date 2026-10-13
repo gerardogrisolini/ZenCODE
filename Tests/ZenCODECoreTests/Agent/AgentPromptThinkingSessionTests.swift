@@ -25,7 +25,7 @@ extension AgentConfigurationTests {
         #expect(!instructions.contains("feature.reload"))
         #expect(!instructions.contains("feature.install"))
         #expect(!instructions.contains("feature.delete"))
-        #expect(!instructions.contains("Swift tools 6.3"))
+        #expect(!instructions.contains("Swift tools 6.4"))
         #expect(instructions.contains("local.inspectFile"))
         #expect(instructions.contains("search.locate"))
         #expect(instructions.contains("local.readFile` offset/limit"))

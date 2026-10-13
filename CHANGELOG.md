@@ -28,6 +28,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Sub-agent thinking now uses the main thinking Markdown formatting, including
+  muted accents and structured blocks. Both thinking views omit bold styling;
+  normal responses, the stable thinking title, and in-place layout limits remain
+  unchanged.
+- Raised the Swift tools and installer minimum to 6.4, aligning standalone
+  feature packages, generated feature scaffolds, and contributor documentation.
+  Linux CI and release jobs now target the published `swift:6.4-noble` image on
+  both supported architectures. The Raspberry Pi container recipe explicitly
+  installs the 6.4 toolchain series without upgrading existing machines.
+  The macOS runner migration remains pending;
+  see `Docs/release.md` for the verified runner options and validation limits.
 - `/changes diff` and `/changes --diff` now keep the existing `Summary` above
   the same file metadata and numbered, syntax-highlighted diff renderer used by
   `/artifacts`, replacing the legacy patch renderer. `/changes` still selects
@@ -64,6 +75,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Parallel test runs now isolate ACP checkpoint storage and plan-language settings,
+  prepare the memory fallback before measuring its deadline, and keep blocking
+  terminal fixtures off the cooperative executor. CPR fixtures count delivered
+  bytes and await input release; legacy-memory compatibility tests no longer
+  starve unrelated callbacks. Runtime behavior and production timeouts are unchanged.
 - Newly recorded delegated file artifacts now clear a still-owned live Sub-Agents
   overview before inserting permanent output, so the completed tool row replaces
   its pending presentation. Root artifacts and history rendering are unchanged;
