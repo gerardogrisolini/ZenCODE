@@ -297,8 +297,8 @@ struct TerminalMarkdownCodeRenderingTests {
         #expect(rendered.contains("\(palette.diffHeader)--- a/File.swift"))
         #expect(rendered.contains("\(palette.diffHeader)+++ b/File.swift"))
         #expect(rendered.contains("\(palette.diffHunk)@@ -1,2 +1,2 @@"))
-        #expect(rendered.contains("\(palette.diffRemoval)-let old = 1"))
-        #expect(rendered.contains("\(palette.diffAddition)+let new = 2"))
+        #expect(rendered.contains("\(palette.diffRemoval)-\(TerminalStyle.reset)\(palette.codeForeground)\(palette.diffRemovalBackground)let old = 1"))
+        #expect(rendered.contains("\(palette.diffAddition)+\(TerminalStyle.reset)\(palette.codeForeground)\(palette.diffAdditionBackground)let new = 2"))
     }
 
     @Test

@@ -61,14 +61,16 @@ enum TerminalCodeBlockRenderer {
         let normalizedCode = code
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
+        var diffState = DiffState()
         let body = normalizedCode
             .split(separator: "\n", omittingEmptySubsequences: false)
-            .flatMap {
+            .flatMap { line in
                 renderCodeLine(
-                    String($0),
+                    String(line),
                     language: language,
                     width: width,
-                    palette: palette
+                    palette: palette,
+                    diffKind: isDiffLanguage(language) ? diffState.classify(String(line)) : nil
                 )
             }
         return ([renderHeader(language: language, width: width, palette: palette)] + body)
@@ -82,7 +84,11 @@ enum TerminalCodeBlockRenderer {
         palette: TerminalMarkdownPalette
     ) -> String {
         let title: String
-        if let language = normalizedLanguage(language), !language.isEmpty {
+        if isDiffLanguage(language) {
+            title = "Code · Diff" + (diffSourceLanguage(language).map {
+                " · \($0.prefix(1).uppercased())\($0.dropFirst())"
+            } ?? "")
+        } else if let language = normalizedLanguage(language), !language.isEmpty {
             title = "Code · \(language.prefix(1).uppercased())\(language.dropFirst())"
         } else {
             title = "Code"
@@ -102,17 +108,31 @@ enum TerminalCodeBlockRenderer {
         _ line: String,
         language: String?,
         width: Int,
-        palette: TerminalMarkdownPalette
+        palette: TerminalMarkdownPalette,
+        diffKind: DiffLineKind? = nil
     ) -> [String] {
-        let highlighted = renderLine(line, language: language, palette: palette)
+        let highlighted: String
+        let background: String
+        if isDiffLanguage(language) {
+            let kind = diffKind ?? diffLineKind(line)
+            highlighted = renderDiffLine(
+                line,
+                sourceLanguage: diffSourceLanguage(language),
+                kind: kind,
+                palette: palette
+            )
+            switch kind {
+            case .addition: background = palette.diffAdditionBackground
+            case .removal: background = palette.diffRemovalBackground
+            default: background = palette.codeBackground
+            }
+        } else {
+            highlighted = renderLine(line, language: language, palette: palette)
+            background = palette.codeBackground
+        }
+        let rowStyle = "\(palette.codeForeground)\(background)"
         guard width > 0 else {
-            return [
-                renderBackgroundRow(
-                    highlighted,
-                    width: 0,
-                    style: "\(palette.codeForeground)\(palette.codeBackground)"
-                )
-            ]
+            return [renderBackgroundRow(highlighted, width: 0, style: rowStyle)]
         }
 
         let continuation = width >= 4 ? "↳ " : "›"
@@ -125,7 +145,7 @@ enum TerminalCodeBlockRenderer {
             renderBackgroundRow(
                 $0,
                 width: width,
-                style: "\(palette.codeForeground)\(palette.codeBackground)"
+                style: rowStyle
             )
         }
     }
@@ -136,10 +156,15 @@ enum TerminalCodeBlockRenderer {
         palette: TerminalMarkdownPalette = .detected,
         dataSyntaxColors: DataSyntaxColors? = nil
     ) -> String {
+        if isDiffLanguage(language) {
+            return renderDiffLine(
+                line,
+                sourceLanguage: diffSourceLanguage(language),
+                palette: palette
+            )
+        }
         let safeLine = terminalSafeSourceLine(line)
         switch normalizedLanguage(language) {
-        case "diff", "patch":
-            return renderDiffLine(safeLine, palette: palette)
         case "css":
             return renderCSSLine(safeLine, palette: palette)
         case "html", "xml":
@@ -158,30 +183,6 @@ enum TerminalCodeBlockRenderer {
                 palette: palette
             )
         }
-    }
-
-    /// Semantic presentation for unified diffs. File metadata is checked
-    /// before +/- rows so `+++ b/file` and `--- a/file` do not look like source
-    /// additions/removals.
-    static func renderDiffLine(
-        _ line: String,
-        palette: TerminalMarkdownPalette
-    ) -> String {
-        let style: String
-        if line.hasPrefix("+++ ") || line.hasPrefix("--- ")
-            || line.hasPrefix("diff ") || line.hasPrefix("index ")
-            || line.hasPrefix("new file") || line.hasPrefix("deleted file") {
-            style = palette.diffHeader
-        } else if line.hasPrefix("@@") {
-            style = palette.diffHunk
-        } else if line.hasPrefix("+") {
-            style = palette.diffAddition
-        } else if line.hasPrefix("-") {
-            style = palette.diffRemoval
-        } else {
-            return line
-        }
-        return "\(style)\(line)\(reset)"
     }
 
     /// Applies a background to every column of a physical code row. Syntax
@@ -212,7 +213,7 @@ enum TerminalCodeBlockRenderer {
     /// before syntax highlighting. Renderer-owned ANSI is added only after this
     /// pass, so an ESC from a fenced payload can never become an executable
     /// terminal sequence or disappear from width accounting.
-    private static func terminalSafeSourceLine(_ line: String) -> String {
+    static func terminalSafeSourceLine(_ line: String) -> String {
         let tabWidth = 4
         var rendered = ""
         var currentWidth = 0

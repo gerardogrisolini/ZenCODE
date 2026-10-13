@@ -67,6 +67,53 @@ struct TerminalChatLiveArtifactTests {
             == commandEvents.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    @Test(arguments: [false, true])
+    func modifiedLiveAndPatchHistoryShareOneHighlightedDiff(isTerminal: Bool) async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let renderer = makeRenderer(isTerminal: isTerminal)
+        let terminal = try makeTerminal(directory, renderer: renderer)
+        let context = try #require(await terminal.beginFileArtifactTurn())
+        let old = "let value = 1\n"
+        let new = "let value = 2\n"
+        await terminal.publishLiveFileArtifacts(
+            result([OperationFileChange(path: "Value.swift", oldText: old, newText: new)]),
+            callID: "modify", context: context
+        )
+        let liveEvents = await renderer.capturedWriteEvents()
+        let live = liveEvents.map(\.text).joined()
+        let summary = TurnFileChangeSummary(entries: [
+            .init(path: "Value.swift", additions: 1, deletions: 1, status: .modified,
+                  isBinary: false, existedBefore: true,
+                  beforeDataBase64: Data(old.utf8).base64EncodedString(),
+                  patch: "@@ -1,1 +1,1 @@\n-let value = 1\n+let value = 2\n")
+        ])
+        _ = await context.history.sealTurn(context.id)
+        _ = await context.history.finishTurn(
+            context.id, summary: summary, matchingLivePaths: [], workingDirectory: directory
+        )
+        await terminal.handleArtifactsCommand()
+        let history = await renderer.capturedWriteEvents().dropFirst(liveEvents.count).map(\.text).joined()
+        #expect(live.trimmingCharacters(in: .whitespacesAndNewlines)
+            == history.trimmingCharacters(in: .whitespacesAndNewlines))
+        for output in [live, history] {
+            let visible = TerminalANSIText.stripANSI(output)
+            #expect(visible.contains("-let value = 1"))
+            #expect(visible.contains("+let value = 2"))
+            #expect(!visible.contains("Before"))
+            #expect(!visible.contains("After"))
+            if isTerminal {
+                let palette = TerminalMarkdownPalette.detected
+                #expect(output.contains(palette.diffAdditionBackground))
+                #expect(output.contains(palette.diffRemovalBackground))
+                #expect(output.contains("\(palette.syntaxKeyword)let"))
+                #expect(visible.components(separatedBy: "Code · Diff · Swift").count - 1 == 1)
+            } else {
+                #expect(!output.contains("\u{1B}"))
+            }
+        }
+    }
+
     @Test(arguments: ["assistant", "thought"])
     func delegatedArtifactPreservesSplitCodeFenceInTTY(_ stream: String) async throws {
         let directory = try temporaryDirectory()

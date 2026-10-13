@@ -34,6 +34,8 @@ struct TerminalMarkdownPalette: Equatable, Sendable {
     let syntaxProperty: String
     let diffAddition: String
     let diffRemoval: String
+    let diffAdditionBackground: String
+    let diffRemovalBackground: String
     let diffHunk: String
     let diffHeader: String
 

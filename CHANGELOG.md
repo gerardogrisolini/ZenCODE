@@ -25,6 +25,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Live file artifacts and `/artifacts` now show one unified `+`/`-` diff instead
+  of separate Before/After files. Added and removed rows use full-width green
+  and red backgrounds while retaining source-language syntax highlighting;
+  wrapped rows, padding and syntax resets preserve the background without
+  leaking into following output. Non-color output keeps readable diff markers.
 - Terminal prompt history now retains every non-empty submission, including slash
   commands and consecutive repeats, for the entire `zen` process without the
   previous 200-entry limit. It survives `/new`, conversation loading and `/setup`

@@ -80,6 +80,7 @@ public struct TerminalMarkdownStreamFormatter {
         let marker: Character
         let length: Int
         let language: String?
+        var diffState = TerminalCodeBlockRenderer.DiffState()
     }
 
     private struct CodeFenceRun {
@@ -368,16 +369,20 @@ public struct TerminalMarkdownStreamFormatter {
         // Fences are presentation boundaries, never literal terminal output.
         // The exact opening marker/run is retained so shorter inner runs and
         // fence-looking payload text remain code rather than being discarded.
-        if let activeCodeFence {
+        if var activeCodeFence {
             if isClosingCodeFence(line, for: activeCodeFence) {
                 self.activeCodeFence = nil
                 return flushBlock() + newline
             }
+            let diffKind = TerminalCodeBlockRenderer.isDiffLanguage(activeCodeFence.language)
+                ? activeCodeFence.diffState.classify(line) : nil
+            self.activeCodeFence = activeCodeFence
             return TerminalCodeBlockRenderer.renderCodeLine(
                 line,
                 language: activeCodeFence.language,
                 width: codeBlockWidth,
-                palette: palette
+                palette: palette,
+                diffKind: diffKind
             ).joined(separator: "\n") + newline
         }
 

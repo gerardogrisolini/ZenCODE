@@ -162,36 +162,90 @@ extension TerminalChat {
 
                 let languagePath = artifact.displayPath.nilIfBlank ?? artifact.absolutePath
                 let language = codeLanguageHint(forPath: languagePath)
-                if let oldText = artifact.oldText, let newText = artifact.newText {
-                    lines.append("**Before**")
+                if let diff = fileArtifactDiff(artifact) {
                     appendMarkdownCodeBlock(
-                        oldText,
-                        language: language,
-                        to: &lines
-                    )
-                    lines.append("**After**")
-                    appendMarkdownCodeBlock(
-                        newText,
-                        language: language,
-                        to: &lines
-                    )
-                } else if let text = artifact.newText ?? artifact.oldText {
-                    appendMarkdownCodeBlock(
-                        text,
-                        language: language,
-                        to: &lines
-                    )
-                } else if let patch = artifact.patch?.nilIfBlank {
-                    lines.append("**Patch**")
-                    appendMarkdownCodeBlock(
-                        patch,
-                        language: language,
+                        diff,
+                        language: language.map { "diff-\($0)" } ?? "diff",
                         to: &lines
                     )
                 }
             }
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Presentation-only unified diff. Missing evidence is not an empty file:
+    /// only an added/deleted status establishes the absent side. Captured patches
+    /// remain authoritative when complete source snapshots are unavailable.
+    private nonisolated static func fileArtifactDiff(_ artifact: FileChangeArtifact) -> String? {
+        let old: String
+        let new: String
+        if let oldText = artifact.oldText, let newText = artifact.newText {
+            old = oldText
+            new = newText
+        } else if artifact.status == .added, let newText = artifact.newText {
+            old = ""
+            new = newText
+        } else if artifact.status == .deleted, let oldText = artifact.oldText {
+            old = oldText
+            new = ""
+        } else {
+            return artifact.patch?.nilIfBlank
+        }
+
+        // Retain line terminators in the comparison so a final-newline-only
+        // edit is still visible, without manufacturing an extra blank line.
+        func sourceLines(_ text: String) -> [String] {
+            let normalized = text
+                .replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: "\r", with: "\n")
+            guard !normalized.isEmpty else { return [] }
+            let parts = normalized.components(separatedBy: "\n")
+            return parts.enumerated().compactMap { index, part in
+                if index < parts.count - 1 { return part + "\n" }
+                return part.isEmpty ? nil : part
+            }
+        }
+        let oldLines = sourceLines(old)
+        let newLines = sourceLines(new)
+        var removed = Set<Int>()
+        var inserted = Set<Int>()
+        for change in newLines.difference(from: oldLines) {
+            switch change {
+            case let .remove(offset, _, _): removed.insert(offset)
+            case let .insert(offset, _, _): inserted.insert(offset)
+            }
+        }
+        guard !removed.isEmpty || !inserted.isEmpty else { return nil }
+
+        // One hunk keeps unchanged evidence once, rather than printing two files.
+        var rows = ["@@ -\(oldLines.isEmpty ? 0 : 1),\(oldLines.count) +\(newLines.isEmpty ? 0 : 1),\(newLines.count) @@"]
+        func append(_ line: String, marker: String) {
+            if line.hasSuffix("\n") {
+                rows.append(marker + line.dropLast())
+            } else {
+                rows.append(marker + line)
+                rows.append("\\ No newline at end of file")
+            }
+        }
+        var oldIndex = 0
+        var newIndex = 0
+        while oldIndex < oldLines.count || newIndex < newLines.count {
+            if oldIndex < oldLines.count, removed.contains(oldIndex) {
+                append(oldLines[oldIndex], marker: "-")
+                oldIndex += 1
+            } else if newIndex < newLines.count, inserted.contains(newIndex) {
+                append(newLines[newIndex], marker: "+")
+                newIndex += 1
+            } else if oldIndex < oldLines.count, newIndex < newLines.count {
+                append(oldLines[oldIndex], marker: " ")
+                oldIndex += 1
+                newIndex += 1
+            } else {
+                break
+            }
+        }
+        return rows.joined(separator: "\n")
     }
 
     private nonisolated static func renderFileArtifactMetadata(
