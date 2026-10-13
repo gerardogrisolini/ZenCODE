@@ -12,6 +12,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- File artifacts now appear automatically in chat when root or delegated tools
+  complete, using the same Markdown layout and source formatting as `/artifacts`.
+  Turn numbers are reserved at the first live or final artifact and remain stable;
+  reverted turns leave gaps in the net-final `/artifacts` history. Final worktree
+  reconciliation adds only evidence not already shown in its final state,
+  including later shell/Git/MCP edits to a path previously shown live.
 - `/artifacts` now shows the complete in-memory file-artifact history for the
   active session, grouped by turn, with shared text/patch evidence and explicit
   binary or uncertain-evidence fallbacks. The history is presentation-only and
@@ -23,8 +29,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - TUI and ACP clear pending plan-approval state at session restore boundaries and roll back graph changes when approval persistence fails.
 - TUI and ACP now share file-change normalization, deduplication, ordering,
   evidence limits, and fallback semantics through a backend-neutral mapper.
-  Normal tool blocks remain compact; detailed source evidence is available on
-  demand through `/artifacts`.
+  Normal tool blocks remain compact; detailed source evidence is published live
+  and remains available on demand through `/artifacts`.
 - `/artifacts` now renders file names prominently and formats source evidence in fenced code blocks with syntax highlighting selected from each file extension; unknown extensions remain neutral.
 - Existing `Summary`, `/changes`, `/changes diff`, `/undo`, saved snapshots,
   checkpoints, transcripts, and ACP wire formats remain unchanged.

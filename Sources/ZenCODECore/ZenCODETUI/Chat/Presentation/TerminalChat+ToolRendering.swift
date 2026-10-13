@@ -250,8 +250,22 @@ extension TerminalChat {
         )
     }
 
-    func writeSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
+    func writeSubAgentToolEvent(
+        _ event: DirectSubAgentToolEvent,
+        sessionID expectedSessionID: String? = nil,
+        history expectedHistory: SessionFileArtifactHistory? = nil
+    ) async {
+        let observedSessionID = expectedSessionID ?? sessionID
+        let history = expectedHistory ?? fileArtifactHistory
+        guard sessionID == observedSessionID, fileArtifactHistory === history else { return }
+        let artifactTurn = activeFileArtifactTurn
         await renderCoordinator.recordSubAgentToolEvent(event)
+        if case let .completed(result) = event.lifecycle {
+            await publishLiveFileArtifacts(
+                result, callID: event.toolCall.id, agentID: event.agentID,
+                context: artifactTurn
+            )
+        }
         if Self.shouldRefreshGitStatus(for: event) {
             await refreshStatusBarGitStatusSummaryForFileMutation()
         }

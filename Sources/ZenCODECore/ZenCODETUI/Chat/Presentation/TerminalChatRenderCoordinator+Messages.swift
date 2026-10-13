@@ -104,11 +104,38 @@ extension TerminalChatRenderCoordinator {
 
     func writeMarkdownMessage(
         _ markdown: String,
-        to channel: OutputChannel = .standardOutput
+        to channel: OutputChannel = .standardOutput,
+        preservingStreamingContext: Bool = false
     ) {
         interruptActiveToolForInterleavedOutputIfNeeded()
-        finishThoughtOutputIfNeeded()
-        finishAssistantContentFormatting()
+        let wasStreamingThought = thoughtStreamingState.isStreaming
+        let wasStreamingAssistant = assistantStreamingState.isStreaming
+        defer {
+            if preservingStreamingContext {
+                thoughtStreamingState.isStreaming = wasStreamingThought
+                assistantStreamingState.isStreaming = wasStreamingAssistant
+            }
+        }
+        if preservingStreamingContext {
+            // A live artifact is a physical transcript insertion, not an end of
+            // the model's Markdown stream. Keep the formatters, buffered source,
+            // bold-break state and assistant prefix untouched for the next delta.
+            if wasStreamingThought {
+                writeStreamingChat("\n\n", to: .standardError)
+            }
+            if wasStreamingAssistant, standardOutputIsTerminal,
+               currentOutputTrailingNewlineCount == 0 {
+                writeStreamingChat("\n", to: .standardOutput)
+            }
+            flushPendingStreamingWrites()
+            // Let deferred overviews follow the artifact while presentation is
+            // suspended. This entire insertion is synchronous on the actor.
+            thoughtStreamingState.isStreaming = false
+            assistantStreamingState.isStreaming = false
+        } else {
+            finishThoughtOutputIfNeeded()
+            finishAssistantContentFormatting()
+        }
         renderMarkdownMessage(markdown, to: channel)
         renderPendingOverviewsIfIdle()
     }

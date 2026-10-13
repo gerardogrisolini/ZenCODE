@@ -73,8 +73,12 @@ extension TerminalChat {
             return
         }
         didInstallSubAgentToolEventHandler = true
+        let observedSessionID = sessionID
+        let history = fileArtifactHistory
         await sessionRunner.updateSubAgentToolEventHandler { [weak self] event in
-            await self?.writeSubAgentToolEvent(event)
+            await self?.writeSubAgentToolEvent(
+                event, sessionID: observedSessionID, history: history
+            )
         }
     }
 

@@ -9,10 +9,45 @@ import Foundation
 import ToolCore
 
 extension TerminalChat {
+    struct FileArtifactTurnContext: Sendable {
+        let id: UUID
+        let sessionID: String
+        let history: SessionFileArtifactHistory
+    }
+
+    func beginFileArtifactTurn() async -> FileArtifactTurnContext? {
+        let observedSessionID = sessionID
+        let history = fileArtifactHistory
+        guard let id = await history.beginTurn(sessionID: observedSessionID),
+              sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
+        let context = FileArtifactTurnContext(id: id, sessionID: observedSessionID, history: history)
+        activeFileArtifactTurn = context
+        return context
+    }
+
+    func publishLiveFileArtifacts(
+        _ result: DirectAgentToolResult,
+        callID: String,
+        agentID: String? = nil,
+        context: FileArtifactTurnContext?
+    ) async {
+        guard let context, sessionID == context.sessionID,
+              fileArtifactHistory === context.history,
+              activeFileArtifactTurn?.id == context.id else { return }
+        guard let turn = await context.history.recordLive(
+            result.fileChanges, agentID: agentID, callID: callID,
+            turnID: context.id, workingDirectory: configuration.workingDirectory
+        ) else { return }
+        guard sessionID == context.sessionID, fileArtifactHistory === context.history else { return }
+        await writeFileArtifacts([turn], preservingStreamingContext: true)
+    }
+
     /// Replacing the actor also fences restores that reuse the same session ID.
     func resetFileArtifactState() {
         lastFileChangeSummary = nil
+        activeFileArtifactTurn = nil
         fileArtifactHistory = SessionFileArtifactHistory(sessionID: sessionID)
+        didInstallSubAgentToolEventHandler = false
     }
 
     public func publishFileChangeSummaryIfNeeded(
@@ -29,25 +64,45 @@ extension TerminalChat {
     public func collectFileChangeSummaryIfNeeded(
         from coordinator: TurnFileChangeCoordinator,
         sessionID expectedSessionID: String? = nil,
-        history expectedHistory: SessionFileArtifactHistory? = nil
+        history expectedHistory: SessionFileArtifactHistory? = nil,
+        turnID: UUID? = nil
     ) async -> TurnFileChangeSummary? {
         let observedSessionID = expectedSessionID ?? sessionID
         let history = expectedHistory ?? fileArtifactHistory
-        guard let summary = await coordinator.publishSummaryIfNeeded() else {
-            return nil
+        if let turnID, activeFileArtifactTurn?.id == turnID {
+            activeFileArtifactTurn = nil
         }
+        let liveChanges: [OperationFileChange]
+        if let turnID {
+            liveChanges = await history.sealTurn(turnID)
+        } else {
+            liveChanges = []
+        }
+        let summary = await coordinator.publishSummaryIfNeeded(matching: liveChanges)
         // A session switch may race the final reconciliation of an old turn.
         // Keep both the latest-summary slot and the runtime artifact history
         // fenced to the session that started the turn.
         guard sessionID == observedSessionID, fileArtifactHistory === history else {
             return nil
         }
-        lastFileChangeSummary = summary
-        await history.append(
-            summary: summary,
-            sessionID: observedSessionID,
-            workingDirectory: configuration.workingDirectory
-        )
+        let unseen: SessionFileArtifactHistory.Turn?
+        if let turnID {
+            let matchingPaths = await coordinator.matchingLiveArtifactPaths()
+            unseen = await history.finishTurn(
+                turnID, summary: summary, matchingLivePaths: matchingPaths,
+                workingDirectory: configuration.workingDirectory
+            )
+        } else if let summary {
+            unseen = await history.append(
+                summary: summary, sessionID: observedSessionID,
+                workingDirectory: configuration.workingDirectory
+            )
+        } else {
+            unseen = nil
+        }
+        guard sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
+        if let summary { lastFileChangeSummary = summary }
+        if let unseen { await writeFileArtifacts([unseen]) }
         guard sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
         return summary
     }
@@ -58,13 +113,21 @@ extension TerminalChat {
             await writeSystemMessage("No file artifacts in the current session.\n")
             return
         }
+        await writeFileArtifacts(turns)
+    }
+
+    private func writeFileArtifacts(
+        _ turns: [SessionFileArtifactHistory.Turn],
+        preservingStreamingContext: Bool = false
+    ) async {
         await renderCoordinator.writeMarkdownMessage(
             Self.renderFileArtifacts(
                 turns,
                 columnWidth: Self.terminalColumnCount(),
                 isEnabled: AgentOutput.standardErrorIsTerminal
             ),
-            to: .standardError
+            to: .standardError,
+            preservingStreamingContext: preservingStreamingContext
         )
     }
 

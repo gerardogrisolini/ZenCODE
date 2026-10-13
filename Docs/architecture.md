@@ -69,7 +69,17 @@ checkpoint trees, transcripts, snapshots, and ACP wire formats. TUI and ACP may
 render the shared evidence differently, but path normalization, ordering,
 deduplication, byte-budget fallback, and binary/uncertain evidence semantics
 remain shared. The existing `Summary`, `/changes`, `/changes diff`, `/undo`,
-and ACP wire contracts remain unchanged.
+and ACP wire contracts remain unchanged. In TUI, root and delegated tool
+completions publish only their new operation artifacts through the same Markdown
+renderer as `/artifacts`, including during active thinking/assistant streams.
+The history reserves a stable turn number on the first live or final artifact;
+it still stores only net-final turns, so reverted live turns can leave number
+gaps. Pending turn tokens and per-turn agent/call deduplication are runtime-only
+and invalidated on reset. Final reconciliation compares the latest live postimage
+with the final bytes already read by the tracker, omitting unchanged live evidence
+without hiding a subsequent opaque-tool edit to the same path. Uncertain evidence
+is not treated as proof of an unchanged postimage. No watcher, polling, extra
+worktree read, or wire field is introduced.
 
 Optional feature packages are not executables distributed beside `zen`. The
 installer and `zen --install-features` copy a package to

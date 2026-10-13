@@ -114,6 +114,68 @@ struct FileChangeArtifactTests {
         #expect(await history.append(summary: summary, sessionID: "session-1", workingDirectory: directory) == nil)
     }
 
+    @Test
+    func liveHistoryDeduplicatesEventsNotPathsAndReconcilesOnlyNetFinalTurns() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let history = SessionFileArtifactHistory(sessionID: "session")
+        let id = try #require(await history.beginTurn(sessionID: "session"))
+        let first = OperationFileChange(path: "file.txt", oldText: nil, newText: "one\n")
+        let second = OperationFileChange(path: "file.txt", oldText: "one\n", newText: "two\n")
+        let live = await history.recordLive([first], agentID: nil, callID: "call", turnID: id, workingDirectory: directory)
+        #expect(live?.number == 1)
+        #expect(await history.recordLive([first], agentID: nil, callID: "call", turnID: id, workingDirectory: directory) == nil)
+        let delegated = await history.recordLive([second], agentID: "worker", callID: "call", turnID: id, workingDirectory: directory)
+        #expect(delegated?.number == 1)
+        #expect(delegated?.artifacts.first?.newText == "two\n")
+        let third = OperationFileChange(path: "file.txt", oldText: "two\n", newText: "three\n")
+        #expect(await history.recordLive([third], agentID: "worker", callID: "next", turnID: id, workingDirectory: directory) != nil)
+        #expect(await history.snapshot().isEmpty)
+        let latest = await history.sealTurn(id)
+        #expect(latest.count == 1)
+        #expect(latest.first?.newText == "three\n")
+        #expect(await history.recordLive([first], agentID: nil, callID: "late", turnID: id, workingDirectory: directory) == nil)
+        let summary = TurnFileChangeSummary(entries: [addedEntry("file.txt")])
+        #expect(await history.finishTurn(
+            id, summary: summary, matchingLivePaths: [directory.appendingPathComponent("file.txt").path],
+            workingDirectory: directory
+        ) == nil)
+        let snapshot = await history.snapshot()
+        #expect(snapshot.count == 1)
+        #expect(snapshot.first?.number == 1)
+        #expect(snapshot.first?.artifacts == FileChangeArtifactMapper.artifacts(from: summary, workingDirectory: directory))
+        #expect(await history.finishTurn(id, summary: summary, matchingLivePaths: [], workingDirectory: directory) == nil)
+
+        // Provider call identifiers may be reused in a different prompt.
+        let nextID = try #require(await history.beginTurn(sessionID: "session"))
+        #expect(await history.recordLive([first], agentID: nil, callID: "call", turnID: nextID, workingDirectory: directory)?.number == 2)
+    }
+
+    @Test
+    func revertedLiveTurnsLeaveStableNumberGapsAndResetFencesOldTokens() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let history = SessionFileArtifactHistory(sessionID: "session")
+        let id = try #require(await history.beginTurn(sessionID: "session"))
+        let change = OperationFileChange(path: "file.txt", oldText: nil, newText: "one")
+        #expect(await history.recordLive([change], agentID: nil, callID: "call", turnID: id, workingDirectory: directory)?.number == 1)
+        _ = await history.sealTurn(id)
+        #expect(await history.finishTurn(id, summary: nil, matchingLivePaths: [], workingDirectory: directory) == nil)
+        #expect(await history.snapshot().isEmpty)
+        let summary = TurnFileChangeSummary(entries: [addedEntry("file.txt")])
+        #expect(await history.append(summary: summary, sessionID: "session", workingDirectory: directory)?.number == 2)
+        let staleID = try #require(await history.beginTurn(sessionID: "session"))
+        await history.reset(for: "session")
+        #expect(await history.recordLive([change], agentID: nil, callID: "call", turnID: staleID, workingDirectory: directory) == nil)
+        #expect(await history.finishTurn(staleID, summary: summary, matchingLivePaths: [], workingDirectory: directory) == nil)
+        #expect(await history.append(summary: summary, sessionID: "session", workingDirectory: directory)?.number == 1)
+    }
+
+    private func addedEntry(_ path: String) -> TurnFileChangeSummary.Entry {
+        .init(path: path, additions: 1, deletions: 0, status: .added, isBinary: false,
+              existedBefore: false, beforeDataBase64: nil, patch: "@@ -0,0 +1 @@\n+three")
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("file-change-artifact-tests-\(UUID().uuidString)")

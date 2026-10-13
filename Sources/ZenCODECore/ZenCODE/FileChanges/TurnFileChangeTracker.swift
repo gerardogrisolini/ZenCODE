@@ -28,6 +28,8 @@ public actor TurnFileChangeTracker {
     var snapshotsByPath: [String: Snapshot] = [:]
     var cachedSummary: TurnFileChangeSummary?
     var didFinalizeSummary = false
+    /// Transient comparison results, never part of the Codable summary.
+    private(set) var matchingLiveArtifactPaths: Set<String> = []
     /// Content of files already dirty (vs. the index/HEAD) when the turn began,
     /// keyed by absolute path. A present key with `nil` value means the path did
     /// not exist on disk at turn start. Used to bound worktree reconciliation to
@@ -114,7 +116,7 @@ public actor TurnFileChangeTracker {
         #endif
     }
 
-    public func makeSummary() async -> TurnFileChangeSummary? {
+    public func makeSummary(matching liveChanges: [OperationFileChange] = []) async -> TurnFileChangeSummary? {
         if didFinalizeSummary {
             return cachedSummary
         }
@@ -125,6 +127,9 @@ public actor TurnFileChangeTracker {
         await reconcileWorktreeChangesIfNeeded()
         #endif
 
+        let latestChanges = Dictionary(liveChanges.map {
+            (FileChangeArtifactMapper.absolutePath(for: $0.path, workingDirectory: baseDirectoryURL), $0)
+        }, uniquingKeysWith: { _, latest in latest })
         var entries: [TurnFileChangeSummary.Entry] = []
         for snapshot in snapshotsByPath.values.sorted(by: { $0.displayPath < $1.displayPath }) {
             var isDirectory: ObjCBool = false
@@ -141,6 +146,16 @@ public actor TurnFileChangeTracker {
                 }
             } else {
                 afterData = nil
+            }
+
+            // Reuse the final read, rather than polling or rereading a possibly
+            // newer worktree. Path-only dedup would hide a later shell/Git/MCP edit.
+            if let live = latestChanges[snapshot.absolutePath], live.explanation == nil {
+                if let newText = live.newText, existsNow, afterData == Data(newText.utf8) {
+                    matchingLiveArtifactPaths.insert(snapshot.absolutePath)
+                } else if live.newText == nil, live.oldText != nil, !existsNow {
+                    matchingLiveArtifactPaths.insert(snapshot.absolutePath)
+                }
             }
 
             if snapshot.existedInitially == existsNow,
