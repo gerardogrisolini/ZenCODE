@@ -419,73 +419,16 @@ extension TerminalChat {
         return "  \(entry.status.rawValue) \(entry.path)  +\(entry.additions) -\(entry.deletions)"
     }
 
-    nonisolated static func renderFileChangeDiffPatch(
-        _ patch: String,
-        isEnabled: Bool
-    ) -> String {
-        guard isEnabled, !patch.isEmpty else {
-            return patch
-        }
-
-        return patch
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { renderFileChangeDiffLine(String($0)) }
-            .joined(separator: "\n")
-    }
-
-    private nonisolated static func renderFileChangeDiffLine(_ line: String) -> String {
-        let reset = TerminalStyle.reset
-        let meta = TerminalStyle.FileChange.metadata
-        let hunk = TerminalStyle.FileChange.hunk
-        let addition = TerminalStyle.FileChange.addition
-        let deletion = TerminalStyle.FileChange.deletion
-
-        guard !line.isEmpty else {
-            return line
-        }
-
-        if line.hasPrefix("@@") {
-            return "\(hunk)\(line)\(reset)"
-        }
-        if line.hasPrefix("diff --git")
-            || line.hasPrefix("index ")
-            || line.hasPrefix("--- ")
-            || line.hasPrefix("+++ ")
-            || line.hasPrefix("new file mode ")
-            || line.hasPrefix("deleted file mode ")
-            || line.hasPrefix("similarity index ")
-            || line.hasPrefix("rename from ")
-            || line.hasPrefix("rename to ") {
-            return "\(meta)\(line)\(reset)"
-        }
-        if line.hasPrefix("+") {
-            return "\(addition)\(line)\(reset)"
-        }
-        if line.hasPrefix("-") {
-            return "\(deletion)\(line)\(reset)"
-        }
-        return line
-    }
-
     public func writeFileChangeDiffs(_ summary: TurnFileChangeSummary) async {
-        let patches = summary.entries.compactMap { entry -> String? in
-            guard !entry.isBinary,
-                  let patch = entry.patch?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !patch.isEmpty else {
-                return nil
-            }
-            return patch
-        }
-
-        guard !patches.isEmpty else {
-            await writeSystemMessage("No text patches available.\n")
-            return
-        }
-
-        let renderedPatch = Self.renderFileChangeDiffPatch(
-            patches.joined(separator: "\n"),
-            isEnabled: AgentOutput.standardErrorIsTerminal
+        let artifacts = FileChangeArtifactMapper.artifacts(
+            from: summary,
+            workingDirectory: configuration.workingDirectory
         )
-        await writeChatError("\n" + renderedPatch + "\n")
+        // This presentation-only turn neither reads nor mutates session history.
+        // Its number is unused because /changes omits history headings.
+        await writeFileArtifacts(
+            [.init(number: 1, artifacts: artifacts)],
+            includeHistoryHeadings: false
+        )
     }
 }

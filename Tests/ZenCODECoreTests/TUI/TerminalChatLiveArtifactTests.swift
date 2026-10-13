@@ -133,6 +133,183 @@ struct TerminalChatLiveArtifactTests {
         }
     }
 
+    @Test(arguments: [false, true])
+    func changesDiffAliasesPreserveSummaryAndUseArtifactsRenderer(isTerminal: Bool) async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let renderer = makeRenderer(isTerminal: isTerminal)
+        let terminal = try makeTerminal(directory, renderer: renderer)
+        let summary = TurnFileChangeSummary(entries: [
+            .init(path: "Value.swift", additions: 1, deletions: 1, status: .modified,
+                  isBinary: false, existedBefore: true,
+                  beforeDataBase64: Data("let value = 1\n".utf8).base64EncodedString(),
+                  patch: "@@ -1,1 +1,1 @@\n-let value = 1\n+let value = 2\n"),
+        ])
+        terminal.lastFileChangeSummary = summary
+        await terminal.fileArtifactHistory.append(
+            summary: summary, sessionID: terminal.sessionID, workingDirectory: directory
+        )
+
+        await terminal.handleChangesCommand("/changes")
+        let summaryEvents = await renderer.capturedWriteEvents()
+        let summaryOutput = summaryEvents.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(TerminalANSIText.stripANSI(summaryOutput)
+            == TerminalChat.renderFileChangeSummary(summary).trimmingCharacters(in: .whitespacesAndNewlines))
+        await terminal.handleArtifactsCommand()
+        let history = await renderer.capturedWriteEvents().dropFirst(summaryEvents.count).map(\.text).joined()
+        let historyBodyStart = try #require(history.range(of: "modified")).lowerBound
+        let historyBody = history[historyBodyStart...].trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var aliasOutputs: [String] = []
+        for command in ["/changes diff", "/changes --diff"] {
+            let count = await renderer.capturedWriteEvents().count
+            await terminal.handleChangesCommand(command)
+            let output = await renderer.capturedWriteEvents().dropFirst(count).map(\.text).joined()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            #expect(output.hasPrefix(summaryOutput))
+            let body = String(output.dropFirst(summaryOutput.count))
+            let bodyStart = try #require(body.range(of: "modified")).lowerBound
+            #expect(body[bodyStart...].trimmingCharacters(in: .whitespacesAndNewlines) == historyBody)
+            let visible = TerminalANSIText.stripANSI(output)
+            #expect(visible.contains("1 │ -let value = 1"))
+            #expect(visible.contains("1 │ +let value = 2"))
+            #expect(!visible.contains("🪬 Artifacts"))
+            #expect(!visible.contains("Turn 1 —"))
+            if isTerminal {
+                let palette = TerminalMarkdownPalette.detected
+                #expect(output.contains(palette.diffAdditionBackground))
+                #expect(output.contains(palette.diffRemovalBackground))
+                #expect(output.contains("\(palette.syntaxKeyword)let"))
+            } else {
+                #expect(!output.contains("\u{1B}"))
+            }
+            aliasOutputs.append(output)
+        }
+        #expect(aliasOutputs[0] == aliasOutputs[1])
+        #expect(await renderer.capturedWriteEvents().allSatisfy { $0.channel == .standardError })
+    }
+
+    @Test
+    func changesDiffUsesOnlyLatestSummaryWithoutMutatingHistory() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let renderer = makeRenderer()
+        let terminal = try makeTerminal(directory, renderer: renderer)
+        let summaries = ["Earlier.swift", "Latest.swift"].map { path in
+            TurnFileChangeSummary(entries: [
+                .init(path: path, additions: 1, deletions: 0, status: .added,
+                      isBinary: false, existedBefore: false, beforeDataBase64: nil,
+                      patch: "@@ -0,0 +1,1 @@\n+let value = 1\n"),
+            ])
+        }
+        for summary in summaries {
+            await terminal.fileArtifactHistory.append(
+                summary: summary, sessionID: terminal.sessionID, workingDirectory: directory
+            )
+        }
+        terminal.lastFileChangeSummary = summaries[1]
+        let before = await terminal.fileArtifactHistory.snapshot()
+        for command in ["/changes diff", "/changes --diff", "/changes diff"] {
+            let count = await renderer.capturedWriteEvents().count
+            await terminal.handleChangesCommand(command)
+            let output = await renderer.capturedWriteEvents().dropFirst(count).map(\.text).joined()
+            #expect(output.contains("Latest.swift"))
+            #expect(!output.contains("Earlier.swift"))
+            #expect(await terminal.fileArtifactHistory.snapshot() == before)
+            #expect(terminal.lastFileChangeSummary == summaries[1])
+        }
+        let count = await renderer.capturedWriteEvents().count
+        await terminal.handleArtifactsCommand()
+        let history = await renderer.capturedWriteEvents().dropFirst(count).map(\.text).joined()
+        #expect(history.contains("Earlier.swift"))
+        #expect(history.contains("Latest.swift"))
+        #expect(history.contains("### Turn 1 — 1 file"))
+        #expect(history.contains("### Turn 2 — 1 file"))
+        #expect(await terminal.fileArtifactHistory.snapshot() == before)
+        #expect(await renderer.capturedWriteEvents().allSatisfy { $0.channel == .standardError })
+        // Rendering /changes must not even reserve a hidden history number.
+        let next = await terminal.fileArtifactHistory.append(
+            summary: summaries[1], sessionID: terminal.sessionID, workingDirectory: directory
+        )
+        #expect(next?.number == 3)
+    }
+
+    @Test
+    func changesDiffUsesCapturedFallbacksAndDeletedSnapshotWithoutReadingWorktree() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let renderer = makeRenderer()
+        let terminal = try makeTerminal(directory, renderer: renderer)
+        for path in ["Missing.swift", "Deleted.swift"] {
+            try Data("unrelated worktree content\n".utf8).write(to: directory.appendingPathComponent(path))
+        }
+        terminal.lastFileChangeSummary = TurnFileChangeSummary(entries: [
+            .init(path: "Binary.bin", additions: 0, deletions: 0, status: .modified,
+                  isBinary: true, existedBefore: true, beforeDataBase64: nil, patch: nil),
+            .init(path: "Missing.swift", additions: 1, deletions: 1, status: .modified,
+                  isBinary: false, existedBefore: true,
+                  beforeDataBase64: Data("partial evidence\n".utf8).base64EncodedString(), patch: nil),
+            .init(path: "Deleted.swift", additions: 0, deletions: 1, status: .deleted,
+                  isBinary: false, existedBefore: true,
+                  beforeDataBase64: Data("let removed = 1\n".utf8).base64EncodedString(), patch: nil),
+            .init(path: "OverBudget.swift", additions: 1, deletions: 0, status: .added,
+                  isBinary: false, existedBefore: false, beforeDataBase64: nil,
+                  patch: String(repeating: "+", count: OperationFileChangeRecorder.maximumTextBytes + 1)),
+        ])
+        await terminal.handleChangesCommand("/changes diff")
+        let events = await renderer.capturedWriteEvents()
+        let output = events.map(\.text).joined()
+        #expect(output.contains("**modified `Binary.bin`**  +0 -0 (binary)"))
+        #expect(output.contains("Explanation: \(FileChangeArtifactMapper.binaryExplanation)"))
+        #expect(output.contains("**modified `Missing.swift`**  +1 -1"))
+        #expect(output.contains("Explanation: \(FileChangeArtifactMapper.unavailableEvidenceExplanation)"))
+        #expect(output.contains("**deleted `Deleted.swift`**  +0 -1"))
+        #expect(output.contains("1 │ -let removed = 1"))
+        #expect(output.contains("**added `OverBudget.swift`**  +1 -0"))
+        #expect(output.contains("Explanation: \(FileChangeArtifactMapper.byteLimitExplanation)"))
+        #expect(!output.contains("No text patches available."))
+        #expect(!output.contains("partial evidence"))
+        #expect(!output.contains("unrelated worktree content"))
+        #expect(events.allSatisfy { $0.channel == .standardError })
+        #expect(await terminal.fileArtifactHistory.snapshot().isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func fileChangeDiffAdapterKeepsAllNumberedLines(isTerminal: Bool) async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let renderer = makeRenderer(isTerminal: isTerminal)
+        let terminal = try makeTerminal(directory, renderer: renderer)
+        let patch = "@@ -0,0 +1,520 @@\n" + (1...520).map { "+line \($0)\n" }.joined()
+        let summary = TurnFileChangeSummary(entries: [
+            .init(path: "Long.txt", additions: 520, deletions: 0, status: .added,
+                  isBinary: false, existedBefore: false, beforeDataBase64: nil, patch: patch),
+        ])
+        await terminal.writeFileChangeDiffs(summary)
+        let events = await renderer.capturedWriteEvents()
+        let output = TerminalANSIText.stripANSI(events.map(\.text).joined())
+        #expect(output.components(separatedBy: "│ +line ").count - 1 == 520)
+        #expect(output.contains("1 │ +line 1"))
+        #expect(output.contains("520 │ +line 520"))
+        #expect(!output.contains("Summary:"))
+        #expect(events.allSatisfy { $0.channel == .standardError })
+        #expect(await terminal.fileArtifactHistory.snapshot().isEmpty)
+    }
+
+    @Test(arguments: ["/changes", "/changes diff", "/changes --diff"])
+    func changesWithoutSummaryKeepsExistingMessage(command: String) async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let renderer = makeRenderer()
+        let terminal = try makeTerminal(directory, renderer: renderer)
+        await terminal.handleChangesCommand(command)
+        let events = await renderer.capturedWriteEvents()
+        #expect(events.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+            == "No tracked file changes.")
+        #expect(events.allSatisfy { $0.channel == .standardError })
+        #expect(await terminal.fileArtifactHistory.snapshot().isEmpty)
+    }
+
     @Test(arguments: ["assistant", "thought"])
     func delegatedArtifactPreservesSplitCodeFenceInTTY(_ stream: String) async throws {
         let directory = try temporaryDirectory()

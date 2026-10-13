@@ -173,41 +173,6 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func fileChangeDiffPatchRenderingColorsUnifiedDiffLines() {
-        let patch = """
-        diff --git a/Sources/App.swift b/Sources/App.swift
-        index 1111111..2222222 100644
-        --- a/Sources/App.swift
-        +++ b/Sources/App.swift
-        @@ -1,2 +1,2 @@
-         context
-        -old
-        +new
-        """
-
-        let rendered = TerminalChat.renderFileChangeDiffPatch(patch, isEnabled: true)
-
-        #expect(rendered.contains("\u{1B}[38;5;244mdiff --git a/Sources/App.swift b/Sources/App.swift\u{1B}[0m"))
-        #expect(rendered.contains("\u{1B}[38;5;141m@@ -1,2 +1,2 @@\u{1B}[0m"))
-        #expect(rendered.contains("\u{1B}[38;5;203m-old\u{1B}[0m"))
-        #expect(rendered.contains("\u{1B}[38;5;114m+new\u{1B}[0m"))
-        #expect(rendered.contains(" context"))
-    }
-
-    @Test
-    func fileChangeDiffPatchRenderingKeepsAllLines() {
-        let patch = (0..<520)
-            .map { "+line \($0)" }
-            .joined(separator: "\n")
-
-        let rendered = TerminalChat.renderFileChangeDiffPatch(patch, isEnabled: false)
-        let renderedLines = rendered.split(separator: "\n", omittingEmptySubsequences: false)
-
-        #expect(renderedLines.count == 520)
-        #expect(renderedLines.last == "+line 519")
-    }
-
-    @Test
     func sideBySideDiffWrapsLongSourceLinesWithoutTruncatingEitherCell() {
         let old = String(repeating: "oldPayload", count: 12)
         let new = String(repeating: "newPayload", count: 12)

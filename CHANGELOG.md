@@ -28,6 +28,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- `/changes diff` and `/changes --diff` now keep the existing `Summary` above
+  the same file metadata and numbered, syntax-highlighted diff renderer used by
+  `/artifacts`, replacing the legacy patch renderer. `/changes` still selects
+  only the latest change set without mutating or renumbering artifact history.
 - Removed confirmed unused internal helpers, orphaned test fixtures, redundant
   imports and no-op MCP logging work across the runtime, TUI and optional features,
   preserving public APIs, wire and persisted formats, and transport lifecycle behavior.
@@ -55,7 +59,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
   Normal tool blocks remain compact; detailed source evidence is published live
   and remains available on demand through `/artifacts`.
 - `/artifacts` now renders file names prominently and formats source evidence in fenced code blocks with syntax highlighting selected from each file extension; unknown extensions remain neutral.
-- Existing `Summary`, `/changes`, `/changes diff`, `/undo`, saved snapshots,
+- Existing `Summary`, `/changes` selection semantics, `/undo`, saved snapshots,
   checkpoints, transcripts, and ACP wire formats remain unchanged.
 
 ### Fixed
