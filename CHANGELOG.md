@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-14
+
 ### Added
 
 - Terminal shared-chat messages now show their local send time as `HH:mm:ss`
