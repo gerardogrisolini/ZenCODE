@@ -19,6 +19,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Feature process pipe draining no longer drops final stdout/stderr bytes when
+  a child writes and exits just after an empty non-blocking read.
 - Swift Testing runners that explicitly select `--testing-library swift-testing`
   now use the test support-directory sandbox even without an `.xctest` path.
   Existing harness signals, explicit override precedence, and the production

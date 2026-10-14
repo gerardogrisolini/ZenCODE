@@ -169,6 +169,9 @@ public enum FeatureProcessRunner {
         var wasTruncated = false
 
         while true {
+            // Snapshot before reading: the child can write and exit after an
+            // empty read, which must not be mistaken for a drained pipe.
+            let hasExitedBeforeRead = exitObserver.hasExited
             let bytesRead = scratch.withUnsafeMutableBytes { rawBuffer -> Int in
                 guard let base = rawBuffer.baseAddress else { return 0 }
                 return read(descriptor, base, rawBuffer.count)
@@ -220,7 +223,7 @@ public enum FeatureProcessRunner {
                 // before it exits, so an empty pipe after the owned exit was
                 // observed means drained. A descendant may otherwise keep the
                 // inherited write end open indefinitely.
-                if exitObserver.hasExited {
+                if hasExitedBeforeRead {
                     break
                 }
                 do {
