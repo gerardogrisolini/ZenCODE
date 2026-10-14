@@ -446,6 +446,29 @@ Release tags follow the strict `vX.Y.Z` contract described in
 ## [2.1.4] - 2026-09-07
 
 ### Added
+- ZenVoice provider selection adds ChatGPT Subscription alongside the existing API
+  mode, with separate cloud consent and backward-compatible settings. A dedicated
+  `zen --voice-bridge` owns subscription authentication and SwiftNIO control while
+  the independent macOS app owns WebKit/WebRTC media. The bridge never starts tasks,
+  refreshes shared tokens or falls back to API keys; delegation reaches only the
+  app's allowlisted ACP clients. Subscription permissions require an explicit,
+  scrollable menu/modal confirmation bound to the ACP client/request/activation,
+  not inferred vocal playback receipts. Offline protocol, migration, lifecycle,
+  privacy and failure regressions accompany the integration; interactive audio
+  validation remains user-controlled and distinct from successful handshakes.
+- Regression coverage for a WebSocket frame coalesced with HTTP 101; the shared
+  SwiftNIO upgrader now forwards leftover bytes instead of silently dropping the
+  first event. No dependency versions or pins changed.
+
+- Standalone personal macOS status-bar voice assistant in `Apps/ZenVoice`, with
+  its own Swift 6 Xcode project, OpenAI Realtime speech-to-speech, Keychain setup,
+  explicitly allowed projects and independent local ACP processes. Voice-only
+  one-shot permission challenges fail closed; disabling voice preserves running
+  tasks and pipes, while quitting closes children. Includes bounded incremental
+  ACP transport, playback-correlated permission checks and interruption-safe
+  audio scheduling. Unsigned Release build and 16 offline Swift Testing tests
+  verified on Xcode 27 / Swift 6.4 / SDK 27; setup/privacy/lifecycle documented.
+  Live API/audio, signing and notarization remain untested; no root product changes.
 
 - Conservative automatic project-memory consolidation after eligible root turns:
   one isolated, tool-less request to the current model/backend may propose a

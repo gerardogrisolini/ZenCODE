@@ -123,6 +123,8 @@ let targets: [Target] = [
             "LocalToolsSupport",
             "ZenPackageMetadata",
             "ToolCore",
+            // Coalesced WebSocket upgrade regression computes the RFC 6455 SHA-1 accept.
+            .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "Markdown", package: "swift-markdown"),
             // Local deterministic transport tests host small NIO HTTP and
             // WebSocket servers; production dependencies remain Core-only.

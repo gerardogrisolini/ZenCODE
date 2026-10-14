@@ -379,6 +379,7 @@ public final class RemoteTransportCore: Sendable {
                                 completionHandler: { _ in }
                             )
                         try channel.pipeline.syncOperations.addHTTPClientHandlers(
+                            leftOverBytesStrategy: .forwardBytes,
                             withClientUpgrade: upgradeConfiguration
                         )
                         try channel.pipeline.syncOperations.addHandler(
