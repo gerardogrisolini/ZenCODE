@@ -142,6 +142,136 @@ struct PlanCommandTests {
     }
 
     @Test
+    func savedPlanPreparationPreservesNormalizationAndGraphPointPrecedence() throws {
+        let source = try JSONDecoder().decode(TerminalSessionPlan.self, from: Data("""
+        {
+          "id": "plan-reset",
+          "originalGoal": "  Keep the goal  ",
+          "consolidatedText": "  Keep the body  ",
+          "createdAt": 42,
+          "isApproved": true,
+          "points": [
+            {"id": "plan-reset-1", "text": "  First  ", "status": "failed",
+             "dependsOn": ["  predecessor  ", "  "], "hasExplicitDependencies": false},
+            {"id": "plan-reset-1", "text": "Duplicate", "status": "completed",
+             "dependsOn": [], "hasExplicitDependencies": true}
+          ]
+        }
+        """.utf8))
+        let prepared = PlanningCommandKernel.planPreparedForSaving(source)
+        #expect(prepared.id == source.id)
+        #expect(prepared.originalGoal == "Keep the goal")
+        #expect(prepared.consolidatedText == "Keep the body")
+        #expect(prepared.createdAt == source.createdAt)
+        #expect(!prepared.isApproved)
+        #expect(prepared.points.map(\.status) == [.pending, .pending])
+        #expect(prepared.points[0].text == "First")
+        #expect(prepared.points[0].dependsOn == ["predecessor"])
+        #expect(!prepared.points[0].hasExplicitDependencies)
+
+        func savedPlan(tasks: [TaskRecord]) -> SavedTaskPlan {
+            SavedTaskPlan(
+                librarySessionID: "saved-plans-test",
+                graph: TaskGraphSnapshot(
+                    id: source.id,
+                    source: .plan(planID: source.id),
+                    state: .draft,
+                    tasks: tasks,
+                    createdAt: source.createdAt,
+                    updatedAt: source.createdAt
+                ),
+                snapshot: TaskGraphSavedPlan(plan: source)
+            )
+        }
+        #expect(PlanningCommandKernel.planPreparedForReuse(savedPlan(tasks: [])) == prepared)
+        let reused = PlanningCommandKernel.planPreparedForReuse(savedPlan(tasks: [
+            TaskRecord(id: "plan-reset-3", title: "Third", order: 2),
+            TaskRecord(
+                id: "plan-reset-2", title: "Second", order: 1,
+                dependsOn: ["plan-reset-1"]
+            ),
+            TaskRecord(
+                id: "plan-reset-1", title: "Graph first", order: 1,
+                dependsOn: ["predecessor"]
+            ),
+        ]))
+        #expect(reused.id == prepared.id)
+        #expect(reused.originalGoal == prepared.originalGoal)
+        #expect(reused.consolidatedText == prepared.consolidatedText)
+        #expect(reused.createdAt == prepared.createdAt)
+        #expect(!reused.isApproved)
+        #expect(reused.points.map(\.id) == ["plan-reset-1", "plan-reset-2", "plan-reset-3"])
+        #expect(reused.points.map(\.text) == ["Graph first", "Second", "Third"])
+        #expect(reused.points.map(\.status) == [.pending, .pending, .pending])
+        #expect(reused.points.map(\.hasExplicitDependencies) == [false, true, false])
+        #expect(reused.points.map(\.dependsOn) == [["predecessor"], ["plan-reset-1"], []])
+    }
+
+    @Test
+    func planStatusPreservesGraphAndLocalStatusPrecedence() {
+        let now = Date(timeIntervalSince1970: 10)
+        let priority: [TaskStatus] = [
+            .failed, .blocked, .inProgress, .awaitingValidation, .cancelled, .pending,
+        ]
+        for index in priority.indices {
+            let tasks = priority[index...].reversed().enumerated().map { offset, status in
+                TaskRecord(id: "point-\(offset)", title: "Point", order: offset, status: status)
+            }
+            var plan = TerminalSessionPlan(
+                originalGoal: "Track precedence",
+                consolidatedText: "Plan body",
+                isApproved: true,
+                points: tasks.map { task in
+                    TerminalSessionPlanPoint(
+                        id: task.id, text: task.title,
+                        status: PlanningCommandKernel.planPointStatus(for: task.status)
+                    )
+                }
+            )
+            let graphStates: [TaskGraphState] = [.active, .draft, .completed, .cancelled, .archived]
+            for state in graphStates {
+                let graph = TaskGraphSnapshot(
+                    id: plan.id, source: .plan(planID: plan.id), state: state,
+                    tasks: tasks, createdAt: now, updatedAt: now
+                )
+                let expected = state == .active
+                    ? (priority[index] == .pending ? "active" : priority[index].rawValue)
+                    : (state == .draft ? "awaiting_approval" : state.rawValue)
+                #expect(PlanningCommandKernel.planStatusTable(for: plan, graph: graph)
+                    .contains("**Overall status:** `\(expected)`"))
+            }
+            for approved in [false, true] {
+                plan.isApproved = approved
+                let expected = index < 4 ? priority[index].rawValue
+                    : (approved ? "pending" : "awaiting_approval")
+                #expect(PlanningCommandKernel.planStatusTable(for: plan, graph: nil)
+                    .contains("**Overall status:** `\(expected)`"))
+            }
+        }
+    }
+
+    @Test
+    func textOnlyPlanRecognizesAllAcknowledgementPrefixesWithoutMatchingSubstantiveReplies() {
+        let acknowledgements = [
+            "ok", "okay", "yes", "yep", "sure", "perfect", "great", "confirmed",
+            "si", "sì", "va bene", "perfetto", "bene", "d'accordo", "confermo",
+        ]
+        for acknowledgement in acknowledgements {
+            for reply in [acknowledgement, "\(acknowledgement), prepare the plan.",
+                          "\(acknowledgement), keep the identifiers"] {
+                let plan = PlanningCommandKernel.planFromLatestAssistantMessage(in: [
+                    AgentRuntimeMessage(role: .user, content: "Original goal"),
+                    AgentRuntimeMessage(role: .assistant, content: "Ready to plan"),
+                    AgentRuntimeMessage(role: .user, content: reply),
+                    AgentRuntimeMessage(role: .assistant, content: "Implementation plan"),
+                ])
+                #expect(plan?.originalGoal == (reply.hasSuffix("keep the identifiers")
+                    ? reply : "Original goal"))
+            }
+        }
+    }
+
+    @Test
     func savedPlansListMessageRendersShortIDStatusAndCounts() {
         let now = Date()
         let savedPlans = [
@@ -895,6 +1025,43 @@ struct PlanCommandTests {
         #expect(policy.contains("concrete validation"))
         #expect(policy.contains("explicit `Dependencies`"))
         #expect(policy.components(separatedBy: "Planner workflow policy:").count == 2)
+    }
+
+    @Test
+    func derivedPlanPointsPreserveNormalizationAndRejectEveryInvalidDependencyShape() throws {
+        func text(firstDependencies: String, secondDependencies: String) -> String {
+            """
+            Specifiche concordate
+            Keep the scope.
+
+            Implementation plan
+            1.   Inspect the workspace.\("  ")
+               Keep existing constraints.
+               Dependencies: \(firstDependencies)
+            2. Validate the result.
+               Dependencies: \(secondDependencies)
+            """
+        }
+        let points = try #require(PlanningCommandKernel.planPoints(
+            derivedFromFinalText: text(firstDependencies: "none", secondDependencies: "[1]"),
+            identifierToken: "ab-1"
+        ))
+        #expect(points.map(\.id) == ["plan-ab1-1", "plan-ab1-2"])
+        #expect(points.map(\.text) == [
+            "Inspect the workspace.\nKeep existing constraints.", "Validate the result.",
+        ])
+        #expect(points.map(\.status) == [.pending, .pending])
+        #expect(points.map(\.dependsOn) == [[], ["plan-ab1-1"]])
+        #expect(points.allSatisfy { $0.hasExplicitDependencies })
+        for (first, second) in [
+            ("none", "0"), ("none", "-1"), ("none", "3"), ("none", "1, 1"),
+            ("1", "none"), ("none", "2"), ("2", "1"), ("none", "invalid"),
+        ] {
+            #expect(PlanningCommandKernel.planPoints(
+                derivedFromFinalText: text(firstDependencies: first, secondDependencies: second),
+                identifierToken: "ab-1"
+            ) == nil)
+        }
     }
 
     @Test

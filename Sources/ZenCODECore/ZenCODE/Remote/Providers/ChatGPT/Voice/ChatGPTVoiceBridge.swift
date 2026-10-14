@@ -69,7 +69,7 @@ public actor ChatGPTVoiceBridge {
         guard ["CHATGPT_ACCESS_TOKEN", "CHATGPT_REFRESH_TOKEN", "CHATGPT_ACCOUNT_ID"].allSatisfy({ env[$0] == nil }) else { throw VoiceBridgeFailure.authMissing }
         // Store snapshot uses normal serialized read/hardening. Never calls loadValidCredentials/refresh/save.
         let value: CodexAgentCredentials
-        do { value = try CodexAgentModel.loadCredentials() } catch { throw VoiceBridgeFailure.authMissing }
+        do { value = try ChatGPTSubscriptionAuthService.loadCredentials() } catch { throw VoiceBridgeFailure.authMissing }
         try validateCredentials(value)
         return value
     }
@@ -84,7 +84,7 @@ public actor ChatGPTVoiceBridge {
         base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
         guard let data = Data(base64Encoded: base64), let claims = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let exp = claims["exp"] as? Double, exp.isFinite,
-              try CodexAgentModel.chatGPTAccountID(from: value.accessToken) == value.accountID else { throw VoiceBridgeFailure.authMissing }
+              try ChatGPTSubscriptionAuthService.chatGPTAccountID(from: value.accessToken) == value.accountID else { throw VoiceBridgeFailure.authMissing }
         guard exp - Date().timeIntervalSince1970 > 60 else { throw VoiceBridgeFailure.authExpired }
     }
     public func ready() async throws { try await output(.init(type: "ready")) }

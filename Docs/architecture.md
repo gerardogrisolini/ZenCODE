@@ -500,6 +500,41 @@ lookup, and persisted bindings are unchanged.
 The former public `ZenCODESetup` module is intentionally folded into
 `ZenCODECore`; repository consumers import `ZenCODECore` for setup APIs.
 
+### Responsibility-based subtrees
+
+Internal directories group cohesive responsibilities without adding SwiftPM
+modules or changing public names, feature paths, wire formats, or persistence:
+
+```text
+Sources/ZenCODECore/ZenCODE/
+├── Agent/Core/Commands/       # Parsing, transient state, plans, and workflow control
+│   └── Prompts/              # Planning/workflow prompt text, unchanged by relocation
+├── Setup/
+│   ├── Profiles/             # Agent instructions, bindings, and tool/skill selection
+│   ├── Models/               # Providers, catalogs, model selection, and DS4 setup
+│   ├── Interaction/          # Menus, prompts, and response language
+│   ├── Integrations/         # Features, memory embeddings, and Telegram setup
+│   └── Maintenance/          # Data management and configuration reset
+└── Telegram/
+    ├── Transport/            # Bot API, multipart encoding, and rate governance
+    ├── Routing/              # Dispatcher, mailbox, leases, routes, and update offsets
+    ├── Control/              # Control service, commands, and permission requests
+    ├── Attachments/          # Inbound files, artifact policy, and consent
+    ├── Pairing/              # Pairing service and grants
+    └── Presentation/         # Rich messages, streaming, shared chat, and progress
+
+Tests/ZenCODECoreTests/
+├── Tools/SubAgents/           # Thematic runtime tests and domain-specific fixtures
+└── TUI/RenderCoordinator/     # Tools, overlays, overview, streaming, and resize tests
+```
+
+`Setup` retains its runner, requirement, and shared setup types at the root.
+Command files extend the existing `PlanningCommandKernel`; they do not create a
+second coordinator or task-graph owner. The two test entry files retain their
+suite declarations and traits, with scenario methods in thematic extensions.
+Shared test helpers remove repeated setup and output projections while preserving
+suite/test names, assertions, per-test state, and lifecycle boundaries.
+
 ## Dependency Direction
 
 Arrows point from a dependency to its consumer. The actual direction is from

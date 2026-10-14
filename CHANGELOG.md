@@ -10,8 +10,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Organised command coordination, setup, and Telegram into responsibility-based
+  subtrees. Split the largest sub-agent and render-coordinator test suites into
+  focused files and shared fixtures, removing repeated setup and projections
+  without dropping test cases. Command handling now shares plan preparation and
+  status selection; public symbols, prompt text, wire and persisted formats,
+  and existing test names remain unchanged.
+
 ### Fixed
 
+- Fixed the voice bridge's two stale authentication-service references that
+  prevented the root package from compiling.
 - MCP connections now identify the client as `ZenCODE` instead of
   `Feature MCP client`, including Xcode's Agent Activity panel.
 - Shared-chat timestamp rendering tests now isolate terminal output, preventing
