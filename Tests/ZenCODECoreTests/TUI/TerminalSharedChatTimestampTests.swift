@@ -81,7 +81,8 @@ struct TerminalSharedChatTimestampTests {
     func statusBarFitsTimestampedAuthorWithinNarrowReaderRows(columns: Int) async throws {
         let message = try historicalMessage()
         let expectedAuthor = "Author: Worker [\(localTime(message.sentAt))] → Coordinator"
-        let statusBar = TerminalStatusBar(isEnabled: false)
+        // configureForTesting enables rendering, so keep all writes off the real terminal.
+        let statusBar = TerminalStatusBar(isEnabled: false, outputSink: { _ in })
         await statusBar.configureForTesting(row: 20, columns: columns)
         await statusBar.updateInputPanel(text: "draft", cursorIndex: 5, modeText: "Chat", helpText: "Enter")
         await statusBar.setSharedChatReader(

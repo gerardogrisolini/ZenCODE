@@ -10,6 +10,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Shared-chat timestamp rendering tests now isolate terminal output, preventing
+  test panels containing `draft` and `historical message` from appearing in the
+  active terminal while tests run.
+
 ## [2.3.0] - 2026-10-14
 
 ### Added
