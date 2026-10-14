@@ -10,6 +10,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- macOS CI, release gates, and standalone feature jobs now use the explicitly
+  accepted arm64 `xcode-27` preview runner with Xcode 27 and Swift 6.4. The macOS
+  SwiftPM cache is isolated from the previous image; Linux jobs are unchanged.
+  Hosted gate success remains required before treating macOS builds as validated.
+
 ## [2.3.0] - 2026-10-14
 
 ### Added
@@ -39,8 +46,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   Linux CI and release jobs now target the published `swift:6.4-noble` image on
   both supported architectures. The Raspberry Pi container recipe explicitly
   installs the 6.4 toolchain series without upgrading existing machines.
-  The macOS runner migration remains pending;
-  see `Docs/release.md` for the verified runner options and validation limits.
+  The macOS runner migration remained pending in this release;
+  see `Docs/release.md` for the current runner selection and validation limits.
 - `/changes diff` and `/changes --diff` now keep the existing `Summary` above
   the same file metadata and numbered, syntax-highlighted diff renderer used by
   `/artifacts`, replacing the legacy patch renderer. `/changes` still selects

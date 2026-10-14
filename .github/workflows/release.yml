@@ -95,9 +95,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Swift 6.4 runner selection is pending; see Docs/release.md.
-          - name: macOS 26 (Swift 6.4 required)
-            os: macos-26
+          # The xcode-27 arm64 preview is explicitly accepted; see Docs/release.md.
+          - name: macOS (Xcode 27 preview, Swift 6.4)
+            os: xcode-27
             container: ""
             platform: macos-arm64
           - name: Ubuntu 24.04

@@ -136,6 +136,61 @@ struct BundledFeatureCatalogParityTests {
     }
 
     @Test
+    func standaloneCIMatrixUsesXcode27AndPreservesLinuxEligibility() throws {
+        let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
+        let scratchPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-feature-ci-matrix-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: scratchPath, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratchPath) }
+
+        let generator = scratchPath.appendingPathComponent("feature-ci-matrix")
+        _ = try runProcess(
+            executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+            arguments: [
+                "swiftc",
+                "Sources/ZenPackageMetadata/ZenBundledFeatureCatalog.swift",
+                "Scripts/FeatureCIMatrix.swift",
+                "-o", generator.path
+            ],
+            currentDirectoryURL: packageRoot
+        )
+        let data = try runProcess(
+            executableURL: generator,
+            arguments: [],
+            currentDirectoryURL: packageRoot
+        )
+        let matrix = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let entries = try #require(matrix["include"] as? [[String: String]])
+        #expect(
+            entries.count == ZenBundledFeatureCatalog.all.count
+                + ZenBundledFeatureCatalog.all.filter(\.isInstalledOnLinux).count
+        )
+
+        for feature in ZenBundledFeatureCatalog.all {
+            let macOSEntries = entries.filter {
+                $0["feature"] == feature.id && $0["platform"] == "macos"
+            }
+            #expect(macOSEntries.count == 1)
+            let macOS = try #require(macOSEntries.first)
+            #expect(macOS["os"] == "xcode-27")
+            #expect(macOS["container"] == "")
+            #expect(macOS["product"] == feature.productName)
+            #expect(macOS["packagePath"] == feature.sourceRelativePath)
+
+            let linuxEntries = entries.filter {
+                $0["feature"] == feature.id && $0["platform"] == "linux"
+            }
+            #expect(linuxEntries.count == (feature.isInstalledOnLinux ? 1 : 0))
+            for linux in linuxEntries {
+                #expect(linux["os"] == "ubuntu-24.04")
+                #expect(linux["container"] == "swift:6.4-noble")
+                #expect(linux["product"] == feature.productName)
+                #expect(linux["packagePath"] == feature.sourceRelativePath)
+            }
+        }
+    }
+
+    @Test
     func nativeAndStaticallyDeclaredBundledToolsHaveExplicitPresentations() {
         let nativeDescriptors = DirectToolCatalog.baseDescriptors
         let missingNative = nativeDescriptors

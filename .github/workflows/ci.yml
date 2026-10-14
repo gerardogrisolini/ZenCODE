@@ -22,7 +22,7 @@ env:
 jobs:
   feature-matrix:
     name: Generate standalone feature matrix
-    runs-on: macos-26
+    runs-on: xcode-27
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
@@ -129,10 +129,9 @@ jobs:
           SWIFT
 
   macos:
-    name: macOS 26 (Swift 6.4 required)
-    # Swift 6.4 runner selection is pending; macos-26 currently documents Xcode 26.x.
-    # See Docs/release.md before treating this lane as a supported release gate.
-    runs-on: macos-26
+    name: macOS (Xcode 27 preview, Swift 6.4)
+    # The xcode-27 arm64 preview is explicitly accepted; see Docs/release.md.
+    runs-on: xcode-27
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -147,9 +146,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: .build
-          key: spm-macos-26-${{ hashFiles('Package.resolved') }}
+          key: spm-xcode-27-${{ hashFiles('Package.resolved') }}
           restore-keys: |
-            spm-macos-26-
+            spm-xcode-27-
 
       - name: Assert live provider suites are disabled
         run: |

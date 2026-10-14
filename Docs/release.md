@@ -50,11 +50,11 @@ but it is not a reproducible release input.
 
 The **CI** and **Release** workflows require Swift 6.4 or newer. Linux jobs use
 Ubuntu 24.04 on x86_64 and arm64 with `swift:6.4-noble`; that published image tag
-has both architectures. The macOS runner migration is still pending: the
-configured `macos-26` image documents Xcode 26.x, not the Swift 6.4 toolchain.
-GitHub publishes the arm64 `xcode-27` label as a preview, but adopting that runner
-requires an explicit decision. Until a compatible runner is selected and its
-gates pass, macOS CI and release builds must not be considered validated.
+has both architectures. All macOS jobs, including standalone feature jobs, use
+GitHub's arm64 `xcode-27` runner with Xcode 27 and Swift 6.4. Its preview status
+and possible capacity and stability limitations are explicitly accepted. Runner
+selection is not evidence that ZenCODE's hosted gates pass; macOS CI and release
+builds must not be considered validated until those gates succeed.
 
 The platform gates use the resolved lockfile without updating it, run the full
 non-live test suite, and build `ZenCODECore` and the release `zen` product. CI also
@@ -73,7 +73,7 @@ or running a hosted workflow:
 - [The `macos-26` software inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md)
   lists Xcode 26.6 as its default. The separate
   [`xcode-27` inventory](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md)
-  lists Xcode 27.0 (build `27A266a`) as its default on macOS 27.0.1.
+  lists Xcode 27.0 (build `27A266a`) as its default on macOS 27.0.1, with Swift 6.4.
   [GitHub's announcement](https://github.com/actions/runner-images/issues/14404)
   documents the `xcode-27` label and its preview status, including possible capacity
   and stability limitations. No `macos-27` label or custom Xcode path is assumed.
