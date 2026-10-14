@@ -10,6 +10,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Feature catalog generation now preserves the committed Swift catalog's author
+  header, preventing CI `--check` failures caused by the header mismatch.
+- `/goal` no longer closes its graph when the last currently defined task finishes.
+  Open workflows remain extensible, pausable, and recoverable from checkpoints,
+  including after analysis-only work. After verifying the whole objective, the
+  root coordinator explicitly finalizes through `tasks.update` with workflow
+  state `completed`, the graph ID, and its current revision; unfinished or
+  unvalidated tasks prevent closure. Manual/plan auto-completion and previously
+  terminal graphs are unchanged. Schema-1 and v4 readers retain legacy support;
+  older binaries cannot read the new workflow state in finalized saved snapshots.
+
 ## [2.3.0] - 2026-10-14
 
 ### Added

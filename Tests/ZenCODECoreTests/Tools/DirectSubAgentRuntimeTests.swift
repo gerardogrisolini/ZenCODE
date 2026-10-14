@@ -4301,16 +4301,23 @@ struct DirectSubAgentRuntimeTests {
         let agent = try #require(await runtime.snapshots().first)
         #expect(agent.status == .standby)
 
-        // Validate positively → task completes → graph completes → standby released.
+        // Task validation keeps the goal open and the agent in standby until
+        // the coordinator explicitly finalizes the whole objective.
         _ = try await orchestrator.validateTaskResult(
             sessionID: "root",
             taskID: "task-a",
             succeeded: true
         )
-        let graph = try #require(try await orchestrator.graphSnapshot(
+        let ready = try #require(try await orchestrator.graphSnapshot(
             sessionID: "root",
             graphID: "workflow"
         ))
+        #expect(ready.state == .active)
+        #expect(await runtime.snapshots().first { $0.id == agent.id }?.status == .standby)
+        let graph = try await orchestrator.updateWorkflow(
+            sessionID: "root", graphID: ready.id, state: .completed,
+            message: nil, expectedRevision: ready.revision
+        )
         #expect(graph.state == .completed)
 
         // Backend shutdown is emitted only after the graph observer has released
@@ -4531,10 +4538,14 @@ struct DirectSubAgentRuntimeTests {
             taskID: "task-a",
             succeeded: true
         )
-        let graph = try #require(try await orchestrator.graphSnapshot(
+        let ready = try #require(try await orchestrator.graphSnapshot(
             sessionID: "root",
             graphID: "workflow"
         ))
+        let graph = try await orchestrator.updateWorkflow(
+            sessionID: "root", graphID: ready.id, state: .completed,
+            message: nil, expectedRevision: ready.revision
+        )
         #expect(graph.state == .completed)
 
         // Releasing terminated graphs flags the in-flight resident for release

@@ -416,6 +416,8 @@ public enum TaskGraphWorkflowState: String, Codable, Equatable, Sendable {
     case running
     case awaitingUser = "awaiting_user"
     case blocked
+    /// The coordinator explicitly verified the whole objective, not just the current tasks.
+    case completed
 }
 
 /// Persisted /goal control state, separate from task lifecycle and Planner clarification.

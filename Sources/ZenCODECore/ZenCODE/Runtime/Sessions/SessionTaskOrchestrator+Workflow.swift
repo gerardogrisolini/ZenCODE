@@ -88,6 +88,12 @@ extension SessionTaskOrchestrator {
         if checkingCancellation { try Task.checkCancellation() }
         var graph = original
         graph.workflow = workflow
+        if workflow.state == .completed {
+            // Validation below requires a non-empty DAG of completed, validated
+            // tasks. Commit both states atomically, never a terminal graph with
+            // an unfinished objective merely because its current tasks ended.
+            graph.state = .completed
+        }
         try validate(graph)
         touchGraph(&graph, at: Date())
         guard var sessionState = sessionStates[sessionID] else {

@@ -245,7 +245,7 @@ struct WorkflowCommandRuntimeState: Sendable, Equatable {
                 return false
             }
             switch workflow.state {
-            case .running: pendingSignal = nil
+            case .running, .completed: pendingSignal = nil
             case .awaitingUser: pendingSignal = .clarification(workflow.message ?? "Workflow awaiting user input.")
             case .blocked: pendingSignal = .blocked(workflow.message ?? "Workflow blocked.")
             }
@@ -597,6 +597,7 @@ enum PlanningCommandKernel {
             case .running: return .continueAutomatically
             case .awaitingUser: return .awaitingClarification
             case .blocked: return .blocked
+            case .completed: return .completed
             }
         }
         // Explicit compatibility fallback for schema-1 graphs without metadata.
@@ -614,6 +615,13 @@ enum PlanningCommandKernel {
         planning, after a partial implementation, or merely because one task or agent attempt ended.
         - Keep inspecting, executing directly or delegating when useful, validating, retrying failed work, and processing newly \
         unblocked tasks until the goal and every acceptance criterion are satisfied.
+        - Completing all currently defined tasks does not complete the goal or close its graph. \
+        Add newly discovered work to the same graph, or pause for clarification when needed.
+        - After the entire goal is achieved and validated and every task is completed, call \
+        tasks.list for the current graph revision, then tasks.update with only graphID, \
+        expectedRevision, and workflow: {state: "completed"}. This explicit finalization requires \
+        a non-empty graph with all tasks completed; do not finalize merely after analysis or planning. \
+        Only after finalization report the final summary.
         - If any requirement, constraint, expected behavior, or necessary decision is unclear and \
         cannot be resolved reliably from the workspace or existing context, ask the user a focused \
         clarification question instead of guessing. Once clarified, resume this same goal graph.
@@ -815,6 +823,8 @@ enum PlanningCommandKernel {
         Phase 3 — Final review:
         - Verify the completed work against the goal and acceptance criteria.
         - Inspect changed files to confirm correctness and consistency.
+        - Explicitly finalize the verified goal with tasks.update workflow state completed as \
+        specified in the Completion contract; task completion alone leaves the workflow open.
         - Report a concise summary: what was done, key decisions, validation results, and only \
         non-blocking concerns or optional follow-ups. Never present an unsatisfied requirement or \
         acceptance criterion as a follow-up.

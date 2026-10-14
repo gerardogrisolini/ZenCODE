@@ -613,6 +613,12 @@ struct SessionTaskOrchestratorTests {
             _ = try await orchestrator.validateTaskResult(
                 sessionID: "session", taskID: "delegated", succeeded: true
             )
+            let ready = try #require(try await orchestrator.graphSnapshot(sessionID: "session"))
+            #expect(ready.state == .active)
+            _ = try await orchestrator.updateWorkflow(
+                sessionID: "session", graphID: ready.id, state: .completed,
+                message: nil, expectedRevision: ready.revision
+            )
         }
         #expect(try await orchestrator.graphSnapshot(sessionID: "session")?.state == .completed)
     }

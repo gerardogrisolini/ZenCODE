@@ -187,6 +187,14 @@ actor ScriptedACPCommandBackend: AgentRuntimeBackend {
                 return DirectAgentResponse(text: "Direct work started", stopReason: "end_turn", modelID: "workflow-model")
             }
             if prompt.contains("Continue the active /goal workflow automatically") {
+                let graph = try #require(try await owner.graphSnapshot(sessionID: sessionID))
+                if graph.tasks.allSatisfy({ $0.status == .completed }) {
+                    _ = try await owner.updateWorkflow(
+                        sessionID: sessionID, graphID: graph.id, state: .completed,
+                        message: "Whole objective verified", expectedRevision: graph.revision
+                    )
+                    return DirectAgentResponse(text: "Goal verified", stopReason: "end_turn", modelID: "workflow-model")
+                }
                 _ = try await owner.updateTask(
                     sessionID: sessionID, taskID: "direct",
                     update: TaskUpdate(status: .completed, output: "Direct work validated")
@@ -910,10 +918,11 @@ struct ACPCommandRoutingTests {
             "sessionId": fixture.sessionID, "prompt": "/goal Complete direct work"
         ])
         let prompts = await fixture.backend.recordedPrompts()
-        #expect(prompts.count == 2)
-        #expect(prompts.last?.contains("Continue the active /goal workflow automatically") == true)
+        #expect(prompts.count == 3)
+        #expect(prompts.dropFirst().allSatisfy { $0.contains("Continue the active /goal workflow automatically") })
         let graph = try #require(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID))
         #expect(graph.state == .completed)
+        #expect(graph.workflow?.state == .completed)
         #expect(graph.tasks.count == 1)
         #expect(graph.tasks.first?.attempts.last?.executor == .coordinator)
         #expect(graph.tasks.first?.attempts.last?.status == .completed)

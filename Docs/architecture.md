@@ -96,10 +96,16 @@ The task control plane follows the same compatibility rule: `SessionTaskOrchestr
 
 `/goal` additionally persists optional `TaskGraphWorkflow` metadata on schema-1
 graphs: the immutable original goal (nil only for adopted legacy graphs),
-`running` / `awaiting_user` / `blocked` control state, an explanatory message,
+`running` / `awaiting_user` / `blocked` / `completed` control state, an explanatory message,
 and a workflow-specific monotonic revision. These are owned and committed only
 by `SessionTaskOrchestrator`; frontend reply transcripts remain transient.
-New workflows are retained for recovery even before the first task exists.
+Open workflows are retained for recovery even before the first task exists and
+after all currently defined tasks complete, including metadata-free legacy graphs.
+Completing the last task never finalizes a workflow: the coordinator must verify
+the whole objective, then explicitly call `tasks.update` with
+`workflow: {state: "completed"}` and the current graph revision. That transaction
+atomically marks the workflow and graph completed; only then can recovery pruning
+remove its checkpoint and automatic continuation stop for successful completion.
 `tasks.update` exposes an exclusive root-coordinator workflow mode requiring
 `graphID`, `expectedRevision` from `tasks.list`, and `workflow: {state, message}`;
 it rejects task payloads, objective changes, non-current/non-active/non-workflow
@@ -119,9 +125,15 @@ independent validation regardless of the runtime's completion hint; negative
 validation records `failed`, and retry creates a new attempt. The effective
 attempt executor determines this policy, not its original task specification.
 Workflow lifecycle, ownership, dependency and revision checks remain intact;
-completion requires a nonempty graph whose tasks are all `completed`. No task,
-mutation or delegation grants are expanded by this execution choice. Workflow
-state does not automatically verify semantic goal completion.
+explicit completion requires a nonempty graph whose tasks are all `completed`
+and whose delegated results have been validated. Manual and plan graphs retain
+their derived automatic completion. No task, mutation or delegation grants are
+expanded. The runtime checks lifecycle consistency, not semantic goal attainment:
+the coordinator is responsible for verifying the original objective before finalizing.
+The schema remains 1; `completed` is an additive workflow control-state value.
+Existing checkpoints remain readable, and previously terminal graphs are not
+silently reopened (their old `running` metadata is not evidence of unfinished work).
+Older binaries do not understand the new value in saved finalized snapshots.
 Older schema-1 checkpoints without this field still decode. Their unavailable
 original objective is explicit rather than inferred from tasks or replayed chat;
 the legacy heading protocol remains a compatibility fallback only until first

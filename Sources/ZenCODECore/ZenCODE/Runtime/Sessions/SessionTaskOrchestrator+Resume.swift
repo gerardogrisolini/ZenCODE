@@ -77,8 +77,9 @@ extension SessionTaskOrchestrator {
 
     /// Returns the incomplete task graphs persisted for a working directory,
     /// most recently updated first. A graph is resumable when it is not in a
-    /// terminal state and retains either workflow metadata or a non-terminal task.
-    /// Workflow objectives survive pauses before any task is created. During the
+    /// terminal state and is a workflow or retains a non-terminal task.
+    /// Workflow objectives survive pauses before any task is created and remain
+    /// recoverable after all current tasks finish, until explicit completion. During the
     /// scan, legacy ordinary checkpoints are compacted best-effort so terminal
     /// graph history does not remain on disk. This does not require a
     /// registered session.
@@ -167,7 +168,7 @@ extension SessionTaskOrchestrator {
     ) -> [TaskGraphSnapshot] {
         checkpoint.graphs.filter { graph in
             !graph.state.isTerminal
-                && (graph.workflow != nil || graph.tasks.contains(where: { !$0.status.isTerminal }))
+                && (graph.source.isWorkflow || graph.tasks.contains(where: { !$0.status.isTerminal }))
         }
     }
 

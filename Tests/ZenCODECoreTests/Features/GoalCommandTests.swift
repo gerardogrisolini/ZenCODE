@@ -112,6 +112,8 @@ struct GoalCommandTests {
         #expect(prompt.contains("resume this same goal graph"))
         #expect(prompt.contains("exhaust the clarification, evidence, suitable-agent, and retry paths"))
         #expect(prompt.contains("acceptance criterion as a follow-up"))
+        #expect(prompt.contains("workflow: {state: \"completed\"}"))
+        #expect(prompt.contains("do not finalize merely after analysis or planning"))
         #expect(!prompt.contains("all tasks are completed or a real blocker is reached"))
         #expect(!prompt.contains("use agent.message to request corrections or"))
     }
@@ -196,6 +198,41 @@ struct GoalCommandTests {
         // The reply is consumed once; it does not capture every later message.
         #expect(terminal.activeWorkflow?.isAwaitingReply == false)
         #expect(terminal.activeWorkflow?.exchanges.count == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func lastTaskCompletionStillAllowsClarificationAndSameGraphContinuation(subAgentsEnabled: Bool) async throws {
+        let terminal = try makeTerminal(subAgentsEnabled: subAgentsEnabled)
+        _ = await terminal.submittedLineAction("/goal Implement the whole change")
+        let owner = await terminal.sessionRunner.taskOrchestrator
+        _ = try await owner.createTasks(sessionID: terminal.sessionID, tasks: [
+            TaskDefinition(id: "analysis", title: "Analyze scope"),
+        ])
+        for status in [TaskStatus.inProgress, .completed] {
+            _ = try await owner.updateTask(
+                sessionID: terminal.sessionID, taskID: "analysis", update: TaskUpdate(status: status)
+            )
+        }
+        let analyzed = try #require(try await owner.graphSnapshot(sessionID: terminal.sessionID))
+        #expect(analyzed.state == .active)
+        _ = try await owner.updateWorkflow(
+            sessionID: terminal.sessionID, graphID: analyzed.id, state: .awaitingUser,
+            message: "Which scope?", expectedRevision: analyzed.revision
+        )
+        await terminal.recordWorkflowTurnOutcome(graphID: analyzed.id, coordinatorMessage: "Which scope?")
+        #expect(terminal.activeWorkflow?.isAwaitingReply == true)
+        guard case let .runHiddenPrompt(prompt, purpose) = await terminal.submittedLineAction("The entire repository") else {
+            Issue.record("Completing the analysis must not prevent clarification and continuation")
+            return
+        }
+        #expect(purpose == .workflow(originalGoal: "Implement the whole change", graphID: analyzed.id))
+        #expect(prompt.contains("The entire repository"))
+        #expect(prompt.contains("workflow: {state: \"completed\"}"))
+        #expect(try await owner.graphSnapshot(sessionID: terminal.sessionID)?.workflow?.state == .running)
+        _ = try await owner.createTasks(sessionID: terminal.sessionID, tasks: [
+            TaskDefinition(id: "implementation", title: "Implement", dependsOn: ["analysis"]),
+        ])
+        #expect(try await owner.graphSnapshot(sessionID: terminal.sessionID)?.id == analyzed.id)
     }
 
     @Test
@@ -517,6 +554,7 @@ struct GoalCommandTests {
         #expect(prompt.contains("Goal: Ship the complete feature"))
         #expect(prompt.contains("Active workflow task graph: workflow_test"))
         #expect(prompt.contains("no tasks defined"))
+        #expect(prompt.contains("workflow: {state: \"completed\"}"))
         #expect(prompt.contains("not permission to return a progress summary"))
         #expect(prompt.contains("Continue working until the stated goal is fully achieved"))
         #expect(prompt.contains("canonical agent.create"))

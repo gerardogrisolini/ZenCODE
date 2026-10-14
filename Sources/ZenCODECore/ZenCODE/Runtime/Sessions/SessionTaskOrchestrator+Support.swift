@@ -215,8 +215,14 @@ extension SessionTaskOrchestrator {
             guard graph.source.isWorkflow,
                   workflow.revision > 0,
                   workflow.originalGoal.map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) ?? true,
-                  workflow.state == .running || workflow.message?.nilIfBlank != nil else {
+                  workflow.state == .running || workflow.state == .completed || workflow.message?.nilIfBlank != nil else {
                 throw SessionTaskOrchestratorError.invalidSnapshot("invalid workflow control metadata")
+            }
+            if workflow.state == .completed,
+               (!graph.state.isTerminal || graph.tasks.isEmpty || graph.tasks.contains(where: { $0.status != .completed })) {
+                throw SessionTaskOrchestratorError.invalidSnapshot(
+                    "completed workflow requires a terminal graph with all tasks completed and validated"
+                )
             }
             if let message = workflow.message, message.count > limits.maximumDetailsLength {
                 throw SessionTaskOrchestratorError.valueTooLong(field: "workflow.message", limit: limits.maximumDetailsLength)
@@ -468,6 +474,10 @@ extension SessionTaskOrchestrator {
     }
 
     func updateGraphCompletion(_ graph: inout TaskGraphSnapshot, at date: Date) {
+        // A workflow may discover more work after its last current task. Only
+        // updateWorkflow(.completed) finalizes its objective, including legacy
+        // active workflows without metadata. Manual/plan graphs remain derived.
+        guard !graph.source.isWorkflow else { return }
         let allCompleted = !graph.tasks.isEmpty
             && graph.tasks.allSatisfy { $0.status == .completed }
         if allCompleted, graph.state == .active {
@@ -497,7 +507,7 @@ extension SessionTaskOrchestrator {
     func resumableGraphs(in state: SessionState) -> [TaskGraphSnapshot] {
         state.graphs.values.filter { graph in
             !graph.state.isTerminal
-                && (graph.workflow != nil || graph.tasks.contains(where: { !$0.status.isTerminal }))
+                && (graph.source.isWorkflow || graph.tasks.contains(where: { !$0.status.isTerminal }))
         }
     }
 

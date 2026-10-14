@@ -222,7 +222,15 @@ struct WorkflowControlTests {
         for status in [TaskStatus.inProgress, .completed] {
             _ = try await reader.updateTask(sessionID: "root", taskID: "second", update: TaskUpdate(status: status))
         }
-        let completed = try #require(try await reader.graphSnapshot(sessionID: "root"))
+        let ready = try #require(try await reader.graphSnapshot(sessionID: "root"))
+        #expect(ready.state == .active)
+        #expect(PlanningCommandKernel.workflowTurnDisposition(
+            graph: ready, expectedGraphID: ready.id, coordinatorMessage: "Done"
+        ) == .continueAutomatically)
+        let completed = try await reader.updateWorkflow(
+            sessionID: "root", graphID: ready.id, state: .completed,
+            message: nil, expectedRevision: ready.revision
+        )
         #expect(completed.state == .completed)
         #expect(completed.tasks.allSatisfy { $0.status == .completed })
         #expect(PlanningCommandKernel.workflowTurnDisposition(
