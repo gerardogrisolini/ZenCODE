@@ -21,6 +21,98 @@ struct AppStorageDirectoryTests {
         ))
     }
 
+    @Test(arguments: [
+        ["ZenCODECoreTests", "--testing-library", "swift-testing"],
+        ["ZenCODECoreTests", "--filter", "AppStorageDirectoryTests", "--testing-library", "swift-testing"],
+    ])
+    func swiftTestingLibrarySelectorIsAnIndependentTestHarnessSignal(arguments: [String]) {
+        #expect(AppStorageDirectory.isRunningUnderTestHarness(
+            processName: "ZenCODECoreTests",
+            arguments: arguments,
+            environment: [:],
+            bundlePath: "/tmp/zencode-build/debug"
+        ))
+    }
+
+    @Test(arguments: [
+        [],
+        ["zen"],
+        ["zen", "swift-testing"],
+        ["zen", "--testing-library"],
+        ["zen", "--testing-library", ""],
+        ["zen", "--testing-library", "xctest"],
+        ["zen", "--testing-library", "other"],
+        ["zen", "--testing-library", "swift-testing-extra"],
+        ["zen", "--testing-library", "Swift-Testing"],
+        ["zen", "--testing-library", "xctest", "swift-testing"],
+        ["zen", "--testing-library", "--filter", "swift-testing"],
+        ["zen", "--other", "swift-testing"],
+        ["zen", "--not-testing-library", "swift-testing"],
+        ["zen", "--testing-library swift-testing"],
+        ["zen", "--testing-library=xctest"],
+        ["zen", "--other=swift-testing"],
+        ["zen", "--message=--testing-library swift-testing"],
+    ])
+    func unrelatedOrIncompleteLibrarySelectorsAreNotTestHarnessSignals(arguments: [String]) {
+        #expect(!AppStorageDirectory.isRunningUnderTestHarness(
+            processName: "zen",
+            arguments: arguments,
+            environment: [:],
+            bundlePath: "/Applications/ZenCODE.app"
+        ))
+    }
+
+    @Test(arguments: [
+        "XCTestConfigurationFilePath",
+        "XCTestBundlePath",
+        "XCTestSessionIdentifier",
+        "SWIFT_TESTING_ENABLED",
+    ])
+    func existingTestHarnessEnvironmentSignalsRemainIndependent(key: String) {
+        #expect(AppStorageDirectory.isRunningUnderTestHarness(
+            processName: "zen",
+            arguments: ["zen"],
+            environment: [key: ""],
+            bundlePath: "/Applications/ZenCODE.app"
+        ))
+    }
+
+    @Test(arguments: ["xctest", "swiftpm-testing-helper", "swiftpm-xctest-helper"])
+    func existingTestHarnessProcessNamesRemainIndependent(processName: String) {
+        #expect(AppStorageDirectory.isRunningUnderTestHarness(
+            processName: processName,
+            arguments: [processName],
+            environment: [:],
+            bundlePath: "/Applications/ZenCODE.app"
+        ))
+    }
+
+    @Test(arguments: [
+        "/tmp/ZenCODECoreTests.xctest",
+        "/tmp/ZenCODECoreTests.xctest/Contents/MacOS/ZenCODECoreTests",
+    ])
+    func existingXCTestArgumentPathsRemainIndependent(path: String) {
+        #expect(AppStorageDirectory.isRunningUnderTestHarness(
+            processName: "zen",
+            arguments: ["zen", path],
+            environment: [:],
+            bundlePath: "/Applications/ZenCODE.app"
+        ))
+    }
+
+    @Test(arguments: [
+        "/tmp/ZenCODECoreTests.xctest",
+        "/tmp/ZenCODECoreTests.xctest/Contents/MacOS/ZenCODECoreTests",
+    ])
+    func existingXCTestBundlePathsRemainIndependent(path: String) {
+        #expect(AppStorageDirectory.isRunningUnderTestHarness(
+            processName: "zen",
+            arguments: ["zen"],
+            environment: [:],
+            bundlePath: path
+        ))
+    }
+
     @Test
     func coderSupportFilesUseTheEffectiveZenCodeDirectory() {
         AppStorageDirectory.configureSupportDirectoryURL(nil)

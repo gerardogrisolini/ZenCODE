@@ -74,6 +74,7 @@ public enum AppStorageDirectory {
     /// portable one: Xcode sets `XCTest*` variables, `swift test` runs the
     /// bundle through `swiftpm-testing-helper` (or `xctest`) and carries the
     /// `.xctest` bundle path in its arguments rather than as its own executable,
+    /// Swift Testing runners explicitly select `--testing-library swift-testing`,
     /// and a directly launched bundle shows up in `Bundle.main`. Over-detection
     /// is harmless here (a redirected support directory), while under-detection
     /// only restores the previous behaviour, so the checks are deliberately
@@ -88,8 +89,8 @@ public enum AppStorageDirectory {
         )
     }
 
-    /// Pure detection seam so the standalone-helper marker is tested without
-    /// relying on this XCTest process's ambient overrides.
+    /// Pure detection seam so harness signals are tested without relying on
+    /// this test process's ambient overrides.
     static func isRunningUnderTestHarness(
         processName: String,
         arguments: [String],
@@ -117,6 +118,14 @@ public enum AppStorageDirectory {
         // not inherit XCTest's process name, bundle path, or environment.
         // They opt in explicitly rather than relying on those parent signals.
         if arguments.contains(testHarnessArgument) {
+            return true
+        }
+        // Swift Testing runners can be plain executables without a `.xctest`
+        // path. Require the exact selector and its adjacent value, not merely
+        // the library name somewhere in an unrelated argument.
+        if zip(arguments, arguments.dropFirst()).contains(where: {
+            $0.0 == "--testing-library" && $0.1 == "swift-testing"
+        }) {
             return true
         }
         // Substring, not suffix: the bundle is normally passed as a path *into*

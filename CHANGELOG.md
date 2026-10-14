@@ -17,6 +17,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   SwiftPM cache is isolated from the previous image; Linux jobs are unchanged.
   Hosted gate success remains required before treating macOS builds as validated.
 
+### Fixed
+
+- Swift Testing runners that explicitly select `--testing-library swift-testing`
+  now use the test support-directory sandbox even without an `.xctest` path.
+  Existing harness signals, explicit override precedence, and the production
+  default `~/.zencode` remain unchanged.
+
 ## [2.3.0] - 2026-10-14
 
 ### Added
