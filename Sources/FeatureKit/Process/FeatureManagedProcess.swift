@@ -348,6 +348,9 @@ public actor FeatureManagedProcess {
         var scratch = [UInt8](repeating: 0, count: 65_536)
         var exitObservedAt: ContinuousClock.Instant?
         while !Task.isCancelled {
+            // The child can write and exit after an empty read. Only an exit
+            // observed before that read makes EAGAIN evidence of a drained pipe.
+            let hasExitedBeforeRead = exitSignal.hasExited
             let bytesRead = scratch.withUnsafeMutableBytes { rawBuffer -> Int in
                 guard let base = rawBuffer.baseAddress else { return 0 }
                 return read(descriptor, base, rawBuffer.count)
@@ -369,7 +372,7 @@ public actor FeatureManagedProcess {
             let readError = errno
             if readError == EINTR { continue }
             if readError == EAGAIN || readError == EWOULDBLOCK {
-                if exitSignal.hasExited { return }
+                if hasExitedBeforeRead { return }
                 do { try await Task.sleep(for: .milliseconds(5)) }
                 catch { return }
                 continue

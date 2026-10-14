@@ -17,10 +17,12 @@ import Glibc
 /// without having FeatureManagedProcess construct or invoke a shell.
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct FeatureManagedProcessLifecycleTests {
-    @Test
-    func directArgvLaunchesAndPublishesNaturalExitAndOutput() async throws {
+    // Repeated short-lived launches exercise the race between an empty pipe
+    // read, the child's final writes, and publication of its natural exit.
+    @Test(arguments: 0 ..< 64)
+    func directArgvLaunchesAndPublishesNaturalExitAndOutput(_ iteration: Int) async throws {
         let fixture = try Self.makeFixture(
-            name: "argv",
+            name: "argv-\(iteration)",
             body: "#!/bin/sh\nprintf '%s' \"$1\"\nprintf 'diagnostic' 1>&2\nexit 7\n"
         )
         defer { try? FileManager.default.removeItem(at: fixture.root) }

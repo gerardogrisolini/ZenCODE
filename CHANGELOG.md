@@ -21,6 +21,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Managed feature processes no longer lose stdout or stderr when a short-lived
+  child writes and exits between an empty pipe read and the exit-state check.
 - Fixed the voice bridge's two stale authentication-service references that
   prevented the root package from compiling.
 - MCP connections now identify the client as `ZenCODE` instead of
