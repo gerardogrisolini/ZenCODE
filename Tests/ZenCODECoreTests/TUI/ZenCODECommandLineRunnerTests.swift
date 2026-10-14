@@ -4,11 +4,6 @@
 //
 
 import Foundation
-#if canImport(Darwin)
-import Darwin
-#else
-import Glibc
-#endif
 @testable import ZenCODECore
 import Synchronization
 import Testing
@@ -463,41 +458,6 @@ struct ZenCODECommandLineRunnerTests {
 
     private func decodeRecords(_ writes: [Data]) throws -> [JSONValue] {
         try writes.map { try JSONDecoder().decode(JSONValue.self, from: $0) }
-    }
-
-    @Test(arguments: ["eof", "invalid", "closed-output", "regular-output"])
-    func voiceBridgePrivateModeNeverEntersSetup(scenario: String) async throws {
-        let process = Process(), input = Pipe(), output = Pipe(), errors = Pipe()
-        process.executableURL = try zenExecutableURL(); process.arguments = ["--voice-bridge"]
-        process.standardInput = input; process.standardOutput = output; process.standardError = errors
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        process.environment = ["PATH": "/usr/bin:/bin", "HOME": directory.path, "ZENCODE_SUPPORT_DIRECTORY": directory.path]
-        if scenario == "closed-output" { try output.fileHandleForReading.close() }
-        let file = directory.appendingPathComponent("redirect.log")
-        if scenario == "regular-output" {
-            #expect(FileManager.default.createFile(atPath: file.path, contents: Data()))
-            process.standardOutput = try FileHandle(forWritingTo: file)
-        }
-        try process.run()
-        defer { if process.isRunning { kill(process.processIdentifier, SIGKILL) } }
-        if scenario == "invalid" { try input.fileHandleForWriting.write(contentsOf: Data("{\"version\":1,\"id\":\"one\",\"command\":\"input_audio.append\"}\n".utf8)) }
-        try input.fileHandleForWriting.close()
-        for _ in 0..<1000 { if !process.isRunning { break }; try await Task.sleep(for: .milliseconds(10)) }
-        #expect(!process.isRunning)
-        if process.isRunning { return }
-        #expect(process.terminationStatus == (scenario == "eof" ? 0 : scenario == "regular-output" ? 2 : 1))
-        #expect(errors.fileHandleForReading.readDataToEndOfFile().isEmpty)
-        if scenario != "closed-output", scenario != "regular-output" {
-            let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            let frames = try text.split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
-            #expect(frames.first??["type"] as? String == "ready")
-            #expect(frames.last??["type"] as? String == "closed")
-        }
-        let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
-        #expect(files == (scenario == "regular-output" ? ["redirect.log"] : []))
-        if scenario == "regular-output" { #expect(try Data(contentsOf: file).isEmpty) }
     }
 
     private func zenExecutableURL() throws -> URL {

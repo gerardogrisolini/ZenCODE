@@ -85,6 +85,34 @@ struct TerminalStatusBarRenderingTests {
     }
 
     @Test
+    func inputPanelBordersExplicitlyDisableBold() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 24, columns: 100, modelID: "test-model")
+
+        await bar.updateInputPanel(
+            text: "Prompt",
+            cursorIndex: 6,
+            modeText: "Prompt",
+            helpText: "Enter to send",
+            suggestionLines: ["/help"],
+            suggestionSelectedIndex: 0
+        )
+
+        // SGR 22 cancels inherited bold without changing the orange foreground.
+        let border = "\u{1B}[22;38;5;208m"
+        #expect(TerminalStyle.Chrome.border == border)
+        let frame = captured.combined
+        for edge in ["╭", "│", "├", "╰"] {
+            #expect(frame.contains(edge))
+            #expect(
+                frame.components(separatedBy: border + edge).count
+                    == frame.components(separatedBy: edge).count
+            )
+        }
+    }
+
+    @Test
     func scrollableOutputCapacityExcludesTheActiveOverlayRows() async {
         let captured = CapturedOutput()
         let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }

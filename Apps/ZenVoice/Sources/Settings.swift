@@ -7,7 +7,7 @@ enum VoiceProvider: Sendable {
 
 enum VoiceConnection: Sendable {
     case api(key: String)
-    case chatGPTSubscription
+    case chatGPTSubscription(credentials: SubscriptionCredentials)
 
     var provider: VoiceProvider {
         switch self {
@@ -20,8 +20,22 @@ enum VoiceConnection: Sendable {
 struct Settings: Codable, Sendable {
     static let executable = "/usr/local/bin/zen"
     var projects: [String] = []
+    var desktopEnabled = false
 
-    // Decoding only projects also migrates the old settings without retaining connection overrides.
+    init(projects: [String] = [], desktopEnabled: Bool = false) {
+        self.projects = projects
+        self.desktopEnabled = desktopEnabled
+    }
+
+    private enum CodingKeys: String, CodingKey { case projects, desktopEnabled }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        projects = try values.decodeIfPresent([String].self, forKey: .projects) ?? []
+        // Existing installations never acquire desktop access through migration.
+        desktopEnabled = try values.decodeIfPresent(Bool.self, forKey: .desktopEnabled) ?? false
+    }
+
+    // Connection credentials are intentionally absent from the persisted settings.
     static func load(defaults: UserDefaults = .standard) -> Settings {
         guard let data = defaults.data(forKey: "settings"),
               let value = try? JSONDecoder().decode(Settings.self, from: data) else { return Settings() }
@@ -48,7 +62,7 @@ struct Settings: Codable, Sendable {
         guard !requiresProjects || !projects.isEmpty else {
             throw VoiceError.invalid("Scegli almeno un progetto consentito")
         }
-        return Settings(projects: try Array(Set(projects.map(Self.canonicalProject))).sorted())
+        return Settings(projects: try Array(Set(projects.map(Self.canonicalProject))).sorted(), desktopEnabled: desktopEnabled)
     }
 }
 
@@ -81,7 +95,7 @@ enum ZenCODEConfiguration {
             // Decoder errors can contain credential data: expose only a fixed diagnostic.
             throw VoiceError.invalid("Configurazione non valida in ~/.zencode/settings.json")
         }
-        guard (4...13).contains(manifest.version) else {
+        guard (4...14).contains(manifest.version) else {
             throw VoiceError.invalid("Versione di ~/.zencode/settings.json non supportata")
         }
         let models = manifest.models.filter { $0.id == manifest.selected?.modelID }
@@ -103,8 +117,9 @@ enum ZenCODEConfiguration {
             guard login.expiresAt.timeIntervalSince(now) > 60 else {
                 throw VoiceError.invalid("Login ChatGPT scaduto: rinnova il login in ZenCODE")
             }
-            return .chatGPTSubscription
-        }
+            return .chatGPTSubscription(credentials: SubscriptionCredentials(
+                accessToken: login.accessToken, accountID: login.accountID, expiresAt: login.expiresAt
+            ))        }
 
         // An OpenAI-compatible chat endpoint is not necessarily an OpenAI Realtime service.
         guard provider.providerProfileID == "openai",
@@ -188,17 +203,22 @@ enum ZenCODEConfiguration {
     }
 
     private struct SubscriptionLogin: Decodable {
-        let isPresent: Bool
+        let accessToken: String
+        let accountID: String
         let expiresAt: Date
+        var isPresent: Bool {
+            !accessToken.isEmpty && !accountID.isEmpty
+                && accessToken.utf8.allSatisfy { (33...126).contains($0) }
+                && accountID.utf8.allSatisfy { (33...126).contains($0) }
+        }
         private enum CodingKeys: String, CodingKey { case accessToken, accountID, expiresAt }
 
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
-            // Retain readiness only, not subscription secrets. Authentication remains owned by zen.
-            let token = try values.decodeIfPresent(String.self, forKey: .accessToken) ?? ""
-            let account = try values.decodeIfPresent(String.self, forKey: .accountID) ?? ""
-            isPresent = !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !account.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            // Read-only login reuse. Tokens live only in the native subscription transport,
+            // never in defaults, subprocess environments, native media or tool arguments.
+            accessToken = try values.decodeIfPresent(String.self, forKey: .accessToken) ?? ""
+            accountID = try values.decodeIfPresent(String.self, forKey: .accountID) ?? ""
             expiresAt = try values.decode(Date.self, forKey: .expiresAt)
         }
     }

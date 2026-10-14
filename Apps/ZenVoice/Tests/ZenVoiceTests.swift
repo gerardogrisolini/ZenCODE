@@ -295,7 +295,7 @@ struct SharedConfigurationTests {
 
     private func manifest(subscription: Bool = true) -> [String: Any] {
         [
-            "version": 13,
+            "version": 14,
             "selected": ["modelID": "selected-binding"],
             "models": [["id": "selected-binding", "modelID": "different-chat-model", "providerID": Self.providerID]],
             "providers": [[
@@ -431,9 +431,17 @@ struct SharedConfigurationTests {
         #expect(throws: VoiceError.self) { try ZenCODEConfiguration.loadConnection(directory: directory, now: Self.now) }
     }
 
-    @Test func unsupportedSettingsVersionIsRejected() throws {
+    @Test(arguments: Array(4...14), [true, false])
+    func supportedSettingsVersionsResolveSelectedConnection(version: Int, subscription: Bool) throws {
+        var value = manifest(subscription: subscription)
+        value["version"] = version
+        #expect(try resolve(value).provider == (subscription ? .chatGPTSubscription : .api))
+    }
+
+    @Test(arguments: [3, 15, 999])
+    func unsupportedSettingsVersionIsRejected(version: Int) throws {
         var value = manifest()
-        value["version"] = 999
+        value["version"] = version
         #expect(throws: VoiceError.self) { try resolve(value) }
     }
 
@@ -508,6 +516,234 @@ struct SharedConfigurationTests {
     }
 }
 
+struct ArchitectureSeparationTests {
+    @Test func voiceImplementationIsOwnedByTheAppNotTheZenRuntime() throws {
+        let app = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let repository = app.deletingLastPathComponent().deletingLastPathComponent()
+        let fm = FileManager.default
+        for relative in ["Sources/zen", "Sources/ZenCODECore"] {
+            let directory = repository.appendingPathComponent(relative)
+            let files = try #require(fm.enumerator(at: directory, includingPropertiesForKeys: nil))
+            for case let file as URL in files where file.pathExtension == "swift" {
+                let content = try String(contentsOf: file, encoding: .utf8)
+                for forbidden in ["--voice-bridge", "ChatGPTVoiceBridge", "VoiceBridgeCommand", "ZenCODEVoiceBridgeRunner", "Sei ZenVoice"] {
+                    #expect(!content.contains(forbidden), "Residuo del bridge vocale in \(file.lastPathComponent): \(forbidden)")
+                }
+            }
+        }
+        let client = try String(contentsOf: app.appendingPathComponent("Sources/VoiceBridgeClient.swift"), encoding: .utf8)
+        #expect(!client.contains("Process()"))
+        #expect(!client.contains("--voice-bridge"))
+    }
+}
+
+struct DesktopHostTests {
+    @Test func projectConsentStaysBlockedAfterDesktopApprovalUICloses() {
+        var interlock = DesktopOperationInterlock()
+        #expect(interlock.permitsProjectConsent)
+        let began = interlock.begin()
+        #expect(began)
+        #expect(interlock.phase == .awaitingApproval)
+        #expect(!interlock.permitsProjectConsent)
+        // The UI/continuation can be cleared, but the approved worker may still synthesize Return.
+        interlock.resolveApproval(allowed: true)
+        #expect(interlock.phase == .executing)
+        #expect(!interlock.permitsProjectConsent)
+        let overlapping = interlock.begin()
+        #expect(!overlapping)
+        // Deactivation resolving an already-cleared prompt must not unlock a running worker.
+        interlock.resolveApproval(allowed: false)
+        #expect(!interlock.permitsProjectConsent)
+        interlock.finish()
+        #expect(interlock.permitsProjectConsent)
+        #expect(!interlock.busy)
+    }
+
+    @Test func deniedDesktopApprovalKeepsLockUntilTheInvocationUnwinds() {
+        var interlock = DesktopOperationInterlock()
+        let began = interlock.begin()
+        #expect(began)
+        interlock.resolveApproval(allowed: false)
+        #expect(interlock.busy)
+        #expect(!interlock.permitsProjectConsent)
+        let overlapping = interlock.begin()
+        #expect(!overlapping)
+        interlock.finish()
+        #expect(interlock.permitsProjectConsent)
+        let beganAgain = interlock.begin()
+        #expect(beganAgain)
+    }
+    @Test func desktopMovementDurationMatchesWorkerAndWaitHasSeparateLimit() throws {
+        for action in ["move_mouse", "click", "drag"] {
+            var values: [String: JSON] = ["action": .string(action), "x": 100, "y": 100, "duration": 10]
+            if action == "drag" { values["to_x"] = 200; values["to_y"] = 200 }
+            _ = try DesktopToolClient.validatedArguments(.object(values))
+            values["duration"] = .number(10.1)
+            #expect(throws: (any Error).self) { try DesktopToolClient.validatedArguments(.object(values)) }
+        }
+        _ = try DesktopToolClient.validatedArguments(["action": "wait", "duration": 30])
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedArguments(["action": "wait", "duration": .number(30.1)]) }
+    }
+
+    private func delegationEvent(_ text: String, id: String = "fixture") throws -> Data {
+        let event: JSON = ["type": "delegation.created", "item": ["type": "delegation", "target": "client", "id": .string(id),
+                           "content": [["type": "input_text", "text": .string(text)]]]]
+        return try event.encoded()
+    }
+
+    @Test func allowedDesktopTextsFitTheCompleteSubscriptionDelegation() throws {
+        for text in [String(repeating: "a", count: VoiceToolLimits.maximumDesktopTextBytes), String(repeating: "漢", count: 2000)] {
+            let arguments: JSON = ["action": "write_clipboard", "text": .string(text)]
+            _ = try DesktopToolClient.validatedArguments(arguments)
+            let request: JSON = ["tool": "desktop.run", "arguments": arguments]
+            let payload = String(decoding: try request.encoded(), as: UTF8.self)
+            let delegation = try #require(try SubscriptionVoiceProtocol.delegation(from: try delegationEvent(payload)))
+            var gate = SubscriptionDelegationGate()
+            #expect(gate.accept(id: delegation.id, text: delegation.text, projects: [], desktopEnabled: true) != nil)
+        }
+        let escaped: JSON = ["action": "write_clipboard", "text": .string(String(repeating: "\n", count: 8000))]
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedArguments(escaped) }
+    }
+
+    @Test func oversizedDesktopTextIsARejectedOperationNotAFramingFailure() throws {
+        let arguments: JSON = ["action": "write_clipboard", "text": .string(String(repeating: "漢", count: 6000))]
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedArguments(arguments) }
+        let request: JSON = ["tool": "desktop.run", "arguments": arguments]
+        let payload = String(decoding: try request.encoded(), as: UTF8.self)
+        #expect(payload.utf8.count > SubscriptionVoiceProtocol.maximumDelegationBytes)
+        // The reader can deliver the bounded event to the gate without its fatal catch path.
+        let delegation = try #require(try SubscriptionVoiceProtocol.delegation(from: try delegationEvent(payload)))
+        var gate = SubscriptionDelegationGate()
+        #expect(gate.accept(id: delegation.id, text: delegation.text, projects: [], desktopEnabled: true) == nil)
+        #expect(SubscriptionDelegationGate.rejectionMessage(text: delegation.text).contains("16000"))
+        let next = try #require(try SubscriptionVoiceProtocol.delegation(from: try delegationEvent(#"{"tool":"desktop.run","arguments":{"action":"permissions"}}"#, id: "next")))
+        #expect(gate.accept(id: next.id, text: next.text, projects: [], desktopEnabled: true) != nil)
+    }
+
+    @Test func desktopOutputBudgetIncludesAllPrefixesAndPreservesTheWholeJSON() throws {
+        func output(_ clipboard: String) throws -> Data {
+            let envelope: JSON = ["ok": true, "output": ["ok": true, "action": "read_clipboard", "summary": "fixture", "clipboard_text": .string(clipboard)]]
+            return try envelope.encoded() + Data([10])
+        }
+        let empty = try DesktopToolClient.validatedOutput(output(""), expectedAction: "read_clipboard")
+        let available = VoiceToolLimits.maximumResultPayloadBytes - empty.utf8.count
+        let exact = String(repeating: "a", count: available)
+        let accepted = try DesktopToolClient.validatedOutput(output(exact), expectedAction: "read_clipboard")
+        #expect(accepted.utf8.count == VoiceToolLimits.maximumResultPayloadBytes)
+        let event = SubscriptionVoiceProtocol.resultEvent(id: "fixture", text: accepted)
+        guard case .array(let parts) = event["content"] else { Issue.record("Missing result content"); return }
+        #expect(parts[0]["text"].text == VoiceToolLimits.resultPrefix + accepted)
+        #expect(parts[0]["text"].text?.utf8.count == VoiceToolLimits.maximumResultBytes)
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedOutput(output(exact + "a"), expectedAction: "read_clipboard") }
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedOutput(output(String(repeating: "x", count: 20000) + "END"), expectedAction: "read_clipboard") }
+        let unicode = try DesktopToolClient.validatedOutput(output(String(repeating: "漢", count: 3500) + "END"), expectedAction: "read_clipboard")
+        let unicodeEvent = SubscriptionVoiceProtocol.resultEvent(id: "unicode", text: unicode)
+        guard case .array(let unicodeParts) = unicodeEvent["content"] else { Issue.record("Missing Unicode result"); return }
+        #expect(unicodeParts[0]["text"].text == VoiceToolLimits.resultPrefix + unicode)
+        #expect(unicode.contains("END"))
+    }
+
+    private let manifest = Data(#"{"schemaVersion":2,"id":"desktop-tools","enabled":true,"executable":".build/release/desktop-tools-feature"}"#.utf8)
+
+    @Test func desktopOptInMigratesOffAndPersistsNoCredentials() throws {
+        let old = try JSONDecoder().decode(Settings.self, from: Data(#"{"projects":[]}"#.utf8))
+        #expect(!old.desktopEnabled)
+        let settings = try Settings(projects: [], desktopEnabled: true).validated(requiresProjects: false)
+        #expect(settings.desktopEnabled)
+        let encoded = try JSONEncoder().encode(settings)
+        #expect(try JSONDecoder().decode(Settings.self, from: encoded).desktopEnabled)
+        #expect(!String(decoding: encoded, as: UTF8.self).contains("accessToken"))
+    }
+
+    @Test(arguments: [
+        #"{"action":"screenshot"}"#, #"{"action":"request_permissions"}"#,
+        #"{"action":"click"}"#, #"{"action":"click","x":1,"y":2,"approved":true}"#,
+        #"{"action":"list_apps","limit":true}"#, #"{"action":"list_windows","limit":201}"#,
+        #"{"action":"launch_app","app_path":"relative.app"}"#,
+        #"{"action":"open","target":"javascript:alert(1)"}"#,
+        #"{"action":"open","target":"file:///tmp/script.command"}"#,
+        #"{"action":"open","target":"https://user:secret@example.invalid"}"#,
+        #"{"action":"type_text","text":"hello","environment":{"KEY":"x"}}"#
+    ])
+    func invalidDesktopArgumentsNeverReachAProcess(text: String) throws {
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedArguments(JSON.parse(Data(text.utf8))) }
+    }
+
+    @Test func validDesktopPayloadAndManifestAreNotReinterpreted() throws {
+        let args: JSON = ["action": "list_windows", "limit": 5]
+        #expect(try DesktopToolClient.validatedArguments(args) == args)
+        #expect(try DesktopToolClient.validatedManifest(manifest) == DesktopToolClient.executableRelativePath)
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedManifest(Data(#"{"schemaVersion":2,"id":"desktop-tools","enabled":true,"executable":"/bin/sh"}"#.utf8)) }
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedManifest(Data(#"{"schemaVersion":2,"id":"desktop-tools","enabled":false,"executable":".build/release/desktop-tools-feature"}"#.utf8)) }
+    }
+
+    @Test func desktopOutputRejectsImagesAndMismatchedActions() throws {
+        let output = #"{"ok":true,"output":{"ok":true,"action":"permissions","summary":"fixture"}}"# + "\n"
+        #expect(try DesktopToolClient.validatedOutput(Data(output.utf8), expectedAction: "permissions").contains("NON FIDATI"))
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedOutput(Data(output.utf8), expectedAction: "click") }
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedOutput(Data(output.dropLast().utf8), expectedAction: "permissions") }
+        let attachment = #"{"ok":true,"output":{"ok":true,"action":"permissions","summary":"fixture"},"attachments":[{"path":"/tmp/private.png"}]}"# + "\n"
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedOutput(Data(attachment.utf8), expectedAction: "permissions") }
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedOutput(Data(repeating: 65, count: 131073), expectedAction: "permissions") }
+    }
+
+    @Test func desktopEnvironmentIsExplicitAndIsolatesArtifacts() {
+        let env = DesktopToolClient.processEnvironment(supportDirectory: URL(fileURLWithPath: "/fixture/support"), temporaryDirectory: URL(fileURLWithPath: "/fixture/temp"))
+        #expect(env["ZENCODE_SUPPORT_DIRECTORY"] == "/fixture/support")
+        #expect(env["OPENAI_API_KEY"] == nil)
+        #expect(env["CHATGPT_ACCESS_TOKEN"] == nil)
+        #expect(env["DYLD_INSERT_LIBRARIES"] == nil)
+    }
+
+    private func fixture(script: String) throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let release = root.appendingPathComponent(".build/release")
+        try FileManager.default.createDirectory(at: release, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try manifest.write(to: root.appendingPathComponent("feature.json"))
+        let executable = root.appendingPathComponent(DesktopToolClient.executableRelativePath)
+        try Data(script.utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        return root
+    }
+
+    @Test func installedExecutableCannotEscapeApprovedRoot() throws {
+        let root = try fixture(script: "#!/bin/sh\nexit 0\n")
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try DesktopToolClient.validatedInstallation(at: root)
+        let file = root.appendingPathComponent(DesktopToolClient.executableRelativePath)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: URL(fileURLWithPath: "/bin/sh"))
+        #expect(throws: (any Error).self) { try DesktopToolClient.validatedInstallation(at: root) }
+    }
+
+    @Test @MainActor func fakeDesktopWaitsForInputEOFAndReturnsTextOnly() async throws {
+        guard #available(macOS 26.0, *) else { return }
+        let script = """
+        #!/bin/sh
+        /bin/cat >/dev/null
+        printf '%s\\n' '{"ok":true,"output":{"ok":true,"action":"permissions","summary":"offline-fixture"}}'
+        """
+        let root = try fixture(script: script)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let client = DesktopToolClient(supportDirectory: root.appendingPathComponent("support"), installRoot: root, timeout: 2)
+        let result = await client.execute(arguments: ["action": "permissions"])
+        #expect(result.contains("offline-fixture"))
+        client.cancel()
+    }
+
+    @Test @MainActor func fakeDesktopTimeoutDoesNotReplay() async throws {
+        guard #available(macOS 26.0, *) else { return }
+        let root = try fixture(script: "#!/bin/sh\n/bin/cat >/dev/null\nexec /bin/sleep 30\n")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let client = DesktopToolClient(supportDirectory: root.appendingPathComponent("support"), installRoot: root, timeout: 0.1)
+        let start = ContinuousClock.now
+        let result = await client.execute(arguments: ["action": "permissions"])
+        #expect(start.duration(to: .now) < .seconds(5))
+        #expect(!result.contains("NON FIDATI"))
+        client.cancel()
+    }
+}
+
 struct SubscriptionTests {
     @Test func bridgeTextLimitPreservesUnicodeByteBudget() {
         let value = String(repeating: "città 👩🏽‍💻 ", count: 4000)
@@ -523,7 +759,9 @@ struct SubscriptionTests {
         #expect(value.projects == ["/fixture"])
         #expect(Settings.executable == "/usr/local/bin/zen")
         let encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
-        #expect(Set(encoded.keys) == ["projects"])
+        #expect(Set(encoded.keys) == ["projects", "desktopEnabled"])
+        #expect(value.desktopEnabled == false)
+        #expect(encoded["desktopEnabled"] as? Bool == false)
     }
     @Test func explicitPermissionCannotCrossClientRequestOrActivation() {
         let client = UUID(), epoch = UUID(), now = Date()
@@ -553,28 +791,65 @@ struct SubscriptionTests {
         }
         #expect(!SubscriptionSDPPolicy.accepts("v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=fingerprint:sha-256 test\r\na=candidate:1 1 udp 1 127.0.0.1 9000 typ host\r\n"))
     }
-    @Test @MainActor func missingLoginBridgeNeverFallsBackToAPI() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("voice-stub")
-        let script = """
-        #!/bin/sh
-        printf '{"version":1,"type":"ready"}\\n'
-        while IFS= read -r line; do
-          printf '{"version":1,"type":"error","code":"auth_missing"}\\n'
-          break
-        done
-        """
-        try Data(script.utf8).write(to: file)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
+    @Test @MainActor func missingSubscriptionLoginFailsBeforeAnyNetwork() async {
         let bridge = VoiceBridgeClient()
-        var message = ""
-        bridge.onFailure = { message = $0 }
-        try await bridge.start(executable: file.path)
-        await #expect(throws: (any Error).self) { try await bridge.open(sdp: "v=0", projects: ["/fixture"]) }
-        #expect(message.contains("Login ChatGPT assente"))
-        #expect(message.contains("Nessun fallback API"))
+        let error = await #expect(throws: VoiceError.self) {
+            try await bridge.start(credentials: .init(accessToken: "", accountID: "", expiresAt: .distantFuture))
+        }
+        #expect(error?.localizedDescription.contains("Login ChatGPT assente") == true)
+        #expect(error?.localizedDescription.contains("Nessun fallback API") == true)
         await bridge.stop()
+    }
+
+    private func credentials(account: String = "fixture-account", claimAccount: String = "fixture-account", expiry: Double = 5000) throws -> SubscriptionCredentials {
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "exp": expiry, "https://api.openai.com/auth": ["chatgpt_account_id": claimAccount]
+        ]).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        return .init(accessToken: "fixture.\(payload).signature", accountID: account, expiresAt: Date(timeIntervalSince1970: expiry))
+    }
+
+    @Test func subscriptionCredentialsAreCheckedLocallyWithoutRefreshing() throws {
+        let now = Date(timeIntervalSince1970: 1000)
+        try SubscriptionVoiceProtocol.validateCredentials(credentials(), now: now)
+        #expect(throws: (any Error).self) { try SubscriptionVoiceProtocol.validateCredentials(credentials(claimAccount: "another-account"), now: now) }
+        #expect(throws: (any Error).self) { try SubscriptionVoiceProtocol.validateCredentials(credentials(expiry: 1060), now: now) }
+        #expect(throws: (any Error).self) { try SubscriptionVoiceProtocol.validateCredentials(credentials(account: "fixture\r\naccount"), now: now) }
+    }
+
+    @Test func subscriptionToolsAreAdvertisedOnlyWhenEnabled() throws {
+        let none = try JSON.parse(SubscriptionVoiceProtocol.sessionBody(sdp: "v=0", projects: []))
+        #expect(none["session"]["model"].text == "gpt-live-1-codex")
+        #expect(none["session"]["instructions"].text?.contains("Nessuno strumento abilitato") == true)
+        #expect(none["session"]["instructions"].text?.contains("desktop.run") == false)
+        let enabled = try JSON.parse(SubscriptionVoiceProtocol.sessionBody(sdp: "v=0", projects: [], desktopEnabled: true))
+        #expect(enabled["session"]["instructions"].text?.contains("desktop.run") == true)
+        #expect(enabled["session"]["instructions"].text?.contains("Screenshot non disponibili") == true)
+        #expect(enabled["session"]["instructions"].text?.contains("Strumento progetti") == false)
+        let many = (0..<140).map { "/fixture/\($0)" }
+        _ = try SubscriptionVoiceProtocol.sessionBody(sdp: "v=0", projects: many)
+        #expect(throws: (any Error).self) { try SubscriptionVoiceProtocol.sessionBody(sdp: String(repeating: "x", count: 65537), projects: []) }
+    }
+
+    @Test func desktopDelegationNeedsOptInAndCannotGrantItselfConsent() {
+        let request = #"{"tool":"desktop.run","arguments":{"action":"list_windows"}}"#
+        var gate = SubscriptionDelegationGate()
+        #expect(gate.accept(id: "disabled", text: request, projects: []) == nil)
+        #expect(gate.accept(id: "enabled", text: request, projects: [], desktopEnabled: true) != nil)
+        #expect(gate.accept(id: "enabled", text: request, projects: [], desktopEnabled: true) == nil)
+        #expect(gate.accept(id: "consent", text: #"{"tool":"desktop.run","arguments":{"action":"list_windows"},"approved":true}"#, projects: [], desktopEnabled: true) == nil)
+        #expect(gate.accept(id: "image", text: #"{"tool":"desktop.run","arguments":{"action":"screenshot"}}"#, projects: [], desktopEnabled: true) == nil)
+        #expect(gate.accept(id: "unknown", text: #"{"tool":"shell.run","arguments":{"command":"pwd"}}"#, projects: [], desktopEnabled: true) == nil)
+    }
+
+    @Test func subscriptionEventsAndCallIDsAreStrictlyBounded() throws {
+        let valid = Data(#"{"type":"delegation.created","item":{"type":"delegation","target":"client","id":"call_1","content":[{"type":"input_text","text":"one"},{"type":"input_text","text":"two"}]}}"#.utf8)
+        #expect(try SubscriptionVoiceProtocol.delegation(from: valid) == .init(id: "call_1", text: "onetwo"))
+        let image = Data(#"{"type":"delegation.created","item":{"type":"delegation","target":"client","id":"call_1","content":[{"type":"input_image","image_url":"file:///fixture.png"}]}}"#.utf8)
+        #expect(throws: (any Error).self) { try SubscriptionVoiceProtocol.delegation(from: image) }
+        #expect(try SubscriptionVoiceProtocol.delegation(from: Data(#"{"type":"session.started"}"#.utf8)) == nil)
+        #expect(throws: (any Error).self) { try SubscriptionVoiceProtocol.delegation(from: Data(repeating: 65, count: 131073)) }
+        #expect(SubscriptionVoiceProtocol.callID(from: "/v1/realtime/calls/rtc_fixture") == "rtc_fixture")
+        #expect(SubscriptionVoiceProtocol.callID(from: "/v1/realtime/calls/not-a-call") == nil)
+        #expect(SubscriptionVoiceProtocol.callID(from: "/v1/realtime/calls/rtc_fixture%2Fescape") == nil)
     }
 }

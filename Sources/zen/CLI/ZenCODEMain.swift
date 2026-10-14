@@ -13,10 +13,6 @@ import ZenPackageMetadata
 struct ZenCODEMain {
     static func main() async {
         let arguments = ZenCODECommandLineArgumentSanitizer.sanitized(CommandLine.arguments)
-        // Voice-only IPC must never enter interactive setup, ACP, or the task runner.
-        if ZenCODEVoiceBridgeRunner.shouldRun(arguments: arguments) {
-            Foundation.exit(await ZenCODEVoiceBridgeRunner.run(arguments: arguments))
-        }
 
         // This must run before the configuration gate. Optional features are
         // useful on a fresh installation, where no provider or model exists yet.
@@ -136,11 +132,10 @@ struct ZenCODEMain {
 
 private enum ZenCODEStandaloneHelp {
     static var text: String {
-        let usage = "zen [--doctor] [--install-features [id,id,...]] [--jsonl] [-p PROMPT] [--acp] [--voice-bridge]"
+        let usage = "zen [--doctor] [--install-features [id,id,...]] [--jsonl] [-p PROMPT] [--acp]"
         let options = """
           -p, --prompt PROMPT    Run one headless text prompt.
           --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt).
-          --voice-bridge         Private ZenVoice subscription control over stdio; no task execution.
           --acp                  ACP JSON-RPC over stdio for compatible clients.
           --doctor               Print a redacted diagnostic report (environment, configuration, permissions) and exit. Non-interactive; never starts setup or reveals secrets.
           --install-features [id,id,...]

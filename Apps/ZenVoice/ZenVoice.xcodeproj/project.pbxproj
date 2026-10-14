@@ -1,62 +1,467 @@
 // !$*UTF8*$!
 {
 	archiveVersion = 1;
-	classes = {};
-	objectVersion = 56;
-	objects = {
-		0E61E509740A6799D8328933 = { isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
-		DB111961E51BE82A43534DFA = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocol.swift; sourceTree = "<group>"; };
-		60653EBAB9FF3D518813FEEB = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
-		C730CBF29E699205154D2BD9 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACPClient.swift; sourceTree = "<group>"; };
-		D78BF173259C6B6FAEAA81F7 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioIO.swift; sourceTree = "<group>"; };
-		DC11893D23F156153E484F13 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeClient.swift; sourceTree = "<group>"; };
-		4ED384CA6C68F8F7ECEE24FD = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceBridgeClient.swift; sourceTree = "<group>"; };
-		963D2F3D2063956588C0BAA3 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionClient.swift; sourceTree = "<group>"; };
-		E0BB9EF53D5722B548E0F144 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceModel.swift; sourceTree = "<group>"; };
-		1D09D2D36062671229F4E57F = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZenVoiceApp.swift; sourceTree = "<group>"; };
-		0707B1A7358A948DBBBC8268 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZenVoiceTests.swift; sourceTree = "<group>"; };
-		29E482BF45846524F707E0B8 = { isa = PBXGroup; children = (DB111961E51BE82A43534DFA, 60653EBAB9FF3D518813FEEB, C730CBF29E699205154D2BD9, D78BF173259C6B6FAEAA81F7, DC11893D23F156153E484F13, 4ED384CA6C68F8F7ECEE24FD, 963D2F3D2063956588C0BAA3, E0BB9EF53D5722B548E0F144, 1D09D2D36062671229F4E57F, ); path = Sources; sourceTree = "<group>"; };
-		0ED4925424A501EB270F3777 = { isa = PBXGroup; children = (0707B1A7358A948DBBBC8268, ); path = Tests; sourceTree = "<group>"; };
-		81F31879437340D5CD6ED968 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = ZenVoice.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		64321F40F98F9F79FEC83C37 = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = ZenVoiceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		6F7199ED7B63CDA338A0FB82 = { isa = PBXGroup; children = (81F31879437340D5CD6ED968, 64321F40F98F9F79FEC83C37, ); name = Products; sourceTree = "<group>"; };
-		CC5D242D023A9271190EA7C6 = { isa = PBXGroup; children = (29E482BF45846524F707E0B8, 0ED4925424A501EB270F3777, 6F7199ED7B63CDA338A0FB82, ); sourceTree = "<group>"; };
-		D1F9F7E7A3934A603124C9A0 = { isa = PBXBuildFile; fileRef = DB111961E51BE82A43534DFA; };
-		7944A6954F9228FBA9EF8013 = { isa = PBXBuildFile; fileRef = 60653EBAB9FF3D518813FEEB; };
-		5651B43A442FBFCD9D76A34E = { isa = PBXBuildFile; fileRef = C730CBF29E699205154D2BD9; };
-		FE9FE9BCCCA24E3342A82010 = { isa = PBXBuildFile; fileRef = D78BF173259C6B6FAEAA81F7; };
-		FEEEE16724D6FD04016FB2BA = { isa = PBXBuildFile; fileRef = DC11893D23F156153E484F13; };
-		4B6CA8285442225A2D2075C8 = { isa = PBXBuildFile; fileRef = 4ED384CA6C68F8F7ECEE24FD; };
-		D1B206E99A7422D51F099A75 = { isa = PBXBuildFile; fileRef = 963D2F3D2063956588C0BAA3; };
-		AF2721C1974D9D5A00450BDD = { isa = PBXBuildFile; fileRef = E0BB9EF53D5722B548E0F144; };
-		7DBD6C39FE76988D7C3568F0 = { isa = PBXBuildFile; fileRef = 1D09D2D36062671229F4E57F; };
-		17655138DE091C505416ABEA = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D1F9F7E7A3934A603124C9A0, 7944A6954F9228FBA9EF8013, 5651B43A442FBFCD9D76A34E, FE9FE9BCCCA24E3342A82010, FEEEE16724D6FD04016FB2BA, 4B6CA8285442225A2D2075C8, D1B206E99A7422D51F099A75, AF2721C1974D9D5A00450BDD, 7DBD6C39FE76988D7C3568F0, ); runOnlyForDeploymentPostprocessing = 0; };
-		0D38476086B2FB52D05E1FD9 = { isa = PBXBuildFile; fileRef = 0E61E509740A6799D8328933; };
-		1B85B821D2F93F337F70D49F = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (0D38476086B2FB52D05E1FD9, ); runOnlyForDeploymentPostprocessing = 0; };
-		D18FD5E61A9286359343951E = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		8C1A045E96B998B40533C7FF = { isa = PBXNativeTarget; buildConfigurationList = 5D32D499D7738AB763D0FB39; buildPhases = (17655138DE091C505416ABEA, 1B85B821D2F93F337F70D49F, D18FD5E61A9286359343951E, ); buildRules = (); dependencies = (); name = ZenVoice; productName = ZenVoice; productReference = 81F31879437340D5CD6ED968; productType = "com.apple.product-type.application"; };
-		F9704A57320AEC6BE6AB9BC5 = { isa = PBXBuildFile; fileRef = DB111961E51BE82A43534DFA; };
-		169637496DF8CA205A0211D6 = { isa = PBXBuildFile; fileRef = 60653EBAB9FF3D518813FEEB; };
-		85441F7B523614E0C62D4F54 = { isa = PBXBuildFile; fileRef = C730CBF29E699205154D2BD9; };
-		04C01867E839BB2D6AC4F192 = { isa = PBXBuildFile; fileRef = DC11893D23F156153E484F13; };
-		D31A72E3E74CE61A3094E542 = { isa = PBXBuildFile; fileRef = 4ED384CA6C68F8F7ECEE24FD; };
-		79675D826289A4CBECBB5F2F = { isa = PBXBuildFile; fileRef = 963D2F3D2063956588C0BAA3; };
-		E06E19561482787690D07781 = { isa = PBXBuildFile; fileRef = 0707B1A7358A948DBBBC8268; };
-		B762D73446F6B90C9E7A476F = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F9704A57320AEC6BE6AB9BC5, 169637496DF8CA205A0211D6, 85441F7B523614E0C62D4F54, 04C01867E839BB2D6AC4F192, D31A72E3E74CE61A3094E542, 79675D826289A4CBECBB5F2F, E06E19561482787690D07781, ); runOnlyForDeploymentPostprocessing = 0; };
-		776BF40C70D0824BBFAE16A8 = { isa = PBXBuildFile; fileRef = 0E61E509740A6799D8328933; };
-		E82235EB2594C86AF0E4DE4A = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (776BF40C70D0824BBFAE16A8, ); runOnlyForDeploymentPostprocessing = 0; };
-		8EDAE251EB7E1481D5427483 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		B70E7FC58E5219C3FB7E302C = { isa = PBXNativeTarget; buildConfigurationList = 5F0A1F9C6FEE4F423CA8D05D; buildPhases = (B762D73446F6B90C9E7A476F, E82235EB2594C86AF0E4DE4A, 8EDAE251EB7E1481D5427483, ); buildRules = (); dependencies = (); name = ZenVoiceTests; productName = ZenVoiceTests; productReference = 64321F40F98F9F79FEC83C37; productType = "com.apple.product-type.bundle.unit-test"; };
-		184B519F8E1416CCE38CFFD7 = { isa = XCBuildConfiguration; buildSettings = { SWIFT_VERSION = 6.0; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES; OTHER_SWIFT_FLAGS = "$(inherited) -enable-upcoming-feature MemberImportVisibility"; CLANG_ENABLE_MODULES = YES; CODE_SIGN_STYLE = Automatic; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; ENABLE_TESTABILITY = YES; DEBUG_INFORMATION_FORMAT = dwarf; }; name = Debug; };
-		A824290273A346217D9BE6F4 = { isa = XCBuildConfiguration; buildSettings = { SWIFT_VERSION = 6.0; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES; OTHER_SWIFT_FLAGS = "$(inherited) -enable-upcoming-feature MemberImportVisibility"; CLANG_ENABLE_MODULES = YES; CODE_SIGN_STYLE = Automatic; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; }; name = Release; };
-		9F6B1A7BCFF26D263B843F95 = { isa = XCConfigurationList; buildConfigurations = (184B519F8E1416CCE38CFFD7, A824290273A346217D9BE6F4, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		0D9B6C467828201280D620A8 = { isa = XCBuildConfiguration; buildSettings = { SWIFT_VERSION = 6.0; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES; OTHER_SWIFT_FLAGS = "$(inherited) -enable-upcoming-feature MemberImportVisibility"; CLANG_ENABLE_MODULES = YES; CODE_SIGN_STYLE = Automatic; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; ENABLE_TESTABILITY = YES; DEBUG_INFORMATION_FORMAT = dwarf; PRODUCT_NAME = "$(TARGET_NAME)"; GENERATE_INFOPLIST_FILE = YES; CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = app.zencode.ZenVoice; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"; INFOPLIST_KEY_LSUIElement = YES; INFOPLIST_KEY_NSMicrophoneUsageDescription = "ZenVoice invia il microfono a OpenAI Realtime solo quando attivi la voce."; ENABLE_APP_SANDBOX = NO; ENABLE_HARDENED_RUNTIME = YES; CODE_SIGN_ENTITLEMENTS = ZenVoice.entitlements; INFOPLIST_KEY_CFBundleDisplayName = ZenVoice; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools"; }; name = Debug; };
-		E532E4CDC1E6865CE523475E = { isa = XCBuildConfiguration; buildSettings = { SWIFT_VERSION = 6.0; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES; OTHER_SWIFT_FLAGS = "$(inherited) -enable-upcoming-feature MemberImportVisibility"; CLANG_ENABLE_MODULES = YES; CODE_SIGN_STYLE = Automatic; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; PRODUCT_NAME = "$(TARGET_NAME)"; GENERATE_INFOPLIST_FILE = YES; CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = app.zencode.ZenVoice; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"; INFOPLIST_KEY_LSUIElement = YES; INFOPLIST_KEY_NSMicrophoneUsageDescription = "ZenVoice invia il microfono a OpenAI Realtime solo quando attivi la voce."; ENABLE_APP_SANDBOX = NO; ENABLE_HARDENED_RUNTIME = YES; CODE_SIGN_ENTITLEMENTS = ZenVoice.entitlements; INFOPLIST_KEY_CFBundleDisplayName = ZenVoice; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools"; }; name = Release; };
-		5D32D499D7738AB763D0FB39 = { isa = XCConfigurationList; buildConfigurations = (0D9B6C467828201280D620A8, E532E4CDC1E6865CE523475E, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		7CAEF1B744878FE1A4DD3594 = { isa = XCBuildConfiguration; buildSettings = { SWIFT_VERSION = 6.0; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES; OTHER_SWIFT_FLAGS = "$(inherited) -enable-upcoming-feature MemberImportVisibility"; CLANG_ENABLE_MODULES = YES; CODE_SIGN_STYLE = Automatic; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; ENABLE_TESTABILITY = YES; DEBUG_INFORMATION_FORMAT = dwarf; PRODUCT_NAME = "$(TARGET_NAME)"; GENERATE_INFOPLIST_FILE = YES; CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = app.zencode.ZenVoice.Tests; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"; TEST_HOST = ""; BUNDLE_LOADER = ""; CODE_SIGNING_ALLOWED = NO; }; name = Debug; };
-		5798DB0A8EF2871B955A63C6 = { isa = XCBuildConfiguration; buildSettings = { SWIFT_VERSION = 6.0; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES; OTHER_SWIFT_FLAGS = "$(inherited) -enable-upcoming-feature MemberImportVisibility"; CLANG_ENABLE_MODULES = YES; CODE_SIGN_STYLE = Automatic; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; PRODUCT_NAME = "$(TARGET_NAME)"; GENERATE_INFOPLIST_FILE = YES; CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = app.zencode.ZenVoice.Tests; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"; TEST_HOST = ""; BUNDLE_LOADER = ""; CODE_SIGNING_ALLOWED = NO; }; name = Release; };
-		5F0A1F9C6FEE4F423CA8D05D = { isa = XCConfigurationList; buildConfigurations = (7CAEF1B744878FE1A4DD3594, 5798DB0A8EF2871B955A63C6, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		244210E48437B6556980A702 = { isa = PBXProject; attributes = { BuildIndependentTargetsInParallel = YES; LastSwiftUpdateCheck = 2700; LastUpgradeCheck = 2700; }; buildConfigurationList = 9F6B1A7BCFF26D263B843F95; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base, it); mainGroup = CC5D242D023A9271190EA7C6; productRefGroup = 6F7199ED7B63CDA338A0FB82; projectDirPath = ""; projectRoot = ""; targets = (8C1A045E96B998B40533C7FF, B70E7FC58E5219C3FB7E302C, ); };
+	classes = {
 	};
-	rootObject = 244210E48437B6556980A702;
+	objectVersion = 110;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A15500000000000000000011 /* NativeWebRTCMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15500000000000000000010 /* NativeWebRTCMedia.swift */; };
+		A15500000000000000000012 /* NativeWebRTCMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15500000000000000000010 /* NativeWebRTCMedia.swift */; };
+		A15500000000000000000014 /* NativeWebRTCMediaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15500000000000000000013 /* NativeWebRTCMediaTests.swift */; };
+		04C01867E839BB2D6AC4F192 /* RealtimeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC11893D23F156153E484F13 /* RealtimeClient.swift */; };
+		0D38476086B2FB52D05E1FD9 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = A15500000000000000000002 /* WebRTC */; };
+		169637496DF8CA205A0211D6 /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60653EBAB9FF3D518813FEEB /* Settings.swift */; };
+		4B6CA8285442225A2D2075C8 /* VoiceBridgeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ED384CA6C68F8F7ECEE24FD /* VoiceBridgeClient.swift */; };
+		561BB3CE3080057F00D43AC3 /* DesktopToolClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 561BB3CD3080057F00D43AC3 /* DesktopToolClient.swift */; };
+		561BB3CF3080057F00D43AC3 /* DesktopToolClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 561BB3CD3080057F00D43AC3 /* DesktopToolClient.swift */; };
+		5651B43A442FBFCD9D76A34E /* ACPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C730CBF29E699205154D2BD9 /* ACPClient.swift */; };
+		776BF40C70D0824BBFAE16A8 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = A15500000000000000000003 /* WebRTC */; };
+		7944A6954F9228FBA9EF8013 /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60653EBAB9FF3D518813FEEB /* Settings.swift */; };
+		79675D826289A4CBECBB5F2F /* SubscriptionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 963D2F3D2063956588C0BAA3 /* SubscriptionClient.swift */; };
+		7DBD6C39FE76988D7C3568F0 /* ZenVoiceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D09D2D36062671229F4E57F /* ZenVoiceApp.swift */; };
+		85441F7B523614E0C62D4F54 /* ACPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C730CBF29E699205154D2BD9 /* ACPClient.swift */; };
+		AF2721C1974D9D5A00450BDD /* VoiceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0BB9EF53D5722B548E0F144 /* VoiceModel.swift */; };
+		D1B206E99A7422D51F099A75 /* SubscriptionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 963D2F3D2063956588C0BAA3 /* SubscriptionClient.swift */; };
+		D1F9F7E7A3934A603124C9A0 /* Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB111961E51BE82A43534DFA /* Protocol.swift */; };
+		D31A72E3E74CE61A3094E542 /* VoiceBridgeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ED384CA6C68F8F7ECEE24FD /* VoiceBridgeClient.swift */; };
+		E06E19561482787690D07781 /* ZenVoiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0707B1A7358A948DBBBC8268 /* ZenVoiceTests.swift */; };
+		F9704A57320AEC6BE6AB9BC5 /* Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB111961E51BE82A43534DFA /* Protocol.swift */; };
+		FE9FE9BCCCA24E3342A82010 /* AudioIO.swift in Sources */ = {isa = PBXBuildFile; fileRef = D78BF173259C6B6FAEAA81F7 /* AudioIO.swift */; };
+		FEEEE16724D6FD04016FB2BA /* RealtimeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC11893D23F156153E484F13 /* RealtimeClient.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A15500000000000000000010 /* NativeWebRTCMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWebRTCMedia.swift; sourceTree = "<group>"; };
+		A15500000000000000000013 /* NativeWebRTCMediaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWebRTCMediaTests.swift; sourceTree = "<group>"; };
+		0707B1A7358A948DBBBC8268 /* ZenVoiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZenVoiceTests.swift; sourceTree = "<group>"; };
+		1D09D2D36062671229F4E57F /* ZenVoiceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZenVoiceApp.swift; sourceTree = "<group>"; };
+		4ED384CA6C68F8F7ECEE24FD /* VoiceBridgeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceBridgeClient.swift; sourceTree = "<group>"; };
+		561BB3CD3080057F00D43AC3 /* DesktopToolClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopToolClient.swift; sourceTree = "<group>"; };
+		60653EBAB9FF3D518813FEEB /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
+		64321F40F98F9F79FEC83C37 /* ZenVoiceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = ZenVoiceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		81F31879437340D5CD6ED968 /* ZenVoice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = ZenVoice.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		963D2F3D2063956588C0BAA3 /* SubscriptionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionClient.swift; sourceTree = "<group>"; };
+		C730CBF29E699205154D2BD9 /* ACPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACPClient.swift; sourceTree = "<group>"; };
+		D78BF173259C6B6FAEAA81F7 /* AudioIO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioIO.swift; sourceTree = "<group>"; };
+		DB111961E51BE82A43534DFA /* Protocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocol.swift; sourceTree = "<group>"; };
+		DC11893D23F156153E484F13 /* RealtimeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeClient.swift; sourceTree = "<group>"; };
+		E0BB9EF53D5722B548E0F144 /* VoiceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceModel.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1B85B821D2F93F337F70D49F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				0D38476086B2FB52D05E1FD9 /* WebRTC in Frameworks */,
+			);
+		};
+		E82235EB2594C86AF0E4DE4A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				776BF40C70D0824BBFAE16A8 /* WebRTC in Frameworks */,
+			);
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0ED4925424A501EB270F3777 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				0707B1A7358A948DBBBC8268 /* ZenVoiceTests.swift */,
+				A15500000000000000000013 /* NativeWebRTCMediaTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		29E482BF45846524F707E0B8 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				DB111961E51BE82A43534DFA /* Protocol.swift */,
+				60653EBAB9FF3D518813FEEB /* Settings.swift */,
+				C730CBF29E699205154D2BD9 /* ACPClient.swift */,
+				D78BF173259C6B6FAEAA81F7 /* AudioIO.swift */,
+				DC11893D23F156153E484F13 /* RealtimeClient.swift */,
+				4ED384CA6C68F8F7ECEE24FD /* VoiceBridgeClient.swift */,
+				963D2F3D2063956588C0BAA3 /* SubscriptionClient.swift */,
+				A15500000000000000000010 /* NativeWebRTCMedia.swift */,
+				E0BB9EF53D5722B548E0F144 /* VoiceModel.swift */,
+				1D09D2D36062671229F4E57F /* ZenVoiceApp.swift */,
+				561BB3CD3080057F00D43AC3 /* DesktopToolClient.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		561BB3CC307FD60700D43AC3 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
+		6F7199ED7B63CDA338A0FB82 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				81F31879437340D5CD6ED968 /* ZenVoice.app */,
+				64321F40F98F9F79FEC83C37 /* ZenVoiceTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		CC5D242D023A9271190EA7C6 = {
+			isa = PBXGroup;
+			children = (
+				29E482BF45846524F707E0B8 /* Sources */,
+				0ED4925424A501EB270F3777 /* Tests */,
+				6F7199ED7B63CDA338A0FB82 /* Products */,
+				561BB3CC307FD60700D43AC3 /* Recovered References */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		8C1A045E96B998B40533C7FF /* ZenVoice */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5D32D499D7738AB763D0FB39 /* Build configuration list for PBXNativeTarget "ZenVoice" */;
+			buildPhases = (
+				17655138DE091C505416ABEA /* Sources */,
+				1B85B821D2F93F337F70D49F /* Frameworks */,
+				D18FD5E61A9286359343951E /* Resources */,
+			);
+			buildRules = (
+			);
+			name = ZenVoice;
+			packageProductDependencies = (A15500000000000000000002 /* WebRTC */, );
+			productName = ZenVoice;
+			productReference = 81F31879437340D5CD6ED968 /* ZenVoice.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B70E7FC58E5219C3FB7E302C /* ZenVoiceTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5F0A1F9C6FEE4F423CA8D05D /* Build configuration list for PBXNativeTarget "ZenVoiceTests" */;
+			buildPhases = (
+				B762D73446F6B90C9E7A476F /* Sources */,
+				E82235EB2594C86AF0E4DE4A /* Frameworks */,
+				8EDAE251EB7E1481D5427483 /* Resources */,
+			);
+			buildRules = (
+			);
+			name = ZenVoiceTests;
+			packageProductDependencies = (A15500000000000000000003 /* WebRTC */, );
+			productName = ZenVoiceTests;
+			productReference = 64321F40F98F9F79FEC83C37 /* ZenVoiceTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		244210E48437B6556980A702 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+			};
+			buildConfigurationList = 9F6B1A7BCFF26D263B843F95 /* Build configuration list for PBXProject "ZenVoice" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				it,
+			);
+			mainGroup = CC5D242D023A9271190EA7C6;
+			packageReferences = (A15500000000000000000001 /* XCRemoteSwiftPackageReference "WebRTC" */, );
+			preferredProjectObjectVersion = 110;
+			productRefGroup = 6F7199ED7B63CDA338A0FB82 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				8C1A045E96B998B40533C7FF /* ZenVoice */,
+				B70E7FC58E5219C3FB7E302C /* ZenVoiceTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A15500000000000000000001 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC.git";
+			requirement = {kind = exactVersion; version = 155.0.0; };
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A15500000000000000000002 /* WebRTC */ = {isa = XCSwiftPackageProductDependency; package = A15500000000000000000001; productName = WebRTC; };
+		A15500000000000000000003 /* WebRTC */ = {isa = XCSwiftPackageProductDependency; package = A15500000000000000000001; productName = WebRTC; };
+/* End XCSwiftPackageProductDependency section */
+
+/* Begin PBXResourcesBuildPhase section */
+		8EDAE251EB7E1481D5427483 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		D18FD5E61A9286359343951E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		17655138DE091C505416ABEA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				D1F9F7E7A3934A603124C9A0 /* Protocol.swift in Sources */,
+				7944A6954F9228FBA9EF8013 /* Settings.swift in Sources */,
+				5651B43A442FBFCD9D76A34E /* ACPClient.swift in Sources */,
+				FE9FE9BCCCA24E3342A82010 /* AudioIO.swift in Sources */,
+				FEEEE16724D6FD04016FB2BA /* RealtimeClient.swift in Sources */,
+				4B6CA8285442225A2D2075C8 /* VoiceBridgeClient.swift in Sources */,
+				D1B206E99A7422D51F099A75 /* SubscriptionClient.swift in Sources */,
+				A15500000000000000000011 /* NativeWebRTCMedia.swift in Sources */,
+				561BB3CF3080057F00D43AC3 /* DesktopToolClient.swift in Sources */,
+				AF2721C1974D9D5A00450BDD /* VoiceModel.swift in Sources */,
+				7DBD6C39FE76988D7C3568F0 /* ZenVoiceApp.swift in Sources */,
+			);
+		};
+		B762D73446F6B90C9E7A476F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				F9704A57320AEC6BE6AB9BC5 /* Protocol.swift in Sources */,
+				561BB3CE3080057F00D43AC3 /* DesktopToolClient.swift in Sources */,
+				169637496DF8CA205A0211D6 /* Settings.swift in Sources */,
+				85441F7B523614E0C62D4F54 /* ACPClient.swift in Sources */,
+				04C01867E839BB2D6AC4F192 /* RealtimeClient.swift in Sources */,
+				D31A72E3E74CE61A3094E542 /* VoiceBridgeClient.swift in Sources */,
+				79675D826289A4CBECBB5F2F /* SubscriptionClient.swift in Sources */,
+				A15500000000000000000012 /* NativeWebRTCMedia.swift in Sources */,
+				A15500000000000000000014 /* NativeWebRTCMediaTests.swift in Sources */,
+				E06E19561482787690D07781 /* ZenVoiceTests.swift in Sources */,
+			);
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		0D9B6C467828201280D620A8 /* Debug configuration for PBXNativeTarget "ZenVoice" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				AUTOMATION_APPLE_EVENTS = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = ZenVoice.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = YES;
+				ENABLE_RESOURCE_ACCESS_LOCATION = YES;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = YES;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ZenVoice;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "ZenVoice invia il microfono a OpenAI Realtime solo quando attivi la voce.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -enable-upcoming-feature MemberImportVisibility";
+				PRODUCT_BUNDLE_IDENTIFIER = app.zencode.ZenVoice;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
+				SDKROOT = macosx;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		184B519F8E1416CCE38CFFD7 /* Debug configuration for PBXProject "ZenVoice" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -enable-upcoming-feature MemberImportVisibility";
+				SDKROOT = macosx;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		5798DB0A8EF2871B955A63C6 /* Release configuration for PBXNativeTarget "ZenVoiceTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "";
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -enable-upcoming-feature MemberImportVisibility";
+				PRODUCT_BUNDLE_IDENTIFIER = app.zencode.ZenVoice.Tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "";
+			};
+			name = Release;
+		};
+		7CAEF1B744878FE1A4DD3594 /* Debug configuration for PBXNativeTarget "ZenVoiceTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "";
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -enable-upcoming-feature MemberImportVisibility";
+				PRODUCT_BUNDLE_IDENTIFIER = app.zencode.ZenVoice.Tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "";
+			};
+			name = Debug;
+		};
+		A824290273A346217D9BE6F4 /* Release configuration for PBXProject "ZenVoice" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -enable-upcoming-feature MemberImportVisibility";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		E532E4CDC1E6865CE523475E /* Release configuration for PBXNativeTarget "ZenVoice" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				AUTOMATION_APPLE_EVENTS = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = ZenVoice.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = YES;
+				ENABLE_RESOURCE_ACCESS_LOCATION = YES;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ZenVoice;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "ZenVoice invia il microfono a OpenAI Realtime solo quando attivi la voce.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -enable-upcoming-feature MemberImportVisibility";
+				PRODUCT_BUNDLE_IDENTIFIER = app.zencode.ZenVoice;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5D32D499D7738AB763D0FB39 /* Build configuration list for PBXNativeTarget "ZenVoice" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0D9B6C467828201280D620A8 /* Debug configuration for PBXNativeTarget "ZenVoice" */,
+				E532E4CDC1E6865CE523475E /* Release configuration for PBXNativeTarget "ZenVoice" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		5F0A1F9C6FEE4F423CA8D05D /* Build configuration list for PBXNativeTarget "ZenVoiceTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7CAEF1B744878FE1A4DD3594 /* Debug configuration for PBXNativeTarget "ZenVoiceTests" */,
+				5798DB0A8EF2871B955A63C6 /* Release configuration for PBXNativeTarget "ZenVoiceTests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		9F6B1A7BCFF26D263B843F95 /* Build configuration list for PBXProject "ZenVoice" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				184B519F8E1416CCE38CFFD7 /* Debug configuration for PBXProject "ZenVoice" */,
+				A824290273A346217D9BE6F4 /* Release configuration for PBXProject "ZenVoice" */,
+			);
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 244210E48437B6556980A702 /* Project object */;
 }

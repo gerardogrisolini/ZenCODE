@@ -21,6 +21,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Prompt borders now explicitly disable inherited bold, matching the shared-chat
+  border weight while preserving their orange color.
+- Restored ZenVoice's missing audio and Realtime sources, shared Xcode scheme,
+  and entitlements, including the source references required to build the app
+  and its offline tests.
 - Managed feature processes no longer lose stdout or stderr when a short-lived
   child writes and exits between an empty pipe read and the exit-state check.
 - Fixed the voice bridge's two stale authentication-service references that

@@ -19,6 +19,13 @@ import Foundation
                 Button("Esamina e consenti una volta…") { model.respondToMenuPermission(id: request.id, allow: true) }.disabled(model.closing)
                 Button("Rifiuta") { model.respondToMenuPermission(id: request.id, allow: false) }
             }
+            if let request = model.desktopPermission {
+                Divider()
+                Text("Permesso · Desktop")
+                Text(request.details).lineLimit(8)
+                Button("Esamina e consenti una volta…") { model.respondToDesktopPermission(id: request.id, allow: true) }.disabled(model.closing)
+                Button("Rifiuta operazione Desktop") { model.respondToDesktopPermission(id: request.id, allow: false) }
+            }
             Divider()
             Button("Configurazione…") { delegate.openSetup() }.disabled(model.closing)
             Button("Esci") { model.quit() }.disabled(model.closing)
@@ -31,7 +38,7 @@ import Foundation
     private var setupWindow: NSWindow?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
-        if Self.model.settings.projects.isEmpty { openSetup() }
+        if Self.model.settings.projects.isEmpty && !Self.model.settings.desktopEnabled { openSetup() }
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if Self.model.quitting { return .terminateNow }
@@ -40,7 +47,7 @@ import Foundation
     func openSetup() {
         guard !Self.model.closing else { return }
         if let setupWindow { setupWindow.makeKeyAndOrderFront(nil); NSApplication.shared.activate(ignoringOtherApps: true); return }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 420), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 580), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Configurazione ZenVoice"; window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: SetupView(model: Self.model))
         window.center(); setupWindow = window
@@ -52,6 +59,7 @@ private struct SetupView: View {
     @ObservedObject var model: VoiceModel
     @State private var projects: [RegisteredProject] = []
     @State private var selectedProjects: Set<String> = []
+    @State private var desktopEnabled = false
     @State private var message = ""
 
     var body: some View {
@@ -80,6 +88,14 @@ private struct SetupView: View {
                     .toggleStyle(.checkbox)
                 }
             }
+            Divider()
+            Toggle("Abilita Desktop nel vocale ChatGPT Subscription", isOn: $desktopEnabled)
+                .toggleStyle(.checkbox)
+            Text("ZenVoice esegue il tool direttamente, senza agenti ZenCODE. Ogni operazione richiede conferma dal menu; i dati consultati possono essere inviati al provider. Richiede Desktop Tools già installato e i permessi macOS pertinenti. Screenshot e controllo visivo non sono disponibili in questa modalità.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let reason = model.desktopAvailability {
+                Text(reason).font(.caption).foregroundStyle(.secondary)
+            }
             HStack {
                 Button("Aggiorna") { reloadProjects() }
                 Text("\(selectedProjects.count) progetti selezionati").font(.caption)
@@ -89,11 +105,11 @@ private struct SetupView: View {
                         guard !model.closing, !model.hasTasks else {
                             throw VoiceError.invalid("Attendi i task prima di cambiare i progetti consentiti")
                         }
-                        let settings = try Settings(projects: Array(selectedProjects)).validated(requiresProjects: false)
+                        let settings = try Settings(projects: Array(selectedProjects), desktopEnabled: desktopEnabled).validated(requiresProjects: false)
                         model.deactivate()
                         try settings.save()
                         model.settings = settings
-                        message = "Progetti salvati. Scegli Attiva dal menu per usare ZenVoice."
+                        message = "Configurazione salvata. Scegli Attiva dal menu per usare ZenVoice."
                     } catch { message = error.localizedDescription }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -103,6 +119,7 @@ private struct SetupView: View {
         .padding(20)
         .disabled(model.closing || model.hasTasks)
         .onAppear {
+            desktopEnabled = model.settings.desktopEnabled
             selectedProjects = Set(model.settings.projects.compactMap { try? Settings.canonicalProject($0) })
             reloadProjects()
         }

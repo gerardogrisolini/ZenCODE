@@ -102,7 +102,8 @@ enum TerminalStyle {
     }
 
     enum Chrome {
-        static let border = Accent.primary
+        // Match shared-chat borders: never inherit bold from surrounding output.
+        static let border = TerminalStyle.sequence(22, 38, 5, 208)
         static let suggestion = Text.muted
     }
 
