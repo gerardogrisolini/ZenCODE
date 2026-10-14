@@ -772,6 +772,7 @@ extension SwiftFeatureRuntimeTests {
         #expect(report.manifestPath.hasSuffix("/search-tools/feature.json"))
     }
 
+    #if os(macOS)
     @Test
     func featureEditCreatesMultiTargetLocalCopyForBundledXcodeFeature() async throws {
         let rootURL = FileManager.default.temporaryDirectory
@@ -821,6 +822,7 @@ extension SwiftFeatureRuntimeTests {
         #expect(build.ok)
         #expect(FileManager.default.isExecutableFile(atPath: build.executablePath))
     }
+    #endif
 
     @Test
     func featureEditCreatesLocalCopyForBundledFeatureAndDeleteRestoresBundledRecord() async throws {

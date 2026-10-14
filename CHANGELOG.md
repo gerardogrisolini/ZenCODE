@@ -10,29 +10,6 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
-### Changed
-
-- `/goal` now works until completion or a genuine blocker, using direct execution
-  or delegation when useful. Its persistent task DAG, original objective,
-  structured pause/resume, and automatic continuation remain intact. Sub-agent
-  tools are no longer required to start, resume, or discover `/goal`; delegated
-  attempts still require independent validation and retry through a new attempt.
-  Tool grants, schema-1 task checkpoints, and v4 saved sessions are unchanged.
-
-- macOS CI, release gates, and standalone feature jobs now use the explicitly
-  accepted arm64 `xcode-27` preview runner with Xcode 27 and Swift 6.4. The macOS
-  SwiftPM cache is isolated from the previous image; Linux jobs are unchanged.
-  Hosted gate success remains required before treating macOS builds as validated.
-
-### Fixed
-
-- Feature process pipe draining no longer drops final stdout/stderr bytes when
-  a child writes and exits just after an empty non-blocking read.
-- Swift Testing runners that explicitly select `--testing-library swift-testing`
-  now use the test support-directory sandbox even without an `.xctest` path.
-  Existing harness signals, explicit override precedence, and the production
-  default `~/.zencode` remain unchanged.
-
 ## [2.3.0] - 2026-10-14
 
 ### Added
@@ -53,6 +30,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- `/goal` now works until completion or a genuine blocker, using direct execution
+  or delegation when useful. Its persistent task DAG, original objective,
+  structured pause/resume, and automatic continuation remain intact. Sub-agent
+  tools are no longer required to start, resume, or discover `/goal`; delegated
+  attempts still require independent validation and retry through a new attempt.
+  Tool grants, schema-1 task checkpoints, and v4 saved sessions are unchanged.
+- macOS CI, release gates, and standalone feature jobs now use the explicitly
+  accepted arm64 `xcode-27` preview runner with Xcode 27 and Swift 6.4. The macOS
+  SwiftPM cache is isolated from the previous image; Linux jobs are unchanged.
+  Hosted gate success remains required before treating macOS builds as validated.
 - Sub-agent thinking now uses the main thinking Markdown formatting, including
   muted accents and structured blocks. Both thinking views omit bold styling;
   normal responses, the stable thinking title, and in-place layout limits remain
@@ -99,6 +86,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
   checkpoints, transcripts, and ACP wire formats remain unchanged.
 
 ### Fixed
+
+- The bundled Xcode feature adoption/build test is now compiled only on macOS,
+  avoiding an unsupported `xcode-tools-feature` build during Linux test runs.
+- Feature process pipe draining no longer drops final stdout/stderr bytes when
+  a child writes and exits just after an empty non-blocking read.
+- Swift Testing runners that explicitly select `--testing-library swift-testing`
+  now use the test support-directory sandbox even without an `.xctest` path.
+  Existing harness signals, explicit override precedence, and the production
+  default `~/.zencode` remain unchanged.
 
 - The `Authorization` card now fills the same safe width as the prompt box below,
   aligning their right borders even for short commands. Both leave the final
