@@ -12,6 +12,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- MCP connections now identify the client as `ZenCODE` instead of
+  `Feature MCP client`, including Xcode's Agent Activity panel.
 - Shared-chat timestamp rendering tests now isolate terminal output, preventing
   test panels containing `draft` and `historical message` from appearing in the
   active terminal while tests run.

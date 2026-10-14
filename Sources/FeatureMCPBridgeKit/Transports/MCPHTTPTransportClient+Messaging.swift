@@ -28,7 +28,7 @@ extension MCPHTTPTransportClient {
         let initializeParams = MCPInitializeParams(
             protocolVersion: preferredProtocolVersion,
             capabilities: MCPClientCapabilities(),
-            clientInfo: MCPClientInfo(name: "Feature MCP client", version: "1.0")
+            clientInfo: MCPClientInfo(name: "ZenCODE", version: "1.0")
         )
 
         _ = try await request(

@@ -14,6 +14,65 @@ struct LocalMCPTransportPolicyTests {
     }
 
     #if os(macOS)
+    @Test(arguments: [false, true])
+    func localHandshakeIdentifiesZenCODE(optimistic: Bool) async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mcp-client-info-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+
+        let executableURL = rootURL.appendingPathComponent("mcp-fixture")
+        let initializeURL = rootURL.appendingPathComponent("initialize.json")
+        try """
+        #!/bin/sh
+        while IFS= read -r line; do
+          id=$(printf '%s\n' "$line" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\\([^,}]*\\).*/\\1/p')
+          case "$line" in
+            *notifications*initialized*)
+              ;;
+            *initialize*)
+              printf '%s\n' "$line" > "\(initializeURL.path)"
+              printf '%s\n' '{"jsonrpc":"2.0","id":'"$id"',"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}}}'
+              ;;
+            *tools*list*)
+              printf '%s\n' '{"jsonrpc":"2.0","id":'"$id"',"result":{"tools":[]}}'
+              ;;
+          esac
+        done
+        """.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+
+        let client = MCPClient(
+            configuration: MCPServerConfiguration(
+                executablePath: executableURL.path,
+                arguments: [],
+                environment: [:]
+            ),
+            localTransportPolicy: LocalMCPTransportPolicy(
+                handshake: optimistic ? .optimisticInitialized : .standard
+            )
+        )
+        do {
+            try await client.connect()
+            _ = try await client.listTools()
+
+            let request = try #require(
+                JSONSerialization.jsonObject(with: Data(contentsOf: initializeURL)) as? [String: Any]
+            )
+            let params = try #require(request["params"] as? [String: Any])
+            let clientInfo = try #require(params["clientInfo"] as? [String: Any])
+            #expect(clientInfo["name"] as? String == "ZenCODE")
+            #expect(clientInfo["version"] as? String == "1.0")
+        } catch {
+            await client.disconnect()
+            throw error
+        }
+        await client.disconnect()
+    }
+
     @Test
     func standardPolicyLeavesServerErrorsGeneric() async {
         let client = MCPClient(
