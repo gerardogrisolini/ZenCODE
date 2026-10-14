@@ -2,6 +2,8 @@
 //  TerminalTelegramPairingService.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Pairing domain of the Telegram runtime: the waiting actor, its DTOs and
 //  the hard-deadline long poll. Extracted verbatim from
 //  TerminalTelegramControlService.swift.

@@ -2,6 +2,8 @@
 //  ResponseLanguageResolver.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Centralizes operating-system language detection and ISO language-code
 //  resolution so the TUI session lock and the setup flow share one source of
 //  truth for the configured response language.

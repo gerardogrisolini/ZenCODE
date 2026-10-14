@@ -10,9 +10,10 @@ import Testing
 @TerminalChatActor
 @Suite
 struct GoalCommandTests {
-    @Test
-    func goalCommandCreatesAnActiveDelegatedGraphBeforePrompting() async throws {
-        let terminal = try makeTerminal()
+    @Test(arguments: [false, true])
+    func goalCommandCreatesAnActivePersistentGraphBeforePrompting(subAgentsEnabled: Bool) async throws {
+        let terminal = try makeTerminal(subAgentsEnabled: subAgentsEnabled)
+        #expect(terminal.isSubAgentToolEnabled == subAgentsEnabled)
 
         let action = await terminal.submittedLineAction("/goal Ship delegated work")
         guard case let .runHiddenPrompt(prompt, purpose) = action else {
@@ -31,8 +32,8 @@ struct GoalCommandTests {
         #expect(graph.tasks.isEmpty)
         #expect(graph.id.hasPrefix("workflow_"))
         #expect(prompt.contains("Active workflow task graph: \(graph.id)"))
-        #expect(prompt.contains("execution.executor set to sub_agent"))
-        #expect(prompt.contains("Do not start a task attempt directly with tasks.update"))
+        #expect(prompt.contains("execution.executor set to coordinator for direct work or sub_agent for delegated work"))
+        #expect(prompt.contains("Delegation is optional, not a prerequisite for /goal"))
         #expect(prompt.contains("Continue working until the stated goal is fully achieved and validated"))
         #expect(prompt.contains("ask the user a focused clarification question instead of guessing"))
         #expect(prompt.contains("Phase 0 — Identify the objective autonomously"))
@@ -90,15 +91,15 @@ struct GoalCommandTests {
     }
 
     @Test
-    func goalPromptRequiresDelegationWithoutAReadOnlyCoordinatorPolicy() {
+    func goalPromptAllowsDirectWorkAndOptionalDelegationWithoutChangingGrants() {
         let prompt = TerminalChat.workflowPrompt(
             goal: "Ship delegated work",
             graphID: "workflow_test"
         )
 
-        #expect(prompt.contains("canonical `agents` array"))
-        #expect(prompt.contains("task ID in the item's `taskID` field"))
-        #expect(prompt.contains("the task graph enforces sub-agent execution"))
+        #expect(prompt.contains("canonical agent.create `agents` array"))
+        #expect(prompt.contains("`taskID` inside its item, never at the root"))
+        #expect(prompt.contains("Keep all work in the persistent task DAG, including direct work"))
         #expect(prompt.contains("For profiles without bindings, omit `model` to inherit the main session model"))
         #expect(prompt.contains("only when bindings are configured, the `model` binding"))
         #expect(!prompt.contains("your only direct actions"))
@@ -148,9 +149,9 @@ struct GoalCommandTests {
         #expect(!message.localizedCaseInsensitiveContains("graphNotMutable"))
     }
 
-    @Test
-    func aPlainMessageContinuesTheOpenWorkflowOnTheSameGraph() async throws {
-        let terminal = try makeTerminal()
+    @Test(arguments: [false, true])
+    func aPlainMessageContinuesTheOpenWorkflowOnTheSameGraph(subAgentsEnabled: Bool) async throws {
+        let terminal = try makeTerminal(subAgentsEnabled: subAgentsEnabled)
         guard case .runHiddenPrompt = await terminal.submittedLineAction(
             "/goal Ship delegated work"
         ) else {
@@ -296,7 +297,7 @@ struct GoalCommandTests {
         #expect(prompt.contains("Active workflow task graph: \(graphID)"))
         #expect(prompt.contains("the previous workflow turn did not finish"))
         #expect(prompt.contains("boom"))
-        #expect(prompt.contains("tasks.retry any task left"))
+        #expect(prompt.contains("Use tasks.retry for failed or blocked tasks before starting a new direct or delegated attempt."))
     }
 
     @Test
@@ -444,7 +445,7 @@ struct GoalCommandTests {
     }
 
     @Test
-    func workflowContinuationPromptKeepsTheContractAndDelegationRules() {
+    func workflowContinuationPromptKeepsTheContractAndExecutionRules() {
         var state = WorkflowCommandRuntimeState(goal: "Ship it", graphID: "workflow_test")
         let didArm = state.recordCoordinatorOutput(
             "Workflow question\nWhich database should I target?"
@@ -521,9 +522,9 @@ struct GoalCommandTests {
         #expect(prompt.contains("canonical agent.create"))
     }
 
-    @Test
-    func structuredBlockerStopsAndResumedCheckpointKeepsTheOriginalGoal() async throws {
-        let terminal = try makeTerminal()
+    @Test(arguments: [false, true])
+    func structuredBlockerStopsAndResumedCheckpointKeepsTheOriginalGoal(subAgentsEnabled: Bool) async throws {
+        let terminal = try makeTerminal(subAgentsEnabled: subAgentsEnabled)
         _ = await terminal.submittedLineAction("/goal Complete the entire approved change")
         let initial = try #require(try await terminal.sessionRunner.taskGraphSnapshot(sessionID: terminal.sessionID))
         await terminal.recordWorkflowTurnOutcome(graphID: initial.id, coordinatorMessage: "Workflow question\nHeading alone")
@@ -742,7 +743,7 @@ struct GoalCommandTests {
         #expect(terminal.activeWorkflow == nil)
     }
 
-    private func makeTerminal() throws -> TerminalChat {
+    private func makeTerminal(subAgentsEnabled: Bool = true) throws -> TerminalChat {
         let configuration = try AgentConfiguration(
             hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
@@ -752,7 +753,11 @@ struct GoalCommandTests {
             )
         )
         let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false)
-        terminal.selectedToolKeys.insert("sub-agents")
+        if subAgentsEnabled {
+            terminal.selectedToolKeys.insert("sub-agents")
+        } else {
+            terminal.selectedToolKeys.remove("sub-agents")
+        }
         return terminal
     }
 }

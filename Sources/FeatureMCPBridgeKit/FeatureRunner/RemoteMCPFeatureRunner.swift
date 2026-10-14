@@ -2,6 +2,8 @@
 //  RemoteMCPFeatureRunner.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Shared CLI runner for MCP tool features. Each
 //  feature supplies a lightweight configuration; this runner handles
 //  argument parsing, JSON envelope, and error rendering so that

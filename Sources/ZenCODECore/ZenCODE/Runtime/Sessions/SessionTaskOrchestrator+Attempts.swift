@@ -2,6 +2,8 @@
 //  SessionTaskOrchestrator+Attempts.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 import Foundation
 import ToolCore
@@ -37,10 +39,6 @@ extension SessionTaskOrchestrator {
                 throw SessionTaskOrchestratorError.taskNotFound(claim.taskID)
             }
             let task = graph.tasks[index]
-            if graph.source.requiresSubAgentExecution,
-               (task.execution.executor != .subAgent || claim.executor != .subAgent) {
-                throw SessionTaskOrchestratorError.taskRequiresSubAgentExecution(task.id)
-            }
             guard task.activeAttemptID == nil else {
                 throw SessionTaskOrchestratorError.taskAlreadyClaimed(task.id)
             }
@@ -264,7 +262,9 @@ extension SessionTaskOrchestrator {
                 actual: task.revision
             )
         }
-        let validationFailureStatus: TaskStatus = (graph.source.requiresSubAgentExecution || !blocked)
+        let isDelegatedWorkflowAttempt = graph.source.isWorkflow
+            && task.attempts.last?.executor == .subAgent
+        let validationFailureStatus: TaskStatus = (isDelegatedWorkflowAttempt || !blocked)
             ? .failed
             : .blocked
         guard task.status == .awaitingValidation else {
@@ -379,10 +379,12 @@ extension SessionTaskOrchestrator {
         let attemptIndex = location.attemptIndex
         var task = graph.tasks[taskIndex]
 
-        // A workflow implementation is never terminal until an independent
-        // validator accepts it, regardless of the runtime caller's hint.
+        // Delegated workflow work requires independent validation regardless of
+        // the runtime caller's hint. Direct attempts retain ordinary transitions.
+        let isDelegatedWorkflowAttempt = graph.source.isWorkflow
+            && task.attempts[attemptIndex].executor == .subAgent
         let completionRequiresValidation = attemptStatus == .completed
-            && (taskStatus == .awaitingValidation || graph.source.requiresSubAgentExecution)
+            && (taskStatus == .awaitingValidation || isDelegatedWorkflowAttempt)
         let resolvedTaskStatus: TaskStatus = completionRequiresValidation
             ? .awaitingValidation
             : taskStatus

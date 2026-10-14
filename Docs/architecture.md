@@ -109,8 +109,19 @@ parsing explanation text. A plain user reply resumes the same graph and
 reinserts its original objective. Resume/rollback compare workflow metadata and
 graph incarnation, not task revision, preserving independent child progress;
 rollback changes only metadata and advances its token to prevent ABA adoption.
-Terminal task validation and mandatory sub-agent execution remain unchanged;
-workflow state does not automatically verify semantic goal completion.
+`/goal` keeps a persistent DAG for direct, delegated, or mixed execution and
+continues until completion or a genuine blocker; sub-agent tools are optional.
+Workflow identity (`isWorkflow`) is separate from delegation policy (the public
+`requiresSubAgentExecution` compatibility property is false). Direct work uses
+`tasks.update` from `pending` to `in_progress` (creating a coordinator attempt)
+and then records its outcome. Successful delegated attempts still require
+independent validation regardless of the runtime's completion hint; negative
+validation records `failed`, and retry creates a new attempt. The effective
+attempt executor determines this policy, not its original task specification.
+Workflow lifecycle, ownership, dependency and revision checks remain intact;
+completion requires a nonempty graph whose tasks are all `completed`. No task,
+mutation or delegation grants are expanded by this execution choice. Workflow
+state does not automatically verify semantic goal completion.
 Older schema-1 checkpoints without this field still decode. Their unavailable
 original objective is explicit rather than inferred from tasks or replayed chat;
 the legacy heading protocol remains a compatibility fallback only until first

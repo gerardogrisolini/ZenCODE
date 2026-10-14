@@ -2,6 +2,8 @@
 //  DirectToolExecutor+DestructiveGating.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Authorization gate for destructive direct tools beyond `local.exec`:
 //  irreversible filesystem deletion, remote history mutation, and worktree
 //  discard. The gate reuses the session's authorization handler so access

@@ -449,8 +449,8 @@ struct TelegramTUITests {
         #expect(reviewPrompt.contains("role \"Reviewer\""))
     }
 
-    @Test
-    func telegramRepliesContinueAnOpenWorkflowOnTheSameGraph() async throws {
+    @Test(arguments: [false, true])
+    func telegramRepliesContinueAnOpenWorkflowOnTheSameGraph(subAgentsEnabled: Bool) async throws {
         let configuration = try AgentConfiguration(
             hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
@@ -460,7 +460,11 @@ struct TelegramTUITests {
             )
         )
         let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false)
-        terminal.selectedToolKeys.insert("sub-agents")
+        if subAgentsEnabled {
+            terminal.selectedToolKeys.insert("sub-agents")
+        } else {
+            terminal.selectedToolKeys.remove("sub-agents")
+        }
         let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
         terminal.telegramControlState.isActive = true
         terminal.telegramControlState.wireLifecycleEpoch = UUID()

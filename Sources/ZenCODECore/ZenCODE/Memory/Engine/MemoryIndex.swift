@@ -1,3 +1,5 @@
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 import Foundation
 
 /// Pluggable lexical retrieval backend used by `MemoryEngine`.

@@ -2,6 +2,8 @@
 //  SubscriptionLimitResetFormatter.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Builds a human-readable "subscription resumes at <time>" message from a
 //  rate-limit reset value (seconds-until-reset, an absolute date, or a
 //  `retry-after` header value). The message reports the precise local time.

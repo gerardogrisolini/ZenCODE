@@ -2,6 +2,8 @@
 //  SessionTaskOrchestrator+Workflow.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 import Foundation
 import ToolCore
@@ -70,7 +72,7 @@ extension SessionTaskOrchestrator {
             throw SessionTaskOrchestratorError.graphNotFound(graphID)
         }
         guard sessionStates[sessionID]?.currentGraphID == graphID,
-              graph.source.requiresSubAgentExecution,
+              graph.source.isWorkflow,
               graph.state == .active else {
             throw SessionTaskOrchestratorError.graphNotActive(graphID)
         }

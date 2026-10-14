@@ -2,6 +2,8 @@
 //  BrowserPNGCodec.swift
 //  BrowserToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Bounded, pure-Swift PNG decoding and encoding for Browser visual diffs.
 //  The implementation deliberately supports the PNG shape emitted by browser
 //  screenshots (8-bit RGB/RGBA, non-interlaced) and rejects every other shape.

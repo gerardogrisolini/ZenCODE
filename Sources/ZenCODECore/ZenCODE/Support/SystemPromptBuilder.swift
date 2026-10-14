@@ -163,10 +163,12 @@ public enum SystemPromptBuilder {
         let delegationInstruction: String
         if agentDelegationIsAvailable(allowedToolNames) {
             delegationInstruction = """
-            Prefer delegation for non-trivial graph work whenever a compatible profile has the \
-            tools required to perform it. Execute graph work directly only when the work is \
-            trivial, delegation offers no meaningful benefit, no compatible profile can perform \
-            it, or shared mutable state makes delegation unsafe. When delegating graph work, put \
+            In `/goal`, execute graph work directly or delegate when useful; delegation is optional. \
+            For other task graphs, prefer delegation for non-trivial work whenever a compatible \
+            profile has the tools required to perform it. Execute other graph work directly only \
+            when it is trivial, delegation offers no meaningful benefit, no compatible profile \
+            can perform it, or shared mutable state makes delegation unsafe. \
+            When delegating graph work, put \
             the task ID returned by tasks.create/tasks.list in each canonical \
             agent.create `agents` item as `taskID`; never pass taskID as a root argument. This \
             claims the assignment and execution attempt atomically. Select the most suitable \
@@ -177,25 +179,21 @@ public enum SystemPromptBuilder {
             parallel execution is safe and useful; serialize work that mutates overlapping \
             files or shared state. When a task graph is already active, every delegated agent \
             must use `agents[].taskID`; do not create taskless agents outside that workflow. A \
-            `/goal` graph requires every task to be delegated through the canonical \
-            agent.create `agents` array; the \
-            coordinator cannot start a task attempt directly, although its normal tool grant \
-            remains unchanged. For other task graphs, coordinator execution remains permitted \
-            only under the fallback conditions above. For substantial self-contained work that \
+            `/goal` graph remains persistent even for entirely direct work; its normal tool grant \
+            remains unchanged. For substantial self-contained work outside `/goal` that \
             fits one compatible sub-agent, prefer a single delegation without manufacturing a \
             task graph. \
-            After a `/goal` implementation task completes, validate its result. If validation \
+            After a delegated `/goal` implementation task completes, validate its result. If validation \
             is negative, record the task as failed, call tasks.retry, then claim the new attempt \
-            with a new canonical agent.create item containing `taskID`; do not use agent.message \
+            with tasks.update in_progress for direct execution or a new canonical agent.create \
+            item containing `taskID` for delegation; do not use agent.message \
             to reopen a completed task.
             """
         } else {
             delegationInstruction = """
-            When agent.create is unavailable, execute runnable graph work directly only in a \
-            task graph that permits coordinator execution, and record its lifecycle with \
-            tasks.update. Never create or directly execute work in a `/goal` graph: it \
-            requires a sub-agent claim through a canonical agent.create `agents` item containing \
-            `taskID`.
+            When agent.create is unavailable, execute runnable graph work directly, including \
+            in `/goal`, and record its lifecycle with tasks.update. Delegation is optional; \
+            do not request unavailable tools or bypass the current permission boundary.
             """
         }
 
@@ -211,6 +209,12 @@ public enum SystemPromptBuilder {
         `execution`. Then use tasks.list with runnableOnly=true to choose work and \
         tasks.update to record progress, outcomes, blockers, and validation.
 
+        For direct work, declare execution.executor as coordinator and use tasks.update to move \
+        pending work to in_progress before execution, then mark it completed after validating \
+        the result. Use tasks.retry for failed or blocked work before starting a new attempt. \
+        `/goal` keeps this persistent DAG and continues until completion or a genuine blocker, \
+        whether work is direct, delegated, or mixed.
+
         When defining tasks, prefer a dependency graph that maximizes safe, useful parallelism \
         over a linear sequence. Add an edge only for a real prerequisite, required output or \
         decision, validation ordering, or a shared mutable resource that cannot be changed \
@@ -225,7 +229,7 @@ public enum SystemPromptBuilder {
         Agent selection policy: \(TaskRecord.agentSelectionPolicy)
 
         \(delegationInstruction)
-        A single self-contained delegation or a short disposable lookup does not require a \
+        Outside `/goal`, a single self-contained delegation or a short disposable lookup does not require a \
         task graph.
         """
     }

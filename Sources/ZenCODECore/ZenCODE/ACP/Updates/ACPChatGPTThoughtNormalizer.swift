@@ -1,3 +1,5 @@
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 // ACP-only presentation of ChatGPT public reasoning summaries.
 // This is deliberately not a Markdown parser and never changes runtime history.
 struct ACPChatGPTThoughtNormalizer: Sendable {

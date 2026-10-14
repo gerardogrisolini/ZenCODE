@@ -2,6 +2,8 @@
 //  CommonInputs.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Shared input protocols and a structured schema builder so tool authors
 //  can reuse common parameter groups (path aliases, working-directory,
 //  timeout, limits, pagination) without hand-writing JSON Schema strings.

@@ -2,6 +2,8 @@
 //  DS4ServerSupervisor.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Coordinates an optional local ds4 HTTP server. The supervisor may adopt a
 //  compatible, explicitly-candidate loopback endpoint, but only owns and stops
 //  children it launched itself.

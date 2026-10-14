@@ -1,3 +1,5 @@
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 import Foundation
 
 /// Shared selection syntax; callers retain their domain-specific matching and errors.

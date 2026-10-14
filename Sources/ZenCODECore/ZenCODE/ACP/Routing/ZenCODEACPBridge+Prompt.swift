@@ -631,7 +631,7 @@ extension ZenCODEACPBridge {
     ) async {
         let graph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID)
         let graphIsOpen = graph?.id == graphID
-            && graph?.source.requiresSubAgentExecution == true
+            && graph?.source.isWorkflow == true
             && graph?.state.isTerminal == false
         _ = updateReservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) { session in
             guard var workflow = session.workflowContinuation,

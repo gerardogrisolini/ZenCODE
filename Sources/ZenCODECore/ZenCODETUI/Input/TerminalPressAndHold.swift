@@ -2,6 +2,8 @@
 //  TerminalPressAndHold.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 /// Timing thresholds and accent catalogue for the terminal press-and-hold
 /// fallback.

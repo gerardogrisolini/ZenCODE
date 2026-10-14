@@ -2,6 +2,8 @@
 //  TerminalChatRenderCoordinator+Diagnostics.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 /// Test and diagnostics snapshots, capture retrieval, and flush barriers.
 extension TerminalChatRenderCoordinator {

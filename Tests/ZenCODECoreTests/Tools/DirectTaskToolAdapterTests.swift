@@ -195,7 +195,10 @@ struct DirectTaskToolAdapterTests {
         )
         #expect(createDescriptor.description.contains("leave independent tasks dependency-free"))
         #expect(createDescriptor.description.contains("safe, useful parallelism"))
-        #expect(createDescriptor.description.contains("execution.executor as sub_agent"))
+        #expect(
+            createDescriptor.description.contains("keep direct work in the DAG with execution.executor coordinator")
+                && createDescriptor.description.contains("Delegation is optional: only for delegated work use execution.executor sub_agent")
+        )
         #expect(createDescriptor.inputSchema.contains("\"sub_agent\""))
         #expect(!createDescriptor.inputSchema.contains("toolNames"))
         #expect(createDescriptor.schemaObject != nil)
@@ -258,43 +261,34 @@ struct DirectTaskToolAdapterTests {
     }
 
     @Test
-    func workflowTaskCreationRequiresSubAgentExecution() async throws {
+    func workflowTaskCreationSupportsDirectAndDelegatedWork() async throws {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(
-            sessionID: "workflow-session",
-            id: "workflow",
-            source: .workflow,
-            state: .active,
-            tasks: []
+            sessionID: "workflow-session", id: "workflow", source: .workflow,
+            state: .active, tasks: []
         )
         let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
-
-        await #expect(throws: SessionTaskOrchestratorError.self) {
-            _ = try await adapter.execute(
-                sessionID: "workflow-session",
-                toolCall: call(
-                    name: "tasks.create",
-                    arguments: ["id": "implementation", "title": "Implement"]
-                )
-            )
-        }
-
         _ = try await adapter.execute(
             sessionID: "workflow-session",
-            toolCall: call(
-                name: "tasks.create",
-                arguments: [
-                    "id": "implementation",
-                    "title": "Implement",
-                    "execution": ["executor": "sub_agent"],
-                ]
-            )
+            toolCall: call(name: "tasks.create", arguments: ["tasks": [
+                ["id": "direct", "title": "Direct", "execution": ["executor": "coordinator"]],
+                ["id": "delegated", "title": "Delegated", "execution": ["executor": "sub_agent"]],
+            ]])
         )
-
+        for status in ["in_progress", "completed"] {
+            _ = try await adapter.execute(
+                sessionID: "workflow-session",
+                toolCall: call(name: "tasks.update", arguments: ["id": "direct", "status": status])
+            )
+        }
+        let direct = try await orchestrator.task(sessionID: "workflow-session", taskID: "direct").task
+        #expect(direct.status == .completed)
+        #expect(direct.attempts.last?.executor == .coordinator)
+        #expect(direct.attempts.last?.status == .completed)
         #expect(try await orchestrator.task(
-            sessionID: "workflow-session",
-            taskID: "implementation"
+            sessionID: "workflow-session", taskID: "delegated"
         ).task.execution.executor == .subAgent)
+        #expect(try await orchestrator.graphSnapshot(sessionID: "workflow-session")?.state == .active)
     }
 
     @Test
@@ -706,6 +700,7 @@ struct DirectTaskToolAdapterTests {
         )
 
         #expect(output.contains("Hint: 1 previous attempt on this task (complexity 8) did not succeed"))
+        #expect(output.contains("start a new direct attempt with tasks.update status in_progress"))
         #expect(output.contains("role-compatible profile and its lowest-capability authorized model binding"))
         #expect(output.contains("profile's highest-capability binding"))
         #expect(output.contains("report the capability gap"))

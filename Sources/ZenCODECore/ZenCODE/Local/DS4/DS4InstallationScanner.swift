@@ -2,6 +2,8 @@
 //  DS4InstallationScanner.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Read-only discovery of GGUF artifacts in a DS4 checkout.
 //
 

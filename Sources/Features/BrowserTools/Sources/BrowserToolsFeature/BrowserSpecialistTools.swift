@@ -2,6 +2,8 @@
 //  BrowserSpecialistTools.swift
 //  BrowserToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Carefully bounded specialist CDP capabilities: printable artifacts,
 //  performance metrics, and a fail-closed download policy.
 //

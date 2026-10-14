@@ -1,3 +1,5 @@
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 import Foundation
 
 /// Authoritative in-memory session/snapshot cache for the runner. Session

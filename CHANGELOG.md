@@ -12,6 +12,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- `/goal` now works until completion or a genuine blocker, using direct execution
+  or delegation when useful. Its persistent task DAG, original objective,
+  structured pause/resume, and automatic continuation remain intact. Sub-agent
+  tools are no longer required to start, resume, or discover `/goal`; delegated
+  attempts still require independent validation and retry through a new attempt.
+  Tool grants, schema-1 task checkpoints, and v4 saved sessions are unchanged.
+
 - macOS CI, release gates, and standalone feature jobs now use the explicitly
   accepted arm64 `xcode-27` preview runner with Xcode 27 and Swift 6.4. The macOS
   SwiftPM cache is isolated from the previous image; Linux jobs are unchanged.

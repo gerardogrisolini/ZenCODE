@@ -1,3 +1,5 @@
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 // TerminalDialogPresentation.swift
 
 /// An already-rendered single-key dialog, not a list of selectable menu items.

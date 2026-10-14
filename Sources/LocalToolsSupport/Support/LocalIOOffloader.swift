@@ -2,6 +2,8 @@
 //  LocalIOOffloader.swift
 //  LocalToolsSupport
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Offloads integral, blocking file/text I/O away from Swift's cooperative
 //  concurrency thread pool and honors cooperative Task cancellation.
 //

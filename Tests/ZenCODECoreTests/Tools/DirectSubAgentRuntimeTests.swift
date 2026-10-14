@@ -2204,8 +2204,8 @@ struct DirectSubAgentRuntimeTests {
         #expect(await backend.didInstallTaskOrchestrator())
     }
 
-    @Test
-    func workflowAttemptIsFencedAfterValidationFailureUntilRetryCreatesANewAgent() async throws {
+    @Test(arguments: [TaskExecutorKind.subAgent, .coordinator])
+    func workflowAttemptIsFencedAfterValidationFailureUntilRetryCreatesANewAgent(declaredExecutor: TaskExecutorKind) async throws {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(
             sessionID: "root",
@@ -2216,7 +2216,7 @@ struct DirectSubAgentRuntimeTests {
                 TaskDefinition(
                     id: "implementation",
                     title: "Implement",
-                    execution: TaskExecutionSpec(executor: .subAgent)
+                    execution: TaskExecutionSpec(executor: declaredExecutor)
                 )
             ]
         )
@@ -2251,7 +2251,8 @@ struct DirectSubAgentRuntimeTests {
             sessionID: "root",
             taskID: "implementation",
             succeeded: false,
-            failureReason: "focused validation failed"
+            failureReason: "focused validation failed",
+            blocked: true
         )
         #expect(failedValidation.task.status == .failed)
 

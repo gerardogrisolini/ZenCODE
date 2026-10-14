@@ -2,6 +2,8 @@
 //  BrowserInspection.swift
 //  BrowserToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Snapshot-bound DOM/CSS inspection. This intentionally exposes a small,
 //  host-controlled projection of a single accessibility target rather than raw
 //  CDP responses, selectors, or page-provided JavaScript.

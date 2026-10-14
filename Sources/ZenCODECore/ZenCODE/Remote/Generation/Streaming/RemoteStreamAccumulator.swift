@@ -2,6 +2,8 @@
 //  RemoteStreamAccumulator.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Accumulates streamed deltas into a final RemoteStreamResult. Extracted from
 //  RemoteGenerationClient+Streaming to keep streaming logic focused.
 //

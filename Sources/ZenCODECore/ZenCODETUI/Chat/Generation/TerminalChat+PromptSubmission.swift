@@ -2,6 +2,8 @@
 //  TerminalChat+PromptSubmission.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 #if canImport(Darwin)
 import Darwin

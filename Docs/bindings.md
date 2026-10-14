@@ -2,8 +2,8 @@
 
 A **model binding** is the explicit authorization that connects one agent profile
 to one model. It is the single mechanism that turns "which agent" and "which
-model" into one routing decision, and it is what `/goal` uses to assign every
-task to the right sub-agent.
+model" into one routing decision, including when `/goal` chooses to delegate
+a task. Direct `/goal` execution does not require a binding or a sub-agent.
 
 Read this page before configuring delegation. Profile concepts and the
 delegation lifecycle are in [agents.md](agents.md).
@@ -147,17 +147,18 @@ conflicting or malformed aliases are rejected.
 
 ## Bindings In `/goal`
 
-`/goal <goal>` is where bindings pay off, because every task must be executed
-by a sub-agent:
+`/goal <goal>` works until completion or a genuine blocker and keeps a persistent
+task DAG for both direct and delegated work. Bindings apply when it delegates:
 
 1. The current agent creates the task graph, assigning each task a `complexity`.
-2. For each task it picks a role-compatible profile and the lowest qualifying
-   binding of that profile.
-3. It claims the task atomically with `agent.create(taskID:)`, passing `profile`
-   and `model`.
-4. It validates the result, and on negative validation records the failure,
-   calls `tasks.retry`, and claims a **new** attempt with a new
-   `agent.create(taskID:)`.
+2. For each task it chooses direct execution or useful delegation. For delegated
+   work it picks a role-compatible profile and its lowest qualifying binding.
+3. It claims delegated work atomically with a canonical `agent.create` `agents`
+   item containing `taskID`, `profile`, and `model` only for configured bindings.
+   Direct work instead uses `tasks.update` from `pending` to `in_progress`.
+4. It validates results before completion. Negative delegated validation records
+   failure, followed by `tasks.retry` and a **new** direct or delegated attempt.
+   Never use `agent.message` to reopen a completed delegated attempt.
 
 Mapping the screenshot onto a typical workflow graph: analysis tasks go to
 `Reporter`, routine implementation to `Developer` on `glm-5.2` (6/10), delicate

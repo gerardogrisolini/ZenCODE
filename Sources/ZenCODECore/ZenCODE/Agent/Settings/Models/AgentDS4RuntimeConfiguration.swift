@@ -2,6 +2,8 @@
 //  AgentDS4RuntimeConfiguration.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Persisted, provider-neutral metadata for an optional local DS4 runtime.
 //  This contract deliberately excludes process identity, listening ports and
 //  machine-specific hardware handles: those values belong to the live runtime.

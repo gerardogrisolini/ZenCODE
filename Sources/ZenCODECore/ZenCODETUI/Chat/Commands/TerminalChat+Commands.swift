@@ -276,8 +276,8 @@ extension TerminalChat {
         ),
         TerminalChatCommandDescriptor(
             command: "/goal",
-            summary: "plan and delegate all work to sub-agents",
-            help: "/goal <goal> plans the work, creates a task graph, and delegates every task to the best-matching sub-agent. The current agent stays as coordinator and final reviewer.",
+            summary: "work until complete or genuinely blocked",
+            help: "/goal <goal> works until completion or a genuine blocker, using a persistent task graph. Execute directly or delegate when useful; validate the result before completing tasks.",
             requiresArgument: true
         ),
                 TerminalChatCommandDescriptor(

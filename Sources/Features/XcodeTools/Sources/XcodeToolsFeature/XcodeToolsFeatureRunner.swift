@@ -2,6 +2,8 @@
 //  XcodeToolsFeatureMain.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Thin configuration for the Xcode MCP tool feature. Overrides
 //  `invoke` to use `XcodeToolExecutor` (which includes retry logic
 //  for XcodeUpdate) and `mapError` for consent-denied detection.

@@ -2,6 +2,8 @@
 //  TerminalChatActor.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 /// Global actor that owns the terminal chat isolation domain.
 ///

@@ -2,6 +2,8 @@
 //  LocalExecCommandParser.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Parses `local.exec` command strings to extract authorization-relevant
 //  information: pipeline/sequence segmentation and per-segment executable
 //  identity. Pure (no side effects).

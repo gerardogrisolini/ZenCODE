@@ -2,6 +2,8 @@
 //  BrowserNetworkGuard.swift
 //  BrowserToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Per-invocation request interception for the opt-in Browser feature. This is
 //  deliberately not represented as a permanent network sandbox: a one-shot
 //  feature process cannot supervise a persistent Chrome target between calls.

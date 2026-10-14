@@ -2,6 +2,8 @@
 //  DirectTaskToolAdapter.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 import Foundation
 import ToolCore
@@ -171,12 +173,14 @@ public actor DirectTaskToolAdapter {
                 let noun = unsuccessfulAttempts.count == 1 ? "attempt" : "attempts"
                 rendered += "\nHint: \(unsuccessfulAttempts.count) previous \(noun) on this "
                     + "task (complexity \(view.task.complexity)) did not succeed. Re-evaluate "
-                    + "the task type and required tools, then retry with a role-compatible "
+                    + "the task type and required tools, then start a new direct attempt with "
+                    + "tasks.update status in_progress, or delegate when useful with a role-compatible "
                     + "profile and its lowest-capability authorized model binding that meets "
                     + "the task complexity. If none exists, use that profile's highest-capability "
                     + "binding and "
                     + "report the capability gap. For a profile without bindings, omit model in "
-                    + "agent.create to inherit the main session model and provider."
+                    + "agent.create to inherit the main session model and provider. Put taskID in "
+                    + "the new agents item; never reopen a completed attempt with agent.message."
             }
             return rendered
 
@@ -426,7 +430,7 @@ extension DirectTaskToolAdapter {
             lines.append("Workflow state=\(workflow.state.rawValue) revision=\(workflow.revision)")
             lines.append("Original goal: \(workflow.originalGoal ?? "unavailable (legacy checkpoint)")")
             if let message = workflow.message { lines.append("Workflow message: \(message)") }
-        } else if graph.source.requiresSubAgentExecution {
+        } else if graph.source.isWorkflow {
             lines.append("Legacy workflow: original goal and structured control state were not recorded.")
         }
         guard !views.isEmpty else {

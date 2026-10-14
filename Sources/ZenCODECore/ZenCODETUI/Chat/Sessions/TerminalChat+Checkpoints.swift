@@ -2,6 +2,8 @@
 //  TerminalChat+Checkpoints.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Checkpoint tree operations invoked via /sessions subcommands.
 //
 

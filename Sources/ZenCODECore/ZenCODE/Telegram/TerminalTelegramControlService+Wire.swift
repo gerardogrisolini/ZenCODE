@@ -2,6 +2,8 @@
 //  TerminalTelegramControlService+Wire.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Wire-effect accounting and outbound Bot API surface of
 //  ``TerminalTelegramControlService``. Extracted verbatim from
 //  TerminalTelegramControlService.swift; every method keeps its actor

@@ -2,6 +2,8 @@
 //  DS4CompatibilityAdvisor.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Offline compatibility decisions for discovered DS4 hardware and artifacts.
 //
 

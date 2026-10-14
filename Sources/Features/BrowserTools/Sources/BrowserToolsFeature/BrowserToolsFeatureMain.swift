@@ -2,6 +2,8 @@
 //  BrowserToolsFeatureMain.swift
 //  BrowserToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  A browser-based web feature that uses a real Chrome/Chromium instance via
 //  the Chrome DevTools Protocol. Legacy search/read tools preserve their
 //  behaviour; persistent page tools are opt-in once the Browser feature itself

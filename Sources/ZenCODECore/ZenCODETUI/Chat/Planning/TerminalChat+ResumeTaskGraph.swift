@@ -2,6 +2,8 @@
 //  TerminalChat+ResumeTaskGraph.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 import Foundation
 import ToolCore
@@ -159,7 +161,7 @@ extension TerminalChat {
     }
 
     func restoreWorkflowProjection(from snapshot: TaskGraphSnapshot?) {
-        guard let snapshot, snapshot.source.requiresSubAgentExecution,
+        guard let snapshot, snapshot.source.isWorkflow,
               !snapshot.state.isTerminal else {
             activeWorkflow = nil
             return
@@ -180,7 +182,7 @@ extension TerminalChat {
         // continuation round-trip used after a clarification question so the
         // next message resumes the coordinator on this exact graph instead of
         // starting an unrelated turn.
-        if graph.source.requiresSubAgentExecution, !graph.state.isTerminal {
+        if graph.source.isWorkflow, !graph.state.isTerminal {
             let snapshot = try? await sessionRunner.taskGraphSnapshot(
                 sessionID: sessionID, graphID: graph.graphID
             )

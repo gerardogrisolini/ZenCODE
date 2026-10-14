@@ -1,3 +1,5 @@
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 import Foundation
 
 /// Transient, transport-neutral access to text owned by the embedding editor.

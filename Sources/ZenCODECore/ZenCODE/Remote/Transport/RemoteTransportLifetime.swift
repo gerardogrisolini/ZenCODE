@@ -2,6 +2,8 @@
 //  RemoteTransportLifetime.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Internal lifetime token for the cross-platform SwiftNIO transport.
 //
 

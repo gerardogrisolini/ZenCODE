@@ -2,6 +2,8 @@
 //  TerminalQueuedPromptBuffer.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 /// Finite FIFO for prompts accepted while the terminal is already busy.
 ///

@@ -2,6 +2,8 @@
 //  ZenCODEACPBridge+Commands.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Shared /plan and /goal routing for ACP sessions.
 //
 
@@ -239,7 +241,7 @@ extension ZenCODEACPBridge {
         }
         guard let goal = goal.nilIfBlank else {
             return .immediate(
-                "ZenCODE: /goal requires a goal. Use /goal <goal> to describe what should be planned and delegated."
+                "ZenCODE: /goal requires a goal. Use /goal <goal> to describe the outcome to achieve."
             )
         }
         guard session.activePlan == nil, session.planBrainstorming == nil else {
@@ -247,22 +249,17 @@ extension ZenCODEACPBridge {
                 "ZenCODE: /goal cannot start while an active plan or planning discussion exists. Finish it or use /plan clear first."
             )
         }
-        guard acpSubAgentsAreAvailable(in: session) else {
-            return .immediate(
-                "ZenCODE: /goal requires the sub-agent tools in this ACP session."
-            )
-        }
         // Mirror the TUI guard: the orchestrator refuses to create a graph while
         // the current one is an unfinished workflow graph, and the raw
         // `graphNotMutable` error is not actionable for the user.
         if let current = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID),
-           current.source.requiresSubAgentExecution,
+           current.source.isWorkflow,
            !current.state.isTerminal {
             let open = current.tasks.filter {
                 $0.status != .completed && $0.status != .cancelled
             }.count
             return .immediate(
-                "ZenCODE: a delegated workflow is already running (\(current.id), "
+                "ZenCODE: a goal workflow is already running (\(current.id), "
                     + "\(open) task\(open == 1 ? "" : "s") still open). "
                     + "Reply in this session to continue it when it is waiting for you, "
                     + "or clear its task graph before starting another /goal."
@@ -335,11 +332,10 @@ extension ZenCODEACPBridge {
         ) else {
             return nil
         }
-        guard acpSubAgentsAreAvailable(in: session) else { return nil }
         let currentGraph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID)
         var projectedWorkflow = session.workflowContinuation
         if projectedWorkflow == nil, let graph = currentGraph,
-           graph.source.requiresSubAgentExecution, !graph.state.isTerminal {
+           graph.source.isWorkflow, !graph.state.isTerminal {
             var restored = WorkflowCommandRuntimeState(goal: graph.workflow?.originalGoal ?? "", graphID: graph.id)
             if graph.workflow != nil, graph.workflow?.state != .running {
                 restored.recordCoordinatorOutput(nil, graph: graph)
@@ -356,7 +352,7 @@ extension ZenCODEACPBridge {
         // Never resume a graph that is no longer the session's open workflow.
         guard let graph = currentGraph,
               graph.id == workflow.graphID,
-              graph.source.requiresSubAgentExecution,
+              graph.source.isWorkflow,
               !graph.state.isTerminal else {
             _ = updateReservedPromptSession(
                 sessionID: sessionID,
@@ -1331,9 +1327,13 @@ extension ZenCODEACPBridge {
 
 extension ZenCODEACPBridge {
     func availableCommandsUpdate(for session: SessionState) -> JSONValue {
-        var commands: [JSONValue] = []
+        var commands: [JSONValue] = [.object([
+            "name": .string("goal"),
+            "description": .string("Work until the goal is complete or genuinely blocked"),
+            "input": .object(["hint": .string("Goal to achieve")])
+        ])]
         if acpSubAgentsAreAvailable(in: session) {
-            for (name, description) in [("goal", "Run a delegated task workflow"), ("review", "Review with delegated agents"), ("plan", "Create or manage a plan")] {
+            for (name, description) in [("review", "Review with delegated agents"), ("plan", "Create or manage a plan")] {
                 commands.append(.object([
                     "name": .string(name), "description": .string(description),
                     "input": .object(["hint": .string("Instructions or subcommand")])

@@ -1,3 +1,5 @@
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 // TerminalCursorReport.swift
 // CPR is an input protocol, never a second reader of the controlling terminal.
 import Dispatch

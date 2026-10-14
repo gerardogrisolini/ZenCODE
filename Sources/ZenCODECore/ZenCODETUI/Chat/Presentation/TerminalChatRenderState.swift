@@ -2,6 +2,8 @@
 //  TerminalChatRenderState.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 /// Actor-confined bookkeeping for tool-row ownership and lifecycle timing.
 /// The coordinator remains the sole mutator; this value only groups invariants

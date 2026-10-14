@@ -568,89 +568,115 @@ struct SessionTaskOrchestratorTests {
         }
     }
 
-    @Test
-    func workflowGraphsRequireDelegatedTaskAttemptsWithoutChangingManualGraphs() async throws {
+    @Test(arguments: [TaskGraphSource.workflow, .manual])
+    func graphSupportsDirectAndDelegatedAttempts(source: TaskGraphSource) async throws {
         let orchestrator = SessionTaskOrchestrator()
-
-        do {
-            _ = try await orchestrator.createGraph(
-                sessionID: "workflow-session",
-                id: "workflow-invalid",
-                source: .workflow,
-                state: .active,
-                tasks: [TaskDefinition(id: "implementation", title: "Implement")]
-            )
-            Issue.record("A workflow task without sub-agent execution should be rejected")
-        } catch let error as SessionTaskOrchestratorError {
-            #expect(error == .taskRequiresSubAgentExecution("implementation"))
-        }
-
         _ = try await orchestrator.createGraph(
-            sessionID: "workflow-session",
-            id: "workflow",
-            source: .workflow,
-            state: .active,
+            sessionID: "session", id: "graph", source: source, state: .active,
             tasks: [
+                TaskDefinition(id: "direct", title: "Direct"),
                 TaskDefinition(
-                    id: "implementation",
-                    title: "Implement",
+                    id: "delegated", title: "Delegated", dependsOn: ["direct"],
                     execution: TaskExecutionSpec(executor: .subAgent)
                 )
             ]
         )
-
-        do {
-            _ = try await orchestrator.updateTask(
-                sessionID: "workflow-session",
-                taskID: "implementation",
-                update: TaskUpdate(status: .inProgress)
-            )
-            Issue.record("The workflow coordinator must not start a task attempt")
-        } catch let error as SessionTaskOrchestratorError {
-            #expect(error == .taskRequiresSubAgentExecution("implementation"))
-        }
-
-        do {
+        await #expect(throws: SessionTaskOrchestratorError.self) {
             _ = try await orchestrator.claimTasks(
-                sessionID: "workflow-session",
-                claims: [TaskClaim(
-                    taskID: "implementation",
-                    executor: .coordinator
-                )]
+                sessionID: "session", claims: [TaskClaim(taskID: "delegated", agentID: "worker")]
             )
-            Issue.record("A workflow task must not be claimed by the coordinator")
-        } catch let error as SessionTaskOrchestratorError {
-            #expect(error == .taskRequiresSubAgentExecution("implementation"))
         }
+        let started = try await orchestrator.updateTask(
+            sessionID: "session", taskID: "direct", update: TaskUpdate(status: .inProgress)
+        )
+        #expect(started.task.activeAttempt?.executor == .coordinator)
+        let completed = try await orchestrator.updateTask(
+            sessionID: "session", taskID: "direct",
+            update: TaskUpdate(status: .completed, output: "Direct work validated")
+        )
+        #expect(completed.task.status == .completed)
+        #expect(completed.task.attempts.last?.status == .completed)
+        #expect(completed.task.activeAttemptID == nil)
+        #expect(try await orchestrator.graphSnapshot(sessionID: "session")?.state == .active)
 
-        let delegatedReceipt = try #require(try await orchestrator.claimTasks(
-            sessionID: "workflow-session",
-            claims: [TaskClaim(taskID: "implementation", agentID: "worker")]
+        let receipt = try #require(try await orchestrator.claimTasks(
+            sessionID: "session", claims: [TaskClaim(taskID: "delegated", agentID: "worker")]
         ).first)
-        #expect(delegatedReceipt.agentID == "worker")
-        #expect(try await orchestrator.task(
-            sessionID: "workflow-session",
-            taskID: "implementation"
-        ).task.activeAttempt?.executor == .subAgent)
+        _ = try await orchestrator.completeAttempt(
+            sessionID: "session", taskID: "delegated", attemptID: receipt.attemptID,
+            output: "Delegated result", requiresValidation: false
+        )
+        let delegated = try await orchestrator.task(sessionID: "session", taskID: "delegated")
+        #expect(delegated.task.status == (source.isWorkflow ? .awaitingValidation : .completed))
+        if source.isWorkflow {
+            #expect(try await orchestrator.graphSnapshot(sessionID: "session")?.state == .active)
+            _ = try await orchestrator.validateTaskResult(
+                sessionID: "session", taskID: "delegated", succeeded: true
+            )
+        }
+        #expect(try await orchestrator.graphSnapshot(sessionID: "session")?.state == .completed)
+    }
 
-        let manual = SessionTaskOrchestrator()
-        _ = try await manual.createGraph(
-            sessionID: "manual-session",
-            id: "manual",
-            source: .manual,
-            state: .active,
-            tasks: [TaskDefinition(id: "direct", title: "Direct")]
+    @Test(arguments: [false, true])
+    func workflowValidationUsesActualAttemptExecutor(requiresValidation: Bool) async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "session", id: "workflow", source: .workflow, state: .active,
+            tasks: [TaskDefinition(
+                id: "work", title: "Work", execution: TaskExecutionSpec(executor: .subAgent)
+            )]
         )
-        let direct = try await manual.updateTask(
-            sessionID: "manual-session",
-            taskID: "direct",
-            update: TaskUpdate(status: .inProgress)
+        let claim = try #require(try await orchestrator.claimTasks(
+            sessionID: "session", claims: [TaskClaim(taskID: "work", executor: .coordinator)]
+        ).first)
+        _ = try await orchestrator.completeAttempt(
+            sessionID: "session", taskID: "work", attemptID: claim.attemptID,
+            output: "Direct result", requiresValidation: requiresValidation
         )
-        #expect(direct.task.activeAttempt?.executor == .coordinator)
+        let direct = try await orchestrator.task(sessionID: "session", taskID: "work")
+        #expect(direct.task.status == (requiresValidation ? .awaitingValidation : .completed))
+        if requiresValidation {
+            let rejected = try await orchestrator.validateTaskResult(
+                sessionID: "session", taskID: "work", succeeded: false,
+                failureReason: "Access needed", blocked: true
+            )
+            #expect(rejected.task.status == .blocked)
+            _ = try await orchestrator.retryTask(sessionID: "session", taskID: "work")
+            let retried = try await orchestrator.updateTask(
+                sessionID: "session", taskID: "work", update: TaskUpdate(status: .inProgress)
+            )
+            #expect(retried.task.attempts.count == 2)
+            #expect(retried.task.activeAttemptID != claim.attemptID)
+        }
+    }
+
+    @Test
+    func workflowDelegationRequiresValidationEvenForDeclaredCoordinatorWork() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        _ = try await orchestrator.createGraph(
+            sessionID: "session", id: "workflow", source: .workflow, state: .active,
+            tasks: [TaskDefinition(id: "work", title: "Work")]
+        )
+        let claim = try #require(try await orchestrator.claimTasks(
+            sessionID: "session", claims: [TaskClaim(taskID: "work", agentID: "worker")]
+        ).first)
+        _ = try await orchestrator.completeAttempt(
+            sessionID: "session", taskID: "work", attemptID: claim.attemptID,
+            output: "Delegated result", requiresValidation: false
+        )
+        #expect(try await orchestrator.task(sessionID: "session", taskID: "work").task.status == .awaitingValidation)
+        let rejected = try await orchestrator.validateTaskResult(
+            sessionID: "session", taskID: "work", succeeded: false,
+            failureReason: "Needs correction", blocked: true
+        )
+        #expect(rejected.task.status == .failed)
     }
 
     @Test
     func activeWorkflowGraphCannotBeReplacedAndItsSourceRoundTrips() async throws {
+        #expect(TaskGraphSource.workflow.isWorkflow)
+        #expect(!TaskGraphSource.manual.isWorkflow)
+        #expect(!TaskGraphSource.workflow.requiresSubAgentExecution)
         let sourceData = try JSONEncoder().encode(TaskGraphSource.workflow)
         #expect(try JSONDecoder().decode(TaskGraphSource.self, from: sourceData) == .workflow)
 

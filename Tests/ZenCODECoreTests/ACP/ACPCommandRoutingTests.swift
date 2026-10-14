@@ -59,6 +59,14 @@ actor ScriptedACPCommandBackend: AgentRuntimeBackend {
     private var failNextWorkflow = false
     private var pauseBeforeInterruption = false
     private var workflowIsSuspended = false
+    private var completesWorkflowDirectly = false
+    private var observedToolGrants: [Set<String>?] = []
+
+    func recordedToolGrants() -> [Set<String>?] { observedToolGrants }
+
+    func completeWorkflowDirectly() {
+        completesWorkflowDirectly = true
+    }
 
     func interruptWorkflow(fail: Bool, afterPause: Bool) {
         interruptNextWorkflow = true
@@ -92,10 +100,12 @@ actor ScriptedACPCommandBackend: AgentRuntimeBackend {
         systemPrompt _: String?,
         history _: [AgentRuntimeMessage],
         cacheKey _: String?,
-        allowedToolNames _: Set<String>?,
+        allowedToolNames: Set<String>?,
         thinkingSelection _: AgentThinkingSelection?,
         preserveThinking _: Bool
-    ) {}
+    ) {
+        observedToolGrants.append(allowedToolNames)
+    }
 
     func createSessionIfNeeded(
         id: String,
@@ -122,10 +132,12 @@ actor ScriptedACPCommandBackend: AgentRuntimeBackend {
     func updateSessionOptions(
         id _: String,
         systemPrompt _: String?,
-        allowedToolNames _: Set<String>?,
+        allowedToolNames: Set<String>?,
         thinkingSelection _: AgentThinkingSelection?,
         preserveThinking _: Bool
-    ) {}
+    ) {
+        observedToolGrants.append(allowedToolNames)
+    }
 
     func closeSession(id _: String) {}
     func shutdown() async {}
@@ -162,6 +174,26 @@ actor ScriptedACPCommandBackend: AgentRuntimeBackend {
         }
         // Workflow prompts are recognised by content, so `/goal` behaves the
         // same regardless of how many planning turns preceded it.
+        if completesWorkflowDirectly {
+            let owner = try #require(orchestrator)
+            if prompt.contains("Work autonomously until the goal is complete") {
+                _ = try await owner.createTasks(
+                    sessionID: sessionID,
+                    tasks: [TaskDefinition(id: "direct", title: "Complete direct work")]
+                )
+                _ = try await owner.updateTask(
+                    sessionID: sessionID, taskID: "direct", update: TaskUpdate(status: .inProgress)
+                )
+                return DirectAgentResponse(text: "Direct work started", stopReason: "end_turn", modelID: "workflow-model")
+            }
+            if prompt.contains("Continue the active /goal workflow automatically") {
+                _ = try await owner.updateTask(
+                    sessionID: sessionID, taskID: "direct",
+                    update: TaskUpdate(status: .completed, output: "Direct work validated")
+                )
+                return DirectAgentResponse(text: "Direct work complete", stopReason: "end_turn", modelID: "workflow-model")
+            }
+        }
         if prompt.contains("Continue the active /goal workflow automatically") {
             let workflowQuestion = "Which remaining constraint should I apply?"
             try await pauseWorkflow(sessionID: sessionID, message: workflowQuestion)
@@ -172,7 +204,7 @@ actor ScriptedACPCommandBackend: AgentRuntimeBackend {
                 modelID: "workflow-model"
             )
         }
-        if prompt.contains("Continue the delegated workflow") {
+        if prompt.contains("Continue the goal workflow") {
             await onEvent(.content("WORKFLOW CONTINUED"))
             return DirectAgentResponse(
                 text: "WORKFLOW CONTINUED",
@@ -180,7 +212,7 @@ actor ScriptedACPCommandBackend: AgentRuntimeBackend {
                 modelID: "workflow-model"
             )
         }
-        if prompt.contains("You are the coordinator of a delegated workflow") {
+        if prompt.contains("Work autonomously until the goal is complete") {
             // No heading: runtime suspension follows the persisted tool state.
             let workflowQuestion = "Which surface should I cover first?"
             try await pauseWorkflow(sessionID: sessionID, message: workflowQuestion)
@@ -612,7 +644,7 @@ struct ACPCommandRoutingTests {
         ])
         let prompts = await fixture.backend.recordedPrompts()
         let continuationPrompt = try #require(prompts.dropLast().last)
-        #expect(continuationPrompt.contains("Continue the delegated workflow"))
+        #expect(continuationPrompt.contains("Continue the goal workflow"))
         #expect(continuationPrompt.contains("Active workflow task graph: \(graph.id)"))
         #expect(continuationPrompt.contains("Start with ACP."))
         #expect(continuationPrompt.contains("Which surface should I cover first?"))
@@ -633,7 +665,7 @@ struct ACPCommandRoutingTests {
             "prompt": "/goal start another one",
         ])
         let refusal = try #require(fixture.wire.updateTexts(kind: "agent_message_chunk").last)
-        #expect(refusal.contains("a delegated workflow is already running"))
+        #expect(refusal.contains("a goal workflow is already running"))
         #expect(refusal.contains(graph.id))
         #expect(!refusal.localizedCaseInsensitiveContains("graphNotMutable"))
     }
@@ -719,7 +751,7 @@ struct ACPCommandRoutingTests {
             "sessionId": fixture.sessionID, "prompt": "The external blocker is resolved",
         ])
         let prompts = await fixture.backend.recordedPrompts()
-        let continuation = try #require(prompts.first { $0.contains("Continue the delegated workflow") })
+        let continuation = try #require(prompts.first { $0.contains("Continue the goal workflow") })
         #expect(continuation.contains("Goal: preserve the full objective"))
         #expect(continuation.contains("Active workflow task graph: \(blocked.id)"))
         #expect(continuation.contains("The external blocker is resolved"))
@@ -776,7 +808,7 @@ struct ACPCommandRoutingTests {
         try await bridge.prompt(id: .number(4), params: ["sessionId": sessionID, "prompt": "Retry after real cancel"])
         let prompts = await fixture.backend.recordedPrompts()
         let resumed = try #require(prompts.first { $0.contains("Retry after real cancel") })
-        #expect(resumed.contains("Continue the delegated workflow"))
+        #expect(resumed.contains("Continue the goal workflow"))
         #expect(resumed.contains("Goal: Keep cancel objective"))
         #expect(resumed.contains("Active workflow task graph: \(before.id)"))
         if state != .running {
@@ -829,8 +861,68 @@ struct ACPCommandRoutingTests {
         #expect(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID) == graph)
     }
 
+    @Test(arguments: [Set<String>(), ["agent.create"], ["agent.wait"], ["agent.create", "agent.wait"]])
+    func goalDiscoveryDoesNotChangePlanAndReviewRequirements(tools: Set<String>) async throws {
+        let fixture = try await makeFixture(sessionID: "acp-goal-discovery-\(UUID().uuidString)", allowedToolNames: tools)
+        let names = await fixture.bridge.commandNamesForGoalTesting(sessionID: fixture.sessionID).sorted()
+        #expect(names == (tools.contains("agent.create") && tools.contains("agent.wait")
+            ? ["goal", "plan", "review"] : ["goal"]))
+    }
+
+    @Test
+    func goalWithoutSubAgentsStartsResumesAndIsDiscoverable() async throws {
+        let fixture = try await makeFixture(
+            sessionID: "acp-direct-goal-\(UUID().uuidString)", allowedToolNames: ["local.readFile"]
+        )
+        let names = await fixture.bridge.commandNamesForGoalTesting(sessionID: fixture.sessionID)
+        #expect(names == ["goal"])
+        try await fixture.bridge.prompt(id: .number(1), params: [
+            "sessionId": fixture.sessionID, "prompt": "/goal Preserve direct objective"
+        ])
+        let graph = try #require(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID))
+        #expect(graph.workflow?.state == .awaitingUser)
+        #expect(graph.workflow?.originalGoal == "Preserve direct objective")
+        try await fixture.bridge.prompt(id: .number(2), params: [
+            "sessionId": fixture.sessionID, "prompt": "Proceed directly"
+        ])
+        let prompts = await fixture.backend.recordedPrompts()
+        #expect(prompts.contains { $0.contains("Continue the goal workflow") && $0.contains("Proceed directly") })
+        #expect(prompts.contains { $0.contains("Continue the active /goal workflow automatically") })
+        let resumed = try #require(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID))
+        #expect(resumed.id == graph.id)
+        #expect(resumed.workflow?.originalGoal == graph.workflow?.originalGoal)
+        #expect(resumed.workflow?.state == .awaitingUser)
+        #expect(await fixture.bridge.commandNamesForGoalTesting(sessionID: fixture.sessionID) == ["goal"])
+        let expectedGrant = ACPCommandPromptPurpose.workflow(graphID: graph.id).additionalToolNames
+            .union(["local.readFile"])
+        let grants = await fixture.backend.recordedToolGrants()
+        #expect(grants.contains(expectedGrant))
+        #expect(grants.allSatisfy { $0?.isSubset(of: expectedGrant) == true })
+    }
+
+    @Test
+    func directGoalAutomaticallyContinuesUntilGraphCompletionWithoutSubAgents() async throws {
+        let fixture = try await makeFixture(
+            sessionID: "acp-direct-complete-\(UUID().uuidString)", allowedToolNames: ["local.readFile"]
+        )
+        await fixture.backend.completeWorkflowDirectly()
+        try await fixture.bridge.prompt(id: .number(1), params: [
+            "sessionId": fixture.sessionID, "prompt": "/goal Complete direct work"
+        ])
+        let prompts = await fixture.backend.recordedPrompts()
+        #expect(prompts.count == 2)
+        #expect(prompts.last?.contains("Continue the active /goal workflow automatically") == true)
+        let graph = try #require(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID))
+        #expect(graph.state == .completed)
+        #expect(graph.tasks.count == 1)
+        #expect(graph.tasks.first?.attempts.last?.executor == .coordinator)
+        #expect(graph.tasks.first?.attempts.last?.status == .completed)
+        #expect(await fixture.bridge.workflowStateForTesting(sessionID: fixture.sessionID) == nil)
+    }
+
     private func makeFixture(
-        sessionID: String
+        sessionID: String,
+        allowedToolNames: Set<String>? = nil
     ) async throws -> (
         bridge: ZenCODEACPBridge,
         backend: ScriptedACPCommandBackend,
@@ -866,7 +958,7 @@ struct ACPCommandRoutingTests {
             systemPrompt: "ACP command routing test",
             cacheKey: nil,
             history: [],
-            allowedToolNames: nil
+            allowedToolNames: allowedToolNames
         )
         try await bridge.sessionRunner.createSession(
             configuration: sessionConfiguration
@@ -877,6 +969,13 @@ struct ACPCommandRoutingTests {
 }
 
 extension ZenCODEACPBridge {
+    fileprivate func commandNamesForGoalTesting(sessionID: String) -> [String] {
+        guard let session = sessions[sessionID] else { return [] }
+        return availableCommandsUpdate(for: session).objectValue?["availableCommands"]?.arrayValue?.compactMap {
+            $0.objectValue?["name"]?.stringValue
+        } ?? []
+    }
+
     fileprivate func installDisarmedWorkflowForTesting(sessionID: String, graphID: String) {
         sessions[sessionID]?.workflowContinuation = WorkflowCommandRuntimeState(goal: "Do not capture ordinary chat", graphID: graphID)
     }

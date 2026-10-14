@@ -2,6 +2,8 @@
 //  SessionCheckpointTree.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Session checkpoint tree inspired by Pi's tree-structured sessions.
 //  Each entry (message, checkpoint, model change, branch summary) forms a node
 //  linked via `parentID`, enabling branching and resumption from any point.

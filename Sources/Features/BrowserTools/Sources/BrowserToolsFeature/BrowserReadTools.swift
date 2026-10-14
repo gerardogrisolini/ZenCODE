@@ -2,6 +2,8 @@
 //  BrowserReadTools.swift
 //  BrowserToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Public read-first Browser tools. These expose semantic observations, never
 //  raw CDP methods or arbitrary page evaluation.
 //

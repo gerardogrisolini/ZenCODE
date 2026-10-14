@@ -2,6 +2,8 @@
 //  ResponsesStreamParser.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Parses SSE objects from the /responses streaming endpoint into
 //  ParsedRemoteStreamEvent values. Extracted from RemoteGenerationClient+Streaming.
 //

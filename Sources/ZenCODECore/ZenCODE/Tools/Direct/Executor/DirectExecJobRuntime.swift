@@ -2,6 +2,8 @@
 //  DirectExecJobRuntime.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Background job lifecycle for `local.exec` with background=true and the
 //  `exec.job` management tool (poll/kill/list).
 //

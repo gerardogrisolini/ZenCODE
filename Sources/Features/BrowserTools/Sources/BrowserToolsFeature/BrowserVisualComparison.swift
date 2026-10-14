@@ -2,6 +2,8 @@
 //  BrowserVisualComparison.swift
 //  BrowserToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Deterministic screenshot metadata and comparison for Browser-owned PNG
 //  artifacts. This deliberately avoids a model-media bridge and never accepts
 //  arbitrary filesystem paths or image bytes from the model.

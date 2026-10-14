@@ -2,6 +2,8 @@
 //  DS4HardwareProbe.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Bounded, diagnostic-only hardware discovery for the optional local DS4 runtime.
 //
 

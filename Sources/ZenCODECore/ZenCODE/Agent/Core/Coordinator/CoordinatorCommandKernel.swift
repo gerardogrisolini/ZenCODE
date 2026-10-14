@@ -2,6 +2,8 @@
 //  CoordinatorCommandKernel.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Shared runtime-only routing for /plan, /goal, and /review.
 //
 
@@ -46,7 +48,7 @@ enum CoordinatorCommandFamily: String, CaseIterable, Sendable {
     var menuDescription: String {
         switch self {
         case .plan: "Plan work and continue planning questions"
-        case .goal: "Run a delegated goal workflow"
+        case .goal: "Work until the goal is complete or genuinely blocked"
         case .review: "Review the current changes"
         }
     }
@@ -586,7 +588,7 @@ enum PlanningCommandKernel {
     ) -> WorkflowTurnDisposition {
         guard let graph,
               graph.id == expectedGraphID,
-              graph.source.requiresSubAgentExecution,
+              graph.source.isWorkflow,
               !graph.state.isTerminal else {
             return .completed
         }
@@ -610,7 +612,7 @@ enum PlanningCommandKernel {
     static let workflowCompletionContract = """
         - Continue working until the stated goal is fully achieved and validated. Do not stop after \
         planning, after a partial implementation, or merely because one task or agent attempt ended.
-        - Keep inspecting, delegating, validating, retrying failed work, and processing newly \
+        - Keep inspecting, executing directly or delegating when useful, validating, retrying failed work, and processing newly \
         unblocked tasks until the goal and every acceptance criterion are satisfied.
         - If any requirement, constraint, expected behavior, or necessary decision is unclear and \
         cannot be resolved reliably from the workspace or existing context, ask the user a focused \
@@ -620,21 +622,26 @@ enum PlanningCommandKernel {
         End the turn with the focused question in normal prose. Text alone, including a \
         "Workflow question" heading, does not change workflow state. A user reply resumes this same graph.
         - Stop without achieving the goal only for a genuine blocker that cannot be resolved through \
-        clarification, another suitable sub-agent, retry, or available project evidence; use tasks.update workflow mode \
+        clarification, direct execution, optional suitable delegation, retry, or available project evidence; use tasks.update workflow mode \
         with state "blocked" and a precise message stating what is needed to continue. End the turn; \
         do not repeatedly retry blocked work. Runtime control is structured, not inferred from prose.
         """
 
-    /// The invariant delegation rules, shared by the initial and continuation
+    /// The invariant execution rules, shared by the initial and continuation
     /// prompts so a resumed workflow cannot silently lose them.
     static func workflowRules(graphID: String) -> String {
         """
-        - Every workflow task is delegated through the canonical agent.create `agents` array \
-        with `taskID` inside its item; the task graph \
-        enforces sub-agent execution.
+        - Keep all work in the persistent task DAG, including direct work. Choose direct execution \
+        or delegation when useful, within the tools and permissions already available; /goal grants no extra tools.
+        - For direct work, declare execution.executor as coordinator and use tasks.update to move \
+        a runnable task from pending to in_progress before working, then record its outcome and \
+        mark it completed only after validation. This creates and finishes a coordinator attempt.
+        - Only when delegating, declare execution.executor as sub_agent and claim the task through \
+        the canonical agent.create `agents` array with `taskID` inside its item, never at the root.
         - Respect dependencies; never claim a task twice.
-        - A negative validation follows failure, tasks.retry, then a new canonical agent.create \
-        item containing `taskID`; never use agent.message to reopen a completed attempt.
+        - After failure, use tasks.retry before starting a new attempt. For delegated corrections, \
+        use a new canonical agent.create item containing `taskID`; never use agent.message to \
+        reopen a completed attempt. For direct retries, start again with tasks.update in_progress.
         - Use the active workflow graph \(graphID); do not recreate or replace it.
         - Your final summary must follow the session response language from the system \
         prompt. Do not answer in English merely because this internal prompt is in English.
@@ -643,7 +650,7 @@ enum PlanningCommandKernel {
 
     /// Resumes an existing workflow graph after the user answered the
     /// coordinator (clarification round-trip) or after a restart restored the
-    /// graph. The graph ID, the completion contract and the delegation rules are
+    /// graph. The graph ID, the completion contract and the execution rules are
     /// re-injected verbatim so the continuation turn is not a plain chat turn.
     static func workflowContinuationPrompt(
         state: WorkflowCommandRuntimeState,
@@ -663,9 +670,9 @@ enum PlanningCommandKernel {
         }.joined(separator: "\n\n").nilIfBlank
             ?? "(no recorded exchange: continue from the state stored in the task graph.)"
         return """
-        Continue the delegated workflow you are already coordinating. This is not a new goal \
+        Continue the goal workflow you are already coordinating. This is not a new goal \
         and not a plain chat turn: keep using the same task graph, the same completion \
-        contract, and the same delegation rules.
+        contract, and the same execution rules.
 
         \(goalLine)
 
@@ -678,8 +685,8 @@ enum PlanningCommandKernel {
         Apply the user's answer — or, when the exchange above says the previous turn did not \
         finish, recover that interrupted work — then resume on this same graph. Start by calling \
         tasks.list for \(state.graphID) to re-establish the current state before deciding \
-        what to plan, delegate, validate, or retry. Re-delegate or tasks.retry any task left \
-        incomplete by the interrupted turn. Add any newly required tasks to this \
+        what to plan, execute directly, delegate, validate, or retry. Use tasks.retry for failed or \
+        blocked tasks before starting a new direct or delegated attempt. Add any newly required tasks to this \
         graph with tasks.create; never create or replace another graph.
 
         Completion contract:
@@ -716,9 +723,9 @@ enum PlanningCommandKernel {
         Current task state: \(counts).
 
         Call tasks.list for \(graph.id) first. If the graph has no tasks, finish identifying the \
-        concrete objective and create the complete delegated task DAG. Otherwise continue with \
-        every pending, blocked, failed, or awaiting-validation task: inspect evidence, delegate \
-        runnable work, validate results, retry failed attempts, and add any work discovered during \
+        concrete objective and create the persistent task DAG. Otherwise continue with \
+        every pending, blocked, failed, or awaiting-validation task: inspect evidence, execute \
+        runnable work directly or delegate when useful, validate results, retry failed attempts, and add any work discovered during \
         validation. Do not repeat a progress report and do not wait for the user unless a material \
         decision cannot be resolved from the request, workspace, existing context, or project \
         conventions.
@@ -733,11 +740,10 @@ enum PlanningCommandKernel {
 
     static func workflowPrompt(goal: String, graphID: String) -> String {
         return """
-        You are the coordinator of a delegated workflow. You plan the work, add tasks to \
-        the active task graph, delegate every task to the best-matching sub-agent, and act \
-        as the final reviewer. Every task in this graph must be executed through \
-        agent.create using its canonical `agents` array with the task ID in the item's `taskID` \
-        field; never pass taskID at the root. Do not start a task attempt directly with tasks.update.
+        Work autonomously until the goal is complete or a genuine blocker requires a pause. \
+        Plan the work in the active persistent task graph, execute directly or delegate when \
+        useful, and validate the result. Delegation is optional, not a prerequisite for /goal. \
+        Keep the task DAG even when doing all work directly; this is not a taskless mode.
 
         Goal: \(goal)
 
@@ -764,7 +770,7 @@ enum PlanningCommandKernel {
         - Add all tasks to the active workflow graph with one canonical tasks.create `tasks` \
         array. Do not mix root-level single-task fields or the legacy `items` alias. Give each \
         task a stable id, clear title, description, complexity (1-10), acceptance criteria, and \
-        execution.executor set to sub_agent.
+        execution.executor set to coordinator for direct work or sub_agent for delegated work.
         - Design dependencies as a DAG with minimum safe edges:
           - Independent tasks must have empty dependsOn arrays so they can run in parallel.
           - Add a dependency only when one task consumes another's output or decision, \
@@ -773,11 +779,13 @@ enum PlanningCommandKernel {
           - Never chain tasks merely because they are numbered; never split trivial work \
         solely to manufacture parallelism.
         - Keep task granularity meaningful: each task should be a coherent unit of work \
-        that one sub-agent can own end to end.
+        that one executor can own end to end.
 
-        Phase 2 — Delegate all work to sub-agents:
+        Phase 2 — Execute directly or delegate when useful:
         - Call tasks.list with runnableOnly=true to find tasks ready to execute.
-        - For each runnable task, select the best-matching agent profile and, when configured, \
+        - For direct work, use tasks.update status in_progress, perform and validate the work, \
+        then record output/evidence and status completed; record failed or blocked when appropriate.
+        - When delegation is useful and available, select the best-matching agent profile and, when configured, \
         one of its authorized model bindings:
           - Determine the task type (investigation, implementation, review, planning) and \
         required tools before comparing capability.
@@ -787,20 +795,20 @@ enum PlanningCommandKernel {
         binding and report the gap.
           - For profiles without bindings, omit `model` to inherit the main session model and \
         provider; do not invent a binding or capability rating.
-        - Delegate each task with one canonical agent.create `agents` item containing the selected \
+        - Claim each delegated task with one canonical agent.create `agents` item containing the selected \
         profile and, only when bindings are configured, the `model` binding. Put the task ID in \
         that item's `taskID` field. Batch \
         independent runnable tasks in a single agent.create call when \
         parallel execution is safe and useful.
-        - Wait for sub-agents with agent.wait — they run in parallel.
+        - When delegating, wait for sub-agents with agent.wait — they run in parallel.
         - When sub-agents complete, review their output with tasks.get. Verify results \
         against acceptance criteria and current files.
-        - For a task awaiting validation, record successful validation with tasks.update. If \
+        - For a delegated task awaiting validation, record successful validation with tasks.update. If \
         validation is negative, record the task as failed with tasks.update, call tasks.retry, \
-        then start a new attempt with a new canonical agent.create item containing `taskID` and \
-        using a suitable profile. Do \
+        then start a new delegated attempt with a new canonical agent.create item containing `taskID` and \
+        using a suitable profile, or execute the retry directly with tasks.update. Do \
         not use agent.message to request corrections from an agent after its task completed.
-        - Repeat: call tasks.list again to pick up newly unblocked tasks, delegate, wait, \
+        - Repeat: call tasks.list again to pick up newly unblocked tasks, execute directly or delegate, \
         and review until all tasks are completed. If progress is blocked, exhaust the clarification, \
         evidence, suitable-agent, and retry paths in the Completion contract before stopping.
 

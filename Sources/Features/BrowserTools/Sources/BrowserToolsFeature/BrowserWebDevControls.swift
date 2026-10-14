@@ -2,6 +2,8 @@
 //  BrowserWebDevControls.swift
 //  BrowserToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Constrained, host-side web-development controls for persistent Browser pages.
 //  These tools deliberately expose named presets and semantic conditions only:
 //  callers never provide JavaScript, selectors, CDP method names, viewport

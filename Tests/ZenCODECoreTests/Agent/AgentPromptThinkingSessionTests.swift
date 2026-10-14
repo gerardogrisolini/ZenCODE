@@ -71,7 +71,7 @@ extension AgentConfigurationTests {
         )
 
         #expect(instructions.contains("Task workflow policy:"))
-        #expect(instructions.contains("A `/goal` graph requires every task to be delegated"))
+        #expect(instructions.contains("A `/goal` graph remains persistent even for entirely direct work"))
         #expect(instructions.contains("new canonical agent.create item containing `taskID`"))
     }
 
@@ -127,9 +127,9 @@ extension AgentConfigurationTests {
         #expect(policy.contains("Never serialize tasks merely because"))
         #expect(policy.contains("Give independent tasks empty dependencies"))
         #expect(policy.contains("Keep work sequential when concurrency offers no"))
-        #expect(policy.contains("Prefer delegation for non-trivial graph work"))
-        #expect(policy.contains("Execute graph work directly only when"))
-        #expect(policy.contains("coordinator execution remains permitted"))
+        #expect(policy.contains("In `/goal`, execute graph work directly or delegate when useful; delegation is optional"))
+        #expect(policy.contains("For other task graphs, prefer delegation for non-trivial work"))
+        #expect(policy.contains("execution.executor as coordinator"))
         #expect(policy.contains("prefer a single delegation without manufacturing a task graph"))
         #expect(!policy.contains("you remain free to execute tasks directly"))
         #expect(policy.contains("canonical tasks.create `tasks` array"))
@@ -137,7 +137,7 @@ extension AgentConfigurationTests {
         #expect(policy.contains("agent.create `agents` item as `taskID`"))
         #expect(policy.contains("never pass taskID as a root argument"))
         #expect(policy.contains("every delegated agent must use `agents[].taskID`"))
-        #expect(policy.contains("A `/goal` graph requires every task to be delegated"))
+        #expect(policy.contains("A `/goal` graph remains persistent even for entirely direct work"))
         #expect(policy.contains("normal tool grant remains unchanged"))
         #expect(policy.contains("single self-contained delegation"))
         #expect(policy.contains("Determine the task type and required tools"))
@@ -169,10 +169,10 @@ extension AgentConfigurationTests {
             )
         )
         #expect(coordinatorOnlyPolicy.contains(
-            "execute runnable graph work directly only in a task graph that permits coordinator execution"
+            "execute runnable graph work directly, including in `/goal`"
         ))
         #expect(coordinatorOnlyPolicy.contains(
-            "Never create or directly execute work in a `/goal` graph"
+            "do not request unavailable tools or bypass the current permission boundary"
         ))
         #expect(!coordinatorOnlyPolicy.contains(
             "Execute runnable graph work directly and record its lifecycle"

@@ -1,3 +1,5 @@
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 // Live output is append-only. A failed round stays visible, but its matching
 // prefix must not be emitted twice when that round is regenerated.
 actor RemoteRoundOutputRelay {

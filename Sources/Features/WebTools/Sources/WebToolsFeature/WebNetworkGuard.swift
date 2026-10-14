@@ -2,6 +2,8 @@
 //  WebNetworkGuard.swift
 //  WebToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Public-network request policy for the Web feature's fetch path. It mirrors
 //  the approach of BrowserNetworkRequestPolicy in BrowserTools: every URL the
 //  feature is about to request — the initial fetch and each redirect hop — is

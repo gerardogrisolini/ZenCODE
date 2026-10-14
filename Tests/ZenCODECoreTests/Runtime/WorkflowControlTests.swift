@@ -178,6 +178,58 @@ struct WorkflowControlTests {
         #expect(try await owner.graphSnapshot(sessionID: "root") == pausedAgain)
     }
 
+    @Test(arguments: [false, true])
+    func directWorkPersistsAndResumesWithLegacyCompatibleLifecycle(legacy: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let store = SessionTaskGraphStore(supportDirectoryURL: root.appendingPathComponent("support"))
+        let writer = SessionTaskOrchestrator(store: store)
+        try await writer.registerSession(id: "root", workingDirectory: workspace)
+        _ = try await writer.createGraph(
+            sessionID: "root", id: "direct-workflow", source: .workflow, state: .active,
+            tasks: [
+                TaskDefinition(id: "first", title: "First"),
+                TaskDefinition(id: "second", title: "Second", dependsOn: ["first"])
+            ], originalGoal: legacy ? nil : "Keep direct objective"
+        )
+        for status in [TaskStatus.inProgress, .completed] {
+            _ = try await writer.updateTask(sessionID: "root", taskID: "first", update: TaskUpdate(status: status))
+        }
+        var saved = try #require(try await writer.graphSnapshot(sessionID: "root"))
+        if !legacy {
+            saved = try await writer.updateWorkflow(
+                sessionID: "root", graphID: saved.id, state: .blocked,
+                message: "Need access", expectedRevision: saved.revision
+            )
+        }
+        let reader = SessionTaskOrchestrator(store: store)
+        try await reader.registerSession(id: "root", workingDirectory: workspace)
+        let restored = try #require(try await reader.graphSnapshot(sessionID: "root"))
+        #expect(restored.schemaVersion == 1)
+        #expect(restored.workflow == saved.workflow)
+        #expect(restored.tasks == saved.tasks)
+        #expect(restored.tasks.first?.attempts.last?.executor == .coordinator)
+        #expect(PlanningCommandKernel.workflowTurnDisposition(
+            graph: restored, expectedGraphID: restored.id, coordinatorMessage: "Done"
+        ) == (legacy ? .continueAutomatically : .blocked))
+        let resumed = try await reader.resumeWorkflow(sessionID: "root", expectedGraph: restored)
+        #expect(resumed.workflow?.originalGoal == (legacy ? nil : "Keep direct objective"))
+        #expect(PlanningCommandKernel.workflowTurnDisposition(
+            graph: resumed, expectedGraphID: resumed.id, coordinatorMessage: "Partial progress"
+        ) == .continueAutomatically)
+        for status in [TaskStatus.inProgress, .completed] {
+            _ = try await reader.updateTask(sessionID: "root", taskID: "second", update: TaskUpdate(status: status))
+        }
+        let completed = try #require(try await reader.graphSnapshot(sessionID: "root"))
+        #expect(completed.state == .completed)
+        #expect(completed.tasks.allSatisfy { $0.status == .completed })
+        #expect(PlanningCommandKernel.workflowTurnDisposition(
+            graph: completed, expectedGraphID: completed.id, coordinatorMessage: "Done"
+        ) == .completed)
+    }
+
     @Test
     func checkpointRetainsObjectiveAndPauseBeforeAnyTasksAndLegacyRemainsReadable() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -316,7 +316,7 @@ Commands start with `/`:
 - `/plan status` — show plan progress from the graph state.
 - `/plan approve` — activate the plan and start implementation.
 - `/plan clear` — archive the graph and remove the active plan.
-- `/goal <goal>` — autonomously inspect the workspace and context to turn the request into a concrete objective with testable acceptance criteria, then plan and delegate all work to sub-agents. It creates an active workflow graph up front; every graph task is enforced as a sub-agent execution attempt. A normal model `end_turn` does not stop the command while that graph remains open and its workflow is `running`: ZenCODE automatically continues coordinating, delegating, retrying, and validating until the graph is completed, the user explicitly cancels it, or the coordinator records `awaiting_user` (a material ambiguity) or `blocked` (a genuine unresolved blocker) through structured `tasks.update` workflow control. The text only explains the pause; no `Workflow question` heading is required. Paused workflows do not auto-retry. Your next message resumes the same graph. The original goal and workflow state are retained separately from tasks in the checkpoint and reinserted on continuation/resume, including workflows paused before task creation. Legacy checkpoints remain readable with an explicit unavailable-objective fallback; only metadata-free legacy graphs retain the old heading protocol until adopted. It refuses to start while an active `/plan` exists; finish that plan or use `/plan clear` first. The current agent stays as coordinator and final reviewer, retaining its normal tool grant for that work. No separate Planner sub-agent, routine objective-confirmation step, or approval step. Use `/tasks` to monitor progress.
+- `/goal <goal>` — autonomously inspect the workspace and context to turn the request into a concrete objective with testable acceptance criteria, then work until completion or a genuine blocker, executing directly or delegating when useful. It creates an active persistent workflow graph up front and keeps the DAG even for entirely direct work; sub-agent tools are optional. A normal model `end_turn` does not stop the command while that graph remains open and its workflow is `running`: ZenCODE automatically continues coordinating, executing directly or delegating, retrying, and validating until the graph is completed, the user explicitly cancels it, or the coordinator records `awaiting_user` (a material ambiguity) or `blocked` (a genuine unresolved blocker) through structured `tasks.update` workflow control. The text only explains the pause; no `Workflow question` heading is required. Paused workflows do not auto-retry. Your next message resumes the same graph. The original goal and workflow state are retained separately from tasks in the checkpoint and reinserted on continuation/resume, including workflows paused before task creation. Legacy checkpoints remain readable with an explicit unavailable-objective fallback; only metadata-free legacy graphs retain the old heading protocol until adopted. It refuses to start while an active `/plan` exists; finish that plan or use `/plan clear` first. The current agent executes or coordinates the work and validates results, retaining its normal tool grant; `/goal` does not implicitly enable delegation or mutation tools. No separate Planner sub-agent, routine objective-confirmation step, or approval step. Use `/tasks` to monitor progress.
 - `/review [focus]` — delegate review to sub-agents using the configured `Reviewer` profile. See [reviewer.md](reviewer.md).
 - `/feature` — manage Swift feature packages (Builder profile only). See [builder.md](builder.md).
 
@@ -326,9 +326,9 @@ Commands start with `/`:
 |---|---|---|
 | **Planning** | Delegated to a sub-agent using the configured Planner profile | Done autonomously by the current agent after inspecting the request, workspace, context, and project conventions |
 | **Approval step** | Yes — `/plan approve` activates the graph | No — starts immediately and continues automatically while its graph is open |
-| **Task implementation** | The current agent works freely: directly or by delegating, as it sees fit | Every graph task must be claimed by a sub-agent; coordinator task attempts are rejected while its normal tool grant remains unchanged |
-| **Sub-agent selection** | The model decides per task if and when to delegate | The model must assign the best-matching profile to every task |
-| **Role of current agent** | Implementer (can delegate when useful) | Coordinator and final reviewer only |
+| **Task implementation** | The current agent works freely: directly or by delegating, as it sees fit | Direct or delegated work is recorded in the persistent DAG; the normal tool grant is unchanged |
+| **Sub-agent selection** | The model decides per task if and when to delegate | Optional; select a compatible profile when delegation is useful |
+| **Role of current agent** | Implementer (can delegate when useful) | Implementer, coordinator, and final reviewer |
 | **Monitor progress** | `/plan status` or `/tasks` | `/tasks` |
 
 ### Live Agent Chat
@@ -466,7 +466,7 @@ Tool groups include filesystem, shell, text, search, Git, memory, sub-agents, ge
 
 When work has multiple units, dependencies, or concurrent delegation, the coordinator creates a task graph first, then selects runnable work with `tasks.list` and assigns delegated tasks through `agent.create(taskID:)`. Each task carries a `complexity` (1–10) that is matched against the capability of the chosen profile's model binding — see [bindings.md](bindings.md). Report-agent success completes a task; implementation-agent success moves it to `awaiting_validation` until independently validated. Record a successful validation as completion. For negative validation, record `failed` with `tasks.update`, call `tasks.retry` to return the task to `pending`, then use a **new** `agent.create(taskID:)` to claim the new attempt. Do not use `agent.message` to reopen the already completed agent.
 
-`/goal` uses a distinct graph source. Its tasks must declare `execution.executor: sub_agent`, and the orchestrator rejects coordinator attempts or graph replacement while that workflow is active. This enforces delegation at the task lifecycle boundary rather than by applying a read-only tool policy to the coordinator. A coordinator without `agent.create` may work directly only in a graph that permits coordinator execution; it must never create or directly execute a workflow task.
+`/goal` uses a distinct graph source to preserve automatic continuation and prevent replacement of an unfinished workflow. Direct tasks declare `execution.executor: coordinator` and use `tasks.update` from `pending` to `in_progress` (creating an attempt), then `completed` after validation. Delegated tasks declare `execution.executor: sub_agent` and are claimed through a canonical `agent.create` `agents` item containing `taskID`. Successful delegated attempts still enter `awaiting_validation`, even if their task was originally declared for direct execution; negative validation remains `failed` and requires `tasks.retry` plus a new attempt. Direct work follows ordinary coordinator transitions, including `blocked` and retry. The workflow completes only when its nonempty task graph is entirely completed. These lifecycle checks do not automatically verify semantic goal completion and do not expand any tool grant.
 
 Checkpoints are written atomically under `~/.zencode/task-graphs/<project>/`.
 `/plan save` reuses this checkpoint directory rather than creating a separate
@@ -593,7 +593,7 @@ token environment variables still apply.
 1. `cd /path/to/project && zen` — start in the target project; first-run setup opens automatically when required.
 2. `/setup` — reconfigure providers, models, agents, or features later without leaving the TUI.
 3. `/tools` and `/skills` — select tools and skills.
-4. `/plan <goal>` or `/goal <goal>` — optional planning before editing. `/plan` delegates to a Planner sub-agent with an approval step; `/goal` plans directly and delegates all implementation to sub-agents.
+4. `/plan <goal>` or `/goal <goal>` — optional planning before editing. `/plan` delegates to a Planner sub-agent with an approval step; `/goal` works until completion or a genuine blocker, executing directly or delegating when useful with a persistent task graph.
 5. Implement with the active profile.
 6. `/changes diff` and Git — inspect changes.
 7. `/review` — read-only review before commit.
@@ -608,6 +608,6 @@ token environment variables still apply.
 - **No tools available**: use `/tools`, switch profile, or check ACP client tool exposure.
 - **`/feature` unavailable**: switch to `/agents Builder`.
 - **Optional feature tools are missing**: install the package with `zen --install-features <id>` (or choose it in setup), then enable/select it with `/tools`.
-- **`/plan`, `/goal`, or `/review` needs sub-agents**: enable `sub-agents` with `/tools` or switch profile.
+- **`/plan` or `/review` needs sub-agents**: enable `sub-agents` with `/tools` or switch profile. `/goal` does not require sub-agents; delegation is optional.
 - **Xcode tools missing**: make sure Xcode is running. See [xcode.md](xcode.md).
 - **Figma tools missing**: make sure the Figma desktop MCP server is enabled.

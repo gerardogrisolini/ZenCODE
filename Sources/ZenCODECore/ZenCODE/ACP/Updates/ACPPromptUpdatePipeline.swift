@@ -2,6 +2,8 @@
 //  ACPPromptUpdatePipeline.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Serializes app-mode and ChatGPT thinking prompt-update units leaving the ACP
 //  prompt path for one writer. Callbacks reaching `onEvent` are `@Sendable` and can overlap
 //  arbitrarily: without this choke point, two concurrent units could interleave

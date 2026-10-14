@@ -2,6 +2,8 @@
 //  AgentProfileBindingReconciler.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Reconciles persisted agent bindings with the model catalog assembled by setup.
 //
 

@@ -2,6 +2,8 @@
 //  CDPSession.swift
 //  BrowserTools
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Chrome DevTools Protocol WebSocket client.
 //
 

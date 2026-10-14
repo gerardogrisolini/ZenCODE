@@ -2,6 +2,8 @@
 //  DS4ModelCatalog.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  A local, evidence-backed catalog of runnable DS4 artifacts.
 //
 

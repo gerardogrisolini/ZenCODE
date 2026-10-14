@@ -2,6 +2,8 @@
 //  AgentCorePromptTaskRegistry.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Extracted from AgentCoreSessionRunner to isolate prompt-task lifecycle
 //  tracking so that the runner stays focused on orchestration.
 //

@@ -2,6 +2,8 @@
 //  SessionTaskOrchestrator.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 import Foundation
 import ToolCore
@@ -317,7 +319,7 @@ public actor SessionTaskOrchestrator {
            let currentGraphID = sessionState.currentGraphID,
            currentGraphID != graphID,
            let currentGraph = sessionState.graphs[currentGraphID],
-           currentGraph.source.requiresSubAgentExecution,
+           currentGraph.source.isWorkflow,
            !currentGraph.state.isTerminal {
             throw SessionTaskOrchestratorError.graphNotMutable(currentGraphID)
         }
@@ -436,7 +438,7 @@ public actor SessionTaskOrchestrator {
         let requestedGraphID = rawGraphID?.nilIfBlank
         if let currentGraphID = sessionState.currentGraphID,
            let currentGraph = sessionState.graphs[currentGraphID],
-           currentGraph.source.requiresSubAgentExecution,
+           currentGraph.source.isWorkflow,
            !currentGraph.state.isTerminal,
            requestedGraphID != nil,
            requestedGraphID != currentGraphID {
@@ -597,13 +599,6 @@ public actor SessionTaskOrchestrator {
             taskID: taskID
         )
         var task = graph.tasks[taskIndex]
-
-        if graph.source.requiresSubAgentExecution,
-           update.status == .inProgress,
-           task.status == .pending,
-           task.activeAttemptID == nil {
-            throw SessionTaskOrchestratorError.taskRequiresSubAgentExecution(task.id)
-        }
 
         if let scope {
             guard scope.taskID == taskID,
@@ -904,7 +899,7 @@ public actor SessionTaskOrchestrator {
         if graphID != sessionState.currentGraphID,
            let currentGraphID = sessionState.currentGraphID,
            let currentGraph = sessionState.graphs[currentGraphID],
-           currentGraph.source.requiresSubAgentExecution,
+           currentGraph.source.isWorkflow,
            !currentGraph.state.isTerminal {
             throw SessionTaskOrchestratorError.graphNotMutable(currentGraphID)
         }
@@ -913,7 +908,7 @@ public actor SessionTaskOrchestrator {
         for otherID in sessionState.graphs.keys where otherID != graphID {
             guard let other = sessionState.graphs[otherID],
                   other.state == .active else { continue }
-            guard !other.source.requiresSubAgentExecution
+            guard !other.source.isWorkflow
                 || other.state.isTerminal else {
                 throw SessionTaskOrchestratorError.graphNotMutable(otherID)
             }

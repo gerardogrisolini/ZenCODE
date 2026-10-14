@@ -2,6 +2,8 @@
 //  TerminalTelegramCommandRegistry.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  The single Telegram command registry and its parsing surface: canonical
 //  spellings, menu publication and ingress resolution. Extracted verbatim
 //  from TerminalTelegramTurnProgressReporter.swift, which keeps only the

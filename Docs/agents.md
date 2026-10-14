@@ -200,7 +200,7 @@ Write authority normally comes from the selected profile's configured tools. A c
   `tasks.cancel` remain restricted.
 - Every child receives the intrinsic `skills.list` and `skills.read` tools.
 
-`/plan`, `/review`, and `/goal` delegate with the selected profile's own tools unless that profile is the coordinator's same resolved profile, in which case the coordinator's effective session allowlist is inherited. Different profiles remain isolated; configure each profile with exactly the access required for its role.
+`/plan` and `/review`, and `/goal` when it delegates, use the selected profile's own tools unless that profile is the coordinator's same resolved profile, in which case the coordinator's effective session allowlist is inherited. Different profiles remain isolated; configure each profile with exactly the access required for its role.
 
 ### Model Selection
 
@@ -229,8 +229,9 @@ creation time; taskless agents are for single self-contained lookups.
 2. It creates an active workflow graph.
 3. The current agent adds its task definitions with `tasks.create`, including a
    `complexity` per task.
-4. It delegates every task to the best-matching profile and binding via
-   `agent.create(taskID:)`.
+4. It executes directly using `tasks.update` (`pending` → `in_progress` →
+   `completed` after validation), or delegates when useful through a canonical
+   `agent.create` `agents` item containing `taskID`.
 5. It validates and reviews the results.
 6. If a coordinator generation ends while the graph is still open, the runtime
    automatically starts another coordinator generation on that same graph. It
@@ -250,10 +251,14 @@ Legacy checkpoints remain readable; their missing objective is stated explicitly
 not guessed. Until first resumed or structurally updated, legacy graphs without
 metadata retain their old heading-based clarification fallback.
 
-Workflow tasks must use `execution.executor: sub_agent`; the orchestrator
-rejects coordinator task attempts without narrowing the coordinator's normal tool
-grant. Unlike `/plan`, there is no separate Planner sub-agent and no approval
-step — the current agent is the sole planner, coordinator, and final reviewer.
+Workflow tasks use `execution.executor: coordinator` for direct work or
+`sub_agent` for delegation. The DAG is retained in both cases, and the normal
+tool grant is unchanged: `/goal` neither requires nor implicitly enables
+sub-agent tools or mutation tools. Delegated results require independent
+validation; on failure use `tasks.retry` and a new attempt, not `agent.message`
+to reopen a completed child. Direct retries use `tasks.update in_progress`;
+delegated retries use a new `agent.create` item containing `taskID`.
+Unlike `/plan`, there is no separate Planner sub-agent and no approval step.
 See the [zen.md](zen.md#task-orchestration) task orchestration section.
 
 ## Setup Parameters

@@ -172,7 +172,7 @@ swift build -c release --product zen
 /undo        Revert the latest tracked agent changes
 /tasks       Inspect, retry, cancel, or clear the session task graph
 /plan        Create, save, load, approve, inspect, or clear a delegated session plan
-/goal        Plan and delegate all work to sub-agents
+/goal        Work until complete or genuinely blocked; delegate when useful
 /review      Review tracked changes and verify task/plan claims
 /feature     Manage Swift features with the Builder agent
 /telegram    Turn Telegram remote control on/off when paired in setup

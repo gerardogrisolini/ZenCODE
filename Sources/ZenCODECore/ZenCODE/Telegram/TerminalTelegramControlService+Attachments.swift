@@ -2,6 +2,8 @@
 //  TerminalTelegramControlService+Attachments.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Outbound artifact consent, inbound attachment store, presence leases and
 //  voice download of ``TerminalTelegramControlService``. Extracted verbatim
 //  from TerminalTelegramControlService.swift; the dead private helper

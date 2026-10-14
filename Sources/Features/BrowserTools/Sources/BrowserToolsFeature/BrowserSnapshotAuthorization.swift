@@ -2,6 +2,8 @@
 //  BrowserSnapshotAuthorization.swift
 //  BrowserToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Browser-owned authorization for opaque accessibility refs. This state never
 //  enters the page's JavaScript realm: it is retained in Browser's private
 //  host-side profile and is invalidated when the main-frame document changes.

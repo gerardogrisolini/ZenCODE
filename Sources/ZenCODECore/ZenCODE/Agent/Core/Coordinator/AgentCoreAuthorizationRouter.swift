@@ -1,3 +1,5 @@
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 import Foundation
 
 /// Routes authorization by exact turn/session identity and owns every retained

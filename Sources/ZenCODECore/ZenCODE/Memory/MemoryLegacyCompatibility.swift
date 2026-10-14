@@ -2,6 +2,8 @@
 //  MemoryLegacyCompatibility.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Source compatibility layer for the pre-graph (1.1.4 / 3003ddc) memory API.
 //
 //  The 1.1.x `MemoryService` API exposed each public entry point synchronously,

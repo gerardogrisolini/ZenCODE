@@ -2,6 +2,8 @@
 //  ChromeBrowser.swift
 //  BrowserToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Chrome/Chromium process lifecycle manager and CDP HTTP API client.
 //
 

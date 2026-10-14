@@ -2,6 +2,8 @@
 //  TerminalChat+Goal.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 import Foundation
 import ToolCore
@@ -32,17 +34,6 @@ extension TerminalChat {
                     graphID: existing.id,
                     pendingTaskCount: Self.openTaskCount(in: existing)
                 )
-            )
-            return .continueChat
-        }
-
-        if !isSubAgentToolEnabled {
-            await writeFailureMessage(
-                """
-                ZenCODE: /goal requires the sub-agents tool group. \
-                Enable it with /tools (or switch to an agent that includes it) and try again.
-
-                """
             )
             return .continueChat
         }
@@ -79,7 +70,6 @@ extension TerminalChat {
         _ reply: String
     ) async -> TerminalSubmittedLineAction? {
         guard var workflow = activeWorkflow, workflow.isAwaitingReply else { return nil }
-        guard isSubAgentToolEnabled else { return nil }
         // The graph may have been cleared, archived, completed or replaced since
         // the workflow turn ended. Never resume a graph that is no longer the
         // session's open workflow graph.
@@ -194,7 +184,7 @@ extension TerminalChat {
     /// The session's current task graph when it is an unfinished workflow graph.
     private func currentWorkflowGraph() async -> TaskGraphSnapshot? {
         guard let graph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID),
-              graph.source.requiresSubAgentExecution,
+              graph.source.isWorkflow,
               !graph.state.isTerminal else {
             return nil
         }
@@ -214,7 +204,7 @@ extension TerminalChat {
 
     nonisolated static let workflowMissingGoalMessage =
         "ZenCODE: /goal requires a goal. "
-        + "Use /goal <goal> to describe what should be planned and delegated.\n"
+        + "Use /goal <goal> to describe the outcome to achieve.\n"
 
     nonisolated static let workflowActivePlanMessage =
         "ZenCODE: /goal cannot start while an active plan or planning discussion exists. "
@@ -224,7 +214,7 @@ extension TerminalChat {
         graphID: String,
         pendingTaskCount: Int
     ) -> String {
-        "ZenCODE: a delegated workflow is already running (\(graphID), "
+        "ZenCODE: a goal workflow is already running (\(graphID), "
             + "\(pendingTaskCount) task\(pendingTaskCount == 1 ? "" : "s") still open). "
             + "Reply in chat to continue it while it is waiting for you, "
             + "review it with /tasks, "

@@ -2,6 +2,8 @@
 //  SessionTaskOrchestrator+Support.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 import Foundation
 import ToolCore
@@ -210,7 +212,7 @@ extension SessionTaskOrchestrator {
         }
 
         if let workflow = graph.workflow {
-            guard graph.source.requiresSubAgentExecution,
+            guard graph.source.isWorkflow,
                   workflow.revision > 0,
                   workflow.originalGoal.map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) ?? true,
                   workflow.state == .running || workflow.message?.nilIfBlank != nil else {
@@ -221,12 +223,8 @@ extension SessionTaskOrchestrator {
             }
         }
 
-        if graph.source.requiresSubAgentExecution {
+        if graph.source.isWorkflow {
             for task in graph.tasks {
-                guard task.execution.executor == .subAgent,
-                      task.attempts.allSatisfy({ $0.executor == .subAgent }) else {
-                    throw SessionTaskOrchestratorError.taskRequiresSubAgentExecution(task.id)
-                }
                 try validateWorkflowTaskLifecycle(task)
             }
             if graph.state == .completed,

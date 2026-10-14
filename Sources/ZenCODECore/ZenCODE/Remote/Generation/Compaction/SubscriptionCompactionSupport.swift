@@ -2,6 +2,8 @@
 //  SubscriptionCompactionSupport.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Shared compaction helpers for subscription-based remote generation
 //  clients (ChatGPT, Anthropic). Keeps the token-budget math, message
 //  counting, context-limit detection, and diagnostics in a single place so

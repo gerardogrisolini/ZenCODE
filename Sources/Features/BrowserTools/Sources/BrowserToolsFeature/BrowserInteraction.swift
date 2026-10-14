@@ -2,6 +2,8 @@
 //  BrowserInteraction.swift
 //  BrowserToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Controlled semantic Browser interaction. The public contract accepts only
 //  opaque snapshot refs and constrained actions; raw CDP and JavaScript remain
 //  internal implementation details.

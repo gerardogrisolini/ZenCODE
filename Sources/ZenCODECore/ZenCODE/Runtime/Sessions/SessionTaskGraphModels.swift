@@ -2,6 +2,8 @@
 //  SessionTaskGraphModels.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 
 import Foundation
 import ToolCore
@@ -52,11 +54,13 @@ public enum TaskGraphSource: Codable, Equatable, Sendable {
         return planID
     }
 
-    /// Workflow graphs are execution-owned by delegated sub-agents. The
-    /// coordinator still owns graph management, but never starts a task attempt.
-    public var requiresSubAgentExecution: Bool {
+    /// Workflow identity is independent of whether work is direct or delegated.
+    public var isWorkflow: Bool {
         self == .workflow
     }
+
+    /// Retained for source compatibility. No graph source requires delegation.
+    public var requiresSubAgentExecution: Bool { false }
 }
 
 public enum TaskGraphState: String, Codable, Equatable, Sendable {

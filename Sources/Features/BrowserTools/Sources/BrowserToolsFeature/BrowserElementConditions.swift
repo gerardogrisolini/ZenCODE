@@ -2,6 +2,8 @@
 //  BrowserElementConditions.swift
 //  BrowserToolsFeature
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Snapshot-bound element wait/assert controls. Model input is limited to an
 //  opaque snapshot ref, a closed condition enum, and a bounded literal. The
 //  DOM probe is a fixed host-side function; selectors, JavaScript, and CDP

@@ -2,6 +2,8 @@
 //  ZenCODEAgentProfileSetupRunner+Models.swift
 //  ZenCODE
 //
+//  Created by Gerardo Grisolini on 30/05/26.
+//
 //  Bulk setup for associating authorized model bindings to agents.
 //
 
