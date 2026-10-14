@@ -49,6 +49,54 @@ import Testing
         #expect(!capture.bytes.contains("\u{1B}[2J"))
     }
 
+    @Test(arguments: [20, 40, 48, 100, 160], [
+        "pwd",
+        "printf " + String(repeating: "界🙂e\u{301}-long-argument ", count: 12) + "tail-token",
+    ])
+    func `authorization right border aligns with the real prompt for short and long commands`(
+        columns: Int, command: String
+    ) async {
+        // Forty rows retain the whole wrapped card above the actual prompt;
+        // this is an alignment regression, not a resize or clipping fixture.
+        let capture = PrimaryScreenCapture(rows: 40, columns: columns)
+        let bar = TerminalStatusBar(
+            isEnabled: true, cursorReports: capture.reports, outputSink: capture.write,
+        )
+        await bar.configureForTesting(row: 40, columns: columns, modelID: "test-model")
+        await bar.updateInputPanel(text: "draft", cursorIndex: 5, modeText: "Prompt", helpText: "Enter")
+        let reservedRows = await bar.reservedRowsForOverlay()
+        let originalFooter = capture.terminal.withLock { Array($0.viewport.suffix(reservedRows)) }
+        let promptRightBorder = originalFooter.first?.cells.lastIndex(of: "╮")
+        #expect(originalFooter.first?.text.hasPrefix("╭") == true)
+        #expect(promptRightBorder == columns - 2) // zero-based; one spare column
+
+        let rendered = prompt(columns: columns, command: command)
+        let expected = cardLines(rendered)
+        let modal = TerminalModalSession(screen: await bar.primaryScreen)
+        modal.updateDialog(TerminalDialogPresentation(prompt: rendered))
+        let viewport = capture.terminal.withLock { $0.viewport }
+        let authorizationRows = Array(viewport.dropLast(reservedRows).suffix(expected.count))
+
+        #expect(authorizationRows.map(\.text) == expected)
+        #expect(authorizationRows.allSatisfy { row in
+            row.cells.lastIndex(where: { $0 == "╮" || $0 == "│" || $0 == "┤" || $0 == "╯" })
+                == promptRightBorder
+        })
+        #expect(authorizationRows.allSatisfy { row in
+            TerminalANSIText.visibleWidth(row.text) == columns - 1 && row.cells.last == " "
+        })
+        #expect(Array(viewport.suffix(reservedRows).map(\.text)) == originalFooter.map(\.text))
+        if command != "pwd" {
+            #expect(expected.filter { $0.hasPrefix("│") }.count > 4)
+            let bodyContent = expected.filter { $0.hasPrefix("│") }.map {
+                String($0.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespaces)
+            }.joined()
+            #expect(bodyContent.contains("tail-token"))
+        }
+        modal.close()
+        await bar.stop()
+    }
+
     @Test func `dialog rows retain whitespace and ANSI without menu normalization`() {
         let content = "  \u{1B}[36mplain dialog 界🙂\u{1B}[0m  "
         let dialog = TerminalDialogPresentation(prompt: "\n" + content + "\n")

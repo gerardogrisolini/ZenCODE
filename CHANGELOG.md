@@ -75,6 +75,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- The `Authorization` card now fills the same safe width as the prompt box below,
+  aligning their right borders even for short commands. Both leave the final
+  terminal column unused, while long commands and narrow-terminal content keep
+  their existing width-aware wrapping.
 - Parallel test runs now isolate ACP checkpoint storage and plan-language settings,
   prepare the memory fallback before measuring its deadline, and keep blocking
   terminal fixtures off the cooperative executor. CPR fixtures count delivered

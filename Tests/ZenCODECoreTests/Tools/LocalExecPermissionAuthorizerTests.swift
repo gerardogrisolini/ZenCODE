@@ -312,6 +312,31 @@ struct LocalExecPermissionAuthorizerTests {
         #expect(deletePrompt.contains("session only"))
     }
 
+    @Test(arguments: [6, 12, 20, 40, 80, 100, 160], [
+        "pwd",
+        "printf " + String(repeating: "long-unbroken-argument", count: 12),
+    ])
+    func terminalPromptFillsSafeWidthRegardlessOfContent(columns: Int, command: String) {
+        let request = AgentToolAuthorizationRequest(
+            sessionID: "session", toolCallID: "call", toolName: "local.exec",
+            title: "Run command", kind: "shell", command: command,
+            workingDirectory: "/tmp/project",
+        )
+        let prompt = LocalExecPermissionAuthorizer.terminalPrompt(
+            for: request, terminalColumns: columns,
+        )
+        let rows = TerminalANSIText.stripANSI(prompt).split(separator: "\n").map(String.init)
+
+        #expect(rows.first?.hasPrefix("╭") == true)
+        #expect(rows.first?.hasSuffix("╮") == true)
+        #expect(rows.last?.hasPrefix("╰") == true)
+        #expect(rows.last?.hasSuffix("╯") == true)
+        // An upper bound alone misses short cards whose right border falls well
+        // before the prompt. Every row must actually fill the safe width.
+        #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) == columns - 1 })
+        #expect(rows.filter { $0.hasPrefix("│") }.allSatisfy { $0.hasSuffix("│") })
+    }
+
     @Test
     func terminalPromptReflowsLongCommandsWithinTerminalWidth() {
         let columns = 48

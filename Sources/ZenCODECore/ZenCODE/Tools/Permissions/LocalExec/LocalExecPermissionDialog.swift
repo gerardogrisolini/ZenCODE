@@ -216,11 +216,11 @@ extension LocalExecPermissionAuthorizer {
             + rest
     }
 
-    /// Builds the orange-bordered card around the consent information. The card
-    /// is content-driven up to the available terminal width, then its content is
-    /// explicitly reflowed. Leaving the final terminal column unused prevents
-    /// automatic right-margin wrapping from adding invisible physical rows that
-    /// would desynchronize the TUI panel's cursor bookkeeping.
+    /// Builds the orange-bordered card at the same safe row width as the prompt
+    /// panel, regardless of content length, then explicitly reflows its content.
+    /// Leaving the final terminal column unused prevents automatic right-margin
+    /// wrapping from adding invisible physical rows that would desynchronize the
+    /// TUI panel's cursor bookkeeping.
     private static func renderConsentBox(
         title: String,
         innerLines: [String],
@@ -232,15 +232,7 @@ extension LocalExecPermissionAuthorizer {
         // Keep one terminal column spare so a row never triggers terminal
         // autowrap at the right margin.
         let safeRowWidth = max(4, terminalColumns - 1)
-        let maximumInnerWidth = max(1, safeRowWidth - 4)
-        var naturalWidths = innerLines.map(TerminalANSIText.visibleWidth)
-        if let footer {
-            naturalWidths.append(TerminalANSIText.visibleWidth(footer))
-        }
-        let innerWidth = min(
-            maximumInnerWidth,
-            max(min(28, maximumInnerWidth), naturalWidths.max() ?? 0)
-        )
+        let innerWidth = max(1, safeRowWidth - 4)
         let rule = String(repeating: "─", count: innerWidth + 2)
         let border = { Self.wrap($0, code: Self.ansiOrange, colored: colored) }
 
