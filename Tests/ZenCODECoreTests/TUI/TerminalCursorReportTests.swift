@@ -141,8 +141,17 @@ struct TerminalCursorReportTests {
             if case let .success(value) = result { position.withLock { $0 = value } }
         })
         pipe.fileHandleForWriting.write(Data("x\u{1B}[19;1Ry".utf8))
-        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 200) == .key(.character("x")))
-        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 200) == .key(.character("y")))
+        var results: [TerminalInteractiveLineReader.KeyReadResult] = []
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        // The asynchronous CPR callback may hold the keys across a poll timeout.
+        // Retry only timeouts; preserve every other result to check ordering.
+        while results.count < 2, ContinuousClock.now < deadline {
+            let result = reader.readKeyResult(pollTimeoutMilliseconds: 200)
+            if result == .timedOut { continue }
+            results.append(result)
+            if result == .endOfInput { break }
+        }
+        #expect(results == [.key(.character("x")), .key(.character("y"))])
         #expect(position.withLock { $0 } == .init(row: 19, column: 1))
         let trace = events.withLock { $0 }
         #expect(trace.contains { $0.hasPrefix("report.armed id=") })

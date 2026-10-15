@@ -1699,14 +1699,17 @@ private func writeSSEPayload(
         LocalHTTPResponseHandler.wrapOutboundOut(.body(.byteBuffer(body))),
         promise: nil
     )
-    // Send the HTTP response terminator before closing the channel so the
-    // client's body reader observes a clean end-of-stream instead of a
-    // transport-level close that can race ahead of the final body chunk.
+    // Flush the HTTP terminator before closing so the final body chunk and
+    // clean end-of-stream cannot be overtaken by the transport-level close.
+    let channel = context.channel
+    let flushPromise = context.eventLoop.makePromise(of: Void.self)
     context.writeAndFlush(
         LocalHTTPResponseHandler.wrapOutboundOut(.end(nil)),
-        promise: nil
+        promise: flushPromise
     )
-    context.close(promise: nil)
+    flushPromise.futureResult.whenComplete { _ in
+        channel.close(promise: nil)
+    }
 }
 
 private func writeHTTPResponse(
@@ -1917,6 +1920,7 @@ private final class LocalHTTPResponseHandler:
     private let onRequest: @Sendable (ChannelHandlerContext, HTTPRequestHead) -> Void
     private let onInactive: @Sendable () -> Void
     private var receivedHead = false
+    private var requestHead: HTTPRequestHead?
 
     init(
         onRequest: @escaping @Sendable (ChannelHandlerContext, HTTPRequestHead) -> Void,
@@ -1933,9 +1937,17 @@ private final class LocalHTTPResponseHandler:
                 return
             }
             receivedHead = true
-            onRequest(context, head)
-        case .body, .end:
+            requestHead = head
+        case .body:
             break
+        case .end:
+            guard let head = requestHead else {
+                return
+            }
+            requestHead = nil
+            // A response may close the channel. Wait for the complete request
+            // so that close cannot race the client's remaining body writes.
+            onRequest(context, head)
         }
     }
 

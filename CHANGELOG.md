@@ -35,6 +35,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Shared-chat timestamp rendering tests now isolate terminal output, preventing
   test panels containing `draft` and `historical message` from appearing in the
   active terminal while tests run.
+- Stabilised cursor-report diagnostics and ChatGPT HTTP fallback tests by
+  allowing the asynchronous key handoff and waiting for complete HTTP requests
+  and response flushes before the test server closes connections.
 
 ## [2.3.0] - 2026-10-14
 

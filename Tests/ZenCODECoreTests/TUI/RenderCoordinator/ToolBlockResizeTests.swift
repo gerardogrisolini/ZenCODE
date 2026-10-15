@@ -106,7 +106,7 @@ extension TerminalChatToolBlockResizeTests {
 
     @Test
     func compactNoResizeClearsAsBefore() async {
-        let (widthBox, renderer) = makeResizableRenderer(width: 100)
+        let (_, renderer) = makeResizableRenderer(width: 100)
         let toolCall = presentedToolCall(
             id: "resize-compact-stable",
             name: "agent.wait",
@@ -145,7 +145,7 @@ extension TerminalChatToolBlockResizeTests {
 
     @Test
     func detailedNoResizeClearsAsBefore() async {
-        let (widthBox, renderer) = makeResizableRenderer(width: 100)
+        let (_, renderer) = makeResizableRenderer(width: 100)
         let toolCall = presentedToolCall(
             id: "resize-detailed-stable",
             name: "local.exec",
