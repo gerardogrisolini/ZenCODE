@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-10-16
+
 ### Changed
 
 - Organised command coordination, setup, and Telegram into responsibility-based
