@@ -239,6 +239,106 @@ struct TurnFileChangeCoordinatorTests {
         #expect(await coordinator.latestFileChangeSummary() == summary)
     }
 
+    @Test
+    func liveCheckpointsAreIncrementalAndKeepTheOriginalUndoBaseline() async throws {
+        let repository = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repository) }
+        let file = repository.appendingPathComponent("file.txt")
+        try Data("committed\n".utf8).write(to: file)
+        try initializeGitRepository(at: repository)
+        try Data("user edit\n".utf8).write(to: file)
+        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
+        await coordinator.prepareForTurn()
+        #expect(await coordinator.collectLiveSummary(matching: []) == nil)
+
+        for (before, after) in [("user edit\n", "first\n"), ("first\n", "second\n"), ("second\n", "committed\n")] {
+            try Data(after.utf8).write(to: file)
+            let live = try #require(await coordinator.collectLiveSummary(matching: []))
+            let entry = try #require(live.entries.first)
+            #expect(entry.beforeDataBase64 == Data(before.utf8).base64EncodedString())
+            #expect(entry.patch?.contains("+" + after) == true)
+            #expect(await coordinator.collectLiveSummary(matching: []) == nil)
+            #expect(await coordinator.latestFileChangeSummary() == nil)
+        }
+        let final = try #require(await coordinator.publishSummaryIfNeeded())
+        #expect(final.entries.first?.beforeDataBase64 == Data("user edit\n".utf8).base64EncodedString())
+        #expect(await coordinator.matchingLiveArtifactPaths() == [file.path])
+        _ = try await coordinator.undoLatestChanges()
+        #expect(try String(contentsOf: file, encoding: .utf8) == "user edit\n")
+    }
+
+    @Test
+    func liveCheckpointsDetectDirtyFilesReturningToCleanAndUntrackedDeletion() async throws {
+        let repository = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repository) }
+        let file = repository.appendingPathComponent("file.txt")
+        let untracked = repository.appendingPathComponent("untracked.txt")
+        try Data("committed\n".utf8).write(to: file)
+        try initializeGitRepository(at: repository)
+        try Data("dirty\n".utf8).write(to: file)
+        try Data("untracked\n".utf8).write(to: untracked)
+        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
+        await coordinator.prepareForTurn()
+        try Data("committed\n".utf8).write(to: file)
+        try FileManager.default.removeItem(at: untracked)
+        let live = try #require(await coordinator.collectLiveSummary(matching: []))
+        #expect(live.entries.map(\.path) == ["file.txt", "untracked.txt"])
+        #expect(live.entries.last?.status == .deleted)
+        #expect(await coordinator.collectLiveSummary(matching: []) == nil)
+        let final = try #require(await coordinator.publishSummaryIfNeeded())
+        #expect(final.entries.count == 2)
+        #expect(await coordinator.matchingLiveArtifactPaths() == [file.path, untracked.path])
+    }
+
+    @Test
+    func liveCheckpointsDeduplicateDirectEvidenceButDetectSubsequentOpaqueChanges() async throws {
+        let repository = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repository) }
+        let file = repository.appendingPathComponent("file.txt")
+        try Data("before\n".utf8).write(to: file)
+        try initializeGitRepository(at: repository)
+        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
+        await coordinator.prepareForTurn()
+        try Data("direct\n".utf8).write(to: file)
+        let evidence = [OperationFileChange(path: "file.txt", oldText: "before\n", newText: "direct\n")]
+        #expect(await coordinator.collectLiveSummary(matching: evidence) == nil)
+        try Data("opaque\n".utf8).write(to: file)
+        let live = try #require(await coordinator.collectLiveSummary(matching: []))
+        #expect(live.entries.first?.beforeDataBase64 == Data("direct\n".utf8).base64EncodedString())
+        // Returning to an older direct postimage is still a new change after
+        // the opaque checkpoint; stale direct evidence must not hide it.
+        try Data("direct\n".utf8).write(to: file)
+        #expect(await coordinator.publishSummaryIfNeeded(matching: evidence) != nil)
+        #expect(await coordinator.matchingLiveArtifactPaths().isEmpty)
+    }
+
+    @Test
+    func liveCheckpointsHandleAddedDeletedBinaryAndOversizedFiles() async throws {
+        let repository = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repository) }
+        try Data("seed\n".utf8).write(to: repository.appendingPathComponent("seed.txt"))
+        try initializeGitRepository(at: repository)
+        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
+        await coordinator.prepareForTurn()
+        let file = repository.appendingPathComponent("new.txt")
+        try Data("new\n".utf8).write(to: file)
+        #expect(await coordinator.collectLiveSummary(matching: [])?.entries.first?.status == .added)
+        try FileManager.default.removeItem(at: file)
+        #expect(await coordinator.collectLiveSummary(matching: [])?.entries.first?.status == .deleted)
+        try Data([0, 1, 2]).write(to: repository.appendingPathComponent("binary.dat"))
+        try Data(repeating: 97, count: OperationFileChangeRecorder.maximumTextBytes + 1)
+            .write(to: repository.appendingPathComponent("large.txt"))
+        let live = try #require(await coordinator.collectLiveSummary(matching: []))
+        let artifacts = FileChangeArtifactMapper.artifacts(from: live, workingDirectory: repository)
+        #expect(artifacts.count == 2)
+        #expect(artifacts.first?.isBinary == true)
+        #expect(artifacts.last?.explanation != nil)
+        #expect(await coordinator.collectLiveSummary(matching: []) == nil)
+        let final = try #require(await coordinator.publishSummaryIfNeeded())
+        #expect(final.entries.map(\.path) == ["binary.dat", "large.txt"])
+        #expect(await coordinator.matchingLiveArtifactPaths().count == 2)
+    }
+
     private func initializeGitRepository(at directory: URL) throws {
         try runGit(["init"], in: directory)
         try runGit(["config", "user.email", "test@example.com"], in: directory)

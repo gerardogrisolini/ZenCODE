@@ -20,7 +20,9 @@ extension TerminalChat {
     ) async throws -> TerminalChatGenerationSuccess {
         let turnSessionID = sessionID
         let turnArtifactHistory = fileArtifactHistory
-        let artifactTurn = await beginFileArtifactTurn()
+        let fileChanges = TurnFileChangeCoordinator(baseDirectoryURL: configuration.workingDirectory)
+        await fileChanges.prepareForTurn()
+        let artifactTurn = await beginFileArtifactTurn(coordinator: fileChanges)
         await installSubAgentToolEventHandlerIfNeeded()
         let planPointCollector = TerminalPlanPointCollector()
         let plannerTurnBaseline: PlannerTurnBaseline?
@@ -44,10 +46,7 @@ extension TerminalChat {
             prompt: attempt.prompt,
             attachments: attempt.attachments
         )
-        let fileChanges = TurnFileChangeCoordinator(
-            baseDirectoryURL: configuration.workingDirectory
-        )
-        await fileChanges.prepareForTurn()
+        let assistantOutput = TerminalAssistantResponseBuffer()
         await beginTelegramTurnProgressReporting(for: attempt.origin)
         // The turn's Telegram reporting ends in `finishPromptResult`, after
         // deferred overview renders and their mirrors have been drained: the
@@ -122,9 +121,10 @@ extension TerminalChat {
                             break
                         }
                         await transcriptTurn.appendAssistantContent(delta)
-                        await self.writeAssistantContent(delta)
+                        await assistantOutput.append(delta)
                         await self.appendTelegramRootResponseDelta(delta)
                     case let .toolCallStarted(toolCall):
+                        await self.writeAssistantContent(await assistantOutput.takePending())
                         await transcriptTurn.appendToolCallStarted(toolCall)
                         await self.writeToolCallStarted(toolCall)
                         // The tool call closes the root response that preceded
@@ -216,6 +216,8 @@ extension TerminalChat {
                         coordinatorMessage: await transcriptTurn.lastAssistantContent()
                     )
                     if case .continueAutomatically = disposition, let graph {
+                        await writeAssistantContent(await assistantOutput.takePending())
+                        await finishStreamingOutput()
                         await transcriptTurn.flushAssistantMessage()
                         generationPrompt = PlanningCommandKernel.workflowAutomaticContinuationPrompt(
                             goal: originalGoal,
@@ -298,6 +300,7 @@ extension TerminalChat {
                 }
                 await transcriptTurn.appendAssistantContent(response.text)
             }
+            let finalAssistantContent: String
             appendActiveSessionTranscript(
                 contentsOf: await transcriptTurn.messages(finalResponseText: response.text)
             )
@@ -308,8 +311,9 @@ extension TerminalChat {
             await stopSubAgentOverviewRefresh()
             await renderCoordinator.waitForOverviewMirrorsToDrain()
             if case .plan = attempt.purpose {
-                await writeAssistantContent(response.text)
+                finalAssistantContent = response.text
             } else {
+                finalAssistantContent = await assistantOutput.finalContent(fallback: response.text)
                 try await recordStructuredPlanIfNeeded(
                     responseText: response.text,
                     purpose: attempt.purpose,
@@ -327,7 +331,8 @@ extension TerminalChat {
                 response: response,
                 origin: attempt.origin,
                 fileChangeSummary: fileChangeSummary,
-                automaticallyCompletedPlan: await planPointCollector.automaticallyCompletedPlan()
+                automaticallyCompletedPlan: await planPointCollector.automaticallyCompletedPlan(),
+                finalAssistantContent: finalAssistantContent
             )
         } catch {
             if let planningCollectionID {
@@ -351,6 +356,7 @@ extension TerminalChat {
             )
             await stopSubAgentOverviewRefresh()
             await renderCoordinator.waitForOverviewMirrorsToDrain()
+            await writeAssistantContent(await assistantOutput.takePending())
             throw TerminalChatGenerationRunError(
                 underlying: error,
                 fileChangeSummary: fileChangeSummary
@@ -424,22 +430,22 @@ extension TerminalChat {
         switch result {
         case let .success(success):
             let response = success.response
-            // Seal the terminal transcript before flushing the final streamed
+            // Seal the terminal transcript before publishing the final
             // response. Task/sub-agent observations still refresh and mirror,
             // but no automatic terminal overview may overtake the answer (or a
             // model question) below this point.
             await renderCoordinator.beginAssistantTranscriptTail()
             await finishStreamingOutput()
             await printModelIfNeeded(response.modelID)
-            let responseText = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let completionText = responseText.isEmpty ? "Done." : responseText
-            if responseText.isEmpty {
-                await writeChatOutput("Done.")
-            }
-            await writeChatOutput("\n")
             if let plan = success.automaticallyCompletedPlan {
                 await writeMarkdownMessage(Self.planStatusTable(for: plan))
             }
+            let responseText = success.finalAssistantContent
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let completionText = responseText.isEmpty ? "Done." : responseText
+            await writeAssistantContent(completionText)
+            await finishStreamingOutput()
+            await writeChatOutput("\n")
             // Quiesce the debounced task-graph observer and publish the
             // latest known section once while the reporter is still alive;
             // then retire the turn's Telegram reporting, restart the observer

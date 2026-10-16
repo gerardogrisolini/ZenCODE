@@ -9,18 +9,29 @@ import Foundation
 import ToolCore
 
 extension TerminalChat {
-    struct FileArtifactTurnContext: Sendable {
+    @TerminalChatActor
+    final class FileArtifactTurnContext {
         let id: UUID
         let sessionID: String
         let history: SessionFileArtifactHistory
+        let coordinator: TurnFileChangeCoordinator?
+        var pendingPublication: Task<Void, Never>?
+        var acceptsPublications = true
+
+        init(id: UUID, sessionID: String, history: SessionFileArtifactHistory, coordinator: TurnFileChangeCoordinator?) {
+            self.id = id
+            self.sessionID = sessionID
+            self.history = history
+            self.coordinator = coordinator
+        }
     }
 
-    func beginFileArtifactTurn() async -> FileArtifactTurnContext? {
+    func beginFileArtifactTurn(coordinator: TurnFileChangeCoordinator? = nil) async -> FileArtifactTurnContext? {
         let observedSessionID = sessionID
         let history = fileArtifactHistory
         guard let id = await history.beginTurn(sessionID: observedSessionID),
               sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
-        let context = FileArtifactTurnContext(id: id, sessionID: observedSessionID, history: history)
+        let context = FileArtifactTurnContext(id: id, sessionID: observedSessionID, history: history, coordinator: coordinator)
         activeFileArtifactTurn = context
         return context
     }
@@ -31,16 +42,36 @@ extension TerminalChat {
         agentID: String? = nil,
         context: FileArtifactTurnContext?
     ) async {
-        guard let context, sessionID == context.sessionID,
+        guard let context, context.acceptsPublications, sessionID == context.sessionID,
               fileArtifactHistory === context.history,
               activeFileArtifactTurn?.id == context.id else { return }
-        guard let turn = await context.history.recordLive(
+        let previous = context.pendingPublication
+        let publication = Task(name: "ZenCODE.TUI.live-artifact-publication") { @TerminalChatActor [weak self] in
+            await previous?.value
+            await self?.publishCompletedFileArtifacts(result, callID: callID, agentID: agentID, context: context)
+        }
+        context.pendingPublication = publication
+        await publication.value
+    }
+
+    private func publishCompletedFileArtifacts(
+        _ result: DirectAgentToolResult, callID: String, agentID: String?, context: FileArtifactTurnContext
+    ) async {
+        guard sessionID == context.sessionID, fileArtifactHistory === context.history,
+              activeFileArtifactTurn?.id == context.id else { return }
+        var turns: [SessionFileArtifactHistory.Turn] = []
+        if let turn = await context.history.recordLive(
             result.fileChanges, agentID: agentID, callID: callID,
             turnID: context.id, workingDirectory: configuration.workingDirectory
-        ) else { return }
+        ) { turns.append(turn) }
+        if let summary = await context.coordinator?.collectLiveSummary(matching: result.fileChanges),
+           let turn = await context.history.recordLiveSummary(
+               summary, turnID: context.id, workingDirectory: configuration.workingDirectory
+           ) { turns.append(turn) }
         guard sessionID == context.sessionID, fileArtifactHistory === context.history else { return }
+        guard !turns.isEmpty else { return }
         await writeFileArtifacts(
-            [turn],
+            turns,
             includeHistoryHeadings: false,
             preservingStreamingContext: true,
             replacingSubAgentOverviewFor: agentID == nil ? nil : context
@@ -74,7 +105,10 @@ extension TerminalChat {
     ) async -> TurnFileChangeSummary? {
         let observedSessionID = expectedSessionID ?? sessionID
         let history = expectedHistory ?? fileArtifactHistory
-        if let turnID, activeFileArtifactTurn?.id == turnID {
+        if let turnID, let context = activeFileArtifactTurn, context.id == turnID {
+            context.acceptsPublications = false
+            await context.pendingPublication?.value
+            guard sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
             activeFileArtifactTurn = nil
         }
         let liveChanges: [OperationFileChange]

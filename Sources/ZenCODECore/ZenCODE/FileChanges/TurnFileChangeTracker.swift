@@ -30,6 +30,8 @@ public actor TurnFileChangeTracker {
     var didFinalizeSummary = false
     /// Transient comparison results, never part of the Codable summary.
     private(set) var matchingLiveArtifactPaths: Set<String> = []
+    /// Last workspace state presented at a tool boundary; never the undo baseline.
+    var liveSnapshotsByPath: [String: Snapshot] = [:]
     /// Content of files already dirty (vs. the index/HEAD) when the turn began,
     /// keyed by absolute path. A present key with `nil` value means the path did
     /// not exist on disk at turn start. Used to bound worktree reconciliation to
@@ -148,9 +150,18 @@ public actor TurnFileChangeTracker {
                 afterData = nil
             }
 
+            if snapshot.existedInitially == existsNow,
+               snapshot.beforeData == afterData {
+                continue
+            }
+
             // Reuse the final read, rather than polling or rereading a possibly
             // newer worktree. Path-only dedup would hide a later shell/Git/MCP edit.
-            if let live = latestChanges[snapshot.absolutePath], live.explanation == nil {
+            if let live = liveSnapshotsByPath[snapshot.absolutePath] {
+                if live.existedInitially == existsNow, live.beforeData == afterData {
+                    matchingLiveArtifactPaths.insert(snapshot.absolutePath)
+                }
+            } else if let live = latestChanges[snapshot.absolutePath], live.explanation == nil {
                 if let newText = live.newText, existsNow, afterData == Data(newText.utf8) {
                     matchingLiveArtifactPaths.insert(snapshot.absolutePath)
                 } else if live.newText == nil, live.oldText != nil, !existsNow {
@@ -158,46 +169,7 @@ public actor TurnFileChangeTracker {
                 }
             }
 
-            if snapshot.existedInitially == existsNow,
-               snapshot.beforeData == afterData {
-                continue
-            }
-
-            let status: TurnFileChangeSummary.Entry.Status
-            switch (snapshot.existedInitially, existsNow) {
-            case (false, true):
-                status = .added
-            case (true, false):
-                status = .deleted
-            default:
-                status = .modified
-            }
-
-            let diffStats = await resolvedDiffStats(
-                before: snapshot.beforeData,
-                after: afterData,
-                status: status
-            )
-            let patch = await gitPatch(
-                before: snapshot.beforeData,
-                after: afterData,
-                displayPath: snapshot.displayPath,
-                existedBefore: snapshot.existedInitially,
-                existsNow: existsNow
-            )
-
-            entries.append(
-                TurnFileChangeSummary.Entry(
-                    path: snapshot.displayPath,
-                    additions: diffStats?.additions ?? 0,
-                    deletions: diffStats?.deletions ?? 0,
-                    status: status,
-                    isBinary: diffStats?.isBinary ?? false,
-                    existedBefore: snapshot.existedInitially,
-                    beforeDataBase64: snapshot.beforeData?.base64EncodedString(),
-                    patch: patch
-                )
-            )
+            entries.append(await summaryEntry(for: snapshot, afterData: afterData, existsNow: existsNow))
         }
 
         entries = entries
@@ -207,6 +179,44 @@ public actor TurnFileChangeTracker {
 
         cachedSummary = entries.isEmpty ? nil : TurnFileChangeSummary(entries: entries)
         return cachedSummary
+    }
+
+    func summaryEntry(
+        for snapshot: Snapshot, afterData: Data?, existsNow: Bool
+    ) async -> TurnFileChangeSummary.Entry {
+        let status: TurnFileChangeSummary.Entry.Status
+        switch (snapshot.existedInitially, existsNow) {
+        case (false, true):
+            status = .added
+        case (true, false):
+            status = .deleted
+        default:
+            status = .modified
+        }
+
+        let diffStats = await resolvedDiffStats(
+            before: snapshot.beforeData,
+            after: afterData,
+            status: status
+        )
+        let patch = await gitPatch(
+            before: snapshot.beforeData,
+            after: afterData,
+            displayPath: snapshot.displayPath,
+            existedBefore: snapshot.existedInitially,
+            existsNow: existsNow
+        )
+
+        return TurnFileChangeSummary.Entry(
+            path: snapshot.displayPath,
+            additions: diffStats?.additions ?? 0,
+            deletions: diffStats?.deletions ?? 0,
+            status: status,
+            isBinary: diffStats?.isBinary ?? false,
+            existedBefore: snapshot.existedInitially,
+            beforeDataBase64: snapshot.beforeData?.base64EncodedString(),
+            patch: patch
+        )
     }
 
     func resolvedDiffStats(

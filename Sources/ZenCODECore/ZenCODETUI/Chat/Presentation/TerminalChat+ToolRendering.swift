@@ -261,6 +261,9 @@ extension TerminalChat {
         let history = expectedHistory ?? fileArtifactHistory
         guard sessionID == observedSessionID, fileArtifactHistory === history else { return }
         let artifactTurn = activeFileArtifactTurn
+        if case .started = event.lifecycle {
+            await artifactTurn?.coordinator?.captureBaselineIfNeeded(forAgentToolCall: event.toolCall)
+        }
         await renderCoordinator.recordSubAgentToolEvent(event)
         if case let .completed(result) = event.lifecycle {
             await publishLiveFileArtifacts(

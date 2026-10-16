@@ -90,6 +90,17 @@ public actor SessionFileArtifactHistory {
         return Turn(number: number, artifacts: artifacts)
     }
 
+    /// Checkpoints preserve the net-final history and share the live turn number.
+    func recordLiveSummary(_ summary: TurnFileChangeSummary, turnID: UUID, workingDirectory: URL) -> Turn? {
+        guard var pending = pendingTurns[turnID], !pending.isSealed else { return nil }
+        let artifacts = FileChangeArtifactMapper.artifacts(from: summary, workingDirectory: workingDirectory)
+        guard !artifacts.isEmpty else { return nil }
+        let number = pending.number ?? reserveNumber()
+        pending.number = number
+        pendingTurns[turnID] = pending
+        return Turn(number: number, artifacts: artifacts)
+    }
+
     /// Stop admitting live events before final reconciliation suspends.
     func sealTurn(_ id: UUID) -> [OperationFileChange] {
         guard var pending = pendingTurns[id], !pending.isSealed else { return [] }

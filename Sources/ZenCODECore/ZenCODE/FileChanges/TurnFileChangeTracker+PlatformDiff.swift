@@ -177,7 +177,14 @@ extension TurnFileChangeTracker {
         }
 
         let basePath = baseDirectoryURL.path
-        for relativePath in await gitStatusDirtyRelativePaths(repositoryRoot: repositoryRoot) {
+        let initiallyDirtyPaths = initialWorktreeDirtyContents.keys.map {
+            String($0.dropFirst(repositoryRoot.count + 1))
+        }
+        // A tool can restore a pre-existing dirty file to HEAD or remove an
+        // untracked file; neither path then appears in the current Git status.
+        let paths = Set(await gitStatusDirtyRelativePaths(repositoryRoot: repositoryRoot))
+            .union(initiallyDirtyPaths)
+        for relativePath in paths.sorted() {
             let absolutePath = URL(fileURLWithPath: repositoryRoot)
                 .appendingPathComponent(relativePath)
                 .standardizedFileURL
@@ -207,6 +214,8 @@ extension TurnFileChangeTracker {
                 )
             }
 
+            // A delegated start can capture this path while Git is suspended.
+            guard snapshotsByPath[absolutePath] == nil else { continue }
             snapshotsByPath[absolutePath] = Snapshot(
                 absolutePath: absolutePath,
                 displayPath: displayPath(for: absolutePath),

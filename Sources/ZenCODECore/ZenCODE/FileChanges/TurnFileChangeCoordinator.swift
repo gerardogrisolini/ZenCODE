@@ -50,6 +50,11 @@ public actor TurnFileChangeCoordinator {
         return latestSummary
     }
 
+    func collectLiveSummary(matching changes: [OperationFileChange]) async -> TurnFileChangeSummary? {
+        guard !didPublishSummary else { return nil }
+        return await tracker.collectLiveSummary(matching: changes)
+    }
+
     func matchingLiveArtifactPaths() async -> Set<String> {
         await tracker.matchingLiveArtifactPaths
     }

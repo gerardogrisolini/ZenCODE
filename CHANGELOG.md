@@ -19,6 +19,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- File artifacts from shell, Git, and external tools are now reconciled after
+  each tool completes, including delegated calls, instead of accumulating at
+  turn end. Already displayed file states are not repeated during final
+  reconciliation. Assistant messages are held until their next tool boundary
+  or turn completion so the final answer follows all artifacts and precedes Summary.
 - Prompt turn separators now reserve the terminal's rightmost column, matching
   the input panel's right margin and avoiding right-edge autowrap, including
   after terminal resizes.

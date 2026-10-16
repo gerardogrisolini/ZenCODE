@@ -119,6 +119,7 @@ struct TerminalChatGenerationSuccess: Sendable {
     let origin: TerminalPromptOrigin
     let fileChangeSummary: TurnFileChangeSummary?
     let automaticallyCompletedPlan: TerminalSessionPlan?
+    let finalAssistantContent: String
 }
 
 struct TerminalChatGenerationRunError: Error, Sendable {

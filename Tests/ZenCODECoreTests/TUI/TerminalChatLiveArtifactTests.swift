@@ -78,6 +78,65 @@ struct TerminalChatLiveArtifactTests {
         #expect(command.hasSuffix(live))
     }
 
+    @Test(arguments: [false, true], [false, true])
+    nonisolated func opaqueArtifactsAppearAtEachCompletionAndFinalAnswerPrecedesSummary(
+        delegated: Bool, isTerminal: Bool
+    ) async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let workspace = directory.appendingPathComponent("workspace")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try Data("initial\n".utf8).write(to: workspace.appendingPathComponent("file.txt"))
+        for arguments in [["init"], ["add", "."], ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "initial"]] {
+            let process = Process()
+            process.executableURL = GitExecutableResolver.executableURL()
+            process.arguments = ["-C", workspace.path] + arguments
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+            try process.run()
+            process.waitUntilExit()
+            #expect(process.terminationStatus == 0)
+        }
+        try await AppStorageDirectory.withSupportDirectoryURL(directory.appendingPathComponent("support")) {
+            try await Task(name: "ZenCODE.Tests.artifact-ordering") { @TerminalChatActor in
+                let renderer = makeRenderer(isTerminal: isTerminal)
+                let backend = CompletionArtifactBackend(workspace: workspace, delegated: delegated)
+                let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
+                let terminal = try makeTerminal(workspace, renderer: renderer, runner: runner)
+                await backend.setProbe { stage in
+                    let output = TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().map(\.text).joined())
+                    #expect(output.contains("Preparing edits"))
+                    #expect(output.components(separatedBy: "1 │ +stage \(stage)").count - 1 == 1)
+                    #expect(!output.contains("Final answer"))
+                    #expect(!output.contains("Summary"))
+                }
+                let success = try await terminal.generateResponse(attempt: TerminalPromptAttempt(
+                    prompt: "edit files", attachments: [], origin: .local,
+                    locksResponseLanguage: false, purpose: .normal
+                ))
+                let beforeFinish = TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().map(\.text).joined())
+                #expect(beforeFinish.contains("1 │ +late fallback"))
+                #expect(!beforeFinish.contains("Final answer"))
+                await terminal.finishPromptResult(.success(success))
+                let output = TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().map(\.text).joined())
+                for text in ["Preparing edits", "1 │ +stage 1", "1 │ +stage 2", "1 │ +late fallback", "Final answer"] {
+                    #expect(output.components(separatedBy: text).count - 1 == 1)
+                }
+                let artifact = try #require(output.range(of: "1 │ +late fallback"))
+                let answer = try #require(output.range(of: "Final answer"))
+                let summary = try #require(output.range(of: "Summary"))
+                #expect(artifact.lowerBound < answer.lowerBound)
+                #expect(answer.lowerBound < summary.lowerBound)
+                let tail = output[answer.upperBound..<summary.lowerBound]
+                #expect(!tail.contains("file.txt"))
+                #expect(!tail.contains("│"))
+                #expect(success.fileChangeSummary?.entries.first?.beforeDataBase64 == Data("initial\n".utf8).base64EncodedString())
+                #expect(await terminal.fileArtifactHistory.snapshot().count == 1)
+                await runner.shutdown()
+            }.value
+        }
+    }
+
     @Test(arguments: [false, true])
     func modifiedLiveAndPatchHistoryShareOneHighlightedDiff(isTerminal: Bool) async throws {
         let directory = try temporaryDirectory()
@@ -426,6 +485,44 @@ struct TerminalChatLiveArtifactTests {
     }
 
     @Test
+    func finalReconciliationDrainsPendingPublicationBeforeSealingHistory() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let renderer = makeRenderer()
+        let terminal = try makeTerminal(directory, renderer: renderer)
+        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: directory)
+        let context = try #require(await terminal.beginFileArtifactTurn(coordinator: coordinator))
+        await coordinator.captureBaselineIfNeeded(forAgentToolCall: call("pending", path: "pending.txt"))
+        try Data("pending source\n".utf8).write(to: directory.appendingPathComponent("pending.txt"))
+        let gate = ArtifactPublicationGate()
+        context.pendingPublication = Task(name: "ZenCODE.Tests.pending-artifact") {
+            await gate.wait()
+            let turn = await context.history.recordLive(
+                [.init(path: "pending.txt", oldText: nil, newText: "pending source\n")],
+                agentID: nil, callID: "pending", turnID: context.id, workingDirectory: directory
+            )
+            #expect(turn != nil)
+            if let turn {
+                await renderer.writeMarkdownMessage(
+                    TerminalChat.renderFileArtifacts([turn], includeHistoryHeadings: false), to: .standardError
+                )
+            }
+        }
+        let finalization = Task.immediate(name: "ZenCODE.Tests.artifact-finalization") {
+            await terminal.collectFileChangeSummaryIfNeeded(
+                from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
+            )
+        }
+        #expect(!context.acceptsPublications)
+        #expect(await renderer.capturedWriteEvents().isEmpty)
+        await gate.release()
+        #expect(await finalization.value?.fileCount == 1)
+        let output = await renderer.capturedWriteEvents().map(\.text).joined()
+        #expect(output.components(separatedBy: "1 │ +pending source").count - 1 == 1)
+        #expect(terminal.activeFileArtifactTurn == nil)
+    }
+
+    @Test
     func resetRejectsStaleRootDelegateAndFinalEvidenceEvenWithSameSessionID() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -538,5 +635,73 @@ private actor LiveArtifactBackend: AgentRuntimeBackend {
         didProbe = true
         await onEvent(.content("generation ended"))
         return DirectAgentResponse(text: "generation ended", stopReason: "end_turn", modelID: "test-model")
+    }
+}
+
+private actor CompletionArtifactBackend: AgentRuntimeBackend {
+    let workspace: URL
+    let delegated: Bool
+    private var handler: DirectSubAgentToolEventHandler?
+    private var probe: (@Sendable (Int) async -> Void)?
+
+    init(workspace: URL, delegated: Bool) {
+        self.workspace = workspace
+        self.delegated = delegated
+    }
+
+    func setProbe(_ probe: @escaping @Sendable (Int) async -> Void) { self.probe = probe }
+    func updateSubAgentToolEventHandler(_ handler: DirectSubAgentToolEventHandler?) { self.handler = handler }
+    func createSession(id: String, cwd: String, systemPrompt: String?, history: [AgentRuntimeMessage], cacheKey: String?, allowedToolNames: Set<String>?, thinkingSelection: AgentThinkingSelection?, preserveThinking: Bool) {}
+    func createSessionIfNeeded(id: String, cwd: String, systemPrompt: String?, history: [AgentRuntimeMessage], cacheKey: String?, allowedToolNames: Set<String>?, thinkingSelection: AgentThinkingSelection?, preserveThinking: Bool) {}
+    func updateSessionOptions(id: String, systemPrompt: String?, allowedToolNames: Set<String>?, thinkingSelection: AgentThinkingSelection?, preserveThinking: Bool) {}
+    func closeSession(id: String) {}
+    func shutdown() {}
+    func preloadModel(onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void) async throws -> String { "test-model" }
+    func activeToolDescriptors() -> [DirectToolDescriptor] { [] }
+
+    func sendPrompt(sessionID: String, prompt: String, attachments: [AgentRuntimeAttachment], onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void) async throws -> DirectAgentResponse {
+        await onEvent(.content("Preparing "))
+        await onEvent(.content("edits\n"))
+        let parent = DirectAgentToolCall(id: "parent", name: "agent.wait", argumentsObject: [:], argumentsJSON: "{}")
+        if delegated { await onEvent(.toolCallStarted(parent)) }
+        for stage in 1...2 {
+            let call = DirectAgentToolCall(id: "shell-\(stage)", name: "local.exec", argumentsObject: ["command": "edit"], argumentsJSON: "{}")
+            if delegated {
+                await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .started))
+            } else {
+                await onEvent(.toolCallStarted(call))
+            }
+            try Data("stage \(stage)\n".utf8).write(to: workspace.appendingPathComponent("file.txt"))
+            // A failed command may also have written files before exiting.
+            let result = DirectAgentToolResult(output: "done", summary: "done", status: stage == 1 ? .completed : .failed)
+            if delegated {
+                await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .completed(result)))
+            } else {
+                await onEvent(.toolCallCompleted(call, result))
+            }
+            await probe?(stage)
+        }
+        if delegated { await onEvent(.toolCallCompleted(parent, .init(output: "done", summary: "done"))) }
+        await onEvent(.content("**Final "))
+        await onEvent(.content("answer**\n"))
+        // Exercise the safety-net reconciliation after the final model delta.
+        try Data("late fallback\n".utf8).write(to: workspace.appendingPathComponent("file.txt"))
+        return DirectAgentResponse(text: "Preparing edits\n**Final answer**\n", stopReason: "end_turn", modelID: "test-model")
+    }
+}
+
+private actor ArtifactPublicationGate {
+    private var released = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        guard !released else { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    func release() {
+        released = true
+        waiter?.resume()
+        waiter = nil
     }
 }
