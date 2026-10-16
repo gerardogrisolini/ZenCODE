@@ -12,6 +12,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Prompt/status and docked Chat frames now reach the final terminal column while
+  preserving their left and internal padding. Authorization cards retain the same
+  aligned edge; panel redraws keep autowrap disabled without widening transcript
+  or artifact output.
 - Dimmed the startup logo with ANSI SGR 2, preserving its orange color and leaving
   the startup summary text unchanged.
 - Dimmed the prompt/status bar frame and their divider with ANSI SGR 2, preserving
@@ -32,9 +36,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   turn end. Already displayed file states are not repeated during final
   reconciliation. Assistant messages are held until their next tool boundary
   or turn completion so the final answer follows all artifacts and precedes Summary.
-- Prompt turn separators now reserve the terminal's rightmost column, matching
-  the input panel's right margin and avoiding right-edge autowrap, including
-  after terminal resizes.
+- Prompt turn separators still reserve the terminal's rightmost column, avoiding
+  right-edge autowrap in transcript output, including after terminal resizes.
 
 ## [2.3.1] - 2026-10-16
 

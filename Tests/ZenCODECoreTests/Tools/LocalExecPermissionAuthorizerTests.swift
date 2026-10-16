@@ -316,7 +316,7 @@ struct LocalExecPermissionAuthorizerTests {
         "pwd",
         "printf " + String(repeating: "long-unbroken-argument", count: 12),
     ])
-    func terminalPromptFillsSafeWidthRegardlessOfContent(columns: Int, command: String) {
+    func terminalPromptFillsFullWidthRegardlessOfContent(columns: Int, command: String) {
         let request = AgentToolAuthorizationRequest(
             sessionID: "session", toolCallID: "call", toolName: "local.exec",
             title: "Run command", kind: "shell", command: command,
@@ -332,8 +332,8 @@ struct LocalExecPermissionAuthorizerTests {
         #expect(rows.last?.hasPrefix("╰") == true)
         #expect(rows.last?.hasSuffix("╯") == true)
         // An upper bound alone misses short cards whose right border falls well
-        // before the prompt. Every row must actually fill the safe width.
-        #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) == columns - 1 })
+        // before the prompt. Every row must fill the same physical width.
+        #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) == columns })
         #expect(rows.filter { $0.hasPrefix("│") }.allSatisfy { $0.hasSuffix("│") })
     }
 
@@ -368,10 +368,9 @@ struct LocalExecPermissionAuthorizerTests {
         }
         let bodyRows = boxRows.filter { $0.hasPrefix("│") }
 
-        // Never use the rightmost terminal cell: terminals can autowrap a row
-        // that exactly fills it, which would damage the box and panel layout.
+        // The compositor paints these full-width rows with autowrap disabled.
         #expect(renderedRows.allSatisfy {
-            TerminalANSIText.visibleWidth($0) <= columns - 1
+            TerminalANSIText.visibleWidth($0) <= columns
         })
         #expect(boxRows.first?.hasPrefix("╭") == true)
         #expect(boxRows.last?.hasPrefix("╰") == true)

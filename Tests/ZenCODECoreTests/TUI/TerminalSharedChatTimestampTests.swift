@@ -95,11 +95,11 @@ struct TerminalSharedChatTimestampTests {
         let rows = sequence.components(separatedBy: "\u{1B}[2K")
             .dropFirst().map { TerminalANSIText.stripANSI($0) }
         let authorRow = try #require(rows.first { $0.contains("Author:") })
-        let contentWidth = columns - 5
+        let contentWidth = columns - 4
         let fittedAuthor = TerminalStatusBar.fit(expectedAuthor, width: contentWidth)
 
         #expect(rows.count >= 3)
-        #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) <= columns - 1 })
+        #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) == columns })
         #expect(authorRow == "│ \(TerminalStatusBar.padded(fittedAuthor, width: contentWidth)) │")
         #expect(await statusBar.sharedChatReaderRenderSequenceLocked(state: &state) == sequence)
         #expect(state.sharedChatReaderDock?.entries.first?.route == String(expectedAuthor.dropFirst("Author: ".count)))

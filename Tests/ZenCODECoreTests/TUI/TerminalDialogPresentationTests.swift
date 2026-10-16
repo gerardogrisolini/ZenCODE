@@ -42,7 +42,7 @@ import Testing
         let rows = capture.terminal.withLock { $0.viewport.map(\.text) }
         #expect(Array(rows.dropLast(footerLines.count).suffix(expected.count)) == expected)
         #expect(Array(rows.suffix(footerLines.count)) == footerLines)
-        #expect(expected.map(TerminalANSIText.visibleWidth).max() == columns - 1)
+        #expect(expected.map(TerminalANSIText.visibleWidth).max() == columns)
         #expect(capture.visible.filter { $0 == "╭" }.count == 1)
         #expect(capture.visible.filter { $0 == "╰" }.count == 1)
         #expect(!capture.bytes.contains("?1049"))
@@ -68,7 +68,7 @@ import Testing
         let originalFooter = capture.terminal.withLock { Array($0.viewport.suffix(reservedRows)) }
         let promptRightBorder = originalFooter.first?.cells.lastIndex(of: "╮")
         #expect(originalFooter.first?.text.hasPrefix("╭") == true)
-        #expect(promptRightBorder == columns - 2) // zero-based; one spare column
+        #expect(promptRightBorder == columns - 1) // zero-based; final physical column
 
         let rendered = prompt(columns: columns, command: command)
         let expected = cardLines(rendered)
@@ -83,7 +83,7 @@ import Testing
                 == promptRightBorder
         })
         #expect(authorizationRows.allSatisfy { row in
-            TerminalANSIText.visibleWidth(row.text) == columns - 1 && row.cells.last == " "
+            TerminalANSIText.visibleWidth(row.text) == columns && row.cells.last != " " && !row.softWrapped
         })
         #expect(Array(viewport.suffix(reservedRows).map(\.text)) == originalFooter.map(\.text))
         if command != "pwd" {

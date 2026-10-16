@@ -285,9 +285,9 @@ extension TerminalStatusBar {
     
     func statusBoxWidthLocked(state: inout State) -> Int {
         let horizontalInset = statusBoxHorizontalInsetLocked(state: &state)
-        // Geometry contains physical terminal columns. Reserve the last one,
-        // matching Authorization and avoiding right-margin autowrap.
-        return max(20, state.columns - horizontalInset * 2) - 1
+        // Footer surfaces are painted with autowrap disabled by the primary
+        // screen compositor, so their right border can own the final column.
+        return max(20, state.columns - horizontalInset * 2)
     }
     
     func statusBoxContentWidthLocked(state: inout State) -> Int {

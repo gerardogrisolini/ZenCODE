@@ -218,11 +218,10 @@ extension LocalExecPermissionAuthorizer {
             + rest
     }
 
-    /// Builds the orange-bordered card at the same safe row width as the prompt
+    /// Builds the orange-bordered card at the same full row width as the prompt
     /// panel, regardless of content length, then explicitly reflows its content.
-    /// Leaving the final terminal column unused prevents automatic right-margin
-    /// wrapping from adding invisible physical rows that would desynchronize the
-    /// TUI panel's cursor bookkeeping.
+    /// The primary-screen compositor disables autowrap while painting dialog
+    /// rows, just as it does for the prompt and docked Chat surfaces.
     private static func renderConsentBox(
         title: String,
         innerLines: [String],
@@ -231,10 +230,8 @@ extension LocalExecPermissionAuthorizer {
         terminalColumns: Int
     ) -> String {
         // A box row is `│ <content> │`, i.e. four visible cells of chrome.
-        // Keep one terminal column spare so a row never triggers terminal
-        // autowrap at the right margin.
-        let safeRowWidth = max(4, terminalColumns - 1)
-        let innerWidth = max(1, safeRowWidth - 4)
+        let rowWidth = max(4, terminalColumns)
+        let innerWidth = max(1, rowWidth - 4)
         let rule = String(repeating: "─", count: innerWidth + 2)
         let border = { Self.wrap($0, code: Self.ansiOrange, colored: colored) }
 
