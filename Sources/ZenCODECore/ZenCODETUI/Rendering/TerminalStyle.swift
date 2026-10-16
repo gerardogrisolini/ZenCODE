@@ -104,6 +104,9 @@ enum TerminalStyle {
     enum Chrome {
         // Match shared-chat borders: never inherit bold from surrounding output.
         static let border = TerminalStyle.sequence(22, 38, 5, 208)
+        // Dim only the prompt/status frame, clearing inherited bold before SGR 2.
+        static let promptBorder = TerminalStyle.sequence(22, 2, 38, 5, 208)
+        static let startupLogo = TerminalStyle.sequence(22, 2, 38, 5, 208)
         static let suggestion = Text.muted
     }
 

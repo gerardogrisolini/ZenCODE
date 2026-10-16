@@ -10,6 +10,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Dimmed the startup logo with ANSI SGR 2, preserving its orange color and leaving
+  the startup summary text unchanged.
+- Dimmed the prompt/status bar frame and their divider with ANSI SGR 2, preserving
+  the orange color and leaving text, menus, and Summary headings unchanged.
+
+### Fixed
+
+- Prompt turn separators now reserve the terminal's rightmost column, matching
+  the input panel's right margin and avoiding right-edge autowrap, including
+  after terminal resizes.
+
 ## [2.3.1] - 2026-10-16
 
 ### Changed

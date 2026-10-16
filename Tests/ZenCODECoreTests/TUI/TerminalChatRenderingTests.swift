@@ -39,6 +39,23 @@ private actor TickGate {
 @Suite
 struct TerminalChatRenderingTests {
     @Test
+    func startupLogoUsesDimOrangeWithoutDimmingSummary() {
+        let rendered = TerminalChat.renderStartupBox(lines: ["Version: test", "", "Commands: /help"])
+        let reset = TerminalStyle.reset
+        let orange = TerminalStyle.Accent.primary
+        let gray = TerminalStyle.Text.secondary
+        let logo = "\u{1B}[22;2;38;5;208m\(TerminalChat.zenCODEHeader)\(reset)"
+
+        #expect(TerminalStyle.Chrome.startupLogo == "\u{1B}[22;2;38;5;208m")
+        #expect(rendered == [
+            logo,
+            "\(orange)Version:\(gray) test\(reset)",
+            "\(gray)\(reset)",
+            "\(orange)Commands:\(gray) /help\(reset)"
+        ].joined(separator: "\n"))
+    }
+
+    @Test
     func removingLeadingLineBreaksPreservesContent() {
 
         #expect(TerminalChatTextFormatting.removingLeadingLineBreaks("\n\nCiao") == "Ciao")

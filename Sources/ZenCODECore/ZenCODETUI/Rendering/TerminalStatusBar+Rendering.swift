@@ -227,7 +227,7 @@ extension TerminalStatusBar {
         let topRow = max(1, state.row - reservedRows + 1) + sharedChatReaderReservedRowsLocked(state: &state)
         let startColumn = statusBoxStartColumnLocked(state: &state)
         let boxWidth = statusBoxWidthLocked(state: &state)
-        let orange = TerminalStyle.Chrome.border
+        let orange = TerminalStyle.Chrome.promptBorder
         let dim = TerminalStyle.Chrome.suggestion
         let reset = TerminalStyle.reset
         let horizontalRule = String(repeating: "─", count: max(0, boxWidth - 2))
@@ -354,7 +354,7 @@ extension TerminalStatusBar {
         let startColumn = statusBoxStartColumnLocked(state: &state)
         let boxWidth = statusBoxWidthLocked(state: &state)
         let contentWidth = statusBoxContentWidthLocked(state: &state)
-        let orange = TerminalStyle.Chrome.border
+        let orange = TerminalStyle.Chrome.promptBorder
         let lightText = TerminalStyle.Text.secondary
         let reset = TerminalStyle.reset
         let horizontalRule = String(repeating: "─", count: max(0, boxWidth - 2))

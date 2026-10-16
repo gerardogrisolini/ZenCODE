@@ -177,10 +177,10 @@ extension TerminalChat {
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
         let contentWidth = max(20, columns - horizontalInset * 2)
                 let linePrefix = String(repeating: " ", count: horizontalInset)
-        let orange = TerminalStyle.Accent.primary
+        let logoStyle = TerminalStyle.Chrome.startupLogo
         let reset = TerminalStyle.reset
 
-        var output: [String] = ["\(orange)\(TerminalChat.zenCODEHeader)\(reset)"]
+        var output: [String] = ["\(logoStyle)\(TerminalChat.zenCODEHeader)\(reset)"]
         for line in lines {
             let splitLines = line.components(separatedBy: .newlines)
             for splitLine in splitLines {

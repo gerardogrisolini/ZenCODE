@@ -21,12 +21,18 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(combined.contains("Planning safely"))
     }
 
-    @Test
-    func subsequentSubmittedPromptsReceiveOneDimFullWidthTurnRule() async {
-        let terminalColumns = 7
-        let rule = String(repeating: "─", count: 6)
+    @Test(arguments: [7, 80, 120], [false, true])
+    func subsequentSubmittedPromptsReceiveOneDimTurnRuleWithRightMargin(
+        terminalColumns: Int,
+        stdinIsTerminal: Bool
+    ) async {
+        let inset = stdinIsTerminal ? TerminalChatTextFormatting.chatLineInsetPrefix : ""
+        let rule = String(
+            repeating: "─",
+            count: terminalColumns - TerminalChat.displayWidth(inset) - 1
+        )
         let renderer = makeRenderer(
-            stdinIsTerminal: true,
+            stdinIsTerminal: stdinIsTerminal,
             standardErrorIsTerminal: true,
             columnWidthProvider: { terminalColumns }
         )
@@ -45,15 +51,65 @@ extension TerminalChatRenderCoordinatorTests {
             return !trimmed.isEmpty && trimmed.allSatisfy { $0 == "─" }
         }
 
-        #expect(!TerminalANSIText.stripANSI(firstTurn).contains(rule))
-        #expect(ruleRows.count == 2)
+        #expect(!TerminalANSIText.stripANSI(firstTurn).contains("─"))
+        #expect(ruleRows == ["\(inset)\(rule)", "\(inset)\(rule)"])
         #expect(ruleRows.allSatisfy {
-            TerminalChat.displayWidth($0) == terminalColumns
+            TerminalChat.displayWidth($0) == terminalColumns - 1
         })
         #expect(stderr.components(separatedBy: "\u{1B}[90m\(rule)\u{1B}[0m").count - 1 == 2)
         #expect(stderr.components(separatedBy: "> first turn").count - 1 == 1)
         #expect(stderr.components(separatedBy: "> second turn").count - 1 == 1)
         #expect(stderr.components(separatedBy: "> third turn").count - 1 == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func submittedPromptTurnRulePreservesRightMarginAfterResize(stdinIsTerminal: Bool) async {
+        let widths = [80, 120, 40]
+        let widthBox = ColumnWidthBox(widths[0])
+        let renderer = makeRenderer(
+            stdinIsTerminal: stdinIsTerminal,
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { widthBox.width }
+        )
+
+        await renderer.writeSubmittedPrompt("first turn")
+        for width in widths {
+            widthBox.width = width
+            await renderer.writeSubmittedPrompt("turn at \(width) columns")
+        }
+
+        let stderr = await renderer.capturedPlainText(on: .standardError)
+        let ruleRows = stderr.split(separator: "\n").filter { row in
+            let trimmed = row.trimmingCharacters(in: .whitespaces)
+            return !trimmed.isEmpty && trimmed.allSatisfy { $0 == "─" }
+        }
+
+        #expect(ruleRows.map { TerminalChat.displayWidth(String($0)) } == widths.map { $0 - 1 })
+    }
+
+    @Test(arguments: [0, 1, 2, 3], [false, true])
+    func submittedPromptTurnRuleClampsToAtLeastOneCharacter(
+        terminalColumns: Int,
+        stdinIsTerminal: Bool
+    ) async {
+        let inset = stdinIsTerminal ? TerminalChatTextFormatting.chatLineInsetPrefix : ""
+        let renderer = makeRenderer(
+            stdinIsTerminal: stdinIsTerminal,
+            standardErrorIsTerminal: true,
+            columnWidthProvider: { terminalColumns }
+        )
+
+        await renderer.writeSubmittedPrompt("first turn")
+        await renderer.writeSubmittedPrompt("second turn")
+
+        let stderr = await renderer.capturedPlainText(on: .standardError)
+        let ruleRows = stderr.split(separator: "\n").map(String.init).filter { row in
+            let trimmed = row.trimmingCharacters(in: .whitespaces)
+            return !trimmed.isEmpty && trimmed.allSatisfy { $0 == "─" }
+        }
+        let ruleWidth = max(1, terminalColumns - TerminalChat.displayWidth(inset) - 1)
+
+        #expect(ruleRows == [inset + String(repeating: "─", count: ruleWidth)])
     }
 
     @Test

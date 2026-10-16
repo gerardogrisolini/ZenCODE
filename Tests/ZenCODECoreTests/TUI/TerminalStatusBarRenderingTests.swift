@@ -58,6 +58,22 @@ struct TerminalStatusBarRenderingTests {
         #expect(!frame.contains("┐"))
         #expect(!frame.contains("└"))
         #expect(!frame.contains("┘"))
+
+        let border = TerminalStyle.Chrome.promptBorder
+        let reset = TerminalStyle.reset
+        for edge in ["╭", "│", "╰"] {
+            #expect(
+                frame.components(separatedBy: border + edge).count
+                    == frame.components(separatedBy: edge).count
+            )
+        }
+        for edge in ["╮", "│", "╯"] {
+            #expect(
+                frame.components(separatedBy: edge + reset).count
+                    == frame.components(separatedBy: edge).count
+            )
+        }
+        #expect(frame.contains("\(border)│\(reset) \(TerminalStyle.Text.secondary)test-model"))
     }
 
     @Test
@@ -99,9 +115,10 @@ struct TerminalStatusBarRenderingTests {
             suggestionSelectedIndex: 0
         )
 
-        // SGR 22 cancels inherited bold without changing the orange foreground.
-        let border = "\u{1B}[22;38;5;208m"
-        #expect(TerminalStyle.Chrome.border == border)
+        // SGR 22 cancels inherited bold before SGR 2 dims the orange frame.
+        let border = "\u{1B}[22;2;38;5;208m"
+        let reset = TerminalStyle.reset
+        #expect(TerminalStyle.Chrome.promptBorder == border)
         let frame = captured.combined
         for edge in ["╭", "│", "├", "╰"] {
             #expect(frame.contains(edge))
@@ -110,6 +127,23 @@ struct TerminalStatusBarRenderingTests {
                     == frame.components(separatedBy: edge).count
             )
         }
+        for edge in ["╮", "│", "┤", "╯"] {
+            #expect(frame.contains(edge))
+            #expect(
+                frame.components(separatedBy: edge + reset).count
+                    == frame.components(separatedBy: edge).count
+            )
+        }
+        #expect(frame.contains("\(border)│\(reset) > Prompt▌"))
+        #expect(frame.contains("\(border)│\(reset) \(TerminalStyle.Chrome.suggestion)/help"))
+        #expect(frame.contains("\(border)│\(reset) \(TerminalStyle.Chrome.suggestion)Prompt · Enter to send"))
+        #expect(frame.contains("\(border)│\(reset) \(TerminalStyle.Text.secondary)test-model"))
+    }
+
+    @Test
+    func promptBorderDoesNotChangeMenuOrSummaryStyles() {
+        #expect(TerminalStyle.Chrome.border == "\u{1B}[22;38;5;208m")
+        #expect(TerminalStyle.FileChange.summaryHeader == "\u{1B}[38;5;208m")
     }
 
     @Test
