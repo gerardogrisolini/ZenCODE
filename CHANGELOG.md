@@ -19,6 +19,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Live file artifacts now omit an unavailable-diff fallback when the same tool
+  completion recovers a valid textual diff for that file, without hiding genuine
+  fallbacks or changing final artifact history and undo baselines.
 - Small local edits to large UTF-8 files now retain compact, operation-captured
   diffs with context instead of discarding all evidence above 64 KiB. Retained
   output stays byte-bounded, with explicit fallback for oversized or costly

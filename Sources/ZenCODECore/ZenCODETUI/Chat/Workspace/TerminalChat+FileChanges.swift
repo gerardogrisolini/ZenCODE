@@ -67,7 +67,19 @@ extension TerminalChat {
         if let summary = await context.coordinator?.collectLiveSummary(matching: result.fileChanges),
            let turn = await context.history.recordLiveSummary(
                summary, turnID: context.id, workingDirectory: configuration.workingDirectory
-           ) { turns.append(turn) }
+           ) {
+            // Replace only this completion's direct fallbacks; keep both recordings intact.
+            let recoveredPaths = Set(turn.artifacts.filter {
+                $0.explanation == nil && !$0.isBinary && Self.fileArtifactDiff($0) != nil
+            }.map(\.absolutePath))
+            turns = turns.compactMap { liveTurn in
+                let artifacts = liveTurn.artifacts.filter {
+                    $0.explanation == nil || !recoveredPaths.contains($0.absolutePath)
+                }
+                return artifacts.isEmpty ? nil : .init(number: liveTurn.number, artifacts: artifacts)
+            }
+            turns.append(turn)
+        }
         guard sessionID == context.sessionID, fileArtifactHistory === context.history else { return }
         guard !turns.isEmpty else { return }
         await writeFileArtifacts(
