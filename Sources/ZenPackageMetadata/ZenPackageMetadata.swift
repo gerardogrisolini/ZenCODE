@@ -6,5 +6,5 @@
 //
 
 public enum ZenPackageMetadata {
-    public static let version = "2.3.1"
+    public static let version = "2.3.2"
 }

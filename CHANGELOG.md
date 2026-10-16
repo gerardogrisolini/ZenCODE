@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-10-16
+
 ### Changed
 
 - Prompt/status and docked Chat frames now reach the final terminal column while
