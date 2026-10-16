@@ -324,9 +324,9 @@ extension TerminalChat {
     ) -> String {
         let path = artifact.displayPath.nilIfBlank ?? artifact.absolutePath
         let displayedPath = path.nilIfBlank ?? "(unknown path)"
-        let counts = "+\(artifact.additions) -\(artifact.deletions)"
+        let counts = artifact.hasLineCounts ? "  +\(artifact.additions) -\(artifact.deletions)" : ""
         let binary = artifact.isBinary ? " (binary)" : ""
-        return "**\(artifact.status.rawValue) `\(markdownInlineCode(displayedPath))`**  \(counts)\(binary)"
+        return "**\(artifact.status.rawValue) `\(markdownInlineCode(displayedPath))`**\(counts)\(binary)"
     }
 
     private nonisolated static func appendMarkdownCodeBlock(

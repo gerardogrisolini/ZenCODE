@@ -82,7 +82,7 @@ public actor SessionFileArtifactHistory {
             if seenPaths.insert(path).inserted {
                 pending.latestChanges[path] = OperationFileChange(
                     path: path, oldText: change.oldText, newText: change.newText,
-                    explanation: change.explanation
+                    explanation: change.explanation, compactDiff: change.compactDiff
                 )
             }
         }

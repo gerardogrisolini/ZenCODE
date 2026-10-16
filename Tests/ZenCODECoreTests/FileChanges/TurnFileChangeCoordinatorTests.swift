@@ -371,3 +371,65 @@ struct TurnFileChangeCoordinatorTests {
         return directory
     }
 }
+
+extension TurnFileChangeCoordinatorTests {
+    @Test(arguments: [false, true])
+    func largeFileCompactEditsRemainUsefulInFinalArtifactHistory(laterOpaqueEdit: Bool) async throws {
+        let repository = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repository) }
+        let file = repository.appendingPathComponent("CHANGELOG.md")
+        let before = (0..<2000).map { "entry \($0): " + String(repeating: "context ", count: 8) + "\n" }.joined()
+        #expect(before.utf8.count > OperationFileChangeRecorder.maximumTextBytes)
+        try before.write(to: file, atomically: true, encoding: .utf8)
+        try initializeGitRepository(at: repository)
+        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
+        await coordinator.prepareForTurn()
+        let history = SessionFileArtifactHistory(sessionID: "compact")
+        let turnID = try #require(await history.beginTurn(sessionID: "compact"))
+        // Background-exec tests intentionally invalidate local evidence for the
+        // process lifetime. Exercise history with captured compact evidence here;
+        // real tool capture is covered separately in LocalToolsSupportTests.
+        let after = before.replacingOccurrences(of: "entry 1000:", with: "direct change:")
+        try after.write(to: file, atomically: true, encoding: .utf8)
+        let lines = before.components(separatedBy: "\n")
+        let patch = "@@ -998,7 +998,7 @@\n"
+            + lines[997..<1000].map { " \($0)\n" }.joined()
+            + "-\(lines[1000])\n"
+            + "+\(lines[1000].replacingOccurrences(of: "entry 1000:", with: "direct change:"))\n"
+            + lines[1001..<1004].map { " \($0)\n" }.joined()
+        let changes = [OperationFileChange(
+            path: file.path, oldText: nil, newText: nil,
+            compactDiff: .init(patch: patch, additions: 1, deletions: 1)
+        )]
+        let live = try #require(await history.recordLive(changes, agentID: nil, callID: "edit", turnID: turnID, workingDirectory: repository))
+        #expect(live.artifacts.first?.patch?.contains("+direct change:") == true)
+        // Patch-only evidence is not a full postimage: checkpoint collection
+        // still captures it, without changing the original undo baseline.
+        if let checkpoint = await coordinator.collectLiveSummary(matching: changes) {
+            _ = await history.recordLiveSummary(checkpoint, turnID: turnID, workingDirectory: repository)
+        }
+        if laterOpaqueEdit {
+            let final = before.replacingOccurrences(of: "entry 1000:", with: "opaque final change:")
+            try final.write(to: file, atomically: true, encoding: .utf8)
+        }
+        let latest = await history.sealTurn(turnID)
+        let summary = try #require(await coordinator.publishSummaryIfNeeded(matching: latest))
+        #expect(summary.entries.first?.beforeDataBase64 == Data(before.utf8).base64EncodedString())
+        let matched = await coordinator.matchingLiveArtifactPaths()
+        if laterOpaqueEdit { #expect(!matched.contains(file.path)) }
+        _ = await history.finishTurn(turnID, summary: summary, matchingLivePaths: matched, workingDirectory: repository)
+        let turns = await history.snapshot()
+        let artifact = try #require(turns.first?.artifacts.first)
+        #expect(artifact.oldText == nil && artifact.newText == nil)
+        #expect(artifact.explanation == nil)
+        #expect(artifact.status == .modified && artifact.hasLineCounts)
+        #expect(artifact.additions == 1 && artifact.deletions == 1)
+        #expect((artifact.patch?.utf8.count ?? .max) <= OperationFileChangeRecorder.maximumTextBytes)
+        // Rendering remains based on captured final evidence even after removal.
+        try FileManager.default.removeItem(at: file)
+        let rendered = TerminalChat.renderFileArtifacts(turns)
+        #expect(rendered.contains("**modified `CHANGELOG.md`**  +1 -1"))
+        #expect(rendered.contains(laterOpaqueEdit ? "+opaque final change:" : "+direct change:"))
+        #expect(!rendered.contains("Diff unavailable"))
+    }
+}

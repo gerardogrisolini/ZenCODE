@@ -81,6 +81,20 @@ without hiding a subsequent opaque-tool edit to the same path. Uncertain evidenc
 is not treated as proof of an unchanged postimage. No watcher, polling, extra
 worktree read, or wire field is introduced.
 
+Local operation evidence may also contain a complete compact unified patch and
+its counts instead of full old/new text. Compaction runs on the operation's
+captured regular-file preimage and committed text, never in the mapper or TUI.
+Retained text/patch limits remain 64 KiB per image or patch and 256 KiB per
+operation, shared by both representations. Temporary snapshot inputs are capped
+at 1 MiB per file and 4 MiB cumulatively per operation; compact-diff input scans
+have a separate 4 MiB cumulative reservation. The synchronous line diff keeps
+three context lines, preserves UTF-8 bytes and final-newline markers, and bounds
+line count, edit distance and comparison work. Exceeded budgets produce a clear
+explanation, not a truncated patch or unavailable counts displayed as zeros.
+Patch-only evidence is not a complete postimage for reconciliation. ACP uses
+existing standard text content for these patches; no persisted or wire fields
+are added.
+
 Optional feature packages are not executables distributed beside `zen`. The
 installer and `zen --install-features` copy a package to
 `~/.zencode/features/<id>/`, generate the same manifest shape used by a local

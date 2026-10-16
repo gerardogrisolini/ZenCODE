@@ -21,6 +21,8 @@ public struct FileChangeArtifact: Sendable, Equatable, Hashable {
     public let status: Status
     public let additions: Int
     public let deletions: Int
+    /// False when evidence did not establish counts; zero is a valid count.
+    public let hasLineCounts: Bool
     public let isBinary: Bool
     public let oldText: String?
     public let newText: String?
@@ -33,6 +35,7 @@ public struct FileChangeArtifact: Sendable, Equatable, Hashable {
         status: Status,
         additions: Int = 0,
         deletions: Int = 0,
+        hasLineCounts: Bool = true,
         isBinary: Bool = false,
         oldText: String? = nil,
         newText: String? = nil,
@@ -44,6 +47,7 @@ public struct FileChangeArtifact: Sendable, Equatable, Hashable {
         self.status = status
         self.additions = max(0, additions)
         self.deletions = max(0, deletions)
+        self.hasLineCounts = hasLineCounts
         self.isBinary = isBinary
         self.oldText = oldText
         self.newText = newText

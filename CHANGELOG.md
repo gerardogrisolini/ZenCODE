@@ -19,6 +19,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Small local edits to large UTF-8 files now retain compact, operation-captured
+  diffs with context instead of discarding all evidence above 64 KiB. Retained
+  output stays byte-bounded, with explicit fallback for oversized or costly
+  diffs and no misleading zero counts when evidence is unavailable. Compact
+  patches remain transient; ACP presents them using existing text content.
 - File artifacts from shell, Git, and external tools are now reconciled after
   each tool completes, including delegated calls, instead of accumulating at
   turn end. Already displayed file states are not repeated during final

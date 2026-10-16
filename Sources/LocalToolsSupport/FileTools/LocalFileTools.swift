@@ -425,8 +425,8 @@ struct LocalAppendTool: FeatureTool {
             try LocalOperationWrite.append(data, to: path)
             let after: String?
             if OperationFileChangeRecorder.current != nil,
-               content.utf8.count <= OperationFileChangeRecorder.maximumTextBytes,
-               (before?.count ?? 0) + content.utf8.count <= OperationFileChangeRecorder.maximumTextBytes {
+               content.utf8.count <= OperationFileChangeRecorder.maximumSnapshotBytes,
+               (before?.count ?? 0) + content.utf8.count <= OperationFileChangeRecorder.maximumSnapshotBytes {
                 after = before.flatMap { String(data: $0, encoding: .utf8) }.map { $0 + content }
                     ?? (existed ? nil : content)
             } else {

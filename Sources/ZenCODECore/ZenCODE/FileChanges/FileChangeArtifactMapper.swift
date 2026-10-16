@@ -24,6 +24,7 @@ public enum FileChangeArtifactMapper {
             guard seen.insert(path).inserted else { return nil }
             let status: FileChangeArtifact.Status
             if change.explanation != nil { status = .unknown }
+            else if change.compactDiff != nil { status = .modified }
             else {
                 switch (change.oldText, change.newText) {
                 case (nil, nil): status = .unknown
@@ -33,14 +34,20 @@ public enum FileChangeArtifactMapper {
                 }
             }
             let evidence = boundedEvidence(
-                oldText: change.oldText, newText: change.newText, patch: nil,
+                oldText: change.oldText, newText: change.newText, patch: change.compactDiff?.patch,
                 status: status, isBinary: false, explanation: change.explanation,
-                budget: &budget
+                allowsEmptyPatch: change.compactDiff != nil, budget: &budget
             )
-            let counts = lineCounts(old: evidence.old, new: evidence.new)
+            let counts: (additions: Int, deletions: Int)
+            if evidence.patch != nil, let compact = change.compactDiff {
+                counts = (compact.additions, compact.deletions)
+            } else {
+                counts = lineCounts(old: evidence.old, new: evidence.new)
+            }
             return FileChangeArtifact(
                 absolutePath: path, displayPath: displayPath(for: path, workingDirectory: workingDirectory),
                 status: status, additions: counts.additions, deletions: counts.deletions,
+                hasLineCounts: evidence.explanation == nil,
                 isBinary: evidence.binary, oldText: evidence.old, newText: evidence.new,
                 patch: evidence.patch, explanation: evidence.explanation
             )
@@ -66,6 +73,7 @@ public enum FileChangeArtifactMapper {
             return FileChangeArtifact(
                 absolutePath: path, displayPath: displayPath(for: path, workingDirectory: workingDirectory),
                 status: status, additions: entry.additions, deletions: entry.deletions,
+                hasLineCounts: !evidence.binary && (evidence.explanation == nil || entry.additions > 0 || entry.deletions > 0),
                 isBinary: evidence.binary, oldText: evidence.old, newText: evidence.new,
                 patch: evidence.patch, explanation: evidence.explanation
             )
@@ -103,9 +111,10 @@ public enum FileChangeArtifactMapper {
     private static func boundedEvidence(
         oldText: String?, newText: String?, patch: String?,
         status: FileChangeArtifact.Status, isBinary: Bool, explanation: String?,
-        budget: inout Int
+        allowsEmptyPatch: Bool = false, budget: inout Int
     ) -> Evidence {
         let binary = isBinary || oldText?.contains("\0") == true || newText?.contains("\0") == true
+            || patch?.contains("\0") == true
         if let explanation { return Evidence(binary: binary, explanation: explanation) }
         if binary { return Evidence(binary: true, explanation: binaryExplanation) }
         // Missing text is not an empty file. Only added/deleted states establish
@@ -124,7 +133,7 @@ public enum FileChangeArtifactMapper {
             budget -= oldBytes + newBytes
             return Evidence(old: oldText, new: newText)
         }
-        if let patch, !patch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        if let patch, allowsEmptyPatch || !patch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            patch.utf8.count <= limit, patch.utf8.count <= budget {
             budget -= patch.utf8.count
             return Evidence(patch: patch)

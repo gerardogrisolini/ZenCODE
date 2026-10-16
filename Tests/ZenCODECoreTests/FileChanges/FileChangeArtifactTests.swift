@@ -183,3 +183,81 @@ struct FileChangeArtifactTests {
         return url
     }
 }
+
+extension FileChangeArtifactTests {
+    @Test
+    func compactOperationEvidenceKeepsCountsAndPatchWithoutReadingWorktree() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try "unrelated later state\n".write(to: directory.appendingPathComponent("CHANGELOG.md"), atomically: true, encoding: .utf8)
+        let patch = "@@ -100,3 +100,3 @@\n context\n-old entry\n+new entry\n context\n"
+        let artifacts = FileChangeArtifactMapper.artifacts(from: [
+            .init(path: "CHANGELOG.md", oldText: nil, newText: nil,
+                  compactDiff: .init(patch: patch, additions: 1, deletions: 1))
+        ], workingDirectory: directory)
+        let artifact = try #require(artifacts.first)
+        #expect(artifact.status == .modified)
+        #expect(artifact.hasLineCounts)
+        #expect(artifact.additions == 1 && artifact.deletions == 1)
+        #expect(artifact.oldText == nil && artifact.newText == nil)
+        #expect(artifact.patch == patch)
+        #expect(artifact.explanation == nil)
+        let rendered = TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)])
+        #expect(rendered.contains("**modified `CHANGELOG.md`**  +1 -1"))
+        #expect(rendered.contains("101 │ -old entry"))
+        #expect(rendered.contains("101 │ +new entry"))
+        #expect(!rendered.contains("unrelated later state"))
+    }
+
+    @Test
+    func unavailableCountsAreNotRenderedAsZeroButKnownZerosRemainVisible() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let artifacts = FileChangeArtifactMapper.artifacts(from: [
+            .init(path: "large.txt", oldText: nil, newText: nil,
+                  explanation: "Diff unavailable: compact diff exceeds the byte limit."),
+            .init(path: "empty.txt", oldText: nil, newText: ""),
+            .init(path: "unchanged.txt", oldText: nil, newText: nil,
+                  compactDiff: .init(patch: "", additions: 0, deletions: 0))
+        ], workingDirectory: directory)
+        #expect(!artifacts[0].hasLineCounts)
+        #expect(artifacts[1].hasLineCounts && artifacts[2].hasLineCounts)
+        let rendered = TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)])
+        #expect(rendered.contains("**unknown `large.txt`**\nExplanation:"))
+        #expect(!rendered.contains("**unknown `large.txt`**  +0 -0"))
+        #expect(rendered.contains("**added `empty.txt`**  +0 -0"))
+        #expect(rendered.contains("**modified `unchanged.txt`**  +0 -0"))
+    }
+
+    @Test
+    func mapperAppliesOperationBudgetToCompactPatchesAndDropsCountsOnFallback() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let patch = String(repeating: "+", count: OperationFileChangeRecorder.maximumTextBytes)
+        var changes = (0..<5).map {
+            OperationFileChange(path: "file\($0)", oldText: nil, newText: nil,
+                compactDiff: .init(patch: patch, additions: 10, deletions: 10))
+        }
+        changes.append(.init(path: "oversized", oldText: nil, newText: nil,
+            compactDiff: .init(patch: patch + "+", additions: 1, deletions: 1)))
+        let artifacts = FileChangeArtifactMapper.artifacts(from: changes, workingDirectory: directory)
+        #expect(artifacts.prefix(4).allSatisfy { $0.patch == patch && $0.hasLineCounts })
+        #expect(artifacts.suffix(2).allSatisfy { $0.patch == nil && !$0.hasLineCounts && $0.explanation != nil })
+    }
+
+    @Test
+    func compactEvidenceSurvivesLiveHistoryPathNormalizationWithoutBecomingPostimage() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let history = SessionFileArtifactHistory(sessionID: "session")
+        let id = try #require(await history.beginTurn(sessionID: "session"))
+        let diff = OperationFileChange.CompactDiff(patch: "@@ -1,1 +1,1 @@\n-old\n+new\n", additions: 1, deletions: 1)
+        let change = OperationFileChange(path: "CHANGELOG.md", oldText: nil, newText: nil, compactDiff: diff)
+        let live = try #require(await history.recordLive([change], agentID: nil, callID: "c", turnID: id, workingDirectory: directory))
+        #expect(live.artifacts.first?.patch == diff.patch)
+        let latest = try #require(await history.sealTurn(id).first)
+        #expect(latest.path == directory.appendingPathComponent("CHANGELOG.md").path)
+        #expect(latest.compactDiff == diff)
+        #expect(latest.oldText == nil && latest.newText == nil)
+    }
+}

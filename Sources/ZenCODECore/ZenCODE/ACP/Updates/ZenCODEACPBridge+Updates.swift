@@ -192,6 +192,10 @@ extension ZenCODEACPBridge {
         for artifact in artifacts {
             if let explanation = artifact.explanation {
                 content.append(toolCallTextContent("\(artifact.absolutePath): \(explanation)"))
+            } else if let patch = artifact.patch {
+                // ACP diff content requires complete old/new images. A compact
+                // patch is standard text content, never a fabricated empty file.
+                content.append(toolCallTextContent("\(artifact.absolutePath):\n\(patch)"))
             } else {
                 content.append([
                     "type": "diff", "path": artifact.absolutePath,

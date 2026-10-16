@@ -316,3 +316,23 @@ extension ACPStandardPresentationTests {
         #expect(output.withLock { $0.count } == 1)
     }
 }
+
+extension ACPStandardPresentationTests {
+    @Test func compactDiffUsesStandardTextWithoutInventingCompleteFileImages() {
+        let call = DirectAgentToolCall(id: "c", name: "local.editFile", argumentsObject: [:], argumentsJSON: "{}")
+        let patch = "@@ -100,1 +100,1 @@\n-old entry\n+new entry\n"
+        let result = DirectAgentToolResult(output: "Updated", summary: "Updated", fileChanges: [
+            .init(path: "/tmp/CHANGELOG.md", oldText: nil, newText: nil,
+                  compactDiff: .init(patch: patch, additions: 1, deletions: 1))
+        ])
+        let update = ZenCODEACPBridge.toolCallCompletionJSONUpdate(for: call, result: result)
+        let content = update.objectValue?["content"]?.arrayValue ?? []
+        #expect(content.count == 2)
+        #expect(content.allSatisfy { $0.objectValue?["type"] == .string("content") })
+        #expect(content.last?.objectValue?["content"]?.objectValue?["type"] == .string("text"))
+        #expect(content.last?.objectValue?["content"]?.objectValue?["text"] == .string("/tmp/CHANGELOG.md:\n" + patch))
+        #expect(content.allSatisfy { $0.objectValue?["oldText"] == nil && $0.objectValue?["newText"] == nil })
+        #expect(update.objectValue?["compactDiff"] == nil)
+        #expect(update.objectValue?["hasLineCounts"] == nil)
+    }
+}

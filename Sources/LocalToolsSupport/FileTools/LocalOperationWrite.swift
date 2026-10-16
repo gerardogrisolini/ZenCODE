@@ -100,7 +100,7 @@ enum LocalOperationWrite {
         var info = stat()
         guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
               info.st_dev == initial.st_dev, info.st_ino == initial.st_ino,
-              info.st_size >= 0, info.st_size <= OperationFileChangeRecorder.maximumTextBytes,
+              info.st_size >= 0, info.st_size <= OperationFileChangeRecorder.maximumSnapshotBytes,
               recorder.reserveSnapshotBytes(Int(info.st_size)) else { return nil }
         let size = Int(info.st_size)
         var bytes = [UInt8](repeating: 0, count: size + 1)
@@ -139,17 +139,43 @@ enum LocalOperationWrite {
                 explanation: "Diff unavailable: an opaque operation overlapped this file mutation."))
             return
         }
-        guard (after?.utf8.count ?? 0) <= OperationFileChangeRecorder.maximumTextBytes else {
-            recorder.record(.init(path: path.standardizedFileURL.path, oldText: nil, newText: nil,
-                explanation: "Diff unavailable: file evidence exceeds the byte limit."))
-            return
+        let oldBytes = before?.count ?? 0
+        let newBytes = after?.utf8.count ?? 0
+        let needsCompactDiff = max(oldBytes, newBytes) > OperationFileChangeRecorder.maximumTextBytes
+        if needsCompactDiff {
+            guard oldBytes <= OperationFileChangeRecorder.maximumSnapshotBytes,
+                  newBytes <= OperationFileChangeRecorder.maximumSnapshotBytes,
+                  recorder.reserveDiffInputBytes(oldBytes + newBytes) else {
+                recorder.record(.init(path: path.standardizedFileURL.path, oldText: nil, newText: nil,
+                    explanation: "Diff unavailable: compact diff inputs exceed the file or operation byte limit."))
+                return
+            }
         }
         let oldText = before.flatMap { String(data: $0, encoding: .utf8) }
-        if after?.contains("\0") != true && oldText?.contains("\0") != true && (!existed || oldText != nil) {
-            recorder.record(OperationFileChange(path: path.standardizedFileURL.path, oldText: oldText, newText: after))
-        } else {
+        guard after?.contains("\0") != true, oldText?.contains("\0") != true,
+              !existed || oldText != nil else {
             recorder.record(OperationFileChange(path: path.standardizedFileURL.path, oldText: nil, newText: nil,
                 explanation: "Diff unavailable: contents are nonregular, binary, unreadable, unstable, or exceed the evidence byte limit."))
+            return
+        }
+        guard needsCompactDiff else {
+            recorder.record(OperationFileChange(path: path.standardizedFileURL.path, oldText: oldText, newText: after))
+            return
+        }
+        // A large addition/deletion necessarily exceeds the patch byte budget;
+        // compaction only removes unchanged context from complete modifications.
+        guard let oldText, let after else {
+            recorder.record(.init(path: path.standardizedFileURL.path, oldText: nil, newText: nil,
+                explanation: "Diff unavailable: compact diff exceeds the byte limit."))
+            return
+        }
+        do {
+            let diff = try LocalCompactDiff.make(old: oldText, new: after, maximumBytes: recorder.remainingDiffBytes)
+            recorder.record(.init(path: path.standardizedFileURL.path, oldText: nil, newText: nil, compactDiff: diff))
+        } catch {
+            let reason = (error as? LocalCompactDiff.Failure) == .workLimit ? "computation limit" : "byte limit"
+            recorder.record(.init(path: path.standardizedFileURL.path, oldText: nil, newText: nil,
+                explanation: "Diff unavailable: compact diff exceeds the \(reason)."))
         }
     }
 

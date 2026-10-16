@@ -318,7 +318,7 @@ struct TerminalChatLiveArtifactTests {
         await terminal.handleChangesCommand("/changes diff")
         let events = await renderer.capturedWriteEvents()
         let output = events.map(\.text).joined()
-        #expect(output.contains("**modified `Binary.bin`**  +0 -0 (binary)"))
+        #expect(output.contains("**modified `Binary.bin`** (binary)"))
         #expect(output.contains("Explanation: \(FileChangeArtifactMapper.binaryExplanation)"))
         #expect(output.contains("**modified `Missing.swift`**  +1 -1"))
         #expect(output.contains("Explanation: \(FileChangeArtifactMapper.unavailableEvidenceExplanation)"))
