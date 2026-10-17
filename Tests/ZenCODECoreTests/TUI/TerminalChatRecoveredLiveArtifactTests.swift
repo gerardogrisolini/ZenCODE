@@ -68,8 +68,49 @@ struct TerminalChatRecoveredLiveArtifactTests {
         }
     }
 
+    @Test(arguments: [false, true], [false, true])
+    nonisolated func checkpointReplacesSameCompletionCompactDiffOfLargeFile(
+        delegated: Bool, isTerminal: Bool
+    ) async throws {
+        try await withTerminal(isTerminal: isTerminal) { directory, terminal, renderer, coordinator in
+            let prefix = String(repeating: "// unchanged context\n", count: 4_096)
+            let before = prefix + "let value = 1\n"
+            #expect(before.utf8.count > OperationFileChangeRecorder.maximumTextBytes)
+            let file = directory.appendingPathComponent("Value.swift")
+            try Data(before.utf8).write(to: file)
+            await coordinator.captureBaselineIfNeeded(forAgentToolCall: call("edit", path: "Value.swift"))
+            let context = try #require(await terminal.beginFileArtifactTurn(coordinator: coordinator))
+            try Data((prefix + "let value = 2\n").utf8).write(to: file)
+            // Above 64 KiB an edit carries only its compact patch, which cannot
+            // prove the postimage, so the checkpoint reports the same change.
+            let unchanged = String(repeating: " // unchanged context\n", count: 3)
+            let change = OperationFileChange(
+                path: file.path, oldText: nil, newText: nil,
+                compactDiff: .init(
+                    patch: "@@ -4094,4 +4094,4 @@\n" + unchanged + "-let value = 1\n+let value = 2\n",
+                    additions: 1, deletions: 1
+                )
+            )
+            await publish(change, delegated: delegated, terminal: terminal, context: context)
+
+            let events = await renderer.capturedWriteEvents()
+            let output = TerminalANSIText.stripANSI(events.map(\.text).joined())
+            let displayedPath = isTerminal ? "Value.swift" : "`Value.swift`"
+            // Printed once, from the workspace checkpoint with its Git headers.
+            #expect(output.components(separatedBy: "modified \(displayedPath)").count - 1 == 1)
+            #expect(output.components(separatedBy: "│ -let value = 1").count - 1 == 1)
+            #expect(output.components(separatedBy: "│ +let value = 2").count - 1 == 1)
+            #expect(output.contains("diff --git a/Value.swift b/Value.swift"))
+            // Final reconciliation does not print the already shown state again.
+            _ = try #require(await terminal.collectFileChangeSummaryIfNeeded(
+                from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
+            ))
+            #expect(await renderer.capturedWriteEvents().count == events.count)
+        }
+    }
+
     @Test(arguments: UnusableCheckpoint.allCases, [false, true])
-    nonisolated func genuineFallbackRemainsWithoutUsableSamePathCheckpoint(
+    nonisolated func fallbackRemainsOnlyWithoutSamePathCheckpoint(
         checkpoint: UnusableCheckpoint, delegated: Bool
     ) async throws {
         try await withTerminal { directory, terminal, renderer, coordinator in
@@ -104,11 +145,27 @@ struct TerminalChatRecoveredLiveArtifactTests {
             await publish(fallback(), delegated: delegated, terminal: terminal, context: context)
             let events = await renderer.capturedWriteEvents()
             let output = TerminalANSIText.stripANSI(events.map(\.text).joined())
-            #expect(output.components(separatedBy: "unknown `Value.swift`").count - 1 == 1)
-            #expect(output.contains(FileChangeArtifactMapper.byteLimitExplanation))
-            if checkpoint == .otherPath {
+            // A same-path checkpoint is printed instead of the fallback even
+            // without a renderable diff, so the file still appears once.
+            let keepsFallback = checkpoint == .absent || checkpoint == .otherPath
+            #expect(output.components(separatedBy: "`Value.swift`**").count - 1 == 1)
+            #expect(output.components(separatedBy: "unknown `Value.swift`").count - 1 == (keepsFallback ? 1 : 0))
+            switch checkpoint {
+            case .absent:
+                #expect(output.contains(FileChangeArtifactMapper.byteLimitExplanation))
+            case .otherPath:
+                #expect(output.contains(FileChangeArtifactMapper.byteLimitExplanation))
                 #expect(output.components(separatedBy: "modified `Other.swift`").count - 1 == 1)
                 #expect(output.contains("1 │ +let value = 2"))
+            case .oversized:
+                #expect(output.contains("**modified `Value.swift`**"))
+                #expect(output.contains(FileChangeArtifactMapper.byteLimitExplanation))
+            case .emptyDeletion:
+                #expect(output.contains("**deleted `Value.swift`**"))
+                #expect(!output.contains("Diff unavailable"))
+            case .binary:
+                #expect(output.contains("**modified `Value.swift`** (binary)"))
+                #expect(output.contains(FileChangeArtifactMapper.binaryExplanation))
             }
 
             let summary = try #require(await terminal.collectFileChangeSummaryIfNeeded(
@@ -139,7 +196,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
     }
 
     @Test
-    nonisolated func replacementDoesNotDeduplicateSuccessfulArtifactsOrOtherCompletionsAndTurns() async throws {
+    nonisolated func checkpointReplacesDifferingArtifactButNotOtherCompletionsOrTurns() async throws {
         try await withTerminal { directory, terminal, renderer, coordinator in
             let file = directory.appendingPathComponent("Value.swift")
             try Data("let value = 1\n".utf8).write(to: file)
@@ -160,8 +217,9 @@ struct TerminalChatRecoveredLiveArtifactTests {
             let events = await renderer.capturedWriteEvents()
             let output = TerminalANSIText.stripANSI(events.map(\.text).joined())
             #expect(output.components(separatedBy: "unknown `Value.swift`").count - 1 == 1)
-            #expect(output.components(separatedBy: "modified `Value.swift`").count - 1 == 2)
-            #expect(output.contains("1 │ +let operation = 2"))
+            // The workspace checkpoint wins even over a valid, differing operation diff.
+            #expect(output.components(separatedBy: "modified `Value.swift`").count - 1 == 1)
+            #expect(!output.contains("let operation = 2"))
             #expect(output.contains("1 │ +let workspace = 2"))
             _ = await terminal.collectFileChangeSummaryIfNeeded(
                 from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id

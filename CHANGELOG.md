@@ -29,6 +29,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Setup's agent model bindings table is now drawn inside the "Agent model
   bindings" menu frame instead of being printed before it, so it stays visible
   without scrolling back past the menu's blank screen.
+- Live file artifacts no longer show the same file twice after one tool
+  completes, as happened for edits to files above 64 KiB. When the workspace
+  checkpoint reports a file also covered by the tool's own evidence, only the
+  checkpoint is shown, even if their diffs differ; artifact history and undo
+  baselines are unchanged.
 
 ## [2.3.2] - 2026-10-16
 

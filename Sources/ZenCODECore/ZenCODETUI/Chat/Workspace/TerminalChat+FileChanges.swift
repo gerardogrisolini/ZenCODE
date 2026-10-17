@@ -68,14 +68,12 @@ extension TerminalChat {
            let turn = await context.history.recordLiveSummary(
                summary, turnID: context.id, workingDirectory: configuration.workingDirectory
            ) {
-            // Replace only this completion's direct fallbacks; keep both recordings intact.
-            let recoveredPaths = Set(turn.artifacts.filter {
-                $0.explanation == nil && !$0.isBinary && Self.fileArtifactDiff($0) != nil
-            }.map(\.absolutePath))
+            // Print each file once per completion: the workspace checkpoint
+            // replaces this completion's direct artifact for the same path,
+            // even when their diffs differ. Both recordings stay intact.
+            let checkpointPaths = Set(turn.artifacts.map(\.absolutePath))
             turns = turns.compactMap { liveTurn in
-                let artifacts = liveTurn.artifacts.filter {
-                    $0.explanation == nil || !recoveredPaths.contains($0.absolutePath)
-                }
+                let artifacts = liveTurn.artifacts.filter { !checkpointPaths.contains($0.absolutePath) }
                 return artifacts.isEmpty ? nil : .init(number: liveTurn.number, artifacts: artifacts)
             }
             turns.append(turn)
