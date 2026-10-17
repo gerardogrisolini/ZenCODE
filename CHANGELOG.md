@@ -10,6 +10,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- The `tasks.update` tool schema no longer declares a root-level `anyOf`, which
+  Anthropic-compatible providers reject with HTTP 400 `invalid_request_error`.
+  Root-task and `/goal` workflow modes remain validated at execution time.
+- Anthropic Subscription requests now announce Claude Code `2.1.302` instead of
+  `2.1.201`, so current models such as `claude-opus-5-5` no longer fail with
+  HTTP 400 requiring Claude Code `2.1.280` or newer.
+
 ## [2.3.2] - 2026-10-16
 
 ### Changed

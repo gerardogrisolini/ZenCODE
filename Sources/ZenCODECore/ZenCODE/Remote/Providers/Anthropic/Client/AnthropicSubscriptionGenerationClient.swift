@@ -28,7 +28,7 @@ public actor AnthropicSubscriptionGenerationClient: DirectToolRuntimeBackend {
     }
 
     static let apiBaseURL = URL(string: "https://api.anthropic.com/v1")!
-    static let claudeCodeVersion = "2.1.201"
+    static let claudeCodeVersion = "2.1.302"
     static let claudeCodeBetaHeader = "claude-code-20250219"
     static let oauthBetaHeader = "oauth-2025-04-20"
     static let longContextBetaHeader = "context-1m-2025-08-07"
