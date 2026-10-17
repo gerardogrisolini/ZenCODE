@@ -12,14 +12,14 @@ import FoundationNetworking
             let data = Data("""
             {"data":[
               {"id":"entirely-new-adaptive","max_input_tokens":300000,"max_tokens":150000,"capabilities":{
-                "thinking":{"supported":true,"types":{"adaptive":{"supported":true}}},
+                "thinking":{"supported":true,"types":{"adaptive":{"supported":true},"disabled":{"supported":true}}},
                 "effort":{"supported":true,"low":{"supported":true},"max":{"supported":true}}
               }},
               {"id":"entirely-new-manual","capabilities":{
                 "thinking":{"supported":true,"types":{"enabled":{"supported":true}}}
               }},
               {"id":"claude-opus-5","max_tokens":150000,"capabilities":{
-                "thinking":{"supported":true,"types":{"adaptive":{"supported":true}}},
+                "thinking":{"supported":true,"types":{"adaptive":{"supported":true},"disabled":{"supported":false}}},
                 "effort":{"supported":true,"high":{"supported":true}}
               }}],"has_more":false}
             """.utf8)
@@ -28,9 +28,12 @@ import FoundationNetworking
         // No scope -> no writes, and the injected transport cannot make live requests.
         let result = try await client.load(provider: .anthropic, accessToken: "fixture")
         #expect(result.models[0].anthropicThinkingMode == "adaptive")
+        #expect(result.models[0].anthropicSupportsDisabledThinking == true)
         #expect(result.models[0].thinkingSupport?.availableSelections == [.off, .low, .max])
         #expect(result.models[1].thinkingSupport == .generic)
-        #expect(result.models[2].thinkingSupport?.availableSelections == [.off, .high])
+        // Models that reject `thinking.type: "disabled"` must not offer "off".
+        #expect(result.models[2].anthropicSupportsDisabledThinking == false)
+        #expect(result.models[2].thinkingSupport?.availableSelections == [.high])
         let candidates = try await ZenCODESetupRunner.discoveredSubscriptionCandidates(
             provider: .anthropic, accessToken: "fixture", existingModels: [], client: client
         )
@@ -61,6 +64,7 @@ import FoundationNetworking
             #expect(thinking["type"]?.stringValue == (index == 1 ? "enabled" : "adaptive"))
             if index != 1 {
                 #expect(thinking["budget_tokens"] == nil)
+                #expect(thinking["display"]?.stringValue == "summarized")
                 #expect(payload.objectValue?["output_config"]?.objectValue?["effort"]?.stringValue == selection.rawValue)
             }
             await runtime.shutdown()

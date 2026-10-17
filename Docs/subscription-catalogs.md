@@ -67,13 +67,17 @@ only `[off]`, not enabled thinking. Legacy manifests without this metadata retai
 the previous off omission and minimal-to-low behavior.
 
 Anthropic reads `data`, IDs/titles, `max_input_tokens`, `max_tokens`, and explicit
-`capabilities.thinking.types.adaptive/enabled`, `capabilities.effort` levels,
+`capabilities.thinking.types.adaptive/enabled/disabled`, `capabilities.effort` levels,
 `image_input` and `pdf_input`. A fully declared adaptive mode with supported
 levels is persisted as `subscriptionThinkingMode=adaptive` in generation overrides;
 manual `enabled` mode exposes the on/off budget path. Generation uses the persisted
-mode and levels, not ID-based guesses. Adaptive discovery does not infer support
-for `thinking.display=summarized`; no such field is sent without a capability
-contract. Input modality flags remain informational.
+mode and levels, not ID-based guesses. Adaptive models offer `off` only when
+`capabilities.thinking.types.disabled.supported` is true, because several of them
+reject `thinking.type=disabled` with HTTP 400; catalog snapshots without that flag
+are treated as unsupported. Adaptive requests send `thinking.display=summarized`,
+since adaptive-thinking models default to `omitted` and would otherwise return
+thinking blocks with empty text. Manual `enabled` requests send no `display`.
+Input modality flags remain informational.
 
 Missing/unknown capabilities persist an explicit disabled mode and `[off]`.
 Static subscription catalogs and all model-ID-based defaults, limits and capability

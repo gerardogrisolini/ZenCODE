@@ -18,6 +18,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Anthropic Subscription requests now announce Claude Code `2.1.302` instead of
   `2.1.201`, so current models such as `claude-opus-5-5` no longer fail with
   HTTP 400 requiring Claude Code `2.1.280` or newer.
+- Anthropic Subscription adaptive-thinking requests now send
+  `thinking.display: "summarized"`. Current Claude models default to
+  `"omitted"`, so the selected thinking level ran but its text arrived empty
+  and thinking looked disabled.
+- Anthropic Subscription setup offers the `off` thinking level only for models
+  whose catalog declares `thinking.types.disabled` support. Models such as
+  Claude Opus 5.5 reject `thinking: {type: "disabled"}` with HTTP 400. Re-run the
+  model setup to refresh already configured models.
 - Setup's agent model bindings table is now drawn inside the "Agent model
   bindings" menu frame instead of being printed before it, so it stays visible
   without scrolling back past the menu's blank screen.

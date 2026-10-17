@@ -21,16 +21,23 @@ struct SubscriptionModelCatalogClient: Sendable {
         let defaultReasoningLevel: String?
         let inputModalities: [String]
         var anthropicThinkingMode: String? = nil
+        /// Anthropic `capabilities.thinking.types.disabled.supported`. Several
+        /// adaptive models reject `thinking: {type: "disabled"}` with HTTP 400,
+        /// so "off" is offered only when the catalog confirms it. A missing
+        /// value (older cache snapshots) is treated as unsupported.
+        var anthropicSupportsDisabledThinking: Bool? = nil
 
         var thinkingSupport: ModelThinkingSupport? {
             if anthropicThinkingMode == "enabled" { return .generic }
             let levels = reasoningLevels.compactMap(Self.reasoningSelection)
             guard !levels.isEmpty else { return nil }
             let hasThinking = levels.contains { $0 != .off }
+            let offSelection: [ThinkingSelection] = anthropicThinkingMode == "adaptive"
+                && anthropicSupportsDisabledThinking == true ? [.off] : []
             return ModelThinkingSupport(
                 supportsThinking: hasThinking, supportsReasoningEffort: hasThinking,
                 supportsPreserveThinking: false,
-                availableSelections: anthropicThinkingMode == "adaptive" ? [.off] + levels : levels,
+                availableSelections: offSelection + levels,
                 defaultSelection: defaultReasoningLevel.flatMap(Self.reasoningSelection)
                     .flatMap { levels.contains($0) ? $0 : nil } ?? levels[0]
             )
@@ -182,6 +189,7 @@ struct SubscriptionModelCatalogClient: Sendable {
                 var levels = (entry["supported_reasoning_levels"] as? [[String: Any]] ?? [])
                     .compactMap { $0["effort"] as? String }
                 var anthropicMode: String?
+                var anthropicSupportsDisabled: Bool?
                 var modalities = entry["input_modalities"] as? [String] ?? []
                 if provider == .anthropic {
                     let capabilities = entry["capabilities"] as? [String: Any] ?? [:]
@@ -189,6 +197,7 @@ struct SubscriptionModelCatalogClient: Sendable {
                     let types = thinking["types"] as? [String: Any] ?? [:]
                     let effort = capabilities["effort"] as? [String: Any] ?? [:]
                     anthropicMode = "disabled"
+                    anthropicSupportsDisabled = Self.supported(types["disabled"])
                     if thinking["supported"] as? Bool == true {
                         if Self.supported(types["adaptive"]), effort["supported"] as? Bool == true {
                             levels = ["low", "medium", "high", "xhigh", "max"].filter { Self.supported(effort[$0]) }
@@ -207,7 +216,8 @@ struct SubscriptionModelCatalogClient: Sendable {
                     maxOutputTokens: positive(entry["max_tokens"]),
                     reasoningLevels: levels,
                     defaultReasoningLevel: entry["default_reasoning_level"] as? String,
-                    inputModalities: modalities, anthropicThinkingMode: anthropicMode))
+                    inputModalities: modalities, anthropicThinkingMode: anthropicMode,
+                    anthropicSupportsDisabledThinking: anthropicSupportsDisabled))
             }
             cursor = nil
             if provider == .anthropic {

@@ -85,7 +85,11 @@ extension AnthropicSubscriptionGenerationClient {
               let selection, options.contains(selection) else { return (nil, nil) }
         guard selection.isEnabled else { return (["type": "disabled"], nil) }
         if mode == "adaptive" {
-            return (["type": "adaptive"], ["effort": selection.rawValue])
+            // Adaptive-thinking models default `display` to "omitted", which
+            // returns thinking blocks with an empty text field (signature
+            // only). Request the readable summary so the selected level is
+            // visible to the user.
+            return (["type": "adaptive", "display": "summarized"], ["effort": selection.rawValue])
         }
         let budget = adjustedThinkingBudget(thinkingBudgetTokens(for: selection), maxTokens: maxTokens)
         guard budget >= minimumThinkingBudgetTokens else { return (nil, nil) }

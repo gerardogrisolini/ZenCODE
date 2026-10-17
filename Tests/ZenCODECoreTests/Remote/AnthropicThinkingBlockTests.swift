@@ -391,12 +391,13 @@ struct AnthropicThinkingBlockTests {
         #expect(nilSelection.thinking == nil)
         #expect(nilSelection.outputConfig == nil)
         #expect(offSelection.thinking?["type"] as? String == "disabled")
+        #expect(offSelection.thinking?["display"] == nil)
         #expect(offSelection.outputConfig == nil)
         #expect(nonAdaptiveOff.thinking?["type"] as? String == "disabled")
     }
 
     @Test
-    func adaptiveThinkingMetadataDoesNotInferDisplaySupport() throws {
+    func adaptiveThinkingRequestsSummarizedDisplay() throws {
         let payload = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
             mode: "adaptive", selection: .high, options: [.off, .high],
             maxTokens: 8192
@@ -406,18 +407,18 @@ struct AnthropicThinkingBlockTests {
 
         #expect(thinking["type"] as? String == "adaptive")
         #expect(thinking["budget_tokens"] == nil)
-        #expect(thinking["display"] == nil)
+        #expect(thinking["display"] as? String == "summarized")
         #expect(outputConfig["effort"] as? String == "high")
     }
 
     @Test
-    func adaptiveThinkingMetadataPreservesMaxEffortWithoutDisplayGuess() throws {
+    func adaptiveThinkingPreservesMaxEffortWithSummarizedDisplay() throws {
         let payload = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
             mode: "adaptive", selection: .max, options: [.off, .max], maxTokens: 64_000
         )
         let thinking = try #require(payload.thinking)
         #expect(thinking["type"] as? String == "adaptive")
-        #expect(thinking["display"] == nil)
+        #expect(thinking["display"] as? String == "summarized")
         #expect(payload.outputConfig?["effort"] as? String == "max")
     }
 
