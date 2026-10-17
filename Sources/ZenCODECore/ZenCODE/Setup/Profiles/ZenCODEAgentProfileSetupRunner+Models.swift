@@ -77,8 +77,6 @@ extension ZenCODEAgentProfileSetupRunner {
         )
 
         while true {
-            printAgentModelSummary(agents)
-
             var items = [
                 TerminalCheckboxMenuItem(
                     value: 0,
@@ -98,7 +96,8 @@ extension ZenCODEAgentProfileSetupRunner {
             switch TerminalCheckboxMenu.selectOne(
                 title: "Agent model bindings",
                 items: items,
-                selected: 0
+                selected: 0,
+                header: agentModelSummaryLines(agents)
             ) {
             case nil:
                 // Esc/EOF: discard unsaved edits and leave without persisting.
@@ -371,12 +370,22 @@ extension ZenCODEAgentProfileSetupRunner {
 
     // MARK: - Display
 
-    private static func printAgentModelSummary(_ agents: [AgentProfile]) {
-        let table = TerminalChat.renderAgentModelBindings(
+    /// Bindings table shown inside the "Agent model bindings" menu frame.
+    /// The menu may own the alternate screen, so a table printed beforehand
+    /// would only be reachable by scrolling back. The frame consumes four
+    /// columns (borders and padding); the table renderer reserves one more.
+    private static func agentModelSummaryLines(_ agents: [AgentProfile]) -> [String] {
+        let frameColumns = TerminalCheckboxMenu.terminalGeometry().columns
+        let table = TerminalChat.renderAgentModelBindingsTable(
             agents: agents,
-            selectedAgent: nil
+            selectedAgent: nil,
+            columns: max(1, frameColumns - 3)
         )
-        AgentOutput.standardError.writeString("\n" + table + "\n")
+        var lines = table.components(separatedBy: "\n")
+        while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true {
+            lines.removeLast()
+        }
+        return lines
     }
 
     static func agentModelSummary(_ agent: AgentProfile) -> String {

@@ -16,6 +16,10 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         var focusedIndex: Int
         var input: String? = nil
         var inputCursor: Int? = nil
+        /// Non-selectable context lines (for example a summary table) drawn
+        /// inside the menu frame between the help text and the items, so they
+        /// stay visible even when a standalone menu owns the alternate screen.
+        var header: [String] = []
     }
     private enum Presentation: Equatable, Sendable {
         case menu(Modal)
@@ -451,8 +455,14 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         }
         let capacity = max(1, geometry.rows - footerRows - 4)
         let fixed = [modal.title] + modal.help + [""]
-        let selected = TerminalCheckboxMenu.visibleItemLines(items, focusedIndex: focusedIndex, capacity: max(1, capacity - fixed.count))
-        return Array(fixed.prefix(max(0, capacity - selected.count))) + selected
+        let itemCapacity = max(1, capacity - fixed.count)
+        // Items keep priority; the header only uses rows they leave free.
+        let header = TerminalCheckboxMenu.visibleHeaderLines(
+            modal.header,
+            capacity: itemCapacity - min(items.count, itemCapacity)
+        )
+        let selected = TerminalCheckboxMenu.visibleItemLines(items, focusedIndex: focusedIndex, capacity: max(1, itemCapacity - header.count))
+        return Array(fixed.prefix(max(0, capacity - selected.count - header.count))) + header + selected
     }
     private func dialogLines(_ dialog: TerminalDialogPresentation) -> [String] {
         dialog.visibleLines(columns: geometry.columns, capacity: max(0, geometry.rows - footerRows - 2))

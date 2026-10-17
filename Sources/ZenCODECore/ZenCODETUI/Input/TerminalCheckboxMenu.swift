@@ -211,13 +211,16 @@ public enum TerminalCheckboxMenu {
         return selectedValues
     }
 
+    /// - Parameter header: Non-selectable context lines (for example a
+    ///   summary table) rendered inside the menu frame above the items.
     public static func selectOne<Value: Hashable>(
         title: String,
         items: [TerminalCheckboxMenuItem<Value>],
         selected initialSelection: Value?,
+        header: [String] = [],
         reservedBottomRows: Int = 0
     ) -> Value? {
-        selectOne(title: title, items: items, selected: initialSelection,
+        selectOne(title: title, items: items, selected: initialSelection, header: header,
                   reservedBottomRows: reservedBottomRows, shouldCancel: nil)
     }
 
@@ -225,6 +228,7 @@ public enum TerminalCheckboxMenu {
         title: String,
         items: [TerminalCheckboxMenuItem<Value>],
         selected initialSelection: Value?,
+        header: [String] = [],
         reservedBottomRows: Int,
         shouldCancel: (@Sendable () -> Bool)?
     ) -> Value? {
@@ -235,7 +239,8 @@ public enum TerminalCheckboxMenu {
         let focusedIndex = items.firstIndex { $0.value == initialSelection } ?? 0
         guard case let .single(selectedValue)? = selectMenu(
             title: title, items: items, initialState: .single(initialSelection),
-            focusedIndex: focusedIndex, reservedBottomRows: reservedBottomRows, shouldCancel: shouldCancel
+            focusedIndex: focusedIndex, header: header,
+            reservedBottomRows: reservedBottomRows, shouldCancel: shouldCancel
         ) else { return nil }
         return selectedValue
     }
@@ -245,6 +250,7 @@ public enum TerminalCheckboxMenu {
         items: [TerminalCheckboxMenuItem<Value>],
         initialState: SelectionState<Value>,
         focusedIndex initialFocusedIndex: Int,
+        header: [String] = [],
         reservedBottomRows: Int,
         shouldCancel: (@Sendable () -> Bool)?,
         rawInput injectedRawInput: TerminalRawInput? = nil,
@@ -270,7 +276,8 @@ public enum TerminalCheckboxMenu {
                     }
                     return "\(focus) \(marker) \(item.title)\(detailSuffix(for: item))"
                 }
-                modal.update(.init(title: title, help: state.helpLines, lines: lines, focusedIndex: focusedIndex))
+                modal.update(.init(title: title, help: state.helpLines, lines: lines,
+                                   focusedIndex: focusedIndex, header: header))
                 guard let key = readKey(
                     rawInput: rawInput,
                     shouldCancel: cancel,

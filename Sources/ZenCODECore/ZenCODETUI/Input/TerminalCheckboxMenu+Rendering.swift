@@ -153,6 +153,22 @@ extension TerminalCheckboxMenu {
         return visibleLines
     }
 
+    /// Fits non-selectable header lines into `capacity` rows, followed by a
+    /// blank separator. A header that does not fit is cut with an ellipsis
+    /// line; without room for at least one line plus markers it is omitted.
+    static func visibleHeaderLines(_ header: [String], capacity: Int) -> [String] {
+        guard !header.isEmpty, capacity >= 2 else {
+            return []
+        }
+        if header.count + 1 <= capacity {
+            return header + [""]
+        }
+        guard capacity >= 3 else {
+            return []
+        }
+        return Array(header.prefix(capacity - 2)) + ["…", ""]
+    }
+
     static func detailSuffix<Value: Hashable>(
         for item: TerminalCheckboxMenuItem<Value>
     ) -> String {

@@ -65,6 +65,46 @@ final class PrimaryScreenCapture: Sendable {
         #expect(!capture.bytes.contains("\u{1B}[3J"))
     }
 
+    @Test func modalHeaderRendersInsideFrameAboveItems() throws {
+        let capture = PrimaryScreenCapture()
+        let screen = capture.screen()
+        install(screen)
+        let menu = screen.beginModal()
+        screen.updateModal(menu, value: .init(title: "BINDINGS", help: ["Enter"],
+            lines: [.init(text: "> (x) DONE_ITEM", itemIndex: 0)], focusedIndex: 0,
+            header: ["TABLE_ROW_1", "TABLE_ROW_2"]))
+        let visible = capture.visible
+        let row1 = try #require(visible.range(of: "TABLE_ROW_1"))
+        let row2 = try #require(visible.range(of: "TABLE_ROW_2"))
+        let item = try #require(visible.range(of: "DONE_ITEM"))
+        #expect(row1.lowerBound < row2.lowerBound)
+        #expect(row2.lowerBound < item.lowerBound)
+        screen.endModal(menu)
+    }
+
+    @Test func modalHeaderYieldsRowsToItemsWhenSpaceIsTight() {
+        #expect(TerminalCheckboxMenu.visibleHeaderLines(["a", "b"], capacity: 5) == ["a", "b", ""])
+        #expect(TerminalCheckboxMenu.visibleHeaderLines(["a", "b", "c", "d"], capacity: 4) == ["a", "b", "…", ""])
+        #expect(TerminalCheckboxMenu.visibleHeaderLines(["a", "b"], capacity: 2) == [])
+        #expect(TerminalCheckboxMenu.visibleHeaderLines(["a"], capacity: 2) == ["a", ""])
+        #expect(TerminalCheckboxMenu.visibleHeaderLines([], capacity: 10) == [])
+
+        let capture = PrimaryScreenCapture()
+        let screen = capture.screen()
+        install(screen)
+        let menu = screen.beginModal()
+        let items = (0..<14).map { (index: Int) in
+            TerminalCheckboxMenu.RenderedMenuLine(text: "ITEM_\(index)", itemIndex: index)
+        }
+        screen.updateModal(menu, value: .init(title: "BINDINGS", help: [],
+            lines: items, focusedIndex: 0,
+            header: (0..<30).map { "HEADER_\($0)" }))
+        let visible = capture.visible
+        for index in 0..<14 { #expect(visible.contains("ITEM_\(index)")) }
+        #expect(!visible.contains("HEADER_29"))
+        screen.endModal(menu)
+    }
+
     @Test func sameEndpointResizeQueriesBeforeAnyMoveAndQueuesOutput() async throws {
         let capture = PrimaryScreenCapture(), screen = capture.screen()
         install(screen)
