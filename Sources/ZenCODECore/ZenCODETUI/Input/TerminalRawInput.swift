@@ -334,6 +334,13 @@ public final class TerminalRawInput: Sendable {
         }
 
         state.originalAttributes = attributes
+        // A real TTY is now raw: arm SIGINT/SIGTERM/SIGHUP terminal restoration.
+        TerminalSignalRestoration.shared.registerRawMode(
+            owner: ObjectIdentifier(self),
+            inputFileDescriptor: fileDescriptor,
+            controlFileDescriptor: controlFileDescriptor,
+            originalAttributes: attributes
+        )
         cursorReports.recordDiagnostic("raw.activated fd=\(fileDescriptor) lflag=\(rawAttributes.c_lflag) iflag=\(rawAttributes.c_iflag)")
         requestEnhancedKeyboardProtocolLocked(state: &state)
         enableBracketedPasteLocked(state: &state)
@@ -372,6 +379,7 @@ public final class TerminalRawInput: Sendable {
             cursorReports.recordDiagnostic("raw.restore.end success=\(didRestoreAttributes)")
             if didRestoreAttributes {
                 state.originalAttributes = nil
+                TerminalSignalRestoration.shared.unregisterRawMode(owner: ObjectIdentifier(self))
             }
         }
     }
@@ -382,14 +390,16 @@ public final class TerminalRawInput: Sendable {
         }
         writeToTerminal("\u{1B}[>1u\u{1B}[>4;2m")
         state.didRequestEnhancedKeyboardProtocol = true
+        TerminalSignalRestoration.shared.updateRawModes(owner: ObjectIdentifier(self), enhancedKeyboardProtocol: true)
     }
 
     private func restoreEnhancedKeyboardProtocolLocked(state: inout State) {
         guard state.didRequestEnhancedKeyboardProtocol else {
             return
         }
-        writeToTerminal("\u{1B}[<u\u{1B}[>4;0m")
+        writeToTerminal(TerminalSignalRestoration.enhancedKeyboardProtocolReset)
         state.didRequestEnhancedKeyboardProtocol = false
+        TerminalSignalRestoration.shared.updateRawModes(owner: ObjectIdentifier(self), enhancedKeyboardProtocol: false)
     }
 
     private func enableBracketedPasteLocked(state: inout State) {
@@ -398,14 +408,16 @@ public final class TerminalRawInput: Sendable {
         }
         writeToTerminal("\u{1B}[?2004h")
         state.didRequestBracketedPaste = true
+        TerminalSignalRestoration.shared.updateRawModes(owner: ObjectIdentifier(self), bracketedPaste: true)
     }
 
     private func disableBracketedPasteLocked(state: inout State) {
         guard state.didRequestBracketedPaste else {
             return
         }
-        writeToTerminal("\u{1B}[?2004l")
+        writeToTerminal(TerminalSignalRestoration.bracketedPasteReset)
         state.didRequestBracketedPaste = false
+        TerminalSignalRestoration.shared.updateRawModes(owner: ObjectIdentifier(self), bracketedPaste: false)
     }
 
     private static func rawTerminalAttributes(from attributes: termios) -> termios {
@@ -427,7 +439,7 @@ public final class TerminalRawInput: Sendable {
         return rawAttributes
     }
 
-    private static func withSIGTTOUBlocked<T>(_ body: () -> T) -> T? {
+    static func withSIGTTOUBlocked<T>(_ body: () -> T) -> T? {
         var signalSet = sigset_t()
         sigemptyset(&signalSet)
         sigaddset(&signalSet, SIGTTOU)

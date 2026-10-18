@@ -109,6 +109,7 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         TerminalOutputSynchronization.withTransaction {
             self.fileDescriptor = fileDescriptor
             Self.registered.withLock { $0 = self }
+            TerminalSignalRestoration.shared.setPrimaryScreenActive(true, owner: ObjectIdentifier(self))
             reports.beginSession()
             TerminalOutputSynchronization.installWriter { [weak self] text, handle in
                 guard let self, self.handles(handle) else { return false }
@@ -128,6 +129,7 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
             return true
         }
         if removed { TerminalOutputSynchronization.installWriter(nil) }
+        TerminalSignalRestoration.shared.setPrimaryScreenActive(false, owner: ObjectIdentifier(self))
     }
     private func noteResize() {
         TerminalOutputSynchronization.withTransaction {
@@ -389,7 +391,7 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
     // and margins first: geometry can be stale after reflow or during debounce.
     // LF from the clamped bottom allocates a fresh line without erasing history.
     private var appendOnlyStart: String {
-        "\u{1B}[?6l\u{1B}[r\u{1B}[?7h\u{1B}[0m\u{1B}[999999;1H\r\n"
+        TerminalSignalRestoration.screenModesReset + TerminalSignalRestoration.bottomFreshLine
     }
     private func drainQueuedOutput() {
         let pending = queuedOutput
