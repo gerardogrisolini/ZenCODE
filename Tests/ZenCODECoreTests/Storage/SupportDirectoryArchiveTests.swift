@@ -153,6 +153,71 @@ struct SupportDirectoryArchiveTests {
         _ = sourceURL
     }
 
+    /// Deterministic incompressible bytes (SplitMix64, fixed seed).
+    private func incompressibleData(count: Int, seed: UInt64) -> Data {
+        var state = seed
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(count + 8)
+        while bytes.count < count {
+            state = state &+ 0x9E37_79B9_7F4A_7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            z ^= z >> 31
+            for shift in stride(from: 0, to: 64, by: 8) {
+                bytes.append(UInt8(truncatingIfNeeded: z >> UInt64(shift)))
+            }
+        }
+        return Data(bytes.prefix(count))
+    }
+
+    @Test(.timeLimit(.minutes(2)))
+    func roundTripOfLargeIncompressibleMemberDoesNotDeadlock() throws {
+        let sourceURL = try makeTemporaryDirectory("large-src")
+        let payload = incompressibleData(count: 3 * 1024 * 1024, seed: 42)
+        try payload.write(to: sourceURL.appendingPathComponent("blob.bin"))
+        try Data("{}".utf8).write(to: sourceURL.appendingPathComponent("settings.json"))
+        let archiveURL = fileManager.temporaryDirectory
+            .appendingPathComponent("large-\(UUID().uuidString).tar.gz")
+        _ = try SupportDirectoryArchive.export(from: sourceURL, to: archiveURL)
+
+        let destinationURL = try makeTemporaryDirectory("large-dst")
+        let result = try SupportDirectoryArchive.import(
+            from: archiveURL,
+            into: destinationURL
+        )
+        #expect(result.fileCount == 2)
+        #expect(
+            try Data(contentsOf: destinationURL.appendingPathComponent("blob.bin"))
+                == payload
+        )
+    }
+
+    @Test(.timeLimit(.minutes(2)))
+    func validatingArchiveWithThousandsOfEntriesDoesNotDeadlock() throws {
+        let sourceURL = try makeTemporaryDirectory("many-src")
+        let directoryURL = sourceURL.appendingPathComponent(
+            "memory-with-a-reasonably-long-directory-name",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true
+        )
+        for index in 0..<3000 {
+            try Data("x".utf8).write(
+                to: directoryURL.appendingPathComponent(
+                    "entry-with-a-long-file-name-\(index).json"
+                )
+            )
+        }
+        let archiveURL = fileManager.temporaryDirectory
+            .appendingPathComponent("many-\(UUID().uuidString).tar.gz")
+        _ = try SupportDirectoryArchive.export(from: sourceURL, to: archiveURL)
+        let manifest = try SupportDirectoryArchive.validate(archiveURL: archiveURL)
+        #expect(manifest.entries.count == 3000)
+    }
+
     @Test
     func importReplacesExistingDestinationEntirely() throws {
         let (sourceURL, archiveURL, files) = try makeArchive(label: "replace")

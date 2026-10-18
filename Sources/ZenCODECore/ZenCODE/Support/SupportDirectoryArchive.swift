@@ -206,6 +206,62 @@ enum SupportDirectoryArchive {
         standardInput: Data? = nil,
         fileManager: FileManager
     ) throws -> Data {
+        var collected = Data()
+        try runTar(
+            arguments,
+            standardInput: standardInput,
+            fileManager: fileManager
+        ) { collected.append($0) }
+        return collected
+    }
+
+    /// Drains a pipe on a dedicated thread, retaining only the
+    /// first bytes so a chatty child can never block on stderr nor make the
+    /// parent buffer unbounded output.
+    private final class BoundedPipeDrain: @unchecked Sendable {
+        private let lock = NSLock()
+        private let finished = DispatchSemaphore(value: 0)
+        private var retained = Data()
+        private let limit: Int
+
+        init(handle: FileHandle, limit: Int) {
+            self.limit = limit
+            // A dedicated thread (not the shared dispatch pool) so draining
+            // can never be starved when callers block pool threads.
+            let thread = Thread { [self] in
+                while let chunk = try? handle.read(upToCount: 16 * 1024),
+                      !chunk.isEmpty {
+                    lock.lock()
+                    if retained.count < limit {
+                        retained.append(chunk.prefix(limit - retained.count))
+                    }
+                    lock.unlock()
+                }
+                finished.signal()
+            }
+            thread.stackSize = 256 * 1024
+            thread.start()
+        }
+
+        /// Waits for EOF on the pipe and returns the retained prefix.
+        func finish() -> Data {
+            finished.wait()
+            lock.lock()
+            defer { lock.unlock() }
+            return retained
+        }
+    }
+
+    /// Streaming variant: stdout chunks are handed to `sink` as they arrive.
+    /// stderr is drained independently so neither pipe can stall the child.
+    /// If `sink` throws, the child is terminated and reaped before the error
+    /// propagates.
+    private static func runTar(
+        _ arguments: [String],
+        standardInput: Data? = nil,
+        fileManager: FileManager,
+        stdoutSink sink: (Data) throws -> Void
+    ) throws {
         guard let executableURL = locateTarExecutable(fileManager: fileManager)
         else {
             throw SupportDirectoryArchiveError.tarUnavailable(
@@ -237,18 +293,26 @@ enum SupportDirectoryArchive {
             try process.run()
         }
 
-        var collected = Data()
-        var errorCollected = Data()
         let stdoutHandle = standardOutput.fileHandleForReading
         let stderrHandle = standardError.fileHandleForReading
-        while true {
-            let chunk = try stdoutHandle.read(upToCount: processChunkSize)
-            let errorChunk = try stderrHandle.read(upToCount: processChunkSize)
-            if let chunk { collected.append(chunk) }
-            if let errorChunk { errorCollected.append(errorChunk) }
-            if chunk == nil && errorChunk == nil { break }
+        let errorDrain = BoundedPipeDrain(handle: stderrHandle, limit: 2048)
+        do {
+            while let chunk = try stdoutHandle.read(upToCount: processChunkSize),
+                  !chunk.isEmpty {
+                try sink(chunk)
+            }
+        } catch {
+            if process.isRunning { process.terminate() }
+            process.waitUntilExit()
+            _ = errorDrain.finish()
+            try? stdoutHandle.close()
+            try? stderrHandle.close()
+            throw error
         }
         process.waitUntilExit()
+        let errorCollected = errorDrain.finish()
+        try? stdoutHandle.close()
+        try? stderrHandle.close()
 
         guard process.terminationStatus == 0 else {
             let reason = String(
@@ -259,7 +323,6 @@ enum SupportDirectoryArchive {
                 reason.isEmpty ? "tar exited with status \(process.terminationStatus)" : reason
             )
         }
-        return collected
     }
 
     // MARK: - Export
@@ -1113,9 +1176,10 @@ enum SupportDirectoryArchive {
         }
     }
 
-    /// Streams one archive member to a file via `tar --to-stdout`, computing
-    /// its digest on the fly and verifying the recorded size and checksum
-    /// before the caller sees it.
+    /// Streams one archive member to a file via `tar --to-stdout`, writing
+    /// each chunk as it arrives while computing the digest incrementally, and
+    /// verifying the recorded size and checksum. A failing member aborts the
+    /// child and removes the partial file.
     private static func extractMemberToFile(
         archiveURL: URL,
         memberPath: String,
@@ -1136,7 +1200,10 @@ enum SupportDirectoryArchive {
         }
         let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         do {
-            let data = try runTar(
+            var hasher = SHA256()
+            var received: UInt64 = 0
+            let declaredSize = UInt64(declared.size)
+            try runTar(
                 [
                     "--extract",
                     "--to-stdout",
@@ -1145,18 +1212,30 @@ enum SupportDirectoryArchive {
                     memberPath
                 ],
                 fileManager: fileManager
-            )
-            guard data.count == declared.size else {
+            ) { chunk in
+                // The declared sizes are bounded by the manifest validation,
+                // so enforcing the per-member size here also bounds the total.
+                received += UInt64(chunk.count)
+                guard received <= declaredSize else {
+                    throw SupportDirectoryArchiveError.sizeMismatch(declared.path)
+                }
+                hasher.update(data: chunk)
+                try handle.write(contentsOf: chunk)
+            }
+            guard received == declaredSize else {
                 throw SupportDirectoryArchiveError.sizeMismatch(declared.path)
             }
-            guard data.sha256Hex() == declared.sha256 else {
+            let digest = hasher.finalize()
+                .map { String(format: "%02x", $0) }.joined()
+            guard digest == declared.sha256 else {
                 throw SupportDirectoryArchiveError.checksumMismatch(declared.path)
             }
-            try handle.write(contentsOf: data)
             try handle.synchronize()
             try handle.close()
         } catch {
             try? handle.close()
+            // The file was created here with O_EXCL, so removing it is safe.
+            try? fileManager.removeItem(at: destinationURL)
             throw error
         }
         #else
