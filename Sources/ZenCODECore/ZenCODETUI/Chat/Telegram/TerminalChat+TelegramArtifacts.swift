@@ -122,7 +122,7 @@ extension TerminalChat {
             }
         } catch {
             await sendTelegramSystemMessage(
-                "ZenCODE message: this file cannot be sent (\(error.localizedDescription)).",
+                "ZenCODE message: this file cannot be sent (\(TerminalTelegramControlError.operatorDescription(error))).",
                 to: chatID,
                 origin: origin
             )
@@ -189,7 +189,7 @@ extension TerminalChat {
             } catch {
                 Self.removeStagedArtifact(at: stagedURL)
                 await sendTelegramSystemMessage(
-                    "ZenCODE message: the file could not be sent (\(error.localizedDescription)).",
+                    "ZenCODE message: the file could not be sent (\(TerminalTelegramControlError.operatorDescription(error))).",
                     to: message.chatID,
                     origin: origin
                 )
@@ -316,7 +316,7 @@ extension TerminalChat {
                 replyMarkup: replyMarkup, fence: fence
             )
         } catch {
-            telegramControlState.lastError = error.localizedDescription
+            telegramControlState.lastError = TerminalTelegramControlError.operatorDescription(error)
             return nil
         }
     }

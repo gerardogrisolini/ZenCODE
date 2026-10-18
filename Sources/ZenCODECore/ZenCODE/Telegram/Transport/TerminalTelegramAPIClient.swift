@@ -661,7 +661,7 @@ public enum TerminalTelegramControlError: LocalizedError, Sendable, Equatable {
         case let .httpError(statusCode, body):
             let detail = body?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let detail, !detail.isEmpty {
-                return "Telegram returned HTTP \(statusCode): \(detail)"
+                return "Telegram returned HTTP \(statusCode): \(Self.boundedDiagnostic(Self.redactingToken(in: detail)))"
             }
             return "Telegram returned HTTP \(statusCode)."
         case let .apiFailure(status, errorCode, description, retryAfter):
@@ -672,13 +672,42 @@ public enum TerminalTelegramControlError: LocalizedError, Sendable, Equatable {
                 text += "(HTTP \(status))"
             }
             if let description, !description.isEmpty {
-                text += ": \(description)"
+                text += ": \(Self.boundedDiagnostic(Self.redactingToken(in: description)))"
             }
             if let retryAfter {
                 text += " (retry after \(retryAfter)s)"
             }
             return text
         }
+    }
+}
+
+extension TerminalTelegramControlError {
+    /// Upper bound for operator-facing diagnostics. An HTML error page from a
+    /// proxy can be tens of kilobytes; `lastError` and the terminal only need
+    /// the beginning.
+    static let maximumDiagnosticLength = 512
+
+    /// Operator-facing text for any error raised on a Telegram path, suitable
+    /// for `lastError`, the terminal and the linked chat: any bot token
+    /// (`bot<id>:<secret>`, as embedded in Bot API and file URLs) is removed and
+    /// the text is bounded.
+    static func operatorDescription(_ error: Error) -> String {
+        let raw = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        return boundedDiagnostic(redactingToken(in: raw))
+    }
+
+    static func redactingToken(in text: String) -> String {
+        text.replacingOccurrences(
+            of: #"bot\d+:[A-Za-z0-9_\-]+"#,
+            with: "bot<redacted>",
+            options: .regularExpression
+        )
+    }
+
+    static func boundedDiagnostic(_ text: String) -> String {
+        guard text.count > maximumDiagnosticLength else { return text }
+        return String(text.prefix(maximumDiagnosticLength)) + "…"
     }
 }
 

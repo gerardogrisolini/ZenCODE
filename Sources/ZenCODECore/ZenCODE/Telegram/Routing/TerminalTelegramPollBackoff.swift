@@ -108,17 +108,13 @@ struct TerminalTelegramPollBackoff: Sendable, Equatable {
     }
 
     /// Operator-facing text for an error, with any bot token (`bot<id>:<secret>`
-    /// as embedded in Bot API URLs) removed.
+    /// as embedded in Bot API URLs) removed. Shared with every other Telegram
+    /// diagnostic path through ``TerminalTelegramControlError/operatorDescription(_:)``.
     static func sanitizedDescription(_ error: Error) -> String {
-        let raw = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        return redactToken(in: raw)
+        TerminalTelegramControlError.operatorDescription(error)
     }
 
     static func redactToken(in text: String) -> String {
-        text.replacingOccurrences(
-            of: #"bot\d+:[A-Za-z0-9_\-]+"#,
-            with: "bot<redacted>",
-            options: .regularExpression
-        )
+        TerminalTelegramControlError.redactingToken(in: text)
     }
 }

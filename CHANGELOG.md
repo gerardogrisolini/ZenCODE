@@ -57,6 +57,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Security
 
+- Every Telegram diagnostic (start-up, command menu, sends, attachments,
+  voice downloads, shared-chat relay) now removes the bot token
+  (`bot<id>:<secret>`) from error text and bounds it to 512 characters before
+  it reaches `lastError`, the terminal or the linked chat. Previously only the
+  long-poll error was redacted, and an HTTP error body (for example a proxy
+  HTML page echoing the request URL) was shown in full.
 - GitTools now validates every model-provided positional argument (remotes,
   branches, refspecs, revisions, stash references, grep patterns): values
   starting with `-` are rejected so they cannot be parsed as git options (for

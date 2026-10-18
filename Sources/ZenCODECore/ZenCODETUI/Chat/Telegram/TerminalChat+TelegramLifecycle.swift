@@ -64,9 +64,9 @@ extension TerminalChat {
             // until setup creates a complete schema-2 owner route.
         } catch {
             telegramControlState = await telegramControlService.currentState()
-            telegramControlState.lastError = error.localizedDescription
+            telegramControlState.lastError = TerminalTelegramControlError.operatorDescription(error)
             await synchronizeTelegramTurnProgressReporting()
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeFailureMessage("ZenCODE: \(TerminalTelegramControlError.operatorDescription(error))\n")
         }
     }
 

@@ -193,7 +193,7 @@ public actor TerminalTelegramControlService {
             // Only the still-current generation reports the failure to state.
             if generation == pollingGeneration {
                 state.isActive = false
-                state.lastError = error.localizedDescription
+                state.lastError = TerminalTelegramControlError.operatorDescription(error)
             }
             throw error
         }
@@ -290,7 +290,7 @@ public actor TerminalTelegramControlService {
         guard generation == pollingGeneration else { return }
         commandMenuTask = nil
         if let error {
-            recordDiagnostics("Could not publish Telegram command menu: \(error.localizedDescription)")
+            recordDiagnostics("Could not publish Telegram command menu: \(TerminalTelegramControlError.operatorDescription(error))")
         }
     }
 

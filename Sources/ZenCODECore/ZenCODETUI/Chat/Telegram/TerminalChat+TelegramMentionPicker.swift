@@ -97,7 +97,7 @@ extension TerminalChat {
                 replyMarkup: replyMarkup, fence: fence
             )
         }
-        catch { telegramControlState.lastError = error.localizedDescription; return nil }
+        catch { telegramControlState.lastError = TerminalTelegramControlError.operatorDescription(error); return nil }
     }
 
     nonisolated static func telegramMentionPickerReplyTarget(

@@ -113,7 +113,7 @@ extension TerminalChat {
                 fence: fence
             )
         } catch {
-            telegramControlState.lastError = error.localizedDescription
+            telegramControlState.lastError = TerminalTelegramControlError.operatorDescription(error)
             return nil
         }
     }
@@ -183,7 +183,7 @@ extension TerminalChat {
             )
             await refreshSharedChatPanelSuggestions()
         } catch {
-            let safeError = Self.sharedChatInlineTerminalSafeText(error.localizedDescription)
+            let safeError = Self.sharedChatInlineTerminalSafeText(TerminalTelegramControlError.operatorDescription(error))
             await sendTelegramSystemMessage(
                 "ZenCODE message: \(safeError)",
                 to: message.chatID,

@@ -299,8 +299,8 @@ extension TerminalChat {
             )
             return true
         } catch {
-            telegramControlState.lastError = error.localizedDescription
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            telegramControlState.lastError = TerminalTelegramControlError.operatorDescription(error)
+            await writeFailureMessage("ZenCODE: \(TerminalTelegramControlError.operatorDescription(error))\n")
             return false
         }
     }

@@ -89,7 +89,7 @@ extension TerminalChat {
                     .voicePromptCompleted(
                         TerminalVoicePromptResult(
                             origin: origin,
-                            outcome: .failure(error.localizedDescription)
+                            outcome: .failure(TerminalTelegramControlError.operatorDescription(error))
                         )
                     )
                 ) else {

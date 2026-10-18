@@ -118,6 +118,27 @@ struct TerminalTelegramPollErrorPropagationTests {
         #expect(seen.last! == nil)
         #expect(delays.withLock { $0.first } == .seconds(60))
     }
+
+    /// Every Telegram diagnostic path shares one sanitizer: tokens embedded in
+    /// API or file URLs are removed and oversized bodies are bounded.
+    @Test
+    func operatorDescriptionRedactsTokenAndBoundsLength() {
+        let page = "<html>GET /bot123456:ABCDEF_x-y/getMe "
+            + String(repeating: "x", count: 5_000) + "</html>"
+        let text = TerminalTelegramControlError.operatorDescription(
+            TerminalTelegramControlError.httpError(502, page)
+        )
+        #expect(!text.contains("123456:ABCDEF"))
+        #expect(text.contains("bot<redacted>"))
+        #expect(text.count <= TerminalTelegramControlError.maximumDiagnosticLength + 1)
+
+        let foreign = NSError(domain: "test", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: "download failed: https://api.telegram.org/file/bot42:secret_token/voice.oga",
+        ])
+        let foreignText = TerminalTelegramControlError.operatorDescription(foreign)
+        #expect(!foreignText.contains("secret_token"))
+        #expect(foreignText.contains("file/bot<redacted>/voice.oga"))
+    }
 }
 
 private actor ScriptedPollTransport: TelegramHTTPTransport {
