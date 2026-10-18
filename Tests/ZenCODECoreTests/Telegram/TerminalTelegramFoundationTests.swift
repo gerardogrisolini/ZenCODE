@@ -412,6 +412,17 @@ struct TerminalTelegramFoundationTests {
         #expect(!published.contains { $0.command == "start" })
     }
 
+    /// Telegram `/help` lists every command published to the menu, so help
+    /// cannot drift from `setMyCommands`.
+    @Test
+    func remoteHelpListsEveryPublishedCommand() {
+        let listed = TerminalChat.telegramRemoteCommandList()
+            .components(separatedBy: ", ")
+            .compactMap { $0.split(separator: " ").first.map(String.init) }
+        let published = TerminalTelegramCommandRegistry.botCommands.map { "/\($0.command)" }
+        #expect(listed == published)
+    }
+
     /// The production API client emits a valid all-private-chats Bot API scope
     /// and omits the chat id that is illegal for that scope.
     @Test

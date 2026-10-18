@@ -64,6 +64,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Telegram `/help` now lists `/chat` and `/undo` too. The command list is
+  derived from the same registry used for the published Telegram command menu,
+  so help and menu can no longer drift apart.
 - The `tasks.update` tool schema no longer declares a root-level `anyOf`, which
   Anthropic-compatible providers reject with HTTP 400 `invalid_request_error`.
   Root-task and `/goal` workflow modes remain validated at execution time.

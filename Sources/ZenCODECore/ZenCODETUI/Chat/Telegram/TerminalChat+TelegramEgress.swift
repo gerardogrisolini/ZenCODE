@@ -350,7 +350,7 @@ extension TerminalChat {
         Send a message to prompt the current ZenCODE TUI session.
         Live messages from agents are forwarded here; reply to one with text to answer its sender.
         A voice note cannot be a direct reply: send text, or record without replying to run an ordinary prompt.
-        Remote commands: /status, /changes, /diff, /report, /help, /plan <goal> and its subcommands, /goal <goal>, /review [focus].
+        Remote commands: \(Self.telegramRemoteCommandList()).
         /diff and /report send a file only after you confirm it with an explicit button; nothing is uploaded automatically.
         Documents and images you send are received selectively (text, markdown, csv, json, yaml, pdf, rtf, word, odt and images) and kept as private temporaries.
         While /plan is asking questions, ordinary replies continue that same runtime discussion.
@@ -359,6 +359,21 @@ extension TerminalChat {
         Gated operations (shell commands, deletions, git push/restore) are asked here.
         Turn Telegram off from the TUI with /telegram off.
         """
+    }
+
+    /// Remote command list shown by Telegram `/help`, derived from the same
+    /// sources as the published `setMyCommands` menu (registry order, then the
+    /// coordinator workflow families) so help can never drift from the menu.
+    nonisolated static func telegramRemoteCommandList() -> String {
+        let remoteCommands = TerminalTelegramCommandRegistry.commands.map { "/\($0.name)" }
+        let workflowCommands = CoordinatorCommandFamily.allCases.map { family in
+            switch family {
+            case .plan: "/plan <goal> and its subcommands"
+            case .goal: "/goal <goal>"
+            case .review: "/review [focus]"
+            }
+        }
+        return (remoteCommands + workflowCommands).joined(separator: ", ")
     }
 
     @discardableResult
