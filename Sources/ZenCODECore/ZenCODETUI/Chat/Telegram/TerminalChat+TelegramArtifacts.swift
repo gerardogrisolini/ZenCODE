@@ -71,6 +71,9 @@ extension TerminalChat {
                 origin: origin
             )
         } catch {
+            // writePrivateArtifact failed: no offer exists, so the service never
+            // owned the file. Remove any partial excerpt.
+            Self.removeStagedArtifact(at: url)
             await sendTelegramSystemMessage(
                 "ZenCODE message: the diff could not be prepared for upload.",
                 to: chatID,
@@ -121,6 +124,9 @@ extension TerminalChat {
                 )
             }
         } catch {
+            // The offer was never registered (the service threw before taking
+            // ownership), so the staged excerpt is still ours to remove.
+            Self.removeStagedArtifact(at: artifact.fileURL)
             await sendTelegramSystemMessage(
                 "ZenCODE message: this file cannot be sent (\(TerminalTelegramControlError.operatorDescription(error))).",
                 to: chatID,
@@ -155,11 +161,9 @@ extension TerminalChat {
                 origin: origin
             )
         case .send:
-            // Capture the artifact before the offer is spent, so the staged
-            // excerpt can be removed after the attempt either way.
-            let stagedURL = await telegramControlService.pendingConsentArtifact(
-                offerID: offerID, chatID: message.chatID
-            )?.fileURL
+            // Once the offer is registered the control service owns the staged
+            // excerpt: it deletes it after consume (sent, refused or failed),
+            // on cancel, on expiry and on reset. The TUI never deletes it here.
             do {
                 guard let messageID = try await telegramControlService
                     .sendArtifactWithConsent(
@@ -171,7 +175,6 @@ extension TerminalChat {
                         topicID: lease.effectiveMessageThreadID,
                         fence: fence
                     ) else {
-                    Self.removeStagedArtifact(at: stagedURL)
                     await sendTelegramSystemMessage(
                         "ZenCODE message: that confirmation expired or no longer matches the file. Ask again with /diff.",
                         to: message.chatID,
@@ -180,14 +183,17 @@ extension TerminalChat {
                     return true
                 }
                 _ = messageID
-                Self.removeStagedArtifact(at: stagedURL)
                 await sendTelegramSystemMessage(
                     "ZenCODE message: file sent.",
                     to: message.chatID,
                     origin: origin
                 )
             } catch {
-                Self.removeStagedArtifact(at: stagedURL)
+                // Failures before the offer was consumed (e.g. wire fence)
+                // leave it pending: spend it so the service removes the file.
+                await telegramControlService.cancelArtifactConsent(
+                    offerID: offerID, chatID: message.chatID
+                )
                 await sendTelegramSystemMessage(
                     "ZenCODE message: the file could not be sent (\(TerminalTelegramControlError.operatorDescription(error))).",
                     to: message.chatID,

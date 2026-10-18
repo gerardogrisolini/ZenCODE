@@ -7,14 +7,19 @@
 
 import Foundation
 import ToolCore
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// One outbound artifact the operator explicitly selected on Telegram.
 ///
 /// ZenCODE never uploads repository content, secrets or whole files by
 /// default. An artifact exists only as the result of an explicit selection:
-/// the operator asks for a diff or an attachment (`/diff` or a reply that
-/// resolves to one attachment) and then confirms with one tap on
-/// the consent keyboard. Nothing else creates a `TerminalTelegramArtifact`.
+/// the operator asks for the session diff with `/diff` and then confirms with
+/// one tap on the consent keyboard. `/diff` is the only producer of a
+/// `TerminalTelegramArtifact`.
 public struct TerminalTelegramArtifact: Sendable, Equatable {
     /// Where the bytes to upload live. Always a local file: uploads are
     /// streamed from disk, never from an in-memory repository copy.
@@ -48,7 +53,7 @@ public struct TerminalTelegramArtifactPolicy: Sendable {
     /// implicit members of this list: the caller must have resolved the exact
     /// file, and the file must match an allowed extension and size.
     public let allowedDirectories: [URL]
-    /// Filename suffixes allowed for export. Diff/log/report oriented.
+    /// Filename suffixes allowed for export. Defaults to session diffs only.
     public let allowedExtensions: Set<String>
     /// Hard per-file byte budget (also enforced by the multipart builder).
     public let maximumBytes: Int
@@ -67,9 +72,7 @@ public struct TerminalTelegramArtifactPolicy: Sendable {
 
     public init(
         allowedDirectories: [URL],
-        allowedExtensions: Set<String> = [
-            "diff", "patch", "log", "txt", "md", "json", "yaml", "yml", "csv",
-        ],
+        allowedExtensions: Set<String> = ["diff"],
         maximumBytes: Int = 45 * 1_024 * 1_024
     ) {
         self.allowedDirectories = allowedDirectories
@@ -82,17 +85,17 @@ public struct TerminalTelegramArtifactPolicy: Sendable {
     /// artifact on success.
     public func validated(_ artifact: TerminalTelegramArtifact) throws(TerminalTelegramControlError) -> TerminalTelegramArtifact {
         // 1. Path sanity, fail-closed: the URL must be a file URL whose
-        //    standardized form is unchanged (no `..` traversal) and whose
-        //    resolved form equals itself (no symlink in any component).
+        //    standardized form is unchanged (no `..` traversal). Symlinks are
+        //    judged in step 3, relative to the allowed directory.
         let path = artifact.fileURL.path
         guard artifact.fileURL.isFileURL,
               artifact.fileURL.standardizedFileURL.path == path,
-              artifact.fileURL.resolvingSymlinksInPath().path == path else {
+              let realPath = Self.realPath(path) else {
             throw .artifactPathRejected
         }
         let values: URLResourceValues
         do {
-            values = try artifact.fileURL.resourceValues(
+            values = try URL(fileURLWithPath: realPath).resourceValues(
                 forKeys: [.isRegularFileKey, .fileSizeKey]
             )
         } catch {
@@ -102,11 +105,12 @@ public struct TerminalTelegramArtifactPolicy: Sendable {
             throw .artifactPathRejected
         }
         let resolved = artifact.fileURL
-        let standardizedPath = resolved.standardizedFileURL.path
 
         // 2. Denied trees and names come first, before any allow rule.
         let components = resolved.pathComponents
-        for fragment in Self.deniedPathFragments where components.contains(fragment) {
+        let realComponents = URL(fileURLWithPath: realPath).pathComponents
+        for fragment in Self.deniedPathFragments
+        where components.contains(fragment) || realComponents.contains(fragment) {
             throw .artifactPathRejected
         }
         let base = resolved.lastPathComponent
@@ -117,11 +121,12 @@ public struct TerminalTelegramArtifactPolicy: Sendable {
             throw .artifactPathRejected
         }
 
-        // 3. The file must live inside an allowed directory (realpath prefix).
+        // 3. The file must live inside an allowed directory, compared on
+        //    resolved real paths. Symlinks in ancestors of the allowed
+        //    directory are fine; any symlink between the allowed directory and
+        //    the file (or the file itself) is rejected.
         let isAllowed = allowedDirectories.contains { directory in
-            let directoryPath = directory.resolvingSymlinksInPath().standardizedFileURL.path
-            return standardizedPath == directoryPath
-                || standardizedPath.hasPrefix(directoryPath + "/")
+            Self.isContainedWithoutSymlinks(path: path, in: directory)
         }
         guard isAllowed else {
             throw .artifactPathRejected
@@ -146,6 +151,43 @@ public struct TerminalTelegramArtifactPolicy: Sendable {
             filename: safeFilename,
             contentType: artifact.contentType?.nilIfBlank.map { Self.sanitizedContentType($0) }
         )
+    }
+
+    /// `realpath(3)` of `path`, or nil when it cannot be resolved.
+    static func realPath(_ path: String) -> String? {
+        guard let resolved = realpath(path, nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    private static func isSymbolicLink(_ path: String) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let type = attributes[.type] as? FileAttributeType else {
+            return true // fail closed
+        }
+        return type == .typeSymbolicLink
+    }
+
+    /// True when `path` (unresolved, standardized) lies inside `directory`
+    /// by real path and no component below the directory is a symlink.
+    private static func isContainedWithoutSymlinks(path: String, in directory: URL) -> Bool {
+        guard let realDirectory = realPath(directory.path) else { return false }
+        let parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        // Shortest prefix of the candidate that resolves to the allowed directory.
+        var prefix = ""
+        for (index, part) in parts.enumerated() {
+            prefix += "/" + part
+            guard realPath(prefix) == realDirectory else { continue }
+            let rest = parts[(index + 1)...]
+            guard !rest.isEmpty else { return false }
+            var current = prefix
+            for component in rest {
+                current += "/" + component
+                if isSymbolicLink(current) { return false }
+            }
+            return true
+        }
+        return false
     }
 
     /// Normalizes a client-provided filename to a single safe path component.

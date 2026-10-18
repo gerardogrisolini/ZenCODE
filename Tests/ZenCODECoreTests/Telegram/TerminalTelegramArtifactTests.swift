@@ -33,6 +33,7 @@ struct TerminalTelegramArtifactTests {
             )
             policy = TerminalTelegramArtifactPolicy(
                 allowedDirectories: [directory],
+                allowedExtensions: ["diff", "txt", "log"],
                 maximumBytes: 1024
             )
         }
@@ -177,6 +178,85 @@ struct TerminalTelegramArtifactTests {
     }
 
     @Test
+    func policyDefaultsToDiffExtensionOnly() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let policy = TerminalTelegramArtifactPolicy(allowedDirectories: [fixture.directory])
+        #expect(policy.allowedExtensions == ["diff"])
+        let diff = try fixture.writeFile("d", name: "a.diff")
+        _ = try policy.validated(TerminalTelegramArtifact(fileURL: diff, filename: "a.diff"))
+        for name in ["a.log", "a.txt", "a.md", "a.json", "a.patch"] {
+            let url = try fixture.writeFile("x", name: name)
+            #expect(throws: TerminalTelegramControlError.artifactPathRejected) {
+                _ = try policy.validated(TerminalTelegramArtifact(fileURL: url, filename: name))
+            }
+        }
+    }
+
+    @Test
+    func policyAcceptsAllowedDirectoryReachedThroughSymlinkedAncestor() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zen-artifact-tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let staging = root.appendingPathComponent("real/staging", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("link"),
+            withDestinationURL: root.appendingPathComponent("real")
+        )
+        let viaLink = root.appendingPathComponent("link/staging", isDirectory: true)
+        let file = viaLink.appendingPathComponent("a.diff")
+        try Data("ok".utf8).write(to: file)
+        let policy = TerminalTelegramArtifactPolicy(allowedDirectories: [viaLink])
+
+        let validated = try policy.validated(TerminalTelegramArtifact(fileURL: file, filename: "a.diff"))
+        #expect(validated.filename == "a.diff")
+        // The same file reached by its real path is accepted too.
+        let real = staging.appendingPathComponent("a.diff")
+        _ = try policy.validated(TerminalTelegramArtifact(fileURL: real, filename: "a.diff"))
+    }
+
+    @Test
+    func policyRejectsSymlinksInsideAllowedDirectory() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zen-artifact-tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let staging = root.appendingPathComponent("staging", isDirectory: true)
+        let outside = root.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let target = outside.appendingPathComponent("secret.diff")
+        try Data("s".utf8).write(to: target)
+        // File symlink pointing outside.
+        let fileLink = staging.appendingPathComponent("a.diff")
+        try FileManager.default.createSymbolicLink(at: fileLink, withDestinationURL: target)
+        // Directory symlink pointing outside.
+        try FileManager.default.createSymbolicLink(
+            at: staging.appendingPathComponent("dir"), withDestinationURL: outside
+        )
+        let policy = TerminalTelegramArtifactPolicy(allowedDirectories: [staging])
+
+        for url in [fileLink, staging.appendingPathComponent("dir/secret.diff")] {
+            #expect(throws: TerminalTelegramControlError.artifactPathRejected) {
+                _ = try policy.validated(TerminalTelegramArtifact(fileURL: url, filename: "x.diff"))
+            }
+        }
+    }
+
+    #if os(macOS)
+    @Test
+    func policyAcceptsPrivateVarAndVarForms() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let file = try fixture.writeFile("ok", name: "a.diff")
+        guard file.path.hasPrefix("/var/") else { return }
+        let privateDirectory = URL(fileURLWithPath: "/private" + fixture.directory.path, isDirectory: true)
+        let policy = TerminalTelegramArtifactPolicy(allowedDirectories: [privateDirectory])
+        _ = try policy.validated(TerminalTelegramArtifact(fileURL: file, filename: "a.diff"))
+    }
+    #endif
+
+    @Test
     func policyRejectsTraversalAndEscapes() throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -287,6 +367,65 @@ struct TerminalTelegramArtifactTests {
     }
 
     // MARK: - Explicit consent
+
+    @Test
+    func serviceIsSoleOwnerOfStagedFileCleanup() async throws {
+        let support = FileManager.default.temporaryDirectory
+            .appendingPathComponent("telegram-cleanup-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: support) }
+        try AgentSettingsManifestStore.save(
+            AgentSettingsManifest(models: [], telegram: AgentTelegramSettingsManifest(
+                enabled: true, botToken: "123456:ABCDEF", linkedChatID: 42,
+                linkedChatTitle: "Test", ownerUserID: 7, routes: [.init(roomID: "default")]
+            )),
+            to: support.appendingPathComponent(AgentSettingsManifestStore.settingsFilename)
+        )
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let transport = RecordingUploadTransport()
+        try await AppStorageDirectory.withSupportDirectoryURL(support) {
+            let service = TerminalTelegramControlService(transportFactory: { transport })
+            let state = try await service.start()
+            let fence = Self.wireFence(epoch: try #require(state.wireLifecycleEpoch))
+
+            // Confirmed send: the service removes the file, once.
+            let sent = try fixture.writeFile("payload", name: "sent.diff")
+            let sentID = try #require(try await service.offerArtifactConsent(
+                artifact: .init(fileURL: sent, filename: "sent.diff"),
+                chatID: 42, userID: 7, routeLease: Self.routeLease, cleanupAfterUse: true
+            ))
+            #expect(FileManager.default.fileExists(atPath: sent.path))
+            let messageID = try await service.sendArtifactWithConsent(
+                offerID: sentID, chatID: 42, userID: 7, routeLease: Self.routeLease,
+                policy: fixture.policy, topicID: nil, fence: fence
+            )
+            #expect(messageID != nil)
+            #expect(!FileManager.default.fileExists(atPath: sent.path))
+            #expect(await transport.uploads == 1)
+
+            // Declined consent: cancel removes the file, replays are inert.
+            let declined = try fixture.writeFile("payload", name: "declined.diff")
+            let declinedID = try #require(try await service.offerArtifactConsent(
+                artifact: .init(fileURL: declined, filename: "declined.diff"),
+                chatID: 42, userID: 7, routeLease: Self.routeLease, cleanupAfterUse: true
+            ))
+            await service.cancelArtifactConsent(offerID: declinedID, chatID: 42)
+            #expect(!FileManager.default.fileExists(atPath: declined.path))
+            await service.cancelArtifactConsent(offerID: declinedID, chatID: 42)
+            let replay = try await service.sendArtifactWithConsent(
+                offerID: declinedID, chatID: 42, userID: 7, routeLease: Self.routeLease,
+                policy: fixture.policy, topicID: nil, fence: fence
+            )
+            #expect(replay == nil)
+            #expect(await transport.uploads == 1)
+
+            // No staged leftovers.
+            let leftovers = try FileManager.default.contentsOfDirectory(atPath: fixture.directory.path)
+            #expect(leftovers.isEmpty)
+            _ = await service.stop()
+        }
+    }
 
     @Test
     func consentIsSingleUseAndBoundToChatAndUser() async throws {
@@ -1102,6 +1241,27 @@ private actor LifecycleDownloadGateTransport: TelegramHTTPTransport {
             return (200, Data(#"{"ok":true,"result":{"file_id":"file","file_size":4,"file_path":"documents/note.txt"}}"#.utf8))
         }
         return (200, Data("data".utf8))
+    }
+}
+
+private actor RecordingUploadTransport: TelegramHTTPTransport {
+    private(set) var uploads = 0
+
+    func send(
+        url: URL, method: String, headers: [RemoteHTTPHeader], body: Data?, timeout: Duration?
+    ) async throws -> (status: Int, body: Data) {
+        switch url.lastPathComponent {
+        case "deleteWebhook", "setMyCommands":
+            return (200, Data(#"{"ok":true,"result":true}"#.utf8))
+        case "getMe":
+            return (200, Data(#"{"ok":true,"result":{"id":9102,"is_bot":true,"first_name":"bot"}}"#.utf8))
+        case "getUpdates":
+            try await Task.sleep(for: .seconds(60))
+            throw CancellationError()
+        default:
+            uploads += 1
+            return (200, Data(#"{"ok":true,"result":{"message_id":9,"chat":{"id":42,"type":"private"}}}"#.utf8))
+        }
     }
 }
 

@@ -11,8 +11,8 @@ import ToolCore
 
 /// Explicit outbound consent for one artifact upload.
 ///
-/// Every outbound document needs one: the operator selected the artifact
-/// (`/diff` or an attachment reply) and then tapped an explicit
+/// Every outbound document needs one: the operator asked for the session
+/// diff with `/diff` (the only producer) and then tapped an explicit
 /// confirmation button. The grant is single-use, chat-scoped, bound to the
 /// exact artifact identity (path + size + mtime identity) and short-lived,
 /// so a stale confirmation can never authorize a newer, different file and a

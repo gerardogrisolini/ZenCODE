@@ -115,6 +115,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   tool group is enabled "from the ZenCODE TUI with /tools".
 - `@botname` suffixes are stripped by one shared normalizer before every
   Telegram command check, so `/plan@` behaves like `/plan` everywhere.
+- `/diff` on Telegram no longer fails with "outside the allowed directories"
+  when the temporary directory is reached through a symlink (for example a
+  `/private/var` `TMPDIR` on macOS or a symlinked home): the staging-directory
+  check compares resolved real paths and rejects only symlinks inside the
+  staging directory. Exportable files are now restricted to `.diff`, the only
+  file Telegram can send, and the staged excerpt is removed by a single owner.
 - The `tasks.update` tool schema no longer declares a root-level `anyOf`, which
   Anthropic-compatible providers reject with HTTP 400 `invalid_request_error`.
   Root-task and `/goal` workflow modes remain validated at execution time.
