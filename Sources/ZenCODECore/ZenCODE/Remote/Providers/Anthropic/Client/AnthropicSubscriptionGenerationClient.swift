@@ -61,6 +61,25 @@ public actor AnthropicSubscriptionGenerationClient: DirectToolRuntimeBackend {
     var sessionRequestOverhead: [String: SubscriptionCompactionSupport.RequestOverhead] = [:]
     private var nextSessionGeneration: UInt64 = 0
     let messagesEndpointURLOverride: URL?
+    /// Loads credentials at the start of every tool round, renewing them when
+    /// they are inside the expiry margin. Injectable so deterministic tests can
+    /// exercise mid-turn recovery without the persisted manifest.
+    var credentialsLoader: @Sendable () async throws -> AnthropicSubscriptionCredentials = {
+        try await AnthropicSubscriptionAuthService.loadValidCredentials()
+    }
+    /// Forces a token refresh after the service rejected the access token
+    /// (HTTP 401/403) even though the local expiry window still looked valid.
+    var credentialsRefresher: @Sendable (AnthropicSubscriptionCredentials) async throws -> AnthropicSubscriptionCredentials = {
+        try await AnthropicSubscriptionAuthService.refresh(credentials: $0)
+    }
+
+    func setCredentialProviders(
+        load: @escaping @Sendable () async throws -> AnthropicSubscriptionCredentials,
+        refresh: @escaping @Sendable (AnthropicSubscriptionCredentials) async throws -> AnthropicSubscriptionCredentials
+    ) {
+        credentialsLoader = load
+        credentialsRefresher = refresh
+    }
 
     public init(
         configuration: AgentRuntimeConfiguration,

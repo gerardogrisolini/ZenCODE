@@ -32,6 +32,29 @@ extension AnthropicSubscriptionGenerationClient {
         return stringValue(object["message"])
     }
 
+    /// Shared prefix of every non-2xx provider failure, so callers can recover
+    /// the HTTP status (for example 401/403 auth recovery) from the error.
+    static let httpFailureMessagePrefix = "Anthropic Subscription returned HTTP "
+
+    /// HTTP status carried by an error produced by `validateHTTPResponse`.
+    static func httpFailureStatus(of error: Error) -> Int? {
+        guard case let .remoteFailure(message)? = error as? RemoteGenerationClientError,
+              message.hasPrefix(httpFailureMessagePrefix) else {
+            return nil
+        }
+        let digits = message
+            .dropFirst(httpFailureMessagePrefix.count)
+            .prefix(while: \.isNumber)
+        return Int(digits)
+    }
+
+    static func isAuthenticationFailure(_ error: Error) -> Bool {
+        guard let status = httpFailureStatus(of: error) else {
+            return false
+        }
+        return status == 401 || status == 403
+    }
+
     static func validateHTTPResponse(
         _ response: RemoteHTTPStreamingResponse
     ) async throws {
@@ -62,7 +85,7 @@ extension AnthropicSubscriptionGenerationClient {
 
         let suffix = details.isEmpty ? "" : ": \(details.joined(separator: "; "))"
         throw RemoteGenerationClientError.remoteFailure(
-            "Anthropic Subscription returned HTTP \(response.status)\(suffix)"
+            "\(httpFailureMessagePrefix)\(response.status)\(suffix)"
         )
     }
 

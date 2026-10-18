@@ -15,39 +15,103 @@ import os
 
 #if os(macOS)
 final class ChatGPTSubscriptionCallbackServer: Sendable {
+    /// Port registered with the OAuth client for
+    /// `http://localhost:1455/auth/callback`.
+    static let defaultPort: UInt16 = 1455
+
     let state: String
+    /// Requested port. `0` asks the IPv4 listener for an ephemeral port, which
+    /// the IPv6 listener then reuses (deterministic loopback tests only).
+    let port: UInt16
     let queue = DispatchQueue(label: "ZenCODE.ChatGPTSubscriptionCallback")
     private let callbackState = ChatGPTSubscriptionCallbackServerState()
 
-    init(state: String) {
+    init(state: String, port: UInt16 = ChatGPTSubscriptionCallbackServer.defaultPort) {
         self.state = state
+        self.port = port
     }
 
+    /// Starts loopback-only listeners for the redirect URI host `localhost`.
+    ///
+    /// Browsers can resolve `localhost` to either `127.0.0.1` or `::1`, so one
+    /// listener is bound to each loopback address on the same port; the first
+    /// valid callback wins. Nothing listens on LAN interfaces, so a remote host
+    /// can neither deliver a code nor tear the sign-in down. The IPv4 listener
+    /// is required; the IPv6 one is best effort (hosts with IPv6 disabled),
+    /// and browsers fall back to `127.0.0.1` when `::1` refuses connections.
     @discardableResult
     func start() async throws -> ChatGPTSubscriptionCallbackServer {
+        let ipv4Listener = try await startLoopbackListener(host: .ipv4(.loopback), port: port)
+        guard let boundPort = ipv4Listener.port?.rawValue, boundPort != 0 else {
+            await stop()
+            throw ChatGPTSubscriptionAuthError.callbackServerUnavailable
+        }
+        _ = try? await startLoopbackListener(host: .ipv6(.loopback), port: boundPort)
+        return self
+    }
+
+    /// Port actually bound by the running listeners, if any.
+    func boundPort() async -> UInt16? {
+        await callbackState.activeListeners().first?.port?.rawValue
+    }
+
+    /// Local endpoints the running listeners are restricted to.
+    func boundLocalEndpoints() async -> [NWEndpoint] {
+        await callbackState.activeListeners().compactMap {
+            $0.parameters.requiredLocalEndpoint
+        }
+    }
+
+    static func loopbackParameters(
+        host: NWEndpoint.Host,
+        port: UInt16
+    ) -> NWParameters {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(
+            host: host,
+            port: NWEndpoint.Port(rawValue: port) ?? .any
+        )
+        // Defense in depth: refuse any non-local peer even if the binding is
+        // ever widened.
+        parameters.acceptLocalOnly = true
+        // Network.framework otherwise reports EADDRINUSE when the IPv6
+        // loopback listener binds the port already held by the IPv4 loopback
+        // listener; the two specific addresses never overlap.
+        parameters.allowLocalEndpointReuse = true
+        return parameters
+    }
+
+    private func startLoopbackListener(
+        host: NWEndpoint.Host,
+        port: UInt16
+    ) async throws -> NWListener {
         let listener: NWListener
         do {
-            listener = try NWListener(using: .tcp, on: 1455)
+            listener = try NWListener(
+                using: Self.loopbackParameters(host: host, port: port)
+            )
         } catch {
             // Surface the failure instead of returning a listener-less server
             // whose waitForCode() would suspend forever.
             throw ChatGPTSubscriptionAuthError.callbackServerUnavailable
         }
 
-        await callbackState.setListener(listener)
         listener.newConnectionHandler = { [weak self] connection in
             self?.handle(connection)
+        }
+        guard await callbackState.addListener(listener) else {
+            // Already completed or stopped.
+            throw ChatGPTSubscriptionAuthError.callbackCancelled
         }
 
         do {
             try await startListening(listener, timeout: .seconds(2))
         } catch {
             listener.cancel()
-            await callbackState.clearListener(listener)
+            await callbackState.removeListener(listener)
             throw ChatGPTSubscriptionAuthError.callbackServerUnavailable
         }
-
-        return self
+        return listener
     }
 
     func submitAuthorizationInput(_ input: String) throws {
@@ -168,8 +232,61 @@ final class ChatGPTSubscriptionCallbackServer: Sendable {
 
     func stop() async {
         let state = await callbackState.stop()
-        state.listener?.listener.cancel()
+        for listener in state.listeners {
+            listener.cancel()
+        }
         state.continuation?.resume(throwing: ChatGPTSubscriptionAuthError.callbackCancelled)
+    }
+
+    /// Outcome of one HTTP request received by the callback listener.
+    enum CallbackRequestDecision: Equatable, Sendable {
+        /// Valid callback with the expected `state`: finish with the code.
+        case authorized(code: String)
+        /// Callback carrying the expected `state` but no code (for example an
+        /// OAuth error redirect). It is authentic, so it ends the flow.
+        case authenticFailure(message: String)
+        /// Request for another path: answer 404 and keep waiting.
+        case notFound
+        /// Malformed request, wrong or missing `state`: answer 400 and keep
+        /// waiting, so a spurious request cannot terminate the sign-in.
+        case invalid(message: String)
+
+        var statusCode: Int {
+            switch self {
+            case .authorized: 200
+            case .notFound: 404
+            case .authenticFailure, .invalid: 400
+            }
+        }
+    }
+
+    /// Pure decision for one received request. Only a request carrying the
+    /// expected OAuth `state` can complete the flow.
+    func callbackDecision(for data: Data?) -> CallbackRequestDecision {
+        guard let data,
+              let request = String(data: data, encoding: .utf8),
+              let firstLine = request.components(separatedBy: "\n").first else {
+            return .invalid(message: ChatGPTSubscriptionAuthError.callbackRequestInvalid.localizedDescription)
+        }
+        let parts = firstLine
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: " ", maxSplits: 2)
+        guard parts.count >= 2,
+              let components = URLComponents(string: "http://localhost\(parts[1])") else {
+            return .invalid(message: ChatGPTSubscriptionAuthError.callbackRequestInvalid.localizedDescription)
+        }
+        guard components.path == "/auth/callback" else {
+            return .notFound
+        }
+        let queryItems = components.queryItems ?? []
+        guard queryItems.first(where: { $0.name == "state" })?.value == state else {
+            return .invalid(message: ChatGPTSubscriptionAuthError.stateMismatch.localizedDescription)
+        }
+        do {
+            return .authorized(code: try authorizationCode(from: components, requireState: true))
+        } catch {
+            return .authenticFailure(message: error.localizedDescription)
+        }
     }
 
     func handle(_ connection: NWConnection) {
@@ -184,84 +301,53 @@ final class ChatGPTSubscriptionCallbackServer: Sendable {
             }
 
             if error != nil {
+                // A broken connection is not a callback; keep waiting.
                 self.sendResponse(
                     statusCode: 400,
                     body: Self.errorHTML("Unable to read sign-in callback."),
                     on: connection
                 )
-                self.complete(.failure(ChatGPTSubscriptionAuthError.callbackRequestInvalid))
                 return
             }
 
-            do {
-                guard let path = self.callbackPath(from: data),
-                      path == "/auth/callback" else {
-                    self.sendResponse(
-                        statusCode: 404,
-                        body: Self.errorHTML("This callback does not belong to ZenCODE."),
-                        on: connection
-                    )
-                    return
-                }
-                let code = try self.authorizationCode(from: data)
+            let decision = self.callbackDecision(for: data)
+            switch decision {
+            case let .authorized(code):
                 self.sendResponse(
-                    statusCode: 200,
+                    statusCode: decision.statusCode,
                     body: Self.successHTML(),
                     on: connection
                 )
                 self.complete(.success(code))
-            } catch {
+            case let .authenticFailure(message):
                 self.sendResponse(
-                    statusCode: 400,
-                    body: Self.errorHTML(error.localizedDescription),
+                    statusCode: decision.statusCode,
+                    body: Self.errorHTML(message),
                     on: connection
                 )
-                self.complete(.failure(error))
+                self.complete(.failure(ChatGPTSubscriptionAuthError.missingAuthorizationCode))
+            case .notFound:
+                self.sendResponse(
+                    statusCode: decision.statusCode,
+                    body: Self.errorHTML("This callback does not belong to ZenCODE."),
+                    on: connection
+                )
+            case let .invalid(message):
+                self.sendResponse(
+                    statusCode: decision.statusCode,
+                    body: Self.errorHTML(message),
+                    on: connection
+                )
             }
         }
-    }
-
-    func callbackPath(from data: Data?) -> String? {
-        guard let data,
-              let request = String(data: data, encoding: .utf8),
-              let firstLine = request.components(separatedBy: "\n").first else {
-            return nil
-        }
-
-        let parts = firstLine.split(separator: " ", maxSplits: 2)
-        guard parts.count >= 2,
-              let components = URLComponents(string: "http://localhost\(parts[1])") else {
-            return nil
-        }
-        return components.path
-    }
-
-    func authorizationCode(from data: Data?) throws -> String {
-        guard let data,
-              let request = String(data: data, encoding: .utf8),
-              let firstLine = request.components(separatedBy: "\n").first else {
-            throw ChatGPTSubscriptionAuthError.callbackRequestInvalid
-        }
-
-        let parts = firstLine.split(separator: " ", maxSplits: 2)
-        guard parts.count >= 2 else {
-            throw ChatGPTSubscriptionAuthError.callbackRequestInvalid
-        }
-
-        let target = String(parts[1])
-        guard let components = URLComponents(string: "http://localhost\(target)") else {
-            throw ChatGPTSubscriptionAuthError.callbackRequestInvalid
-        }
-        guard components.path == "/auth/callback" else {
-            throw ChatGPTSubscriptionAuthError.callbackRequestInvalid
-        }
-        return try authorizationCode(from: components, requireState: true)
     }
 
     func complete(_ result: Result<String, Error>) {
         Task(name: "ChatGPT callback background task") {
             let state = await callbackState.complete(result)
-            state.listener?.listener.cancel()
+            for listener in state.listeners {
+                listener.cancel()
+            }
             state.continuation?.resume(with: result)
         }
     }
@@ -271,16 +357,22 @@ final class ChatGPTSubscriptionCallbackServer: Sendable {
         body: String,
         on connection: NWConnection
     ) {
-        let reason = statusCode == 200 ? "OK" : "Bad Request"
+        let reason = switch statusCode {
+        case 200: "OK"
+        case 404: "Not Found"
+        default: "Bad Request"
+        }
         let bodyData = Data(body.utf8)
+        // HTTP/1.1 requires CRLF line endings; strict clients reject bare LF.
         var response = Data(
-            """
-            HTTP/1.1 \(statusCode) \(reason)
-            Content-Type: text/html; charset=utf-8
-            Content-Length: \(bodyData.count)
-            Connection: close
-            
-            """.utf8
+            [
+                "HTTP/1.1 \(statusCode) \(reason)",
+                "Content-Type: text/html; charset=utf-8",
+                "Content-Length: \(bodyData.count)",
+                "Connection: close",
+                "",
+                ""
+            ].joined(separator: "\r\n").utf8
         )
         response.append(bodyData)
         connection.send(content: response, completion: .contentProcessed { _ in
@@ -333,30 +425,33 @@ final class ChatGPTSubscriptionCallbackServer: Sendable {
     }
 }
 
-private struct ChatGPTSubscriptionCallbackListener: Sendable {
-    let listener: NWListener
-}
-
 private actor ChatGPTSubscriptionCallbackServerState {
     typealias CompletionState = (
-        listener: ChatGPTSubscriptionCallbackListener?,
+        listeners: [NWListener],
         continuation: CheckedContinuation<String, Error>?
     )
 
-    private var listener: ChatGPTSubscriptionCallbackListener?
+    private var listeners: [NWListener] = []
     private var waitContinuation: CheckedContinuation<String, Error>?
     private var pendingResult: Result<String, Error>?
     private var isStopped = false
 
-    func setListener(_ listener: NWListener) {
-        self.listener = ChatGPTSubscriptionCallbackListener(listener: listener)
+    /// Registers a listener; returns false once the flow is already over, in
+    /// which case the caller must not start it.
+    func addListener(_ listener: NWListener) -> Bool {
+        guard !isStopped else {
+            return false
+        }
+        listeners.append(listener)
+        return true
     }
 
-    func clearListener(_ listener: NWListener) {
-        guard self.listener?.listener === listener else {
-            return
-        }
-        self.listener = nil
+    func removeListener(_ listener: NWListener) {
+        listeners.removeAll { $0 === listener }
+    }
+
+    func activeListeners() -> [NWListener] {
+        listeners
     }
 
     func waitForCode() async throws -> String {
@@ -383,22 +478,22 @@ private actor ChatGPTSubscriptionCallbackServerState {
 
     func stop() -> CompletionState {
         guard !isStopped else {
-            return (nil, nil)
+            return ([], nil)
         }
         isStopped = true
-        let state = (listener: listener, continuation: waitContinuation)
-        listener = nil
+        let state = (listeners: listeners, continuation: waitContinuation)
+        listeners = []
         waitContinuation = nil
         return state
     }
 
     func complete(_ result: Result<String, Error>) -> CompletionState {
         guard !isStopped else {
-            return (nil, nil)
+            return ([], nil)
         }
         isStopped = true
-        let state = (listener: listener, continuation: waitContinuation)
-        listener = nil
+        let state = (listeners: listeners, continuation: waitContinuation)
+        listeners = []
         waitContinuation = nil
         if state.continuation == nil {
             pendingResult = result

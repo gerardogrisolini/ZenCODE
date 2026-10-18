@@ -47,7 +47,7 @@ extension AnthropicSubscriptionGenerationClient {
             throw RemoteGenerationClientError.missingSession
         }
 
-        let credentials = try await AnthropicSubscriptionAuthService.loadValidCredentials()
+        var credentials = try await credentialsLoader()
         guard currentSession(for: lease) != nil else {
             throw RemoteGenerationClientError.missingSession
         }
@@ -61,6 +61,15 @@ extension AnthropicSubscriptionGenerationClient {
         var didRetryAfterThinkingReplayRejection = false
 
         for round in 0..<configuration.maxToolRounds {
+            // An agentic turn can outlive the access token. Reloading is cheap
+            // (it only refreshes inside the expiry margin), so every round
+            // starts from credentials that are valid at that moment.
+            if round > 0 {
+                credentials = try await credentialsLoader()
+            }
+            // One forced refresh per round: a second 401/403 on the same round
+            // is surfaced instead of looping.
+            var didRetryAfterAuthFailure = false
             guard var session = currentSession(for: lease) else {
                 throw RemoteGenerationClientError.missingSession
             }
@@ -91,6 +100,25 @@ extension AnthropicSubscriptionGenerationClient {
                         onEvent: onEvent
                     )
                 } catch {
+                    if Self.isAuthenticationFailure(error) {
+                        // The rejection happens when the stream is opened,
+                        // before any assistant message or tool result of this
+                        // round is committed, so replaying the same round
+                        // cannot duplicate session content.
+                        guard !didRetryAfterAuthFailure else {
+                            throw Self.authenticationFailureAfterRefresh(error)
+                        }
+                        didRetryAfterAuthFailure = true
+                        credentials = try await refreshCredentialsAfterAuthFailure(
+                            credentials,
+                            originalError: error
+                        )
+                        guard currentSession(for: lease) != nil else {
+                            throw RemoteGenerationClientError.missingSession
+                        }
+                        await onEvent(.diagnostic(Self.authRefreshDiagnostic()))
+                        continue
+                    }
                     if !didRetryAfterThinkingReplayRejection,
                        Self.isThinkingReplayRejected(error) {
                         didRetryAfterThinkingReplayRejection = true
@@ -195,6 +223,51 @@ extension AnthropicSubscriptionGenerationClient {
             }
         }
         throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)
+    }
+
+    /// Forces a refresh after the service rejected the access token. Refresh
+    /// failures are surfaced once, with a sign-in hint, and never retried.
+    func refreshCredentialsAfterAuthFailure(
+        _ credentials: AnthropicSubscriptionCredentials,
+        originalError: Error
+    ) async throws -> AnthropicSubscriptionCredentials {
+        do {
+            return try await credentialsRefresher(credentials)
+        } catch {
+            if Task.isCancelled || error is CancellationError {
+                throw error
+            }
+            // Typed auth errors (for example `refreshTokenRejected`) already
+            // carry an actionable "sign in again" description.
+            if error is AnthropicSubscriptionAuthError {
+                throw error
+            }
+            throw RemoteGenerationClientError.remoteFailure(
+                Self.message(of: originalError)
+                    + ". Refreshing the access token failed: "
+                    + error.localizedDescription
+                    + ". Sign in to Anthropic Subscription again."
+            )
+        }
+    }
+
+    static func authenticationFailureAfterRefresh(_ error: Error) -> Error {
+        RemoteGenerationClientError.remoteFailure(
+            message(of: error)
+                + " (after refreshing the access token). Sign in to Anthropic Subscription again."
+        )
+    }
+
+    static func authRefreshDiagnostic() -> String {
+        "Anthropic Subscription returned an authentication error; refreshed "
+            + "the access token and will retry."
+    }
+
+    private static func message(of error: Error) -> String {
+        if case let .remoteFailure(output)? = error as? RemoteGenerationClientError {
+            return output
+        }
+        return error.localizedDescription
     }
 
     static func removingThinkingBlocks(
