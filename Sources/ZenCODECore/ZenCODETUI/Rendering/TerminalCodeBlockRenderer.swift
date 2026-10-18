@@ -18,7 +18,7 @@ enum TerminalCodeBlockRenderer {
         let comment: String
         let number: String
     }
-    
+
     struct SyntaxProfile {
         var keywords: Set<String>
         var types: Set<String>
@@ -28,7 +28,7 @@ enum TerminalCodeBlockRenderer {
         var directivePrefixes: Set<Character>
         var stringDelimiters: Set<Character>
         var allowsSwiftRawStrings: Bool
-        
+
         static let generic = SyntaxProfile(
             keywords: [
                 "and", "as", "async", "await", "break", "case", "catch", "class",
@@ -46,7 +46,7 @@ enum TerminalCodeBlockRenderer {
             allowsSwiftRawStrings: false
         )
     }
-    
+
     /// Renders a complete fenced-code presentation. The caller supplies the
     /// visible width of the code surface (or zero when no width is known). This
     /// is deliberately shared by the document visitor and the streaming
@@ -273,7 +273,7 @@ enum TerminalCodeBlockRenderer {
         // C1 controls have no matching Control Pictures glyph.
         return "�"
     }
-    
+
     static func normalizedLanguage(_ language: String?) -> String? {
         guard let language = language.map(terminalSafeSourceLine)?.lowercased() else {
             return nil
@@ -313,7 +313,7 @@ enum TerminalCodeBlockRenderer {
             return language
         }
     }
-    
+
     static func renderProfileLine(
         _ line: String,
         profile: SyntaxProfile,
@@ -321,7 +321,7 @@ enum TerminalCodeBlockRenderer {
     ) -> String {
         var rendered = ""
         var index = line.startIndex
-        
+
         while index < line.endIndex {
             if matchingPrefix(
                 in: line,
@@ -331,13 +331,13 @@ enum TerminalCodeBlockRenderer {
                 rendered += "\(palette.syntaxComment)\(line[index...])\(reset)"
                 break
             }
-            
+
             if let blockCommentEnd = blockCommentEnd(in: line, at: index) {
                 rendered += "\(palette.syntaxComment)\(line[index..<blockCommentEnd])\(reset)"
                 index = blockCommentEnd
                 continue
             }
-            
+
             if let stringEnd = stringEnd(
                 in: line,
                 at: index,
@@ -348,14 +348,14 @@ enum TerminalCodeBlockRenderer {
                 index = stringEnd
                 continue
             }
-            
+
             if profile.attributePrefixes.contains(line[index]) {
                 let end = consumeIdentifier(in: line, from: line.index(after: index))
                 rendered += "\(palette.syntaxAttribute)\(line[index..<end])\(reset)"
                 index = end
                 continue
             }
-            
+
             if profile.directivePrefixes.contains(line[index]),
                line.index(after: index) < line.endIndex,
                line[line.index(after: index)].isLetter {
@@ -364,14 +364,14 @@ enum TerminalCodeBlockRenderer {
                 index = end
                 continue
             }
-            
+
             if line[index].isNumber {
                 let end = consumeNumber(in: line, from: index)
                 rendered += "\(palette.syntaxNumber)\(line[index..<end])\(reset)"
                 index = end
                 continue
             }
-            
+
             if isIdentifierStart(line[index]) {
                 let end = consumeIdentifier(in: line, from: index)
                 let token = String(line[index..<end])
@@ -389,14 +389,14 @@ enum TerminalCodeBlockRenderer {
                 index = end
                 continue
             }
-            
+
             rendered.append(line[index])
             index = line.index(after: index)
         }
-        
+
         return rendered
     }
-    
+
     static func renderDataLine(
         _ line: String,
         language: String?,
@@ -417,16 +417,16 @@ enum TerminalCodeBlockRenderer {
                 return ["#"]
             }
         }()
-        
+
         var rendered = ""
         var index = line.startIndex
-        
+
         while index < line.endIndex {
             if matchingPrefix(in: line, at: index, prefixes: comments) != nil {
                 rendered += "\(commentColor)\(line[index...])\(reset)"
                 break
             }
-            
+
             if let stringEnd = stringEnd(
                 in: line,
                 at: index,
@@ -442,7 +442,7 @@ enum TerminalCodeBlockRenderer {
                 index = stringEnd
                 continue
             }
-            
+
             if line[index].isNumber || line[index] == "-" {
                 let end = consumeNumber(in: line, from: index)
                 if end > index {
@@ -451,7 +451,7 @@ enum TerminalCodeBlockRenderer {
                     continue
                 }
             }
-            
+
             if isIdentifierStart(line[index]) {
                 let end = consumeIdentifier(in: line, from: index)
                 let token = String(line[index..<end])
@@ -465,21 +465,21 @@ enum TerminalCodeBlockRenderer {
                 index = end
                 continue
             }
-            
+
             rendered.append(line[index])
             index = line.index(after: index)
         }
-        
+
         return rendered
     }
-    
+
     static func renderMarkupLine(
         _ line: String,
         palette: TerminalMarkdownPalette
     ) -> String {
         var rendered = ""
         var index = line.startIndex
-        
+
         while index < line.endIndex {
             if hasPrefix("<!--", in: line, at: index) {
                 let end = endOfDelimitedSegment(
@@ -491,16 +491,16 @@ enum TerminalCodeBlockRenderer {
                 index = end
                 continue
             }
-            
+
             if line[index] == "<" {
                 rendered.append("<")
                 index = line.index(after: index)
-                
+
                 if index < line.endIndex, line[index] == "/" {
                     rendered.append("/")
                     index = line.index(after: index)
                 }
-                
+
                 let tagEnd = consumeIdentifier(in: line, from: index)
                 if tagEnd > index {
                     rendered += "\(palette.syntaxKeyword)\(line[index..<tagEnd])\(reset)"
@@ -508,7 +508,7 @@ enum TerminalCodeBlockRenderer {
                     continue
                 }
             }
-            
+
             if let stringEnd = stringEnd(
                 in: line,
                 at: index,
@@ -519,35 +519,35 @@ enum TerminalCodeBlockRenderer {
                 index = stringEnd
                 continue
             }
-            
+
             if isIdentifierStart(line[index]), isMarkupAttribute(in: line, after: index) {
                 let end = consumeIdentifier(in: line, from: index)
                 rendered += "\(palette.syntaxAttribute)\(line[index..<end])\(reset)"
                 index = end
                 continue
             }
-            
+
             rendered.append(line[index])
             index = line.index(after: index)
         }
-        
+
         return rendered
     }
-    
+
     static func renderCSSLine(
         _ line: String,
         palette: TerminalMarkdownPalette
     ) -> String {
         var rendered = ""
         var index = line.startIndex
-        
+
         while index < line.endIndex {
             if let blockCommentEnd = blockCommentEnd(in: line, at: index) {
                 rendered += "\(palette.syntaxComment)\(line[index..<blockCommentEnd])\(reset)"
                 index = blockCommentEnd
                 continue
             }
-            
+
             if let stringEnd = stringEnd(
                 in: line,
                 at: index,
@@ -558,28 +558,28 @@ enum TerminalCodeBlockRenderer {
                 index = stringEnd
                 continue
             }
-            
+
             if line[index] == "@" {
                 let end = consumeIdentifier(in: line, from: line.index(after: index))
                 rendered += "\(palette.syntaxAttribute)\(line[index..<end])\(reset)"
                 index = end
                 continue
             }
-            
+
             if line[index] == "#",
                let end = cssColorEnd(in: line, from: index) {
                 rendered += "\(palette.syntaxNumber)\(line[index..<end])\(reset)"
                 index = end
                 continue
             }
-            
+
             if line[index].isNumber {
                 let end = consumeNumber(in: line, from: index)
                 rendered += "\(palette.syntaxNumber)\(line[index..<end])\(reset)"
                 index = end
                 continue
             }
-            
+
             if isIdentifierStart(line[index]) {
                 let end = consumeCSSIdentifier(in: line, from: index)
                 if isObjectKey(in: line, after: end) {
@@ -592,12 +592,12 @@ enum TerminalCodeBlockRenderer {
                 index = end
                 continue
             }
-            
+
             rendered.append(line[index])
             index = line.index(after: index)
         }
-        
+
         return rendered
     }
-    
+
 }

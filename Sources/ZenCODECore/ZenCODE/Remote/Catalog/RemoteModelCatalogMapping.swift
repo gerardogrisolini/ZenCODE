@@ -281,4 +281,3 @@ func doubleValue(
         return nil
     }
 }
-

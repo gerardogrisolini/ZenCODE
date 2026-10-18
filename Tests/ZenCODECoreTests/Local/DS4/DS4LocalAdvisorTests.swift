@@ -44,7 +44,7 @@ struct DS4HardwareProbeTests {
                 return Self.result(stdout: """
                     Chipset Model: Apple M4 Max
                     Metal Support: Metal 4
-                    
+
                     """)
             default:
                 throw DS4HardwareProbeError.executableUnavailable(command.executableName)

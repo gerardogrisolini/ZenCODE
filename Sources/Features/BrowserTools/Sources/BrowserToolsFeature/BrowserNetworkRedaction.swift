@@ -250,4 +250,3 @@ enum BrowserNetworkValue {
         return nil
     }
 }
-

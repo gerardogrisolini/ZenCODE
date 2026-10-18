@@ -288,4 +288,3 @@ struct BrowserNetworkFilters: Sendable, Equatable {
         return supportedResourceTypes.first { $0.lowercased() == normalized }
     }
 }
-

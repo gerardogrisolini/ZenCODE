@@ -9,7 +9,7 @@ import Foundation
 
 enum TerminalANSIText {
     private static let reset = TerminalStyle.reset
-    
+
     /// Number of visible terminal columns in `text`, ignoring ANSI escape
     /// sequences and accounting for common double-width grapheme clusters such
     /// as emoji and CJK/fullwidth characters.
@@ -27,8 +27,8 @@ enum TerminalANSIText {
         }
         return width
     }
-    
-    
+
+
     /// Number of visible terminal columns occupied by a single extended
     /// grapheme cluster, applying the same double-width policy as
     /// ``visibleWidth(_:)``. Exposed so width-aware callers (truncation,
@@ -58,7 +58,7 @@ enum TerminalANSIText {
         }
         return 1
     }
-    
+
     private static func isZeroWidthScalar(_ scalar: Unicode.Scalar) -> Bool {
         let value = scalar.value
         return value == 0
@@ -73,7 +73,7 @@ enum TerminalANSIText {
         || (0x20D0...0x20FF).contains(value)
         || (0xFE20...0xFE2F).contains(value)
     }
-    
+
     /// Returns `true` when Unicode assigns an emoji presentation by default.
     ///
     /// This deliberately uses Unicode's `Emoji_Presentation` property rather
@@ -83,7 +83,7 @@ enum TerminalANSIText {
     private static func isEmojiPresentationScalar(_ scalar: Unicode.Scalar) -> Bool {
         scalar.properties.isEmojiPresentation
     }
-    
+
     private static func isWideOrFullwidthScalar(_ scalar: Unicode.Scalar) -> Bool {
         let value = scalar.value
         return (0x1100...0x115F).contains(value)
@@ -99,7 +99,7 @@ enum TerminalANSIText {
         || (0x20000...0x2FFFD).contains(value)
         || (0x30000...0x3FFFD).contains(value)
     }
-    
+
     /// Truncates `text` to at most `width` visible columns, appending an
     /// ellipsis (`…`) when content is cut. ANSI escape sequences are preserved
     /// and a reset is emitted at the end so styles never leak past the cut.
@@ -257,7 +257,7 @@ enum TerminalANSIText {
                 )
             }
     }
-    
+
     private static func wrapSingleLine(
         _ line: String,
         width: Int,
@@ -267,25 +267,25 @@ enum TerminalANSIText {
         guard startingAtColumn + visibleWidth(line) > width else {
             return line
         }
-        
+
         let leadingWhitespace = String(line.prefix { $0 == " " })
         let body = String(line.dropFirst(leadingWhitespace.count))
         let words = body.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
         guard !words.isEmpty else {
             return line
         }
-        
+
         var lines: [String] = []
         var current = leadingWhitespace
         var currentWidth = startingAtColumn + leadingWhitespace.count
         var active = ""
         var lineHasWord = false
-        
+
         for word in words {
             let wordWidth = visibleWidth(word)
             let needsSpace = lineHasWord
             let projected = currentWidth + (needsSpace ? 1 : 0) + wordWidth
-            
+
             if lineHasWord && projected > width {
                 if !active.isEmpty {
                     current += reset
@@ -295,7 +295,7 @@ enum TerminalANSIText {
                 currentWidth = hangingIndent.count
                 lineHasWord = false
             }
-            
+
             if lineHasWord {
                 current += " "
                 currentWidth += 1
@@ -305,7 +305,7 @@ enum TerminalANSIText {
             lineHasWord = true
             active = updatedActiveStyle(active, scanning: word)
         }
-        
+
         lines.append(current)
         return lines.joined(separator: "\n")
     }
@@ -370,7 +370,7 @@ enum TerminalANSIText {
         }
         return lines
     }
-    
+
     /// Tracks the SGR sequences that remain active after `fragment` so a wrap
     /// boundary can re-open them on the next line.
     private static func updatedActiveStyle(_ current: String, scanning fragment: String) -> String {
@@ -398,7 +398,7 @@ enum TerminalANSIText {
         }
         return active
     }
-    
+
     private static func isResetSequence(_ sequence: String) -> Bool {
         let codes = sequence
             .dropFirst(2)
@@ -477,8 +477,8 @@ enum TerminalANSIText {
         }
         return .open(closure: "\u{1B}]8;;\(terminator)")
     }
-    
-    
+
+
     static func endOfEscapeSequence(
         in text: String,
         from start: String.Index
@@ -519,7 +519,7 @@ enum TerminalANSIText {
         }
         return scalars.index(after: afterEscape)
     }
-    
+
     /// Counts trailing visible newlines while skipping ANSI escape sequences,
     /// without materializing the stripped string. Mirrors the visibility rules
     /// of `stripANSI` but only accumulates counters, which keeps the streaming

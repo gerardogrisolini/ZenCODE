@@ -325,4 +325,3 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
         return options.first
     }
 }
-

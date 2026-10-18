@@ -27,7 +27,7 @@ extension TerminalStatusBar {
         }
         return "\(modelName) · \(thinkingSelection.displayTitle)"
     }
-    
+
     static func gitStatusFragment(summary: TerminalGitStatusSummary) -> String {
         let reset = TerminalStyle.reset
         let count = TerminalStyle.FileChange.count
@@ -37,14 +37,14 @@ extension TerminalStatusBar {
         + "\(addition)+\(summary.additions)\(reset) "
         + "\(deletion)-\(summary.deletions)\(reset)"
     }
-    
+
     static func modelDisplayName(_ modelID: String) -> String {
         modelID
             .split(separator: "/")
             .last
             .map(String.init) ?? modelID
     }
-    
+
     /// Merges a metrics event into the status bar's running metrics.
     ///
     /// The semantics live on `DirectAgentGenerationMetrics` so the sub-agent
@@ -68,7 +68,7 @@ extension TerminalStatusBar {
         }
         return "\(usedText)/\(contextWindowLimitText(maxTokens))"
     }
-    
+
     static func contextWindowLimitText(_ value: Int) -> String {
         let absoluteValue = abs(value)
         if absoluteValue >= 1_000_000 {
@@ -79,7 +79,7 @@ extension TerminalStatusBar {
         }
         return "\(value)"
     }
-    
+
     static func contextTokenCountText(_ value: Int) -> String {
         let absoluteValue = abs(value)
         if absoluteValue >= 1_000_000 {
@@ -90,7 +90,7 @@ extension TerminalStatusBar {
         }
         return "\(value)"
     }
-    
+
     static func tokenCountText(_ value: Int) -> String {
         let absoluteValue = abs(value)
         if absoluteValue >= 1_000_000 {
@@ -104,7 +104,7 @@ extension TerminalStatusBar {
         }
         return "\(value)"
     }
-    
+
     static func generationTokenCountsFragment(
         _ metrics: DirectAgentGenerationMetrics
     ) -> String? {
@@ -113,7 +113,7 @@ extension TerminalStatusBar {
             metrics.promptTokenCount.map { "p:\(tokenCountText($0))" },
             metrics.completionTokenCount.map { "g:\(tokenCountText($0))" }
         ].compactMap(\.self)
-        
+
         guard !fragments.isEmpty else {
             return nil
         }
@@ -168,7 +168,7 @@ extension TerminalStatusBar {
     private static func mutedLabel(_ label: String) -> String {
         "\(TerminalStyle.Text.muted)\(label)\(TerminalStyle.reset)"
     }
-    
+
     static func usagePercentText(_ value: Double) -> String {
         guard value.isFinite else {
             return "--"
@@ -179,7 +179,7 @@ extension TerminalStatusBar {
         }
         return String(format: "%.1f%%", clamped)
     }
-    
+
     static func durationText(_ value: Double) -> String {
         guard value.isFinite, value >= 0 else {
             return "--"
@@ -189,11 +189,11 @@ extension TerminalStatusBar {
             .seconds(value)
             .formatted(style)
     }
-    
+
     static func visibleCharacterCount(_ text: String) -> Int {
         TerminalANSIText.visibleWidth(text)
     }
-    
+
     static func fit(_ text: String, width: Int) -> String {
         guard width > 3, visibleCharacterCount(text) > width else {
             return text
@@ -201,7 +201,7 @@ extension TerminalStatusBar {
 
         return TerminalANSIText.truncate(text, to: width)
     }
-    
+
     static func padded(_ text: String, width: Int) -> String {
         let visibleCount = visibleCharacterCount(text)
         guard visibleCount < width else {
@@ -209,7 +209,7 @@ extension TerminalStatusBar {
         }
         return text + String(repeating: " ", count: width - visibleCount)
     }
-    
+
     func inputPanelDisplayLineCountLocked(
         state: inout State,
         text: String,
@@ -217,7 +217,7 @@ extension TerminalStatusBar {
     ) -> Int {
         inputPanelDisplayRowsLocked(state: &state, text: text, cursorIndex: cursorIndex).count
     }
-    
+
     func inputPanelDisplayRowsLocked(
         state: inout State,
         text: String,
@@ -232,7 +232,7 @@ extension TerminalStatusBar {
             maxRows: maxRows
         )
     }
-    
+
     func inputPanelSuggestionRowsLocked(
         state: inout State,
         lines: [String],
@@ -274,26 +274,26 @@ extension TerminalStatusBar {
             selectedIndex: boundedSelection - start
         )
     }
-    
+
     func statusBoxHorizontalInsetLocked(state: inout State) -> Int {
         0
     }
-    
+
     func statusBoxStartColumnLocked(state: inout State) -> Int {
         statusBoxHorizontalInsetLocked(state: &state) + 1
     }
-    
+
     func statusBoxWidthLocked(state: inout State) -> Int {
         let horizontalInset = statusBoxHorizontalInsetLocked(state: &state)
         // Footer surfaces are painted with autowrap disabled by the primary
         // screen compositor, so their right border can own the final column.
         return max(20, state.columns - horizontalInset * 2)
     }
-    
+
     func statusBoxContentWidthLocked(state: inout State) -> Int {
         max(1, statusBoxWidthLocked(state: &state) - 4)
     }
-    
+
     func maximumInputPanelTextRowsLocked(state: inout State) -> Int {
         guard state.row > 0 else {
             return 1
@@ -332,7 +332,7 @@ extension TerminalStatusBar {
         )
         return min(requested, available)
     }
-    
+
     static func inputPanelDisplayRows(
         text: String,
         cursorIndex: Int,
@@ -346,7 +346,7 @@ extension TerminalStatusBar {
         var characters = Array(text)
         let boundedCursorIndex = min(max(0, cursorIndex), characters.count)
         characters.insert(marker, at: boundedCursorIndex)
-        
+
         var logicalLines: [[Character]] = [[]]
         for character in characters {
             if character == "\n" {
@@ -355,7 +355,7 @@ extension TerminalStatusBar {
                 logicalLines[logicalLines.count - 1].append(character)
             }
         }
-        
+
         var rows: [String] = []
         for (logicalLineIndex, logicalLine) in logicalLines.enumerated() {
             var remaining = logicalLine
@@ -374,7 +374,7 @@ extension TerminalStatusBar {
                 isFirstVisualRow = false
             } while !remaining.isEmpty
         }
-        
+
         guard !rows.isEmpty else {
             return [Self.padded(promptPrefix + String(marker), width: contentWidth)]
         }
@@ -385,7 +385,7 @@ extension TerminalStatusBar {
             contentWidth: contentWidth
         )
     }
-    
+
     static func inputPanelChunk(
         _ characters: [Character],
         maxWidth: Int
@@ -426,7 +426,7 @@ extension TerminalStatusBar {
         guard rows.count > maxRows else {
             return rows
         }
-        
+
         let cursorRowIndex = rows.firstIndex { $0.contains(marker) } ?? max(0, rows.count - 1)
         let windowStart = min(
             max(0, cursorRowIndex - maxRows / 2),
@@ -434,7 +434,7 @@ extension TerminalStatusBar {
         )
         let windowEnd = min(rows.count, windowStart + maxRows)
         var visibleRows = Array(rows[windowStart..<windowEnd])
-        
+
         if maxRows >= 3, windowStart > 0, !visibleRows.isEmpty, cursorRowIndex != windowStart {
             visibleRows[0] = Self.padded("  ... earlier", width: contentWidth)
         }
@@ -446,5 +446,5 @@ extension TerminalStatusBar {
         }
         return visibleRows
     }
-    
+
 }

@@ -163,4 +163,3 @@ struct AgentSettingsSelectionManifest: Codable, Hashable, Sendable {
         modelID == nil && thinking == nil
     }
 }
-

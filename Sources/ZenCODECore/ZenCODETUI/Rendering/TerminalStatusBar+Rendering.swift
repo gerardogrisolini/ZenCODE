@@ -24,12 +24,12 @@ extension TerminalStatusBar {
               geometry.columns >= 40 else {
             return false
         }
-        
+
         state.row = geometry.rows
         state.columns = geometry.columns
         return true
     }
-    
+
     func refreshTerminalGeometryLocked(
         state: inout State,
         geometry: (rows: Int, columns: Int)?
@@ -58,7 +58,7 @@ extension TerminalStatusBar {
         state.lastStatusRender = nil
         primaryScreen.enterAppendOnly(reason: "cursor layout unavailable at terminal geometry")
     }
-    
+
     /// Repaints only the Chat-owned layout. A margin write homes the cursor,
     /// even when DECSTBM repeats the current margins, so ordinary unread and
     /// selection refreshes must not write it at all.
@@ -75,7 +75,7 @@ extension TerminalStatusBar {
         guard state.row > 0, state.columns > 0, !state.isResizePending else {
             return
         }
-        
+
         let statusSequence = statusRenderSequenceLocked(state: &state)
         // The full render paints both input panel and status, so update the
         // status cache to the sequence just written. Subsequent status-only
@@ -104,7 +104,7 @@ extension TerminalStatusBar {
         }
         renderLocked(state: &state)
     }
-    
+
     func sharedChatReaderViewportRowsLocked(state: inout State) -> Int {
         max(0, sharedChatReaderReservedRowsLocked(state: &state) - 2)
     }
@@ -222,7 +222,7 @@ extension TerminalStatusBar {
         guard let inputPanelState = state.inputPanelState else {
             return ""
         }
-        
+
         let reservedRows = reservedBottomRowsLocked(state: &state)
         let topRow = max(1, state.row - reservedRows + 1) + sharedChatReaderReservedRowsLocked(state: &state)
         let startColumn = statusBoxStartColumnLocked(state: &state)
@@ -253,7 +253,7 @@ extension TerminalStatusBar {
             ),
             width: contentWidth
         )
-        
+
         let inputSequence = inputRows.enumerated().map { offset, inputRow in
             [
                 "\u{1B}[\(topRow + offset + 1);\(startColumn)H",
@@ -349,7 +349,7 @@ extension TerminalStatusBar {
         }
         return fit("\(modeAndBadge) · \(compactHelpText)", width: width)
     }
-    
+
     func statusRenderSequenceLocked(state: inout State) -> String {
         let startColumn = statusBoxStartColumnLocked(state: &state)
         let boxWidth = statusBoxWidthLocked(state: &state)
@@ -401,7 +401,7 @@ extension TerminalStatusBar {
         + "\u{1B}8"
         return sequence
     }
-    
+
     func reservedBottomRowsLocked(state: inout State) -> Int {
         guard let inputPanelState = state.inputPanelState else {
             return Self.standaloneStatusRows
@@ -416,7 +416,7 @@ extension TerminalStatusBar {
         + inputPanelSuggestionRowCountLocked(state: &state)
         + Self.attachedStatusRows
     }
-    
+
     func minimumRowsLocked(state: inout State) -> Int {
         let minimumReservedRows: Int
         if state.inputPanelState == nil {
@@ -429,7 +429,7 @@ extension TerminalStatusBar {
         }
         return max(5, minimumReservedRows + Self.minimumScrollableRows)
     }
-    
+
     nonisolated func statusTextLocked(state: inout State) -> String {
         let tokensUsed = state.latestContextWindow?.usedTokens
         ?? state.latestMetrics?.totalTokenCount
@@ -489,5 +489,5 @@ extension TerminalStatusBar {
             return "\(TerminalStyle.Status.failure)●\(TerminalStyle.reset)"
         }
     }
-    
+
 }

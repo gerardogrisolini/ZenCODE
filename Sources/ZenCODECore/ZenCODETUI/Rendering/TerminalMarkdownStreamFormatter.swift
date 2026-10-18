@@ -62,7 +62,7 @@ public struct TerminalMarkdownStreamFormatter {
         static let maximumDigitCount = 9
         static let maximumValue = 999_999_999
     }
-    
+
     /// Multi-line markdown constructs that must be parsed as a whole block
     /// rather than one isolated line at a time. Buffering these lets the
     /// renderer handle nested lists, multi-line blockquotes, and GFM tables.
@@ -114,7 +114,7 @@ public struct TerminalMarkdownStreamFormatter {
         case ambiguousBlockMarker
         case resolved
     }
-    
+
     private let isEnabled: Bool
     private let fixedRenderWidth: Int?
     private let supportsHyperlinks: Bool
@@ -123,7 +123,7 @@ public struct TerminalMarkdownStreamFormatter {
     /// such as nested sub-agent response indentation.
     private let presentationPrefixWidth: Int
     private let palette: TerminalMarkdownPalette
-    
+
     /// Visible terminal width used for structured Markdown reflow. When no fixed
     /// width was injected (production), this is re-read on each access so output
     /// adapts to live terminal resizes instead of being frozen at startup. A
@@ -161,7 +161,7 @@ public struct TerminalMarkdownStreamFormatter {
     /// Cached, incremental block-marker classification for the current line.
     /// It is reset only when that line is completed or force-flushed.
     private var pendingLineStartState: PendingLineStartState = .leadingWhitespace
-    
+
     public init(
         isEnabled: Bool,
         removesUnbalancedStrongMarkers: Bool = false,
@@ -175,7 +175,7 @@ public struct TerminalMarkdownStreamFormatter {
         self.presentationPrefixWidth = max(0, presentationPrefixWidth)
         self.palette = .detected
     }
-    
+
     init(
         isEnabled: Bool,
         renderWidth: Int,
@@ -192,7 +192,7 @@ public struct TerminalMarkdownStreamFormatter {
         self.presentationPrefixWidth = max(0, presentationPrefixWidth)
         self.palette = palette ?? .detected
     }
-    
+
     public mutating func consume(_ text: String) -> String {
         guard isEnabled else {
             return text
@@ -245,10 +245,10 @@ public struct TerminalMarkdownStreamFormatter {
                 clearPendingTailPreservingLineContext()
             }
         }
-        
+
         return rendered
     }
-    
+
     public mutating func finish() -> String {
         guard isEnabled else {
             return ""
@@ -398,7 +398,7 @@ public struct TerminalMarkdownStreamFormatter {
             )
             return flushed + header + newline
         }
-        
+
         // Continue or start a multi-line block.
         if blockKind == .tableCandidate {
             if isTableDelimiterRow(trimmed) {
@@ -480,7 +480,7 @@ public struct TerminalMarkdownStreamFormatter {
             let flushed = flushBlock()
             return flushed + handleCompleteLine(line, appendsNewline: appendsNewline)
         }
-        
+
         if let kind = blockKind(forStartLine: trimmed) {
             if kind == .list {
                 // Record ordered-list state up front so incremental flushes can
@@ -495,10 +495,10 @@ public struct TerminalMarkdownStreamFormatter {
             }
             return ""
         }
-        
+
         return renderCompleteLine(line, appendsNewline: appendsNewline)
     }
-    
+
     private func lineContinuesBlock(_ line: String, trimmed: String) -> Bool {
         guard let kind = blockKind else {
             return false
@@ -567,7 +567,7 @@ public struct TerminalMarkdownStreamFormatter {
         }
         return isListMarker(trimmed)
     }
-    
+
     private func blockKind(forStartLine trimmed: String) -> BlockKind? {
         if trimmed.hasPrefix(">") {
             return .blockQuote
@@ -580,7 +580,7 @@ public struct TerminalMarkdownStreamFormatter {
         }
         return nil
     }
-    
+
     private func isListMarker(_ trimmed: String) -> Bool {
         if trimmed.hasPrefix("- ")
             || trimmed.hasPrefix("* ")
@@ -592,7 +592,7 @@ public struct TerminalMarkdownStreamFormatter {
         }
         return isOrderedListMarker(in: trimmed)
     }
-    
+
     private func isPotentialTableHeader(_ trimmed: String) -> Bool {
         guard !isTableDelimiterRow(trimmed) else {
             return false
@@ -677,7 +677,7 @@ public struct TerminalMarkdownStreamFormatter {
         }
         return length
     }
-    
+
     /// Renders and clears the buffered multi-line block, parsing it as a single
     /// markdown document so nested structure is preserved.
     private mutating func flushBlock() -> String {
@@ -938,24 +938,24 @@ public struct TerminalMarkdownStreamFormatter {
             !line.trimmingCharacters(in: .whitespaces).isEmpty
         }
     }
-    
+
     private mutating func renderCompleteLine(
         _ line: String,
         appendsNewline: Bool
     ) -> String {
         let newline = appendsNewline ? "\n" : ""
-        
+
         guard mayContainMarkdown(in: line) else {
             return "\(line)\(newline)"
         }
-        
+
         let parsed = leadingIndent(in: sanitizedMarkdownSource(line))
         var renderer = makeRenderer()
         let document = Document(parsing: parsed.body)
         let rendered = "\(parsed.indent)\(renderer.visit(document))"
         return "\(rendered)\(newline)"
     }
-    
+
     // MARK: - Incremental prose streaming
 
     /// Completes a line whose prefix was already emitted as plain streaming
@@ -1238,17 +1238,17 @@ public struct TerminalMarkdownStreamFormatter {
         }
         return max(1, renderWidth - 1 - presentationPrefixWidth)
     }
-    
+
     private func shouldFlushPendingLineForStreaming(_ line: String) -> Bool {
         activeCodeFence == nil && blockKind == nil && !mayContainMarkdown(in: line)
     }
-    
+
     private func mayContainMarkdown(in line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
             return false
         }
-        
+
         if trimmed.hasPrefix("#")
             || trimmed.hasPrefix(">")
             || trimmed.hasPrefix("```")
@@ -1261,11 +1261,11 @@ public struct TerminalMarkdownStreamFormatter {
             || trimmed.hasPrefix("+ ") {
             return true
         }
-        
+
         if isOrderedListMarker(in: trimmed) {
             return true
         }
-        
+
         // Single pass over the line looking for inline markers (`, *, _, **,
         // __, ~~ and ]()), exiting at the first match instead of scanning the
         // string once per marker. A lone `*`/`_` is passed to the Markdown
@@ -1287,7 +1287,7 @@ public struct TerminalMarkdownStreamFormatter {
         }
         return false
     }
-    
+
     private func isOrderedListMarker(in line: String) -> Bool {
         // Swift Markdown accepts up to 9-digit ordered markers; 10+ digits are
         // plain text. Keep this consistent with leadingOrderedNumber so the
@@ -1327,7 +1327,7 @@ public struct TerminalMarkdownStreamFormatter {
             hasWhitespaceBody: afterDot < line.endIndex
         )
     }
-    
+
     private func leadingIndent(in line: String) -> (indent: String, body: String) {
         let bodyStart = line.firstIndex { !$0.isWhitespace } ?? line.endIndex
         return (
@@ -1335,25 +1335,25 @@ public struct TerminalMarkdownStreamFormatter {
             String(line[bodyStart...])
         )
     }
-    
-    
+
+
     private struct StrongMarker {
         let range: Range<String.Index>
         let canOpen: Bool
         let canClose: Bool
     }
-    
+
     private func sanitizedMarkdownSource(_ source: String) -> String {
         guard removesUnbalancedStrongMarkers,
               source.contains("**") else {
             return source
         }
-        
+
         let markers = strongMarkersOutsideInlineCode(in: source)
         guard !markers.isEmpty else {
             return source
         }
-        
+
         var openStack: [Int] = []
         var keptMarkerIndexes = Set<Int>()
         for (markerIndex, marker) in markers.enumerated() {
@@ -1364,11 +1364,11 @@ public struct TerminalMarkdownStreamFormatter {
                 openStack.append(markerIndex)
             }
         }
-        
+
         guard keptMarkerIndexes.count != markers.count else {
             return source
         }
-        
+
         var sanitized = ""
         var markerIndex = 0
         var index = source.startIndex
@@ -1387,7 +1387,7 @@ public struct TerminalMarkdownStreamFormatter {
         }
         return sanitized
     }
-    
+
     private func strongMarkersOutsideInlineCode(in source: String) -> [StrongMarker] {
         var markers: [StrongMarker] = []
         var index = source.startIndex
@@ -1424,7 +1424,7 @@ public struct TerminalMarkdownStreamFormatter {
         }
         return markers
     }
-    
+
     private func strongMarkerCanOpen(in source: String, at index: String.Index) -> Bool {
         let afterMarker = source.index(index, offsetBy: 2)
         guard afterMarker < source.endIndex else {
@@ -1432,7 +1432,7 @@ public struct TerminalMarkdownStreamFormatter {
         }
         return !source[afterMarker].isWhitespace
     }
-    
+
     private func strongMarkerCanClose(in source: String, at index: String.Index) -> Bool {
         guard index > source.startIndex else {
             return false
@@ -1440,7 +1440,7 @@ public struct TerminalMarkdownStreamFormatter {
         let beforeMarker = source.index(before: index)
         return !source[beforeMarker].isWhitespace
     }
-    
+
     private func openingCodeFence(in line: String) -> CodeFence? {
         guard let run = codeFenceRun(in: line) else {
             return nil
@@ -1507,16 +1507,16 @@ public struct TerminalMarkdownStreamFormatter {
         }
         return String(language).lowercased()
     }
-    
+
     // MARK: - Terminal capabilities
-    
+
     private static func detectTerminalWidth() -> Int {
         TerminalWidth.current(
             descriptors: [1, 2, 0],
             fallback: 0
         )
     }
-    
+
     private static func detectHyperlinkSupport() -> Bool {
         let environment = ProcessInfo.processInfo.environment
         if let term = environment["TERM"], term == "dumb" {

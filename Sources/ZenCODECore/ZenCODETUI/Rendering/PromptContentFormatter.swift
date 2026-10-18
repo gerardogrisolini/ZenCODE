@@ -18,7 +18,7 @@ public enum PromptContentFormatter {
     public static func renderPromptText(from blocks: [Any]) -> String {
         blocks.compactMap(renderBlock).joined(separator: "\n\n")
     }
-    
+
     private static func renderBlock(_ block: Any) -> String? {
         if let text = block as? String {
             return text
@@ -26,7 +26,7 @@ public enum PromptContentFormatter {
         guard let object = block as? [String: Any] else {
             return compactJSONString(from: block)
         }
-        
+
         let type = (object["type"] as? String ?? "text").lowercased()
         switch type {
         case "text":
@@ -74,7 +74,7 @@ public enum PromptContentFormatter {
             return compactJSONString(from: object)
         }
     }
-    
+
     private static func compactJSONString(from value: Any) -> String? {
         JSONValue(jsonObject: value).compactString()
     }

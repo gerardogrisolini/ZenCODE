@@ -38,7 +38,7 @@ extension Data {
         #endif
         return Data(bytes).base64URLEncodedString()
     }
-    
+
     func sha256Hex() -> String {
         SHA256.hash(data: self)
             .map { String(format: "%02x", $0) }
@@ -50,7 +50,7 @@ extension String {
     func sha256Base64URL() -> String {
         Data(SHA256.hash(data: Data(self.utf8))).base64URLEncodedString()
     }
-    
+
     func markdownHeadingTitle() -> String? {
         let trimmedLine = self.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedLine.hasPrefix("#") else {

@@ -53,7 +53,7 @@ extension TerminalStatusBar {
         state.spinnerIndex = (state.spinnerIndex + 1) % Self.spinnerFrames.count
         renderStatusLocked(state: &state)
     }
-    
+
     func startResizeSignalSourceLocked(state: inout State) {
         guard state.resizeSignalSource == nil else {
             return
@@ -65,7 +65,7 @@ extension TerminalStatusBar {
         }
         state.resizeSignalSource = ResizeSignalSourceBox(subscription: subscription)
     }
-    
+
     func stopResizeSignalSourceLocked(state: inout State) {
         state.resizeGeneration &+= 1
         state.isResizePending = false
@@ -74,7 +74,7 @@ extension TerminalStatusBar {
         state.resizeSignalSource?.subscription.cancel()
         state.resizeSignalSource = nil
     }
-    
+
     func scheduleTerminalResize() {
         guard state.isStarted else {
             return
@@ -161,7 +161,7 @@ extension TerminalStatusBar {
             geometry: (rows: rows, columns: columns)
         )
     }
-    
+
     static func currentTerminalGeometry(
         fileDescriptor: Int32
     ) -> (rows: Int, columns: Int)? {
@@ -171,7 +171,7 @@ extension TerminalStatusBar {
            size.ws_col > 0 {
             return (Int(size.ws_row), Int(size.ws_col))
         }
-        
+
         let environment = ProcessInfo.processInfo.environment
         guard let rows = positiveInt(environment["LINES"]),
               let columns = positiveInt(environment["COLUMNS"]) else {
@@ -179,20 +179,20 @@ extension TerminalStatusBar {
         }
         return (rows, columns)
     }
-    
+
     static func openControllingTerminal() -> FileHandle? {
         if AgentOutput.standardErrorIsTerminal {
             return AgentOutput.standardError
         }
-        
+
         let terminalFileDescriptor = open("/dev/tty", O_WRONLY | O_NOCTTY)
         if terminalFileDescriptor >= 0 {
             return FileHandle(fileDescriptor: terminalFileDescriptor, closeOnDealloc: true)
         }
-        
+
         return nil
     }
-    
+
     /// Writes text to the terminal output. Uses the injected `outputSink` when
     /// set (testing), otherwise writes to the controlling-terminal FileHandle.
     func performOutput(_ text: String) {
@@ -227,7 +227,7 @@ extension TerminalStatusBar {
             return body()
         }
     }
-    
+
     static func positiveInt(_ rawValue: String?) -> Int? {
         guard let value = rawValue
             .flatMap({ Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }),
@@ -236,7 +236,7 @@ extension TerminalStatusBar {
         }
         return value
     }
-    
+
     static func defaultGeometryIfReasonable() -> (rows: Int, columns: Int)? {
         // Some pseudo-terminals support ANSI scrolling but do not report size
         // through ioctl. Keep a conservative default so the status line still

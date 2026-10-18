@@ -310,4 +310,3 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         return normalized
     }
 }
-

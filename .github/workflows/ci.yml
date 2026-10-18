@@ -201,7 +201,9 @@ jobs:
         run: bash -n Scripts/*.sh
 
       - name: Check whitespace errors
-        run: git diff --check
+        # Compare the committed tree against the empty tree so the gate covers
+        # every tracked file instead of the (always clean) checkout worktree.
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD
 
       - name: Package downloadable build
         run: |
@@ -307,7 +309,9 @@ jobs:
         run: bash -n Scripts/*.sh
 
       - name: Check whitespace errors
-        run: git diff --check
+        # Compare the committed tree against the empty tree so the gate covers
+        # every tracked file instead of the (always clean) checkout worktree.
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD
 
       - name: Package downloadable build
         shell: bash

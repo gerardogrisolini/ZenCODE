@@ -49,4 +49,3 @@ struct DynamicCodingKey: CodingKey {
         self.intValue = intValue
     }
 }
-

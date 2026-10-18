@@ -23,7 +23,7 @@ extension TerminalCodeBlockRenderer {
         }
         return longestMatch
     }
-    
+
     static func hasPrefix(
         _ prefix: String,
         in line: String,
@@ -38,7 +38,7 @@ extension TerminalCodeBlockRenderer {
         }
         return true
     }
-    
+
     static func blockCommentEnd(
         in line: String,
         at index: String.Index
@@ -48,7 +48,7 @@ extension TerminalCodeBlockRenderer {
         }
         return endOfDelimitedSegment(in: line, from: index, closing: "*/")
     }
-    
+
     static func endOfDelimitedSegment(
         in line: String,
         from start: String.Index,
@@ -67,7 +67,7 @@ extension TerminalCodeBlockRenderer {
         }
         return line.endIndex
     }
-    
+
     static func stringEnd(
         in line: String,
         at index: String.Index,
@@ -82,12 +82,12 @@ extension TerminalCodeBlockRenderer {
             hashCount += 1
             quoteIndex = line.index(after: quoteIndex)
         }
-        
+
         guard quoteIndex < line.endIndex,
               delimiters.contains(line[quoteIndex]) else {
             return nil
         }
-        
+
         let delimiter = line[quoteIndex]
         var cursor = line.index(after: quoteIndex)
         while cursor < line.endIndex {
@@ -99,7 +99,7 @@ extension TerminalCodeBlockRenderer {
                 }
                 continue
             }
-            
+
             if line[cursor] == delimiter,
                stringClosingHashesMatch(
                 in: line,
@@ -112,13 +112,13 @@ extension TerminalCodeBlockRenderer {
                 }
                 return end
             }
-            
+
             cursor = line.index(after: cursor)
         }
-        
+
         return line.endIndex
     }
-    
+
     static func stringClosingHashesMatch(
         in line: String,
         afterQuoteAt quoteIndex: String.Index,
@@ -133,7 +133,7 @@ extension TerminalCodeBlockRenderer {
         }
         return true
     }
-    
+
     static func consumeNumber(
         in line: String,
         from start: String.Index
@@ -159,7 +159,7 @@ extension TerminalCodeBlockRenderer {
         }
         return cursor
     }
-    
+
     static func consumeCSSIdentifier(
         in line: String,
         from start: String.Index
@@ -176,7 +176,7 @@ extension TerminalCodeBlockRenderer {
         }
         return cursor
     }
-    
+
     static func cssColorEnd(
         in line: String,
         from start: String.Index
@@ -191,7 +191,7 @@ extension TerminalCodeBlockRenderer {
         }
         return [3, 4, 6, 8].contains(count) ? cursor : nil
     }
-    
+
     static func consumeIdentifier(
         in line: String,
         from start: String.Index
@@ -202,15 +202,15 @@ extension TerminalCodeBlockRenderer {
         }
         return cursor
     }
-    
+
     static func isIdentifierStart(_ character: Character) -> Bool {
         character == "_" || character == "$" || character.isLetter
     }
-    
+
     static func isIdentifierPart(_ character: Character) -> Bool {
         character == "_" || character == "$" || character.isLetter || character.isNumber
     }
-    
+
     static func isHexDigit(_ character: Character) -> Bool {
         switch character {
         case "a", "b", "c", "d", "e", "f",
@@ -220,7 +220,7 @@ extension TerminalCodeBlockRenderer {
             return character.isNumber
         }
     }
-    
+
     static func containsToken(
         _ token: String,
         in tokens: Set<String>
@@ -229,7 +229,7 @@ extension TerminalCodeBlockRenderer {
         || tokens.contains(token.lowercased())
         || tokens.contains(token.uppercased())
     }
-    
+
     static func isObjectKey(
         in line: String,
         after end: String.Index
@@ -240,7 +240,7 @@ extension TerminalCodeBlockRenderer {
         }
         return cursor < line.endIndex && (line[cursor] == ":" || line[cursor] == "=")
     }
-    
+
     static func isMarkupAttribute(
         in line: String,
         after start: String.Index
@@ -252,7 +252,7 @@ extension TerminalCodeBlockRenderer {
         }
         return cursor < line.endIndex && line[cursor] == "="
     }
-    
+
     static func isFunctionCall(
         in line: String,
         after end: String.Index

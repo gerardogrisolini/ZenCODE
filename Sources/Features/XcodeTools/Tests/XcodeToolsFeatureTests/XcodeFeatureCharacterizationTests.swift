@@ -19,7 +19,7 @@ struct XcodeFeatureCharacterizationTests {
                 "XCODE_MCP_EXECUTABLE": " /tmp/mcpbridge ",
                 "XCODE_MCP_ARGUMENTS": "--session\nexample\n",
                 "MCP_XCODE_PID": " 123 ",
-                "MCP_XCODE_SESSION_ID": " session-1 " 
+                "MCP_XCODE_SESSION_ID": " session-1 "
             ])
         )
 
