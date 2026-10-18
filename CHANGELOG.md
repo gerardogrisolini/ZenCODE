@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-10-18
+
 ### Changed
 
 - The coordinator now treats configured model bindings as a cost ladder when
