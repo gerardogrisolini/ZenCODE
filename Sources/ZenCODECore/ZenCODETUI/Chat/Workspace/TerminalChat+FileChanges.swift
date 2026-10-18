@@ -9,6 +9,15 @@ import Foundation
 import ToolCore
 
 extension TerminalChat {
+    /// How a complete old/new source snapshot is presented as a diff.
+    /// Captured patches are already compact and ignore this choice.
+    public enum FileArtifactDiffPresentation: Sendable {
+        /// One hunk covering the whole file, unchanged lines included.
+        case fullFile
+        /// Unified-diff hunks limited to changed lines plus surrounding context.
+        case changedLines(contextLines: Int = 3)
+    }
+
     @TerminalChatActor
     final class FileArtifactTurnContext {
         let id: UUID
@@ -208,12 +217,16 @@ extension TerminalChat {
         )
     }
 
+    /// Live turn output defaults to changed lines so edits stay visible inside
+    /// large files; `/artifacts` (history headings) defaults to the whole file.
     nonisolated static func renderFileArtifacts(
         _ turns: [SessionFileArtifactHistory.Turn],
         includeHistoryHeadings: Bool,
+        diffPresentation: FileArtifactDiffPresentation? = nil,
         columnWidth: Int = 100,
         isEnabled: Bool = false
     ) -> String {
+        let presentation = diffPresentation ?? (includeHistoryHeadings ? .fullFile : .changedLines())
         // The source is intentionally emitted as Markdown and rendered by the
         // same formatter as assistant output. Keep these parameters for source
         // compatibility with callers that used the preformatted renderer; the
@@ -243,7 +256,7 @@ extension TerminalChat {
 
                 let languagePath = artifact.displayPath.nilIfBlank ?? artifact.absolutePath
                 let language = codeLanguageHint(forPath: languagePath)
-                if let diff = fileArtifactDiff(artifact) {
+                if let diff = fileArtifactDiff(artifact, presentation: presentation) {
                     appendMarkdownCodeBlock(
                         TerminalCodeBlockRenderer.numberedArtifactDiff(diff),
                         language: language.map { "artifact-diff-\($0)" } ?? "artifact-diff",
@@ -258,7 +271,10 @@ extension TerminalChat {
     /// Presentation-only unified diff. Missing evidence is not an empty file:
     /// only an added/deleted status establishes the absent side. Captured patches
     /// remain authoritative when complete source snapshots are unavailable.
-    private nonisolated static func fileArtifactDiff(_ artifact: FileChangeArtifact) -> String? {
+    private nonisolated static func fileArtifactDiff(
+        _ artifact: FileChangeArtifact,
+        presentation: FileArtifactDiffPresentation
+    ) -> String? {
         let old: String
         let new: String
         if let oldText = artifact.oldText, let newText = artifact.newText {
@@ -299,34 +315,75 @@ extension TerminalChat {
         }
         guard !removed.isEmpty || !inserted.isEmpty else { return nil }
 
-        // One hunk keeps unchanged evidence once, rather than printing two files.
-        var rows = ["@@ -\(oldLines.isEmpty ? 0 : 1),\(oldLines.count) +\(newLines.isEmpty ? 0 : 1),\(newLines.count) @@"]
-        func append(_ line: String, marker: String) {
-            if line.hasSuffix("\n") {
-                rows.append(marker + line.dropLast())
-            } else {
-                rows.append(marker + line)
-                rows.append("\\ No newline at end of file")
-            }
+        // Interleave both sides once; each row remembers the 1-based source
+        // line it consumes so hunk headers can be derived for any slice.
+        struct Row {
+            let marker: String
+            let text: String
+            let oldLine: Int?
+            let newLine: Int?
+            var isChange: Bool { marker != " " }
         }
+        var rows: [Row] = []
         var oldIndex = 0
         var newIndex = 0
         while oldIndex < oldLines.count || newIndex < newLines.count {
             if oldIndex < oldLines.count, removed.contains(oldIndex) {
-                append(oldLines[oldIndex], marker: "-")
+                rows.append(Row(marker: "-", text: oldLines[oldIndex], oldLine: oldIndex + 1, newLine: nil))
                 oldIndex += 1
             } else if newIndex < newLines.count, inserted.contains(newIndex) {
-                append(newLines[newIndex], marker: "+")
+                rows.append(Row(marker: "+", text: newLines[newIndex], oldLine: nil, newLine: newIndex + 1))
                 newIndex += 1
             } else if oldIndex < oldLines.count, newIndex < newLines.count {
-                append(oldLines[oldIndex], marker: " ")
+                rows.append(Row(marker: " ", text: oldLines[oldIndex], oldLine: oldIndex + 1, newLine: newIndex + 1))
                 oldIndex += 1
                 newIndex += 1
             } else {
                 break
             }
         }
-        return rows.joined(separator: "\n")
+
+        let hunks: [Range<Int>]
+        switch presentation {
+        case .fullFile:
+            // One hunk keeps unchanged evidence once, rather than printing two files.
+            hunks = [rows.indices]
+        case let .changedLines(contextLines):
+            let context = max(0, contextLines)
+            var merged: [Range<Int>] = []
+            for index in rows.indices where rows[index].isChange {
+                let range = max(0, index - context)..<min(rows.count, index + context + 1)
+                if let last = merged.last, last.upperBound >= range.lowerBound {
+                    merged[merged.count - 1] = last.lowerBound..<max(last.upperBound, range.upperBound)
+                } else {
+                    merged.append(range)
+                }
+            }
+            hunks = merged
+        }
+
+        var output: [String] = []
+        for hunk in hunks {
+            let slice = rows[hunk]
+            let oldCount = slice.filter { $0.oldLine != nil }.count
+            let newCount = slice.filter { $0.newLine != nil }.count
+            // A side without lines in the hunk anchors to the last consumed
+            // line before it (0 at the start), matching unified-diff convention.
+            let oldStart = slice.first { $0.oldLine != nil }?.oldLine
+                ?? rows[..<hunk.lowerBound].last { $0.oldLine != nil }?.oldLine ?? 0
+            let newStart = slice.first { $0.newLine != nil }?.newLine
+                ?? rows[..<hunk.lowerBound].last { $0.newLine != nil }?.newLine ?? 0
+            output.append("@@ -\(oldStart),\(oldCount) +\(newStart),\(newCount) @@")
+            for row in slice {
+                if row.text.hasSuffix("\n") {
+                    output.append(row.marker + row.text.dropLast())
+                } else {
+                    output.append(row.marker + row.text)
+                    output.append("\\ No newline at end of file")
+                }
+            }
+        }
+        return output.joined(separator: "\n")
     }
 
     private nonisolated static func renderFileArtifactMetadata(

@@ -10,6 +10,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Live file artifacts in the terminal chat now show only the changed lines
+  with three lines of surrounding context, as unified-diff hunks, instead of
+  one hunk covering the whole file. `/artifacts` still shows the whole file
+  when complete before/after snapshots are available.
+
 ### Fixed
 
 - The `tasks.update` tool schema no longer declares a root-level `anyOf`, which

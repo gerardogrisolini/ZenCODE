@@ -22,6 +22,56 @@ struct TerminalArtifactDiffRenderingTests {
     }
 
     @Test
+    func liveOutputShowsOnlyChangedLinesWithContextWhileHistoryShowsTheWholeFile() {
+        let oldLines = (1...30).map { "line \($0)" }
+        var newLines = oldLines
+        newLines[9] = "line 10 changed"
+        newLines.insert("inserted after 25", at: 25)
+        let artifact = FileChangeArtifact(
+            absolutePath: "/tmp/File.swift", displayPath: "File.swift", status: .modified,
+            additions: 2, deletions: 1,
+            oldText: oldLines.joined(separator: "\n") + "\n",
+            newText: newLines.joined(separator: "\n") + "\n"
+        )
+        let turn = SessionFileArtifactHistory.Turn(number: 1, artifacts: [artifact])
+
+        let live = TerminalChat.renderFileArtifacts([turn], includeHistoryHeadings: false)
+        #expect(live.contains("   │ @@ -7,7 +7,7 @@\n 7 │  line 7\n 8 │  line 8\n 9 │  line 9\n10 │ -line 10\n10 │ +line 10 changed\n11 │  line 11\n12 │  line 12\n13 │  line 13\n"))
+        #expect(live.contains("   │ @@ -23,6 +23,7 @@\n23 │  line 23\n24 │  line 24\n25 │  line 25\n26 │ +inserted after 25\n27 │  line 26\n28 │  line 27\n29 │  line 28\n"))
+        #expect(!live.contains("line 1\n"))
+        #expect(!live.contains("line 30"))
+        #expect(live.components(separatedBy: "@@ -").count - 1 == 2)
+
+        let history = TerminalChat.renderFileArtifacts([turn], includeHistoryHeadings: true)
+        #expect(history.contains("   │ @@ -1,30 +1,31 @@\n 1 │  line 1\n"))
+        #expect(history.contains("31 │  line 30\n"))
+        #expect(history.components(separatedBy: "@@ -").count - 1 == 1)
+
+        let explicit = TerminalChat.renderFileArtifacts(
+            [turn], includeHistoryHeadings: true, diffPresentation: .changedLines(contextLines: 0)
+        )
+        #expect(explicit.contains("   │ @@ -10,1 +10,1 @@\n10 │ -line 10\n10 │ +line 10 changed\n   │ @@ -25,0 +26,1 @@\n26 │ +inserted after 25\n"))
+    }
+
+    @Test
+    func changedLinesPresentationKeepsAddedAndDeletedFileHeaders() {
+        let added = TerminalChat.renderFileArtifacts(
+            [.init(number: 1, artifacts: [.init(
+                absolutePath: "/tmp/a.txt", displayPath: "a.txt", status: .added, newText: "first\nlast"
+            )])],
+            includeHistoryHeadings: false
+        )
+        #expect(added.contains("  │ @@ -0,0 +1,2 @@\n1 │ +first\n2 │ +last\n  │ \\ No newline at end of file"))
+        let deleted = TerminalChat.renderFileArtifacts(
+            [.init(number: 1, artifacts: [.init(
+                absolutePath: "/tmp/a.txt", displayPath: "a.txt", status: .deleted, oldText: "first\nlast\n"
+            )])],
+            includeHistoryHeadings: false
+        )
+        #expect(deleted.contains("  │ @@ -1,2 +0,0 @@\n1 │ -first\n2 │ -last\n```"))
+    }
+
+    @Test
     func additionsDeletionsAndFinalNewlineChangesKeepExplicitMarkers() {
         let added = render(.init(
             absolutePath: "/tmp/a.txt", displayPath: "a.txt", status: .added,
