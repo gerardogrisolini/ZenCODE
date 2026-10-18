@@ -357,7 +357,6 @@ extension TerminalChat {
         While /goal is waiting for an answer, ordinary replies continue that same workflow task graph.
         Permission replies: /allow ID, /always ID, /deny ID.
         Gated operations (shell commands, deletions, git push/restore) are asked here.
-        Turn Telegram off from the TUI with /telegram off.
         """
     }
 

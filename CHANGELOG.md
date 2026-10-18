@@ -73,6 +73,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- On Telegram, plain-word command aliases (`status`, `diff`, `help`,
+  `changes`, `undo`, `annulla`, `modifiche`, `stato`) no longer swallow an
+  answer the session is explicitly waiting for: while `/plan approve` waits for
+  its Goal, a Planner question is open or a `/goal` workflow waits for the
+  user, the word is delivered as the answer, and quoting a live-message card
+  and replying `diff` answers its sender. Slash forms (`/diff`, `/status`, ...)
+  keep their command meaning, matching the TUI where these words are never
+  commands.
+- Messages produced while handling a Telegram `/plan approve` Goal reply, a
+  Planner answer or a `/goal` continuation (for example "no completed plan is
+  available to approve" or a task-graph error) are now sent to the Telegram
+  chat too, instead of appearing only in the TUI.
+- The Telegram `/help` text no longer mentions the TUI-only `/telegram`
+  command.
 - Telegram `/help` now lists `/chat` and `/undo` too. The command list is
   derived from the same registry used for the published Telegram command menu,
   so help and menu can no longer drift apart.

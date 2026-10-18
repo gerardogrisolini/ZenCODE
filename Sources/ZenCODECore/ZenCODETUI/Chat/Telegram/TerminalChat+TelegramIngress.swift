@@ -33,7 +33,17 @@ extension TerminalChat {
     ) async -> TerminalSubmittedLineAction {
         guard await validateTelegramOrigin(origin) else { return .continueChat }
         let prompt = Self.telegramCommandWithoutBotMention(prompt)
-        switch TerminalTelegramRemoteCommand(text: prompt) {
+        let remoteCommand = TerminalTelegramRemoteCommand(text: prompt)
+        // A plain-word alias ("status", "diff", "undo", ...) is ordinary text
+        // while a conversation explicitly waits for the operator: the pending
+        // reply wins, exactly as in the TUI, where those words are never
+        // commands. Slash forms keep their command meaning.
+        if remoteCommand != nil,
+           !CoordinatorCommandParser.isSlashCommand(prompt),
+           let action = await telegramPendingConversationReplyAction(prompt, origin: origin) {
+            return action
+        }
+        switch remoteCommand {
         case .start:
             await sendTelegramSystemMessageIfLinked(
                 "Telegram is already linked to this ZenCODE session. Send a prompt or /help.",
@@ -84,7 +94,7 @@ extension TerminalChat {
             }
 
             if !CoordinatorCommandParser.isSlashCommand(prompt),
-               let action = await handlePlanApprovalGoalReply(prompt) {
+               let action = await telegramPendingConversationReplyAction(prompt, origin: origin) {
                 return action
             }
             if let coordinatorCommand = CoordinatorCommandParser.parse(prompt) {
@@ -104,19 +114,40 @@ extension TerminalChat {
                 }
                 return action
             }
-            if !CoordinatorCommandParser.isSlashCommand(prompt),
-               let action = handlePlanBrainstormingReply(prompt) {
-                return action
-            }
+            return .runPrompt(prompt)
+        }
+    }
+
+    /// Routes a plain Telegram line to the conversation that is explicitly
+    /// waiting for the operator, in the same order as the TUI: the Goal for
+    /// `/plan approve`, then an open Planner question, then a `/goal` workflow
+    /// awaiting the user. Returns `nil` when nothing is waiting.
+    ///
+    /// These handlers report through `writeSystemMessage`/`writeFailureMessage`,
+    /// so their immediate output is captured and mirrored to the originating
+    /// chat with the same rule used for coordinator commands; otherwise an
+    /// approval failure would appear only in the TUI.
+    private func telegramPendingConversationReplyAction(
+        _ prompt: String,
+        origin: TerminalPromptOrigin
+    ) async -> TerminalSubmittedLineAction? {
+        telegramImmediateCommandOutput = []
+        var action = await handlePlanApprovalGoalReply(prompt)
+        if action == nil {
+            action = handlePlanBrainstormingReply(prompt)
+        }
+        if action == nil {
             // Same cross-surface rule as the TUI: a plain Telegram message
             // continues the open `/goal` workflow while the coordinator is
             // explicitly waiting for the user.
-            if !CoordinatorCommandParser.isSlashCommand(prompt),
-               let action = await handleWorkflowContinuationReply(prompt) {
-                return action
-            }
-            return .runPrompt(prompt)
+            action = await handleWorkflowContinuationReply(prompt)
         }
+        let output = telegramImmediateCommandOutput?.joined(separator: "\n").nilIfBlank
+        telegramImmediateCommandOutput = nil
+        if case .continueChat = action, let output {
+            await sendTelegramSystemMessageIfLinked(output, origin: origin)
+        }
+        return action
     }
 
     nonisolated static func telegramCommandWithoutBotMention(_ text: String) -> String {

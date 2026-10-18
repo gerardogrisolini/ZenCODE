@@ -14,16 +14,16 @@ extension TerminalChat {
     /// Reports whether `text` is already claimed by a higher-precedence route, in
     /// which case quoting a card must not change its meaning.
     ///
-    /// The decision uses the real parsers: ``TerminalTelegramRemoteCommand`` for
-    /// remote commands, ``CoordinatorCommandParser`` for slash commands and the
-    /// actual ``parseSharedChatMention(from:readableHandles:)`` outcome for
-    /// mentions — including `missingText`, which is a recognised mention whose
-    /// diagnostic must not be replaced by a reply. A leading `@` that resolves to
-    /// nothing is not a mention, so it does not suppress the reply route.
+    /// The decision uses the real parsers: ``CoordinatorCommandParser`` for
+    /// slash commands (every remote command's canonical form is a slash line)
+    /// and the actual ``parseSharedChatMention(from:readableHandles:)`` outcome
+    /// for mentions — including `missingText`, which is a recognised mention
+    /// whose diagnostic must not be replaced by a reply. Plain-word command
+    /// aliases ("status", "diff", ...) do not take precedence: quoting a card
+    /// and answering "diff" is an answer to its sender, as in the TUI. A
+    /// leading `@` that resolves to nothing is not a mention, so it does not
+    /// suppress the reply route.
     func telegramReplyRoutingHasPrecedence(over text: String) async -> Bool {
-        if TerminalTelegramRemoteCommand(text: text) != nil {
-            return true
-        }
         if CoordinatorCommandParser.isSlashCommand(text) {
             return true
         }

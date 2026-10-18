@@ -567,6 +567,113 @@ struct TelegramTUITests {
         #expect(terminal.activePlan?.isApproved == true)
     }
 
+    /// A plain-word alias ("diff", "status") answers an open `/goal` question
+    /// instead of running the remote command; the slash form stays a command.
+    @Test
+    func telegramPlainAliasYieldsToAnOpenWorkflowQuestion() async throws {
+        let terminal = TerminalChat(configuration: try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: URL(
+                fileURLWithPath: "/tmp/ZenCODE-telegram-alias-workflow",
+                isDirectory: true
+            )
+        ), stdinIsTerminal: false)
+        let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
+        terminal.telegramControlState.isActive = true
+        terminal.telegramControlState.wireLifecycleEpoch = UUID()
+        let origin = TerminalPromptOrigin.telegramLease(lease)
+
+        // Nothing is waiting: the alias is still the remote command.
+        guard case .continueChat = await terminal.submittedTelegramLineAction(
+            "status", origin: origin
+        ) else {
+            Issue.record("a plain alias must stay a command while nothing waits")
+            return
+        }
+
+        guard case .runHiddenPrompt = await terminal.submittedTelegramLineAction(
+            "/goal choose a format", origin: origin
+        ) else {
+            Issue.record("Telegram /goal should create a workflow")
+            return
+        }
+        let graphID = try #require(terminal.activeWorkflow?.graphID)
+        let graph = try #require(try await terminal.sessionRunner.taskGraphSnapshot(sessionID: terminal.sessionID))
+        _ = try await terminal.sessionRunner.taskOrchestrator.updateWorkflow(
+            sessionID: terminal.sessionID, graphID: graphID, state: .awaitingUser,
+            message: "Should I emit a diff or a patch?", expectedRevision: graph.revision
+        )
+        await terminal.recordWorkflowTurnOutcome(
+            graphID: graphID,
+            coordinatorMessage: "Should I emit a diff or a patch?"
+        )
+
+        guard case let .runHiddenPrompt(prompt, purpose) =
+            await terminal.submittedTelegramLineAction("diff", origin: origin) else {
+            Issue.record("\"diff\" must answer the open workflow question")
+            return
+        }
+        #expect(purpose == .workflow(originalGoal: "choose a format", graphID: graphID))
+        #expect(prompt.contains("diff"))
+        #expect(terminal.activeWorkflow?.isAwaitingReply == false)
+    }
+
+    /// The outcome of a Telegram `/plan approve` Goal reply reaches the chat
+    /// that sent it, instead of being written only to the TUI.
+    @Test
+    func telegramPlanApprovalFailureIsMirroredToTheChat() async throws {
+        let terminal = TerminalChat(configuration: try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("ZenCODE-telegram-plan-fail-\(UUID().uuidString)", isDirectory: true)
+        ), stdinIsTerminal: false)
+        let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
+        terminal.telegramControlState.isActive = true
+        terminal.telegramControlState.wireLifecycleEpoch = UUID()
+        let origin = TerminalPromptOrigin.telegramLease(lease)
+        let messages = Mutex<[String]>([])
+        terminal.onTelegramSystemMessage = { message, _ in
+            messages.withLock { $0.append(message) }
+            return true
+        }
+        terminal.activePlan = TerminalSessionPlan(
+            originalGoal: "old planner goal",
+            consolidatedText: "Implement the Telegram plan approval flow."
+        )
+
+        guard case .continueChat = await terminal.submittedTelegramLineAction(
+            "/plan approve", origin: origin
+        ) else {
+            Issue.record("Telegram /plan approve should first request a Goal")
+            return
+        }
+        // The plan awaiting approval is replaced before the Goal arrives.
+        terminal.activePlan = TerminalSessionPlan(
+            originalGoal: "another goal",
+            consolidatedText: "A different plan."
+        )
+        messages.withLock { $0.removeAll() }
+
+        guard case .continueChat = await terminal.submittedTelegramLineAction(
+            "Ship the approval flow", origin: origin
+        ) else {
+            Issue.record("a stale approval must not start implementation")
+            return
+        }
+        let unavailable = TerminalChat.planUnavailableForApprovalMessage
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(messages.withLock { $0.contains { $0.contains(unavailable) } })
+    }
+
+    /// `/telegram` is a TUI-only command: the remote help never mentions it.
+    @Test
+    func telegramRemoteHelpDoesNotMentionTheTUIOnlyTelegramCommand() async throws {
+        let terminal = try await Self.activeTelegramTerminal()
+        #expect(!terminal.telegramRemoteHelpText().contains("/telegram"))
+    }
+
     @Test
     func telegramProgressReporterRequiresActiveTelegramSession() async throws {
         let terminal = try await Self.activeTelegramTerminal()
@@ -1853,6 +1960,11 @@ struct TelegramTUITests {
                 over: "answer with an email like a@b.com"
             ) == false
         )
+        // A plain-word command alias is an answer to the quoted card, as in
+        // the TUI; only its slash form keeps command precedence.
+        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "diff") == false)
+        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "status") == false)
+        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "/diff"))
     }
 
     private static func sharedChatMessage(
