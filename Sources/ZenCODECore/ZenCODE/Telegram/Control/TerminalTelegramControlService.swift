@@ -95,6 +95,7 @@ public actor TerminalTelegramControlService {
     private var pollingTask: Task<Void, Never>?
     private var commandMenuTask: Task<Void, Never>?
     private var dispatcherSubscription: TerminalTelegramBotDispatcher.Subscription?
+    private var pollErrorText: String?
     /// Message-send rate governor shared by every outbound path of this
     /// service instance. See ``TerminalTelegramRateGovernor``.
     let rateGovernor = TerminalTelegramRateGovernor()
@@ -216,10 +217,15 @@ public actor TerminalTelegramControlService {
             lastMessagePreview: state.lastMessagePreview,
             wireLifecycleEpoch: UUID()
         )
+        pollErrorText = nil
         lifecycleGate.setActive(true)
         publishCommandMenu(client: client)
+        let pollGeneration = generation
         let subscription = try await dispatcher.subscribe(
-            botID: bot.id, client: client
+            botID: bot.id, client: client,
+            pollStatus: { [weak self] text in
+                await self?.applyPollStatus(text, generation: pollGeneration)
+            }
         )
         do {
             try ensureCurrentGeneration(generation)
@@ -290,6 +296,25 @@ public actor TerminalTelegramControlService {
 
     private func recordDiagnostics(_ text: String) {
         state.lastError = text
+    }
+
+    /// A successful outbound send clears stale diagnostics but must not hide a
+    /// still-failing inbound long poll.
+    func clearSendDiagnostics() {
+        state.lastError = pollErrorText
+    }
+
+    /// Reflects the dispatcher's long-poll health in `lastError`. A recovered
+    /// poll clears only the error this path set, never unrelated diagnostics.
+    private func applyPollStatus(_ text: String?, generation: Int) {
+        guard generation == pollingGeneration, state.isActive else { return }
+        if let text {
+            pollErrorText = text
+            state.lastError = text
+        } else if let previous = pollErrorText {
+            pollErrorText = nil
+            if state.lastError == previous { state.lastError = nil }
+        }
     }
 
     func telegramSettings() throws(TerminalTelegramControlError) -> AgentTelegramSettingsManifest {
@@ -437,4 +462,3 @@ public actor TerminalTelegramControlService {
     }
 
 }
-

@@ -137,7 +137,7 @@ extension TerminalTelegramControlService {
             try await client.sendMessage(trimmed, to: chatID, messageThreadID: topicID, governor: rateGovernor)
         }
         try ensureCurrentWireGeneration(wireGeneration)
-        state.lastError = nil
+        clearSendDiagnostics()
         return state
     }
 
@@ -187,7 +187,7 @@ extension TerminalTelegramControlService {
                 document, to: chatID, messageThreadID: topicID, replyMarkup: replyMarkup, governor: rateGovernor
             )
             try ensureCurrentWireGeneration(wireGeneration)
-            state.lastError = nil
+            clearSendDiagnostics()
             return messageID
         } catch is CancellationError {
             throw CancellationError()
@@ -198,7 +198,7 @@ extension TerminalTelegramControlService {
                 document.plainText, to: chatID, messageThreadID: topicID, replyMarkup: replyMarkup, governor: rateGovernor
             )
             try ensureCurrentWireGeneration(wireGeneration)
-            state.lastError = nil
+            clearSendDiagnostics()
             return messageID
         } catch let error as TerminalTelegramControlError {
             guard Self.isRichMessageCompatibilityError(error) else { throw error }
@@ -207,7 +207,7 @@ extension TerminalTelegramControlService {
                 document.plainText, to: chatID, messageThreadID: topicID, replyMarkup: replyMarkup, governor: rateGovernor
             )
             try ensureCurrentWireGeneration(wireGeneration)
-            state.lastError = nil
+            clearSendDiagnostics()
             return messageID
         }
     }
@@ -236,7 +236,7 @@ extension TerminalTelegramControlService {
                 replyMarkup: replyMarkup, governor: rateGovernor
             )
         try ensureCurrentWireGeneration(wireGeneration)
-        state.lastError = nil
+        clearSendDiagnostics()
         return messageID
     }
 

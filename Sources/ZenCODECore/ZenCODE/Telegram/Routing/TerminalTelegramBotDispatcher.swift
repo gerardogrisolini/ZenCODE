@@ -22,8 +22,15 @@ actor TerminalTelegramBotDispatcher {
         let updates: AsyncStream<TerminalTelegramUpdate>
     }
 
+    /// Receives the latest polling failure description (`nil` once a poll
+    /// succeeds again). Invoked only on changes.
+    typealias PollStatusSink = @Sendable (String?) async -> Void
+    typealias Sleeper = @Sendable (Duration) async throws -> Void
+
     private struct BotState {
         var subscribers: [UUID: AsyncStream<TerminalTelegramUpdate>.Continuation]
+        var statusSinks: [UUID: PollStatusSink] = [:]
+        var pollError: String?
         var task: Task<Void, Never>?
         var taskID: UUID?
         var generation: UUID
@@ -32,11 +39,22 @@ actor TerminalTelegramBotDispatcher {
     }
 
     private var bots: [Int64: BotState] = [:]
+    private let sleeper: Sleeper
+    private let jitter: @Sendable () -> Double
+
+    init(
+        sleeper: @escaping Sleeper = { try await Task.sleep(for: $0) },
+        jitter: @escaping @Sendable () -> Double = { Double.random(in: 0...1) }
+    ) {
+        self.sleeper = sleeper
+        self.jitter = jitter
+    }
 
     func subscribe(
         botID: Int64,
-        client: TerminalTelegramAPIClient
-    ) throws -> Subscription {
+        client: TerminalTelegramAPIClient,
+        pollStatus: PollStatusSink? = nil
+    ) async throws -> Subscription {
         let id = UUID()
         var continuation: AsyncStream<TerminalTelegramUpdate>.Continuation!
         let stream = AsyncStream<TerminalTelegramUpdate>(bufferingPolicy: .bufferingOldest(64)) {
@@ -54,7 +72,13 @@ actor TerminalTelegramBotDispatcher {
             )
         }
         bots[botID]?.subscribers[id] = continuation
+        if let pollStatus {
+            bots[botID]?.statusSinks[id] = pollStatus
+        }
         startPollingIfNeeded(botID: botID)
+        if let pollStatus, let current = bots[botID]?.pollError {
+            await pollStatus(current)
+        }
         return Subscription(id: id, botID: botID, updates: stream)
     }
 
@@ -65,6 +89,7 @@ actor TerminalTelegramBotDispatcher {
     private func unsubscribe(botID: Int64, subscriptionID: UUID) {
         guard var state = bots[botID] else { return }
         state.subscribers.removeValue(forKey: subscriptionID)?.finish()
+        state.statusSinks.removeValue(forKey: subscriptionID)
         guard state.subscribers.isEmpty else {
             bots[botID] = state
             return
@@ -82,9 +107,12 @@ actor TerminalTelegramBotDispatcher {
     ) async {
         defer { pollingDidFinish(botID: botID, generation: generation, taskID: taskID) }
         var offset = initialOffset
+        var backoff = TerminalTelegramPollBackoff()
         while !Task.isCancelled {
             do {
                 let updates = try await client.getUpdates(offset: offset, timeout: 30)
+                backoff.recordSuccess()
+                await setPollError(nil, botID: botID, generation: generation)
                 for update in updates {
                     guard await publish(update, botID: botID, generation: generation) else {
                         return
@@ -94,8 +122,36 @@ actor TerminalTelegramBotDispatcher {
             } catch is CancellationError {
                 return
             } catch {
-                try? await Task.sleep(for: .seconds(3))
+                let decision = backoff.recordFailure(error, jitter: jitter())
+                let description = TerminalTelegramPollBackoff.sanitizedDescription(error)
+                if decision.kind.isPersistent {
+                    ZenLogger.warning(
+                        .diagnostics,
+                        "Telegram getUpdates failing (\(decision.kind)); retrying in \(decision.delay): \(description)"
+                    )
+                }
+                await setPollError(
+                    "Telegram polling failed: \(description)",
+                    botID: botID, generation: generation
+                )
+                do {
+                    try await sleeper(decision.delay)
+                } catch {
+                    return
+                }
             }
+        }
+    }
+
+    /// Records the polling status for the bot and notifies every sink when it
+    /// changes.
+    private func setPollError(_ text: String?, botID: Int64, generation: UUID) async {
+        guard var state = bots[botID], state.generation == generation,
+              state.pollError != text else { return }
+        state.pollError = text
+        bots[botID] = state
+        for sink in state.statusSinks.values {
+            await sink(text)
         }
     }
 
