@@ -138,6 +138,27 @@ extension TerminalChat {
         await writeSystemMessage(telegramStatusText() + "\n")
     }
 
+    /// Tells the operator, once per transition, that Telegram ingress is dead
+    /// because of a persistent polling failure, and when it comes back.
+    /// Without this the TUI kept saying the link was active while no message
+    /// could arrive, and the error was visible only through `/telegram status`.
+    func writeTelegramPollHealthNotice(_ notice: TerminalTelegramPollHealthNotice) async {
+        guard telegramControlState.isActive else { return }
+        telegramControlState = await telegramControlService.currentState()
+        switch notice {
+        case let .failing(text):
+            await writeFailureMessage(
+                """
+                ZenCODE: Telegram is not receiving messages. \(text)
+                ZenCODE keeps retrying every minute. Check the bot token with /setup, or stop the other process polling this bot. /telegram status shows the latest error.
+
+                """
+            )
+        case .recovered:
+            await writeSystemMessage("Telegram polling recovered; messages are being received again.\n")
+        }
+    }
+
     /// Starts tracking a turn even when Telegram is currently disabled. Keeping
     /// the origin lets `/telegram on` attach a reporter to an already-running
     /// local request; previously the reporter was a one-time snapshot created at

@@ -91,6 +91,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   Planner answer or a `/goal` continuation (for example "no completed plan is
   available to approve" or a task-graph error) are now sent to the Telegram
   chat too, instead of appearing only in the TUI.
+- The TUI now reports, once, when Telegram polling hits a persistent failure
+  (HTTP 401/403 invalid token or 409 another poller/webhook) and stops
+  receiving messages, and reports again when polling recovers. Previously the
+  error was visible only through `/telegram status`.
 - The Telegram `/help` text no longer mentions the TUI-only `/telegram`
   command.
 - Telegram `/help` now lists `/chat` and `/undo` too. The command list is

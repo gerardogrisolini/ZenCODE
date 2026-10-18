@@ -5,6 +5,24 @@
 
 import Foundation
 
+/// One long-poll failure as reported to dispatcher subscribers.
+struct TerminalTelegramPollFailure: Sendable, Equatable {
+    /// Operator-facing text, bot token already redacted.
+    let text: String
+    /// `true` for failures retrying will not fix by itself (401/403 invalid
+    /// token, 409 conflicting poller or webhook).
+    let isPersistent: Bool
+}
+
+/// Poll-health transition surfaced to the interactive terminal.
+enum TerminalTelegramPollHealthNotice: Sendable, Equatable {
+    /// Polling entered a persistent failure: no message will arrive until the
+    /// operator fixes the token or stops the other poller.
+    case failing(String)
+    /// The first successful poll after a notified persistent failure.
+    case recovered
+}
+
 /// Pure retry policy for the Bot API long poll.
 ///
 /// - Transient failures (network, 5xx, undecodable bodies): exponential backoff

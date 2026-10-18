@@ -500,6 +500,13 @@ extension TerminalChat {
         var generationTask: Task<Void, Never>?
         let remoteTranscriptions = telegramVoiceTranscriptions
         let telegramForwardingTask = startTelegramForwardingTask(eventQueue: eventQueue)
+        // Persistent polling failures are told to the operator through this
+        // FIFO. The handler runs on the service actor and must not block, so
+        // it only offers the event; `lastError` keeps the detail if the queue
+        // is momentarily full.
+        await telegramControlService.setPollHealthHandler { notice in
+            _ = eventQueue.offer(.telegramPollHealthChanged(notice))
+        }
         // Mailbox monitoring, drain batching and the idle/busy decision belong
         // to the Core coordinator. This task only forwards its live events into
         // the terminal queue: the TUI renders and answers, but never owns the
@@ -1087,6 +1094,8 @@ extension TerminalChat {
                 // genuinely idle.
                 await synchronizeSharedChatConsumerBusyState()
                 scheduleQueuedPromptIfNeeded()
+            case let .telegramPollHealthChanged(notice):
+                await writeTelegramPollHealthNotice(notice)
             case let .telegramRouteInvalidated(lease):
                 guard activeTelegramTurnOrigin?.telegramLease == lease else { continue }
                 generationTask?.cancel()

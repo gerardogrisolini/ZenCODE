@@ -22,15 +22,15 @@ actor TerminalTelegramBotDispatcher {
         let updates: AsyncStream<TerminalTelegramUpdate>
     }
 
-    /// Receives the latest polling failure description (`nil` once a poll
-    /// succeeds again). Invoked only on changes.
-    typealias PollStatusSink = @Sendable (String?) async -> Void
+    /// Receives the latest polling failure (`nil` once a poll succeeds again).
+    /// Invoked only on changes.
+    typealias PollStatusSink = @Sendable (TerminalTelegramPollFailure?) async -> Void
     typealias Sleeper = @Sendable (Duration) async throws -> Void
 
     private struct BotState {
         var subscribers: [UUID: AsyncStream<TerminalTelegramUpdate>.Continuation]
         var statusSinks: [UUID: PollStatusSink] = [:]
-        var pollError: String?
+        var pollError: TerminalTelegramPollFailure?
         var task: Task<Void, Never>?
         var taskID: UUID?
         var generation: UUID
@@ -131,7 +131,10 @@ actor TerminalTelegramBotDispatcher {
                     )
                 }
                 await setPollError(
-                    "Telegram polling failed: \(description)",
+                    TerminalTelegramPollFailure(
+                        text: "Telegram polling failed: \(description)",
+                        isPersistent: decision.kind.isPersistent
+                    ),
                     botID: botID, generation: generation
                 )
                 do {
@@ -145,13 +148,15 @@ actor TerminalTelegramBotDispatcher {
 
     /// Records the polling status for the bot and notifies every sink when it
     /// changes.
-    private func setPollError(_ text: String?, botID: Int64, generation: UUID) async {
+    private func setPollError(
+        _ failure: TerminalTelegramPollFailure?, botID: Int64, generation: UUID
+    ) async {
         guard var state = bots[botID], state.generation == generation,
-              state.pollError != text else { return }
-        state.pollError = text
+              state.pollError != failure else { return }
+        state.pollError = failure
         bots[botID] = state
         for sink in state.statusSinks.values {
-            await sink(text)
+            await sink(failure)
         }
     }
 

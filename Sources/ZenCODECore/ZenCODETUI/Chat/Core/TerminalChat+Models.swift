@@ -202,6 +202,8 @@ enum TerminalChatRuntimeEvent: Sendable {
     case startNextQueuedPrompt
     case telegramMessage(TerminalTelegramIncomingMessage)
     case telegramRouteInvalidated(TerminalTelegramRouteLease)
+    /// Telegram polling entered or left a persistent failure.
+    case telegramPollHealthChanged(TerminalTelegramPollHealthNotice)
     case voicePromptCompleted(TerminalVoicePromptResult)
     /// The originating room remains attached while the event waits in the
     /// terminal queue. A session command can rebind the live observation before
@@ -234,6 +236,7 @@ enum TerminalChatRuntimeEvent: Sendable {
              .startNextQueuedPrompt,
              .telegramMessage,
              .telegramRouteInvalidated,
+             .telegramPollHealthChanged,
              .voicePromptCompleted,
              .sharedChatReaderCollapsed:
             nil

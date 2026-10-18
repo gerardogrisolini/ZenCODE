@@ -102,10 +102,10 @@ struct TerminalTelegramPollErrorPropagationTests {
             jitter: { 0.5 }
         )
         let client = TerminalTelegramAPIClient(token: "123:secret", transport: transport)
-        let events = Mutex<[String?]>([])
+        let events = Mutex<[TerminalTelegramPollFailure?]>([])
         let botID = Int64.random(in: 13_000_001...13_900_000)
-        let subscription = try await dispatcher.subscribe(botID: botID, client: client) { text in
-            events.withLock { $0.append(text) }
+        let subscription = try await dispatcher.subscribe(botID: botID, client: client) { failure in
+            events.withLock { $0.append(failure) }
         }
         for _ in 0..<500 where events.withLock({ $0.count }) < 2 {
             try await Task.sleep(for: .milliseconds(10))
@@ -113,10 +113,53 @@ struct TerminalTelegramPollErrorPropagationTests {
         await dispatcher.unsubscribe(subscription)
         let seen = events.withLock { $0 }
         #expect(seen.count == 2)
-        #expect(seen.first??.contains("409") == true)
-        #expect(seen.first??.contains("123:secret") == false)
+        #expect(seen.first??.text.contains("409") == true)
+        #expect(seen.first??.text.contains("123:secret") == false)
+        #expect(seen.first??.isPersistent == true)
         #expect(seen.last! == nil)
         #expect(delays.withLock { $0.first } == .seconds(60))
+    }
+
+    /// Transient failures only update `lastError`; a persistent failure tells
+    /// the poll-health handler exactly once (a following persistent failure
+    /// with a different text does not repeat it), and the first successful poll
+    /// reports the recovery and clears the poll error.
+    @Test(.timeLimit(.minutes(1)))
+    func persistentPollFailureNotifiesOnceThenRecovers() async throws {
+        let support = try Self.makeSupportDirectory()
+        let transport = RoutedPollTransport(getUpdates: [
+            (500, #"{"ok":false,"error_code":500,"description":"Internal Server Error"}"#),
+            (409, #"{"ok":false,"error_code":409,"description":"Conflict: terminated by other getUpdates request"}"#),
+            (401, #"{"ok":false,"error_code":401,"description":"Unauthorized"}"#),
+            (200, #"{"ok":true,"result":[]}"#),
+        ])
+        let dispatcher = TerminalTelegramBotDispatcher(sleeper: { _ in }, jitter: { 0.5 })
+        let notices = Mutex<[TerminalTelegramPollHealthNotice]>([])
+        let finalError = try await AppStorageDirectory.withSupportDirectoryURL(support) {
+            let service = TerminalTelegramControlService(
+                transportFactory: { transport }, dispatcher: dispatcher
+            )
+            await service.setPollHealthHandler { notice in
+                notices.withLock { $0.append(notice) }
+            }
+            _ = try await service.start()
+            for _ in 0..<500 where notices.withLock({ $0.count }) < 2 {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let lastError = await service.currentState().lastError
+            _ = await service.stop()
+            return lastError
+        }
+        let seen = notices.withLock { $0 }
+        #expect(seen.count == 2)
+        guard case let .failing(text)? = seen.first else {
+            Issue.record("the first notice must report the persistent failure")
+            return
+        }
+        #expect(text.contains("409"))
+        #expect(!text.contains("123456:ABCDEF"))
+        #expect(seen.last == .recovered)
+        #expect(finalError == nil)
     }
 
     /// Every Telegram diagnostic path shares one sanitizer: tokens embedded in
@@ -138,6 +181,59 @@ struct TerminalTelegramPollErrorPropagationTests {
         let foreignText = TerminalTelegramControlError.operatorDescription(foreign)
         #expect(!foreignText.contains("secret_token"))
         #expect(foreignText.contains("file/bot<redacted>/voice.oga"))
+    }
+
+    private static func makeSupportDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("telegram-poll-health-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try AgentSettingsManifestStore.save(
+            AgentSettingsManifest(
+                models: [],
+                telegram: AgentTelegramSettingsManifest(
+                    enabled: true, botToken: "123456:ABCDEF", linkedChatID: 42,
+                    linkedChatTitle: "Test", ownerUserID: 7,
+                    routes: [.init(roomID: "default")]
+                )
+            ),
+            to: url.appendingPathComponent(AgentSettingsManifestStore.settingsFilename)
+        )
+        return url
+    }
+}
+
+/// Answers the start-up calls and plays a scripted `getUpdates` sequence, then
+/// parks the long poll like an idle Bot API.
+private actor RoutedPollTransport: TelegramHTTPTransport {
+    private var getUpdates: [(Int, String)]
+
+    init(getUpdates: [(Int, String)]) {
+        self.getUpdates = getUpdates
+    }
+
+    func send(
+        url: URL,
+        method: String,
+        headers: [RemoteHTTPHeader],
+        body: Data?,
+        timeout: Duration?
+    ) async throws -> (status: Int, body: Data) {
+        switch url.lastPathComponent {
+        case "deleteWebhook", "setMyCommands":
+            return (200, Data(#"{"ok":true,"result":true}"#.utf8))
+        case "getMe":
+            let botID = Int.random(in: 14_000_001...14_900_000)
+            return (200, Data(#"{"ok":true,"result":{"id":\#(botID),"is_bot":true,"first_name":"bot","username":"test_bot"}}"#.utf8))
+        case "getUpdates":
+            guard !getUpdates.isEmpty else {
+                try await Task.sleep(for: .seconds(60))
+                throw CancellationError()
+            }
+            let next = getUpdates.removeFirst()
+            return (next.0, Data(next.1.utf8))
+        default:
+            return (200, Data(#"{"ok":true,"result":true}"#.utf8))
+        }
     }
 }
 

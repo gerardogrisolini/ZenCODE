@@ -96,6 +96,10 @@ public actor TerminalTelegramControlService {
     private var commandMenuTask: Task<Void, Never>?
     private var dispatcherSubscription: TerminalTelegramBotDispatcher.Subscription?
     private var pollErrorText: String?
+    /// Whether the operator was told about the current persistent polling
+    /// failure, so the terminal hears about it once per transition.
+    private var pollFailureNotified = false
+    private var pollHealthHandler: (@Sendable (TerminalTelegramPollHealthNotice) -> Void)?
     /// Message-send rate governor shared by every outbound path of this
     /// service instance. See ``TerminalTelegramRateGovernor``.
     let rateGovernor = TerminalTelegramRateGovernor()
@@ -218,13 +222,14 @@ public actor TerminalTelegramControlService {
             wireLifecycleEpoch: UUID()
         )
         pollErrorText = nil
+        pollFailureNotified = false
         lifecycleGate.setActive(true)
         publishCommandMenu(client: client)
         let pollGeneration = generation
         let subscription = try await dispatcher.subscribe(
             botID: bot.id, client: client,
-            pollStatus: { [weak self] text in
-                await self?.applyPollStatus(text, generation: pollGeneration)
+            pollStatus: { [weak self] failure in
+                await self?.applyPollStatus(failure, generation: pollGeneration)
             }
         )
         do {
@@ -247,6 +252,7 @@ public actor TerminalTelegramControlService {
         // Bump the generation so any in-flight `start()` that resumes afterwards
         // cannot reactivate polling or mutate state.
         pollingGeneration += 1
+        pollFailureNotified = false
         lifecycleGate.setActive(false)
         await stopPolling()
         let menuTask = commandMenuTask
@@ -304,16 +310,40 @@ public actor TerminalTelegramControlService {
         state.lastError = pollErrorText
     }
 
+    /// Installs (or clears with `nil`) the observer told when polling enters a
+    /// persistent failure and when it recovers from one. The handler is called
+    /// synchronously on this actor and must not block: the interactive runtime
+    /// only enqueues an event.
+    func setPollHealthHandler(
+        _ handler: (@Sendable (TerminalTelegramPollHealthNotice) -> Void)?
+    ) {
+        pollHealthHandler = handler
+    }
+
     /// Reflects the dispatcher's long-poll health in `lastError`. A recovered
     /// poll clears only the error this path set, never unrelated diagnostics.
-    private func applyPollStatus(_ text: String?, generation: Int) {
+    ///
+    /// Persistent failures (invalid token, conflicting poller) also notify the
+    /// poll-health handler once per transition, because ingress stays dead
+    /// until the operator acts; transient failures only update `lastError`.
+    private func applyPollStatus(_ failure: TerminalTelegramPollFailure?, generation: Int) {
         guard generation == pollingGeneration, state.isActive else { return }
-        if let text {
-            pollErrorText = text
-            state.lastError = text
-        } else if let previous = pollErrorText {
-            pollErrorText = nil
-            if state.lastError == previous { state.lastError = nil }
+        if let failure {
+            pollErrorText = failure.text
+            state.lastError = failure.text
+            if failure.isPersistent, !pollFailureNotified {
+                pollFailureNotified = true
+                pollHealthHandler?(.failing(failure.text))
+            }
+        } else {
+            if let previous = pollErrorText {
+                pollErrorText = nil
+                if state.lastError == previous { state.lastError = nil }
+            }
+            if pollFailureNotified {
+                pollFailureNotified = false
+                pollHealthHandler?(.recovered)
+            }
         }
     }
 
