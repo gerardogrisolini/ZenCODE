@@ -79,6 +79,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- On Linux, leaving raw mode no longer risks keeping SIGINT, SIGTERM and SIGHUP
+  swallowed after the TUI exits. libdispatch installs its own handler for a
+  signal source asynchronously and never removes it, so restoring the previous
+  disposition before cancelling the source could be overwritten by a late
+  registration. The sources are now cancelled first and the previous
+  dispositions restored once libdispatch has finished with them; this also
+  fixes the intermittent `TerminalSignalRestoration` CI failure on Linux.
 - On Telegram, plain-word command aliases (`status`, `diff`, `help`,
   `changes`, `undo`, `annulla`, `modifiche`, `stato`) no longer swallow an
   answer the session is explicitly waiting for: while `/plan approve` waits for

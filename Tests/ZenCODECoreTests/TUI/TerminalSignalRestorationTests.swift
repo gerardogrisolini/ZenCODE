@@ -13,7 +13,9 @@ import Synchronization
 import Testing
 @testable import ZenCODECore
 
-@Suite("TerminalSignalRestoration")
+/// Serialized: the dispatch-installer tests mutate process-wide signal
+/// dispositions.
+@Suite("TerminalSignalRestoration", .serialized)
 struct TerminalSignalRestorationTests {
     private final class Owner {}
 
@@ -113,15 +115,50 @@ struct TerminalSignalRestorationTests {
         let uninstall = TerminalSignalRestoration.installDispatchHandlers { _ in
             Issue.record("no signal is sent by this test")
         }
-        let ignored = Self.ignoredValue
-        // Previously ignored signals stay ignored; all others are now SIG_IGN
-        // with delivery routed through the dispatch source.
-        #expect(signals.map(Self.dispositionValue).allSatisfy { $0 == ignored })
+        Self.expectArmed(signals: signals, before: before)
         uninstall()
         #expect(signals.map(Self.dispositionValue) == before)
     }
 
+    /// On Linux libdispatch replaces `SIG_IGN` with its own handler some time
+    /// after the source is resumed and never removes it. Uninstalling after
+    /// that replacement must still restore the previous dispositions.
+    @Test("Dispatch installer restores dispositions after libdispatch registered its handler")
+    func dispatchInstallerRestoresAfterLateRegistration() async throws {
+        let signals = TerminalSignalRestoration.terminatingSignals
+        let before = signals.map(Self.dispositionValue)
+        let uninstall = TerminalSignalRestoration.installDispatchHandlers { _ in
+            Issue.record("no signal is sent by this test")
+        }
+        // Give libdispatch's manager thread time to register the sources.
+        try await Task.sleep(for: .milliseconds(200))
+        Self.expectArmed(signals: signals, before: before)
+        uninstall()
+        #expect(signals.map(Self.dispositionValue) == before)
+    }
+
+    /// Previously ignored signals stay ignored. The others are `SIG_IGN` with
+    /// delivery routed through the dispatch source; on Linux libdispatch may
+    /// already have replaced `SIG_IGN` with its own handler, which still never
+    /// applies the default (terminating) action.
+    private static func expectArmed(signals: [Int32], before: [Int]) {
+        let ignored = ignoredValue
+        for (signalNumber, previous) in zip(signals, before) {
+            let current = dispositionValue(signalNumber)
+            if previous == ignored {
+                #expect(current == ignored, "signal \(signalNumber) must stay ignored")
+                continue
+            }
+            #if os(Linux)
+            #expect(current != defaultValue, "signal \(signalNumber) must not use its default action while armed")
+            #else
+            #expect(current == ignored, "signal \(signalNumber) must be SIG_IGN while armed")
+            #endif
+        }
+    }
+
     private static var ignoredValue: Int { unsafeBitCast(SIG_IGN, to: Int.self) }
+    private static var defaultValue: Int { unsafeBitCast(SIG_DFL, to: Int.self) }
 
     /// Reads the current disposition without changing it.
     private static func dispositionValue(_ signalNumber: Int32) -> Int {

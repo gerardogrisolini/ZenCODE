@@ -224,12 +224,38 @@ final class TerminalSignalRestoration: Sendable {
     private final class InstalledHandlers: @unchecked Sendable {
         // Mutated only by `uninstall()`, which the registry calls once.
         private var entries: [(signal: Int32, previous: SignalDisposition?, source: any DispatchSourceSignal)]
+        /// Entered once per source at installation and left by its cancel
+        /// handler, which libdispatch runs only after the source is fully
+        /// unregistered.
+        private let cancellations: DispatchGroup
 
-        init(entries: [(signal: Int32, previous: SignalDisposition?, source: any DispatchSourceSignal)]) {
+        init(
+            entries: [(signal: Int32, previous: SignalDisposition?, source: any DispatchSourceSignal)],
+            cancellations: DispatchGroup
+        ) {
             self.entries = entries
+            self.cancellations = cancellations
         }
 
         func uninstall() {
+            #if os(Linux)
+            // On Linux libdispatch installs its own `sigaction` handler when it
+            // registers a signal source, asynchronously on its manager thread,
+            // and never removes it. Restoring the disposition first could
+            // therefore be overwritten by a registration that lands later,
+            // leaving SIGINT/SIGTERM/SIGHUP swallowed after the TUI exits.
+            // Cancel every source, wait until libdispatch has finished with
+            // them, then restore the previous dispositions last.
+            for entry in entries {
+                entry.source.cancel()
+            }
+            if DispatchQueue.getSpecific(key: TerminalSignalRestoration.signalQueueKey) == nil {
+                cancellations.wait()
+            }
+            for entry in entries {
+                _ = signal(entry.signal, entry.previous)
+            }
+            #else
             for entry in entries {
                 // Restore the disposition before cancelling the source so a
                 // late signal follows the previous semantics instead of being
@@ -237,11 +263,17 @@ final class TerminalSignalRestoration: Sendable {
                 _ = signal(entry.signal, entry.previous)
                 entry.source.cancel()
             }
+            #endif
             entries.removeAll()
         }
     }
 
-    private static let signalQueue = DispatchQueue(label: "zencode.terminal.signal-restoration")
+    private static let signalQueueKey = DispatchSpecificKey<Void>()
+    private static let signalQueue: DispatchQueue = {
+        let queue = DispatchQueue(label: "zencode.terminal.signal-restoration")
+        queue.setSpecific(key: signalQueueKey, value: ())
+        return queue
+    }()
 
     private static func dispositionValue(_ disposition: SignalDisposition?) -> Int {
         unsafeBitCast(disposition, to: Int.self)
@@ -250,10 +282,13 @@ final class TerminalSignalRestoration: Sendable {
     /// `signal(sig, SIG_IGN)` + a `DispatchSourceSignal` per signal on a
     /// dedicated queue. Signals already ignored (e.g. SIGHUP under `nohup`)
     /// are left untouched so ZenCODE never turns an ignored signal fatal.
+    /// On Linux libdispatch later replaces `SIG_IGN` with its own handler
+    /// while a source is registered; delivery still goes only to the source.
     static func installDispatchHandlers(
         onSignal: @escaping @Sendable (Int32) -> Void
     ) -> @Sendable () -> Void {
         var entries: [(signal: Int32, previous: SignalDisposition?, source: any DispatchSourceSignal)] = []
+        let cancellations = DispatchGroup()
         for signalNumber in terminatingSignals {
             let previous = signal(signalNumber, SIG_IGN)
             let previousValue = dispositionValue(previous)
@@ -261,10 +296,12 @@ final class TerminalSignalRestoration: Sendable {
             if previousValue == dispositionValue(SIG_IGN) { continue }
             let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: signalQueue)
             source.setEventHandler { onSignal(signalNumber) }
+            cancellations.enter()
+            source.setCancelHandler { cancellations.leave() }
             source.resume()
             entries.append((signalNumber, previous, source))
         }
-        let installed = InstalledHandlers(entries: entries)
+        let installed = InstalledHandlers(entries: entries, cancellations: cancellations)
         return { installed.uninstall() }
     }
 
