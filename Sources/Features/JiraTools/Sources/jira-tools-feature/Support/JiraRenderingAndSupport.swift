@@ -99,6 +99,7 @@ enum JiraToolsError: LocalizedError {
     case requestFailed(String)
     case issueNotFound(String)
     case keychain(Int32)
+    case environmentConfigurationRequired(missing: [String], reason: String? = nil)
 
     var errorDescription: String? {
         switch self {
@@ -122,6 +123,9 @@ enum JiraToolsError: LocalizedError {
             return "Unable to load Jira issue \(issueKey) from the REST API."
         case let .keychain(status):
             return "Unable to access the Jira API token in Keychain (\(status))."
+        case let .environmentConfigurationRequired(missing, reason):
+            let prefix = reason.map { "\($0) " } ?? ""
+            return "\(prefix)Jira is not configured. On Linux, set ZENCODE_JIRA_SITE_URL, ZENCODE_JIRA_EMAIL and ZENCODE_JIRA_API_TOKEN in the environment of `zen` and retry (missing: \(missing.joined(separator: ", ")))."
         }
     }
 }
@@ -192,15 +196,17 @@ enum JiraCredentialStore {
 }
 #else
 enum JiraCredentialStore {
-    static func load(account _: String) throws -> String {
-        throw JiraToolsError.invalidConfiguration("Jira credential storage is only available on macOS.")
+    static func load(account: String) throws -> String {
+        try JiraFileCredentialStore().load(account: account)
     }
 
-    static func save(_: String, account _: String) throws {
-        throw JiraToolsError.invalidConfiguration("Jira credential storage is only available on macOS.")
+    static func save(_ apiToken: String, account: String) throws {
+        try JiraFileCredentialStore().save(apiToken, account: account)
     }
 
-    static func remove(account _: String) throws {}
+    static func remove(account: String) throws {
+        try JiraFileCredentialStore().remove(account: account)
+    }
 }
 #endif
 

@@ -134,4 +134,4 @@ Bundled feature packages can include Search, Web, Git, Swift, Xcode, Figma, and 
 
 Core tools (shell, files, text, memory, sub-agents) are **not** feature packages — manage them through `/tools`, not `/feature`.
 
-Some integrations need extra configuration. For example, Jira runs setup automatically on the first `jira.search` or `jira.read` call when no token is stored; `/feature enable jira-tools` only toggles package state and does not run authentication.
+Some integrations need extra configuration. For example, Jira runs setup automatically on the first `jira.search` or `jira.read` call when no token is stored; `/feature enable jira-tools` only toggles package state and does not run authentication. On Linux (no browser setup), set `ZENCODE_JIRA_SITE_URL`, `ZENCODE_JIRA_EMAIL` and `ZENCODE_JIRA_API_TOKEN` in the environment of `zen`; the token is then stored in a `0600` file under `~/.zencode/jira/credentials/`.

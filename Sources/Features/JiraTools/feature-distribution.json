@@ -4,9 +4,10 @@
   "distributionSchemaVersion": 1,
   "id": "jira-tools",
   "invocationTimeoutSeconds": 660,
-  "isInstalledOnLinux": false,
+  "isInstalledOnLinux": true,
   "platforms": [
-    "macOS"
+    "macOS",
+    "linux"
   ],
   "productName": "jira-tools-feature",
   "sourceRelativePath": "Sources/Features/JiraTools",

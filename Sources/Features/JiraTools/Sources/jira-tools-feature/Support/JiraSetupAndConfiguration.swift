@@ -27,7 +27,7 @@ enum JiraSetupRunner {
         return JiraRESTService(configuration: result.configuration, apiToken: result.apiToken)
     }
 
-    /// Runs the browser-based setup flow. The user completes the connection in a
+    /// Runs the browser-based setup flow (macOS) or the environment-variable setup (other platforms). The user completes the connection in a
     /// local web form; no terminal prompt is used, so it works while running as a
     /// tool subprocess.
     private static func authenticate(
@@ -37,8 +37,22 @@ enum JiraSetupRunner {
         let defaults = try? JiraConfigurationStore.load()
         return try await JiraBrowserSetup.authenticate(reason: reason, defaults: defaults)
         #else
-        throw JiraToolsError.browserSetupFailed(
-            "Jira browser setup is only available on macOS."
+        guard let resolved = try JiraEnvironmentConfiguration.resolve(
+            environment: ProcessInfo.processInfo.environment
+        ) else {
+            throw JiraToolsError.environmentConfigurationRequired(
+                missing: JiraEnvironmentConfiguration.allKeys,
+                reason: reason.message
+            )
+        }
+        let service = JiraRESTService(configuration: resolved.configuration, apiToken: resolved.apiToken)
+        let accountName = try await service.validateCredentials()
+        try JiraConfigurationStore.save(resolved.configuration)
+        try JiraCredentialStore.save(resolved.apiToken, account: resolved.configuration.credentialAccount)
+        return JiraAuthenticatedConfiguration(
+            configuration: resolved.configuration,
+            apiToken: resolved.apiToken,
+            accountName: accountName
         )
         #endif
     }
@@ -203,7 +217,7 @@ enum JiraConfigurationStore {
     }
 }
 
-private enum JiraFeatureStorageDirectory {
+enum JiraFeatureStorageDirectory {
     private static let supportDirectoryEnvironmentKey = "ZENCODE_SUPPORT_DIRECTORY"
     private static let supportDirectoryName = ".zencode"
 

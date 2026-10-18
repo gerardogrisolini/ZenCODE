@@ -31,10 +31,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   instead of retrying every 3 s forever. The last polling failure is shown in
   the Telegram control state's `lastError` (without the bot token) and cleared
   by the next successful poll.
-- The `jira-tools` optional feature is now declared macOS-only
-  (`isInstalledOnLinux: false`): its credential store is Keychain-backed and
-  every call failed on Linux. The Linux installer and CI feature matrix no
-  longer include it.
+- The `jira-tools` optional feature now works on Linux. Without a Keychain,
+  the API token is stored in a `0600` file under
+  `~/.zencode/jira/credentials/`, and the initial configuration is taken from
+  `ZENCODE_JIRA_SITE_URL`, `ZENCODE_JIRA_EMAIL` and `ZENCODE_JIRA_API_TOKEN`
+  in the environment of `zen` (validated against Jira before being saved;
+  a clear error lists any missing variable). macOS keeps the Keychain store
+  and the browser setup form. Previously every Jira call failed on Linux
+  with "credential storage is only available on macOS".
 - The CI and release whitespace gate now runs `git diff --check` against the
   empty tree, so it covers every tracked file instead of the always-clean
   checkout worktree; the pre-existing trailing-whitespace and
