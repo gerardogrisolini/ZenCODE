@@ -23,11 +23,19 @@ public struct TerminalTelegramControlState: Equatable, Sendable {
     public var isActive: Bool
     public var statusText: String
     public var botUsername: String?
+    /// Last send/other operation error. Inbound polling and command-menu
+    /// failures have their own fields and never write here.
     public var lastError: String?
     public var lastMessagePreview: String?
     /// Epoch emitted by the active service lifecycle and captured by every
     /// production wire fence. It changes on every successful start.
     public var wireLifecycleEpoch: UUID?
+    /// Current inbound long-poll failure (bot token redacted). Set and cleared
+    /// only by the dispatcher's poll status: `nil` once a poll succeeds again.
+    public var pollError: String?
+    /// Last command-menu (`setMyCommands`) publication failure. Cleared by a
+    /// later successful publication and on start/stop.
+    public var commandMenuError: String?
 
     public init(
         isConfigured: Bool,
@@ -36,7 +44,9 @@ public struct TerminalTelegramControlState: Equatable, Sendable {
         botUsername: String?,
         lastError: String?,
         lastMessagePreview: String?,
-        wireLifecycleEpoch: UUID? = nil
+        wireLifecycleEpoch: UUID? = nil,
+        pollError: String? = nil,
+        commandMenuError: String? = nil
     ) {
         self.isConfigured = isConfigured
         self.isActive = isActive
@@ -45,6 +55,8 @@ public struct TerminalTelegramControlState: Equatable, Sendable {
         self.lastError = lastError
         self.lastMessagePreview = lastMessagePreview
         self.wireLifecycleEpoch = wireLifecycleEpoch
+        self.pollError = pollError
+        self.commandMenuError = commandMenuError
     }
 
     public static func inactive(
@@ -58,7 +70,9 @@ public struct TerminalTelegramControlState: Equatable, Sendable {
             botUsername: nil,
             lastError: nil,
             lastMessagePreview: nil,
-            wireLifecycleEpoch: nil
+            wireLifecycleEpoch: nil,
+            pollError: nil,
+            commandMenuError: nil
         )
     }
 }
@@ -95,7 +109,6 @@ public actor TerminalTelegramControlService {
     private var pollingTask: Task<Void, Never>?
     private var commandMenuTask: Task<Void, Never>?
     private var dispatcherSubscription: TerminalTelegramBotDispatcher.Subscription?
-    private var pollErrorText: String?
     /// Whether the operator was told about the current persistent polling
     /// failure, so the terminal hears about it once per transition.
     private var pollFailureNotified = false
@@ -219,9 +232,10 @@ public actor TerminalTelegramControlService {
             botUsername: bot.username,
             lastError: nil,
             lastMessagePreview: state.lastMessagePreview,
-            wireLifecycleEpoch: UUID()
+            wireLifecycleEpoch: UUID(),
+            pollError: nil,
+            commandMenuError: nil
         )
-        pollErrorText = nil
         pollFailureNotified = false
         lifecycleGate.setActive(true)
         publishCommandMenu(client: client)
@@ -271,12 +285,16 @@ public actor TerminalTelegramControlService {
         state.isActive = false
         state.wireLifecycleEpoch = nil
         state.statusText = state.isConfigured ? "Configured" : "Not configured"
+        // Symmetric with start(): no diagnostic of the stopped link survives.
+        state.pollError = nil
+        state.commandMenuError = nil
+        state.lastError = nil
         return state
     }
 
     /// Publishes the registry command menu to Telegram so the client shows the
     /// command list. Best-effort by design: a menu that fails to publish must
-    /// not stop the link, and the failure lands in `lastError` diagnostics only.
+    /// not stop the link, and the failure lands in `commandMenuError` only.
     private func publishCommandMenu(client: TerminalTelegramAPIClient) {
         commandMenuTask?.cancel()
         let generation = pollingGeneration
@@ -292,22 +310,25 @@ public actor TerminalTelegramControlService {
         }
     }
 
+    /// Returns once the in-flight command-menu publication (if any) has
+    /// recorded its outcome. Lets tests observe `commandMenuError`
+    /// deterministically.
+    func waitForCommandMenuPublication() async {
+        await commandMenuTask?.value
+    }
+
     private func finishCommandMenu(generation: Int, error: Error?) {
         guard generation == pollingGeneration else { return }
         commandMenuTask = nil
-        if let error {
-            recordDiagnostics("Could not publish Telegram command menu: \(TerminalTelegramControlError.operatorDescription(error))")
+        state.commandMenuError = error.map {
+            "Could not publish Telegram command menu: \(TerminalTelegramControlError.operatorDescription($0))"
         }
     }
 
-    private func recordDiagnostics(_ text: String) {
-        state.lastError = text
-    }
-
-    /// A successful outbound send clears stale diagnostics but must not hide a
-    /// still-failing inbound long poll.
+    /// A successful outbound send clears the last send/other operation error.
+    /// Poll and command-menu diagnostics live in their own fields.
     func clearSendDiagnostics() {
-        state.lastError = pollErrorText
+        state.lastError = nil
     }
 
     /// Installs (or clears with `nil`) the observer told when polling enters a
@@ -320,26 +341,20 @@ public actor TerminalTelegramControlService {
         pollHealthHandler = handler
     }
 
-    /// Reflects the dispatcher's long-poll health in `lastError`. A recovered
-    /// poll clears only the error this path set, never unrelated diagnostics.
+    /// Reflects the dispatcher's long-poll health in `pollError`.
     ///
     /// Persistent failures (invalid token, conflicting poller) also notify the
     /// poll-health handler once per transition, because ingress stays dead
-    /// until the operator acts; transient failures only update `lastError`.
+    /// until the operator acts; transient failures only update `pollError`.
     private func applyPollStatus(_ failure: TerminalTelegramPollFailure?, generation: Int) {
         guard generation == pollingGeneration, state.isActive else { return }
+        state.pollError = failure?.text
         if let failure {
-            pollErrorText = failure.text
-            state.lastError = failure.text
             if failure.isPersistent, !pollFailureNotified {
                 pollFailureNotified = true
                 pollHealthHandler?(.failing(failure.text))
             }
         } else {
-            if let previous = pollErrorText {
-                pollErrorText = nil
-                if state.lastError == previous { state.lastError = nil }
-            }
             if pollFailureNotified {
                 pollFailureNotified = false
                 pollHealthHandler?(.recovered)
@@ -364,6 +379,9 @@ public actor TerminalTelegramControlService {
         return token
     }
 
+    /// Cancels the update consumer and leaves the dispatcher. `unsubscribe`
+    /// returns only after a poll task this service was the last subscriber of
+    /// has terminated, so a following `start()` cannot overlap its long poll.
     private func stopPolling() async {
         let task = pollingTask
         pollingTask = nil

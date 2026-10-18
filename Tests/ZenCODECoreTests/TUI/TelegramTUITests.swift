@@ -667,6 +667,19 @@ struct TelegramTUITests {
         #expect(messages.withLock { $0.contains { $0.contains(unavailable) } })
     }
 
+    /// `/telegram status` shows poll, command-menu and send errors separately.
+    @Test
+    func telegramStatusRendersSeparateDiagnostics() async throws {
+        let terminal = try await Self.activeTelegramTerminal()
+        terminal.telegramControlState.pollError = "Telegram polling failed: 409"
+        terminal.telegramControlState.commandMenuError = "Could not publish Telegram command menu: x"
+        terminal.telegramControlState.lastError = "send failed"
+        let text = terminal.telegramStatusText()
+        #expect(text.contains("Polling error: Telegram polling failed: 409"))
+        #expect(text.contains("Command menu error: Could not publish Telegram command menu: x"))
+        #expect(text.contains("Last error: send failed"))
+    }
+
     /// `/telegram` is a TUI-only command: the remote help never mentions it.
     @Test
     func telegramRemoteHelpDoesNotMentionTheTUIOnlyTelegramCommand() async throws {

@@ -317,6 +317,12 @@ extension TerminalChat {
         if let title = telegramLinkedChatTitle?.nilIfBlank {
             lines.append("Linked chat: \(title)")
         }
+        if let error = telegramControlState.pollError?.nilIfBlank {
+            lines.append("Polling error: \(error)")
+        }
+        if let error = telegramControlState.commandMenuError?.nilIfBlank {
+            lines.append("Command menu error: \(error)")
+        }
         if let error = telegramControlState.lastError?.nilIfBlank {
             lines.append("Last error: \(error)")
         }

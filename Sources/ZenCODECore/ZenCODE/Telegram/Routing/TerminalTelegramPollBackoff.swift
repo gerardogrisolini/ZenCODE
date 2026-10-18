@@ -52,43 +52,42 @@ struct TerminalTelegramPollBackoff: Sendable, Equatable {
         let delay: Duration
     }
 
+    /// The single 60 s ceiling of the poll retry policy. ``maximumDelay`` and
+    /// ``persistentFailureDelay`` must coincide with it, and it matches
+    /// ``TerminalTelegramRateGovernor/maximumServerRetryAfter`` (the 429 cap,
+    /// owned by the governor and checked by a test) so no poll path ever waits
+    /// longer than one minute.
+    static let delayCeiling: Duration = .seconds(60)
     static let baseDelay: Duration = .seconds(3)
-    static let maximumDelay: Duration = .seconds(60)
-    static let persistentFailureDelay: Duration = .seconds(60)
+    static let maximumDelay: Duration = delayCeiling
+    static let persistentFailureDelay: Duration = delayCeiling
     static let maximumServerRetryAfter = TerminalTelegramRateGovernor.maximumServerRetryAfter
 
     /// Consecutive failures since the last successful poll.
     private(set) var consecutiveFailures = 0
 
     static func classify(_ error: Error) -> (kind: Kind, retryAfter: Int?) {
-        guard let error = error as? TerminalTelegramControlError else {
-            return (.transient, nil)
-        }
-        switch error {
-        case .invalidToken, .missingConfiguration:
+        let status: Int
+        let errorCode: Int?
+        let retryAfter: Int?
+        switch error as? TerminalTelegramControlError {
+        case .invalidToken?, .missingConfiguration?:
             return (.invalidToken, nil)
-        case let .apiFailure(status, errorCode, _, retryAfter):
-            let code = errorCode ?? status
-            switch (status, code) {
-            case (429, _), (_, 429):
-                return (.rateLimited, retryAfter)
-            case (401, _), (403, _), (_, 401), (_, 403):
-                return (.invalidToken, nil)
-            case (409, _), (_, 409):
-                return (.conflict, nil)
-            default:
-                return (.transient, nil)
-            }
-        case let .httpError(status, _):
-            switch status {
-            case 401, 403: return (.invalidToken, nil)
-            case 409: return (.conflict, nil)
-            case 429: return (.rateLimited, nil)
-            default: return (.transient, nil)
-            }
+        case let .apiFailure(apiStatus, apiErrorCode, _, apiRetryAfter)?:
+            (status, errorCode, retryAfter) = (apiStatus, apiErrorCode, apiRetryAfter)
+        case let .httpError(httpStatus, _)?:
+            // A non-JSON HTTP failure carries neither error_code nor retry_after.
+            (status, errorCode, retryAfter) = (httpStatus, nil, nil)
         default:
             return (.transient, nil)
         }
+        // Both the HTTP status and the Bot API error_code are considered, as
+        // before; 429 beats 401/403, which beat 409.
+        let codes: Set<Int> = [status, errorCode ?? status]
+        if codes.contains(429) { return (.rateLimited, retryAfter) }
+        if !codes.isDisjoint(with: [401, 403]) { return (.invalidToken, nil) }
+        if codes.contains(409) { return (.conflict, nil) }
+        return (.transient, nil)
     }
 
     /// Registers a failure and returns how long to wait before the next poll.
@@ -118,11 +117,16 @@ struct TerminalTelegramPollBackoff: Sendable, Equatable {
 
     private func exponentialDelay(jitter: Double) -> Duration {
         let exponent = min(max(consecutiveFailures - 1, 0), 10)
-        let seconds = 3.0 * Double(1 << exponent)
+        let seconds = Self.seconds(Self.baseDelay) * Double(1 << exponent)
         let clampedJitter = min(max(jitter, 0), 1)
         let scaled = seconds * (0.75 + 0.5 * clampedJitter)
-        let capped = min(scaled, 60.0)
+        let capped = min(scaled, Self.seconds(Self.maximumDelay))
         return .milliseconds(Int((capped * 1000).rounded()))
+    }
+
+    private static func seconds(_ duration: Duration) -> Double {
+        let (seconds, attoseconds) = duration.components
+        return Double(seconds) + Double(attoseconds) / 1e18
     }
 
     /// Operator-facing text for an error, with any bot token (`bot<id>:<secret>`

@@ -23,13 +23,16 @@ actor TerminalTelegramBotDispatcher {
     }
 
     /// Receives the latest polling failure (`nil` once a poll succeeds again).
-    /// Invoked only on changes.
+    /// Invoked only on changes, in order, from a per-subscription consumer task:
+    /// a slow sink never blocks the poll loop or the dispatcher actor.
     typealias PollStatusSink = @Sendable (TerminalTelegramPollFailure?) async -> Void
     typealias Sleeper = @Sendable (Duration) async throws -> Void
 
     private struct BotState {
         var subscribers: [UUID: AsyncStream<TerminalTelegramUpdate>.Continuation]
-        var statusSinks: [UUID: PollStatusSink] = [:]
+        /// Ordered, unbounded mailbox per subscription feeding its sink's
+        /// consumer task. Finishing it ends that task after it drains.
+        var statusChannels: [UUID: AsyncStream<TerminalTelegramPollFailure?>.Continuation] = [:]
         var pollError: TerminalTelegramPollFailure?
         var task: Task<Void, Never>?
         var taskID: UUID?
@@ -39,6 +42,11 @@ actor TerminalTelegramBotDispatcher {
     }
 
     private var bots: [Int64: BotState] = [:]
+    /// Poll tasks cancelled because their bot lost its last subscriber, keyed
+    /// by task id until `pollingDidFinish` runs. The public `unsubscribe`
+    /// awaits them so a following subscribe cannot start a second `getUpdates`
+    /// while the old long poll is still in flight (HTTP 409).
+    private var retiringPolls: [UUID: (botID: Int64, task: Task<Void, Never>)] = [:]
     private let sleeper: Sleeper
     private let jitter: @Sendable () -> Double
 
@@ -73,28 +81,60 @@ actor TerminalTelegramBotDispatcher {
         }
         bots[botID]?.subscribers[id] = continuation
         if let pollStatus {
-            bots[botID]?.statusSinks[id] = pollStatus
+            let (statusStream, statusContinuation) = AsyncStream<TerminalTelegramPollFailure?>
+                .makeStream(bufferingPolicy: .unbounded)
+            Task(name: "ZenCODE.Telegram.poll-status.\(botID)") {
+                for await failure in statusStream {
+                    await pollStatus(failure)
+                }
+            }
+            // A late subscriber hears the current failure first; it is queued
+            // before any later change because both happen on this actor.
+            if let current = bots[botID]?.pollError {
+                statusContinuation.yield(current)
+            }
+            bots[botID]?.statusChannels[id] = statusContinuation
         }
         startPollingIfNeeded(botID: botID)
-        if let pollStatus, let current = bots[botID]?.pollError {
-            await pollStatus(current)
-        }
         return Subscription(id: id, botID: botID, updates: stream)
     }
 
-    func unsubscribe(_ subscription: Subscription) {
+    /// Removes the subscription. When it was the last one, the poll task is
+    /// cancelled and this call returns only after that task (and its in-flight
+    /// `getUpdates`) has terminated. Awaiting here is deadlock-free: while
+    /// suspended the actor is free, so the poll task's own calls back into it
+    /// (`publish`, `setPollError`, `pollingDidFinish`) can run.
+    func unsubscribe(_ subscription: Subscription) async {
         unsubscribe(botID: subscription.botID, subscriptionID: subscription.id)
+        // Also covers the race where the stream's `onTermination` already
+        // removed this subscription and retired the poll task.
+        let retiring = retiringPolls.values
+            .filter { $0.botID == subscription.botID }
+            .map(\.task)
+        for task in retiring {
+            await task.value
+        }
     }
 
     private func unsubscribe(botID: Int64, subscriptionID: UUID) {
         guard var state = bots[botID] else { return }
         state.subscribers.removeValue(forKey: subscriptionID)?.finish()
-        state.statusSinks.removeValue(forKey: subscriptionID)
+        state.statusChannels.removeValue(forKey: subscriptionID)?.finish()
         guard state.subscribers.isEmpty else {
             bots[botID] = state
             return
         }
-        state.task?.cancel()
+        retire(botID: botID, state: state)
+    }
+
+    /// Drops the bot state, cancelling its poll task and remembering it in
+    /// ``retiringPolls`` until it finishes.
+    private func retire(botID: Int64, state: BotState) {
+        if let task = state.task, let taskID = state.taskID {
+            task.cancel()
+            retiringPolls[taskID] = (botID, task)
+        }
+        for channel in state.statusChannels.values { channel.finish() }
         bots.removeValue(forKey: botID)
     }
 
@@ -112,7 +152,7 @@ actor TerminalTelegramBotDispatcher {
             do {
                 let updates = try await client.getUpdates(offset: offset, timeout: 30)
                 backoff.recordSuccess()
-                await setPollError(nil, botID: botID, generation: generation)
+                setPollError(nil, botID: botID, generation: generation)
                 for update in updates {
                     guard await publish(update, botID: botID, generation: generation) else {
                         return
@@ -130,7 +170,7 @@ actor TerminalTelegramBotDispatcher {
                         "Telegram getUpdates failing (\(decision.kind)); retrying in \(decision.delay): \(description)"
                     )
                 }
-                await setPollError(
+                setPollError(
                     TerminalTelegramPollFailure(
                         text: "Telegram polling failed: \(description)",
                         isPersistent: decision.kind.isPersistent
@@ -146,17 +186,18 @@ actor TerminalTelegramBotDispatcher {
         }
     }
 
-    /// Records the polling status for the bot and notifies every sink when it
-    /// changes.
+    /// Records the polling status for the bot and, when it changes, enqueues it
+    /// on every subscription's status channel. Never suspends: sinks run on
+    /// their own consumer tasks, so the poll loop is not blocked by them.
     private func setPollError(
         _ failure: TerminalTelegramPollFailure?, botID: Int64, generation: UUID
-    ) async {
+    ) {
         guard var state = bots[botID], state.generation == generation,
               state.pollError != failure else { return }
         state.pollError = failure
         bots[botID] = state
-        for sink in state.statusSinks.values {
-            await sink(failure)
+        for channel in state.statusChannels.values {
+            channel.yield(failure)
         }
     }
 
@@ -197,29 +238,28 @@ actor TerminalTelegramBotDispatcher {
                 }
             }
         }
-        guard var liveState = bots[botID], liveState.generation == generation else {
+        guard let liveState = bots[botID], liveState.generation == generation else {
             return false
         }
         guard !liveState.subscribers.isEmpty else {
-            bots.removeValue(forKey: botID)
+            retire(botID: botID, state: liveState)
             return false
         }
         do {
             try TerminalTelegramUpdateOffsetStore.save(updateID: update.updateID, botID: botID)
         } catch {
-            liveState.task?.cancel()
             for continuation in liveState.subscribers.values { continuation.finish() }
-            bots.removeValue(forKey: botID)
+            retire(botID: botID, state: liveState)
             return false
         }
-        liveState.nextOffset = update.updateID + 1
-        bots[botID] = liveState
+        bots[botID]?.nextOffset = update.updateID + 1
         return true
     }
 
     private func removeSubscriber(botID: Int64, subscriptionID: UUID, generation: UUID) {
         guard var state = bots[botID], state.generation == generation else { return }
         state.subscribers.removeValue(forKey: subscriptionID)
+        state.statusChannels.removeValue(forKey: subscriptionID)?.finish()
         bots[botID] = state
     }
 
@@ -240,6 +280,7 @@ actor TerminalTelegramBotDispatcher {
     }
 
     private func pollingDidFinish(botID: Int64, generation: UUID, taskID: UUID) {
+        retiringPolls.removeValue(forKey: taskID)
         guard var state = bots[botID], state.generation == generation,
               state.taskID == taskID else { return }
         state.task = nil

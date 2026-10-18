@@ -121,6 +121,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   check compares resolved real paths and rejects only symlinks inside the
   staging directory. Exportable files are now restricted to `.diff`, the only
   file Telegram can send, and the staged excerpt is removed by a single owner.
+- `/telegram status` reports polling, command-menu and last send errors on
+  separate lines, a successful send no longer replaces or clears the other two,
+  and `/telegram off` clears them. A rapid `/telegram off` then `/telegram on`
+  now waits for the previous long poll to end, so the new poller cannot hit
+  HTTP 409 and wait a minute. Poll-status notifications no longer block the
+  poll loop.
 - The `tasks.update` tool schema no longer declares a root-level `anyOf`, which
   Anthropic-compatible providers reject with HTTP 400 `invalid_request_error`.
   Root-task and `/goal` workflow modes remain validated at execution time.
