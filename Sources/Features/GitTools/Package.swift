@@ -17,9 +17,23 @@ let package = Package(
         .package(path: "../../..")
     ],
     targets: [
+        .target(
+            name: "GitToolsFeature",
+            dependencies: [
+                .product(name: "FeatureKit", package: "ZenCODE"),
+                .product(name: "ToolCore", package: "ZenCODE")
+            ],
+            swiftSettings: memberImportVisibilitySettings
+        ),
         .executableTarget(
             name: "git-tools-feature",
+            dependencies: ["GitToolsFeature"],
+            swiftSettings: memberImportVisibilitySettings
+        ),
+        .testTarget(
+            name: "GitToolsFeatureTests",
             dependencies: [
+                "GitToolsFeature",
                 .product(name: "FeatureKit", package: "ZenCODE"),
                 .product(name: "ToolCore", package: "ZenCODE")
             ],
