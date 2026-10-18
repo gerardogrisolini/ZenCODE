@@ -61,9 +61,6 @@ extension TerminalChat {
         case .diff:
             await handleTelegramDiffRequest(origin: origin)
             return .continueChat
-        case .report:
-            await handleTelegramReportRequest(origin: origin)
-            return .continueChat
         case .none:
             switch Self.parseSharedChatMention(
                 from: prompt,

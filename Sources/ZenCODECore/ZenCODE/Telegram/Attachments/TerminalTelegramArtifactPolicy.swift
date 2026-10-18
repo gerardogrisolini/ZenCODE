@@ -12,8 +12,8 @@ import ToolCore
 ///
 /// ZenCODE never uploads repository content, secrets or whole files by
 /// default. An artifact exists only as the result of an explicit selection:
-/// the operator asks for a diff/report/attachment (`/diff`, `/report` or a
-/// reply that resolves to one attachment) and then confirms with one tap on
+/// the operator asks for a diff or an attachment (`/diff` or a reply that
+/// resolves to one attachment) and then confirms with one tap on
 /// the consent keyboard. Nothing else creates a `TerminalTelegramArtifact`.
 public struct TerminalTelegramArtifact: Sendable, Equatable {
     /// Where the bytes to upload live. Always a local file: uploads are

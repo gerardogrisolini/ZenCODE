@@ -111,12 +111,6 @@ public enum TerminalTelegramCommandRegistry {
             description: "Send this session's diff as a document (asks first)",
             aliases: ["diff"]
         ),
-        TerminalTelegramCommandSpecification(
-            command: .report,
-            name: "report",
-            description: "Send the latest report/log file (asks first)",
-            aliases: ["report", "log", "report file"]
-        ),
     ]
 
     /// Accepted exact spellings per command, canonical form first. Derived, so
@@ -191,7 +185,6 @@ public enum TerminalTelegramRemoteCommand: Equatable, Sendable {
     case changes
     case undo
     case diff
-    case report
 
     public init?(text: String) {
         let normalized = text

@@ -46,6 +46,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Removed the orphaned `Docs/zenvoice-bridge.md`, left behind by the ZenVOICE
   removal.
 
+### Removed
+
+- The Telegram `/report` command (and its `report`, `log`, `report file`
+  aliases) has been removed from the bot menu, `/help` and the command parser.
+  It looked up the newest `.log`/`.txt`/`.md`/`.json` file under the support
+  and temporary directories, but the outbound artifact policy only accepts
+  files in the private staging directory, so it effectively always answered
+  "no exportable report or log file was found". `/diff` is unchanged.
+
 ### Security
 
 - GitTools now validates every model-provided positional argument (remotes,

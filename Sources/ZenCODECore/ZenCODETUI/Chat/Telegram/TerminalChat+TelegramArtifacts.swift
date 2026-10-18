@@ -14,7 +14,7 @@ extension TerminalChat {
     /// Directories whose individually selected files may be exported to the
     /// linked chat. Deliberately narrow: the temporary artifact staging
     /// directory only. Nothing under the repository working directory is a
-    /// member, so `/diff` and `/report` materialize a bounded excerpt into
+    /// member, so `/diff` materializes a bounded excerpt into
     /// this staging area first and only that excerpt can ever be uploaded.
     nonisolated static var telegramArtifactPolicy: TerminalTelegramArtifactPolicy {
         TerminalTelegramArtifactPolicy(
@@ -77,28 +77,6 @@ extension TerminalChat {
                 origin: origin
             )
         }
-    }
-
-    /// `/report` offers the most recent report/log file found in the ZenCODE
-    /// application support tree, after the policy validates it. No file is
-    /// sent or read into memory before consent.
-    func handleTelegramReportRequest(origin: TerminalPromptOrigin) async {
-        guard let chatID = origin.telegramChatID else { return }
-        guard let candidate = Self.latestTelegramReportCandidate(),
-              let artifact = try? Self.telegramArtifactPolicy.validated(candidate) else {
-            await sendTelegramSystemMessage(
-                "ZenCODE message: no exportable report or log file was found.",
-                to: chatID,
-                origin: origin
-            )
-            return
-        }
-        await offerTelegramArtifact(
-            artifact,
-            chatID: chatID,
-            summary: "Send “\(artifact.filename)” as a document?",
-            origin: origin
-        )
     }
 
     /// Sends the consent request with the two-button keyboard. The upload
@@ -195,7 +173,7 @@ extension TerminalChat {
                     ) else {
                     Self.removeStagedArtifact(at: stagedURL)
                     await sendTelegramSystemMessage(
-                        "ZenCODE message: that confirmation expired or no longer matches the file. Ask again with /diff or /report.",
+                        "ZenCODE message: that confirmation expired or no longer matches the file. Ask again with /diff.",
                         to: message.chatID,
                         origin: origin
                     )
@@ -222,7 +200,7 @@ extension TerminalChat {
 
     /// Removes a staged outbound excerpt after its upload attempt. Only files
     /// inside the private staging directory are ever deleted: operator-owned
-    /// report/log files under application support stay untouched.
+    /// files elsewhere stay untouched.
     private nonisolated static func removeStagedArtifact(at url: URL?) {
         guard let url else { return }
         let staging = telegramArtifactStagingDirectory
@@ -317,41 +295,6 @@ extension TerminalChat {
         guard succeeded else {
             throw CocoaError(.fileWriteUnknown)
         }
-    }
-
-    /// Most recent exportable report/log candidate under application support.
-    private nonisolated static func latestTelegramReportCandidate() -> TerminalTelegramArtifact? {
-        let fileManager = FileManager.default
-        let roots = [
-            AppStorageDirectory.appSupportDirectoryURL(),
-            fileManager.temporaryDirectory,
-        ]
-        let allowed = Set(["log", "txt", "md", "json"])
-        var best: (url: URL, date: Date)?
-        for root in roots {
-            guard let enumerator = fileManager.enumerator(
-                at: root,
-                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) else { continue }
-            for case let url as URL in enumerator {
-                guard let values = try? url.resourceValues(
-                    forKeys: [.contentModificationDateKey, .isRegularFileKey]
-                ), values.isRegularFile == true,
-                    allowed.contains(url.pathExtension.lowercased()) else {
-                    continue
-                }
-                let date = values.contentModificationDate ?? .distantPast
-                if best == nil || date > best!.date {
-                    best = (url, date)
-                }
-            }
-        }
-        guard let best else { return nil }
-        return TerminalTelegramArtifact(
-            fileURL: best.url,
-            filename: best.url.lastPathComponent
-        )
     }
 
     /// Plain-text send with a reply markup, returning the receipt, so consent

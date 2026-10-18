@@ -351,7 +351,7 @@ extension TerminalChat {
         Live messages from agents are forwarded here; reply to one with text to answer its sender.
         A voice note cannot be a direct reply: send text, or record without replying to run an ordinary prompt.
         Remote commands: \(Self.telegramRemoteCommandList()).
-        /diff and /report send a file only after you confirm it with an explicit button; nothing is uploaded automatically.
+        /diff sends a file only after you confirm it with an explicit button; nothing is uploaded automatically.
         Documents and images you send are received selectively (text, markdown, csv, json, yaml, pdf, rtf, word, odt and images) and kept as private temporaries.
         While /plan is asking questions, ordinary replies continue that same runtime discussion.
         While /goal is waiting for an answer, ordinary replies continue that same workflow task graph.
