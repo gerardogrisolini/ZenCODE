@@ -9,6 +9,7 @@ import Darwin
 import Glibc
 #endif
 
+extension LocalToolsSerialGroup {
 @Suite(.serialized)
 struct OperationFileChangeTests {
     private func workspace() throws -> URL {
@@ -94,8 +95,9 @@ struct OperationFileChangeTests {
         #expect(old.contains("A") || old.contains("B"))
     }
 }
+}
 
-extension OperationFileChangeTests {
+extension LocalToolsSerialGroup.OperationFileChangeTests {
     @Test func successfulPatchRecordsCommittedTextsNotPatchSource() async throws {
         let root = try workspace()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -125,7 +127,7 @@ extension OperationFileChangeTests {
     }
 }
 
-extension OperationFileChangeTests {
+extension LocalToolsSerialGroup.OperationFileChangeTests {
     @Test func fifoDeleteAndMoveDoNotWaitForWriter() async throws {
         let root = try workspace()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -239,7 +241,7 @@ extension OperationFileChangeTests {
     }
 }
 
-extension OperationFileChangeTests {
+extension LocalToolsSerialGroup.OperationFileChangeTests {
     @Test func multifileSnapshotBudgetFallsBackAfterLimit() async throws {
         let root = try workspace()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -273,7 +275,7 @@ extension OperationFileChangeTests {
     }
 }
 
-extension OperationFileChangeTests {
+extension LocalToolsSerialGroup.OperationFileChangeTests {
     @Test func concurrentWritesShareAggregateRecorderBudget() async throws {
         let root = try workspace()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -310,7 +312,7 @@ extension OperationFileChangeTests {
     }
 }
 
-private extension OperationFileChangeTests {
+private extension LocalToolsSerialGroup.OperationFileChangeTests {
     func waitForCompletion(_ semaphore: DispatchSemaphore) async throws -> Bool {
         try await LocalIOOffloader.run {
             semaphore.wait(timeout: .now() + 3) == .success
@@ -330,7 +332,7 @@ private extension OperationFileChangeTests {
     }
 }
 
-extension OperationFileChangeTests {
+extension LocalToolsSerialGroup.OperationFileChangeTests {
     @Test func cocoaPermissionErrorRecognizesNativeAndBridgedUnderlyingPOSIXError() {
         func failure(underlying: any Error, code: Int = 257) -> NSError {
             NSError(

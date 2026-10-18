@@ -234,11 +234,16 @@ struct RemoteTransportCoreTests {
             )
         }
         let transport = RemoteTransportCore(owningEventLoopThreads: 1)
+        // Scoped so the response handle (and the lifetime token it retains) is
+        // released before the owned event-loop group shuts down; the run-task
+        // tail of `executeThenClose` must not touch a shut-down loop.
+        let storageBox: WeakBox<RemoteHTTPBodyStorage>
 
         do {
             let response = try await transport.openHTTPStream(
                 RemoteHTTPStreamingRequest(url: server.url(path: "/sse-stall"))
             )
+            storageBox = WeakBox(response.body.storage)
             var events = response.body.sseEvents(
                 idleTimeoutNanoseconds: 200_000_000
             ).makeAsyncIterator()
@@ -260,6 +265,7 @@ struct RemoteTransportCoreTests {
             throw error
         }
 
+        try await awaitDeallocated(storageBox)
         try await transport.shutdown()
         await server.shutdown()
     }
@@ -514,13 +520,8 @@ struct RemoteTransportCoreTests {
             owningEventLoopThreads: 1,
             maximumCollectedResponseBodyBytes: 16
         )
-        defer {
-            Task {
-                try? await transport.shutdown()
-                await server.shutdown()
-            }
-        }
-
+        // Teardown runs exactly once, below: a second (deferred) server.shutdown()
+        // would call shutdownGracefully() on an already shut down event loop group.
         await #expect(throws: RemoteTransportError.self) {
             _ = try await transport.sendRequest(
                 RemoteHTTPStreamingRequest(url: server.url(path: "/oversized"))
@@ -939,10 +940,12 @@ struct RemoteTransportCoreTests {
         let server = try await LocalWebSocketTestServer.start()
         let transport = RemoteTransportCore(owningEventLoopThreads: 1)
 
+        let driverBox: WeakBox<RemoteWebSocketDriver>
         do {
             let connection = try await transport.connectWebSocket(
                 RemoteWebSocketRequest(url: server.url(path: "/cancel"))
             )
+            driverBox = WeakBox(await connection.driver)
             let receiveTask = Task { _ = try await connection.receive() }
             await Task.yield()
             receiveTask.cancel()
@@ -959,6 +962,9 @@ struct RemoteTransportCoreTests {
             throw error
         }
 
+        // Handle release drives teardown asynchronously; shutting the owning
+        // group down before the driver is gone schedules on a dead event loop.
+        try await awaitDeallocated(driverBox)
         try await transport.shutdown()
         await server.shutdown()
     }

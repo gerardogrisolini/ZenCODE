@@ -4,6 +4,7 @@ import FeatureKit
 import ToolCore
 @testable import LocalToolsSupport
 
+extension LocalToolsSerialGroup {
 @Suite(.serialized)
 struct CompactOperationFileChangeTests {
     private func workspace() throws -> URL {
@@ -175,4 +176,5 @@ struct CompactOperationFileChangeTests {
         #expect(overlapped.changes.first?.compactDiff == nil)
         #expect(overlapped.changes.first?.explanation?.contains("overlapped") == true)
     }
+}
 }
