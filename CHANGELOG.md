@@ -100,6 +100,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Telegram `/help` now lists `/chat` and `/undo` too. The command list is
   derived from the same registry used for the published Telegram command menu,
   so help and menu can no longer drift apart.
+- Telegram slash commands that do not exist on Telegram (for example `/tasks`,
+  `/models` or a typo) are answered with "unknown command" and the list of
+  available commands instead of being sent to the model as a prompt, matching
+  the TUI. Remote commands are recognised by their first word, so
+  `/status foo` or `/changes diff` answer that the command does not accept
+  arguments instead of becoming a prompt.
+- While a response is being generated, Telegram now also answers `/help` and
+  `/changes` immediately (previously only `/status`, `/chat` and permission
+  replies), instead of the busy message.
+- Telegram `/help` and the argument request for a bare `/plan` list the `/plan`
+  subcommands (`save`, `load`, `list`, `delete`, `status`, `approve`, `clear`).
+- `/plan` and `/review` messages that reach Telegram now say the sub-agents
+  tool group is enabled "from the ZenCODE TUI with /tools".
+- `@botname` suffixes are stripped by one shared normalizer before every
+  Telegram command check, so `/plan@` behaves like `/plan` everywhere.
 - The `tasks.update` tool schema no longer declares a root-level `anyOf`, which
   Anthropic-compatible providers reject with HTTP 400 `invalid_request_error`.
   Root-task and `/goal` workflow modes remain validated at execution time.

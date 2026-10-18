@@ -1040,6 +1040,122 @@ struct TelegramTUITests {
         #expect(await authorization.value == .denied)
     }
 
+    @Test
+    func busyTelegramSessionAnswersHelpAndChangesButKeepsAliasesBusy() async throws {
+        let terminal = try await Self.activeTelegramTerminal()
+        let notices = Mutex<[String]>([])
+        terminal.onTelegramSystemMessage = { text, _ in
+            notices.withLock { $0.append(text) }
+            return true
+        }
+        var queuedPrompts = TerminalQueuedPromptBuffer()
+        for (index, text) in ["/help", "/changes@zencode_bot", "help"].enumerated() {
+            let didQueue = await terminal.handleTelegramRuntimeMessage(
+                TerminalTelegramIncomingMessage(
+                    chatID: 42, userID: 7, text: text, voice: nil,
+                    messageID: 200 + index, chatTitle: nil, username: nil
+                ),
+                eventQueue: TerminalChatEventQueue(), queuedPrompts: &queuedPrompts,
+                transcriptions: TerminalVoiceTranscriptionRegistry(),
+                isSessionGenerating: true
+            )
+            #expect(!didQueue)
+        }
+        let delivered = notices.withLock { $0 }
+        #expect(delivered.count == 3)
+        #expect(delivered[0].contains("Remote commands:"))
+        #expect(delivered[1].contains("No tracked file changes."))
+        #expect(delivered[2].contains("was not queued"))
+    }
+
+    @Test
+    func telegramUnknownSlashAndArgumentedRemoteCommandsAreRejected() async throws {
+        let terminal = try await Self.activeTelegramTerminal()
+        let lease = try #require(terminal.telegramActiveRouteLease)
+        let origin = TerminalPromptOrigin.telegramLease(lease)
+        let notices = Mutex<[String]>([])
+        terminal.onTelegramSystemMessage = { text, _ in
+            notices.withLock { $0.append(text) }
+            return true
+        }
+
+        guard case .continueChat = await terminal.submittedTelegramLineAction(
+            "/bogus now", origin: origin
+        ) else {
+            Issue.record("Unknown slash command must not reach the model")
+            return
+        }
+        guard case .continueChat = await terminal.submittedTelegramLineAction(
+            "/status foo", origin: origin
+        ) else {
+            Issue.record("/status with an argument must not run or reach the model")
+            return
+        }
+        guard case .runPrompt = await terminal.submittedTelegramLineAction(
+            "status report please", origin: origin
+        ) else {
+            Issue.record("Plain text starting with an alias word stays a prompt")
+            return
+        }
+        guard case .continueChat = await terminal.submittedTelegramLineAction(
+            "/help@zencode_bot", origin: origin
+        ) else {
+            Issue.record("/help@bot should resolve")
+            return
+        }
+        let delivered = notices.withLock { $0 }
+        #expect(delivered.count == 3)
+        #expect(delivered[0].hasPrefix("ZenCODE: unknown command '/bogus'. Available commands: /help"))
+        #expect(delivered[1] == "ZenCODE: /status does not accept arguments.")
+        #expect(delivered[2].contains("Remote commands:"))
+    }
+
+    @Test
+    func telegramPlanSubcommandsAreListedAndDegeneratePlanMentionAsksForArgument() async throws {
+        #expect(TerminalChat.telegramRemoteCommandList().contains(
+            "/plan <goal> (or save|load|list|delete|status|approve|clear)"
+        ))
+        let terminal = try await Self.activeTelegramTerminal()
+        let prompts = Mutex<[String]>([])
+        terminal.onTelegramMentionPickerMessage = { text, _, _ in
+            prompts.withLock { $0.append(text) }
+            return 1
+        }
+        var queuedPrompts = TerminalQueuedPromptBuffer()
+        for (index, text) in ["/plan", "/plan@"].enumerated() {
+            let didQueue = await terminal.handleTelegramRuntimeMessage(
+                TerminalTelegramIncomingMessage(
+                    chatID: 42, userID: 7, text: text, voice: nil,
+                    messageID: 300 + index, chatTitle: nil, username: nil
+                ),
+                eventQueue: TerminalChatEventQueue(), queuedPrompts: &queuedPrompts,
+                transcriptions: TerminalVoiceTranscriptionRegistry()
+            )
+            #expect(!didQueue)
+        }
+        let asked = prompts.withLock { $0 }
+        #expect(asked.count == 2)
+        #expect(asked.allSatisfy { $0.contains("/plan") && $0.contains("approve") })
+    }
+
+    @Test
+    func tuiOnlyToolsHintIsWordedForTheTUI() async throws {
+        let terminal = try await Self.activeTelegramTerminal()
+        let lease = try #require(terminal.telegramActiveRouteLease)
+        let notices = Mutex<[String]>([])
+        terminal.onTelegramSystemMessage = { text, _ in
+            notices.withLock { $0.append(text) }
+            return true
+        }
+        terminal.selectedToolKeys.remove("sub-agents")
+        _ = await terminal.submittedTelegramLineAction(
+            "/plan build it", origin: .telegramLease(lease)
+        )
+        #expect(notices.withLock { $0 }.contains {
+            $0.contains("Enable it from the ZenCODE TUI with /tools")
+        })
+    }
+
     private static func activeTelegramTerminal(
         permissionAuthorizer: LocalExecPermissionAuthorizer? = nil
     ) async throws -> TerminalChat {

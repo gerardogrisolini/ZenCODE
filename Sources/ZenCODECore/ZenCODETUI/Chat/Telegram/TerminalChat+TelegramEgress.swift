@@ -323,8 +323,9 @@ extension TerminalChat {
         return lines.joined(separator: "\n")
     }
 
-    /// Cross-extension visibility: the ingress dispatcher mirrors `/status` and
-    /// `/changes` through this text while the busy gate is open.
+    /// Cross-extension visibility: the ingress dispatcher answers `/status`,
+    /// `/help` and `/changes` (slash forms) through these texts while the busy
+    /// gate is open.
     func telegramRemoteStatusText() -> String {
         let agent = selectedAgent?.displayName ?? AgentProfileStore.developerAgentName
         let model = currentEffectiveModelID() ?? "default model"
@@ -367,7 +368,7 @@ extension TerminalChat {
         let remoteCommands = TerminalTelegramCommandRegistry.commands.map { "/\($0.name)" }
         let workflowCommands = CoordinatorCommandFamily.allCases.map { family in
             switch family {
-            case .plan: "/plan <goal> and its subcommands"
+            case .plan: "/plan <goal> (or save|load|list|delete|status|approve|clear)"
             case .goal: "/goal <goal>"
             case .review: "/review [focus]"
             }

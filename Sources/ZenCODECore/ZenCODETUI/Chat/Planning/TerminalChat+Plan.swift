@@ -127,7 +127,7 @@ extension TerminalChat {
                 await writeFailureMessage(
                     """
                     ZenCODE: /plan requires the sub-agents tool group. \
-                    Enable it with /tools (or switch to an agent that includes it) and try again.
+                    Enable it from the ZenCODE TUI with /tools (or switch to an agent that includes it) and try again.
 
                     """
                 )

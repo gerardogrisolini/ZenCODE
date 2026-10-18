@@ -142,23 +142,36 @@ public enum TerminalTelegramCommandRegistry {
     /// keeps its "already linked" answer and `/start <payload>` is consumed by
     /// the pairing grant flow.
     public static func resolve(_ line: String) -> TerminalTelegramRemoteCommand? {
-        guard let first = commands.first(where: { specification in
-            specification.allForms.contains { matches($0, line: line) }
-        }) else {
-            return nil
-        }
-        return first.command
+        resolveInvocation(line)?.command
     }
 
-    /// One registry spelling against one normalized line.
-    private static func matches(_ form: String, line: String) -> Bool {        guard form.first == "/" else {
-            // A plain-language alias matches the whole line only: "status" must
-            // not capture "status report please".
-            return line == form
+    /// Resolves one trimmed, lowercased line to a command plus its argument.
+    ///
+    /// Slash forms resolve by their FIRST token (with an optional `@botname`
+    /// suffix), so `/status foo` is `.status` with argument `foo`. Plain-word
+    /// aliases match the whole line only: "status" must not capture
+    /// "status report please".
+    public static func resolveInvocation(
+        _ line: String
+    ) -> (command: TerminalTelegramRemoteCommand, argument: String)? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.first == "/" {
+            let tokenEnd = trimmed.firstIndex(where: \.isWhitespace) ?? trimmed.endIndex
+            var token = String(trimmed[..<tokenEnd])
+            if let at = token.firstIndex(of: "@") {
+                token = String(token[..<at])
+            }
+            let argument = String(trimmed[tokenEnd...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let specification = commands.first(where: { "/\($0.name)" == token }) else {
+                return nil
+            }
+            return (specification.command, argument)
         }
-        // A slash form matches exactly, or with a @botname suffix such as
-        // "/help@zencode_bot".
-        return line == form || line.hasPrefix(form + "@")
+        guard let specification = commands.first(where: { $0.aliases.contains(trimmed) }) else {
+            return nil
+        }
+        return (specification.command, "")
     }
 }
 /// Wire form of one `setMyCommands` entry (Bot API snake_case).
@@ -185,6 +198,28 @@ public enum TerminalTelegramRemoteCommand: Equatable, Sendable {
     case changes
     case undo
     case diff
+
+    /// Resolves a line to its command and argument (empty when absent).
+    /// Slash commands resolve by first token; plain aliases need the whole line.
+    public static func invocation(
+        text: String
+    ) -> (command: TerminalTelegramRemoteCommand, argument: String)? {
+        let normalized = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if let resolved = TerminalTelegramCommandRegistry.resolveInvocation(normalized) {
+            return resolved
+        }
+        let first = normalized
+            .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            .first.map(String.init) ?? normalized
+        if first == "/start" || first.hasPrefix("/start@") {
+            let argument = normalized.dropFirst(first.count)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return (.start, argument)
+        }
+        return nil
+    }
 
     public init?(text: String) {
         let normalized = text

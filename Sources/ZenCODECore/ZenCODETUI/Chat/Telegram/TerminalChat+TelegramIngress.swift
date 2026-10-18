@@ -33,7 +33,18 @@ extension TerminalChat {
     ) async -> TerminalSubmittedLineAction {
         guard await validateTelegramOrigin(origin) else { return .continueChat }
         let prompt = Self.telegramCommandWithoutBotMention(prompt)
-        let remoteCommand = TerminalTelegramRemoteCommand(text: prompt)
+        let remoteInvocation = TerminalTelegramRemoteCommand.invocation(text: prompt)
+        let remoteCommand = remoteInvocation?.command
+        if let remoteInvocation, remoteInvocation.command != .start,
+           CoordinatorCommandParser.isSlashCommand(prompt),
+           !remoteInvocation.argument.isEmpty {
+            let name = prompt.split(whereSeparator: \.isWhitespace).first
+                .map { String($0).lowercased() } ?? prompt
+            await sendTelegramSystemMessageIfLinked(
+                "ZenCODE: \(name) does not accept arguments.", origin: origin
+            )
+            return .continueChat
+        }
         // A plain-word alias ("status", "diff", "undo", ...) is ordinary text
         // while a conversation explicitly waits for the operator: the pending
         // reply wins, exactly as in the TUI, where those words are never
@@ -113,6 +124,16 @@ extension TerminalChat {
                     await sendTelegramSystemMessageIfLinked(output, origin: origin)
                 }
                 return action
+            }
+            if CoordinatorCommandParser.isSlashCommand(prompt),
+               TerminalTelegramPermissionBroker.permissionCommand(from: prompt) == nil {
+                let token = prompt.split(whereSeparator: \.isWhitespace).first
+                    .map(String.init) ?? prompt
+                await sendTelegramSystemMessageIfLinked(
+                    "ZenCODE: unknown command '\(token)'. Available commands: \(Self.telegramRemoteCommandList())",
+                    origin: origin
+                )
+                return .continueChat
             }
             return .runPrompt(prompt)
         }
@@ -297,20 +318,34 @@ extension TerminalChat {
             return
         }
         if isSessionGenerating,
-           let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-           TerminalTelegramRemoteCommand(text: text) == .status {
-            await sendTelegramSystemMessageIfLinked(
-                telegramRemoteStatusText(), origin: routeOrigin
-            )
-            return
-        }
-        if isSessionGenerating,
-           let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-           TerminalTelegramRemoteCommand(text: text) == .chat {
-            await handleTelegramMentionPickerRequest(
-                chatID: message.chatID, origin: routeOrigin
-            )
-            return
+           let busyText = message.text.map(Self.telegramCommandWithoutBotMention),
+           let invocation = TerminalTelegramRemoteCommand.invocation(text: busyText),
+           invocation.argument.isEmpty {
+            let isSlash = CoordinatorCommandParser.isSlashCommand(busyText)
+            switch invocation.command {
+            case .status:
+                await sendTelegramSystemMessageIfLinked(
+                    telegramRemoteStatusText(), origin: routeOrigin
+                )
+                return
+            case .chat:
+                await handleTelegramMentionPickerRequest(
+                    chatID: message.chatID, origin: routeOrigin
+                )
+                return
+            case .help where isSlash:
+                await sendTelegramSystemMessageIfLinked(
+                    telegramRemoteHelpText(), origin: routeOrigin
+                )
+                return
+            case .changes where isSlash:
+                await sendTelegramSystemMessageIfLinked(
+                    telegramRemoteChangesText(), origin: routeOrigin
+                )
+                return
+            default:
+                break
+            }
         }
         guard !isSessionGenerating else {
             await sendTelegramBusyMessage(origin: routeOrigin)
@@ -358,26 +393,32 @@ extension TerminalChat {
             return
         }
 
-        if TerminalTelegramRemoteCommand(text: text) == .start {
+        let commandText = Self.telegramCommandWithoutBotMention(text)
+        let invocation = TerminalTelegramRemoteCommand.invocation(text: commandText)
+        // `/start` and `/chat` are answered before the prompt queue: they must
+        // work even when the queue is full and must never be consumed as the
+        // argument of a pending ForceReply command request. `/chat <text>`
+        // falls through to the queued path, which rejects the argument.
+        switch (invocation?.command, invocation?.argument.isEmpty) {
+        case (.start?, _):
             await sendTelegramSystemMessageIfLinked(
                 "Telegram is already linked to this ZenCODE session. Send a prompt or /help.",
                 origin: routeOrigin
             )
             return
-        }
-
-        if TerminalTelegramRemoteCommand(text: text) == .chat {
+        case (.chat?, true?):
             await handleTelegramMentionPickerRequest(
                 chatID: message.chatID, origin: routeOrigin
             )
             return
+        default:
+            break
         }
 
-        if let coordinatorCommand = CoordinatorCommandParser.parse(text),
+        if let coordinatorCommand = CoordinatorCommandParser.parse(commandText),
            coordinatorCommand.requiresArgument {
-            let command = Self.telegramCommandWithoutBotMention(text)
             await requestTelegramCommandArgument(
-                command, chatID: message.chatID, lease: routeLease
+                commandText, chatID: message.chatID, lease: routeLease
             )
             return
         }
@@ -431,7 +472,12 @@ extension TerminalChat {
     private func requestTelegramCommandArgument(
         _ command: String, chatID: Int64, lease: TerminalTelegramRouteLease
     ) async {
-        let prompt = "Enter the argument for \(command). Reply to this message; it will not be treated as a normal prompt."
+        let prompt: String
+        if command == "/plan" {
+            prompt = "Enter the goal or subcommand for /plan (save, load, list, delete, status, approve, clear). Reply to this message; it will not be treated as a normal prompt."
+        } else {
+            prompt = "Enter the argument for \(command). Reply to this message; it will not be treated as a normal prompt."
+        }
         let receipt = await sendTelegramReplyMarkupMessage(
             prompt, to: chatID, replyMarkup: .forceReply, origin: .telegramLease(lease)
         )
