@@ -145,7 +145,9 @@ extension PlanningCommandKernel {
         return """
         Work autonomously until the goal is complete or a genuine blocker requires a pause. \
         Plan the work in the active persistent task graph, execute directly or delegate when \
-        useful, and validate the result. Delegation is optional, not a prerequisite for /goal. \
+        useful, and validate the result. Delegation is optional, not a prerequisite for /goal, \
+        but configured bindings weigh on that choice: when a compatible profile offers a cheaper \
+        binding that still meets a task's complexity, delegating that task is the default. \
         Keep the task DAG even when doing all work directly; this is not a taskless mode.
 
         Goal: \(goal)
@@ -188,6 +190,8 @@ extension PlanningCommandKernel {
         - Call tasks.list with runnableOnly=true to find tasks ready to execute.
         - For direct work, use tasks.update status in_progress, perform and validate the work, \
         then record output/evidence and status completed; record failed or blocked when appropriate.
+        - Decide direct versus delegated execution with cost in mind. \
+        \(TaskRecord.delegationCostPolicy)
         - When delegation is useful and available, select the best-matching agent profile and, when configured, \
         one of its authorized model bindings:
           - Determine the task type (investigation, implementation, review, planning) and \

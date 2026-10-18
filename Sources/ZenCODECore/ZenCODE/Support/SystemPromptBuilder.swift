@@ -168,6 +168,7 @@ public enum SystemPromptBuilder {
             profile has the tools required to perform it. Execute other graph work directly only \
             when it is trivial, delegation offers no meaningful benefit, no compatible profile \
             can perform it, or shared mutable state makes delegation unsafe. \
+            \(TaskRecord.delegationCostPolicy) \
             When delegating graph work, put \
             the task ID returned by tasks.create/tasks.list in each canonical \
             agent.create `agents` item as `taskID`; never pass taskID as a root argument. This \
@@ -323,7 +324,8 @@ public enum SystemPromptBuilder {
         if taskWorkflowToolsAreAvailable(allowedToolNames) {
             selectionPolicy = ""
         } else {
-            selectionPolicy = "\nSelect a role/tool-compatible profile first. When it has bindings, choose the lowest-capability listed binding that meets the task; otherwise inherit the main session model without inventing a capability rating."
+            selectionPolicy = "\nSelect a role/tool-compatible profile first. When it has bindings, choose the lowest-capability listed binding that meets the task; otherwise inherit the main session model without inventing a capability rating. "
+                + TaskRecord.delegationCostPolicy
         }
 
         return """

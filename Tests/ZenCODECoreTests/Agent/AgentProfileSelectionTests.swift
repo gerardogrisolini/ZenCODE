@@ -1043,4 +1043,34 @@ struct DelegatableAgentsSectionTests {
             "same profile inherits the coordinator's effective session allowlist"
         ))
     }
+
+    @Test
+    func rendersDelegationCostPolicyOnlyWhenTaskWorkflowToolsAreUnavailable() throws {
+        let agents = [
+            AgentProfile(
+                id: "developer",
+                name: "Developer",
+                instructions: "Developer agent. Implement the request.",
+                modelID: "dev-model",
+                capability: 4
+            ),
+        ]
+        let models = [Self.model("dev-model")]
+
+        let withTaskTools = try #require(SystemPromptBuilder.delegatableAgentsSection(
+            agents: agents,
+            allowedToolNames: ["agent.create", "tasks.create", "tasks.list", "tasks.update"],
+            models: models
+        ))
+        #expect(!withTaskTools.contains(TaskRecord.delegationCostPolicy))
+
+        let agentOnly = try #require(SystemPromptBuilder.delegatableAgentsSection(
+            agents: agents,
+            allowedToolNames: ["agent.create"],
+            models: models
+        ))
+        #expect(agentOnly.contains("Select a role/tool-compatible profile first."))
+        #expect(agentOnly.contains(TaskRecord.delegationCostPolicy))
+        #expect(agentOnly.contains("Configured bindings are also a cost ladder"))
+    }
 }

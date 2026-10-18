@@ -36,11 +36,34 @@ extension TerminalChatRenderCoordinator {
         if hasPriorContent, trailingNewlineCount(for: channel) == 0 {
             writeChat("\n", to: channel, preservesSpacing: true)
         }
-        writeChat(rendered, to: channel, preservesSpacing: true)
+        // Spacing is preserved inside the message, but its leading blank line
+        // must merge with one already left by the previous block (e.g. a
+        // completed tool) instead of stacking into two separator rows.
+        let body = hasPriorContent
+            ? Self.leadingLineBreaksCapped(
+                rendered,
+                existingTrailingNewlines: trailingNewlineCount(for: channel)
+            )
+            : rendered
+        guard !body.isEmpty else {
+            return
+        }
+        writeChat(body, to: channel, preservesSpacing: true)
         if trailingNewlineCount(for: channel) == 0 {
             writeChat("\n", to: channel)
         }
         flushChatOutput()
+    }
+
+    /// Drops leading line breaks so that, together with the line breaks already
+    /// ending the channel, at most one blank row separates the two blocks.
+    static func leadingLineBreaksCapped(_ text: String, existingTrailingNewlines: Int) -> String {
+        let allowed = max(0, 2 - existingTrailingNewlines)
+        let leading = text.prefix { $0 == "\n" }.count
+        guard leading > allowed else {
+            return text
+        }
+        return String(text.dropFirst(leading - allowed))
     }
 
     /// Applies presentation-only nesting after Markdown has been rendered, so

@@ -79,4 +79,34 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(!continuation.contains("🪬 Artifacts"))
         #expect(!continuation.contains("let x = 2"))
     }
+
+    @Test
+    func liveArtifactAfterCompletedToolIsSeparatedBySingleBlankLine() async throws {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true, standardOutputIsTerminal: true,
+            columnWidthProvider: { 100 }
+        )
+        let call = presentedToolCall(
+            id: "artifact-spacing", name: "local.editFile",
+            argumentsObject: ["path": "Example.swift"], argumentsJSON: "{}"
+        )
+        await renderer.writeToolCallStarted(call)
+        await renderer.writeToolCallCompleted(call, result: .init(output: "done", summary: "done"))
+        let artifacts = FileChangeArtifactMapper.artifacts(
+            from: [.init(path: "Example.swift", oldText: "let x = 1\n", newText: "let x = 2\n")],
+            workingDirectory: URL(fileURLWithPath: "/tmp")
+        )
+        await renderer.writeMarkdownMessage(
+            TerminalChat.renderFileArtifacts(
+                [.init(number: 1, artifacts: artifacts)], includeHistoryHeadings: false
+            ),
+            to: .standardError,
+            preservingStreamingContext: true
+        )
+        let output = await renderer.capturedWriteEvents().plainText()
+        let artifactStart = try #require(output.range(of: "modified Example.swift"))
+        let beforeArtifact = output[..<artifactStart.lowerBound]
+        let separator = beforeArtifact.reversed().prefix { $0 == "\n" || $0 == " " }
+        #expect(separator.filter { $0 == "\n" }.count == 2)
+    }
 }

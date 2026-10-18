@@ -91,6 +91,26 @@ Worked example against the table above — a complexity 6 implementation task:
 The runtime only advises when complexity exceeds the chosen capability; the
 coordinator remains responsible for the explicit profile and binding choice.
 
+## Direct Work vs Delegation
+
+Bindings are also a **cost ladder**: a lower capability means a cheaper model,
+and work the coordinator performs directly is billed to the main session model,
+which normally sits at the top of that ladder. The coordinator therefore weighs
+cost, not just speed, when deciding whether to delegate:
+
+- When a role/tool-compatible profile exposes a binding that is cheaper than the
+  main session model and still meets the task complexity, the task is delegated
+  to the cheapest sufficient binding even if doing it directly would be faster.
+  The coordinator keeps the brief (files, constraints, acceptance criteria),
+  coordination, and validation of the result.
+- Only complexity-1 work whose context is already in hand stays direct.
+- When no compatible profile has bindings, delegation saves nothing: the
+  coordinator works directly unless real parallelism, separate ownership, or a
+  different tool grant justifies a sub-agent.
+
+The same rule applies inside `/goal`, in other task graphs, and for single
+delegations outside a task graph.
+
 ## What The Model Sees
 
 Profiles with at least one binding that has both a model and a capability are

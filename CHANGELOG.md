@@ -12,6 +12,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The coordinator now treats configured model bindings as a cost ladder when
+  choosing between direct work and delegation: when a compatible profile offers
+  a binding cheaper than the main session model that still meets a task's
+  complexity, the task is delegated to the cheapest sufficient binding even if
+  direct execution would be faster; only complexity-1 work with its context
+  already in hand stays direct. Without bindings the previous
+  direct-unless-parallelism logic is unchanged. Applies to the task workflow
+  policy, the delegation roster, and the `/goal` prompt. See
+  `Docs/bindings.md`.
 - Live file artifacts in the terminal chat now show only the changed lines
   with three lines of surrounding context, as unified-diff hunks, instead of
   one hunk covering the whole file. `/artifacts` still shows the whole file
@@ -41,6 +50,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   checkpoint reports a file also covered by the tool's own evidence, only the
   checkpoint is shown, even if their diffs differ; artifact history and undo
   baselines are unchanged.
+- Live file artifacts are separated from the completed tool line above them by
+  a single blank line instead of two.
 
 ## [2.3.2] - 2026-10-16
 

@@ -148,6 +148,11 @@ extension AgentConfigurationTests {
         #expect(policy.contains("For profiles without bindings, omit `model` to inherit the main session model"))
         #expect(policy.contains("For a profile without bindings, omit model in agent.create"))
         #expect(policy.contains("do not invent a binding or capability rating"))
+        #expect(policy.contains(TaskRecord.delegationCostPolicy))
+        #expect(policy.contains("Configured bindings are also a cost ladder"))
+        #expect(policy.contains("delegate the task to the cheapest sufficient binding even when direct execution would be faster"))
+        #expect(policy.contains("Only complexity-1 work whose context is already in hand stays direct"))
+        #expect(policy.contains("When no compatible profile has bindings, delegation saves nothing"))
         #expect(SystemPromptBuilder.taskWorkflowToolsAreAvailable(taskTools))
         #expect(SystemPromptBuilder.taskOrchestrationSection(
             allowedToolNames: ["tasks.create", "tasks.list"]
@@ -177,6 +182,7 @@ extension AgentConfigurationTests {
         #expect(!coordinatorOnlyPolicy.contains(
             "Execute runnable graph work directly and record its lifecycle"
         ))
+        #expect(!coordinatorOnlyPolicy.contains(TaskRecord.delegationCostPolicy))
 
         let singularTaskTools: Set<String> = [
             "task.create",

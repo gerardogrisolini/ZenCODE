@@ -307,6 +307,21 @@ public struct TaskRecord: Codable, Equatable, Sendable, Identifiable {
         + "the main session model and provider; do not invent a binding or capability rating. "
         + "Never select a profile or model binding by capability alone."
 
+    /// The canonical policy that treats configured model bindings as a cost
+    /// signal when deciding between direct execution and delegation. It applies
+    /// to every direct-versus-delegate decision, inside or outside a task graph.
+    public static let delegationCostPolicy =
+        "Configured bindings are also a cost ladder: a lower capability is a cheaper model, "
+        + "and direct work spends the main session model, normally the top of that ladder. "
+        + "When a role/tool-compatible profile exposes a binding whose capability is lower than "
+        + "the main session model and still meets the task complexity, delegate the task to the "
+        + "cheapest sufficient binding even when direct execution would be faster; keep "
+        + "coordination, a precise brief (files, constraints, acceptance criteria), and "
+        + "validation of the result for yourself. Only complexity-1 work whose context is already "
+        + "in hand stays direct. When no compatible profile has bindings, delegation saves nothing: "
+        + "work directly unless real parallelism, separate ownership, or a different tool grant "
+        + "justifies a sub-agent."
+
     public let id: String
     public var title: String
     public var details: String?
