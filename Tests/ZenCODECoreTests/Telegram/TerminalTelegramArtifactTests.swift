@@ -314,7 +314,7 @@ struct TerminalTelegramArtifactTests {
             at: gitDirectory, withIntermediateDirectories: true
         )
         let url = gitDirectory.appendingPathComponent("HEAD")
-        FileManager.default.createFile(atPath: url.path, contents: Data("ref".utf8))
+        _ = FileManager.default.createFile(atPath: url.path, contents: Data("ref".utf8))
 
         #expect(throws: TerminalTelegramControlError.artifactPathRejected) {
             _ = try fixture.policy.validated(
