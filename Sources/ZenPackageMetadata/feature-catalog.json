@@ -51,7 +51,7 @@
       "discoversToolsAtRuntime" : true,
       "id" : "jira-tools",
       "invocationTimeoutSeconds" : 660,
-      "isInstalledOnLinux" : true,
+      "isInstalledOnLinux" : false,
       "productName" : "jira-tools-feature",
       "sourceRelativePath" : "Sources/Features/JiraTools",
       "toolNamePrefixes" : [

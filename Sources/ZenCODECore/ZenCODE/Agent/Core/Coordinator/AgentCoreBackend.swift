@@ -178,11 +178,8 @@ public actor AgentCoreBackend {
     }
 
     public func closeSession(id: String) async {
-        await closeMemoryProposal(parentID: id)
-        sessions.removeValue(forKey: id)
-        if let backend = activeBackend {
-            await backend.closeSession(id: id)
-        }
+        // Same teardown as clearSession: also forgets tool providers so rebuilt backends don't reapply them.
+        await clearSession(id: id)
     }
 
     public func updateSessionOptions(

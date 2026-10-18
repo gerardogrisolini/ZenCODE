@@ -25,6 +25,38 @@ Release tags follow the strict `vX.Y.Z` contract described in
   with three lines of surrounding context, as unified-diff hunks, instead of
   one hunk covering the whole file. `/artifacts` still shows the whole file
   when complete before/after snapshots are available.
+- Telegram polling now backs off exponentially with jitter (3 s to 60 s) on
+  transient `getUpdates` failures, honours `retry_after` on HTTP 429, and
+  retries every 60 s on HTTP 401/403 (invalid token) and 409 (another poller)
+  instead of retrying every 3 s forever. The last polling failure is shown in
+  the Telegram control state's `lastError` (without the bot token) and cleared
+  by the next successful poll.
+- The `jira-tools` optional feature is now declared macOS-only
+  (`isInstalledOnLinux: false`): its credential store is Keychain-backed and
+  every call failed on Linux. The Linux installer and CI feature matrix no
+  longer include it.
+- The CI and release whitespace gate now runs `git diff --check` against the
+  empty tree, so it covers every tracked file instead of the always-clean
+  checkout worktree; the pre-existing trailing-whitespace and
+  blank-line-at-EOF violations were cleaned up.
+- Removed the orphaned `Docs/zenvoice-bridge.md`, left behind by the ZenVOICE
+  removal.
+
+### Security
+
+- GitTools now validates every model-provided positional argument (remotes,
+  branches, refspecs, revisions, stash references, grep patterns): values
+  starting with `-` are rejected so they cannot be parsed as git options (for
+  example `--force` as a push remote, `--upload-pack=<cmd>` as a fetch remote,
+  or `--open-files-in-pager=<cmd>` as a grep pattern), forced `+refspec`
+  pushes are refused, `ext::`/`fd::` remote helpers are refused, and `git grep`
+  passes the pattern with `-e`. The package is split into the `GitToolsFeature`
+  library, the thin `git-tools-feature` executable and a new test target; the
+  executable name and `--list-tools` output are unchanged.
+- The ChatGPT Subscription OAuth callback server now listens only on loopback
+  (`127.0.0.1` and `::1`, port 1455) instead of every interface, and answers
+  malformed or mismatched-`state` requests with HTTP 400 while continuing to
+  wait for the real callback instead of aborting the sign-in.
 
 ### Fixed
 
@@ -52,6 +84,24 @@ Release tags follow the strict `vX.Y.Z` contract described in
   baselines are unchanged.
 - Live file artifacts are separated from the completed tool line above them by
   a single blank line instead of two.
+- Backup export/import (`SupportDirectoryArchive`) no longer deadlocks on
+  archive members larger than the pipe buffer (about 64 KiB) or on long
+  listings: tar's stderr is drained independently of stdout, and members are
+  streamed straight to disk with an incremental SHA-256 and per-chunk size
+  limits instead of being buffered in memory.
+- When the terminal chat is killed by SIGINT (Ctrl-C), SIGTERM or SIGHUP while
+  raw mode is active, ZenCODE now restores the terminal first (kitty keyboard
+  protocol, bracketed paste, scroll region, autowrap, SGR, cursor visibility
+  and the original termios) and then terminates with the original signal, so
+  the shell no longer inherits a broken terminal. Ctrl-C keeps closing `zen`.
+- Anthropic Subscription reloads its credentials at every tool round and, on
+  HTTP 401/403, refreshes the access token and retries that round once, so
+  agentic turns longer than the token's remaining lifetime no longer fail
+  unrecoverably. A second rejection after the refresh is surfaced with a
+  sign-in hint.
+- `AgentCoreBackend.closeSession` now also drops the session's tool providers,
+  as `clearSession` already did, so providers of closed sessions are no longer
+  kept in memory and re-applied to rebuilt backends.
 
 ## [2.3.2] - 2026-10-16
 

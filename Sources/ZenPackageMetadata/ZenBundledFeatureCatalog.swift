@@ -49,7 +49,7 @@ public enum ZenBundledFeatureCatalog {
             id: "jira-tools",
             productName: "jira-tools-feature",
             sourceRelativePath: "Sources/Features/JiraTools",
-            isInstalledOnLinux: true,
+            isInstalledOnLinux: false,
         ),
         ZenBundledFeatureMetadata(
             id: "search-tools",
