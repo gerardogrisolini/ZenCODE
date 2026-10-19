@@ -37,7 +37,7 @@ extension ZenCODEACPBridge {
             options.append([
                 "id": "thinking",
                 "name": "Thinking",
-                "category": "model",
+                "category": "thought_level",
                 "type": "select",
                 "currentValue": selectedThinking?.rawValue ?? "",
                 "options": thinkingConfigOptions(for: model)

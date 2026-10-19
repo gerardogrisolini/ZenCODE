@@ -99,6 +99,33 @@ extension ZenCODEACPBridge {
         }
     }
 
+    func testConfigOptionCategories(for modelID: String) -> [String: String] {
+        var categories: [String: String] = [:]
+        for option in configOptions(for: modelID) {
+            if let id = option["id"] as? String,
+               let category = option["category"] as? String {
+                categories[id] = category
+            }
+        }
+        return categories
+    }
+
+    func testLifecycleModelState(
+        sessionID: String
+    ) -> (current: String?, available: [String]?, metaCurrent: String?) {
+        let result = sessionLifecycleResult(sessionID: sessionID)
+        let models = result["models"] as? [String: Any]
+        let available = (models?["availableModels"] as? [[String: Any]])?.compactMap { model in
+            model["modelId"] as? String
+        }
+        let metaModels = (result["_meta"] as? [String: Any])?["models"] as? [String: Any]
+        return (
+            models?["currentModelId"] as? String,
+            available,
+            metaModels?["currentModelId"] as? String
+        )
+    }
+
     func testLifecycleThinkingCurrentValue(sessionID: String) -> String? {
         let result = sessionLifecycleResult(sessionID: sessionID)
         let options = result["configOptions"] as? [[String: Any]]

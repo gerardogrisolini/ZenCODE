@@ -908,6 +908,55 @@ private extension ACPCompatibilityTests {
     }
 
     @Test
+    func configOptionsUseStandardCategories() async throws {
+        let bridge = try makeBridge(
+            models: [
+                AgentSettingsModelManifest(
+                    id: "thinking-model",
+                    kind: .remoteAPI,
+                    modelID: "local/thinking-model",
+                    thinkingOptions: [.off, .medium, .high],
+                    defaultThinkingSelection: .medium
+                )
+            ]
+        )
+
+        let categories = await bridge.testConfigOptionCategories(for: "thinking-model")
+
+        #expect(categories == ["model": "model", "thinking": "thought_level"])
+    }
+
+    @Test
+    func sessionLifecycleResultExposesTopLevelModelState() async throws {
+        let bridge = try makeBridge(
+            models: [
+                AgentSettingsModelManifest(
+                    id: "first-model", kind: .remoteAPI, modelID: "local/first-model"
+                ),
+                AgentSettingsModelManifest(
+                    id: "second-model", kind: .remoteAPI, modelID: "local/second-model"
+                )
+            ]
+        )
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: "session-models",
+            modelID: "second-model",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: []
+        )
+        await bridge.installTestSession(configuration)
+
+        let state = await bridge.testLifecycleModelState(sessionID: "session-models")
+
+        #expect(state.current == "second-model")
+        #expect(state.available == ["first-model", "second-model"])
+        // The legacy `_meta.models` copy stays for existing clients.
+        #expect(state.metaCurrent == "second-model")
+    }
+
+    @Test
     func configOptionsOmitThinkingForModelsWithoutThinking() async throws {
         let bridge = try makeBridge(
             models: [

@@ -27,6 +27,30 @@ private final class ACPThinkingWire: Sendable {
         }
     }
 
+    /// `configOptions` payloads of every `config_option_update`, in order.
+    func configOptionUpdates() -> [[[String: JSONValue]]] {
+        messages.compactMap { message in
+            guard message["method"]?.acpStringValue == "session/update",
+                  let update = message["params"]?.objectValue?["update"]?.objectValue,
+                  update["sessionUpdate"]?.acpStringValue == "config_option_update",
+                  case let .array(options)? = update["configOptions"] else {
+                return nil
+            }
+            return options.compactMap(\.objectValue)
+        }
+    }
+
+    /// Whether the response with `id` carried a JSON-RPC error.
+    func responseHasError(id: Int) -> Bool? {
+        for message in messages where message["method"] == nil {
+            guard case let .number(value)? = message["id"], Int(value) == id else {
+                continue
+            }
+            return message["error"] != nil
+        }
+        return nil
+    }
+
     private var messages: [[String: JSONValue]] {
         storage.withLock { $0.compactMap(\.objectValue) }
     }
@@ -497,6 +521,38 @@ struct ACPThinkingStreamTests {
         #expect(fixture.wire.updateTexts(kind: "agent_message_chunk")
             .filter { $0.hasPrefix("Agent:") } == [Self.initialSummary])
         #expect(await fixture.backend.recordedSummaryCounts() == [1, 1])
+    }
+
+    /// `session/set_model` is the standard ACP model API; the legacy
+    /// `_zencode/session/set_model` alias stays. Both publish the refreshed
+    /// config options so clients see the thinking levels of the new model.
+    @Test(arguments: ["session/set_model", "_zencode/session/set_model"])
+    func setModelPublishesConfigOptionUpdate(method: String) async throws {
+        let fixture = try await Self.makeFixture(
+            sessionID: "acp-set-model-\(UUID().uuidString)", appMode: false
+        )
+        await fixture.bridge.handleLine("""
+        {"jsonrpc":"2.0","id":1,"method":"\(method)","params":{"sessionId":"\(fixture.sessionID)","modelId":"plain-model"}}
+        """)
+        await fixture.bridge.handleLine("""
+        {"jsonrpc":"2.0","id":2,"method":"\(method)","params":{"sessionId":"\(fixture.sessionID)","modelId":"thinking-model"}}
+        """)
+
+        #expect(fixture.wire.responseHasError(id: 1) == false)
+        #expect(fixture.wire.responseHasError(id: 2) == false)
+        let updates = fixture.wire.configOptionUpdates()
+        try #require(updates.count == 2)
+
+        let plain = updates[0]
+        #expect(plain.compactMap { $0["id"]?.acpStringValue } == ["model"])
+        #expect(plain.first?["currentValue"]?.acpStringValue == "plain-model")
+
+        let thinking = updates[1]
+        #expect(thinking.compactMap { $0["id"]?.acpStringValue } == ["model", "thinking"])
+        #expect(thinking.first?["currentValue"]?.acpStringValue == "thinking-model")
+        let thinkingOption = try #require(thinking.last)
+        #expect(thinkingOption["category"]?.acpStringValue == "thought_level")
+        #expect(thinkingOption["currentValue"]?.acpStringValue == "medium")
     }
 
     @Test(arguments: ["session/load", "session/resume"])

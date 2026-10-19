@@ -483,7 +483,25 @@ extension ZenCODEACPBridge {
             throw error
         }
         await writer.sendResultIfRequest(id: id, result: .object([:]))
+        // The model API does not return config options, so keep clients that
+        // render `configOptions` (e.g. the thinking levels of the new model) in
+        // sync with an agent-side `config_option_update`.
+        await publishConfigOptions(sessionID: sessionID, epoch: sessionEpoch)
         await publishAvailableCommands(sessionID: sessionID, epoch: sessionEpoch)
+    }
+
+    func publishConfigOptions(sessionID: String, epoch: UInt64) async {
+        guard let session = liveSession(id: sessionID, epoch: epoch) else { return }
+        await writer.sendSessionUpdate(
+            sessionID: sessionID,
+            update: JSONValue.acpValue(from: [
+                "sessionUpdate": "config_option_update",
+                "configOptions": configOptions(
+                    for: session.configuration.modelID,
+                    thinkingSelection: session.configuration.thinkingSelection
+                )
+            ])
+        )
     }
 
     /// Re-check for the handlers that reconfigure an existing session through
@@ -865,6 +883,7 @@ extension ZenCODEACPBridge {
                 for: modelID,
                 thinkingSelection: sessionConfiguration?.thinkingSelection
             ),
+            "models": modelState(for: modelID),
             "_meta": [
                 "models": modelState(for: modelID)
             ]
