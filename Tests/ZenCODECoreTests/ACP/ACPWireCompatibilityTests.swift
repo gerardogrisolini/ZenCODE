@@ -927,7 +927,7 @@ private extension ACPCompatibilityTests {
     }
 
     @Test
-    func sessionLifecycleResultExposesTopLevelModelState() async throws {
+    func sessionLifecycleResultKeepsModelStateInMetaOnly() async throws {
         let bridge = try makeBridge(
             models: [
                 AgentSettingsModelManifest(
@@ -950,9 +950,10 @@ private extension ACPCompatibilityTests {
 
         let state = await bridge.testLifecycleModelState(sessionID: "session-models")
 
-        #expect(state.current == "second-model")
-        #expect(state.available == ["first-model", "second-model"])
-        // The legacy `_meta.models` copy stays for existing clients.
+        // Model selection is published through `configOptions`; the removed
+        // legacy top-level `models` field must not come back.
+        #expect(state.current == nil)
+        #expect(state.available == nil)
         #expect(state.metaCurrent == "second-model")
     }
 

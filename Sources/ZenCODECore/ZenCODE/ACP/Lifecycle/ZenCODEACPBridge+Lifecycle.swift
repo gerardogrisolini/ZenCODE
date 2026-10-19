@@ -883,7 +883,6 @@ extension ZenCODEACPBridge {
                 for: modelID,
                 thinkingSelection: sessionConfiguration?.thinkingSelection
             ),
-            "models": modelState(for: modelID),
             "_meta": [
                 "models": modelState(for: modelID)
             ]

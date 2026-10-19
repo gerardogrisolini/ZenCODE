@@ -12,15 +12,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
-- ACP: the model and thinking-level selectors now follow the standard ACP
-  session API, so clients such as Xcode can switch both. Session setup
-  (`session/new`, `session/load`, `session/resume`) returns a top-level
-  `models` state (the `_meta.models` copy is kept), the standard
-  `session/set_model` method is accepted alongside
-  `_zencode/session/set_model`, and the `thinking` config option now uses
-  the `thought_level` category instead of `model`. After a model change the
-  agent sends a `config_option_update` with the refreshed options, including
-  the thinking levels of the new model.
+- ACP: the thinking-level config option now uses the standard
+  `thought_level` category instead of `model`, so clients can tell it apart
+  from the model selector. After a model change through
+  `_zencode/session/set_model` the agent sends a `config_option_update` with
+  the refreshed options, including the thinking levels of the new model.
 
 ## [2.3.3] - 2026-10-18
 

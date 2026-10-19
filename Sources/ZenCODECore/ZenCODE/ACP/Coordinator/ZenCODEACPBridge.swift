@@ -479,7 +479,7 @@ public actor ZenCODEACPBridge {
                 try await newSession(id: id, params: params)
             case "session/set_mode":
                 try await setMode(id: id, params: params)
-            case "session/set_model", "_zencode/session/set_model":
+            case "_zencode/session/set_model":
                 try await setModel(id: id, params: params)
             case "session/set_config_option":
                 try await setConfigOption(id: id, params: params)

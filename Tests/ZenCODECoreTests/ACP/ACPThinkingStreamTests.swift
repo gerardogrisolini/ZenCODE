@@ -523,11 +523,11 @@ struct ACPThinkingStreamTests {
         #expect(await fixture.backend.recordedSummaryCounts() == [1, 1])
     }
 
-    /// `session/set_model` is the standard ACP model API; the legacy
-    /// `_zencode/session/set_model` alias stays. Both publish the refreshed
+    /// The `_zencode/session/set_model` extension publishes the refreshed
     /// config options so clients see the thinking levels of the new model.
-    @Test(arguments: ["session/set_model", "_zencode/session/set_model"])
-    func setModelPublishesConfigOptionUpdate(method: String) async throws {
+    @Test
+    func setModelPublishesConfigOptionUpdate() async throws {
+        let method = "_zencode/session/set_model"
         let fixture = try await Self.makeFixture(
             sessionID: "acp-set-model-\(UUID().uuidString)", appMode: false
         )
