@@ -1,10 +1,3 @@
-//
-//  FeaturePersistentProcessProtocol.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 
 /// A request sent over the private, session-scoped JSON-lines transport used by

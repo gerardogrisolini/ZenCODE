@@ -1,22 +1,10 @@
-//
-//  FeatureProcessOutputRenderer.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 
 /// Stateless renderer for process results. Kept separate from
 /// `FeatureProcessResult` so callers holding differently-shaped process types
 /// (e.g. already-decoded stdout/stderr strings) can reuse the exact same format.
 public enum FeatureProcessOutputRenderer {
-    public static func render(
-        exitCode: Int32,
-        stdout: String,
-        stderr: String,
-        timedOut: Bool
-    ) -> String {
+    public static func render(exitCode: Int32, stdout: String, stderr: String, timedOut: Bool) -> String {
         var sections = ["exit_code: \(exitCode)"]
         if timedOut {
             sections.append("timed_out: true")

@@ -1,10 +1,3 @@
-//
-//  SubAgentToolRequestCompatibility.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 26/05/26.
-//
-
 import Foundation
 
 public nonisolated enum SubAgentToolRequestCompatibility {
@@ -13,10 +6,7 @@ public nonisolated enum SubAgentToolRequestCompatibility {
             return nil
         }
 
-        return ToolRequest(
-            name: canonicalName,
-            arguments: normalizedArguments(request.arguments, for: canonicalName)
-        )
+        return ToolRequest(name: canonicalName, arguments: normalizedArguments(request.arguments, for: canonicalName))
     }
 
     public static func canonicalToolName(for rawName: String) -> String? {
@@ -81,15 +71,8 @@ public nonisolated enum SubAgentToolRequestCompatibility {
     }
 
     private static func normalizedNameTokens(from rawName: String) -> [String] {
-        let foldedName = rawName.folding(
-            options: [.caseInsensitive, .diacriticInsensitive],
-            locale: .current
-        )
-        let separatedName = foldedName.replacingOccurrences(
-            of: #"[^a-z0-9]+"#,
-            with: " ",
-            options: .regularExpression
-        )
+        let foldedName = rawName.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let separatedName = foldedName.replacingOccurrences(of: #"[^a-z0-9]+"#, with: " ", options: .regularExpression)
         var tokens = separatedName.split(whereSeparator: \.isWhitespace).map(String.init)
 
         if tokens.first == "tool" {
@@ -121,10 +104,7 @@ public nonisolated enum SubAgentToolRequestCompatibility {
         return nil
     }
 
-    private static func canonicalAction(
-        in tokens: [String],
-        domain: ToolDomain
-    ) -> CanonicalAction? {
+    private static func canonicalAction(in tokens: [String], domain: ToolDomain) -> CanonicalAction? {
         for token in tokens.reversed() {
             switch domain {
             case .todo:

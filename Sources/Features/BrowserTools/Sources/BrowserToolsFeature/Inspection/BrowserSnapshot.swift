@@ -57,12 +57,7 @@ struct BrowserSnapshotOutput: Codable, Sendable {
         case untrustedContentWarning
     }
 
-    init(
-        page: BrowserPage,
-        snapshotID: String,
-        snapshot: BrowserAccessibilitySnapshotResult,
-        interactiveOnly: Bool
-    ) {
+    init(page: BrowserPage, snapshotID: String, snapshot: BrowserAccessibilitySnapshotResult, interactiveOnly: Bool) {
         self.page = page
         self.snapshotID = snapshotID
         self.nodes = snapshot.nodes
@@ -101,10 +96,7 @@ enum BrowserAccessibilitySnapshot {
         let target: BrowserAccessibilityTarget?
     }
 
-    static func parse(
-        _ response: [String: Any],
-        interactiveOnly: Bool
-    ) throws -> BrowserAccessibilitySnapshotResult {
+    static func parse(_ response: [String: Any], interactiveOnly: Bool) throws -> BrowserAccessibilitySnapshotResult {
         guard let result = response["result"] as? [String: Any],
               let rawNodes = result["nodes"] as? [[String: Any]]
         else {
@@ -173,22 +165,13 @@ enum BrowserAccessibilitySnapshot {
             interactive: interactive
         )
         let target = integerValue(raw["backendDOMNodeId"]).map {
-            BrowserAccessibilityTarget(
-                ref: ref,
-                backendDOMNodeID: $0,
-                interactive: interactive
-            )
+            BrowserAccessibilityTarget(ref: ref, backendDOMNodeID: $0, interactive: interactive)
         }
         return ParsedNode(node: node, target: target)
     }
 
-    private static func states(from rawProperties: Any?) -> (
-        states: [String],
-        suggestsInteractivity: Bool
-    ) {
-        guard let properties = rawProperties as? [[String: Any]] else {
-            return ([], false)
-        }
+    private static func states(from rawProperties: Any?) -> (states: [String], suggestsInteractivity: Bool) {
+        guard let properties = rawProperties as? [[String: Any]] else { return ([], false) }
 
         var states = Set<String>()
         var suggestsInteractivity = false
@@ -240,14 +223,7 @@ enum BrowserAccessibilitySnapshot {
         guard let value, !value.isEmpty else { return nil }
         guard value.lengthOfBytes(using: .utf8) > maximumFieldBytes else { return value }
 
-        var result = ""
-        var usedBytes = 0
-        for character in value {
-            let characterBytes = String(character).lengthOfBytes(using: .utf8)
-            guard usedBytes + characterBytes <= maximumFieldBytes else { break }
-            result.append(character)
-            usedBytes += characterBytes
-        }
+        let result = value.prefixFitting(utf8Bytes: maximumFieldBytes)
         return result + "…"
     }
 }
@@ -255,9 +231,7 @@ enum BrowserAccessibilitySnapshot {
 extension CDPSession {
     /// Returns a bounded semantic snapshot using the Chrome Accessibility
     /// domain. This does not expose raw DOM or CDP commands to the model.
-    func accessibilitySnapshot(
-        interactiveOnly: Bool
-    ) async throws -> BrowserAccessibilitySnapshotResult {
+    func accessibilitySnapshot(interactiveOnly: Bool) async throws -> BrowserAccessibilitySnapshotResult {
         _ = try await send(method: "Accessibility.enable")
         let response = try await send(method: "Accessibility.getFullAXTree")
         return try BrowserAccessibilitySnapshot.parse(response, interactiveOnly: interactiveOnly)
@@ -273,12 +247,8 @@ extension CDPSession {
 
     /// Fails closed when an intervening navigation replaced the document that
     /// supplied a snapshot or read result.
-    func validateCurrentDocument(
-        matches expectedDocument: BrowserDocumentIdentity
-    ) async throws {
-        guard try await currentDocumentIdentity() == expectedDocument else {
-            throw BrowserInteractionError.staleSnapshot
-        }
+    func validateCurrentDocument(matches expectedDocument: BrowserDocumentIdentity) async throws {
+        guard try await currentDocumentIdentity() == expectedDocument else { throw BrowserInteractionError.staleSnapshot }
     }
 
     /// Persists the nonce and returned opaque refs in Browser's bounded,
@@ -305,9 +275,7 @@ extension CDPSession {
     /// state in sequence. Callers use this before and after every target resolution
     /// or read; mutating input actions intentionally call it only *before*
     /// dispatch so a navigation caused by that action remains valid output.
-    func validateSnapshotState(
-        _ authorization: BrowserSnapshotAuthorization
-    ) async throws {
+    func validateSnapshotState(_ authorization: BrowserSnapshotAuthorization) async throws {
         let document = try await currentDocumentIdentity()
         guard try snapshotStateStore.isAuthorized(
             pageID: authorization.pageID,
@@ -336,12 +304,8 @@ extension CDPSession {
     /// Resolves a backend node only after the snapshot is authorized and
     /// verifies the document again after the AX-tree read. It is shared by
     /// inspect, act, and element condition tools.
-    func resolveSnapshotTarget(
-        _ authorization: BrowserSnapshotAuthorization
-    ) async throws -> BrowserAccessibilityTarget {
-        guard let ref = authorization.ref else {
-            throw BrowserInteractionError.staleSnapshot
-        }
+    func resolveSnapshotTarget(_ authorization: BrowserSnapshotAuthorization) async throws -> BrowserAccessibilityTarget {
+        guard let ref = authorization.ref else { throw BrowserInteractionError.staleSnapshot }
         try await validateSnapshotState(authorization)
         let target = try await accessibilityTarget(for: ref)
         try await validateSnapshotState(authorization)
@@ -350,9 +314,7 @@ extension CDPSession {
 
     func accessibilityTarget(for ref: String) async throws -> BrowserAccessibilityTarget {
         let snapshot = try await accessibilitySnapshot(interactiveOnly: false)
-        guard let target = snapshot.targets[ref] else {
-            throw BrowserInteractionError.targetNoLongerAvailable(ref)
-        }
+        guard let target = snapshot.targets[ref] else { throw BrowserInteractionError.targetNoLongerAvailable(ref) }
         return target
     }
 }

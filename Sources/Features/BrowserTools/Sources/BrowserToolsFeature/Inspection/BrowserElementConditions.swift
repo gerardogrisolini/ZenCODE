@@ -69,9 +69,7 @@ enum BrowserElementConditionLimits {
     static func resolveTimeout(_ requestedTimeout: Int?) throws -> Int {
         guard let requestedTimeout else { return defaultTimeoutSeconds }
         guard requestedTimeout > 0 else {
-            throw BrowserToolsFeatureError.browserError(
-                "Browser element wait timeout must be at least 1 second."
-            )
+            throw BrowserToolsFeatureError.browserError("Browser element wait timeout must be at least 1 second.")
         }
         guard requestedTimeout <= maximumTimeoutSeconds else {
             throw BrowserToolsFeatureError.browserError(
@@ -84,18 +82,9 @@ enum BrowserElementConditionLimits {
     /// Bounds untrusted page strings on Unicode-scalar boundaries, so a page
     /// cannot use an unusually large text/value property as a polling channel.
     static func clipProbeValue(_ value: String) -> (value: String, truncated: Bool) {
-        guard value.lengthOfBytes(using: .utf8) > maximumProbeValueBytes else {
-            return (value, false)
-        }
+        guard value.lengthOfBytes(using: .utf8) > maximumProbeValueBytes else { return (value, false) }
 
-        var result = ""
-        var usedBytes = 0
-        for character in value {
-            let characterBytes = String(character).lengthOfBytes(using: .utf8)
-            guard usedBytes + characterBytes <= maximumProbeValueBytes else { break }
-            result.append(character)
-            usedBytes += characterBytes
-        }
+        let result = value.prefixFitting(utf8Bytes: maximumProbeValueBytes)
         return (result, true)
     }
 }
@@ -110,9 +99,7 @@ enum BrowserElementConditionProbeRace {
         until deadlineNanoseconds: UInt64,
         operation: @escaping @Sendable () async throws -> T
     ) async throws -> T? {
-        guard let remainingNanoseconds = remaining(until: deadlineNanoseconds) else {
-            return nil
-        }
+        guard let remainingNanoseconds = remaining(until: deadlineNanoseconds) else { return nil }
 
         return try await withThrowingTaskGroup(of: T?.self) { group in
             group.addTask(name: "BrowserElementConditions.operation") {
@@ -127,9 +114,7 @@ enum BrowserElementConditionProbeRace {
             do {
                 // `next()` returns an outer optional for group exhaustion and
                 // an inner optional where nil is the deadline winner.
-                guard let winner = try await group.next() else {
-                    throw CancellationError()
-                }
+                guard let winner = try await group.next() else { throw CancellationError() }
                 group.cancelAll()
                 // Do not return until cancellation handlers (notably CDP
                 // continuations) have completed. Errors from a deliberately
@@ -158,10 +143,7 @@ enum BrowserElementConditionProbeRace {
 struct BrowserElementConditionLiteral: Hashable, Sendable {
     let value: String
 
-    static func resolve(
-        _ rawValue: String?,
-        for condition: BrowserElementCondition
-    ) throws -> Self? {
+    static func resolve(_ rawValue: String?, for condition: BrowserElementCondition) throws -> Self? {
         if let rawValue,
            rawValue.lengthOfBytes(using: .utf8) > BrowserElementConditionLimits.maximumLiteralBytes
         {
@@ -170,12 +152,8 @@ struct BrowserElementConditionLiteral: Hashable, Sendable {
             )
         }
         guard condition.requiresLiteral else { return nil }
-        guard let rawValue else {
-            throw BrowserToolsFeatureError.missingArgument("value")
-        }
-        guard condition != .textContains || !rawValue.isEmpty else {
-            throw BrowserToolsFeatureError.missingArgument("value")
-        }
+        guard let rawValue else { throw BrowserToolsFeatureError.missingArgument("value") }
+        guard condition != .textContains || !rawValue.isEmpty else { throw BrowserToolsFeatureError.missingArgument("value") }
         return BrowserElementConditionLiteral(value: rawValue)
     }
 }
@@ -332,22 +310,14 @@ extension BrowserElementCondition {
         return BrowserElementConditionEvaluation(
             satisfied: satisfied,
             observation: BrowserElementConditionObservation(probe: probe),
-            observed: BrowserElementConditionDescription.make(
-                condition: self,
-                probe: probe
-            )
+            observed: BrowserElementConditionDescription.make(condition: self, probe: probe)
         )
     }
 }
 
 private enum BrowserElementConditionDescription {
-    static func make(
-        condition: BrowserElementCondition,
-        probe: BrowserElementConditionProbe
-    ) -> String {
-        guard probe.present else {
-            return "The snapshot-authorized element is not present."
-        }
+    static func make(condition: BrowserElementCondition, probe: BrowserElementConditionProbe) -> String {
+        guard probe.present else { return "The snapshot-authorized element is not present." }
 
         switch condition {
         case .present, .absent:
@@ -359,25 +329,17 @@ private enum BrowserElementConditionDescription {
         case .checked, .unchecked:
             return booleanDescription(probe.checked, trueDescription: "The element is checked.", falseDescription: "The element is unchecked.")
         case .textContains:
-            guard let text = probe.text else {
-                return "The element does not expose rendered text."
-            }
+            guard let text = probe.text else { return "The element does not expose rendered text." }
             let suffix = probe.textTruncated ? " The captured text was bounded." : ""
             return "Compared the literal against \(text.lengthOfBytes(using: .utf8)) UTF-8 bytes of element text.\(suffix)"
         case .valueEquals:
-            guard let value = probe.value else {
-                return "The element does not expose a readable value."
-            }
+            guard let value = probe.value else { return "The element does not expose a readable value." }
             let suffix = probe.valueTruncated ? " The captured value was bounded and cannot prove equality." : ""
             return "Compared the literal against an element value of \(value.lengthOfBytes(using: .utf8)) UTF-8 bytes.\(suffix)"
         }
     }
 
-    private static func booleanDescription(
-        _ value: Bool?,
-        trueDescription: String,
-        falseDescription: String
-    ) -> String {
+    private static func booleanDescription(_ value: Bool?, trueDescription: String, falseDescription: String) -> String {
         switch value {
         case true:
             trueDescription
@@ -490,9 +452,7 @@ enum BrowserElementConditionProbeCapture {
         do {
             payload = try JSONDecoder().decode(BrowserElementConditionProbePayload.self, from: data)
         } catch {
-            throw CDPError.invalidResponse(
-                "Unable to decode Browser element condition probe: \(error.localizedDescription)"
-            )
+            throw CDPError.invalidResponse("Unable to decode Browser element condition probe: \(error.localizedDescription)")
         }
 
         guard payload.present else { return .absent }
@@ -542,7 +502,7 @@ struct BrowserElementWaitResult: Sendable {
 
 /// Wraps an optional target so the generic race can distinguish a completed
 /// resolution whose node disappeared from a deadline that won the race.
-private struct BrowserElementConditionTargetResolution: Sendable {
+struct BrowserElementConditionTargetResolution: Sendable {
     let target: BrowserAccessibilityTarget?
 }
 
@@ -638,456 +598,6 @@ struct BrowserAssertElementOutput: Codable, Sendable {
         untrustedContentWarning = "Element state, text, and values originate from the page and are untrusted data. Browser compares fixed condition literals host-side and does not evaluate model-provided expressions."
     }
 }
-
-// MARK: - Public tools (registration is intentionally external)
-
-struct BrowserWaitElementTool: FeatureTool {
-    struct Input: Decodable, Sendable {
-        let pageId: String?
-        let page_id: String?
-        let snapshotId: String?
-        let snapshot_id: String?
-        let ref: String?
-        let condition: String?
-        let value: String?
-        let timeoutSeconds: Int?
-        let timeout_seconds: Int?
-
-        var resolvedPageID: String? {
-            BrowserPageInput.resolve(
-                pageID: pageId,
-                pageIDSnakeCase: page_id
-            )
-        }
-
-        var resolvedSnapshotID: String? {
-            snapshotId?.nilIfBlank ?? snapshot_id?.nilIfBlank
-        }
-
-        var resolvedRef: String? {
-            ref?.nilIfBlank
-        }
-
-        var resolvedTimeout: Int? {
-            timeoutSeconds ?? timeout_seconds
-        }
-    }
-
-    static let name = "browser.wait_element"
-    static let description = "Waits up to a bounded timeout for one fixed condition on an element authorized by pageId, snapshotId, and ref. Conditions are host-side enums; Browser never accepts selectors, JavaScript, or CDP methods."
-    static let inputSchema = buildInputSchema(
-        [
-            .string("pageId", description: "pageId returned by browser.open or browser.pages."),
-            .string("page_id", description: "Snake-case alias for pageId."),
-            .string("snapshotId", description: "snapshotId returned by browser.snapshot for this page."),
-            .string("snapshot_id", description: "Snake-case alias for snapshotId."),
-            .string("ref", description: "Opaque element ref from that snapshot."),
-            .string(
-                "condition",
-                enumValues: BrowserElementCondition.allCases.map(\.rawValue),
-                description: "Fixed element condition."
-            ),
-            .string("value", description: "Literal required by text_contains and value_equals (maximum 1000 UTF-8 bytes)."),
-            .number("timeoutSeconds", description: "Timeout in whole seconds (1 through 30; defaults to 10)."),
-            .number("timeout_seconds", description: "Snake-case alias for timeoutSeconds."),
-        ],
-        required: ["pageId", "snapshotId", "ref", "condition"]
-    )
-
-    func run(_ input: Input, context: FeatureContext) async throws -> BrowserWaitElementOutput {
-        guard let pageID = input.resolvedPageID else {
-            throw BrowserToolsFeatureError.missingArgument("pageId")
-        }
-        guard let snapshotID = input.resolvedSnapshotID else {
-            throw BrowserToolsFeatureError.missingArgument("snapshotId")
-        }
-        guard let ref = input.resolvedRef else {
-            throw BrowserToolsFeatureError.missingArgument("ref")
-        }
-        let condition = try BrowserElementCondition.resolve(input.condition)
-        let literal = try BrowserElementConditionLiteral.resolve(input.value, for: condition)
-        let timeoutSeconds = try BrowserElementConditionLimits.resolveTimeout(input.resolvedTimeout)
-
-        return try await BrowserToolsRunner.withPage(
-            pageID: pageID,
-            context: context,
-            waitForReady: false
-        ) { session, tab in
-            let authorization = BrowserSnapshotAuthorization(
-                pageID: tab.id,
-                snapshotID: snapshotID,
-                ref: ref
-            )
-            let result = try await session.waitForElementCondition(
-                authorization: authorization,
-                condition: condition,
-                literal: literal,
-                timeoutSeconds: timeoutSeconds
-            )
-            try await session.validateSnapshotState(authorization)
-            let page = (try? await session.pageMetadata(pageID: tab.id)) ?? BrowserPage(tab: tab)
-            try await session.validateSnapshotState(authorization)
-            return BrowserWaitElementOutput(
-                page: page,
-                snapshotID: snapshotID,
-                ref: ref,
-                condition: condition,
-                literal: literal,
-                result: result
-            )
-        }
-    }
-}
-
-struct BrowserAssertElementTool: FeatureTool {
-    struct Input: Decodable, Sendable {
-        let pageId: String?
-        let page_id: String?
-        let snapshotId: String?
-        let snapshot_id: String?
-        let ref: String?
-        let condition: String?
-        let value: String?
-
-        var resolvedPageID: String? {
-            BrowserPageInput.resolve(
-                pageID: pageId,
-                pageIDSnakeCase: page_id
-            )
-        }
-
-        var resolvedSnapshotID: String? {
-            snapshotId?.nilIfBlank ?? snapshot_id?.nilIfBlank
-        }
-
-        var resolvedRef: String? {
-            ref?.nilIfBlank
-        }
-    }
-
-    static let name = "browser.assert_element"
-    static let description = "Evaluates one fixed condition on an element authorized by pageId, snapshotId, and ref, returning a structured pass/fail result. Browser never accepts selectors, JavaScript, or CDP methods."
-    static let inputSchema = buildInputSchema(
-        [
-            .string("pageId", description: "pageId returned by browser.open or browser.pages."),
-            .string("page_id", description: "Snake-case alias for pageId."),
-            .string("snapshotId", description: "snapshotId returned by browser.snapshot for this page."),
-            .string("snapshot_id", description: "Snake-case alias for snapshotId."),
-            .string("ref", description: "Opaque element ref from that snapshot."),
-            .string(
-                "condition",
-                enumValues: BrowserElementCondition.allCases.map(\.rawValue),
-                description: "Fixed element condition."
-            ),
-            .string("value", description: "Literal required by text_contains and value_equals (maximum 1000 UTF-8 bytes)."),
-        ],
-        required: ["pageId", "snapshotId", "ref", "condition"]
-    )
-
-    func run(_ input: Input, context: FeatureContext) async throws -> BrowserAssertElementOutput {
-        guard let pageID = input.resolvedPageID else {
-            throw BrowserToolsFeatureError.missingArgument("pageId")
-        }
-        guard let snapshotID = input.resolvedSnapshotID else {
-            throw BrowserToolsFeatureError.missingArgument("snapshotId")
-        }
-        guard let ref = input.resolvedRef else {
-            throw BrowserToolsFeatureError.missingArgument("ref")
-        }
-        let condition = try BrowserElementCondition.resolve(input.condition)
-        let literal = try BrowserElementConditionLiteral.resolve(input.value, for: condition)
-
-        return try await BrowserToolsRunner.withPage(
-            pageID: pageID,
-            context: context,
-            waitForReady: false
-        ) { session, tab in
-            let authorization = BrowserSnapshotAuthorization(
-                pageID: tab.id,
-                snapshotID: snapshotID,
-                ref: ref
-            )
-            // As with wait, validate before resolving a backend identity.
-            let target = try await session.resolveElementConditionTarget(
-                authorization: authorization
-            )
-            let evaluation = try await session.evaluateElementCondition(
-                authorization: authorization,
-                target: target,
-                condition: condition,
-                literal: literal
-            )
-            try await session.validateSnapshotState(authorization)
-            let page = (try? await session.pageMetadata(pageID: tab.id)) ?? BrowserPage(tab: tab)
-            try await session.validateSnapshotState(authorization)
-            return BrowserAssertElementOutput(
-                page: page,
-                snapshotID: snapshotID,
-                ref: ref,
-                condition: condition,
-                literal: literal,
-                evaluation: evaluation
-            )
-        }
-    }
-}
-
-// MARK: - Snapshot-bound CDP helpers
-
-extension CDPSession {
-    /// Validates the snapshot/ref before resolving the current accessibility
-    /// target. A deleted target is normal state for absent/hidden, but a stale
-    /// snapshot is an authorization failure and always escapes to the caller.
-    func resolveElementConditionTarget(
-        authorization: BrowserSnapshotAuthorization
-    ) async throws -> BrowserAccessibilityTarget? {
-        guard let ref = authorization.ref else {
-            throw BrowserInteractionError.staleSnapshot
-        }
-        try await validateSnapshotState(authorization)
-        _ = try await send(method: "DOM.enable")
-        do {
-            let target = try await accessibilityTarget(for: ref)
-            try await validateSnapshotState(authorization)
-            return target
-        } catch let error as BrowserInteractionError {
-            guard case .targetNoLongerAvailable = error else {
-                // Prefer a fail-closed stale-snapshot error if the resolution
-                // raced navigation; otherwise preserve the original failure.
-                try await validateSnapshotState(authorization)
-                throw error
-            }
-            try await validateSnapshotState(authorization)
-            return nil
-        } catch {
-            try await validateSnapshotState(authorization)
-            throw error
-        }
-    }
-
-    /// Surrounding the fixed probe with snapshot checks prevents a navigation
-    /// race from being interpreted as a successful absent/hidden condition.
-    func evaluateElementCondition(
-        authorization: BrowserSnapshotAuthorization,
-        target: BrowserAccessibilityTarget?,
-        condition: BrowserElementCondition,
-        literal: BrowserElementConditionLiteral?
-    ) async throws -> BrowserElementConditionEvaluation {
-        try await validateSnapshotState(authorization)
-        let probe = try await elementConditionProbe(target: target, authorization: authorization)
-        try await validateSnapshotState(authorization)
-        return condition.evaluate(probe: probe, literal: literal)
-    }
-
-    /// A mismatch is data. Snapshot authorization errors remain fail-closed;
-    /// transient CDP errors are retried only until the fixed deadline.
-    func waitForElementCondition(
-        authorization: BrowserSnapshotAuthorization,
-        condition: BrowserElementCondition,
-        literal: BrowserElementConditionLiteral?,
-        timeoutSeconds: Int
-    ) async throws -> BrowserElementWaitResult {
-        let start = DispatchTime.now().uptimeNanoseconds
-        let timeoutNanoseconds = UInt64(timeoutSeconds) * 1_000_000_000
-        let (deadline, didOverflowDeadline) = start.addingReportingOverflow(timeoutNanoseconds)
-        let boundedDeadline = didOverflowDeadline ? UInt64.max : deadline
-        var latestEvaluation: BrowserElementConditionEvaluation?
-        var target: BrowserAccessibilityTarget?
-        var didResolveTarget = false
-
-        while true {
-            try Task.checkCancellation()
-            guard BrowserElementConditionProbeRace.remaining(until: boundedDeadline) != nil else {
-                return BrowserElementWaitResult(
-                    evaluation: latestEvaluation,
-                    timedOut: true,
-                    elapsedMilliseconds: elementConditionElapsedMilliseconds(since: start)
-                )
-            }
-
-            if !didResolveTarget {
-                do {
-                    guard let resolution = try await BrowserElementConditionProbeRace.race(
-                        until: boundedDeadline,
-                        operation: {
-                            BrowserElementConditionTargetResolution(
-                                target: try await self.resolveElementConditionTarget(
-                                    authorization: authorization
-                                )
-                            )
-                        }
-                    ) else {
-                        return BrowserElementWaitResult(
-                            evaluation: latestEvaluation,
-                            timedOut: true,
-                            elapsedMilliseconds: elementConditionElapsedMilliseconds(since: start)
-                        )
-                    }
-                    target = resolution.target
-                    didResolveTarget = true
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch let error as BrowserInteractionError {
-                    if case .staleSnapshot = error {
-                        throw error
-                    }
-                    // A target-resolution race is not an absent observation.
-                    // Retry it under the same deadline before probing.
-                } catch {
-                    // CDP lifecycle/context errors during initial resolution
-                    // are retried under the same absolute deadline.
-                }
-
-                if !didResolveTarget {
-                    guard let remaining = BrowserElementConditionProbeRace.remaining(until: boundedDeadline) else {
-                        return BrowserElementWaitResult(
-                            evaluation: latestEvaluation,
-                            timedOut: true,
-                            elapsedMilliseconds: elementConditionElapsedMilliseconds(since: start)
-                        )
-                    }
-                    try await Task.sleep(
-                        nanoseconds: min(
-                            UInt64(BrowserElementConditionLimits.pollIntervalMilliseconds) * 1_000_000,
-                            remaining
-                        )
-                    )
-                    continue
-                }
-            }
-
-            let probeTarget = target
-            do {
-                guard let evaluation = try await BrowserElementConditionProbeRace.race(
-                    until: boundedDeadline,
-                    operation: {
-                        try await self.evaluateElementCondition(
-                            authorization: authorization,
-                            target: probeTarget,
-                            condition: condition,
-                            literal: literal
-                        )
-                    }
-                ) else {
-                    return BrowserElementWaitResult(
-                        evaluation: latestEvaluation,
-                        timedOut: true,
-                        elapsedMilliseconds: elementConditionElapsedMilliseconds(since: start)
-                    )
-                }
-                latestEvaluation = evaluation
-                if evaluation.satisfied {
-                    return BrowserElementWaitResult(
-                        evaluation: evaluation,
-                        timedOut: false,
-                        elapsedMilliseconds: elementConditionElapsedMilliseconds(since: start)
-                    )
-                }
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch let error as BrowserInteractionError {
-                if case .staleSnapshot = error {
-                    throw error
-                }
-                // Other target/probe races are retried until the deadline.
-            } catch {
-                // A lifecycle transition can briefly invalidate the fixed DOM
-                // probe. It is not an absent observation and cannot satisfy a
-                // condition; a normal timeout remains structured data.
-            }
-
-            guard let remaining = BrowserElementConditionProbeRace.remaining(until: boundedDeadline) else {
-                return BrowserElementWaitResult(
-                    evaluation: latestEvaluation,
-                    timedOut: true,
-                    elapsedMilliseconds: elementConditionElapsedMilliseconds(since: start)
-                )
-            }
-            try await Task.sleep(
-                nanoseconds: min(
-                    UInt64(BrowserElementConditionLimits.pollIntervalMilliseconds) * 1_000_000,
-                    remaining
-                )
-            )
-        }
-    }
-
-    private func elementConditionProbe(
-        target: BrowserAccessibilityTarget?,
-        authorization: BrowserSnapshotAuthorization
-    ) async throws -> BrowserElementConditionProbe {
-        guard let target else { return .absent }
-
-        do {
-            let response = try await snapshotBoundRead(
-                authorization,
-                method: "DOM.resolveNode",
-                params: ["backendNodeId": target.backendDOMNodeID]
-            )
-            guard let result = response["result"] as? [String: Any],
-                  let object = result["object"] as? [String: Any],
-                  let objectID = object["objectId"] as? String,
-                  !objectID.isEmpty
-            else {
-                throw BrowserInteractionError.targetNoLongerAvailable(target.ref)
-            }
-
-            do {
-                let json = try await callFixedElementConditionFunction(
-                    objectID: objectID,
-                    authorization: authorization
-                )
-                _ = try? await send(method: "Runtime.releaseObject", params: ["objectId": objectID])
-                return try BrowserElementConditionProbeCapture.decode(json)
-            } catch {
-                _ = try? await send(method: "Runtime.releaseObject", params: ["objectId": objectID])
-                throw error
-            }
-        } catch let error as BrowserInteractionError {
-            guard case .targetNoLongerAvailable = error else { throw error }
-            return .absent
-        } catch {
-            if BrowserElementConditionProbeCapture.isTargetNoLongerAvailable(error) {
-                return .absent
-            }
-            throw error
-        }
-    }
-
-    private func callFixedElementConditionFunction(
-        objectID: String,
-        authorization: BrowserSnapshotAuthorization
-    ) async throws -> String {
-        let response = try await snapshotBoundRead(
-            authorization,
-            method: "Runtime.callFunctionOn",
-            params: [
-                "objectId": objectID,
-                "functionDeclaration": BrowserElementConditionProbeCapture.functionDeclaration,
-                "returnByValue": true,
-                "awaitPromise": true,
-            ]
-        )
-        let result = response["result"] as? [String: Any] ?? [:]
-        if let exceptionDetails = result["exceptionDetails"] {
-            let description = (exceptionDetails as? [String: Any])?["text"] as? String
-                ?? String(describing: exceptionDetails)
-            throw CDPError.javaScriptError(description)
-        }
-        guard let remoteObject = result["result"] as? [String: Any],
-              let value = remoteObject["value"] as? String
-        else {
-            throw CDPError.invalidResponse("Browser element condition probe did not return a string")
-        }
-        return value
-    }
-
-    private func elementConditionElapsedMilliseconds(since start: UInt64) -> Int {
-        let elapsedNanoseconds = DispatchTime.now().uptimeNanoseconds &- start
-        return Int(min(elapsedNanoseconds / 1_000_000, UInt64(Int.max)))
-    }
-}
-
 
 // MARK: - Semantic presentation
 

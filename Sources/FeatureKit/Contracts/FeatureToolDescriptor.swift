@@ -1,10 +1,3 @@
-//
-//  FeatureToolDescriptor.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 import ToolCore
 
@@ -43,10 +36,7 @@ public struct FeatureToolDescriptor: Codable, Hashable, Sendable {
         self.inputSchema = try container.decode(String.self, forKey: .inputSchema)
         self.outputSchema = try container.decodeIfPresent(String.self, forKey: .outputSchema)
 
-        let presentation = try container.decodeIfPresent(
-            ToolPresentationDefinition.self,
-            forKey: .presentation
-        )
+        let presentation = try container.decodeIfPresent(ToolPresentationDefinition.self, forKey: .presentation)
         if let presentation, !presentation.isSemanticallyValid {
             throw DecodingError.dataCorruptedError(
                 forKey: .presentation,
@@ -70,11 +60,7 @@ public struct FeatureToolDescriptor: Codable, Hashable, Sendable {
 public extension FeatureToolDescriptor {
     /// Bridges the feature wire descriptor to ToolCore's canonical descriptor
     /// without changing the feature protocol's encoded shape.
-    init(
-        toolDescriptor: ToolDescriptor,
-        description: String? = nil,
-        presentation: ToolPresentationDefinition
-    ) {
+    init(toolDescriptor: ToolDescriptor, description: String? = nil, presentation: ToolPresentationDefinition) {
         self.init(
             name: toolDescriptor.name,
             description: description ?? toolDescriptor.description,

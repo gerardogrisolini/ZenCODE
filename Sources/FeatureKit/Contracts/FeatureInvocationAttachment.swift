@@ -1,10 +1,3 @@
-//
-//  FeatureInvocationAttachment.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 
 /// A local media artifact produced by a feature invocation and intended for the
@@ -22,12 +15,7 @@ public struct FeatureInvocationAttachment: Codable, Hashable, Sendable {
     public let contentType: String?
     public let originalFilename: String?
 
-    public init(
-        path: String,
-        kind: Kind,
-        contentType: String? = nil,
-        originalFilename: String? = nil
-    ) {
+    public init(path: String, kind: Kind, contentType: String? = nil, originalFilename: String? = nil) {
         self.path = path
         self.kind = kind
         self.contentType = contentType
@@ -47,10 +35,7 @@ public struct AnyFeatureToolInvocationResult: Sendable {
     public let outputData: Data
     public let attachments: [FeatureInvocationAttachment]
 
-    public init(
-        outputData: Data,
-        attachments: [FeatureInvocationAttachment] = []
-    ) {
+    public init(outputData: Data, attachments: [FeatureInvocationAttachment] = []) {
         self.outputData = outputData
         self.attachments = attachments
     }

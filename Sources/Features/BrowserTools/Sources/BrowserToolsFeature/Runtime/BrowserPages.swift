@@ -79,37 +79,21 @@ enum BrowserContentBudget {
         wasTruncated: Bool
     ) {
         let originalByteCount = content.lengthOfBytes(using: .utf8)
-        guard originalByteCount > maximumBytes else {
-            return (content, originalByteCount, false)
-        }
+        guard originalByteCount > maximumBytes else { return (content, originalByteCount, false) }
 
         let footer = maximumBytes > truncationFooter.lengthOfBytes(using: .utf8)
             ? truncationFooter
             : ""
-        let payloadBudget = max(
-            maximumBytes - footer.lengthOfBytes(using: .utf8),
-            1
-        )
-        var result = ""
-        var usedBytes = 0
-        for character in content {
-            let characterBytes = String(character).lengthOfBytes(using: .utf8)
-            guard usedBytes + characterBytes <= payloadBudget else { break }
-            result.append(character)
-            usedBytes += characterBytes
-        }
+        let payloadBudget = max(maximumBytes - footer.lengthOfBytes(using: .utf8), 1)
+        let result = content.prefixFitting(utf8Bytes: payloadBudget)
         return (result + footer, originalByteCount, true)
     }
 }
 
 extension CDPSession {
     func pageMetadata(pageID: String) async throws -> BrowserPage {
-        let json = try await evalString(
-            "JSON.stringify({title:document.title||'',url:location.href||''})"
-        )
-        guard let data = json.data(using: .utf8) else {
-            throw CDPError.invalidResponse("Page metadata was not UTF-8")
-        }
+        let json = try await evalString("JSON.stringify({title:document.title||'',url:location.href||''})")
+        guard let data = json.data(using: .utf8) else { throw CDPError.invalidResponse("Page metadata was not UTF-8") }
         do {
             let metadata = try JSONDecoder().decode(BrowserPageDocumentMetadata.self, from: data)
             return BrowserPage(pageID: pageID, title: metadata.title, url: metadata.url)

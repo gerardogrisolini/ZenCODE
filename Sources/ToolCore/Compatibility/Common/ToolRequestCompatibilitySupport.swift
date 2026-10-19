@@ -1,10 +1,3 @@
-//
-//  ToolRequestCompatibilitySupport.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 26/05/26.
-//
-
 import Foundation
 
 public nonisolated func assignString(
@@ -85,10 +78,7 @@ public nonisolated func assignJSON(
     normalized[destinationKey] = value
 }
 
-nonisolated func firstStringValue(
-    _ keys: [String],
-    in arguments: [String: JSONValue]
-) -> String? {
+nonisolated func firstStringValue(_ keys: [String], in arguments: [String: JSONValue]) -> String? {
     for key in keys {
         guard let value = arguments[key] else {
             continue
@@ -116,16 +106,11 @@ nonisolated func firstStringValue(
     return nil
 }
 
-nonisolated func normalizedToolPathString(
-    _ rawValue: String
-) -> String {
+nonisolated func normalizedToolPathString(_ rawValue: String) -> String {
     normalizedToolPathString(rawValue, workspaceRootPath: nil)
 }
 
-nonisolated func normalizedToolPathString(
-    _ rawValue: String,
-    workspaceRootPath: String?
-) -> String {
+nonisolated func normalizedToolPathString(_ rawValue: String, workspaceRootPath: String?) -> String {
     let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedValue.isEmpty else {
         return rawValue
@@ -146,11 +131,7 @@ nonisolated func normalizedToolPathString(
 
     let normalizedSeparators = resolvedValue
         .replacingOccurrences(of: "\\", with: "/")
-        .replacingOccurrences(
-            of: #"^\./"#,
-            with: "",
-            options: .regularExpression
-        )
+        .replacingOccurrences(of: #"^\./"#, with: "", options: .regularExpression)
 
     var components = normalizedSeparators
         .split(separator: "/", omittingEmptySubsequences: true)
@@ -193,15 +174,10 @@ public nonisolated func rebasedWorkspaceRelativePaths(
             return
         }
 
-        partialResult[entry.key] = .string(
-            normalizedToolPathString(stringValue, workspaceRootPath: workspaceRootPath)
-        )
+        partialResult[entry.key] = .string(normalizedToolPathString(stringValue, workspaceRootPath: workspaceRootPath))
     }
 
-    return ToolRequest(
-        name: request.name,
-        arguments: rebasedArguments
-    )
+    return ToolRequest(name: request.name, arguments: rebasedArguments)
 }
 
 public nonisolated func rebasedSkillRelativePaths(
@@ -236,10 +212,7 @@ public nonisolated func rebasedSkillRelativePaths(
             return
         }
 
-        let normalizedPath = normalizedToolPathString(
-            stringValue,
-            workspaceRootPath: workspaceRootPath
-        )
+        let normalizedPath = normalizedToolPathString(stringValue, workspaceRootPath: workspaceRootPath)
         guard !normalizedPath.hasPrefix("/") else {
             partialResult[entry.key] = .string(normalizedPath)
             return
@@ -265,8 +238,5 @@ public nonisolated func rebasedSkillRelativePaths(
         }
     }
 
-    return ToolRequest(
-        name: request.name,
-        arguments: rebasedArguments
-    )
+    return ToolRequest(name: request.name, arguments: rebasedArguments)
 }

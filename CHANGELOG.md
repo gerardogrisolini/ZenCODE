@@ -25,6 +25,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   into cohesive `Type+Topic.swift` extensions; no source file in the target
   now exceeds 1,000 lines. Behavior, wire formats, and persisted formats are
   unchanged.
+- The same cleanup was applied to `ToolCore`, `FeatureKit`,
+  `LocalToolsSupport`, `FeatureMCPBridgeKit`, and the optional feature
+  packages under `Sources/Features`: their sources are grouped into
+  responsibility-based subfolders, the large files are deduplicated and split,
+  and no source file exceeds 800 lines. Public APIs, tool names, schemas,
+  `--list-tools` output, and manifests are unchanged.
 
 ## [2.3.3] - 2026-10-18
 

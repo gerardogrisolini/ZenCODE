@@ -45,15 +45,10 @@ struct BrowserGoogleSearchTool: FeatureTool {
     plus a text snapshot as markdown. A visible Chrome window is launched on \
     first use.
     """
-    static let inputSchema = buildInputSchema(
-        [.string("query", description: "Google search query.")],
-        required: ["query"]
-    )
+    static let inputSchema = buildInputSchema([.string("query", description: "Google search query.")], required: ["query"])
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        guard let query = input.query?.nilIfBlank else {
-            throw BrowserToolsFeatureError.missingArgument("query")
-        }
+        guard let query = input.query?.nilIfBlank else { throw BrowserToolsFeatureError.missingArgument("query") }
 
         var components = URLComponents(string: "https://www.google.com/search")!
         components.queryItems = [URLQueryItem(name: "q", value: query)]
@@ -87,15 +82,10 @@ struct BrowserVisitPageTool: FeatureTool {
     feature blocks restricted private-network destinations unless its host-side \
     policy explicitly permits them.
     """
-    static let inputSchema = buildInputSchema(
-        [.string("url", description: "HTTP or HTTPS URL to visit.")],
-        required: ["url"]
-    )
+    static let inputSchema = buildInputSchema([.string("url", description: "HTTP or HTTPS URL to visit.")], required: ["url"])
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        guard let rawURL = input.url?.nilIfBlank else {
-            throw BrowserToolsFeatureError.missingArgument("url")
-        }
+        guard let rawURL = input.url?.nilIfBlank else { throw BrowserToolsFeatureError.missingArgument("url") }
         let url = try BrowserURLPolicy(environment: context.environment).validate(rawURL)
 
         return try await BrowserToolsRunner.runInEphemeralTab(url: url.absoluteString, context: context) { session in
@@ -126,9 +116,7 @@ struct BrowserOpenTool: FeatureTool {
         let requestedURL = try input.url?.nilIfBlank.map {
             try BrowserURLPolicy(environment: context.environment).validate($0)
         }
-        let browser = ChromeBrowserManager(
-            configuration: ChromeBrowserConfiguration(environment: context.environment)
-        )
+        let browser = ChromeBrowserManager(configuration: ChromeBrowserConfiguration(environment: context.environment))
         do {
             try await browser.ensureRunning()
             let tab = try await browser.createTab()
@@ -170,9 +158,7 @@ struct BrowserPagesTool: FeatureTool {
     static let inputSchema = buildInputSchema([])
 
     func run(_ input: Input, context: FeatureContext) async throws -> BrowserPagesOutput {
-        let browser = ChromeBrowserManager(
-            configuration: ChromeBrowserConfiguration(environment: context.environment)
-        )
+        let browser = ChromeBrowserManager(configuration: ChromeBrowserConfiguration(environment: context.environment))
         do {
             try await browser.ensureRunning()
             return BrowserPagesOutput(pages: try await browser.listTabs().map(BrowserPage.init(tab:)))
@@ -206,12 +192,8 @@ struct BrowserGotoTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> BrowserPage {
-        guard let pageID = input.resolvedPageID else {
-            throw BrowserToolsFeatureError.missingArgument("pageId")
-        }
-        guard let rawURL = input.url?.nilIfBlank else {
-            throw BrowserToolsFeatureError.missingArgument("url")
-        }
+        guard let pageID = input.resolvedPageID else { throw BrowserToolsFeatureError.missingArgument("pageId") }
+        guard let rawURL = input.url?.nilIfBlank else { throw BrowserToolsFeatureError.missingArgument("url") }
         let url = try BrowserURLPolicy(environment: context.environment).validate(rawURL)
         let allowsLoopback = BrowserURLPolicy(environment: context.environment)
             .isLoopbackURL(url.absoluteString)
@@ -251,9 +233,7 @@ struct BrowserReadTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> BrowserReadOutput {
-        guard let pageID = input.resolvedPageID else {
-            throw BrowserToolsFeatureError.missingArgument("pageId")
-        }
+        guard let pageID = input.resolvedPageID else { throw BrowserToolsFeatureError.missingArgument("pageId") }
         let shouldScroll = input.scroll ?? true
         return try await BrowserToolsRunner.withPage(pageID: pageID, context: context) { session, tab in
             if shouldScroll {
@@ -288,12 +268,8 @@ struct BrowserClosePageTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> BrowserClosePageOutput {
-        guard let pageID = input.resolvedPageID else {
-            throw BrowserToolsFeatureError.missingArgument("pageId")
-        }
-        let browser = ChromeBrowserManager(
-            configuration: ChromeBrowserConfiguration(environment: context.environment)
-        )
+        guard let pageID = input.resolvedPageID else { throw BrowserToolsFeatureError.missingArgument("pageId") }
+        let browser = ChromeBrowserManager(configuration: ChromeBrowserConfiguration(environment: context.environment))
         do {
             _ = try await browser.tab(id: pageID)
             await browser.closeTab(id: pageID)
@@ -314,9 +290,7 @@ enum BrowserToolsRunner {
         context: FeatureContext,
         body: (CDPSession) async throws -> T
     ) async throws -> T {
-        let browser = ChromeBrowserManager(
-            configuration: ChromeBrowserConfiguration(environment: context.environment)
-        )
+        let browser = ChromeBrowserManager(configuration: ChromeBrowserConfiguration(environment: context.environment))
 
         do {
             try await browser.ensureRunning()
@@ -325,11 +299,7 @@ enum BrowserToolsRunner {
             do {
                 let allowsLoopback = BrowserURLPolicy(environment: context.environment)
                     .isLoopbackURL(url)
-                let result = try await withTab(
-                    tab,
-                    context: context,
-                    allowsLoopback: allowsLoopback
-                ) { session, _ in
+                let result = try await withTab(tab, context: context, allowsLoopback: allowsLoopback) { session, _ in
                     try await session.navigate(to: url)
                     return try await body(session)
                 }
@@ -356,9 +326,7 @@ enum BrowserToolsRunner {
         allowsLoopback: Bool? = nil,
         body: (CDPSession, CDPTabInfo) async throws -> T
     ) async throws -> T {
-        let browser = ChromeBrowserManager(
-            configuration: ChromeBrowserConfiguration(environment: context.environment)
-        )
+        let browser = ChromeBrowserManager(configuration: ChromeBrowserConfiguration(environment: context.environment))
         do {
             try await browser.ensureRunning()
             let tab = try await browser.tab(id: pageID)
@@ -422,10 +390,7 @@ enum BrowserToolsRunner {
         if preparePage {
             let viewportPreset = BrowserViewportStateStore(environment: context.environment)
                 .preset(for: tab.id)
-            try await session.preparePage(
-                waitForReady: false,
-                viewportPreset: viewportPreset
-            )
+            try await session.preparePage(waitForReady: false, viewportPreset: viewportPreset)
         } else {
             try await session.enablePageAndRuntime()
         }
@@ -434,10 +399,7 @@ enum BrowserToolsRunner {
         if enforceNetworkPolicy {
             let guardInstance = BrowserNetworkGuard(
                 session: session,
-                requestPolicy: BrowserNetworkRequestPolicy(
-                    environment: context.environment,
-                    allowsLoopback: allowsLoopback
-                )
+                requestPolicy: BrowserNetworkRequestPolicy(environment: context.environment, allowsLoopback: allowsLoopback)
             )
             try await guardInstance.install()
             networkGuard = guardInstance
@@ -509,7 +471,6 @@ public enum BrowserToolsFeatureRunner {
         await FeatureRunner.run(tools())
     }
 }
-
 
 // MARK: - Semantic presentation
 

@@ -1,18 +1,8 @@
-//
-//  AnyFeatureTool.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 
 public struct AnyFeatureTool: Sendable {
     public let descriptor: FeatureToolDescriptor
-    private let invokeBody: @Sendable (
-        Data,
-        FeatureContext
-    ) async throws -> AnyFeatureToolInvocationResult
+    private let invokeBody: @Sendable (Data, FeatureContext) async throws -> AnyFeatureToolInvocationResult
 
     public init<T: FeatureTool>(_ tool: T) {
         self.descriptor = FeatureToolDescriptor(
@@ -35,17 +25,11 @@ public struct AnyFeatureTool: Sendable {
         }
     }
 
-    public func invoke(
-        inputData: Data,
-        context: FeatureContext
-    ) async throws -> Data {
+    public func invoke(inputData: Data, context: FeatureContext) async throws -> Data {
         try await invokeResult(inputData: inputData, context: context).outputData
     }
 
-    public func invokeResult(
-        inputData: Data,
-        context: FeatureContext
-    ) async throws -> AnyFeatureToolInvocationResult {
+    public func invokeResult(inputData: Data, context: FeatureContext) async throws -> AnyFeatureToolInvocationResult {
         try await invokeBody(inputData, context)
     }
 }

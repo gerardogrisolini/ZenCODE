@@ -1,10 +1,3 @@
-//
-//  FeatureRunner.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 
 public enum FeatureRunner {
@@ -23,9 +16,7 @@ public enum FeatureRunner {
             switch command {
             case .listTools:
                 try FeatureProcessProtocol.emitJSON(
-                    FeatureListToolsResponse(
-                        tools: FeatureToolDescriptor.canonicalized(tools.map(\.descriptor))
-                    )
+                    FeatureListToolsResponse(tools: FeatureToolDescriptor.canonicalized(tools.map(\.descriptor)))
                 )
             case let .invoke(toolName, workingDirectory):
                 let response = try await invokeResponse(
@@ -37,15 +28,11 @@ public enum FeatureRunner {
                 )
                 FileHandle.standardOutput.write(response)
             case .usage:
-                try FeatureProcessProtocol.emitJSON(
-                    FeatureErrorResponse(error: FeatureProcessProtocol.usageText)
-                )
+                try FeatureProcessProtocol.emitJSON(FeatureErrorResponse(error: FeatureProcessProtocol.usageText))
                 FeatureProcessProtocol.terminate(code: 64)
             }
         } catch {
-            try? FeatureProcessProtocol.emitJSON(
-                FeatureErrorResponse(error: error.localizedDescription)
-            )
+            try? FeatureProcessProtocol.emitJSON(FeatureErrorResponse(error: error.localizedDescription))
             FeatureProcessProtocol.terminate(code: 1)
         }
     }
@@ -65,27 +52,19 @@ public enum FeatureRunner {
                 ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
             environment: environment
         )
-        let invocationResult = try await tool.invokeResult(
-            inputData: inputData,
-            context: context
-        )
+        let invocationResult = try await tool.invokeResult(inputData: inputData, context: context)
         return try FeatureProcessProtocol.renderSuccess(
             outputData: invocationResult.outputData,
             attachments: invocationResult.attachments
         )
     }
 
-    private static func runPersistentService(
-        tools: [AnyFeatureTool],
-        environment: [String: String]
-    ) async {
+    private static func runPersistentService(tools: [AnyFeatureTool], environment: [String: String]) async {
         await FeaturePersistentService.run { request in
             switch request.operation {
             case .listTools:
                 return try FeatureProcessProtocol.renderJSON(
-                    FeatureListToolsResponse(
-                        tools: FeatureToolDescriptor.canonicalized(tools.map(\.descriptor))
-                    )
+                    FeatureListToolsResponse(tools: FeatureToolDescriptor.canonicalized(tools.map(\.descriptor)))
                 )
             case .invoke:
                 guard let toolName = request.toolName else {

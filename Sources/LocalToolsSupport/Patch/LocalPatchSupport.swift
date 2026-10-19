@@ -1,15 +1,7 @@
-//
-//  LocalPatchSupport.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 import ToolCore
 
 extension LocalToolsSupport {
-    // MARK: - Unified diff support
 
     struct DiffHunk {
         let oldStart: Int
@@ -181,11 +173,7 @@ extension LocalToolsSupport {
             return FilePatchResult(newContent: lines.joined(separator: "\n") + "\n", isDelete: false)
         case .update:
             let source = PatchTextLines(try LocalOperationWrite.patchText(at: url))
-            let result = try applyBeginPatchHunks(
-                filePatch.hunks,
-                path: filePatch.path,
-                to: source.lines
-            )
+            let result = try applyBeginPatchHunks(filePatch.hunks, path: filePatch.path, to: source.lines)
             return FilePatchResult(newContent: source.content(from: result), isDelete: false)
         }
     }
@@ -250,11 +238,7 @@ extension LocalToolsSupport {
         }
     }
 
-    private static func firstMatch(
-        of pattern: [String],
-        in lines: [String],
-        startingAt startIndex: Int
-    ) -> Int? {
+    private static func firstMatch(of pattern: [String], in lines: [String], startingAt startIndex: Int) -> Int? {
         guard !pattern.isEmpty, pattern.count <= lines.count else {
             return nil
         }
@@ -358,12 +342,7 @@ extension LocalToolsSupport {
                 }
 
                 patches.append(
-                    FilePatch(
-                        path: targetPath,
-                        isNewFile: isNewFile,
-                        isDeletedFile: isDeletedFile,
-                        hunks: hunks
-                    )
+                    FilePatch(path: targetPath, isNewFile: isNewFile, isDeletedFile: isDeletedFile, hunks: hunks)
                 )
             } else {
                 index += 1
@@ -387,15 +366,8 @@ extension LocalToolsSupport {
             return FilePatchResult(newContent: nil, isDelete: true)
         }
 
-        let source = PatchTextLines(
-            try originalText(for: filePatch, at: url),
-            isNewFile: filePatch.isNewFile
-        )
-        let result = try applyUnifiedDiffHunks(
-            filePatch.hunks,
-            path: filePatch.path,
-            to: source.lines
-        )
+        let source = PatchTextLines(try originalText(for: filePatch, at: url), isNewFile: filePatch.isNewFile)
+        let result = try applyUnifiedDiffHunks(filePatch.hunks, path: filePatch.path, to: source.lines)
         return FilePatchResult(
             newContent: source.content(from: result, forceTrailingNewline: filePatch.isNewFile),
             isDelete: false
@@ -426,13 +398,7 @@ extension LocalToolsSupport {
                 result.append(contentsOf: originalLines[cursor..<targetIndex])
                 cursor = targetIndex
             }
-            try appendUnifiedDiffHunk(
-                hunk,
-                path: path,
-                originalLines: originalLines,
-                cursor: &cursor,
-                result: &result
-            )
+            try appendUnifiedDiffHunk(hunk, path: path, originalLines: originalLines, cursor: &cursor, result: &result)
         }
 
         if cursor < originalLines.count {

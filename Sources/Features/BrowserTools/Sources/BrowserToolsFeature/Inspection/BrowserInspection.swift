@@ -54,18 +54,8 @@ struct BrowserInspectOutput: Codable, Sendable {
         case untrustedContentWarning
     }
 
-    init(
-        page: BrowserPage,
-        snapshotID: String,
-        ref: String,
-        inspection: BrowserDOMInspection.Selection
-    ) {
-        let bounded = BrowserDOMInspection.boundOutput(
-            page: page,
-            snapshotID: snapshotID,
-            ref: ref,
-            inspection: inspection
-        )
+    init(page: BrowserPage, snapshotID: String, ref: String, inspection: BrowserDOMInspection.Selection) {
+        let bounded = BrowserDOMInspection.boundOutput(page: page, snapshotID: snapshotID, ref: ref, inspection: inspection)
         self.page = bounded.page
         self.snapshotID = bounded.snapshotID
         self.ref = bounded.ref
@@ -238,9 +228,7 @@ enum BrowserDOMInspection {
               let nodeID = rawNodeIDs.compactMap(integerValue).first,
               nodeID > 0
         else {
-            throw CDPError.invalidResponse(
-                "DOM.pushNodesByBackendIdsToFrontend did not return a frontend node"
-            )
+            throw CDPError.invalidResponse("DOM.pushNodesByBackendIdsToFrontend did not return a frontend node")
         }
         return nodeID
     }
@@ -281,12 +269,7 @@ enum BrowserDOMInspection {
         var projectedAttributes: [String: String] = [:]
         for name in attributesByName.keys.sorted() {
             guard let rawValue = attributesByName[name] else { continue }
-            guard let sanitized = sanitizedAttribute(
-                name: name,
-                value: rawValue
-            ) else {
-                continue
-            }
+            guard let sanitized = sanitizedAttribute(name: name, value: rawValue) else { continue }
             projectedAttributes[name] = sanitized.value
             didTruncate = didTruncate || sanitized.truncated
         }
@@ -314,9 +297,7 @@ enum BrowserDOMInspection {
                 continue
             }
             let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard allowedComputedStyleProperties.contains(name), values[name] == nil else {
-                continue
-            }
+            guard allowedComputedStyleProperties.contains(name), values[name] == nil else { continue }
             let clipped = clip(rawValue, maximumBytes: maximumComputedStyleValueBytes)
             values[name] = clipped.value
             didTruncate = didTruncate || clipped.truncated
@@ -346,12 +327,7 @@ enum BrowserDOMInspection {
         )
     }
 
-    static func boundOutput(
-        page: BrowserPage,
-        snapshotID: String,
-        ref: String,
-        inspection: Selection
-    ) -> BoundedOutput {
+    static func boundOutput(page: BrowserPage, snapshotID: String, ref: String, inspection: Selection) -> BoundedOutput {
         let pageID = clip(page.pageID, maximumBytes: 256)
         let pageTitle = clip(page.title, maximumBytes: maximumPageFieldBytes)
         let pageURL = clip(redactedResourceURL(page.url), maximumBytes: maximumPageFieldBytes)
@@ -387,10 +363,7 @@ enum BrowserDOMInspection {
                 page: BrowserPage(pageID: pageIdentifier, title: title, url: url),
                 snapshotID: boundedSnapshotID.value,
                 ref: boundedRef.value,
-                element: BrowserInspectableElement(
-                    tagName: boundedTagName.value,
-                    attributes: attributes
-                ),
+                element: BrowserInspectableElement(tagName: boundedTagName.value, attributes: attributes),
                 boxModel: boxModel,
                 computedStyle: computedStyle,
                 truncated: didTruncate,
@@ -448,10 +421,7 @@ enum BrowserDOMInspection {
         }
     }
 
-    private static func sanitizedAttribute(
-        name: String,
-        value: String
-    ) -> (value: String, truncated: Bool)? {
+    private static func sanitizedAttribute(name: String, value: String) -> (value: String, truncated: Bool)? {
         if name == "href" || name == "src" {
             let clipped = clip(redactedResourceURL(value), maximumBytes: maximumAttributeValueBytes)
             return (clipped.value, clipped.truncated)
@@ -486,9 +456,7 @@ enum BrowserDOMInspection {
     }
 
     private static func redactedResourceURL(_ rawValue: String) -> String {
-        guard let components = URLComponents(string: rawValue) else {
-            return "[redacted]"
-        }
+        guard let components = URLComponents(string: rawValue) else { return "[redacted]" }
         if let scheme = components.scheme?.lowercased(), scheme != "http", scheme != "https" {
             return "[redacted]"
         }
@@ -525,19 +493,10 @@ enum BrowserDOMInspection {
     }
 
     private static func clip(_ value: String, maximumBytes: Int) -> (value: String, truncated: Bool) {
-        guard value.lengthOfBytes(using: .utf8) > maximumBytes else {
-            return (value, false)
-        }
+        guard value.lengthOfBytes(using: .utf8) > maximumBytes else { return (value, false) }
         let suffix = "…"
         let payloadBudget = max(maximumBytes - suffix.lengthOfBytes(using: .utf8), 0)
-        var result = ""
-        var usedBytes = 0
-        for character in value {
-            let characterBytes = String(character).lengthOfBytes(using: .utf8)
-            guard usedBytes + characterBytes <= payloadBudget else { break }
-            result.append(character)
-            usedBytes += characterBytes
-        }
+        let result = value.prefixFitting(utf8Bytes: payloadBudget)
         return (result + suffix, true)
     }
 
@@ -593,11 +552,7 @@ extension CDPSession {
         // until the document has been requested by this short-lived DevTools
         // session. Push the authorized backend identity into the frontend DOM
         // first so CSS.getComputedStyleForNode receives a usable nodeId.
-        _ = try await snapshotBoundRead(
-            authorization,
-            method: "DOM.getDocument",
-            params: ["depth": 0, "pierce": false]
-        )
+        _ = try await snapshotBoundRead(authorization, method: "DOM.getDocument", params: ["depth": 0, "pierce": false])
         let pushedNodeResponse = try await snapshotBoundRead(
             authorization,
             method: "DOM.pushNodesByBackendIdsToFrontend",
@@ -652,16 +607,6 @@ extension CDPSession {
 
 // MARK: - Public tool (registration is intentionally owned by integration)
 
-private enum BrowserInspectionPageInput {
-    static func resolve(
-        pageID: String?,
-        pageIDSnakeCase: String?,
-        id: String?
-    ) -> String? {
-        pageID?.nilIfBlank ?? pageIDSnakeCase?.nilIfBlank ?? id?.nilIfBlank
-    }
-}
-
 struct BrowserInspectTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let pageId: String?
@@ -672,7 +617,7 @@ struct BrowserInspectTool: FeatureTool {
         let ref: String?
 
         var resolvedPageID: String? {
-            BrowserInspectionPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
+            BrowserPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
         }
 
         var resolvedSnapshotID: String? {
@@ -698,39 +643,20 @@ struct BrowserInspectTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> BrowserInspectOutput {
-        guard let pageID = input.resolvedPageID else {
-            throw BrowserToolsFeatureError.missingArgument("pageId")
-        }
-        guard let snapshotID = input.resolvedSnapshotID else {
-            throw BrowserToolsFeatureError.missingArgument("snapshotId")
-        }
-        guard let ref = input.resolvedRef else {
-            throw BrowserToolsFeatureError.missingArgument("ref")
-        }
+        guard let pageID = input.resolvedPageID else { throw BrowserToolsFeatureError.missingArgument("pageId") }
+        guard let snapshotID = input.resolvedSnapshotID else { throw BrowserToolsFeatureError.missingArgument("snapshotId") }
+        guard let ref = input.resolvedRef else { throw BrowserToolsFeatureError.missingArgument("ref") }
 
         return try await BrowserToolsRunner.withPage(pageID: pageID, context: context) { session, tab in
-            let authorization = BrowserSnapshotAuthorization(
-                pageID: tab.id,
-                snapshotID: snapshotID,
-                ref: ref
-            )
+            let authorization = BrowserSnapshotAuthorization(pageID: tab.id, snapshotID: snapshotID, ref: ref)
             let target = try await session.resolveSnapshotTarget(authorization)
-            let inspection = try await session.inspectDOMAndCSS(
-                target: target,
-                authorization: authorization
-            )
+            let inspection = try await session.inspectDOMAndCSS(target: target, authorization: authorization)
             // Tab metadata is Browser-owned CDP data; unlike pageMetadata(),
             // this inspector does not evaluate an additional page expression.
-            return BrowserInspectOutput(
-                page: BrowserPage(tab: tab),
-                snapshotID: snapshotID,
-                ref: ref,
-                inspection: inspection
-            )
+            return BrowserInspectOutput(page: BrowserPage(tab: tab), snapshotID: snapshotID, ref: ref, inspection: inspection)
         }
     }
 }
-
 
 extension BrowserInspectTool {
     static var presentation: ToolPresentationDefinition {

@@ -59,12 +59,7 @@ struct BrowserPDFOutput: Codable, Sendable {
     let landscape: Bool
     let note: String
 
-    init(
-        page: BrowserPage,
-        artifact: BrowserArtifact,
-        format: BrowserPDFFormat,
-        landscape: Bool
-    ) {
+    init(page: BrowserPage, artifact: BrowserArtifact, format: BrowserPDFFormat, landscape: Bool) {
         self.page = page
         self.artifact = artifact
         self.format = format
@@ -95,16 +90,10 @@ enum BrowserDownloadPolicy {
     static let pageFallbackMethod = "Page.setDownloadBehavior"
 
     static func apply(to session: CDPSession) async throws {
-        if (try? await session.send(
-            method: browserMethod,
-            params: ["behavior": "deny"]
-        )) != nil {
+        if (try? await session.send(method: browserMethod, params: ["behavior": "deny"])) != nil {
             return
         }
-        if (try? await session.send(
-            method: pageFallbackMethod,
-            params: ["behavior": "deny"]
-        )) != nil {
+        if (try? await session.send(method: pageFallbackMethod, params: ["behavior": "deny"])) != nil {
             return
         }
         throw BrowserSpecialistError.downloadPolicyUnavailable
@@ -189,16 +178,6 @@ extension CDPSession {
     }
 }
 
-private enum BrowserSpecialistPageInput {
-    static func resolve(
-        pageID: String?,
-        pageIDSnakeCase: String?,
-        id: String?
-    ) -> String? {
-        pageID?.nilIfBlank ?? pageIDSnakeCase?.nilIfBlank ?? id?.nilIfBlank
-    }
-}
-
 struct BrowserPDFTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let pageId: String?
@@ -208,7 +187,7 @@ struct BrowserPDFTool: FeatureTool {
         let landscape: Bool?
 
         var resolvedPageID: String? {
-            BrowserSpecialistPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
+            BrowserPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
         }
     }
 
@@ -225,9 +204,7 @@ struct BrowserPDFTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> BrowserPDFOutput {
-        guard let pageID = input.resolvedPageID else {
-            throw BrowserToolsFeatureError.missingArgument("pageId")
-        }
+        guard let pageID = input.resolvedPageID else { throw BrowserToolsFeatureError.missingArgument("pageId") }
         let format = try BrowserPDFFormat.resolve(input.format)
         let landscape = input.landscape ?? false
         let store = BrowserArtifactStore(environment: context.environment)
@@ -236,12 +213,7 @@ struct BrowserPDFTool: FeatureTool {
             let pdf = try await session.printToPDF(format: format, landscape: landscape)
             let artifact = try store.storePDF(pdf, pageID: tab.id)
             let page = try await session.pageMetadata(pageID: tab.id)
-            return BrowserPDFOutput(
-                page: page,
-                artifact: artifact,
-                format: format,
-                landscape: landscape
-            )
+            return BrowserPDFOutput(page: page, artifact: artifact, format: format, landscape: landscape)
         }
     }
 }
@@ -253,7 +225,7 @@ struct BrowserPerformanceTool: FeatureTool {
         let id: String?
 
         var resolvedPageID: String? {
-            BrowserSpecialistPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
+            BrowserPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
         }
     }
 
@@ -268,9 +240,7 @@ struct BrowserPerformanceTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> BrowserPerformanceOutput {
-        guard let pageID = input.resolvedPageID else {
-            throw BrowserToolsFeatureError.missingArgument("pageId")
-        }
+        guard let pageID = input.resolvedPageID else { throw BrowserToolsFeatureError.missingArgument("pageId") }
         return try await BrowserToolsRunner.withPage(pageID: pageID, context: context) { session, tab in
             let metrics = try await session.performanceMetrics()
             let page = try await session.pageMetadata(pageID: tab.id)
@@ -278,7 +248,6 @@ struct BrowserPerformanceTool: FeatureTool {
         }
     }
 }
-
 
 // MARK: - Semantic presentation
 

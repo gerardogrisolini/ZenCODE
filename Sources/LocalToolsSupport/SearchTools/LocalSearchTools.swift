@@ -1,10 +1,3 @@
-//
-//  LocalToolsSupport.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -13,7 +6,6 @@ import Glibc
 #endif
 import FeatureKit
 import ToolCore
-
 
 /// Directories that are skipped by recursive text searches: VCS metadata and
 /// build products dwarf real sources and produce noisy, slow matches.
@@ -52,9 +44,7 @@ struct SearchGlobTool: FeatureTool {
 
     static let name = "search.glob"
     static let description = "Finds files under a local path. Pass pattern for a glob such as **/*.swift; omit pattern to list files recursively."
-    static let inputSchema = buildInputSchema(
-        [.string("pattern"), .string("path")] + CommonSchemaProperties.limit
-    )
+    static let inputSchema = buildInputSchema([.string("pattern"), .string("path")] + CommonSchemaProperties.limit)
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         try await LocalIOOffloader.run {
@@ -155,11 +145,7 @@ struct SearchLocateTool: FeatureTool {
         var output = ["matches: \(matchLines.count)"]
         output.append(contentsOf: matchLines)
 
-        let suggestions = readSuggestions(
-            from: matchLines,
-            contextLines: input.context ?? 20,
-            maxSuggestions: 8
-        )
+        let suggestions = readSuggestions(from: matchLines, contextLines: input.context ?? 20, maxSuggestions: 8)
         if !suggestions.isEmpty {
             output.append("suggested_reads:")
             output.append(contentsOf: suggestions)
@@ -171,11 +157,7 @@ struct SearchLocateTool: FeatureTool {
         return output.joined(separator: "\n")
     }
 
-    private func readSuggestions(
-        from matchLines: [String],
-        contextLines: Int,
-        maxSuggestions: Int
-    ) -> [String] {
+    private func readSuggestions(from matchLines: [String], contextLines: Int, maxSuggestions: Int) -> [String] {
         let safeContext = min(max(contextLines, 0), 100)
         let readLimit = min(max((safeContext * 2) + 1, 20), 220)
         var seen = Set<String>()
@@ -200,9 +182,6 @@ struct SearchLocateTool: FeatureTool {
         return suggestions
     }
 }
-
-
-// MARK: - Semantic presentation
 
 extension SearchGlobTool {
     static var presentation: ToolPresentationDefinition {

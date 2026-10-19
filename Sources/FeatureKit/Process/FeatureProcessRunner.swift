@@ -1,10 +1,3 @@
-//
-//  FeatureProcessRunner.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -105,11 +98,7 @@ public enum FeatureProcessRunner {
             byteLimit: outputByteLimit,
             terminationRequest: terminationRequest
         )
-        async let stdinOutcome = writeStdin(
-            stdinPipe,
-            data: stdinData,
-            exitObserver: exitObserver
-        )
+        async let stdinOutcome = writeStdin(stdinPipe, data: stdinData, exitObserver: exitObserver)
 
         let timedOut = await superviseProcessExit(
             process,
@@ -273,11 +262,7 @@ public enum FeatureProcessRunner {
         while totalWritten < data.count {
             let written = data.withUnsafeBytes { rawBuffer -> Int in
                 guard let base = rawBuffer.baseAddress else { return 0 }
-                return write(
-                    descriptor,
-                    base.advanced(by: totalWritten),
-                    rawBuffer.count - totalWritten
-                )
+                return write(descriptor, base.advanced(by: totalWritten), rawBuffer.count - totalWritten)
             }
 
             if written > 0 {
@@ -368,10 +353,7 @@ public enum FeatureProcessRunner {
         // SIGTERM.
         guard exitObserver.hasExited else {
             // Shared, bounded TERM -> grace -> KILL -> reap escalation.
-            await FeatureProcessTerminationEscalator.escalate(
-                process,
-                exitSignal: exitObserver
-            )
+            await FeatureProcessTerminationEscalator.escalate(process, exitSignal: exitObserver)
             // A line-limit truncation triggers escalation so the run always
             // returns, but it is not a timeout: preserve timedOut == false.
             return timedOut

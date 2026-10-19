@@ -21,9 +21,7 @@ enum BrowserConsoleLevel: String, Codable, Sendable {
             return .all
         }
         guard let level = Self(rawValue: rawValue.lowercased()) else {
-            throw BrowserToolsFeatureError.browserError(
-                "Unsupported console level '\(rawValue)'. Use all, warn, or error."
-            )
+            throw BrowserToolsFeatureError.browserError("Unsupported console level '\(rawValue)'. Use all, warn, or error.")
         }
         return level
     }
@@ -43,11 +41,7 @@ struct BrowserConsoleOutput: Codable, Sendable {
     let truncated: Bool
     let untrustedContentWarning: String
 
-    init(
-        page: BrowserPage,
-        level: BrowserConsoleLevel,
-        selection: BrowserConsoleSelection
-    ) {
+    init(page: BrowserPage, level: BrowserConsoleLevel, selection: BrowserConsoleSelection) {
         self.page = page
         self.level = level
         self.entries = selection.entries
@@ -118,34 +112,22 @@ enum BrowserConsoleCapture {
 
     static func resolvedLimit(_ requestedLimit: Int?) throws -> Int {
         guard let requestedLimit else { return 50 }
-        guard requestedLimit > 0 else {
-            throw BrowserToolsFeatureError.browserError("Console limit must be at least 1.")
-        }
+        guard requestedLimit > 0 else { throw BrowserToolsFeatureError.browserError("Console limit must be at least 1.") }
         return min(requestedLimit, maximumReturnedEntries)
     }
 
     static func decode(_ json: String) throws -> [BrowserConsoleEntry] {
-        guard let data = json.data(using: .utf8) else {
-            throw CDPError.invalidResponse("Console output was not UTF-8")
-        }
+        guard let data = json.data(using: .utf8) else { throw CDPError.invalidResponse("Console output was not UTF-8") }
         do {
             return try JSONDecoder().decode([BrowserConsoleEntry].self, from: data).map { entry in
-                BrowserConsoleEntry(
-                    level: entry.level.lowercased(),
-                    text: clipped(entry.text),
-                    timestamp: entry.timestamp
-                )
+                BrowserConsoleEntry(level: entry.level.lowercased(), text: clipped(entry.text), timestamp: entry.timestamp)
             }
         } catch {
             throw CDPError.invalidResponse("Unable to decode Browser console output: \(error.localizedDescription)")
         }
     }
 
-    static func select(
-        _ entries: [BrowserConsoleEntry],
-        level: BrowserConsoleLevel,
-        limit: Int
-    ) -> BrowserConsoleSelection {
+    static func select(_ entries: [BrowserConsoleEntry], level: BrowserConsoleLevel, limit: Int) -> BrowserConsoleSelection {
         let matching = entries.filter { entry in
             switch level {
             case .all:
@@ -166,14 +148,7 @@ enum BrowserConsoleCapture {
 
     private static func clipped(_ value: String) -> String {
         guard value.lengthOfBytes(using: .utf8) > maximumEntryBytes else { return value }
-        var result = ""
-        var usedBytes = 0
-        for character in value {
-            let characterBytes = String(character).lengthOfBytes(using: .utf8)
-            guard usedBytes + characterBytes <= maximumEntryBytes else { break }
-            result.append(character)
-            usedBytes += characterBytes
-        }
+        let result = value.prefixFitting(utf8Bytes: maximumEntryBytes)
         return result + "…"
     }
 }
@@ -183,9 +158,7 @@ extension CDPSession {
     /// script is installed only when the current page has not already confirmed
     /// it, preventing routine calls from accumulating duplicate injections.
     func ensureConsoleCapture() async throws {
-        let installed = (try? await evalString(
-            "globalThis.__zencodeConsoleCaptureInstalled ? 'yes' : 'no'"
-        )) == "yes"
+        let installed = (try? await evalString("globalThis.__zencodeConsoleCaptureInstalled ? 'yes' : 'no'")) == "yes"
         guard !installed else { return }
 
         _ = try await send(

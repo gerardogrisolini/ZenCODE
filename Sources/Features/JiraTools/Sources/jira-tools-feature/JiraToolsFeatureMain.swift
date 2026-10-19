@@ -1,10 +1,3 @@
-//
-//  main.swift
-//  jira-tools-feature
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import FeatureKit
 import ToolCore
 
@@ -18,16 +11,12 @@ struct JiraSearchTool: FeatureTool {
     static let inputSchema = #"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#
 
     func run(_ input: Input, context _: FeatureContext) async throws -> String {
-        guard let query = input.query?.nilIfBlank else {
-            throw JiraToolsError.missingArgument("query")
-        }
+        guard let query = input.query?.nilIfBlank else { throw JiraToolsError.missingArgument("query") }
 
         let issues = try await JiraAuthenticatedService.run { service in
             try await service.searchIssues(matching: query)
         }
-        guard !issues.isEmpty else {
-            return "Jira search: \(query)\nNo issues found."
-        }
+        guard !issues.isEmpty else { return "Jira search: \(query)\nNo issues found." }
         return JiraToolRenderer.renderSearchResults(issues, query: query)
     }
 }
@@ -61,10 +50,7 @@ struct JiraReadTool: FeatureTool {
         let issue = try await JiraAuthenticatedService.run { service in
             try await service.loadIssue(matching: query)
         }
-        return JiraToolRenderer.renderTaskContext(
-            issue,
-            includeRaw: input.includeRaw ?? input.include_raw ?? false
-        )
+        return JiraToolRenderer.renderTaskContext(issue, includeRaw: input.includeRaw ?? input.include_raw ?? false)
     }
 }
 
@@ -96,9 +82,6 @@ struct JiraToolsFeatureMain {
         ])
     }
 }
-
-
-// MARK: - Semantic presentation
 
 extension JiraSearchTool {
     static var presentation: ToolPresentationDefinition {

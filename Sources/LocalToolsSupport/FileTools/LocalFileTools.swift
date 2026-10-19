@@ -1,10 +1,3 @@
-//
-//  LocalToolsSupport.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -13,7 +6,6 @@ import Glibc
 #endif
 import FeatureKit
 import ToolCore
-
 
 private func replacingAll(
     _ contents: String,
@@ -25,10 +17,7 @@ private func replacingAll(
     guard occurrences > 0 else {
         throw LocalToolsFeatureError.permissionDenied(notFoundMessage())
     }
-    return (
-        contents.replacingOccurrences(of: oldText, with: newText),
-        occurrences
-    )
+    return (contents.replacingOccurrences(of: oldText, with: newText), occurrences)
 }
 
 private func editFailureMessage(_ failure: LocalFileEditFailure, path: String) -> String {
@@ -42,12 +31,7 @@ private func editFailureMessage(_ failure: LocalFileEditFailure, path: String) -
     }
 }
 
-private func multiEditFailureMessage(
-    _ failure: LocalFileEditFailure,
-    edit: Int,
-    total: Int,
-    path: String
-) -> String {
+private func multiEditFailureMessage(_ failure: LocalFileEditFailure, edit: Int, total: Int, path: String) -> String {
     let reason: String
     switch failure {
     case .emptyOld:
@@ -59,7 +43,6 @@ private func multiEditFailureMessage(
     }
     return "Multi-edit failed at edit \(edit) of \(total) in \(path): \(reason) No changes were written."
 }
-
 
 struct LocalPwdTool: FeatureTool {
     struct Input: Decodable, Sendable {}
@@ -81,10 +64,7 @@ struct LocalListDirectoryTool: FeatureTool {
 
     static let name = "local.ls"
     static let description = "Lists files and directories. Paths may be absolute or relative to the working directory."
-    static let inputSchema = buildInputSchema(
-        [.string("path"), .boolean("includeHidden")],
-        required: ["path"]
-    )
+    static let inputSchema = buildInputSchema([.string("path"), .boolean("includeHidden")], required: ["path"])
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let url = try LocalToolsSupport.requiredPath(input.path, context: context)
@@ -334,11 +314,7 @@ struct LocalMultiEditTool: FeatureTool {
     static let name = "local.multiEdit"
     static let description = "Applies ordered unique old/new replacements to one file and writes only if every edit succeeds."
     static let inputSchema = buildInputSchema(
-        [.string("path"), .arrayOfObjects(
-            "edits",
-            properties: CommonSchemaProperties.edit,
-            required: ["old", "new"]
-        )],
+        [.string("path"), .arrayOfObjects("edits", properties: CommonSchemaProperties.edit, required: ["old", "new"])],
         required: ["path", "edits"]
     )
 
@@ -384,12 +360,7 @@ struct LocalMultiEditTool: FeatureTool {
                 result = try LocalFileEditSupport.apply(old: oldText, new: newText, to: contents)
             } catch let failure as LocalFileEditFailure {
                 throw LocalToolsFeatureError.permissionDenied(
-                    multiEditFailureMessage(
-                        failure,
-                        edit: index + 1,
-                        total: edits.count,
-                        path: path
-                    )
+                    multiEditFailureMessage(failure, edit: index + 1, total: edits.count, path: path)
                 )
             }
             contents = result.contents
@@ -407,10 +378,7 @@ struct LocalAppendTool: FeatureTool {
 
     static let name = "local.append"
     static let description = "Appends UTF-8 text to a file."
-    static let inputSchema = buildInputSchema(
-        [.string("path"), .string("content")],
-        required: ["path", "content"]
-    )
+    static let inputSchema = buildInputSchema([.string("path"), .string("content")], required: ["path", "content"])
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
@@ -458,10 +426,7 @@ struct LocalMakeDirectoryTool: FeatureTool {
         let path = try LocalToolsSupport.requiredPath(input.path, nil, context: context)
         let withIntermediateDirectories = input.createIntermediateDirectories ?? true
         return try await LocalIOOffloader.run {
-            try FileManager.default.createDirectory(
-                at: path,
-                withIntermediateDirectories: withIntermediateDirectories
-            )
+            try FileManager.default.createDirectory(at: path, withIntermediateDirectories: withIntermediateDirectories)
             return "Created directory \(path.path)."
         }
     }
@@ -475,10 +440,7 @@ struct LocalDeleteTool: FeatureTool {
 
     static let name = "local.delete"
     static let description = "Deletes a file or directory. Directories require recursive=true."
-    static let inputSchema = buildInputSchema(
-        [.string("path"), .boolean("recursive")],
-        required: ["path"]
-    )
+    static let inputSchema = buildInputSchema([.string("path"), .boolean("recursive")], required: ["path"])
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, nil, context: context)
@@ -582,8 +544,6 @@ struct LocalMoveTool: FeatureTool {
     }
 }
 
-// MARK: - Semantic presentation
-
 extension LocalPwdTool {
     static var presentation: ToolPresentationDefinition {
         .standard(title: "Working directory", action: "Show", kind: .read, includesParameters: false)
@@ -612,10 +572,7 @@ extension LocalReadFilesTool {
                 .code(
                     label: "content",
                     value: .resultOutput(),
-                    languageHint: .argument(
-                        ["paths.0", "file_paths.0"],
-                        format: .languageHint
-                    )
+                    languageHint: .argument(["paths.0", "file_paths.0"], format: .languageHint)
                 )
             ],
             summary: ToolPresentationSummaryDefinition(
@@ -652,10 +609,7 @@ extension LocalMultiEditTool {
             action: "Edit",
             kind: .edit,
             target: .argument(["path"], format: .path),
-            sections: [
-                .parameters(),
-                .list(label: "edits", value: .argument(["edits"], format: .json))
-            ],
+            sections: [.parameters(), .list(label: "edits", value: .argument(["edits"], format: .json))],
             summary: ToolPresentationSummaryDefinition(value: .resultSummary(), strategy: .firstLine, label: "summary")
         )
     }

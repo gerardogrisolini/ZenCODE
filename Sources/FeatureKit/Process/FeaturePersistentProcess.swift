@@ -1,10 +1,3 @@
-//
-//  FeaturePersistentProcess.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -61,11 +54,7 @@ public actor FeaturePersistentProcess {
         }
     }
 
-    public init(
-        executableURL: URL,
-        workingDirectory: URL? = nil,
-        environment: [String: String]? = nil
-    ) {
+    public init(executableURL: URL, workingDirectory: URL? = nil, environment: [String: String]? = nil) {
         self.executableURL = executableURL.standardizedFileURL
         self.workingDirectory = workingDirectory?.standardizedFileURL
         self.environment = environment
@@ -93,10 +82,7 @@ public actor FeaturePersistentProcess {
 
     /// Sends one request and returns the exact response bytes from the
     /// equivalent one-shot feature command.
-    public func response(
-        to request: FeaturePersistentRequest,
-        timeout: TimeInterval? = nil
-    ) async throws -> Data {
+    public func response(to request: FeaturePersistentRequest, timeout: TimeInterval? = nil) async throws -> Data {
         guard !isClosing else {
             throw transportError(kind: .closed, message: "Feature persistent session is closing.")
         }
@@ -141,9 +127,7 @@ public actor FeaturePersistentProcess {
 
         let request = FeaturePersistentRequest(operation: .shutdown)
         _ = try? await exchange(request, timeout: 3, canStartProcess: false)
-        await closeCurrentProcess(
-            failure: transportError(kind: .closed, message: "Feature persistent session closed.")
-        )
+        await closeCurrentProcess(failure: transportError(kind: .closed, message: "Feature persistent session closed."))
     }
 
     private func acquireRequestSlot() async {
@@ -210,11 +194,7 @@ public actor FeaturePersistentProcess {
             }
         }
 
-        return try await sendAndAwait(
-            requestID: request.id,
-            payload: framedPayload,
-            generation: generation
-        )
+        return try await sendAndAwait(requestID: request.id, payload: framedPayload, generation: generation)
     }
 
     private func ensureProcess(canStartProcess: Bool) async throws {
@@ -309,11 +289,7 @@ public actor FeaturePersistentProcess {
         #endif
     }
 
-    private func sendAndAwait(
-        requestID: UUID,
-        payload: Data,
-        generation: UUID
-    ) async throws -> Data {
+    private func sendAndAwait(requestID: UUID, payload: Data, generation: UUID) async throws -> Data {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 guard pendingResponse == nil else {
@@ -373,11 +349,7 @@ public actor FeaturePersistentProcess {
                 guard let baseAddress = rawBuffer.baseAddress else {
                     return 0
                 }
-                return write(
-                    descriptor,
-                    baseAddress.advanced(by: offset),
-                    rawBuffer.count - offset
-                )
+                return write(descriptor, baseAddress.advanced(by: offset), rawBuffer.count - offset)
             }
             if bytesWritten > 0 {
                 offset += bytesWritten
@@ -422,11 +394,7 @@ public actor FeaturePersistentProcess {
                 return read(descriptor, baseAddress, rawBuffer.count)
             }
             if bytesRead > 0 {
-                await owner.value?.received(
-                    Data(scratch[0 ..< bytesRead]),
-                    from: stream,
-                    generation: generation
-                )
+                await owner.value?.received(Data(scratch[0 ..< bytesRead]), from: stream, generation: generation)
                 continue
             }
             if bytesRead == 0 {
@@ -534,10 +502,7 @@ public actor FeaturePersistentProcess {
             return
         }
         failCurrentRequest(
-            transportError(
-                kind: .closed,
-                message: "Feature persistent stdout reader failed: \(message)"
-            )
+            transportError(kind: .closed, message: "Feature persistent stdout reader failed: \(message)")
         )
     }
 

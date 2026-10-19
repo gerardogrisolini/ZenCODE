@@ -1,10 +1,3 @@
-//
-//  FeatureProcessTerminationEscalator.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 
 #if canImport(Darwin)
@@ -77,10 +70,7 @@ enum FeatureProcessTerminationEscalator {
     /// Cancellation-aware bounded wait for a real exit. Returns `true` only when
     /// the exit was genuinely observed: a cancellation that broke the wait must
     /// fall through to the caller's SIGKILL fallback.
-    static func waitForExit(
-        _ exitSignal: FeatureProcessExitSignal,
-        within budget: Duration
-    ) async -> Bool {
+    static func waitForExit(_ exitSignal: FeatureProcessExitSignal, within budget: Duration) async -> Bool {
         if exitSignal.hasExited {
             return true
         }
@@ -106,10 +96,7 @@ enum FeatureProcessTerminationEscalator {
     /// `waitForExit`, this deliberately keeps polling under cancellation so a
     /// cancelled run still gives the monitor a chance to observe the reap; the
     /// deadline keeps the wait finite regardless.
-    static func reap(
-        _ exitSignal: FeatureProcessExitSignal,
-        within budget: Duration
-    ) async {
+    static func reap(_ exitSignal: FeatureProcessExitSignal, within budget: Duration) async {
         let deadline = ContinuousClock.now.advanced(by: budget)
         while ContinuousClock.now < deadline, !exitSignal.hasExited {
             try? await Task.sleep(for: .milliseconds(10))

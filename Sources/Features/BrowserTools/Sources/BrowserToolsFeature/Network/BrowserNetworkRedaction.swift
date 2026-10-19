@@ -17,9 +17,7 @@ enum BrowserNetworkURLRedaction {
     ]
 
     static func apply(to rawURL: String) -> String {
-        guard rawURL.lengthOfBytes(using: .utf8) <= maximumRawURLBytes else {
-            return "<redacted-url>"
-        }
+        guard rawURL.lengthOfBytes(using: .utf8) <= maximumRawURLBytes else { return "<redacted-url>" }
         guard var components = URLComponents(string: rawURL),
               let scheme = components.scheme?.lowercased(),
               !scheme.isEmpty
@@ -53,10 +51,7 @@ enum BrowserNetworkURLRedaction {
         }
 
         guard let result = components.string else { return "<redacted-url>" }
-        return BrowserNetworkOutputBounds.clip(
-            result,
-            maximumBytes: BrowserNetworkOutputBounds.maximumURLBytes
-        )
+        return BrowserNetworkOutputBounds.clip(result, maximumBytes: BrowserNetworkOutputBounds.maximumURLBytes)
     }
 }
 
@@ -87,16 +82,8 @@ enum BrowserNetworkSensitiveTextRedaction {
 
     static func redact(_ source: String) -> String {
         let jsonRedacted = redactJSONIfPossible(source) ?? source
-        let withoutBearer = replacing(
-            bearerExpression,
-            in: jsonRedacted,
-            with: "[redacted]"
-        )
-        return replacing(
-            assignmentExpression,
-            in: withoutBearer,
-            with: "$1\"[redacted]\""
-        )
+        let withoutBearer = replacing(bearerExpression, in: jsonRedacted, with: "[redacted]")
+        return replacing(assignmentExpression, in: withoutBearer, with: "$1\"[redacted]\"")
     }
 
     static func redactAndClip(_ source: String, maximumBytes: Int) -> String {
@@ -121,10 +108,7 @@ enum BrowserNetworkSensitiveTextRedaction {
         }
         let redactedObject = redactJSONValue(object)
         guard JSONSerialization.isValidJSONObject(redactedObject),
-              let serialized = try? JSONSerialization.data(
-                withJSONObject: redactedObject,
-                options: [.sortedKeys]
-              )
+              let serialized = try? JSONSerialization.data(withJSONObject: redactedObject, options: [.sortedKeys])
         else {
             return nil
         }
@@ -150,18 +134,9 @@ enum BrowserNetworkSensitiveTextRedaction {
         return value
     }
 
-    private static func replacing(
-        _ expression: NSRegularExpression,
-        in source: String,
-        with template: String
-    ) -> String {
+    private static func replacing(_ expression: NSRegularExpression, in source: String, with template: String) -> String {
         let range = NSRange(source.startIndex..<source.endIndex, in: source)
-        return expression.stringByReplacingMatches(
-            in: source,
-            options: [],
-            range: range,
-            withTemplate: template
-        )
+        return expression.stringByReplacingMatches(in: source, options: [], range: range, withTemplate: template)
     }
 }
 
@@ -181,23 +156,12 @@ enum BrowserNetworkOutputBounds {
     }
 
     static func clipWithMetadata(_ value: String, maximumBytes: Int) -> (value: String, truncated: Bool) {
-        guard value.lengthOfBytes(using: .utf8) > maximumBytes else {
-            return (value, false)
-        }
+        guard value.lengthOfBytes(using: .utf8) > maximumBytes else { return (value, false) }
         let ellipsis = "…"
         let ellipsisBytes = ellipsis.lengthOfBytes(using: .utf8)
-        guard maximumBytes >= ellipsisBytes else {
-            return ("", true)
-        }
+        guard maximumBytes >= ellipsisBytes else { return ("", true) }
         let contentBudget = maximumBytes - ellipsisBytes
-        var result = ""
-        var usedBytes = 0
-        for character in value {
-            let characterBytes = String(character).lengthOfBytes(using: .utf8)
-            guard usedBytes + characterBytes <= contentBudget else { break }
-            result.append(character)
-            usedBytes += characterBytes
-        }
+        let result = value.prefixFitting(utf8Bytes: contentBudget)
         return (result + ellipsis, true)
     }
 }

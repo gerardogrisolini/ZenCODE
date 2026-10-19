@@ -1,10 +1,3 @@
-//
-//  RemoteMCPToolExecutor.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 26/05/26.
-//
-
 import Foundation
 import ToolCore
 
@@ -17,10 +10,7 @@ public actor RemoteMCPToolExecutor {
         toolNamePrefix: String,
         localTransportPolicy: LocalMCPTransportPolicy = .standard
     ) {
-        self.client = MCPClient(
-            configuration: configuration,
-            localTransportPolicy: localTransportPolicy
-        )
+        self.client = MCPClient(configuration: configuration, localTransportPolicy: localTransportPolicy)
         self.toolNamePrefix = toolNamePrefix
     }
 
@@ -41,10 +31,7 @@ public actor RemoteMCPToolExecutor {
         }
 
         let result = try await client.callTool(named: rawToolName, arguments: request.arguments)
-        return ToolExecutionOutput(
-            text: MCPToolResultRenderer.stringify(result),
-            rawResult: result
-        )
+        return ToolExecutionOutput(text: MCPToolResultRenderer.stringify(result), rawResult: result)
     }
 
     public func disconnect() async {
@@ -106,9 +93,7 @@ public nonisolated enum MCPToolResultRenderer {
         return renderedText
     }
 
-    private static func renderRootObjectMessage(
-        _ rootObject: [String: JSONValue]
-    ) -> String? {
+    private static func renderRootObjectMessage(_ rootObject: [String: JSONValue]) -> String? {
         let preferredText = rootObject["message"]?.stringValue
             ?? rootObject["content"]?.stringValue
             ?? rootObject["text"]?.stringValue
@@ -150,9 +135,7 @@ public nonisolated enum MCPToolResultRenderer {
         return renderedStructuredContent == "{}" ? nil : renderedStructuredContent
     }
 
-    private static func effectiveSuccessFlag(
-        in rootObject: [String: JSONValue]
-    ) -> Bool? {
+    private static func effectiveSuccessFlag(in rootObject: [String: JSONValue]) -> Bool? {
         if let success = rootObject["success"]?.boolValue {
             return success
         }
@@ -164,9 +147,7 @@ public nonisolated enum MCPToolResultRenderer {
         return structuredObject["success"]?.boolValue
     }
 
-    private static func isErrorResult(
-        _ rootObject: [String: JSONValue]
-    ) -> Bool {
+    private static func isErrorResult(_ rootObject: [String: JSONValue]) -> Bool {
         let structuredIsError: Bool
         if case let .object(structuredObject) = rootObject["structuredContent"] {
             structuredIsError = structuredObject["isError"]?.boolValue == true

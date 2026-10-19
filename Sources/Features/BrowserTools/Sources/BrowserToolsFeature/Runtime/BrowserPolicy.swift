@@ -60,21 +60,15 @@ struct BrowserURLPolicy: Sendable {
 
     func validate(_ rawURL: String) throws -> URL {
         let value = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else {
-            throw BrowserURLPolicyError.emptyURL
-        }
+        guard !value.isEmpty else { throw BrowserURLPolicyError.emptyURL }
         guard let components = URLComponents(string: value),
               let scheme = components.scheme?.lowercased(),
               let url = components.url
         else {
             throw BrowserURLPolicyError.invalidURL(value)
         }
-        guard ["http", "https"].contains(scheme) else {
-            throw BrowserURLPolicyError.unsupportedScheme(components.scheme ?? "")
-        }
-        guard components.user == nil, components.password == nil else {
-            throw BrowserURLPolicyError.credentialsNotAllowed(value)
-        }
+        guard ["http", "https"].contains(scheme) else { throw BrowserURLPolicyError.unsupportedScheme(components.scheme ?? "") }
+        guard components.user == nil, components.password == nil else { throw BrowserURLPolicyError.credentialsNotAllowed(value) }
         guard let rawHost = components.host?.trimmingCharacters(in: .whitespacesAndNewlines),
               !rawHost.isEmpty
         else {
@@ -82,9 +76,7 @@ struct BrowserURLPolicy: Sendable {
         }
 
         let host = normalizedHost(rawHost)
-        guard allowsPrivateNetwork || !isRestricted(host: host) else {
-            throw BrowserURLPolicyError.restrictedHost(rawHost)
-        }
+        guard allowsPrivateNetwork || !isRestricted(host: host) else { throw BrowserURLPolicyError.restrictedHost(rawHost) }
         return url
     }
 
@@ -94,12 +86,8 @@ struct BrowserURLPolicy: Sendable {
     /// allowed to continue an intercepted request.
     func validateResolvedAddress(_ rawAddress: String) throws {
         let address = normalizedHost(rawAddress)
-        guard !address.isEmpty else {
-            throw BrowserURLPolicyError.restrictedHost(rawAddress)
-        }
-        guard allowsPrivateNetwork || !isRestricted(host: address) else {
-            throw BrowserURLPolicyError.restrictedHost(rawAddress)
-        }
+        guard !address.isEmpty else { throw BrowserURLPolicyError.restrictedHost(rawAddress) }
+        guard allowsPrivateNetwork || !isRestricted(host: address) else { throw BrowserURLPolicyError.restrictedHost(rawAddress) }
     }
 
     /// Identifies the explicitly local destinations Browser supports for web
@@ -126,9 +114,7 @@ struct BrowserURLPolicy: Sendable {
         if let octets = ipv4Octets(host) {
             return octets[0] == 127
         }
-        guard let bytes = ipv6Bytes(host) else {
-            return false
-        }
+        guard let bytes = ipv6Bytes(host) else { return false }
         let isIPv4Compatible = bytes[0..<12].allSatisfy { $0 == 0 }
         let isIPv4Mapped = bytes[0..<10].allSatisfy { $0 == 0 }
             && bytes[10] == 0xff
@@ -165,9 +151,7 @@ struct BrowserURLPolicy: Sendable {
 
     private func ipv4Octets(_ host: String) -> [UInt8]? {
         let parts = host.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count == 4 else {
-            return nil
-        }
+        guard parts.count == 4 else { return nil }
         var result: [UInt8] = []
         result.reserveCapacity(4)
         for part in parts {

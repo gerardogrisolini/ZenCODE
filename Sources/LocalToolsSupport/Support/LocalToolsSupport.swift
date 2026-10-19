@@ -1,10 +1,3 @@
-//
-//  LocalToolsSupport.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import ToolCore
 import Foundation
 #if canImport(Darwin)
@@ -14,7 +7,6 @@ import Glibc
 #endif
 import FeatureKit
 
-
 enum LocalToolsSupport {
     struct FileOutlineEntry {
         let line: Int
@@ -22,20 +14,14 @@ enum LocalToolsSupport {
         let name: String
     }
 
-    static func requiredPath(
-        _ paths: String?...,
-        context: FeatureContext
-    ) throws -> URL {
+    static func requiredPath(_ paths: String?..., context: FeatureContext) throws -> URL {
         guard let path = paths.compactMap({ $0?.nilIfBlank }).first else {
             throw LocalToolsFeatureError.missingArgument("path")
         }
         return context.resolvePath(path)
     }
 
-    static func requiredRawString(
-        _ values: String?...,
-        name: String
-    ) throws -> String {
+    static func requiredRawString(_ values: String?..., name: String) throws -> String {
         guard let value = values.compactMap({ $0 }).first(where: { !$0.isEmpty }) else {
             throw LocalToolsFeatureError.missingArgument(name)
         }
@@ -121,10 +107,7 @@ enum LocalToolsSupport {
         return output.joined(separator: "\n")
     }
 
-    static func outlineEntries(
-        in lines: [String],
-        maxEntries: Int
-    ) -> (entries: [FileOutlineEntry], truncated: Bool) {
+    static func outlineEntries(in lines: [String], maxEntries: Int) -> (entries: [FileOutlineEntry], truncated: Bool) {
         var entries: [FileOutlineEntry] = []
         for (index, line) in lines.enumerated() {
             guard let entry = outlineEntry(for: line, lineNumber: index + 1) else {

@@ -59,9 +59,7 @@ struct BrowserSystemHostResolver: BrowserHostResolving {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
             .trimmingCharacters(in: CharacterSet(charactersIn: "."))
-        guard !normalizedHost.isEmpty else {
-            throw BrowserNetworkGuardError.unresolvedHost(host)
-        }
+        guard !normalizedHost.isEmpty else { throw BrowserNetworkGuardError.unresolvedHost(host) }
         // RFC 6761 makes these loopback names special in browsers. Resolving
         // them explicitly avoids platform resolver differences while retaining
         // Browser's intended local-development support.
@@ -80,9 +78,7 @@ struct BrowserSystemHostResolver: BrowserHostResolving {
         let status = normalizedHost.withCString { hostPointer in
             getaddrinfo(hostPointer, nil, &hints, &rawResults)
         }
-        guard status == 0, let firstResult = rawResults else {
-            throw BrowserNetworkGuardError.unresolvedHost(host)
-        }
+        guard status == 0, let firstResult = rawResults else { throw BrowserNetworkGuardError.unresolvedHost(host) }
         defer { freeaddrinfo(firstResult) }
 
         var addresses = Set<String>()
@@ -102,19 +98,14 @@ struct BrowserSystemHostResolver: BrowserHostResolving {
                 )
                 if nameStatus == 0 {
                     let nullTerminator = buffer.firstIndex(of: 0) ?? buffer.endIndex
-                    let address = String(
-                        decoding: buffer[..<nullTerminator].map(UInt8.init(bitPattern:)),
-                        as: UTF8.self
-                    )
+                    let address = String(decoding: buffer[..<nullTerminator].map(UInt8.init(bitPattern:)), as: UTF8.self)
                     addresses.insert(address)
                 }
             }
             current = info.ai_next
         }
         let values = addresses.sorted()
-        guard !values.isEmpty else {
-            throw BrowserNetworkGuardError.noResolvedAddresses(host)
-        }
+        guard !values.isEmpty else { throw BrowserNetworkGuardError.noResolvedAddresses(host) }
         return values
     }
 }
@@ -184,11 +175,7 @@ struct BrowserNetworkRequestPolicy: Sendable {
         self.allowsLoopback = allowsLoopback
     }
 
-    init(
-        urlPolicy: BrowserURLPolicy,
-        resolver: any BrowserHostResolving,
-        allowsLoopback: Bool = false
-    ) {
+    init(urlPolicy: BrowserURLPolicy, resolver: any BrowserHostResolving, allowsLoopback: Bool = false) {
         self.urlPolicy = urlPolicy
         self.resolver = resolver
         self.allowsLoopback = allowsLoopback
@@ -215,25 +202,19 @@ struct BrowserNetworkRequestPolicy: Sendable {
             throw BrowserNetworkGuardError.unsupportedRequestScheme(scheme)
         }
 
-        guard let navigationURL = components.url else {
-            throw BrowserNetworkGuardError.unsupportedRequestScheme(scheme)
-        }
+        guard let navigationURL = components.url else { throw BrowserNetworkGuardError.unsupportedRequestScheme(scheme) }
         let validatedURL = try urlPolicy.validate(navigationURL.absoluteString)
         guard let host = validatedURL.host, !host.isEmpty else {
             throw BrowserNetworkGuardError.unresolvedHost(components.host ?? "")
         }
         let isExplicitLoopback = urlPolicy.isLoopbackHost(host)
         guard !isExplicitLoopback || allowsLoopback else {
-            throw BrowserNetworkGuardError.loopbackNotAuthorized(
-                BrowserNetworkURLRedaction.apply(to: rawURL)
-            )
+            throw BrowserNetworkGuardError.loopbackNotAuthorized(BrowserNetworkURLRedaction.apply(to: rawURL))
         }
         let addresses = try resolver.resolve(host: host)
         for address in addresses {
             guard isExplicitLoopback || !urlPolicy.isLoopbackHost(address) else {
-                throw BrowserNetworkGuardError.unexpectedResolvedLoopback(
-                    BrowserNetworkURLRedaction.apply(to: rawURL)
-                )
+                throw BrowserNetworkGuardError.unexpectedResolvedLoopback(BrowserNetworkURLRedaction.apply(to: rawURL))
             }
             try urlPolicy.validateResolvedAddress(address)
         }
@@ -270,18 +251,14 @@ struct BrowserNetworkRequestPolicy: Sendable {
             throw BrowserNetworkGuardError.unsupportedRequestScheme(scheme)
         }
 
-        guard let navigationURL = components.url else {
-            throw BrowserNetworkGuardError.unsupportedRequestScheme(scheme)
-        }
+        guard let navigationURL = components.url else { throw BrowserNetworkGuardError.unsupportedRequestScheme(scheme) }
         let validatedURL = try urlPolicy.validate(navigationURL.absoluteString)
         guard let host = validatedURL.host, !host.isEmpty else {
             throw BrowserNetworkGuardError.unresolvedHost(components.host ?? "")
         }
         let isExplicitLoopback = urlPolicy.isLoopbackHost(host)
         guard !isExplicitLoopback || allowsLoopback else {
-            throw BrowserNetworkGuardError.loopbackNotAuthorized(
-                BrowserNetworkURLRedaction.apply(to: rawURL)
-            )
+            throw BrowserNetworkGuardError.loopbackNotAuthorized(BrowserNetworkURLRedaction.apply(to: rawURL))
         }
 
         let addresses = try await resolveHostOffloaded(host)
@@ -479,10 +456,7 @@ final class BrowserNetworkGuard: Sendable {
             try await requestPolicy.validateRequestURLOffloaded(url)
             try Task.checkCancellation()
             guard acceptsDecisions else { return }
-            _ = try await session.send(
-                method: "Fetch.continueRequest",
-                params: ["requestId": requestID]
-            )
+            _ = try await session.send(method: "Fetch.continueRequest", params: ["requestId": requestID])
         } catch is CancellationError {
             // `stop()` owns cancellation. Do not record a policy violation or
             // issue a new CDP command while that teardown is in progress.

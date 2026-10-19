@@ -75,11 +75,7 @@ struct BrowserScreenshotPixelComparisonUnavailable: Codable, Hashable, Sendable 
     let message: String
     let dimensions: BrowserScreenshotDimensionsMismatch?
 
-    init(
-        reason: Reason,
-        message: String,
-        dimensions: BrowserScreenshotDimensionsMismatch? = nil
-    ) {
+    init(reason: Reason, message: String, dimensions: BrowserScreenshotDimensionsMismatch? = nil) {
         self.reason = reason
         self.message = message
         self.dimensions = dimensions
@@ -176,12 +172,7 @@ struct BrowserScreenshotPixelComparisonUnavailable: Codable, Hashable, Sendable 
 
 enum BrowserVisualComparisonError: LocalizedError, Sendable {
     case invalidThresholdPercent(Double)
-    case differentImageDimensions(
-        baselineWidth: Int,
-        baselineHeight: Int,
-        candidateWidth: Int,
-        candidateHeight: Int
-    )
+    case differentImageDimensions(baselineWidth: Int, baselineHeight: Int, candidateWidth: Int, candidateHeight: Int)
 
     var errorDescription: String? {
         switch self {
@@ -215,10 +206,7 @@ struct BrowserScreenshotVisualDiff: Sendable {
 }
 
 enum BrowserScreenshotComparison {
-    static func compare(
-        baseline: BrowserOwnedScreenshot,
-        candidate: BrowserOwnedScreenshot
-    ) -> BrowserScreenshotByteComparison {
+    static func compare(baseline: BrowserOwnedScreenshot, candidate: BrowserOwnedScreenshot) -> BrowserScreenshotByteComparison {
         let commonByteCount = min(baseline.data.count, candidate.data.count)
         let mismatchedCommonBytes = zip(baseline.data, candidate.data)
             .reduce(into: 0) { count, pair in
@@ -446,19 +434,14 @@ struct BrowserCompareScreenshotsTool: FeatureTool {
         guard let candidatePath = input.resolvedCandidatePath else {
             throw BrowserToolsFeatureError.missingArgument("candidatePath")
         }
-        let thresholdPercent = try BrowserVisualComparisonLimits.resolveThresholdPercent(
-            input.resolvedThresholdPercent
-        )
+        let thresholdPercent = try BrowserVisualComparisonLimits.resolveThresholdPercent(input.resolvedThresholdPercent)
 
         let store = BrowserArtifactStore(environment: context.environment)
         let baseline = try store.loadOwnedScreenshot(at: baselinePath)
         let candidate = try store.loadOwnedScreenshot(at: candidatePath)
         // The legacy encoded-byte comparison is always produced for any pair the
         // Browser-owned load path accepted, preserving the original contract.
-        let byteComparison = BrowserScreenshotComparison.compare(
-            baseline: baseline,
-            candidate: candidate
-        )
+        let byteComparison = BrowserScreenshotComparison.compare(baseline: baseline, candidate: candidate)
 
         // Attempt the bounded decoded-pixel diff. If dimensions, format, or codec
         // limits prevent it, degrade to byte-only output with a structured reason
@@ -512,7 +495,6 @@ struct BrowserCompareScreenshotsTool: FeatureTool {
         )
     }
 }
-
 
 extension BrowserCompareScreenshotsTool {
     static var presentation: ToolPresentationDefinition {

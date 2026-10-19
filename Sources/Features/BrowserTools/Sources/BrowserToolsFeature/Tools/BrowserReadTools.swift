@@ -60,17 +60,13 @@ struct BrowserSnapshotTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> BrowserSnapshotOutput {
-        guard let pageID = input.resolvedPageID else {
-            throw BrowserToolsFeatureError.missingArgument("pageId")
-        }
+        guard let pageID = input.resolvedPageID else { throw BrowserToolsFeatureError.missingArgument("pageId") }
         return try await BrowserToolsRunner.withPage(pageID: pageID, context: context) { session, tab in
             // Capture the Browser-owned main-frame identity on both sides of
             // the AX and metadata reads. A snapshot that raced a navigation is
             // never entered in the host-side authorization store.
             let document = try await session.currentDocumentIdentity()
-            let snapshot = try await session.accessibilitySnapshot(
-                interactiveOnly: input.resolvesInteractiveOnly
-            )
+            let snapshot = try await session.accessibilitySnapshot(interactiveOnly: input.resolvesInteractiveOnly)
             let page = try await session.pageMetadata(pageID: tab.id)
             try await session.validateCurrentDocument(matches: document)
             let snapshotID = UUID().uuidString.lowercased()
@@ -116,9 +112,7 @@ struct BrowserConsoleTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> BrowserConsoleOutput {
-        guard let pageID = input.resolvedPageID else {
-            throw BrowserToolsFeatureError.missingArgument("pageId")
-        }
+        guard let pageID = input.resolvedPageID else { throw BrowserToolsFeatureError.missingArgument("pageId") }
         let level = try BrowserConsoleLevel.resolve(input.level)
         let limit = try BrowserConsoleCapture.resolvedLimit(input.limit)
 
@@ -221,9 +215,7 @@ struct BrowserNetworkTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> BrowserNetworkOutput {
-        guard let pageID = input.resolvedPageID else {
-            throw BrowserToolsFeatureError.missingArgument("pageId")
-        }
+        guard let pageID = input.resolvedPageID else { throw BrowserToolsFeatureError.missingArgument("pageId") }
         let requestedURL = try input.url?.nilIfBlank.map {
             try BrowserURLPolicy(environment: context.environment).validate($0)
         }
@@ -245,10 +237,7 @@ struct BrowserNetworkTool: FeatureTool {
             context: context,
             allowsLoopback: allowsLoopback
         ) { session, tab in
-            let observer = BrowserNetworkObserver(
-                capturesHeaders: capturesHeaders,
-                capturesBodies: capturesBodies
-            )
+            let observer = BrowserNetworkObserver(capturesHeaders: capturesHeaders, capturesBodies: capturesBodies)
             let eventToken = session.addEventHandler { event in
                 observer.consume(event)
             }
@@ -269,9 +258,7 @@ struct BrowserNetworkTool: FeatureTool {
                 if let requestedURL {
                     try await session.navigate(to: requestedURL.absoluteString)
                 }
-                try await Task.sleep(
-                    nanoseconds: UInt64(durationSeconds) * 1_000_000_000
-                )
+                try await Task.sleep(nanoseconds: UInt64(durationSeconds) * 1_000_000_000)
                 let observedDuration = observationStart.duration(to: .now)
                 let observedDurationMilliseconds = max(
                     0,
@@ -333,9 +320,7 @@ struct BrowserScreenshotTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> BrowserScreenshotOutput {
-        guard let pageID = input.resolvedPageID else {
-            throw BrowserToolsFeatureError.missingArgument("pageId")
-        }
+        guard let pageID = input.resolvedPageID else { throw BrowserToolsFeatureError.missingArgument("pageId") }
         let fullPage = input.resolvesFullPage
         let store = BrowserArtifactStore(environment: context.environment)
 
@@ -347,7 +332,6 @@ struct BrowserScreenshotTool: FeatureTool {
         }
     }
 }
-
 
 // MARK: - Semantic presentation
 

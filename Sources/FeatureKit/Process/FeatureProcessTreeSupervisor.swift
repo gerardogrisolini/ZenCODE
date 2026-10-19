@@ -1,5 +1,3 @@
-//  Created by Gerardo Grisolini on 30/05/26.
-//
 import Foundation
 
 #if canImport(Darwin)
@@ -16,10 +14,7 @@ public enum FeatureProcessTreeSupervisor {
     /// Terminates one captured process tree with a single shared TERM→KILL
     /// escalation. Descendants are snapshotted before TERM because an exiting
     /// root may re-parent a TERM-ignoring child before the grace period ends.
-    public static func terminateAndEscalate(
-        _ process: Process,
-        graceNanoseconds: UInt64 = 1_000_000_000
-    ) async {
+    public static func terminateAndEscalate(_ process: Process, graceNanoseconds: UInt64 = 1_000_000_000) async {
         let pid = process.processIdentifier
         guard pid > 0 else { return }
         let processGroupLeader = isProcessGroupLeader(process)
@@ -73,11 +68,7 @@ public enum FeatureProcessTreeSupervisor {
         #endif
     }
 
-    public static func send(
-        _ signal: Int32,
-        to process: Process,
-        processGroupLeader: Bool
-    ) {
+    public static func send(_ signal: Int32, to process: Process, processGroupLeader: Bool) {
         let pid = process.processIdentifier
         guard pid > 0 else { return }
         let target = processGroupLeader ? -pid : pid

@@ -40,11 +40,7 @@ struct BrowserNetworkTiming: Codable, Hashable, Sendable {
             tlsMilliseconds: phaseDuration(values, start: "sslStart", end: "sslEnd"),
             sendMilliseconds: phaseDuration(values, start: "sendStart", end: "sendEnd"),
             waitMilliseconds: phaseDuration(values, start: "sendEnd", end: "receiveHeadersStart"),
-            receiveHeadersMilliseconds: phaseDuration(
-                values,
-                start: "receiveHeadersStart",
-                end: "receiveHeadersEnd"
-            )
+            receiveHeadersMilliseconds: phaseDuration(values, start: "receiveHeadersStart", end: "receiveHeadersEnd")
         )
         guard timing.dnsMilliseconds != nil
             || timing.connectMilliseconds != nil
@@ -58,11 +54,7 @@ struct BrowserNetworkTiming: Codable, Hashable, Sendable {
         return timing
     }
 
-    private static func phaseDuration(
-        _ values: [String: Any],
-        start: String,
-        end: String
-    ) -> Double? {
+    private static func phaseDuration(_ values: [String: Any], start: String, end: String) -> Double? {
         guard let startValue = BrowserNetworkValue.double(values[start]),
               let endValue = BrowserNetworkValue.double(values[end]),
               startValue >= 0,
@@ -179,7 +171,6 @@ struct BrowserNetworkSummary: Codable, Sendable {
     let statusCounts: [String: Int]
 }
 
-
 struct BrowserNetworkOutput: Codable, Sendable {
     let page: BrowserPage
     let entries: [BrowserNetworkEntry]
@@ -254,9 +245,7 @@ struct BrowserNetworkFilters: Sendable, Equatable {
         }
         if let status {
             guard (100...599).contains(status) else {
-                throw BrowserToolsFeatureError.browserError(
-                    "Network status filter must be an HTTP status between 100 and 599."
-                )
+                throw BrowserToolsFeatureError.browserError("Network status filter must be an HTTP status between 100 and 599.")
             }
         }
 
@@ -275,9 +264,7 @@ struct BrowserNetworkFilters: Sendable, Equatable {
     }
 
     func matches(_ entry: BrowserNetworkEntry) -> Bool {
-        guard resourceTypes.isEmpty || resourceTypes.contains(entry.resourceType.lowercased()) else {
-            return false
-        }
+        guard resourceTypes.isEmpty || resourceTypes.contains(entry.resourceType.lowercased()) else { return false }
         guard status == nil || entry.status == status else { return false }
         guard let urlContains else { return true }
         return entry.url.range(of: urlContains, options: [.caseInsensitive]) != nil

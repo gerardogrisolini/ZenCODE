@@ -1,10 +1,3 @@
-//
-//  MCPHTTPTransportClient+OAuth.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 26/05/26.
-//
-
 #if canImport(CryptoKit)
 
 import CryptoKit
@@ -30,9 +23,7 @@ extension MCPHTTPTransportClient {
         return false
     }
 
-    public func ensureOAuthAccessToken(
-        requiringFreshLogin: Bool
-    ) async throws -> MCPOAuthAccessToken {
+    public func ensureOAuthAccessToken(requiringFreshLogin: Bool) async throws -> MCPOAuthAccessToken {
         if requiringFreshLogin {
             oauthAccessToken = nil
         } else if let oauthAccessToken {
@@ -55,9 +46,7 @@ extension MCPHTTPTransportClient {
 
     public func performBrowserOAuthLogin() async throws -> MCPOAuthAccessToken {
         guard case let .browserOAuth(oauthConfiguration) = httpAuthentication else {
-            throw MCPClientError.browserAuthenticationFailed(
-                "This MCP endpoint is not configured for browser sign-in."
-            )
+            throw MCPClientError.browserAuthenticationFailed("This MCP endpoint is not configured for browser sign-in.")
         }
         let serviceName = oauthConfiguration.serviceName
 
@@ -78,10 +67,7 @@ extension MCPHTTPTransportClient {
             callbackServer.stop()
         }
 
-        let clientRegistration = try await registerOAuthClient(
-            using: metadata,
-            oauthConfiguration: oauthConfiguration
-        )
+        let clientRegistration = try await registerOAuthClient(using: metadata, oauthConfiguration: oauthConfiguration)
         let state = Self.randomURLSafeToken(byteCount: 24)
         let codeVerifier = Self.randomURLSafeToken(byteCount: 48)
         let authorizationURL = try makeAuthorizationURL(
@@ -222,9 +208,7 @@ extension MCPHTTPTransportClient {
     ) throws -> URL {
         let codeChallenge = Self.pkceCodeChallenge(for: codeVerifier)
         guard var components = URLComponents(url: metadata.authorizationEndpoint, resolvingAgainstBaseURL: false) else {
-            throw MCPClientError.browserAuthenticationFailed(
-                "Unable to build the \(serviceName) browser sign-in URL."
-            )
+            throw MCPClientError.browserAuthenticationFailed("Unable to build the \(serviceName) browser sign-in URL.")
         }
 
         components.queryItems = [
@@ -238,9 +222,7 @@ extension MCPHTTPTransportClient {
         ]
 
         guard let authorizationURL = components.url else {
-            throw MCPClientError.browserAuthenticationFailed(
-                "Unable to build the \(serviceName) browser sign-in URL."
-            )
+            throw MCPClientError.browserAuthenticationFailed("Unable to build the \(serviceName) browser sign-in URL.")
         }
 
         return authorizationURL
@@ -256,10 +238,7 @@ extension MCPHTTPTransportClient {
     ) async throws -> MCPOAuthAccessToken {
         var request = URLRequest(url: metadata.tokenEndpoint)
         request.httpMethod = "POST"
-        request.setValue(
-            "application/x-www-form-urlencoded; charset=utf-8",
-            forHTTPHeaderField: "Content-Type"
-        )
+        request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.httpBody = Self.formEncodedBody([
             URLQueryItem(name: "grant_type", value: "authorization_code"),
@@ -379,10 +358,7 @@ extension MCPHTTPTransportClient {
         return components.percentEncodedQuery?.data(using: .utf8)
     }
 
-    public nonisolated static func openBrowser(
-        at url: URL,
-        serviceName: String
-    ) async throws {
+    public nonisolated static func openBrowser(at url: URL, serviceName: String) async throws {
         let didOpen = await MainActor.run {
             NSWorkspace.shared.open(url)
         }
@@ -398,10 +374,7 @@ extension MCPHTTPTransportClient {
         redirectURL: URL
     ) -> MCPOAuthClientRegistration? {
         guard let data = UserDefaults.standard.data(
-            forKey: oauthClientRegistrationStorageKey(
-                endpointURL: endpointURL,
-                redirectURL: redirectURL
-            )
+            forKey: oauthClientRegistrationStorageKey(endpointURL: endpointURL, redirectURL: redirectURL)
         ) else {
             return nil
         }
@@ -420,17 +393,11 @@ extension MCPHTTPTransportClient {
 
         UserDefaults.standard.set(
             data,
-            forKey: oauthClientRegistrationStorageKey(
-                endpointURL: endpointURL,
-                redirectURL: redirectURL
-            )
+            forKey: oauthClientRegistrationStorageKey(endpointURL: endpointURL, redirectURL: redirectURL)
         )
     }
 
-    public nonisolated static func oauthClientRegistrationStorageKey(
-        endpointURL: URL,
-        redirectURL: URL
-    ) -> String {
+    public nonisolated static func oauthClientRegistrationStorageKey(endpointURL: URL, redirectURL: URL) -> String {
         "MCPHTTPTransportClient.oauthClientRegistration.\(endpointURL.absoluteString)|\(redirectURL.absoluteString)"
     }
 }

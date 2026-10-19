@@ -8,13 +8,8 @@
 import Foundation
 
 extension BrowserPNGCodec {
-    static func inflateZlib(
-        _ compressed: [UInt8],
-        maximumOutputBytes: Int
-    ) throws -> [UInt8] {
-        guard compressed.count >= 6 else {
-            throw BrowserPNGCodecError.invalidZlibStream
-        }
+    static func inflateZlib(_ compressed: [UInt8], maximumOutputBytes: Int) throws -> [UInt8] {
+        guard compressed.count >= 6 else { throw BrowserPNGCodecError.invalidZlibStream }
         let cmf = compressed[0]
         let flags = compressed[1]
         let header = (Int(cmf) << 8) | Int(flags)
@@ -37,9 +32,7 @@ extension BrowserPNGCodec {
         repeat {
             try Task.checkCancellation()
             blockCount += 1
-            guard blockCount <= maximumDeflateBlocks else {
-                throw BrowserPNGCodecError.invalidDeflateStream
-            }
+            guard blockCount <= maximumDeflateBlocks else { throw BrowserPNGCodecError.invalidDeflateStream }
             finalBlock = try reader.readBits(1) == 1
             let blockType = try reader.readBits(2)
             switch blockType {
@@ -69,21 +62,17 @@ extension BrowserPNGCodec {
         } while !finalBlock
 
         reader.alignToByte()
-        guard reader.isAtEnd else {
-            throw BrowserPNGCodecError.invalidDeflateStream
-        }
+        guard reader.isAtEnd else { throw BrowserPNGCodecError.invalidDeflateStream }
 
         let expectedAdler = (UInt32(compressed[deflateEnd]) << 24)
             | (UInt32(compressed[deflateEnd + 1]) << 16)
             | (UInt32(compressed[deflateEnd + 2]) << 8)
             | UInt32(compressed[deflateEnd + 3])
-        guard adler32(output) == expectedAdler else {
-            throw BrowserPNGCodecError.invalidZlibStream
-        }
+        guard adler32(output) == expectedAdler else { throw BrowserPNGCodecError.invalidZlibStream }
         return output
     }
 
-    static func inflateStoredBlock(
+    fileprivate static func inflateStoredBlock(
         reader: inout DeflateBitReader,
         output: inout [UInt8],
         maximumOutputBytes: Int
@@ -91,30 +80,23 @@ extension BrowserPNGCodec {
         reader.alignToByte()
         let length = try reader.readAlignedUInt16()
         let complement = try reader.readAlignedUInt16()
-        guard length ^ complement == 0xFFFF else {
-            throw BrowserPNGCodecError.invalidDeflateStream
-        }
-        guard length <= maximumOutputBytes - output.count else {
-            throw BrowserPNGCodecError.decompressedDataTooLarge
-        }
+        guard length ^ complement == 0xFFFF else { throw BrowserPNGCodecError.invalidDeflateStream }
+        guard length <= maximumOutputBytes - output.count else { throw BrowserPNGCodecError.decompressedDataTooLarge }
         let bytes = try reader.readAlignedBytes(count: length)
         output.append(contentsOf: bytes)
     }
 
-    static func fixedHuffmanTrees() throws -> (literalLength: DeflateHuffmanTree, distance: DeflateHuffmanTree) {
+    fileprivate static func fixedHuffmanTrees() throws -> (literalLength: DeflateHuffmanTree, distance: DeflateHuffmanTree) {
         var literalLengths = [Int](repeating: 0, count: 288)
         for symbol in 0...143 { literalLengths[symbol] = 8 }
         for symbol in 144...255 { literalLengths[symbol] = 9 }
         for symbol in 256...279 { literalLengths[symbol] = 7 }
         for symbol in 280...287 { literalLengths[symbol] = 8 }
         let distanceLengths = [Int](repeating: 5, count: 32)
-        return (
-            try DeflateHuffmanTree(lengths: literalLengths),
-            try DeflateHuffmanTree(lengths: distanceLengths)
-        )
+        return (try DeflateHuffmanTree(lengths: literalLengths), try DeflateHuffmanTree(lengths: distanceLengths))
     }
 
-    static func dynamicHuffmanTrees(
+    fileprivate static func dynamicHuffmanTrees(
         reader: inout DeflateBitReader
     ) throws -> (literalLength: DeflateHuffmanTree, distance: DeflateHuffmanTree) {
         let literalLengthCount = try reader.readBits(5) + 257
@@ -140,25 +122,17 @@ extension BrowserPNGCodec {
             case 0...15:
                 lengths.append(symbol)
             case 16:
-                guard let previous = lengths.last else {
-                    throw BrowserPNGCodecError.invalidDeflateStream
-                }
+                guard let previous = lengths.last else { throw BrowserPNGCodecError.invalidDeflateStream }
                 let repeatCount = try reader.readBits(2) + 3
-                guard repeatCount <= totalCount - lengths.count else {
-                    throw BrowserPNGCodecError.invalidDeflateStream
-                }
+                guard repeatCount <= totalCount - lengths.count else { throw BrowserPNGCodecError.invalidDeflateStream }
                 lengths.append(contentsOf: repeatElement(previous, count: repeatCount))
             case 17:
                 let repeatCount = try reader.readBits(3) + 3
-                guard repeatCount <= totalCount - lengths.count else {
-                    throw BrowserPNGCodecError.invalidDeflateStream
-                }
+                guard repeatCount <= totalCount - lengths.count else { throw BrowserPNGCodecError.invalidDeflateStream }
                 lengths.append(contentsOf: repeatElement(0, count: repeatCount))
             case 18:
                 let repeatCount = try reader.readBits(7) + 11
-                guard repeatCount <= totalCount - lengths.count else {
-                    throw BrowserPNGCodecError.invalidDeflateStream
-                }
+                guard repeatCount <= totalCount - lengths.count else { throw BrowserPNGCodecError.invalidDeflateStream }
                 lengths.append(contentsOf: repeatElement(0, count: repeatCount))
             default:
                 throw BrowserPNGCodecError.invalidDeflateStream
@@ -167,16 +141,14 @@ extension BrowserPNGCodec {
 
         let literalLengths = Array(lengths[0..<literalLengthCount])
         let distanceLengths = Array(lengths[literalLengthCount..<totalCount])
-        guard literalLengths.count > 256, literalLengths[256] != 0 else {
-            throw BrowserPNGCodecError.invalidDeflateStream
-        }
+        guard literalLengths.count > 256, literalLengths[256] != 0 else { throw BrowserPNGCodecError.invalidDeflateStream }
         return (
             try DeflateHuffmanTree(lengths: literalLengths),
             try DeflateHuffmanTree(lengths: distanceLengths, allowsEmpty: true)
         )
     }
 
-    static func inflateHuffmanBlock(
+    fileprivate static func inflateHuffmanBlock(
         reader: inout DeflateBitReader,
         literalLengthTree: DeflateHuffmanTree,
         distanceTree: DeflateHuffmanTree,
@@ -210,9 +182,7 @@ extension BrowserPNGCodec {
             let symbol = try literalLengthTree.decode(reader: &reader)
             switch symbol {
             case 0...255:
-                guard output.count < maximumOutputBytes else {
-                    throw BrowserPNGCodecError.decompressedDataTooLarge
-                }
+                guard output.count < maximumOutputBytes else { throw BrowserPNGCodecError.decompressedDataTooLarge }
                 output.append(UInt8(symbol))
             case 256:
                 return
@@ -220,9 +190,7 @@ extension BrowserPNGCodec {
                 let lengthIndex = symbol - 257
                 let length = lengthBases[lengthIndex] + (try reader.readBits(lengthExtraBits[lengthIndex]))
                 let distanceSymbol = try distanceTree.decode(reader: &reader)
-                guard distanceSymbol < distanceBases.count else {
-                    throw BrowserPNGCodecError.invalidDeflateStream
-                }
+                guard distanceSymbol < distanceBases.count else { throw BrowserPNGCodecError.invalidDeflateStream }
                 let distance = distanceBases[distanceSymbol]
                     + (try reader.readBits(distanceExtraBits[distanceSymbol]))
                 guard distance > 0, distance <= output.count,
@@ -254,14 +222,10 @@ private struct DeflateBitReader {
     }
 
     mutating func readBits(_ count: Int) throws -> Int {
-        guard count >= 0, count <= 16 else {
-            throw BrowserPNGCodecError.invalidDeflateStream
-        }
+        guard count >= 0, count <= 16 else { throw BrowserPNGCodecError.invalidDeflateStream }
         var result = 0
         for bit in 0..<count {
-            guard byteOffset < bytes.count else {
-                throw BrowserPNGCodecError.invalidDeflateStream
-            }
+            guard byteOffset < bytes.count else { throw BrowserPNGCodecError.invalidDeflateStream }
             let value = Int((bytes[byteOffset] >> bitOffset) & 1)
             result |= value << bit
             bitOffset += 1
@@ -281,9 +245,7 @@ private struct DeflateBitReader {
 
     mutating func readAlignedUInt16() throws -> Int {
         alignToByte()
-        guard bytes.count - byteOffset >= 2 else {
-            throw BrowserPNGCodecError.invalidDeflateStream
-        }
+        guard bytes.count - byteOffset >= 2 else { throw BrowserPNGCodecError.invalidDeflateStream }
         let value = Int(bytes[byteOffset]) | (Int(bytes[byteOffset + 1]) << 8)
         byteOffset += 2
         return value
@@ -291,9 +253,7 @@ private struct DeflateBitReader {
 
     mutating func readAlignedBytes(count: Int) throws -> [UInt8] {
         alignToByte()
-        guard count >= 0, count <= bytes.count - byteOffset else {
-            throw BrowserPNGCodecError.invalidDeflateStream
-        }
+        guard count >= 0, count <= bytes.count - byteOffset else { throw BrowserPNGCodecError.invalidDeflateStream }
         let result = Array(bytes[byteOffset..<(byteOffset + count)])
         byteOffset += count
         return result
@@ -305,14 +265,10 @@ private struct DeflateHuffmanTree {
     private let maximumCodeLength: Int
 
     init(lengths: [Int], allowsEmpty: Bool = false) throws {
-        guard !lengths.isEmpty else {
-            throw BrowserPNGCodecError.invalidDeflateStream
-        }
+        guard !lengths.isEmpty else { throw BrowserPNGCodecError.invalidDeflateStream }
         let nonZeroLengths = lengths.filter { $0 != 0 }
         if nonZeroLengths.isEmpty {
-            guard allowsEmpty else {
-                throw BrowserPNGCodecError.invalidDeflateStream
-            }
+            guard allowsEmpty else { throw BrowserPNGCodecError.invalidDeflateStream }
             symbolsByCode = [:]
             maximumCodeLength = 0
             return
@@ -320,9 +276,7 @@ private struct DeflateHuffmanTree {
 
         var counts = [Int](repeating: 0, count: 16)
         for length in lengths {
-            guard (0...15).contains(length) else {
-                throw BrowserPNGCodecError.invalidDeflateStream
-            }
+            guard (0...15).contains(length) else { throw BrowserPNGCodecError.invalidDeflateStream }
             if length > 0 {
                 counts[length] += 1
             }
@@ -332,9 +286,7 @@ private struct DeflateHuffmanTree {
         var code = 0
         for length in 1...15 {
             code = (code + counts[length - 1]) << 1
-            guard code + counts[length] <= (1 << length) else {
-                throw BrowserPNGCodecError.invalidDeflateStream
-            }
+            guard code + counts[length] <= (1 << length) else { throw BrowserPNGCodecError.invalidDeflateStream }
             nextCode[length] = code
         }
 
@@ -345,9 +297,7 @@ private struct DeflateHuffmanTree {
             nextCode[length] += 1
             let reversedCode = Self.reverseBits(canonicalCode, count: length)
             let key = (length << 16) | reversedCode
-            guard decodedSymbols[key] == nil else {
-                throw BrowserPNGCodecError.invalidDeflateStream
-            }
+            guard decodedSymbols[key] == nil else { throw BrowserPNGCodecError.invalidDeflateStream }
             decodedSymbols[key] = symbol
         }
         symbolsByCode = decodedSymbols
@@ -355,9 +305,7 @@ private struct DeflateHuffmanTree {
     }
 
     func decode(reader: inout DeflateBitReader) throws -> Int {
-        guard maximumCodeLength > 0 else {
-            throw BrowserPNGCodecError.invalidDeflateStream
-        }
+        guard maximumCodeLength > 0 else { throw BrowserPNGCodecError.invalidDeflateStream }
         var code = 0
         for length in 1...maximumCodeLength {
             code |= (try reader.readBits(1)) << (length - 1)

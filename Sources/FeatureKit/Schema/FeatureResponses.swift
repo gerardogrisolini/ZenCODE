@@ -1,10 +1,3 @@
-//
-//  FeatureResponses.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 
 /// Canonical response emitted by `--list-tools`.
@@ -26,10 +19,7 @@ public struct FeatureListToolsResponse: Codable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let schemaVersion = try container.decodeIfPresent(
-            Int.self,
-            forKey: .schemaVersion
-        ) ?? 1
+        let schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         let tools = try container.decode([FeatureToolDescriptor].self, forKey: .tools)
         if schemaVersion >= 2,
            tools.contains(where: { $0.presentation == nil }) {

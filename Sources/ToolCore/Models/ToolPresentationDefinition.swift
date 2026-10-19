@@ -1,10 +1,3 @@
-//
-//  ToolPresentationDefinition.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 
 /// Rendering density requested by a presentation consumer. The definition is
@@ -140,11 +133,7 @@ public nonisolated struct ToolPresentationValueDefinition: Codable, Hashable, Se
         format: ToolPresentationValueFormat = .json,
         fallback: String? = nil
     ) -> ToolPresentationValueDefinition {
-        ToolPresentationValueDefinition(
-            source: .arguments,
-            format: format,
-            fallback: fallback
-        )
+        ToolPresentationValueDefinition(source: .arguments, format: format, fallback: fallback)
     }
 
     public static func collectedArguments(
@@ -222,27 +211,17 @@ public nonisolated struct ToolPresentationValueDefinition: Codable, Hashable, Se
         format: ToolPresentationValueFormat = .text,
         fallback: String? = nil
     ) -> ToolPresentationValueDefinition {
-        ToolPresentationValueDefinition(
-            source: .resultOutput,
-            format: format,
-            fallback: fallback
-        )
+        ToolPresentationValueDefinition(source: .resultOutput, format: format, fallback: fallback)
     }
 
     public static func resultSummary(
         format: ToolPresentationValueFormat = .text,
         fallback: String? = nil
     ) -> ToolPresentationValueDefinition {
-        ToolPresentationValueDefinition(
-            source: .resultSummary,
-            format: format,
-            fallback: fallback
-        )
+        ToolPresentationValueDefinition(source: .resultSummary, format: format, fallback: fallback)
     }
 
-    public static func toolName(
-        format: ToolPresentationValueFormat = .text
-    ) -> ToolPresentationValueDefinition {
+    public static func toolName(format: ToolPresentationValueFormat = .text) -> ToolPresentationValueDefinition {
         ToolPresentationValueDefinition(source: .toolName, format: format)
     }
 
@@ -250,11 +229,7 @@ public nonisolated struct ToolPresentationValueDefinition: Codable, Hashable, Se
         _ value: String,
         format: ToolPresentationValueFormat = .text
     ) -> ToolPresentationValueDefinition {
-        ToolPresentationValueDefinition(
-            source: .literal,
-            literalValue: value,
-            format: format
-        )
+        ToolPresentationValueDefinition(source: .literal, literalValue: value, format: format)
     }
 
     /// Semantic validation is intentionally lightweight so tool owners can
@@ -282,11 +257,7 @@ public nonisolated struct ToolPresentationMetadataDefinition: Codable, Hashable,
     public let value: ToolPresentationValueDefinition
     public let modes: [ToolPresentationMode]
 
-    public init(
-        label: String,
-        value: ToolPresentationValueDefinition,
-        modes: [ToolPresentationMode] = [.expanded]
-    ) {
+    public init(label: String, value: ToolPresentationValueDefinition, modes: [ToolPresentationMode] = [.expanded]) {
         self.label = label
         self.value = value
         self.modes = modes
@@ -341,12 +312,7 @@ public nonisolated struct ToolPresentationSectionDefinition: Codable, Hashable, 
         value: ToolPresentationValueDefinition = .arguments(),
         modes: [ToolPresentationMode] = [.expanded]
     ) -> ToolPresentationSectionDefinition {
-        ToolPresentationSectionDefinition(
-            kind: .parameters,
-            label: label,
-            value: value,
-            modes: modes
-        )
+        ToolPresentationSectionDefinition(kind: .parameters, label: label, value: value, modes: modes)
     }
 
     public static func code(
@@ -386,12 +352,7 @@ public nonisolated struct ToolPresentationSectionDefinition: Codable, Hashable, 
         value: ToolPresentationValueDefinition,
         modes: [ToolPresentationMode] = [.expanded]
     ) -> ToolPresentationSectionDefinition {
-        ToolPresentationSectionDefinition(
-            kind: .list,
-            label: label,
-            value: value,
-            modes: modes
-        )
+        ToolPresentationSectionDefinition(kind: .list, label: label, value: value, modes: modes)
     }
 
     public var isSemanticallyValid: Bool {
@@ -465,11 +426,7 @@ public extension ToolPresentationDefinition {
                 : .argument(targetKeyPaths, format: targetFormat),
             sections: includesParameters ? [.parameters()] : [],
             summary: summaryStrategy.map {
-                ToolPresentationSummaryDefinition(
-                    value: .resultSummary(),
-                    strategy: $0,
-                    label: "summary"
-                )
+                ToolPresentationSummaryDefinition(value: .resultSummary(), strategy: $0, label: "summary")
             }
         )
     }
@@ -480,10 +437,7 @@ public extension ToolPresentationDefinition {
         targetKeyPaths: [String] = ["file_path", "path"],
         includesParameters: Bool = true
     ) -> ToolPresentationDefinition {
-        let target = ToolPresentationValueDefinition.argument(
-            targetKeyPaths,
-            format: .path
-        )
+        let target = ToolPresentationValueDefinition.argument(targetKeyPaths, format: .path)
         return ToolPresentationDefinition(
             title: title,
             action: action,
@@ -493,10 +447,7 @@ public extension ToolPresentationDefinition {
                 .code(
                     label: "content",
                     value: .resultOutput(),
-                    languageHint: .argument(
-                        targetKeyPaths,
-                        format: .languageHint
-                    )
+                    languageHint: .argument(targetKeyPaths, format: .languageHint)
                 )
             ],
             summary: ToolPresentationSummaryDefinition(
@@ -523,17 +474,10 @@ public extension ToolPresentationDefinition {
                 .code(
                     label: "content",
                     value: .argument(contentKeyPaths, format: .text),
-                    languageHint: .argument(
-                        targetKeyPaths,
-                        format: .languageHint
-                    )
+                    languageHint: .argument(targetKeyPaths, format: .languageHint)
                 )
             ],
-            summary: ToolPresentationSummaryDefinition(
-                value: .resultSummary(),
-                strategy: .firstLine,
-                label: "summary"
-            )
+            summary: ToolPresentationSummaryDefinition(value: .resultSummary(), strategy: .firstLine, label: "summary")
         )
     }
 
@@ -555,17 +499,10 @@ public extension ToolPresentationDefinition {
                     label: "change",
                     old: .argument(oldKeyPaths, format: .text),
                     new: .argument(newKeyPaths, format: .text),
-                    languageHint: .argument(
-                        targetKeyPaths,
-                        format: .languageHint
-                    )
+                    languageHint: .argument(targetKeyPaths, format: .languageHint)
                 )
             ],
-            summary: ToolPresentationSummaryDefinition(
-                value: .resultSummary(),
-                strategy: .firstLine,
-                label: "summary"
-            )
+            summary: ToolPresentationSummaryDefinition(value: .resultSummary(), strategy: .firstLine, label: "summary")
         )
     }
 }

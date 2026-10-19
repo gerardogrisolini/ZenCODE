@@ -1,10 +1,3 @@
-//
-//  LocalToolsSupport.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -24,10 +17,7 @@ struct LocalApplyPatchTool: FeatureTool {
 
     static let name = "local.applyPatch"
     static let description = "Applies a unified diff that may span multiple files. All hunks are validated before commit; writes use same-directory staging and rollback is attempted on every failure."
-    static let inputSchema = buildInputSchema(
-        [.string("patch"), .string("diff")],
-        required: ["patch"]
-    )
+    static let inputSchema = buildInputSchema([.string("patch"), .string("diff")], required: ["patch"])
 
     private struct PlannedPatchChange {
         let url: URL
@@ -178,12 +168,7 @@ struct LocalApplyPatchTool: FeatureTool {
         }
 
         guard !change.isDelete, let content = change.newContent else {
-            return StagedPatchChange(
-                change: change,
-                temporaryURL: nil,
-                backupURL: backupURL,
-                hadOriginal: hadOriginal
-            )
+            return StagedPatchChange(change: change, temporaryURL: nil, backupURL: backupURL, hadOriginal: hadOriginal)
         }
 
         do {
@@ -289,7 +274,6 @@ struct LocalApplyPatchTool: FeatureTool {
     }
 }
 
-
 extension LocalApplyPatchTool {
     static var presentation: ToolPresentationDefinition {
         ToolPresentationDefinition(
@@ -304,11 +288,7 @@ extension LocalApplyPatchTool {
                     languageHint: .literal("diff")
                 )
             ],
-            summary: ToolPresentationSummaryDefinition(
-                value: .resultSummary(),
-                strategy: .firstLine,
-                label: "summary"
-            )
+            summary: ToolPresentationSummaryDefinition(value: .resultSummary(), strategy: .firstLine, label: "summary")
         )
     }
 }

@@ -1,10 +1,3 @@
-//
-//  LocalToolsSupport.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -14,17 +7,13 @@ import Glibc
 import FeatureKit
 import ToolCore
 
-
 struct TextLinesInput: Decodable, Sendable {
     let path: String?
     let file_path: String?
     let lines: Int?
 }
 
-let textLinesInputSchema = buildInputSchema(
-    [.string("path"), .number("lines")],
-    required: ["path"]
-)
+let textLinesInputSchema = buildInputSchema([.string("path"), .number("lines")], required: ["path"])
 
 enum TextLineSelection: Equatable, Sendable { case head, tail }
 
@@ -79,10 +68,7 @@ struct TextSortTool: FeatureTool {
 
     static let name = "text.sort"
     static let description = "Sorts the lines of a local text file and returns the sorted output."
-    static let inputSchema = buildInputSchema(
-        [.string("path"), .boolean("unique")],
-        required: ["path"]
-    )
+    static let inputSchema = buildInputSchema([.string("path"), .boolean("unique")], required: ["path"])
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         let path = try LocalToolsSupport.requiredPath(input.path, input.file_path, context: context)
@@ -120,18 +106,10 @@ struct TextWordCountTool: FeatureTool {
 
     static let name = "text.wc"
     static let description = "Counts lines, words, and characters in a local text file."
-    static let inputSchema = buildInputSchema(
-        CommonSchemaProperties.pathAliases,
-        required: ["path"]
-    )
+    static let inputSchema = buildInputSchema(CommonSchemaProperties.pathAliases, required: ["path"])
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        let fileURL = try LocalToolsSupport.requiredPath(
-            input.path,
-            input.file_path,
-            input.filePath,
-            context: context
-        )
+        let fileURL = try LocalToolsSupport.requiredPath(input.path, input.file_path, input.filePath, context: context)
         return try await LocalIOOffloader.run {
             let contents = try String(contentsOf: fileURL, encoding: .utf8)
             let lines = contents.isEmpty ? 0 : contents.components(separatedBy: .newlines).count
@@ -146,9 +124,6 @@ struct TextWordCountTool: FeatureTool {
         }
     }
 }
-
-
-// MARK: - Semantic presentation
 
 extension TextHeadTool {
     static var presentation: ToolPresentationDefinition {

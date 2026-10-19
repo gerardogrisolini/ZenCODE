@@ -1,10 +1,3 @@
-//
-//  ToolDescriptor.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 26/05/26.
-//
-
 import Foundation
 
 public nonisolated struct ToolDescriptor: Codable, Identifiable, Hashable, Sendable {
@@ -47,10 +40,7 @@ public nonisolated struct ToolDescriptor: Codable, Identifiable, Hashable, Senda
         self.inputSchema = try container.decode(String.self, forKey: .inputSchema)
         self.outputSchema = try container.decodeIfPresent(String.self, forKey: .outputSchema)
 
-        self.presentation = try? container.decodeIfPresent(
-            ToolPresentationDefinition.self,
-            forKey: .presentation
-        )
+        self.presentation = try? container.decodeIfPresent(ToolPresentationDefinition.self, forKey: .presentation)
     }
 
     public func encode(to encoder: Encoder) throws {

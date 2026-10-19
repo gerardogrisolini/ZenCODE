@@ -1,20 +1,11 @@
-//
-//  RemoteMCPFeatureRunner.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
 //  Shared CLI runner for MCP tool features. Each
 //  feature supplies a lightweight configuration; this runner handles
 //  argument parsing, JSON envelope, and error rendering so that
 //  individual feature mains stay thin.
-//
 
 import Foundation
 import FeatureKit
 import ToolCore
-
-// MARK: - Configuration protocol
 
 /// Describes an MCP-backed tool feature so the shared runner can
 /// perform availability checks, wire up the executor, and map errors
@@ -54,11 +45,7 @@ public protocol MCPFeatureConfiguration {
     func listTools(environment: [String: String]) async throws -> [FeatureToolDescriptor]
 
     /// Invokes a tool by name. Default implementation uses `RemoteMCPToolExecutor`.
-    func invoke(
-        toolName: String,
-        inputData: Data,
-        environment: [String: String]
-    ) async throws -> String
+    func invoke(toolName: String, inputData: Data, environment: [String: String]) async throws -> String
 
     /// Maps feature-specific errors (e.g. consent denied) into
     /// user-visible errors.
@@ -78,12 +65,8 @@ public protocol MCPFeaturePersistentSession: Sendable {
 /// `--serve` protocol. Ordinary MCP features keep using the established
 /// one-shot runner and are never made persistent merely by sharing this kit.
 public protocol PersistentMCPFeatureConfiguration: MCPFeatureConfiguration {
-    func makePersistentSession(
-        environment: [String: String]
-    ) async throws -> any MCPFeaturePersistentSession
+    func makePersistentSession(environment: [String: String]) async throws -> any MCPFeaturePersistentSession
 }
-
-// MARK: - Default executor-based implementation
 
 /// Defaults that work for standard MCP features backed by `RemoteMCPToolExecutor`.
 extension MCPFeatureConfiguration {
@@ -93,9 +76,7 @@ extension MCPFeatureConfiguration {
     var toolNamePrefix: String { "" }
     var descriptionPrefix: String { "" }
 
-    public func listTools(
-        environment: [String: String]
-    ) async throws -> [FeatureToolDescriptor] {
+    public func listTools(environment: [String: String]) async throws -> [FeatureToolDescriptor] {
         guard await isAvailable(environment: environment) else {
             return []
         }
@@ -122,11 +103,7 @@ extension MCPFeatureConfiguration {
         }
     }
 
-    public func invoke(
-        toolName: String,
-        inputData: Data,
-        environment: [String: String]
-    ) async throws -> String {
+    public func invoke(toolName: String, inputData: Data, environment: [String: String]) async throws -> String {
         guard await isAvailable(environment: environment) else {
             throw MCPFeatureError.unavailable(featureName)
         }
@@ -150,8 +127,6 @@ extension MCPFeatureConfiguration {
     }
 }
 
-// MARK: - Shared runner
-
 /// Stateless runner that parses `--list-tools` / `--invoke` CLI arguments,
 /// manages the MCP executor lifecycle, and writes JSON responses to stdout.
 public enum RemoteMCPFeatureRunner {
@@ -164,10 +139,7 @@ public enum RemoteMCPFeatureRunner {
     ) async {
         do {
             if FeatureProcessProtocol.isPersistentService(arguments: arguments) {
-                try await runPersistentService(
-                    configuration: configuration,
-                    environment: environment
-                )
+                try await runPersistentService(configuration: configuration, environment: environment)
                 return
             }
 
@@ -176,9 +148,7 @@ public enum RemoteMCPFeatureRunner {
             case .listTools:
                 let tools = try await configuration.listTools(environment: environment)
                 try FeatureProcessProtocol.emitJSON(
-                    FeatureListToolsResponse(
-                        tools: FeatureToolDescriptor.canonicalized(tools)
-                    )
+                    FeatureListToolsResponse(tools: FeatureToolDescriptor.canonicalized(tools))
                 )
 
             case let .invoke(toolName, _):
@@ -188,28 +158,18 @@ public enum RemoteMCPFeatureRunner {
                     inputData: inputData,
                     environment: environment
                 )
-                try FeatureProcessProtocol.emitJSON(
-                    InvocationResponse(ok: true, output: .string(output), error: nil)
-                )
+                try FeatureProcessProtocol.emitJSON(InvocationResponse(ok: true, output: .string(output), error: nil))
 
             case .usage:
                 try FeatureProcessProtocol.emitJSON(
-                    InvocationResponse(
-                        ok: false,
-                        output: nil,
-                        error: configuration.usageText
-                    )
+                    InvocationResponse(ok: false, output: nil, error: configuration.usageText)
                 )
                 terminate(code: 64)
             }
         } catch {
             let mapped = configuration.mapError(error)
             try? FeatureProcessProtocol.emitJSON(
-                InvocationResponse(
-                    ok: false,
-                    output: nil,
-                    error: mapped.localizedDescription
-                )
+                InvocationResponse(ok: false, output: nil, error: mapped.localizedDescription)
             )
             terminate(code: 1)
         }
@@ -222,18 +182,14 @@ public enum RemoteMCPFeatureRunner {
         guard let persistentConfiguration = configuration as? any PersistentMCPFeatureConfiguration else {
             throw MCPFeatureError.unavailable(configuration.featureName)
         }
-        let session = try await persistentConfiguration.makePersistentSession(
-            environment: environment
-        )
+        let session = try await persistentConfiguration.makePersistentSession(environment: environment)
         await FeaturePersistentService.run(
             handler: { request in
                 switch request.operation {
                 case .listTools:
                     return try FeatureProcessProtocol.renderJSON(
                         FeatureListToolsResponse(
-                            tools: FeatureToolDescriptor.canonicalized(
-                                try await session.listTools()
-                            )
+                            tools: FeatureToolDescriptor.canonicalized(try await session.listTools())
                         )
                     )
                 case .invoke:
@@ -246,20 +202,12 @@ public enum RemoteMCPFeatureRunner {
                             inputData: request.inputData ?? Data()
                         )
                         return try FeatureProcessProtocol.renderJSON(
-                            InvocationResponse(
-                                ok: true,
-                                output: .string(output),
-                                error: nil
-                            )
+                            InvocationResponse(ok: true, output: .string(output), error: nil)
                         )
                     } catch {
                         let mapped = configuration.mapError(error)
                         return try FeatureProcessProtocol.renderJSON(
-                            InvocationResponse(
-                                ok: false,
-                                output: nil,
-                                error: mapped.localizedDescription
-                            )
+                            InvocationResponse(ok: false, output: nil, error: mapped.localizedDescription)
                         )
                     }
                 case .shutdown:
@@ -271,8 +219,6 @@ public enum RemoteMCPFeatureRunner {
             }
         )
     }
-
-    // MARK: - Shared utilities
 
     public static func decodeArguments(from data: Data) throws -> [String: JSONValue] {
         guard !data.isEmpty else {
@@ -293,8 +239,6 @@ public enum RemoteMCPFeatureRunner {
         FeatureProcessProtocol.terminate(code: code)
     }
 }
-
-// MARK: - Shared types
 
 public struct ListToolsResponse: Encodable {
     public let tools: [FeatureToolDescriptor]

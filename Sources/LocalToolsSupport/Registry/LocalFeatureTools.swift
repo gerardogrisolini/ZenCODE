@@ -1,13 +1,5 @@
-//
-//  LocalToolsSupport.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 import FeatureKit
-
 
 public enum LocalFeatureTools {
     public static func fileTools() -> [AnyFeatureTool] {
@@ -39,11 +31,7 @@ public enum LocalFeatureTools {
     }
 
     public static func searchTools() -> [AnyFeatureTool] {
-        [
-            AnyFeatureTool(SearchGlobTool()),
-            AnyFeatureTool(SearchGrepTool()),
-            AnyFeatureTool(SearchLocateTool())
-        ]
+        [AnyFeatureTool(SearchGlobTool()), AnyFeatureTool(SearchGrepTool()), AnyFeatureTool(SearchLocateTool())]
     }
 
     public static func textTools() -> [AnyFeatureTool] {

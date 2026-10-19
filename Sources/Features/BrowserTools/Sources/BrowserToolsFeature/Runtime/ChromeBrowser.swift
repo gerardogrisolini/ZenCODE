@@ -69,14 +69,10 @@ struct ChromeBrowserConfiguration: Sendable {
         portOverride: Int? = nil
     ) {
         self.environment = environment
-        self.portOverride = portOverride ?? Self.positivePort(
-            environment["ZENCODE_BROWSER_CDP_PORT"]
-        )
+        self.portOverride = portOverride ?? Self.positivePort(environment["ZENCODE_BROWSER_CDP_PORT"])
         self.profileDirectory = profileDirectory ?? Self.defaultProfileDirectory(environment: environment)
         self.launchesHeadless = Self.enabled(environment["ZENCODE_BROWSER_HEADLESS"])
-        self.allowsUnsandboxedRoot = Self.enabled(
-            environment["ZENCODE_BROWSER_ALLOW_UNSANDBOXED_ROOT"]
-        )
+        self.allowsUnsandboxedRoot = Self.enabled(environment["ZENCODE_BROWSER_ALLOW_UNSANDBOXED_ROOT"])
     }
 
     private static func positivePort(_ rawValue: String?) -> Int? {
@@ -90,9 +86,7 @@ struct ChromeBrowserConfiguration: Sendable {
     }
 
     private static func enabled(_ rawValue: String?) -> Bool {
-        ["1", "true", "yes", "on"].contains(
-            rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        )
+        ["1", "true", "yes", "on"].contains(rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
     }
 
     static func defaultProfileDirectory(environment: [String: String]) -> URL {
@@ -141,16 +135,9 @@ private struct CDPHTTPPageInfo: Decodable {
               let webSocketURL = URL(string: webSocketDebuggerURL),
               ChromeBrowserManager.isTrustedDebuggerURL(webSocketURL, expectedPort: expectedPort)
         else {
-            throw ChromeBrowserError.invalidTabResponse(
-                "Missing or untrusted webSocketDebuggerUrl"
-            )
+            throw ChromeBrowserError.invalidTabResponse("Missing or untrusted webSocketDebuggerUrl")
         }
-        return CDPTabInfo(
-            id: id,
-            title: title ?? "",
-            url: url ?? "",
-            webSocketDebuggerURL: webSocketURL
-        )
+        return CDPTabInfo(id: id, title: title ?? "", url: url ?? "", webSocketDebuggerURL: webSocketURL)
     }
 }
 
@@ -201,9 +188,7 @@ final class ChromeBrowserManager: Sendable {
                     return
                 }
             }
-            throw ChromeBrowserError.cdpNotReady(
-                "Chrome did not expose a trusted CDP endpoint for the Browser profile"
-            )
+            throw ChromeBrowserError.cdpNotReady("Chrome did not expose a trusted CDP endpoint for the Browser profile")
         }
         defer { releaseSpawnLease() }
 
@@ -220,9 +205,7 @@ final class ChromeBrowserManager: Sendable {
             try await Task.sleep(nanoseconds: Self.cdpReadyPollInterval)
         }
 
-        throw ChromeBrowserError.cdpNotReady(
-            "Chrome did not expose CDP for the Browser profile within the startup timeout"
-        )
+        throw ChromeBrowserError.cdpNotReady("Chrome did not expose CDP for the Browser profile within the startup timeout")
     }
 
     private func acquireSpawnLease() -> Bool {
@@ -330,13 +313,9 @@ final class ChromeBrowserManager: Sendable {
 
     func tab(id: String) async throws -> CDPTabInfo {
         let tabID = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !tabID.isEmpty else {
-            throw ChromeBrowserError.pageNotFound(id)
-        }
+        guard !tabID.isEmpty else { throw ChromeBrowserError.pageNotFound(id) }
         let tabs = try await listTabs()
-        guard let tab = tabs.first(where: { $0.id == tabID }) else {
-            throw ChromeBrowserError.pageNotFound(tabID)
-        }
+        guard let tab = tabs.first(where: { $0.id == tabID }) else { throw ChromeBrowserError.pageNotFound(tabID) }
         return tab
     }
 
@@ -366,9 +345,7 @@ final class ChromeBrowserManager: Sendable {
             let (data, response) = try await urlSession.data(from: url)
             try validateHTTP(response)
             let version = try JSONDecoder().decode(CDPVersionInfo.self, from: data)
-            guard let debuggerURL = URL(string: version.webSocketDebuggerURL) else {
-                return false
-            }
+            guard let debuggerURL = URL(string: version.webSocketDebuggerURL) else { return false }
             return Self.isTrustedDebuggerURL(debuggerURL, expectedPort: port)
         } catch {
             return false
@@ -385,9 +362,7 @@ final class ChromeBrowserManager: Sendable {
 
     // MARK: - Chrome discovery
 
-    static func discoverExecutable(
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> String? {
+    static func discoverExecutable(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
         if let envPath = environment["ZENCODE_CHROME"],
            !envPath.isEmpty,
            FileManager.default.isExecutableFile(atPath: envPath)
@@ -448,15 +423,9 @@ final class ChromeBrowserManager: Sendable {
 
     private func spawnChrome() async throws {
         let fileManager = FileManager.default
-        try fileManager.createDirectory(
-            at: configuration.profileDirectory,
-            withIntermediateDirectories: true
-        )
+        try fileManager.createDirectory(at: configuration.profileDirectory, withIntermediateDirectories: true)
         #if canImport(Darwin) || canImport(Glibc)
-        try? fileManager.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: configuration.profileDirectory.path
-        )
+        try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: configuration.profileDirectory.path)
         #endif
 
         #if !os(macOS)
@@ -561,11 +530,7 @@ final class ChromeBrowserManager: Sendable {
     }
 
     private func validateHTTP(_ response: URLResponse) throws {
-        guard let http = response as? HTTPURLResponse else {
-            throw ChromeBrowserError.httpError("Response was not HTTP")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw ChromeBrowserError.httpError("HTTP status \(http.statusCode)")
-        }
+        guard let http = response as? HTTPURLResponse else { throw ChromeBrowserError.httpError("Response was not HTTP") }
+        guard (200..<300).contains(http.statusCode) else { throw ChromeBrowserError.httpError("HTTP status \(http.statusCode)") }
     }
 }

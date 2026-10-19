@@ -1,10 +1,3 @@
-//
-//  JSONValue.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 26/05/26.
-//
-
 import Foundation
 
 public nonisolated enum JSONValue: Codable, Hashable, Sendable {
@@ -31,10 +24,7 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
         } else if let number = try? container.decode(Double.self), number.isFinite {
             self = .number(number)
         } else {
-            throw DecodingError.dataCorruptedError(
-                in: container,
-                debugDescription: "Unsupported JSON value."
-            )
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON value.")
         }
     }
 
@@ -100,11 +90,7 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
     /// silently rendering an unrelated JSON object.
     public func prettyPrintedResult() -> Result<String, Error> {
         do {
-            let data = try jsonData(outputFormatting: [
-                .withoutEscapingSlashes,
-                .prettyPrinted,
-                .sortedKeys,
-            ])
+            let data = try jsonData(outputFormatting: [.withoutEscapingSlashes, .prettyPrinted, .sortedKeys])
             guard let string = String(data: data, encoding: .utf8) else {
                 throw CocoaError(.fileReadInapplicableStringEncoding)
             }
@@ -146,9 +132,7 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
         }
     }
 
-    public func jsonData(
-        outputFormatting: JSONEncoder.OutputFormatting = [.withoutEscapingSlashes]
-    ) throws -> Data {
+    public func jsonData(outputFormatting: JSONEncoder.OutputFormatting = [.withoutEscapingSlashes]) throws -> Data {
         let encoder = JSONEncoder()
         var canonicalFormatting = outputFormatting
         canonicalFormatting.insert(.sortedKeys)

@@ -1,10 +1,3 @@
-//
-//  MCPServerConfiguration.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 26/05/26.
-//
-
 #if canImport(CryptoKit)
 
 import CryptoKit

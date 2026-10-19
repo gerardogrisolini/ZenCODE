@@ -1,10 +1,3 @@
-//
-//  FeaturePersistentService.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -120,24 +113,16 @@ public enum FeaturePersistentService {
             // bridge) before acknowledging shutdown. Once the parent receives
             // the acknowledgement it may terminate this process immediately.
             await shutdown()
-            try? FeatureProcessProtocol.emitJSON(
-                FeaturePersistentResponse(id: request.id, responseData: Data())
-            )
+            try? FeatureProcessProtocol.emitJSON(FeaturePersistentResponse(id: request.id, responseData: Data()))
             return
         }
 
         do {
             let responseData = try await handler(request)
-            try FeatureProcessProtocol.emitJSON(
-                FeaturePersistentResponse(id: request.id, responseData: responseData)
-            )
+            try FeatureProcessProtocol.emitJSON(FeaturePersistentResponse(id: request.id, responseData: responseData))
         } catch {
             try? FeatureProcessProtocol.emitJSON(
-                FeaturePersistentResponse(
-                    id: request.id,
-                    responseData: nil,
-                    error: error.localizedDescription
-                )
+                FeaturePersistentResponse(id: request.id, responseData: nil, error: error.localizedDescription)
             )
         }
     }

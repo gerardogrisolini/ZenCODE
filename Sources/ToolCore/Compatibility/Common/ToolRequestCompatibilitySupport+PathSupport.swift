@@ -1,10 +1,3 @@
-//
-//  ToolRequestCompatibilitySupport+PathSupport.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 26/05/26.
-//
-
 import Foundation
 
 nonisolated let workspaceRelativePathArgumentKeys: Set<String> = [
@@ -32,25 +25,19 @@ nonisolated let defaultToolPathFileExists: @Sendable (String) -> Bool = {
     FileManager.default.fileExists(atPath: $0)
 }
 
-nonisolated func toolRequestUsesWorkspaceRelativePaths(
-    _ toolName: String
-) -> Bool {
+nonisolated func toolRequestUsesWorkspaceRelativePaths(_ toolName: String) -> Bool {
     toolName.hasPrefix("local.")
         || toolName.hasPrefix("search.")
         || toolName.hasPrefix("text.")
 }
 
-nonisolated func toolRequestUsesSkillRelativePaths(
-    _ toolName: String
-) -> Bool {
+nonisolated func toolRequestUsesSkillRelativePaths(_ toolName: String) -> Bool {
     toolName.hasPrefix("local.")
         || toolName.hasPrefix("search.")
         || toolName.hasPrefix("text.")
 }
 
-nonisolated func normalizedWorkspaceRootPath(
-    _ rawValue: String?
-) -> String? {
+nonisolated func normalizedWorkspaceRootPath(_ rawValue: String?) -> String? {
     guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
           !rawValue.isEmpty else {
         return nil
@@ -80,10 +67,7 @@ public nonisolated func shouldDropLeadingMissingWorkspaceContainer(
         return false
     }
 
-    let foldedComponent = trimmedComponent.folding(
-        options: [.caseInsensitive, .diacriticInsensitive],
-        locale: .current
-    )
+    let foldedComponent = trimmedComponent.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     if let workspaceRootURL {
         let foldedRootName = workspaceRootURL.lastPathComponent.folding(
             options: [.caseInsensitive, .diacriticInsensitive],
@@ -202,10 +186,7 @@ nonisolated func normalizedRelativePathByDroppingLeadingMissingWorkspaceContaine
     guard !fileExists(firstComponentURL.path) else {
         return nil
     }
-    guard shouldDropLeadingMissingWorkspaceContainer(
-        components[0],
-        workspaceRootURL: workspaceRootURL
-    ) else {
+    guard shouldDropLeadingMissingWorkspaceContainer(components[0], workspaceRootURL: workspaceRootURL) else {
         return nil
     }
 

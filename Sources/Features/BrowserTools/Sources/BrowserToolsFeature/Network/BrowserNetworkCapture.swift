@@ -57,17 +57,11 @@ enum BrowserNetworkBodyCapture {
         return previews
     }
 
-    static func preview(
-        body: String,
-        isBase64Encoded: Bool,
-        mimeType: String
-    ) -> BrowserNetworkResponseBody? {
+    static func preview(body: String, isBase64Encoded: Bool, mimeType: String) -> BrowserNetworkResponseBody? {
         guard isTextual(mimeType: mimeType) else { return nil }
         let sourceText: String
         if isBase64Encoded {
-            guard body.lengthOfBytes(using: .utf8) <= maximumBase64BodyBytes else {
-                return nil
-            }
+            guard body.lengthOfBytes(using: .utf8) <= maximumBase64BodyBytes else { return nil }
             guard let data = Data(base64Encoded: body),
                   data.count <= maximumResourceBufferBytes,
                   let decoded = String(data: data, encoding: .utf8)
@@ -76,22 +70,14 @@ enum BrowserNetworkBodyCapture {
             }
             sourceText = decoded
         } else {
-            guard body.lengthOfBytes(using: .utf8) <= maximumResourceBufferBytes else {
-                return nil
-            }
+            guard body.lengthOfBytes(using: .utf8) <= maximumResourceBufferBytes else { return nil }
             sourceText = body
         }
 
         let redacted = BrowserNetworkSensitiveTextRedaction.redact(sourceText)
-        let clipped = BrowserNetworkOutputBounds.clipWithMetadata(
-            redacted,
-            maximumBytes: maximumBodyPreviewBytes
-        )
+        let clipped = BrowserNetworkOutputBounds.clipWithMetadata(redacted, maximumBytes: maximumBodyPreviewBytes)
         return BrowserNetworkResponseBody(
-            mimeType: BrowserNetworkOutputBounds.clip(
-                mimeType,
-                maximumBytes: BrowserNetworkOutputBounds.maximumMIMETypeBytes
-            ),
+            mimeType: BrowserNetworkOutputBounds.clip(mimeType, maximumBytes: BrowserNetworkOutputBounds.maximumMIMETypeBytes),
             text: clipped.value,
             truncated: clipped.truncated
                 || sourceText.lengthOfBytes(using: .utf8) > maximumBodyPreviewBytes
@@ -189,9 +175,7 @@ enum BrowserNetworkCapture {
 
     static func resolvedLimit(_ requestedLimit: Int?) throws -> Int {
         guard let requestedLimit else { return maximumReturnedEntries }
-        guard requestedLimit > 0 else {
-            throw BrowserToolsFeatureError.browserError("Network limit must be at least 1.")
-        }
+        guard requestedLimit > 0 else { throw BrowserToolsFeatureError.browserError("Network limit must be at least 1.") }
         return min(requestedLimit, maximumReturnedEntries)
     }
 }

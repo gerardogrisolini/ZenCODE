@@ -1,13 +1,3 @@
-//
-//  LocalIOOffloader.swift
-//  LocalToolsSupport
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-//  Offloads integral, blocking file/text I/O away from Swift's cooperative
-//  concurrency thread pool and honors cooperative Task cancellation.
-//
-
 import Foundation
 import ToolCore
 
@@ -48,9 +38,7 @@ enum LocalIOOffloader {
     ///
     /// Fails fast with `CancellationError` when the surrounding `Task` is
     /// already cancelled, so cancelled tool calls never occupy an I/O thread.
-    static func run<T: Sendable>(
-        _ operation: @escaping @Sendable () throws -> T
-    ) async throws -> T {
+    static func run<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
         // Boundary cancellation check: avoid even scheduling the blocking work
         // (and occupying a GCD thread) when the caller already gave up.
         try Task.checkCancellation()

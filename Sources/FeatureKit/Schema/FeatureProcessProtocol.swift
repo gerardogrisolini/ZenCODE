@@ -1,10 +1,3 @@
-//
-//  FeatureProcessProtocol.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -71,10 +64,7 @@ public enum FeatureProcessProtocol {
         FileHandle.standardOutput.write(Data("\n".utf8))
     }
 
-    public static func renderSuccess(
-        outputData: Data,
-        attachments: [FeatureInvocationAttachment]
-    ) throws -> Data {
+    public static func renderSuccess(outputData: Data, attachments: [FeatureInvocationAttachment]) throws -> Data {
         guard !attachments.isEmpty else {
             return Data(#"{"ok":true,"output":"#.utf8)
                 + outputData

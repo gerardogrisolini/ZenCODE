@@ -1,15 +1,19 @@
-//
-//  GitToolsSupport.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 import ToolCore
 import Foundation
 import FeatureKit
 
 protocol GitWorkingDirectoryInput: WorkingDirectoryInput {}
+
+/// A git tool whose whole behavior is mapping its input to a validated argv.
+protocol GitArgumentTool: FeatureTool where Input: GitWorkingDirectoryInput {
+    static func arguments(for input: Input) throws -> [String]
+}
+
+extension GitArgumentTool {
+    func run(_ input: Input, context: FeatureContext) async throws -> String {
+        try await GitToolsSupport.runGit(try Self.arguments(for: input), input: input, context: context)
+    }
+}
 
 enum GitToolsSupport {
     static func runGit<T: GitWorkingDirectoryInput>(
@@ -27,10 +31,7 @@ enum GitToolsSupport {
         return result.renderedProcessOutput
     }
 
-    static func gitWorkingDirectory<T: GitWorkingDirectoryInput>(
-        input: T,
-        context: FeatureContext
-    ) -> URL {
+    static func gitWorkingDirectory<T: GitWorkingDirectoryInput>(input: T, context: FeatureContext) -> URL {
         context.resolvePath(input.workingDirectory?.nilIfBlank ?? ".")
     }
 
@@ -66,6 +67,15 @@ enum GitToolsSupport {
             throw GitToolsFeatureError.permissionDenied("Remote helper '\(helper)' is not allowed.")
         }
         return trimmed
+    }
+
+    /// Appends `remote [branch|refspec]` after validating each value.
+    static func appendRemote(to args: inout [String], remote: String?, branch: String?, refspec: String?) throws {
+        guard let remote = remote?.nilIfBlank else { return }
+        args.append(try Self.remote(remote))
+        if let branchOrRefspec = firstNonBlank(branch, refspec) {
+            args.append(try Self.refspec(branchOrRefspec, named: "branch"))
+        }
     }
 
     static func rejectControlCharacters(_ value: String, named name: String) throws {

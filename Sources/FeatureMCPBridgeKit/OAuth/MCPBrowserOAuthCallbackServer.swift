@@ -1,10 +1,3 @@
-//
-//  MCPBrowserOAuthCallbackServer.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 26/05/26.
-//
-
 import Foundation
 import Synchronization
 import ToolCore
@@ -161,11 +154,7 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
         }
     }
 
-    public func handleReceivedRequest(
-        data: Data?,
-        error: NWError?,
-        connection: NWConnection
-    ) {
+    public func handleReceivedRequest(data: Data?, error: NWError?, connection: NWConnection) {
         if let error {
             sendResponse(
                 statusCode: 500,
@@ -226,12 +215,7 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
 
         if let oauthError = queryItems["error"], !oauthError.isEmpty {
             let description = queryItems["error_description"] ?? oauthError
-            sendResponse(
-                statusCode: 400,
-                title: "\(serviceName) Sign-In Failed",
-                message: description,
-                on: connection
-            )
+            sendResponse(statusCode: 400, title: "\(serviceName) Sign-In Failed", message: description, on: connection)
             resumeCallbackIfNeeded(
                 with: .failure(
                     MCPClientError.browserAuthenticationFailed(
@@ -269,12 +253,7 @@ public nonisolated final class MCPBrowserOAuthCallbackServer: Sendable {
         resumeCallbackIfNeeded(with: .success(MCPOAuthCallback(code: code, state: state)))
     }
 
-    public func sendResponse(
-        statusCode: Int,
-        title: String,
-        message: String,
-        on connection: NWConnection
-    ) {
+    public func sendResponse(statusCode: Int, title: String, message: String, on connection: NWConnection) {
         let responseBody = """
         <!doctype html>
         <html lang="en">

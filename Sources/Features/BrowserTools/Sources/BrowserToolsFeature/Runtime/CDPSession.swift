@@ -86,11 +86,7 @@ struct CDPSessionConfiguration: Sendable {
         )
     }
 
-    private static func positiveInt(
-        _ rawValue: String?,
-        fallback: Int,
-        range: ClosedRange<Int>
-    ) -> Int {
+    private static func positiveInt(_ rawValue: String?, fallback: Int, range: ClosedRange<Int>) -> Int {
         guard let rawValue,
               let value = Int(rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
               range.contains(value)
@@ -184,9 +180,7 @@ final class CDPSession: Sendable {
     /// page lifecycle, console, and dialog events. The token is valid only for
     /// this WebSocket session and must be removed by its owner.
     @discardableResult
-    func addEventHandler(
-        _ handler: @escaping @Sendable (CDPEvent) -> Void
-    ) -> UUID {
+    func addEventHandler(_ handler: @escaping @Sendable (CDPEvent) -> Void) -> UUID {
         let token = UUID()
         routingState.withLock { state in
             state.eventHandlers[token] = handler
@@ -220,10 +214,7 @@ final class CDPSession: Sendable {
         let timeoutTask = Task(name: "CDPSession.command-timeout") { [weak self, timeoutNanoseconds, timeoutSeconds] in
             try? await Task.sleep(nanoseconds: timeoutNanoseconds)
             guard !Task.isCancelled else { return }
-            self?.resolve(
-                id: id,
-                with: .failure(CDPError.commandFailed("Command timed out after \(timeoutSeconds)s"))
-            )
+            self?.resolve(id: id, with: .failure(CDPError.commandFailed("Command timed out after \(timeoutSeconds)s")))
         }
         defer { timeoutTask.cancel() }
 
@@ -283,10 +274,7 @@ final class CDPSession: Sendable {
     /// viewport selected for this persistent page before an operation touches
     /// it. The runner resolves the preset from its private, whitelist-checked
     /// state store; tool input never reaches this method as dimensions/UA.
-    func preparePage(
-        waitForReady: Bool = true,
-        viewportPreset: BrowserViewportPreset = .desktop
-    ) async throws {
+    func preparePage(waitForReady: Bool = true, viewportPreset: BrowserViewportPreset = .desktop) async throws {
         try await enablePageAndRuntime()
         try await BrowserDownloadPolicy.apply(to: self)
         // Best-effort: ignore failures from emulation commands.
@@ -391,9 +379,7 @@ final class CDPSession: Sendable {
     /// settle again.
     func clickGoogleConsentIfNeeded() async throws {
         let host = try await evalString("location.hostname || ''")
-        guard BrowserGoogleConsentOriginPolicy.allows(host: host) else {
-            return
-        }
+        guard BrowserGoogleConsentOriginPolicy.allows(host: host) else { return }
         let clicked = try await evalString(Self.googleConsentClickJS)
         guard !clicked.isEmpty else { return }
         try await sleep(milliseconds: 1500)
@@ -508,9 +494,7 @@ final class CDPSession: Sendable {
     /// Internal for focused protocol tests. Production callers receive events
     /// through `addEventHandler(_:)`, never through raw CDP objects.
     func handleMessage(_ data: Data) {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return
-        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
 
         if let id = json["id"] as? Int {
             if let error = json["error"] {
@@ -525,11 +509,7 @@ final class CDPSession: Sendable {
 
         guard let method = json["method"] as? String else { return }
         let paramsData = (try? JSONSerialization.data(withJSONObject: json["params"] ?? [:])) ?? Data()
-        let event = CDPEvent(
-            method: method,
-            paramsData: paramsData,
-            sessionID: json["sessionId"] as? String
-        )
+        let event = CDPEvent(method: method, paramsData: paramsData, sessionID: json["sessionId"] as? String)
         let handlers = currentEventHandlers()
         handlers.forEach { $0(event) }
     }

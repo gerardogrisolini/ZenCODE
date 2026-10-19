@@ -1,16 +1,6 @@
-//
-//  ToolRequestCompatibilitySupport+ValueSupport.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 26/05/26.
-//
-
 import Foundation
 
-nonisolated func firstStringArrayValue(
-    _ keys: [String],
-    in arguments: [String: JSONValue]
-) -> [String]? {
+nonisolated func firstStringArrayValue(_ keys: [String], in arguments: [String: JSONValue]) -> [String]? {
     for key in keys {
         guard let value = arguments[key] else {
             continue
@@ -56,9 +46,7 @@ nonisolated func firstStringArrayValue(
     return nil
 }
 
-nonisolated func decodedStructuredJSONValue(
-    _ rawValue: String
-) -> JSONValue? {
+nonisolated func decodedStructuredJSONValue(_ rawValue: String) -> JSONValue? {
     let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let firstCharacter = trimmedValue.first,
           firstCharacter == "[" || firstCharacter == "{",
@@ -69,10 +57,7 @@ nonisolated func decodedStructuredJSONValue(
     return try? JSONDecoder().decode(JSONValue.self, from: data)
 }
 
-nonisolated func firstNumberValue(
-    _ keys: [String],
-    in arguments: [String: JSONValue]
-) -> Double? {
+nonisolated func firstNumberValue(_ keys: [String], in arguments: [String: JSONValue]) -> Double? {
     for key in keys {
         guard let value = arguments[key] else {
             continue
@@ -94,10 +79,7 @@ nonisolated func firstNumberValue(
     return nil
 }
 
-nonisolated func firstBoolValue(
-    _ keys: [String],
-    in arguments: [String: JSONValue]
-) -> Bool? {
+nonisolated func firstBoolValue(_ keys: [String], in arguments: [String: JSONValue]) -> Bool? {
     for key in keys {
         guard let value = arguments[key] else {
             continue
@@ -123,10 +105,7 @@ nonisolated func firstBoolValue(
     return nil
 }
 
-nonisolated func firstJSONValue(
-    _ keys: [String],
-    in arguments: [String: JSONValue]
-) -> JSONValue? {
+nonisolated func firstJSONValue(_ keys: [String], in arguments: [String: JSONValue]) -> JSONValue? {
     for key in keys {
         if let value = arguments[key] {
             return value

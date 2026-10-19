@@ -104,9 +104,7 @@ enum BrowserPNGCodec {
     private static let transparency: [UInt8] = [116, 82, 78, 83]
 
     static func decode(_ data: Data) throws -> Image {
-        guard data.count <= maximumEncodedBytes else {
-            throw BrowserPNGCodecError.compressedDataTooLarge
-        }
+        guard data.count <= maximumEncodedBytes else { throw BrowserPNGCodecError.compressedDataTooLarge }
         let bytes = Array(data)
         guard bytes.count >= signature.count,
               Array(bytes.prefix(signature.count)) == signature
@@ -127,24 +125,16 @@ enum BrowserPNGCodec {
 
         chunkLoop: while cursor < bytes.count {
             try Task.checkCancellation()
-            guard bytes.count - cursor >= 12 else {
-                throw BrowserPNGCodecError.malformedPNGChunk
-            }
+            guard bytes.count - cursor >= 12 else { throw BrowserPNGCodecError.malformedPNGChunk }
             let chunkLength = Int(readUInt32(bytes, at: cursor))
-            guard chunkLength <= maximumChunkBytes else {
-                throw BrowserPNGCodecError.compressedDataTooLarge
-            }
+            guard chunkLength <= maximumChunkBytes else { throw BrowserPNGCodecError.compressedDataTooLarge }
             let typeStart = cursor + 4
             let payloadStart = typeStart + 4
-            guard chunkLength <= bytes.count - payloadStart - 4 else {
-                throw BrowserPNGCodecError.malformedPNGChunk
-            }
+            guard chunkLength <= bytes.count - payloadStart - 4 else { throw BrowserPNGCodecError.malformedPNGChunk }
             let payloadEnd = payloadStart + chunkLength
             let crcOffset = payloadEnd
             let type = Array(bytes[typeStart..<payloadStart])
-            guard type.allSatisfy(isPNGChunkTypeByte) else {
-                throw BrowserPNGCodecError.malformedPNGChunk
-            }
+            guard type.allSatisfy(isPNGChunkTypeByte) else { throw BrowserPNGCodecError.malformedPNGChunk }
             let expectedCRC = readUInt32(bytes, at: crcOffset)
             guard crc32(bytes, range: typeStart..<payloadEnd) == expectedCRC else {
                 throw BrowserPNGCodecError.invalidPNGChunkCRC
@@ -185,14 +175,10 @@ enum BrowserPNGCodec {
                 continue
             }
 
-            guard sawHeader else {
-                throw BrowserPNGCodecError.missingPNGHeader
-            }
+            guard sawHeader else { throw BrowserPNGCodecError.missingPNGHeader }
 
             if type == idat {
-                guard !endedImageData else {
-                    throw BrowserPNGCodecError.malformedPNGChunk
-                }
+                guard !endedImageData else { throw BrowserPNGCodecError.malformedPNGChunk }
                 sawImageData = true
                 compressed.append(contentsOf: bytes[payloadStart..<payloadEnd])
                 continue
@@ -203,9 +189,7 @@ enum BrowserPNGCodec {
             }
 
             if type == iend {
-                guard chunkLength == 0, sawImageData else {
-                    throw BrowserPNGCodecError.missingPNGImageData
-                }
+                guard chunkLength == 0, sawImageData else { throw BrowserPNGCodecError.missingPNGImageData }
                 sawEnd = true
                 break chunkLoop
             }
@@ -233,39 +217,21 @@ enum BrowserPNGCodec {
         guard sawHeader else { throw BrowserPNGCodecError.missingPNGHeader }
         guard sawEnd else { throw BrowserPNGCodecError.missingPNGEnd }
         guard cursor == bytes.count else { throw BrowserPNGCodecError.trailingPNGData }
-        guard let width, let height, let colorType else {
-            throw BrowserPNGCodecError.invalidPNGHeader
-        }
-        guard !compressed.isEmpty else {
-            throw BrowserPNGCodecError.missingPNGImageData
-        }
+        guard let width, let height, let colorType else { throw BrowserPNGCodecError.invalidPNGHeader }
+        guard !compressed.isEmpty else { throw BrowserPNGCodecError.missingPNGImageData }
 
         let channels = colorType == 2 ? 3 : 4
         let pixelCount = try checkedProduct(width, height)
-        guard pixelCount <= maximumPixelCount else {
-            throw BrowserPNGCodecError.imageTooLarge
-        }
+        guard pixelCount <= maximumPixelCount else { throw BrowserPNGCodecError.imageTooLarge }
         let rowBytes = try checkedProduct(width, channels)
         let scanlineBytes = try checkedProduct(height, rowBytes + 1)
-        guard scanlineBytes <= maximumDecodedScanlineBytes else {
-            throw BrowserPNGCodecError.imageTooLarge
-        }
+        guard scanlineBytes <= maximumDecodedScanlineBytes else { throw BrowserPNGCodecError.imageTooLarge }
         let rgbaBytes = try checkedProduct(pixelCount, 4)
-        guard rgbaBytes <= maximumPixelCount * 4 else {
-            throw BrowserPNGCodecError.imageTooLarge
-        }
+        guard rgbaBytes <= maximumPixelCount * 4 else { throw BrowserPNGCodecError.imageTooLarge }
 
         let inflated = try inflateZlib(compressed, maximumOutputBytes: scanlineBytes)
-        guard inflated.count == scanlineBytes else {
-            throw BrowserPNGCodecError.unexpectedDecompressedSize
-        }
-        return try unfilter(
-            scanlines: inflated,
-            width: width,
-            height: height,
-            channels: channels,
-            rgbaByteCount: rgbaBytes
-        )
+        guard inflated.count == scanlineBytes else { throw BrowserPNGCodecError.unexpectedDecompressedSize }
+        return try unfilter(scanlines: inflated, width: width, height: height, channels: channels, rgbaByteCount: rgbaBytes)
     }
 
     /// Encodes an RGBA image as a PNG using bounded DEFLATE stored blocks. The
@@ -278,18 +244,12 @@ enum BrowserPNGCodec {
             throw BrowserPNGCodecError.invalidPNGHeader
         }
         let pixelCount = try checkedProduct(width, height)
-        guard pixelCount <= maximumPixelCount else {
-            throw BrowserPNGCodecError.imageTooLarge
-        }
+        guard pixelCount <= maximumPixelCount else { throw BrowserPNGCodecError.imageTooLarge }
         let expectedRGBABytes = try checkedProduct(pixelCount, 4)
-        guard rgba.count == expectedRGBABytes else {
-            throw BrowserPNGCodecError.invalidImageBuffer
-        }
+        guard rgba.count == expectedRGBABytes else { throw BrowserPNGCodecError.invalidImageBuffer }
         let rowBytes = try checkedProduct(width, 4)
         let scanlineBytes = try checkedProduct(height, rowBytes + 1)
-        guard scanlineBytes <= maximumDecodedScanlineBytes else {
-            throw BrowserPNGCodecError.imageTooLarge
-        }
+        guard scanlineBytes <= maximumDecodedScanlineBytes else { throw BrowserPNGCodecError.imageTooLarge }
 
         var scanlines = [UInt8]()
         scanlines.reserveCapacity(scanlineBytes)
@@ -316,19 +276,11 @@ enum BrowserPNGCodec {
             offset += count
         }
         appendChunk(type: iend, payload: [], to: &png)
-        guard png.count <= maximumEncodedBytes else {
-            throw BrowserPNGCodecError.encodedOutputTooLarge
-        }
+        guard png.count <= maximumEncodedBytes else { throw BrowserPNGCodecError.encodedOutputTooLarge }
         return Data(png)
     }
 
-    private static func unfilter(
-        scanlines: [UInt8],
-        width: Int,
-        height: Int,
-        channels: Int,
-        rgbaByteCount: Int
-    ) throws -> Image {
+    private static func unfilter(scanlines: [UInt8], width: Int, height: Int, channels: Int, rgbaByteCount: Int) throws -> Image {
         let rowBytes = try checkedProduct(width, channels)
         var prior = [UInt8](repeating: 0, count: rowBytes)
         var current = [UInt8](repeating: 0, count: rowBytes)
@@ -339,9 +291,7 @@ enum BrowserPNGCodec {
             try Task.checkCancellation()
             let filter = scanlines[sourceOffset]
             sourceOffset += 1
-            guard filter <= 4 else {
-                throw BrowserPNGCodecError.invalidPNGFilter(filter)
-            }
+            guard filter <= 4 else { throw BrowserPNGCodecError.invalidPNGFilter(filter) }
             for columnByte in 0..<rowBytes {
                 let encoded = scanlines[sourceOffset + columnByte]
                 let left = columnByte >= channels ? current[columnByte - channels] : 0
@@ -404,9 +354,7 @@ enum BrowserPNGCodec {
     }
 
     private static func zlibStoreCompressed(_ bytes: [UInt8]) throws -> [UInt8] {
-        guard !bytes.isEmpty else {
-            throw BrowserPNGCodecError.invalidImageBuffer
-        }
+        guard !bytes.isEmpty else { throw BrowserPNGCodecError.invalidImageBuffer }
         var output = [UInt8](arrayLiteral: 0x78, 0x01)
         output.reserveCapacity(bytes.count + (bytes.count / 65_535 + 1) * 5 + 6)
         var offset = 0
@@ -425,9 +373,7 @@ enum BrowserPNGCodec {
             offset += count
         }
         appendUInt32(adler32(bytes), to: &output)
-        guard output.count <= maximumEncodedBytes else {
-            throw BrowserPNGCodecError.encodedOutputTooLarge
-        }
+        guard output.count <= maximumEncodedBytes else { throw BrowserPNGCodecError.encodedOutputTooLarge }
         return output
     }
 
@@ -455,9 +401,7 @@ enum BrowserPNGCodec {
 
     private static func checkedProduct(_ left: Int, _ right: Int) throws -> Int {
         let result = left.multipliedReportingOverflow(by: right)
-        guard !result.overflow else {
-            throw BrowserPNGCodecError.imageTooLarge
-        }
+        guard !result.overflow else { throw BrowserPNGCodecError.imageTooLarge }
         return result.partialValue
     }
 
@@ -465,7 +409,7 @@ enum BrowserPNGCodec {
         (65...90).contains(byte) || (97...122).contains(byte)
     }
 
-    private static func adler32(_ bytes: [UInt8]) -> UInt32 {
+    static func adler32(_ bytes: [UInt8]) -> UInt32 {
         let modulus: UInt32 = 65_521
         var a: UInt32 = 1
         var b: UInt32 = 0

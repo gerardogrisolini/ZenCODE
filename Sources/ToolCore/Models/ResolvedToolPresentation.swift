@@ -1,10 +1,3 @@
-//
-//  ResolvedToolPresentation.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 30/05/26.
-//
-
 /// A resolved metadata entry. Values remain untrusted text; renderers must
 /// sanitize and bound them before display.
 public nonisolated struct ToolPresentationMetadata: Hashable, Sendable {
@@ -22,12 +15,7 @@ public nonisolated struct ToolPresentationMetadata: Hashable, Sendable {
 public nonisolated enum ToolPresentationElement: Hashable, Sendable {
     case parameters(label: String?, value: JSONValue)
     case code(label: String?, content: String, languageHint: String?)
-    case diff(
-        label: String?,
-        old: String,
-        new: String,
-        languageHint: String?
-    )
+    case diff(label: String?, old: String, new: String, languageHint: String?)
     case list(label: String?, items: [JSONValue])
     case summary(label: String?, text: String)
 }

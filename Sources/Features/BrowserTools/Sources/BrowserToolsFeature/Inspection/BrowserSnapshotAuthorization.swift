@@ -32,9 +32,7 @@ struct BrowserDocumentIdentity: Codable, Hashable, Sendable {
               let frameID = nonBlankString(frame["id"]),
               let loaderID = nonBlankString(frame["loaderId"])
         else {
-            throw CDPError.invalidResponse(
-                "Page.getFrameTree did not return a main-frame loader identity"
-            )
+            throw CDPError.invalidResponse("Page.getFrameTree did not return a main-frame loader identity")
         }
         return Self(frameID: frameID, loaderID: loaderID)
     }
@@ -144,12 +142,7 @@ struct BrowserSnapshotStateStore: Sendable {
     /// are host-generated/captured but are still bounded at the durable-state
     /// boundary before they survive a one-shot feature invocation.
     @discardableResult
-    func record(
-        pageID: String,
-        snapshotID: String,
-        allowedRefs: [String],
-        document: BrowserDocumentIdentity
-    ) throws -> Bool {
+    func record(pageID: String, snapshotID: String, allowedRefs: [String], document: BrowserDocumentIdentity) throws -> Bool {
         guard Self.isValidPageID(pageID),
               Self.isWithinLimit(snapshotID, limit: BrowserSnapshotAuthorizationLimits.maximumSnapshotIDBytes),
               Self.isWithinLimit(document.frameID, limit: BrowserSnapshotAuthorizationLimits.maximumDocumentIdentityBytes),
@@ -165,11 +158,7 @@ struct BrowserSnapshotStateStore: Sendable {
 
         return try withExclusiveLock {
             var state = readState()
-            state.recordsByPageID[pageID] = Record(
-                snapshotID: snapshotID,
-                allowedRefs: refs,
-                document: document
-            )
+            state.recordsByPageID[pageID] = Record(snapshotID: snapshotID, allowedRefs: refs, document: document)
             touch(pageID: pageID, in: &state)
             trim(&state, preserving: pageID)
             guard fitsStateBudget(state) else { return false }
@@ -182,12 +171,7 @@ struct BrowserSnapshotStateStore: Sendable {
     /// one locked transaction. A document mismatch removes the stale record so
     /// a back/forward restoration cannot re-enable an authorization issued for
     /// a previous navigation.
-    func isAuthorized(
-        pageID: String,
-        snapshotID: String,
-        ref: String?,
-        document: BrowserDocumentIdentity
-    ) throws -> Bool {
+    func isAuthorized(pageID: String, snapshotID: String, ref: String?, document: BrowserDocumentIdentity) throws -> Bool {
         guard Self.isValidPageID(pageID),
               Self.isWithinLimit(snapshotID, limit: BrowserSnapshotAuthorizationLimits.maximumSnapshotIDBytes),
               ref.map({ Self.isWithinLimit($0, limit: BrowserSnapshotAuthorizationLimits.maximumRefBytes) }) ?? true
@@ -230,10 +214,7 @@ struct BrowserSnapshotStateStore: Sendable {
         try Self.localLock.withLock { _ in
             let directory = stateURL.deletingLastPathComponent()
             do {
-                try FileManager.default.createDirectory(
-                    at: directory,
-                    withIntermediateDirectories: true
-                )
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             } catch {
                 throw BrowserSnapshotStateStoreError.unavailable
             }
@@ -271,10 +252,7 @@ struct BrowserSnapshotStateStore: Sendable {
         do {
             try data.write(to: stateURL, options: .atomic)
             #if canImport(Darwin) || canImport(Glibc)
-            try? FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: stateURL.path
-            )
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: stateURL.path)
             #endif
         } catch {
             throw BrowserSnapshotStateStoreError.unavailable
@@ -352,10 +330,7 @@ struct BrowserSnapshotStateStore: Sendable {
         return data.count <= BrowserSnapshotAuthorizationLimits.maximumStateBytes
     }
 
-    private static func isValidRecord(
-        _ record: Record,
-        maximumRefsPerSnapshot: Int
-    ) -> Bool {
+    private static func isValidRecord(_ record: Record, maximumRefsPerSnapshot: Int) -> Bool {
         Self.isWithinLimit(record.snapshotID, limit: BrowserSnapshotAuthorizationLimits.maximumSnapshotIDBytes)
             && Self.isWithinLimit(record.document.frameID, limit: BrowserSnapshotAuthorizationLimits.maximumDocumentIdentityBytes)
             && Self.isWithinLimit(record.document.loaderID, limit: BrowserSnapshotAuthorizationLimits.maximumDocumentIdentityBytes)
@@ -366,9 +341,7 @@ struct BrowserSnapshotStateStore: Sendable {
     }
 
     private static func isValidPageID(_ value: String) -> Bool {
-        guard isWithinLimit(value, limit: BrowserSnapshotAuthorizationLimits.maximumPageIDBytes) else {
-            return false
-        }
+        guard isWithinLimit(value, limit: BrowserSnapshotAuthorizationLimits.maximumPageIDBytes) else { return false }
         return value.unicodeScalars.allSatisfy {
             CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_"
         }

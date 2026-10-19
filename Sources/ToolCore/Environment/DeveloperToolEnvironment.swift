@@ -1,10 +1,3 @@
-//
-//  DeveloperToolEnvironment.swift
-//  ToolCore
-//
-//  Created by Gerardo Grisolini on 26/05/26.
-//
-
 import Foundation
 
 #if canImport(Darwin) || canImport(Glibc)
@@ -54,10 +47,6 @@ public enum DeveloperToolEnvironment {
         return result
     }
 
-    private static let fallbackPaths = [
-        "/usr/local/bin",
-        "/usr/bin",
-        "/bin"
-    ]
+    private static let fallbackPaths = ["/usr/local/bin", "/usr/bin", "/bin"]
 }
 #endif

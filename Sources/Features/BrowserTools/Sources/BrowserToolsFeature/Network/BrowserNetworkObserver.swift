@@ -61,10 +61,7 @@ struct BrowserNetworkObservation: Sendable {
 
     func capturingBodies(from responseBodyFetcher: any BrowserNetworkResponseBodyFetching) async -> Self {
         guard !bodyCandidates.isEmpty else { return withoutBodyCandidates() }
-        let bodies = await BrowserNetworkBodyCapture.capture(
-            from: responseBodyFetcher,
-            candidates: bodyCandidates
-        )
+        let bodies = await BrowserNetworkBodyCapture.capture(from: responseBodyFetcher, candidates: bodyCandidates)
         guard !bodies.isEmpty else { return withoutBodyCandidates() }
 
         var amendedEntries = entries
@@ -242,13 +239,7 @@ final class BrowserNetworkObserver: Sendable {
             requestHeaders: requestHeaderSelection?.headers,
             headersTruncated: requestHeaderSelection?.truncated
         )
-        append(
-            requestID: requestID,
-            entry: entry,
-            startedTimestamp: requestTimestamp,
-            completed: false,
-            into: &state
-        )
+        append(requestID: requestID, entry: entry, startedTimestamp: requestTimestamp, completed: false, into: &state)
     }
 
     private func recordResponse(_ params: [String: Any], into state: inout State) {
@@ -458,10 +449,7 @@ final class BrowserNetworkObserver: Sendable {
         _ selection: BrowserNetworkHeaderSelection,
         into state: inout State
     ) -> BrowserNetworkHeaderSelection {
-        let remaining = max(
-            0,
-            BrowserNetworkHeaderRedaction.maximumTotalCapturedBytes - state.capturedHeaderBytes
-        )
+        let remaining = max(0, BrowserNetworkHeaderRedaction.maximumTotalCapturedBytes - state.capturedHeaderBytes)
         guard remaining > 0 else {
             return BrowserNetworkHeaderSelection(headers: [], truncated: !selection.headers.isEmpty || selection.truncated)
         }
@@ -520,10 +508,7 @@ final class BrowserNetworkObserver: Sendable {
 
     private static func resourceType(_ rawValue: Any?) -> String {
         guard let rawValue = rawValue as? String else { return "Other" }
-        let bounded = BrowserNetworkOutputBounds.clip(
-            rawValue,
-            maximumBytes: BrowserNetworkOutputBounds.maximumResourceTypeBytes
-        )
+        let bounded = BrowserNetworkOutputBounds.clip(rawValue, maximumBytes: BrowserNetworkOutputBounds.maximumResourceTypeBytes)
         return BrowserNetworkFilters.canonicalResourceType(bounded) ?? bounded
     }
 }
@@ -555,10 +540,7 @@ protocol BrowserNetworkResponseBodyFetching: Sendable {
 
 extension CDPSession: BrowserNetworkResponseBodyFetching {
     func responseBody(for requestID: String) async throws -> BrowserNetworkResponseBodyPayload? {
-        let response = try await send(
-            method: "Network.getResponseBody",
-            params: ["requestId": requestID]
-        )
+        let response = try await send(method: "Network.getResponseBody", params: ["requestId": requestID])
         guard let result = response["result"] as? [String: Any],
               let body = result["body"] as? String
         else {
@@ -581,15 +563,9 @@ private extension BrowserNetworkInitiator {
             values["type"] as? String ?? "other",
             maximumBytes: BrowserNetworkOutputBounds.maximumResourceTypeBytes
         )
-        let lineNumber = BrowserNetworkValue.integer(
-            values["lineNumber"] ?? stackFrame?["lineNumber"]
-        )
-        let columnNumber = BrowserNetworkValue.integer(
-            values["columnNumber"] ?? stackFrame?["columnNumber"]
-        )
-        guard rawURL != nil || values["type"] != nil || lineNumber != nil || columnNumber != nil else {
-            return nil
-        }
+        let lineNumber = BrowserNetworkValue.integer(values["lineNumber"] ?? stackFrame?["lineNumber"])
+        let columnNumber = BrowserNetworkValue.integer(values["columnNumber"] ?? stackFrame?["columnNumber"])
+        guard rawURL != nil || values["type"] != nil || lineNumber != nil || columnNumber != nil else { return nil }
         return BrowserNetworkInitiator(
             type: type,
             url: rawURL.map { BrowserNetworkURLRedaction.apply(to: $0) },
@@ -634,10 +610,7 @@ private enum BrowserNetworkHeaderRedaction {
         "x-content-type-options", "x-frame-options", "x-xss-protection",
     ]
 
-    static func sanitize(
-        _ rawHeaders: Any?,
-        direction: BrowserNetworkHeaderDirection
-    ) -> BrowserNetworkHeaderSelection {
+    static func sanitize(_ rawHeaders: Any?, direction: BrowserNetworkHeaderDirection) -> BrowserNetworkHeaderSelection {
         guard let rawHeaders = rawHeaders as? [String: Any] else {
             return BrowserNetworkHeaderSelection(headers: [], truncated: false)
         }
@@ -663,10 +636,7 @@ private enum BrowserNetworkHeaderRedaction {
                 continue
             }
 
-            let boundedSource = BrowserNetworkOutputBounds.clip(
-                stringValue,
-                maximumBytes: maximumHeaderSourceBytes
-            )
+            let boundedSource = BrowserNetworkOutputBounds.clip(stringValue, maximumBytes: maximumHeaderSourceBytes)
             let redactedValue: String
             if name == "location" || name == "content-location" || name == "origin" || name == "referer" {
                 redactedValue = BrowserNetworkSensitiveTextRedaction.redactHeaderValue(
@@ -677,10 +647,7 @@ private enum BrowserNetworkHeaderRedaction {
             }
             candidates.append(BrowserNetworkHeader(
                 name: name,
-                value: BrowserNetworkOutputBounds.clip(
-                    redactedValue,
-                    maximumBytes: maximumHeaderValueBytes
-                )
+                value: BrowserNetworkOutputBounds.clip(redactedValue, maximumBytes: maximumHeaderValueBytes)
             ))
         }
         candidates.sort { lhs, rhs in
