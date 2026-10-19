@@ -18,7 +18,8 @@ import ToolCore
 extension DirectToolExecutor {
     /// Tool names that route through the destructive-operation authorization
     /// gate, including `desktop.run` (only for actions that open documents,
-    /// launch apps by path, or terminate processes). `local.exec` keeps its
+    /// launch apps by path, terminate processes, or type text that presses
+    /// Return, which is gated as a `local.exec` command). `local.exec` keeps its
     /// own dedicated command-level gate.
     public static let destructiveGatedToolNames: Set<String> = [
         "local.delete",

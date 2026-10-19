@@ -37,7 +37,7 @@ struct DesktopRunTool: FeatureTool {
         "delta_x": { "type": "number", "minimum": -10000, "maximum": 10000, "description": "Horizontal scroll amount; positive scrolls left." },
         "delta_y": { "type": "number", "minimum": -10000, "maximum": 10000, "description": "Vertical scroll amount; positive scrolls up." },
         "scroll_unit": { "type": "string", "enum": ["pixel", "line"], "description": "Scroll unit; defaults to pixel." },
-        "text": { "type": "string", "maxLength": 10000, "description": "Text for type_text or write_clipboard." },
+        "text": { "type": "string", "maxLength": 10000, "description": "Text for type_text or write_clipboard. type_text presses the real keys of the current keyboard layout; line breaks press Return (submitting the line, so text with line breaks requires the same consent as local.exec) and tabs press Tab." },
         "key": { "type": "string", "description": "Key for press_key: a single character, resolved on the current keyboard layout (Shift/Option are added automatically when the layout needs them), or a named key such as return, tab, space, escape, delete, forward_delete, left, right, up, down, home, end, page_up, page_down, f1-f20, keypad_0-keypad_9." },
         "modifiers": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["command", "shift", "option", "control", "fn"] }, "description": "Modifiers held for press_key." },
         "repeat_count": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Number of key presses; defaults to 1." },

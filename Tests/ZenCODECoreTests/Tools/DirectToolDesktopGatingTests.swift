@@ -99,6 +99,24 @@ struct DirectToolDesktopGatingTests {
     }
 
     @Test
+    func typeTextWithLineBreakIsGatedAsLocalExec() throws {
+        let gated = try #require(request(["action": "type_text", "text": "rm -rf tmp\r\n"]))
+        #expect(gated.toolName == "local.exec")
+        #expect(gated.kind == "execute")
+        #expect(gated.command == "rm -rf tmp\n")
+        #expect(gated.title == "Run rm")
+        #expect(gated.workingDirectory == cwd.path)
+
+        #expect(request(["action": "type_text", "text": "git push --force\rls"])?.command
+            == "git push --force\nls")
+        // Without a line break the text is not submitted; an empty line is
+        // safe for local.exec as well.
+        #expect(request(["action": "type_text", "text": "rm -rf tmp"]) == nil)
+        #expect(request(["action": "type_text", "text": "a\tb"]) == nil)
+        #expect(request(["action": "type_text", "text": "\n"]) == nil)
+    }
+
+    @Test
     func authorizerGatesDesktopRun() {
         #expect(LocalExecPermissionAuthorizer.gatedToolNames.contains("desktop.run"))
     }
@@ -155,6 +173,22 @@ struct DirectToolDesktopGatingTests {
             allowedToolNames: [SwiftFeatureRuntime.featurePackageToolsAllowedName]
         )
         #expect(await requests.requests.count == 1)
+
+        // The ungated screenshot above ran the feature; reset the marker.
+        try? FileManager.default.removeItem(at: marker)
+        let typed = await executor.execute(
+            sessionID: "gating-tests",
+            toolCall: toolCall(
+                name: "desktop.run",
+                arguments: ["action": "type_text", "text": "rm -rf ~/x\n"]
+            ),
+            workingDirectory: workspace,
+            allowedToolNames: [SwiftFeatureRuntime.featurePackageToolsAllowedName]
+        )
+        #expect(typed.status == .permissionDenied)
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+        #expect(await requests.requests.last?.toolName == "local.exec")
+        #expect(await requests.requests.count == 2)
     }
 
     private func toolCall(name: String, arguments: [String: Any]) -> DirectAgentToolCall {

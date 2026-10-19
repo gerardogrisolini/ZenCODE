@@ -15,10 +15,39 @@ extension DirectToolExecutor {
         command: String,
         cwd: URL
     ) async -> String? {
-        guard let authorizationHandler else {
+        guard let authorizationHandler,
+              let request = Self.localExecAuthorizationRequest(
+                  sessionID: sessionID,
+                  toolCallID: toolCall.id,
+                  command: command,
+                  cwd: cwd,
+                  delegatedIdentity: delegatedAuthorizationIdentity
+              ) else {
             return nil
         }
 
+        // A tool call is one consent decision. The parser still inventories all
+        // executable identities for cache/persistence safety, but pipelines,
+        // substitutions, and compound commands must not fan out into a series
+        // of terminal dialogs that repeatedly suspend and resume the input UI.
+        guard await authorizationHandler(request) else {
+            return deniedLocalExecOutput(command: command, cwd: cwd)
+        }
+
+        return nil
+    }
+
+    /// Builds the `local.exec` consent request for a shell command, or nil when
+    /// the parser proves the command safe. Shared by `local.exec` and by
+    /// `desktop.run` `type_text` calls that submit lines with Enter, so both
+    /// routes use the same analysis, cache keys, and persisted approvals.
+    static func localExecAuthorizationRequest(
+        sessionID: String?,
+        toolCallID: String,
+        command: String,
+        cwd: URL,
+        delegatedIdentity: AgentToolAuthorizationRequest.DelegatedIdentity?
+    ) -> AgentToolAuthorizationRequest? {
         let analysis = LocalExecCommandParser.authorizationAnalysis(in: command)
         let candidates: [LocalExecCommandParser.AuthorizationCandidate]
         switch analysis {
@@ -38,27 +67,16 @@ extension DirectToolExecutor {
             ]
         }
 
-        // A tool call is one consent decision. The parser still inventories all
-        // executable identities for cache/persistence safety, but pipelines,
-        // substitutions, and compound commands must not fan out into a series
-        // of terminal dialogs that repeatedly suspend and resume the input UI.
-        let approved = await authorizationHandler(
-            AgentToolAuthorizationRequest(
-                sessionID: sessionID,
-                toolCallID: toolCall.id,
-                toolName: "local.exec",
-                title: Self.localExecAuthorizationTitle(for: candidates),
-                kind: "execute",
-                command: command,
-                workingDirectory: cwd.path,
-                delegatedIdentity: delegatedAuthorizationIdentity
-            )
+        return AgentToolAuthorizationRequest(
+            sessionID: sessionID,
+            toolCallID: toolCallID,
+            toolName: "local.exec",
+            title: localExecAuthorizationTitle(for: candidates),
+            kind: "execute",
+            command: command,
+            workingDirectory: cwd.path,
+            delegatedIdentity: delegatedIdentity
         )
-        guard approved else {
-            return deniedLocalExecOutput(command: command, cwd: cwd)
-        }
-
-        return nil
     }
 
     static func localExecAuthorizationCommands(in command: String) -> [String] {

@@ -4,7 +4,8 @@
 //
 //  Authorization gate for `desktop.run` actions that can run code or end
 //  processes: opening documents/non-web URLs, launching applications by path,
-//  and terminating applications. It mirrors the argument semantics of the
+//  terminating applications, and typing text that presses Return (gated as a
+//  `local.exec` command). It mirrors the argument semantics of the
 //  optional `desktop-tools` feature and fails closed: only provably benign
 //  shapes are left ungated.
 //
@@ -162,6 +163,24 @@ extension DirectToolExecutor {
                 title: force ? "Force-terminate \(target)" : "Terminate \(target)",
                 kind: "destructive",
                 command: parts.joined(separator: " ") + comment
+            )
+        case "type_text":
+            // Typing a line break presses Return, which submits the line to a
+            // focused shell. Treat such text exactly like a `local.exec`
+            // command; text without a line break only edits the input.
+            guard let text = arguments["text"] as? String,
+                  text.unicodeScalars.contains(where: { $0 == "\n" || $0 == "\r" }) else {
+                return nil
+            }
+            let command = text
+                .replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: "\r", with: "\n")
+            return localExecAuthorizationRequest(
+                sessionID: sessionID,
+                toolCallID: toolCall.id,
+                command: command,
+                cwd: workingDirectory,
+                delegatedIdentity: delegatedIdentity
             )
         default:
             return nil

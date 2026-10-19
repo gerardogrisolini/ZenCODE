@@ -28,6 +28,12 @@ enum DesktopKeyLayer: CaseIterable, Sendable {
 
 protocol DesktopKeyTranslating {
     func character(forKeyCode keyCode: CGKeyCode, layer: DesktopKeyLayer) -> String?
+    /// True when the key starts a dead-key sequence instead of producing text.
+    func isDeadKey(keyCode: CGKeyCode, layer: DesktopKeyLayer) -> Bool
+}
+
+extension DesktopKeyTranslating {
+    func isDeadKey(keyCode: CGKeyCode, layer: DesktopKeyLayer) -> Bool { false }
 }
 
 /// Translates key codes using the current keyboard layout. Main-actor only, not Sendable.
@@ -60,6 +66,23 @@ struct CarbonKeyTranslator: DesktopKeyTranslating {
             return String(utf16CodeUnits: characters, count: length)
         }
     }
+
+    func isDeadKey(keyCode: CGKeyCode, layer: DesktopKeyLayer) -> Bool {
+        guard let bytes = CFDataGetBytePtr(layoutData) else { return false }
+        let modifierState = layer.ucModifierState
+        let keyboardType = self.keyboardType
+        return bytes.withMemoryRebound(to: UCKeyboardLayout.self, capacity: 1) { layout in
+            var deadKeyState: UInt32 = 0
+            var length = 0
+            var characters = [UniChar](repeating: 0, count: 4)
+            let status = UCKeyTranslate(
+                layout, keyCode, UInt16(kUCKeyActionDown), modifierState,
+                keyboardType, 0,
+                &deadKeyState, characters.count, &length, &characters
+            )
+            return status == noErr && length == 0 && deadKeyState != 0
+        }
+    }
 }
 
 enum DesktopKeyResolver {
@@ -88,6 +111,36 @@ enum DesktopKeyResolver {
             "key",
             "unsupported key '\(name)'. Use a single character or a named key (return, tab, space, escape, delete, forward_delete, left, right, up, down, home, end, page_up, page_down, f1-f20, keypad_0-keypad_9, ...); use type_text for text."
         )
+    }
+
+    /// Physical key (and modifiers) that types each character on the current
+    /// layout. Case-sensitive; dead keys are skipped because pressing them only
+    /// starts a composition. The first match in layer order wins.
+    static func typingKeyMap(translator: any DesktopKeyTranslating) -> [String: (keyCode: CGKeyCode, flags: CGEventFlags)] {
+        var map: [String: (keyCode: CGKeyCode, flags: CGEventFlags)] = [:]
+        for layer in DesktopKeyLayer.allCases {
+            for code in typingKeyCodes {
+                guard let character = translator.character(forKeyCode: code, layer: layer),
+                      map[character] == nil,
+                      !translator.isDeadKey(keyCode: code, layer: layer) else { continue }
+                map[character] = (code, layer.eventFlags)
+            }
+        }
+        return map
+    }
+
+    /// Key used by type_text for one character, or nil when the character must
+    /// be posted as a Unicode string. Line breaks press Return and tabs press Tab.
+    static func typingKey(
+        for character: Character,
+        keyMap: [String: (keyCode: CGKeyCode, flags: CGEventFlags)]
+    ) -> (keyCode: CGKeyCode, flags: CGEventFlags)? {
+        switch character {
+        case "\n", "\r", "\r\n": return (36, [])
+        case "\t": return (48, [])
+        case " ": return (49, [])
+        default: return keyMap[String(character)]
+        }
     }
 
     /// Typing keycodes searched in ascending order; return, tab and space are excluded, JIS keys come last.

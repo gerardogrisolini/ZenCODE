@@ -130,8 +130,24 @@ extension DesktopController {
     static func typeText(_ text: String, interval: Double) throws {
         try Task.checkCancellation()
         let source = try eventSource()
+        // Real key events on the current layout reach apps that read key codes
+        // (Terminal included); characters the layout cannot type fall back to a
+        // Unicode string on a placeholder key.
+        let keyMap = CarbonKeyTranslator().map { DesktopKeyResolver.typingKeyMap(translator: $0) } ?? [:]
         for character in text {
             try Task.checkCancellation()
+            if let key = DesktopKeyResolver.typingKey(for: character, keyMap: keyMap) {
+                guard let down = CGEvent(keyboardEventSource: source, virtualKey: key.keyCode, keyDown: true),
+                      let up = CGEvent(keyboardEventSource: source, virtualKey: key.keyCode, keyDown: false) else {
+                    throw DesktopControlError.operationFailed("Could not create keyboard events.")
+                }
+                down.flags = key.flags
+                up.flags = key.flags
+                down.post(tap: .cghidEventTap)
+                up.post(tap: .cghidEventTap)
+                if interval > 0 { Thread.sleep(forTimeInterval: interval) }
+                continue
+            }
             let units = Array(String(character).utf16)
             guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
                   let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {

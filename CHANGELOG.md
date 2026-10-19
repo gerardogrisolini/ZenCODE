@@ -154,6 +154,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Desktop: `type_text` now reaches the Terminal and other apps that read key
+  codes. It presses the real keys of the current keyboard layout (with Shift
+  or Option when needed, skipping dead keys), turns line breaks into Return
+  and tabs into Tab, and falls back to a Unicode event only for characters the
+  layout cannot type. Text containing a line break submits the line, so it
+  now goes through the same consent gate as `local.exec`: the same command
+  analysis, safe-command exemptions, and shared "Always" approvals.
 - Browser: `browser.act` fill now works in rich-text editors such as
   social-media composers (Draft.js, Lexical, ProseMirror, Quill). It resolves
   the editable host from a descendant or wrapper node, replaces the existing
