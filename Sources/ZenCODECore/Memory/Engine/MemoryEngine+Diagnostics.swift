@@ -27,10 +27,16 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
     public var edgeDecay: Float
     public var rrfRankConstant: Float
     public var boostSelectedBy: Float
+    /// Permanent confidence loss for a candidate that was retrieved but not
+    /// selected. Off by default: with the age discount and relevance deciding
+    /// the ranking, a per-recall penalty would only erode entries that often
+    /// appear near a prompt without being chosen.
     public var decayRejectedBy: Float
     public var strengthenCoRelevantLinks: Bool
     public var includeOriginalQuery: Bool
     public var intelligenceFailurePolicy: MemoryIntelligenceFailurePolicy
+    /// Age discount applied to retrieval scores (see ``MemoryAgePolicy``).
+    public var agePolicy: MemoryAgePolicy
     /// Number of automatic recalls whose derived maintenance may stay in
     /// memory before a durable checkpoint. Explicit mutations checkpoint them
     /// as part of their own immediate transaction.
@@ -48,10 +54,11 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
         edgeDecay: Float = 0.7,
         rrfRankConstant: Float = 60,
         boostSelectedBy: Float = 0.02,
-        decayRejectedBy: Float = 0.01,
+        decayRejectedBy: Float = 0,
         strengthenCoRelevantLinks: Bool = true,
         includeOriginalQuery: Bool = true,
         intelligenceFailurePolicy: MemoryIntelligenceFailurePolicy = .fallback,
+        agePolicy: MemoryAgePolicy = .default,
         recallMaintenanceCheckpointSize: Int = 4
     ) {
         self.similarityThreshold = similarityThreshold
@@ -69,6 +76,7 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
         self.strengthenCoRelevantLinks = strengthenCoRelevantLinks
         self.includeOriginalQuery = includeOriginalQuery
         self.intelligenceFailurePolicy = intelligenceFailurePolicy
+        self.agePolicy = agePolicy
         self.recallMaintenanceCheckpointSize = max(1, recallMaintenanceCheckpointSize)
     }
 }

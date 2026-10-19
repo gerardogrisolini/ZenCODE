@@ -155,32 +155,35 @@ struct EngineMemoryEntry: Codable, Sendable, Identifiable, Equatable {
         searchText.isEmpty ? Self.normalizeSearchText(content: content, tags: tags) : searchText
     }
 
-    public func effectiveConfidence(at date: Date = Date()) -> Float {
-        let ageDays = max(0, Float(date.timeIntervalSince(createdAt) / 86_400))
-        let halfLife: Float = switch category {
-        case .correction: 365
-        case .preference: 90
-        case .fact: 30
-        case .entity: 60
-        case .custom: 45
-        }
-        let decay = expf(-ageDays / halfLife * 0.693)
+    /// Retrieval weight: stored confidence, discounted by the age of the last
+    /// content change (`max(createdAt, updatedAt)`: a write, an update or an
+    /// archive toggle; retrieval maintenance never touches `updatedAt`), and
+    /// lifted by a logarithmic access boost. See ``MemoryAgePolicy``.
+    public func effectiveConfidence(
+        at date: Date = Date(),
+        policy: MemoryAgePolicy = .default
+    ) -> Float {
+        let lastChange = max(createdAt, updatedAt)
+        let ageDays = max(0, Float(date.timeIntervalSince(lastChange) / 86_400))
+        let discount = policy.discount(ageDays: ageDays, category: category)
         let accessBoost = 1 + 0.1 * logf(Float(accessCount) + 1)
-        return min(confidence * decay * accessBoost, 1)
+        return min(confidence * discount * accessBoost, 1)
     }
 
+    /// Records a selection: the stored confidence rises and the access count
+    /// grows. `updatedAt` is left alone on purpose, so being recalled does not
+    /// make an entry look recently changed and keep it young for ever.
     public mutating func boostConfidence(by amount: Float) {
         confidence = min(confidence + amount, 1)
         accessCount &+= 1
-        updatedAt = Date()
     }
 
     public mutating func decayConfidence(by amount: Float) {
         confidence = max(confidence - amount, 0)
     }
 
+    /// Counts an access without changing the content timestamp.
     public mutating func touch() {
-        updatedAt = Date()
         accessCount &+= 1
     }
 

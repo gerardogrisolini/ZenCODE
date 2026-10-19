@@ -10,11 +10,13 @@ import Testing
 }
 
 @Test func confidenceDecaysByCategory() {
+    // A 30-day-old fact: 120-day half-life lifted onto the 0.2 floor gives
+    // 0.2 + 0.8 * 2^(-30/120) ≈ 0.87.
     let oldDate = Date().addingTimeInterval(-30 * 86_400)
     let entry = EngineMemoryEntry(category: .fact, content: "old fact", createdAt: oldDate)
     let confidence = entry.effectiveConfidence()
-    #expect(confidence > 0.45)
-    #expect(confidence < 0.6)
+    #expect(confidence > 0.85)
+    #expect(confidence < 0.9)
 }
 
 @Test func cascadeTraversesSharedTag() {

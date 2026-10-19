@@ -107,8 +107,22 @@ alike. `scope` is accepted on the wrappers for source compatibility and only
 `.project` is backed by a per-workspace graph. Retrieval
 is BM25-first: `ZenMemory.recall` always runs lexical retrieval through the
 pluggable `MemoryIndex` protocol (default `BM25MemoryIndex`) and uses those hits
-as seeds, then a breadth-first relation cascade with depth decay and
-per-retrieval confidence boost/decay. `memory.search` is strictly read-only: the
+as seeds, then a breadth-first relation cascade with depth decay and a
+per-retrieval confidence boost of the selected entries. Every score carries an
+age discount (`MemoryAgePolicy`, `EngineMemoryEntry.effectiveConfidence`):
+age is measured from the last content change (`max(createdAt, updatedAt)` —
+a write, an update or an archive toggle; retrieval maintenance never touches
+`updatedAt`), halves after 120 days for facts, entities and custom categories
+(90 for preferences, 365 for corrections) and never falls below a floor of
+0.2, so between two old entries relevance decides rather than a near-zero
+factor; a logarithmic access boost lifts frequently selected entries and the
+stored `confidence` scales the whole. The discount is applied to each ranking
+*before* reciprocal-rank fusion — each stage over-fetches and re-sorts by
+relevance × freshness, so a slightly older but better match keeps its rank,
+whereas applying it after fusion would act on near-flat rank scores and sort
+by age alone — and, after the cascade, only to the graph neighbours that
+inherited a seed's decayed score, so every entry is weighted exactly once.
+`memory.search` is strictly read-only: the
 store's `search` runs the engine's `searchReadOnly` path, which shares the same
 analyze → retrieve → select pipeline as recall but performs no transactional
 maintenance — it never mutates `retrievalCount`/`confidence`/links and cannot
@@ -371,17 +385,19 @@ best-effort diagnostics, never a change to the work result.
 ZenCODECore installs its own `ScoreThresholdMemorySelector` (a `MemorySelector`)
 in place of the engine's default `TopScoreMemorySelector`. The default returns
 every candidate up to `maxResults`, which would defeat the engine's
-post-retrieval maintenance: every retrieved entry would be boosted and none
-decayed (confidence flattens toward 1.0), and `selected.count >= 2` would nearly
-always hold, so every recall would link its results pairwise at weight 0.7,
-saturating the graph until cascade retrieval degenerates into noise. The
-threshold selector keeps only candidates scoring at least half of the top hit,
-restoring decay for weak candidates and limiting co-relevance linking to
-genuinely strong matches. It makes no LLM call and no network request:
-BM25/cascade scores have no absolute scale (they depend on corpus statistics),
-so the cutoff is relative to each recall's best hit rather than a fixed
-threshold. The engine's `MemoryVerifier` protocol is deprecated in favour of
-`MemorySelector`. The five `memory.*` tool names
+post-retrieval maintenance: every retrieved entry would be boosted (confidence
+flattens toward 1.0), and `selected.count >= 2` would nearly always hold, so
+every recall would link its results pairwise at weight 0.7, saturating the
+graph until cascade retrieval degenerates into noise. The threshold selector
+keeps only candidates scoring at least half of the top hit, limiting the boost
+and co-relevance linking to genuinely strong matches. Rejected candidates are
+left untouched: `decayRejectedBy` defaults to 0, so being retrieved near a
+prompt without being chosen costs an entry nothing, and the boost records the
+access without touching `updatedAt`. It makes no LLM call and no network
+request: BM25/cascade scores have no absolute scale (they depend on corpus
+statistics), so the cutoff is relative to each recall's best hit rather than a
+fixed threshold. The engine's `MemoryVerifier` protocol is deprecated in favour
+of `MemorySelector`. The five `memory.*` tool names
 and the read-only vs mutating descriptor split are unchanged; `memory.write`
 reports what actually happened — the tool emits `written`/`deduplicated` from
 the store's `(entry, created)` outcome (`writeEntryOutcome`), so a write that

@@ -324,10 +324,12 @@ struct MemoryEnhancementTests {
     }
 
     @Test
-    func weakRecallCandidatesAreDecayedRatherThanBoosted() async throws {
+    func weakRecallCandidatesAreNeitherBoostedNorDecayed() async throws {
         // Regression: with the passthrough selector every recalled candidate
         // was selected, so weak partial matches were boosted toward confidence
-        // 1.0. The score-threshold selector must instead decay them.
+        // 1.0. The score-threshold selector keeps the boost for strong hits
+        // only; a rejected candidate is left exactly as it was — no access
+        // bump, no permanent confidence loss, no timestamp change.
         //
         // Maintenance is exercised through the automatic recall path
         // (`store.context`), not `memory.search`: search is read-only and must
@@ -358,13 +360,15 @@ struct MemoryEnhancementTests {
             let weakAfter = try #require(after.first { $0.id == weak.id })
 
             // The weak hit (~0.26x of the top) was filtered by the 0.5 floor,
-            // so only the strong hit was verified and boosted.
+            // so only the strong hit was verified and boosted. Being recalled
+            // does not touch the content timestamp.
             #expect(strongAfter.accessCount == 1)
             #expect(strongAfter.confidence == 1.0)
-            // The weak hit was decayed, not boosted: no access bump, confidence
-            // fell below the initial 1.0.
+            #expect(abs(strongAfter.updatedAt.timeIntervalSince(strong.updatedAt)) < 0.001)
+            // The weak hit is untouched: no access bump, no decay.
             #expect(weakAfter.accessCount == 0)
-            #expect(weakAfter.confidence < strongAfter.confidence)
+            #expect(weakAfter.confidence == weak.confidence)
+            #expect(abs(weakAfter.updatedAt.timeIntervalSince(weak.updatedAt)) < 0.001)
         }
     }
 
@@ -470,10 +474,15 @@ struct MemoryEnhancementTests {
         )
 
         #expect(oldFact.effectiveConfidence(at: now) < fresh.effectiveConfidence(at: now))
-        // A 60-day-old fact (30-day half-life) has decayed well below half.
-        #expect(oldFact.effectiveConfidence(at: now) < 0.5)
-        // Corrections decay far more slowly than facts (365- vs 30-day half-life).
+        // A 60-day-old fact (120-day half-life, 0.2 floor) keeps most of its
+        // weight: 0.2 + 0.8 * 2^(-60/120) ≈ 0.77, well above the floor.
+        #expect(oldFact.effectiveConfidence(at: now) > 0.7)
+        #expect(oldFact.effectiveConfidence(at: now) < 0.8)
+        // Corrections decay more slowly than facts (365- vs 120-day half-life).
         #expect(oldCorrection.effectiveConfidence(at: now) > oldFact.effectiveConfidence(at: now))
+        // Age never pushes the weight below the floor.
+        let ancient = GraphEntry(category: .fact, content: "ancient fact", createdAt: now.addingTimeInterval(-3650 * 86_400))
+        #expect(ancient.effectiveConfidence(at: now) >= MemoryAgePolicy.default.floor)
     }
 
     @Test

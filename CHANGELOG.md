@@ -53,6 +53,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
   scoring below half of the top hit. Archived entries requested with
   `includeArchived` are ranked with the same BM25 scoring as active ones rather
   than by substring coverage; half of the limit stays reserved for them.
+- Memory retrieval scores use a new age policy (`MemoryAgePolicy`): age is
+  measured from the last content change (`max(createdAt, updatedAt)`) instead
+  of creation, the half-life of facts rises from 30 to 120 days (entities 60 →
+  120, custom 45 → 120; preferences 90 and corrections 365 unchanged), and the
+  discount never falls below 0.2. The discount is applied to each ranking
+  before reciprocal-rank fusion and to graph neighbours after the cascade,
+  instead of to the fused scores, which are near-flat and were effectively
+  sorted by age. Recall maintenance no longer touches `updatedAt` when it boosts
+  a selected entry and no longer decays rejected candidates
+  (`decayRejectedBy` defaults to 0). On the reference journal the median age of
+  recalled entries moves from 5 to about 26 days and relevant entries older
+  than 60 days become retrievable again.
 
 ### Fixed
 

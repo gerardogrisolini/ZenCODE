@@ -103,6 +103,31 @@ extension MemoryEngine {
             return (plan, [], [])
         }
 
+        // Age/confidence weight of every entry, computed once per retrieval.
+        // It is applied to each ranking *before* fusion so that it reorders by
+        // relevance × freshness within a list; applied after reciprocal-rank
+        // fusion it would act on near-flat rank scores and simply sort by age.
+        let now = Date()
+        let agePolicy = configuration.agePolicy
+        let weights: [String: Float] = Dictionary(
+            uniqueKeysWithValues: activeMemories.map { memory in
+                (memory.id, memory.effectiveConfidence(at: now, policy: agePolicy))
+            }
+        )
+        // Each stage fetches more than it keeps, so an entry just outside the
+        // raw top list can still enter it once freshness is accounted for.
+        func weighted(_ ranking: [ScoredMemoryID], keeping limit: Int) -> [ScoredMemoryID] {
+            ranking
+                .map { ScoredMemoryID(id: $0.id, score: $0.score * (weights[$0.id] ?? 1)) }
+                .sorted {
+                    if $0.score == $1.score { return $0.id < $1.id }
+                    return $0.score > $1.score
+                }
+                .prefix(limit)
+                .map { $0 }
+        }
+        let overfetch = 4
+
         var rankings: [[ScoredMemoryID]] = []
         rankings.reserveCapacity(queries.count + configuration.maxSemanticQueries + 1)
 
@@ -111,9 +136,9 @@ extension MemoryEngine {
                 query: query,
                 memories: activeMemories,
                 scope: scope,
-                limit: lexicalLimit
+                limit: lexicalLimit * overfetch
             )
-            if !lexical.isEmpty { rankings.append(lexical) }
+            if !lexical.isEmpty { rankings.append(weighted(lexical, keeping: lexicalLimit)) }
         }
 
         let metadata = MemorySearch.metadataRanking(
@@ -121,9 +146,9 @@ extension MemoryEngine {
             tags: plan.tags,
             entities: plan.entities,
             scope: scope,
-            limit: lexicalLimit
+            limit: lexicalLimit * overfetch
         )
-        if !metadata.isEmpty { rankings.append(metadata) }
+        if !metadata.isEmpty { rankings.append(weighted(metadata, keeping: lexicalLimit)) }
 
         if includeSemantic,
            let embedder,
@@ -140,9 +165,9 @@ extension MemoryEngine {
                         modelID: embedder.modelID,
                         scope: scope,
                         threshold: configuration.similarityThreshold,
-                        limit: semanticLimit
+                        limit: semanticLimit * overfetch
                     )
-                    if !semantic.isEmpty { rankings.append(semantic) }
+                    if !semantic.isEmpty { rankings.append(weighted(semantic, keeping: semanticLimit)) }
                 } catch let cancellation as CancellationError {
                     // Cancellation is not an endpoint failure; keep it observable.
                     throw cancellation
@@ -194,9 +219,14 @@ extension MemoryEngine {
             scope: scope
         )
 
+        // Seeds already carry their weight; a node reached only through the
+        // graph inherits a decayed seed score, so it is weighted here by its
+        // own age and confidence — exactly once either way.
+        let seedIDs = Set(seeds.map(\.id))
         let candidates = cascaded.compactMap { item -> MemoryCandidate? in
             guard let memory = graph.memories[item.id], memory.active else { return nil }
-            return MemoryCandidate(memory: memory, score: item.score * memory.effectiveConfidence())
+            let weight = seedIDs.contains(item.id) ? 1 : (weights[item.id] ?? 1)
+            return MemoryCandidate(memory: memory, score: item.score * weight)
         }.sorted { lhs, rhs in
             if lhs.score == rhs.score { return lhs.memory.id < rhs.memory.id }
             return lhs.score > rhs.score

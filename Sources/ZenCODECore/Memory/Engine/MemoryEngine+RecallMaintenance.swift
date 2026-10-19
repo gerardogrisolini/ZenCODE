@@ -55,8 +55,11 @@ extension MemoryEngine {
             guard var memory = graph.memories[candidate.memory.id] else { continue }
             if selectedIDs.contains(memory.id) {
                 memory.boostConfidence(by: configuration.boostSelectedBy)
-            } else {
+            } else if configuration.decayRejectedBy > 0 {
                 memory.decayConfidence(by: configuration.decayRejectedBy)
+            } else {
+                // Rejected candidates are left untouched by default.
+                continue
             }
             graph.memories[memory.id] = memory
         }
