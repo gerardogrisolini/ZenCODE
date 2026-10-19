@@ -46,6 +46,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   if it is set explicitly and the semantic variable is not, it governs both
   paths. Effect: the semantic request is no longer cancelled systematically at
   150 ms, while the BM25 fallback remains the upper limit of the wait.
+- `memory.search` honours its `limit` (1–50, default 8): every retrieval stage
+  is widened to the requested size and the ranked candidates — direct hits plus
+  graph neighbours — are returned up to that limit, instead of the recall
+  selector's thresholded subset, which capped results at 8 and dropped matches
+  scoring below half of the top hit. Archived entries requested with
+  `includeArchived` are ranked with the same BM25 scoring as active ones rather
+  than by substring coverage; half of the limit stays reserved for them.
 
 ### Fixed
 

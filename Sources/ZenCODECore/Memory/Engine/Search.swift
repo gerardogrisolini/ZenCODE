@@ -80,20 +80,24 @@ enum MemorySearch {
         )
     }
 
+    /// BM25 over `memories`. Inactive entries are skipped unless
+    /// `requireActive` is `false`, which lets a lookup that was explicitly
+    /// asked for archived entries rank them with the same scoring.
     public static func lexicalBM25(
         memories: [EngineMemoryEntry],
         query: String,
         scope: EngineMemoryScope = .all,
         limit: Int = 10,
         k1: Float = 1.2,
-        b: Float = 0.75
+        b: Float = 0.75,
+        requireActive: Bool = true
     ) -> [ScoredMemoryID] {
         guard limit > 0 else { return [] }
         let queryTokens = tokens(query)
         guard !queryTokens.isEmpty else { return [] }
 
         let documents: [(EngineMemoryEntry, [String])] = memories
-            .filter { $0.active && scopeAllows($0.scope, requested: scope) }
+            .filter { (!requireActive || $0.active) && scopeAllows($0.scope, requested: scope) }
             .map { ($0, tokens($0.searchableText)) }
 
         guard !documents.isEmpty else { return [] }

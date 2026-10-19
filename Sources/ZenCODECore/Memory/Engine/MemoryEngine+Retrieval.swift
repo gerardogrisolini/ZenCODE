@@ -49,15 +49,22 @@ extension MemoryEngine {
     /// Read-only retrieval over an explicitly supplied graph: store-level reads
     /// resolve one coherent graph per request (see ``freshSnapshotForReadOnly()``)
     /// and run the pipeline over it, with no maintenance or persistence.
+    ///
+    /// `limit` is the number of ranked results an explicit lookup asked for:
+    /// every retrieval stage is widened to at least that many hits and the
+    /// selection honours it, so `candidates` can satisfy the request instead of
+    /// being capped by the automatic-recall configuration.
     func searchReadOnlyDetailed(
         _ prompt: String,
         scope: EngineMemoryScope,
-        graph suppliedGraph: MemoryGraph
+        graph suppliedGraph: MemoryGraph,
+        limit: Int? = nil
     ) async throws -> MemoryRecallResult {
         let (plan, candidates, selected) = try await retrieveAndSelect(
             prompt,
             scope: scope,
-            graph: suppliedGraph
+            graph: suppliedGraph,
+            limit: limit
         )
         return MemoryRecallResult(plan: plan, candidates: candidates, selected: selected)
     }
@@ -69,12 +76,22 @@ extension MemoryEngine {
         _ prompt: String,
         scope: EngineMemoryScope,
         graph suppliedGraph: MemoryGraph? = nil,
-        includeSemantic: Bool = true
+        includeSemantic: Bool = true,
+        limit: Int? = nil
     ) async throws -> (plan: MemoryQueryPlan, candidates: [MemoryCandidate], selected: [MemoryCandidate]) {
         let plan = try await analyzeWithPolicy(prompt)
         guard plan.shouldRecall, configuration.maxResults > 0 else {
             return (plan, [], [])
         }
+
+        // An explicit lookup limit widens every stage, so a caller asking for
+        // N ranked results is not silently capped by the recall configuration;
+        // automatic recall passes no limit and keeps the configured caps.
+        let requested = limit ?? 0
+        let lexicalLimit = max(configuration.maxLexicalHits, requested)
+        let semanticLimit = max(configuration.maxSemanticHits, requested)
+        let candidateLimit = max(configuration.maxCandidateResults, requested)
+        let resultLimit = limit ?? configuration.maxResults
 
         // The live graph is captured only after the suspending analysis; a
         // supplied store snapshot stays fixed for the request.
@@ -94,7 +111,7 @@ extension MemoryEngine {
                 query: query,
                 memories: activeMemories,
                 scope: scope,
-                limit: configuration.maxLexicalHits
+                limit: lexicalLimit
             )
             if !lexical.isEmpty { rankings.append(lexical) }
         }
@@ -104,7 +121,7 @@ extension MemoryEngine {
             tags: plan.tags,
             entities: plan.entities,
             scope: scope,
-            limit: configuration.maxLexicalHits
+            limit: lexicalLimit
         )
         if !metadata.isEmpty { rankings.append(metadata) }
 
@@ -123,7 +140,7 @@ extension MemoryEngine {
                         modelID: embedder.modelID,
                         scope: scope,
                         threshold: configuration.similarityThreshold,
-                        limit: configuration.maxSemanticHits
+                        limit: semanticLimit
                     )
                     if !semantic.isEmpty { rankings.append(semantic) }
                 } catch let cancellation as CancellationError {
@@ -148,7 +165,7 @@ extension MemoryEngine {
             }
         }
 
-        let seedLimit = max(configuration.maxCandidateResults, configuration.maxLexicalHits)
+        let seedLimit = max(candidateLimit, lexicalLimit)
         let seeds: [ScoredMemoryID]
         if rankings.count == 1 {
             seeds = Array(rankings[0].prefix(seedLimit))
@@ -172,7 +189,7 @@ extension MemoryEngine {
         let cascaded = traversal.cascadeRetrieve(
             seeds: seeds,
             maxDepth: configuration.maxDepth,
-            maxResults: configuration.maxCandidateResults,
+            maxResults: candidateLimit,
             edgeDecay: configuration.edgeDecay,
             scope: scope
         )
@@ -185,7 +202,7 @@ extension MemoryEngine {
             return lhs.score > rhs.score
         }
 
-        let selected = try await selectWithPolicy(context: prompt, candidates: candidates)
+        let selected = try await selectWithPolicy(context: prompt, candidates: candidates, limit: resultLimit)
         return (plan, candidates, selected)
     }
     func retrievalQueries(from plan: MemoryQueryPlan, originalPrompt: String) -> [String] {
@@ -218,13 +235,15 @@ extension MemoryEngine {
 
     func selectWithPolicy(
         context: String,
-        candidates: [MemoryCandidate]
+        candidates: [MemoryCandidate],
+        limit: Int? = nil
     ) async throws -> [MemoryCandidate] {
+        let resultLimit = limit ?? configuration.maxResults
         do {
             let proposed = try await selector.select(
                 context: context,
                 candidates: candidates,
-                limit: configuration.maxResults
+                limit: resultLimit
             )
             let byID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.memory.id, $0) })
             var seen = Set<String>()
@@ -232,11 +251,11 @@ extension MemoryEngine {
                 let id = candidate.memory.id
                 guard seen.insert(id).inserted else { return nil }
                 return byID[id]
-            }.prefix(configuration.maxResults).map { $0 }
+            }.prefix(resultLimit).map { $0 }
         } catch {
             switch configuration.intelligenceFailurePolicy {
             case .fallback:
-                return Array(candidates.prefix(configuration.maxResults))
+                return Array(candidates.prefix(resultLimit))
             case .propagate:
                 throw error
             }

@@ -102,11 +102,16 @@ actor MemoryGraphStore {
         // One coherent snapshot serves both the active pipeline and the archived
         // section below.
         let fresh = try await engine.freshSnapshotForReadOnly()
+        // An explicit lookup returns the ranked candidates — lexical/semantic
+        // hits plus their graph neighbourhood — up to the requested limit. The
+        // recall selector's relative threshold is a guard for what gets injected
+        // unasked into a turn; a caller that asked for N results judges them.
         let recalled = try await engine.searchReadOnlyDetailed(
             query,
             scope: .all,
-            graph: fresh
-        ).selected
+            graph: fresh,
+            limit: cappedLimit
+        ).candidates
         var active = recalled.map(\.memory).filter(\.active)
 
         guard includeArchived else {
@@ -114,17 +119,16 @@ actor MemoryGraphStore {
         }
 
         // Inactive nodes are excluded from both `recall` and the engine's
-        // `lexicalBM25` by design, so archived entries are matched separately.
-        let archived = Self.ordered(fresh.memories.values.filter { !$0.active })
-            .compactMap { entry -> (entry: GraphEntry, score: Int)? in
-                let score = Self.lexicalScore(entry, query: query)
-                return score > 0 ? (entry, score) : nil
-            }
-            .sorted { lhs, rhs in
-                if lhs.score != rhs.score { return lhs.score > rhs.score }
-                return lhs.entry.id < rhs.entry.id
-            }
-            .map(\.entry)
+        // `lexicalBM25` by design, so archived entries are ranked separately,
+        // with the same scoring over the archived subset.
+        let archivedEntries = fresh.memories.values.filter { !$0.active }
+        let archived = MemorySearch.lexicalBM25(
+            memories: Array(archivedEntries),
+            query: query,
+            scope: .all,
+            limit: cappedLimit,
+            requireActive: false
+        ).compactMap { fresh.memories[$0.id] }
 
         // Reserve part of the budget for archived hits. Appending them after a
         // full page of active results would make an explicitly requested
@@ -479,9 +483,18 @@ actor MemoryGraphStore {
             return lhs.id < rhs.id
         }
     }
+}
 
-    /// Term-coverage score for archived entries, which the engine's retrieval
-    /// paths skip. Zero means "no match".
+// MARK: - Conservative automatic writer (manual mutation semantics are unchanged)
+extension MemoryGraphStore {
+    struct LearningSnapshot: Sendable {
+        let entries: [GraphEntry]
+        let comparison: [String: String]
+    }
+
+    /// Term-coverage score used by the automatic writer to pick the lexically
+    /// relevant notes it shows for deduplication; an empty query matches every
+    /// entry. `memory.search` ranks with BM25 instead (see `search`).
     static func lexicalScore(_ entry: GraphEntry, query: String) -> Int {
         let normalizedQuery = query
             .lowercased()
@@ -510,14 +523,6 @@ actor MemoryGraphStore {
             score += 25
         }
         return score
-    }
-}
-
-// MARK: - Conservative automatic writer (manual mutation semantics are unchanged)
-extension MemoryGraphStore {
-    struct LearningSnapshot: Sendable {
-        let entries: [GraphEntry]
-        let comparison: [String: String]
     }
 
     func learningSnapshot(query: String = "") async throws -> LearningSnapshot? {

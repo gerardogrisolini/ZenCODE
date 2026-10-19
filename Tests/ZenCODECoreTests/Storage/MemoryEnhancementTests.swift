@@ -314,10 +314,12 @@ struct MemoryEnhancementTests {
 
             #expect(matches.first?.id == richer.id)
             // The partial match shares only one of the two query terms and
-            // scores roughly 0.26x the top hit, so the score-threshold selector
-            // (relative floor 0.5) filters it out instead of returning it as a
-            // weak second result. Ranking is preserved for what remains.
-            #expect(matches.count == 1)
+            // scores roughly 0.26x the top hit. An explicit lookup returns the
+            // ranked candidates up to its limit rather than the recall
+            // selector's thresholded selection, so it is kept as the weaker
+            // second result instead of being dropped.
+            #expect(matches.count == 2)
+            #expect(matches.last?.content == "Summary: transport layer notes.")
         }
     }
 

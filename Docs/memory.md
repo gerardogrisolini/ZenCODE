@@ -113,7 +113,17 @@ store's `search` runs the engine's `searchReadOnly` path, which shares the same
 analyze → retrieve → select pipeline as recall but performs no transactional
 maintenance — it never mutates `retrievalCount`/`confidence`/links and cannot
 fail on a save error — while automatic recall (`context(for:)`) keeps its
-maintenance-bearing path unchanged. Automatic recall revalidates before it
+maintenance-bearing path unchanged. The two differ in what they return: an
+explicit search widens every retrieval stage (lexical, semantic and cascade
+caps) to the requested `limit` (1–50, default 8) and returns the ranked
+candidates — direct hits plus the graph neighbours the cascade reached — up
+to that limit, whereas recall injects only the selector's thresholded subset
+(see `ScoreThresholdMemorySelector` below), which guards what enters a turn
+unasked. With `includeArchived`, archived entries are ranked with the same
+BM25 over the archived subset (the active pipeline skips inactive nodes by
+design) and up to half of the limit is reserved for them, so an explicitly
+requested archived match stays reachable when active hits fill the page.
+Automatic recall revalidates before it
 commits: the maintenance transaction re-checks the retrieved candidates and
 the selected set against the current graph draft, dropping any entry a
 concurrent forget/archive/scope change made stale while the selector was
