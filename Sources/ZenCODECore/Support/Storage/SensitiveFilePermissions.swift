@@ -147,37 +147,54 @@ enum SensitiveFilePermissions {
         case other
     }
 
+    /// Inspects the node itself without following a final symbolic link.
+    /// `attributesOfItem(atPath:)` is lstat-based on Darwin and Linux, and
+    /// avoids naming `struct stat`, whose defining Clang module is not stable
+    /// under `MemberImportVisibility` on Linux.
     private static func existingPathKind(at url: URL) throws -> PathKind? {
-        var metadata = stat()
-        let result = url.path.withCString { path in
-            #if canImport(Darwin)
-            Darwin.lstat(path, &metadata)
-            #elseif canImport(Glibc)
-            Glibc.lstat(path, &metadata)
-            #endif
-        }
-        guard result == 0 else {
-            let errorCode = errno
+        let attributes: [FileAttributeKey: Any]
+        do {
+            attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        } catch {
+            let errorCode = posixErrorCode(from: error)
             if errorCode == ENOENT {
                 return nil
             }
             throw SensitiveFilePermissionsError.pathInspectionFailed(
                 url,
-                errorCode: errorCode
+                errorCode: errorCode ?? EIO
             )
         }
 
-        let type = metadata.st_mode & mode_t(S_IFMT)
-        if type == mode_t(S_IFREG) {
+        switch attributes[.type] as? FileAttributeType {
+        case FileAttributeType.typeRegular:
             return .regularFile
-        }
-        if type == mode_t(S_IFDIR) {
+        case FileAttributeType.typeDirectory:
             return .directory
-        }
-        if type == mode_t(S_IFLNK) {
+        case FileAttributeType.typeSymbolicLink:
             return .symbolicLink
+        default:
+            return .other
         }
-        return .other
+    }
+
+    /// Recovers the POSIX code behind a Foundation file error, which wraps it
+    /// either directly or as the underlying error of a Cocoa file error.
+    private static func posixErrorCode(from error: any Error) -> Int32? {
+        let nsError = error as NSError
+        if nsError.domain == NSPOSIXErrorDomain {
+            return Int32(truncatingIfNeeded: nsError.code)
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? any Error,
+           let code = posixErrorCode(from: underlying) {
+            return code
+        }
+        if nsError.domain == NSCocoaErrorDomain,
+           nsError.code == CocoaError.fileReadNoSuchFile.rawValue
+            || nsError.code == CocoaError.fileNoSuchFile.rawValue {
+            return ENOENT
+        }
+        return nil
     }
 
     private static func hardenFile(

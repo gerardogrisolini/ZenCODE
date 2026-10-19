@@ -134,4 +134,3 @@ struct TerminalTelegramResponseParameters: Decodable, Sendable, Equatable {
         case retryAfter = "retry_after"
     }
 }
-
