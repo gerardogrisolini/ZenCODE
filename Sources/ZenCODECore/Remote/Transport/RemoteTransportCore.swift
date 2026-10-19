@@ -1,10 +1,3 @@
-//
-//  RemoteTransportCore.swift
-//  ZenCODE
-//
-//  Created by Gerardo Grisolini on 20/07/26.
-//
-
 import Foundation
 import NIOCore
 import NIOHTTP1
@@ -30,9 +23,7 @@ public final class RemoteTransportCore: Sendable {
 
     /// Uses the process-wide POSIX event-loop group shared by all transport
     /// instances in the process.
-    public init(
-        maximumCollectedResponseBodyBytes: Int = RemoteTransportCore.defaultMaximumCollectedResponseBodyBytes
-    ) {
+    public init(maximumCollectedResponseBodyBytes: Int = RemoteTransportCore.defaultMaximumCollectedResponseBodyBytes) {
         eventLoopGroup = NIOSingletons.posixEventLoopGroup
         ownsEventLoopGroup = false
         self.maximumCollectedResponseBodyBytes = max(1, maximumCollectedResponseBodyBytes)
@@ -45,9 +36,7 @@ public final class RemoteTransportCore: Sendable {
         owningEventLoopThreads: Int,
         maximumCollectedResponseBodyBytes: Int = RemoteTransportCore.defaultMaximumCollectedResponseBodyBytes
     ) {
-        eventLoopGroup = MultiThreadedEventLoopGroup(
-            numberOfThreads: max(1, owningEventLoopThreads)
-        )
+        eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: max(1, owningEventLoopThreads))
         ownsEventLoopGroup = true
         self.maximumCollectedResponseBodyBytes = max(1, maximumCollectedResponseBodyBytes)
     }
@@ -80,9 +69,7 @@ public final class RemoteTransportCore: Sendable {
     /// the transport's channels are closed. The operation is idempotent and
     /// concurrent callers await the same shutdown work.
     public func shutdown() async throws {
-        try await lifecycle.shutdown(
-            eventLoopGroup: ownsEventLoopGroup ? eventLoopGroup : nil
-        )
+        try await lifecycle.shutdown(eventLoopGroup: ownsEventLoopGroup ? eventLoopGroup : nil)
     }
 
     /// Single request/response helper: opens an HTTP stream and collects the
@@ -138,17 +125,11 @@ public final class RemoteTransportCore: Sendable {
                   let location = response.headers.firstValue(for: "location"),
                   let url = URL(string: location, relativeTo: request.url)?
                     .absoluteURL else {
-                throw RemoteTransportError.protocolViolation(
-                    "Invalid or excessive HTTP redirect."
-                )
+                throw RemoteTransportError.protocolViolation("Invalid or excessive HTTP redirect.")
             }
 
             redirectCount += 1
-            request = try Self.redirectRequest(
-                request,
-                to: url,
-                status: response.status
-            )
+            request = try Self.redirectRequest(request, to: url, status: response.status)
         }
     }
 
@@ -170,14 +151,10 @@ public final class RemoteTransportCore: Sendable {
     ) throws -> RemoteHTTPStreamingRequest {
         let changesOrigin = !sameOrigin(request.url, url)
         if isHTTPSDowngrade(from: request.url, to: url) {
-            throw RemoteTransportError.protocolViolation(
-                "Refusing an HTTPS to HTTP redirect."
-            )
+            throw RemoteTransportError.protocolViolation("Refusing an HTTPS to HTTP redirect.")
         }
         if changesOrigin, request.body != nil {
-            throw RemoteTransportError.protocolViolation(
-                "Refusing to resend an HTTP request body across origins."
-            )
+            throw RemoteTransportError.protocolViolation("Refusing to resend an HTTP request body across origins.")
         }
         let rewritesToGET = status == 303 ||
             ((status == 301 || status == 302) &&
@@ -235,10 +212,7 @@ public final class RemoteTransportCore: Sendable {
 
             do {
                 try await lifecycle.register(channel)
-                let lease = RemoteChannelLease(
-                    channel: channel,
-                    lifecycle: lifecycle
-                )
+                let lease = RemoteChannelLease(channel: channel, lifecycle: lifecycle)
                 pendingConnection.attach(channel)
 
                 do {
@@ -252,9 +226,7 @@ public final class RemoteTransportCore: Sendable {
                     // released, which is what unblocks `nextRequest()`.
                     let runTask = Task<Void, Never>(name: "Remote transport background task") { [weak lifetime] in
                         do {
-                            try await asyncChannel.executeThenClose(
-                                isolation: bodyStorage
-                            ) { inbound, outbound in
+                            try await asyncChannel.executeThenClose(isolation: bodyStorage) { inbound, outbound in
                                 try await self.writeHTTP(
                                     request,
                                     endpoint: endpoint,
@@ -276,10 +248,7 @@ public final class RemoteTransportCore: Sendable {
                         return RemoteHTTPStreamingResponse(
                             status: head.status,
                             headers: RemoteHTTPHeaders(head.headers),
-                            body: RemoteHTTPBody(
-                                storage: bodyStorage,
-                                lifetime: lifetime
-                            )
+                            body: RemoteHTTPBody(storage: bodyStorage, lifetime: lifetime)
                         )
                     } catch {
                         lifetime.invalidate()
@@ -305,9 +274,7 @@ public final class RemoteTransportCore: Sendable {
         let endpoint = try RemoteTransportEndpoint(webSocketURL: request.url)
         guard request.maximumFrameSize > 0,
               request.maximumFrameSize <= Int(UInt32.max) else {
-            throw RemoteTransportError.invalidWebSocketFrameSize(
-                request.maximumFrameSize
-            )
+            throw RemoteTransportError.invalidWebSocketFrameSize(request.maximumFrameSize)
         }
         try Self.validateWebSocketHeaders(request.headers)
 
@@ -335,10 +302,7 @@ public final class RemoteTransportCore: Sendable {
                                     version: .http1_1,
                                     method: .GET,
                                     uri: endpoint.requestTarget,
-                                    headers: try Self.makeHTTPHeaders(
-                                        request.headers,
-                                        hostHeader: endpoint.hostHeader
-                                    )
+                                    headers: try Self.makeHTTPHeaders(request.headers, hostHeader: endpoint.hostHeader)
                                 ),
                                 upgradeState: upgradeState
                             )
@@ -354,10 +318,7 @@ public final class RemoteTransportCore: Sendable {
                                             >(
                                                 wrappingChannelSynchronously: channel,
                                                 configuration: .init(
-                                                    backPressureStrategy: .init(
-                                                        lowWatermark: 1,
-                                                        highWatermark: 4
-                                                    )
+                                                    backPressureStrategy: .init(lowWatermark: 1, highWatermark: 4)
                                                 )
                                             )
                                             upgradeState.succeed(asyncChannel)
@@ -382,40 +343,24 @@ public final class RemoteTransportCore: Sendable {
                             leftOverBytesStrategy: .forwardBytes,
                             withClientUpgrade: upgradeConfiguration
                         )
-                        try channel.pipeline.syncOperations.addHandler(
-                            requestHandler
-                        )
+                        try channel.pipeline.syncOperations.addHandler(requestHandler)
                     }
                 }
 
-            let channel = try await bootstrap.connect(
-                host: endpoint.host,
-                port: endpoint.port
-            ).get()
+            let channel = try await bootstrap.connect(host: endpoint.host, port: endpoint.port).get()
 
             do {
                 try await lifecycle.register(channel)
-                let lease = RemoteChannelLease(
-                    channel: channel,
-                    lifecycle: lifecycle
-                )
+                let lease = RemoteChannelLease(channel: channel, lifecycle: lifecycle)
                 pendingConnection.attach(channel)
                 do {
                     let asyncChannel = try await upgradeState.wait()
-                    let driver = RemoteWebSocketDriver(
-                        allocator: channel.allocator,
-                        lease: lease
-                    )
+                    let driver = RemoteWebSocketDriver(allocator: channel.allocator, lease: lease)
                     let lifetime = RemoteTransportLifetimeToken(lease: lease)
                     let runTask = Task<Void, Never>(name: "Remote transport background task") { [weak lifetime] in
                         do {
-                            try await asyncChannel.executeThenClose(
-                                isolation: driver
-                            ) { inbound, outbound in
-                                try await driver.run(
-                                    inbound: inbound,
-                                    outbound: outbound
-                                )
+                            try await asyncChannel.executeThenClose(isolation: driver) { inbound, outbound in
+                                try await driver.run(inbound: inbound, outbound: outbound)
                             }
                         } catch {
                             await driver.fail(error)
@@ -425,10 +370,7 @@ public final class RemoteTransportCore: Sendable {
                     lifetime.install(runTask: runTask) { [weak driver] in
                         await driver?.abandon()
                     }
-                    return RemoteWebSocketConnection(
-                        driver: driver,
-                        lifetime: lifetime
-                    )
+                    return RemoteWebSocketConnection(driver: driver, lifetime: lifetime)
                 } catch {
                     lease.close()
                     throw error
@@ -455,28 +397,20 @@ public final class RemoteTransportCore: Sendable {
                 return channel.eventLoop.makeCompletedFuture {
                     if endpoint.isSecure {
                         try channel.pipeline.syncOperations.addHandler(
-                            try Self.makeTLSHandler(
-                                serverHostname: tls.serverName ?? endpoint.host,
-                                tls: tls
-                            )
+                            try Self.makeTLSHandler(serverHostname: tls.serverName ?? endpoint.host, tls: tls)
                         )
                     }
                     try channel.pipeline.syncOperations.addHTTPClientHandlers()
                 }
             }
 
-        let channel = try await bootstrap.connect(
-            host: endpoint.host,
-            port: endpoint.port
-        ).get()
+        let channel = try await bootstrap.connect(host: endpoint.host, port: endpoint.port).get()
         pendingConnection.attach(channel)
 
         return try await channel.eventLoop.submit {
             try NIOAsyncChannel<HTTPClientResponsePart, HTTPClientRequestPart>(
                 wrappingChannelSynchronously: channel,
-                configuration: .init(
-                    backPressureStrategy: .init(lowWatermark: 1, highWatermark: 4)
-                )
+                configuration: .init(backPressureStrategy: .init(lowWatermark: 1, highWatermark: 4))
             )
         }.get()
     }
@@ -493,10 +427,7 @@ public final class RemoteTransportCore: Sendable {
             throw RemoteTransportError.invalidHTTPMethod(request.method)
         }
 
-        var headers = try Self.makeHTTPHeaders(
-            request.headers,
-            hostHeader: endpoint.hostHeader
-        )
+        var headers = try Self.makeHTTPHeaders(request.headers, hostHeader: endpoint.hostHeader)
         if let body = request.body,
            headers["content-length"].isEmpty {
             headers.add(name: "Content-Length", value: String(body.count))
@@ -539,10 +470,7 @@ public final class RemoteTransportCore: Sendable {
             configuration.additionalTrustRoots = [.certificates(certificates)]
         }
         let context = try NIOSSLContext(configuration: configuration)
-        return try NIOSSLClientHandler(
-            context: context,
-            serverHostname: serverHostname
-        )
+        return try NIOSSLClientHandler(context: context, serverHostname: serverHostname)
     }
 
     private static func makeHTTPHeaders(
@@ -552,9 +480,7 @@ public final class RemoteTransportCore: Sendable {
         var headers = HTTPHeaders()
         var hasHost = false
         for header in source {
-            let name = header.name.trimmingCharacters(
-                in: .whitespacesAndNewlines
-            )
+            let name = header.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty,
                   !name.contains(where: { $0 == "\r" || $0 == "\n" }),
                   !header.value.contains(where: { $0 == "\r" || $0 == "\n" })
@@ -572,9 +498,7 @@ public final class RemoteTransportCore: Sendable {
         return headers
     }
 
-    private static func validateWebSocketHeaders(
-        _ headers: [RemoteHTTPHeader]
-    ) throws {
+    private static func validateWebSocketHeaders(_ headers: [RemoteHTTPHeader]) throws {
         let reserved = Set([
             "connection",
             "upgrade",
@@ -609,358 +533,5 @@ public final class RemoteTransportCore: Sendable {
             }
             return value
         }
-    }
-}
-
-private struct RemoteTransportEndpoint: Sendable {
-    let host: String
-    let port: Int
-    let requestTarget: String
-    let hostHeader: String
-    let isSecure: Bool
-
-    init(httpURL url: URL) throws {
-        try self.init(
-            url: url,
-            secureSchemes: ["https"],
-            cleartextSchemes: ["http"]
-        )
-    }
-
-    init(webSocketURL url: URL) throws {
-        try self.init(
-            url: url,
-            secureSchemes: ["wss"],
-            cleartextSchemes: ["ws"]
-        )
-    }
-
-    private init(
-        url: URL,
-        secureSchemes: Set<String>,
-        cleartextSchemes: Set<String>
-    ) throws {
-        guard let scheme = url.scheme?.lowercased() else {
-            throw RemoteTransportError.invalidURL(url.absoluteString)
-        }
-        guard secureSchemes.contains(scheme) || cleartextSchemes.contains(scheme)
-        else {
-            throw RemoteTransportError.unsupportedScheme(scheme)
-        }
-        guard let host = url.host?.nilIfBlank else {
-            throw RemoteTransportError.invalidURL(url.absoluteString)
-        }
-        guard url.user == nil, url.password == nil else {
-            throw RemoteTransportError.invalidURL(url.absoluteString)
-        }
-
-        let isSecure = secureSchemes.contains(scheme)
-        let defaultPort = isSecure ? 443 : 80
-        let port = url.port ?? defaultPort
-        guard (1...65_535).contains(port) else {
-            throw RemoteTransportError.invalidURL(url.absoluteString)
-        }
-
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let path = components?.percentEncodedPath.nilIfBlank ?? "/"
-        let query = components?.percentEncodedQuery.map { "?\($0)" } ?? ""
-        self.host = host
-        self.port = port
-        requestTarget = path + query
-        let printableHost = host.contains(":") ? "[\(host)]" : host
-        hostHeader = port == defaultPort ? printableHost : "\(printableHost):\(port)"
-        self.isSecure = isSecure
-    }
-}
-
-actor RemoteTransportLifecycle {
-    private enum State {
-        case active
-        case shuttingDown
-        case shutDown
-    }
-
-    private var state: State = .active
-    private var channels: [ObjectIdentifier: any Channel] = [:]
-    private var shutdownTask: Task<Void, Error>?
-
-    func register(_ channel: any Channel) throws {
-        guard case .active = state else {
-            channel.close(promise: nil)
-            throw RemoteTransportError.shutdown
-        }
-        channels[ObjectIdentifier(channel)] = channel
-    }
-
-    func unregister(_ channel: any Channel) {
-        channels.removeValue(forKey: ObjectIdentifier(channel))
-    }
-
-    func shutdown(eventLoopGroup: (any EventLoopGroup)?) async throws {
-        if let shutdownTask {
-            return try await shutdownTask.value
-        }
-
-        guard case .active = state else {
-            if case .shutDown = state {
-                return
-            }
-            return
-        }
-        state = .shuttingDown
-        let channelsToClose = Array(channels.values)
-        channels.removeAll()
-        let task = Task<Void, Error>(name: "Remote transport shutdown") {
-            for channel in channelsToClose {
-                _ = try? await channel.close().get()
-            }
-            if let eventLoopGroup {
-                try await eventLoopGroup.shutdownGracefully()
-            }
-        }
-        shutdownTask = task
-        do {
-            try await task.value
-            state = .shutDown
-        } catch {
-            state = .shutDown
-            throw error
-        }
-    }
-}
-
-private final class RemotePendingConnection: Sendable {
-    private struct State {
-        var channel: (any Channel)?
-        var cancelled = false
-    }
-
-    private let state = Mutex(State())
-
-    func attach(_ channel: any Channel) {
-        let shouldClose = state.withLock { state in
-            state.channel = channel
-            return state.cancelled
-        }
-        if shouldClose {
-            channel.close(promise: nil)
-        }
-    }
-
-    func cancel() {
-        let channel = state.withLock { state in
-            state.cancelled = true
-            return state.channel
-        }
-        channel?.close(promise: nil)
-    }
-}
-
-/// Sends the caller-supplied WebSocket upgrade request once the TCP/TLS
-/// channel becomes active. It is removed before the NIO async frame bridge is
-/// installed, so it can never receive post-upgrade WebSocket bytes.
-private final class RemoteWebSocketHandshakeRequestHandler:
-    ChannelInboundHandler,
-    RemovableChannelHandler,
-    @unchecked Sendable
-{
-    typealias InboundIn = HTTPClientResponsePart
-    typealias OutboundOut = HTTPClientRequestPart
-
-    private let requestHead: HTTPRequestHead
-    private let upgradeState: RemoteWebSocketUpgradeState
-    private var didWriteRequest = false
-    /// Status code captured from the rejection response head, if any.
-    private var rejectionStatus: Int?
-    /// Accumulated rejection body for diagnostics (bounded).
-    private var rejectionBody = ""
-    /// Guards against unbounded body accumulation.
-    private static let maxRejectionBodyBytes = 512
-
-    init(
-        requestHead: HTTPRequestHead,
-        upgradeState: RemoteWebSocketUpgradeState
-    ) {
-        self.requestHead = requestHead
-        self.upgradeState = upgradeState
-    }
-
-    func channelActive(context: ChannelHandlerContext) {
-        guard !didWriteRequest else {
-            context.fireChannelActive()
-            return
-        }
-        didWriteRequest = true
-        context.write(Self.wrapOutboundOut(.head(requestHead)), promise: nil)
-        context.write(
-            Self.wrapOutboundOut(.body(.byteBuffer(ByteBuffer()))),
-            promise: nil
-        )
-        context.writeAndFlush(Self.wrapOutboundOut(.end(nil)), promise: nil)
-        context.fireChannelActive()
-    }
-
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        // On a successful upgrade the NIO upgrade handler buffers the 101
-        // response and removes this handler before WebSocket framing is
-        // installed. Any HTTP part that reaches us therefore declined it.
-        // Capture the status code and a bounded excerpt of the response body
-        // so the caller can distinguish a 401 (expired token), 403 (forbidden),
-        // or 429 (rate limited) from a genuine protocol error.
-        let part = Self.unwrapInboundIn(data)
-        switch part {
-        case .head(let head):
-            rejectionStatus = Int(head.status.code)
-        case .body(let byteBuffer):
-            if rejectionBody.utf8.count < Self.maxRejectionBodyBytes {
-                rejectionBody += String(buffer: byteBuffer)
-            }
-        case .end:
-            failUpgradeRejected()
-        @unknown default:
-            upgradeState.fail(
-                RemoteTransportError.protocolViolation(
-                    "Unsupported HTTP response part during WebSocket upgrade"
-                )
-            )
-        }
-        context.fireChannelRead(data)
-    }
-
-    private func failUpgradeRejected() {
-        upgradeState.fail(
-            RemoteTransportError.upgradeRejected(
-                status: rejectionStatus ?? 0,
-                body: rejectionBody
-            )
-        )
-    }
-
-    func errorCaught(context: ChannelHandlerContext, error: Error) {
-        upgradeState.fail(remoteTransportMappedError(error))
-        context.fireErrorCaught(error)
-    }
-
-    func channelInactive(context: ChannelHandlerContext) {
-        // If we already saw a rejection head but the connection closed before
-        // .end, surface the diagnostic status instead of a bare .closed.
-        if rejectionStatus != nil {
-            failUpgradeRejected()
-        } else {
-            upgradeState.fail(RemoteTransportError.closed)
-        }
-        context.fireChannelInactive()
-    }
-}
-
-final class RemoteChannelLease: Sendable {
-    private struct State {
-        var isClosed = false
-        let channel: any Channel
-    }
-
-    private let state: Mutex<State>
-    private let lifecycle: RemoteTransportLifecycle
-
-    fileprivate init(channel: any Channel, lifecycle: RemoteTransportLifecycle) {
-        state = Mutex(State(channel: channel))
-        self.lifecycle = lifecycle
-    }
-
-    func close() {
-        let channel = state.withLock { state -> (any Channel)? in
-            guard !state.isClosed else {
-                return nil
-            }
-            state.isClosed = true
-            return state.channel
-        }
-        guard let channel else {
-            return
-        }
-
-        channel.close(promise: nil)
-        Task(name: "Remote channel lease cleanup") { [lifecycle, channel] in
-            await lifecycle.unregister(channel)
-        }
-    }
-
-    deinit {
-        close()
-    }
-}
-
-private final class RemoteWebSocketUpgradeState: Sendable {
-    private struct State {
-        var result: Result<NIOAsyncChannel<WebSocketFrame, WebSocketFrame>, Error>?
-        var continuation: CheckedContinuation<
-            NIOAsyncChannel<WebSocketFrame, WebSocketFrame>,
-            Error
-        >?
-    }
-
-    private let state = Mutex(State())
-
-    func wait() async throws -> NIOAsyncChannel<WebSocketFrame, WebSocketFrame> {
-        try await withCheckedThrowingContinuation { continuation in
-            let result = state.withLock { state -> Result<
-                NIOAsyncChannel<WebSocketFrame, WebSocketFrame>, Error
-            >? in
-                if let result = state.result {
-                    return result
-                }
-                state.continuation = continuation
-                return nil
-            }
-            if let result {
-                continuation.resume(with: result)
-            }
-        }
-    }
-
-    func succeed(_ channel: NIOAsyncChannel<WebSocketFrame, WebSocketFrame>) {
-        resolve(.success(channel))
-    }
-
-    func fail(_ error: Error) {
-        resolve(.failure(error))
-    }
-
-    private func resolve(
-        _ newResult: Result<NIOAsyncChannel<WebSocketFrame, WebSocketFrame>, Error>
-    ) {
-        let continuation = state.withLock { state -> CheckedContinuation<
-            NIOAsyncChannel<WebSocketFrame, WebSocketFrame>, Error
-        >? in
-            guard state.result == nil else {
-                return nil
-            }
-            state.result = newResult
-            defer { state.continuation = nil }
-            return state.continuation
-        }
-        continuation?.resume(with: newResult)
-    }
-}
-
-func remoteTransportMappedError(_ error: Error) -> Error {
-    if error is CancellationError || Task.isCancelled {
-        return CancellationError()
-    }
-    if let error = error as? RemoteTransportError {
-        return error
-    }
-    let description = String(describing: error)
-    let lowercased = description.lowercased()
-    if lowercased.contains("tls") || lowercased.contains("ssl")
-        || lowercased.contains("certificate") {
-        return RemoteTransportError.tlsFailure(description)
-    }
-    return RemoteTransportError.connectionFailure(description)
-}
-
-private extension String {
-    var nilIfBlank: String? {
-        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
     }
 }

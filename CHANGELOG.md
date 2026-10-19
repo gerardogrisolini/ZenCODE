@@ -21,9 +21,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   level was removed, `ZenCODETUI` became `TUI`, `Shared/` and `Clients/` were
   absorbed into `Models/` and `Support/`, and large flat folders were split
   into subfolders. No public API, module, wire, or persistence change.
-- Every `ZenCODECore` source file over 1,000 lines was deduplicated and split
+- Every `ZenCODECore` source file over 900 lines was deduplicated and split
   into cohesive `Type+Topic.swift` extensions; no source file in the target
-  now exceeds 1,000 lines. Behavior, wire formats, and persisted formats are
+  now exceeds 900 lines. Behavior, wire formats, and persisted formats are
   unchanged.
 - The same cleanup was applied to `ToolCore`, `FeatureKit`,
   `LocalToolsSupport`, `FeatureMCPBridgeKit`, and the optional feature
