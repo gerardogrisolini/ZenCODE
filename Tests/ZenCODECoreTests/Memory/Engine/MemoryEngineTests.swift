@@ -153,7 +153,10 @@ import Testing
 
     let persistence = JSONMemoryPersistence(url: file)
     let graph = try await persistence.load()
-    #expect(graph.graphVersion == 2)
+    // A version 2 file is normalized to the current version in memory; its
+    // numeric `embedding` array still decodes.
+    #expect(graph.graphVersion == MemoryGraph.currentGraphVersion)
+    #expect(graph.memories["mem_1"]?.embedding == [1.0, 0.0])
     #expect(graph.memories["mem_1"]?.scope == .project)
     #expect(graph.outgoingEdges(from: "mem_1").first?.kind == .hasTag)
 }

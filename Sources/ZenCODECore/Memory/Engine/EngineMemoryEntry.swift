@@ -234,7 +234,20 @@ struct EngineMemoryEntry: Codable, Sendable, Identifiable, Equatable {
         active = try c.decodeIfPresent(Bool.self, forKey: .active) ?? true
         supersededBy = try c.decodeIfPresent(String.self, forKey: .supersededBy)
         reinforcements = try c.decodeIfPresent([Reinforcement].self, forKey: .reinforcements) ?? []
-        embedding = try c.decodeIfPresent([Float].self, forKey: .embedding)
+        // Graph version 3 spells the vector as a base64 string; earlier
+        // versions used a numeric array. Both load (see `EmbeddingWireCoding`).
+        if let wire = try c.decodeIfPresent(EmbeddingWireValue.self, forKey: .embedding) {
+            guard let values = wire.components else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .embedding,
+                    in: c,
+                    debugDescription: "Expected a base64 string of little-endian binary32 components."
+                )
+            }
+            embedding = values
+        } else {
+            embedding = nil
+        }
         embeddingModel = try c.decodeIfPresent(String.self, forKey: .embeddingModel)
         confidence = try c.decodeIfPresent(Float.self, forKey: .confidence) ?? 1
         scope = try c.decodeIfPresent(EngineMemoryScope.self, forKey: .scope) ?? .project
@@ -257,7 +270,9 @@ struct EngineMemoryEntry: Codable, Sendable, Identifiable, Equatable {
         try c.encode(active, forKey: .active)
         try c.encodeIfPresent(supersededBy, forKey: .supersededBy)
         if !reinforcements.isEmpty { try c.encode(reinforcements, forKey: .reinforcements) }
-        try c.encodeIfPresent(embedding, forKey: .embedding)
+        if let embedding {
+            try c.encode(EmbeddingWireCoding.string(from: embedding), forKey: .embedding)
+        }
         try c.encodeIfPresent(embeddingModel, forKey: .embeddingModel)
         try c.encode(confidence, forKey: .confidence)
         try c.encode(scope, forKey: .scope)

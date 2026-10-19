@@ -31,6 +31,23 @@ Release tags follow the strict `vX.Y.Z` contract described in
   responsibility-based subfolders, the large files are deduplicated and split,
   and no source file exceeds 800 lines. Public APIs, tool names, schemas,
   `--list-tools` output, and manifests are unchanged.
+- Memory graph version 3 stores each entry's `embedding` as a base64 string of
+  little-endian IEEE-754 binary32 components instead of a JSON number array.
+  The encoding is lossless. Versions 1 and 2 still load unchanged; the file is
+  rewritten in v3 only by the first mutation. Earlier builds reject a v3 graph
+  with `unsupportedGraphVersion(3)` and leave it byte-identical. On the
+  reference graph (239 entries, 4096 dimensions) the file shrinks from about
+  21 MB to about 6 MB, and encoding drops from about 280 ms to about 11 ms per
+  save.
+
+### Fixed
+
+- `JSONMemoryPersistence` caches the last decoded graph keyed by the file
+  identity (device, inode, size, mtime in nanoseconds). `memory.read`,
+  `memory.search`, automatic recall, and the lexical fallback no longer decode
+  an unchanged graph file again. Automatic recall on workspaces with large
+  graphs never completed within its 150 ms deadline, because the JSON decode
+  alone took about 175 ms, and the session was auto-suspended; it now completes.
 
 ## [2.3.3] - 2026-10-18
 

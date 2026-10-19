@@ -136,7 +136,13 @@ struct GraphMetadata: Codable, Sendable, Equatable {
 }
 
 struct MemoryGraph: Codable, Sendable, Equatable {
-    public static let currentGraphVersion: UInt32 = 2
+    /// Wire format written by this build. History: 1 — the original schema
+    /// (files without a `graph_version` key); 2 — versioned schema whose newer
+    /// fields are optional with contract defaults; 3 — `embedding` carried as a
+    /// base64 string of little-endian binary32 components instead of a numeric
+    /// array (see `EmbeddingWireCoding`). Every older version still loads; a
+    /// newer one is rejected without touching the file.
+    public static let currentGraphVersion: UInt32 = 3
 
     /// Assumed `graph_version` for files written before the version key
     /// existed. Their schema matches the earliest versioned format; loading

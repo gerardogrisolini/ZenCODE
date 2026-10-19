@@ -29,6 +29,23 @@ JSON graph entries remain available; JSON version compatibility is unchanged.
 The file-specific template, filename constant and document errors are removed;
 the deprecated synchronous APIs that operate on the graph remain supported.
 
+The persistence layer keeps the last decoded graph together with the identity
+of the file it was read from: device, inode, size, and modification time in
+nanoseconds, read through `FileManager.attributesOfItem` (naming `struct stat`
+is not portable under `MemberImportVisibility` on Linux). `load()`,
+`reloadReadOnly()`, and the reload inside `transaction` (under `flock`) decode
+again only when that identity has changed; a missing file clears the cache and
+yields an empty graph. An unlocked read takes the identity again after the
+bytes were read and keeps the pair only when the file did not change in
+between, so a concurrent publish can never pair one file's identity with
+another file's bytes — it simply costs one more decode. After a successful
+publish the cache is re-primed with the staging file's identity (preserved by
+`rename`) and the graph decoded from the bytes just written, so the next read,
+typically the recall of the following turn, pays no decode. The cache does not
+change semantics: a read returns exactly what decoding the current file would
+return, and cross-process freshness holds because every ZenCODE writer publishes
+via `rename`, which always creates a new inode.
+
 Every mutation — `write`, `update`, `archive`, `delete` — runs through the
 engine's transaction primitive
 (`ZenMemory.transaction(_:)`), which commits after save: the body mutates a
@@ -40,7 +57,7 @@ touches disk. The transaction also serializes read-modify-write sequences that
 would otherwise interleave across actor suspension points, and it re-checks
 `Task.checkCancellation()` after the write lock is acquired and before the
 body/save: a task cancelled while parked at the lock neither commits nor
-strands the lock. The graph JSON carries `graph_version` (currently 2); a file
+strands the lock. The graph JSON carries `graph_version` (currently 3); a file
 written by a newer engine is rejected on load and left byte-identical, while
 older files decode through optional fields with contract defaults (`scope` →
 `.project`, `active` → `true`, …). A file with no `graph_version` key at all is
@@ -48,6 +65,19 @@ the legacy v1 format (`MemoryGraph.legacyGraphVersion`): it is decoded with the
 same contract defaults and normalized to the current version in memory. Loading
 never rewrites the file — the on-disk graph stays byte-identical until an
 explicit save (a mutation) writes the current version.
+
+Graph version 3 stores each `embedding` as a base64 string of the little-endian
+IEEE-754 binary32 components instead of a JSON number array, a lossless
+encoding that preserves the bit pattern of every component. The decoder accepts
+both forms, so v1 and v2 files load unchanged; the version is normalized to 3 in
+memory, and the file is rewritten in v3 only by the first save (an explicit
+mutation or a recall-maintenance checkpoint), never by loading. Earlier builds
+reject a v3 file with `unsupportedGraphVersion(3)` and leave it byte-identical,
+while malformed base64 or a payload that is not a multiple of four bytes fails
+decoding as corrupt data. The format exists because 4096-dimensional vectors
+made the pretty-printed JSON of a 239-entry graph about 21 MB, costing roughly
+175 ms to decode and 280 ms to encode on every save; base64 reduces the file to
+about 6 MB.
 
 ZenCODECore exposes its own public DTOs (`MemoryEntry`, `MemoryScope`,
 `MemoryCategory`) declared under `Models`; the internal `ZenMemory`
@@ -155,9 +185,11 @@ characters, clamped to [200, 32 000]; ZenCODE counts roughly four characters
 per token, so the default is about 1k tokens of recalled memory). The whole
 pipeline, including the one-time JSON graph open on a cold workspace,
 is bounded by `ZENCODE_MEMORY_RECALL_TIMEOUT_MS` (default
-150 ms, clamped to [10, 5000]). When an embedding provider is configured,
-`MemoryTurnCoordinator` prepares a maintenance-free local BM25 result alongside
-the full semantic recall. A semantic result completed within the deadline wins;
+150 ms, clamped to [10, 5000]). At steady state the graph read is served from
+the reload cache, so an unchanged file is not decoded again. When an embedding
+provider is configured, `MemoryTurnCoordinator` prepares a maintenance-free
+local BM25 result alongside the full semantic recall. A semantic result
+completed within the deadline wins;
 if the endpoint is still pending, the prepared lexical block is injected instead
 and the losing request is cancelled without being awaited. If the graph cannot
 open or the local fallback itself is not ready at the deadline, recall resolves

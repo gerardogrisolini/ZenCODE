@@ -147,6 +147,28 @@ private enum MemoryJSONDateCoding {
 actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
     public let url: URL
 
+    /// Identity of the file an in-memory decode was taken from. The graph is
+    /// only ever published by renaming a freshly written staging file, so a
+    /// changed graph always changes the inode; size and modification time
+    /// additionally cover a foreign writer that rewrote the inode in place.
+    struct FileIdentity: Equatable, Sendable {
+        let device: UInt64
+        let inode: UInt64
+        let size: Int64
+        let modificationNanoseconds: Int64
+    }
+
+    /// The last decoded graph and the identity of the file it came from.
+    /// Every read path reuses it while the file is unchanged, so a large graph
+    /// is decoded once per change instead of once per read, recall or
+    /// transaction; a publish re-primes it from the bytes it just wrote. The
+    /// cache only ever shortcuts the decode: what a read returns is exactly
+    /// what decoding the current file would return.
+    private var cached: (identity: FileIdentity, graph: MemoryGraph)?
+
+    /// Number of graphs decoded from disk. Test seam only.
+    private(set) var diskDecodeCount = 0
+
     public init(url: URL) {
         self.url = url
     }
@@ -158,16 +180,14 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         // tightened. Best effort on purpose: a read must not start failing
         // because the mode of a file owned by another user cannot be changed.
         Self.hardenExistingItems(graphURL: url, lockURL: lockURL)
-        guard FileManager.default.fileExists(atPath: url.path) else { return MemoryGraph() }
-        return try decodeGraph(Data(contentsOf: url))
+        return try loadSynchronously()
     }
 
     /// Reloads the graph without chmod, directory creation, lock creation or
     /// any other filesystem mutation. Opening retains the hardening behavior in
     /// `load()`; request-time freshness is a strictly read-only operation.
     func reloadReadOnly() async throws -> MemoryGraph {
-        guard FileManager.default.fileExists(atPath: url.path) else { return MemoryGraph() }
-        return try decodeGraph(Data(contentsOf: url))
+        try loadSynchronously()
     }
 
     public func save(_ graph: MemoryGraph) async throws {
@@ -217,9 +237,44 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
     }
 
     private func loadSynchronously() throws -> MemoryGraph {
-        guard FileManager.default.fileExists(atPath: url.path) else { return MemoryGraph() }
+        guard let before = try Self.identity(ofFileAt: url.path) else {
+            // No file: nothing to decode and nothing worth keeping.
+            cached = nil
+            return MemoryGraph()
+        }
+        if let cached, cached.identity == before {
+            return cached.graph
+        }
+        let data = try Data(contentsOf: url)
+        diskDecodeCount += 1
+        let graph = try decodeGraph(data)
+        // A publish between the identity check and the read would pair one
+        // file's identity with another file's bytes. Keep the pair only when
+        // the file did not change across the read; under the lock it never
+        // does, and an unlocked read simply decodes again next time.
+        if let after = try? Self.identity(ofFileAt: url.path), after == before {
+            cached = (before, graph)
+        } else {
+            cached = nil
+        }
+        return graph
+    }
 
-        return try decodeGraph(Data(contentsOf: url))
+    /// `nil` when no file exists at `path`. Read through `attributesOfItem`,
+    /// which reports device, inode, size and the nanosecond modification time
+    /// on Darwin and Linux without naming `struct stat`, whose defining Clang
+    /// module is not stable under `MemberImportVisibility` on Linux.
+    private static func identity(ofFileAt path: String) throws -> FileIdentity? {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: path) else { return nil }
+        let attributes = try fileManager.attributesOfItem(atPath: path)
+        let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return FileIdentity(
+            device: (attributes[.systemNumber] as? NSNumber)?.uint64Value ?? 0,
+            inode: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0,
+            size: (attributes[.size] as? NSNumber)?.int64Value ?? 0,
+            modificationNanoseconds: Int64((modified * 1_000_000_000).rounded())
+        )
     }
 
     /// Decodes a persisted graph without writing it. Both ordinary loads and
@@ -263,10 +318,21 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         // Byte-identical payload to every previous version of this method; only
         // the way it reaches the final path changed.
-        try Self.publishPrivately(try encoder.encode(graph), to: url)
+        let data = try encoder.encode(graph)
+        let identity = try Self.publishPrivately(data, to: url)
+        // Re-prime from the bytes just published, so the next read — typically
+        // the next turn's recall — pays no decode. Decoding what this build has
+        // just encoded cannot fail; should it ever, the cache is dropped rather
+        // than reporting an error for an already-durable graph.
+        if let published = try? decodeGraph(data) {
+            cached = (identity, published)
+        } else {
+            cached = nil
+        }
     }
 
-    /// Installs `data` at `url` through an owner-only staging file.
+    /// Installs `data` at `url` through an owner-only staging file and returns
+    /// the identity of the published inode.
     ///
     /// `Data.WritingOptions.atomic` also stages and renames, but it creates the
     /// staged file with the process umask and replaces the inode, so the graph
@@ -275,8 +341,11 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
     /// Staging by hand makes the file private *before* a single byte of graph
     /// content is written and publishes it with `rename`, which is atomic within
     /// the directory. `rename` is the commit point and nothing failable follows
-    /// it, so this never reports an error for an already-durable graph.
-    private static func publishPrivately(_ data: Data, to url: URL) throws {
+    /// it, so this never reports an error for an already-durable graph. The
+    /// identity is taken from the private staging file before the rename,
+    /// which preserves it: it is the published inode's identity whatever
+    /// another writer does afterwards.
+    private static func publishPrivately(_ data: Data, to url: URL) throws -> FileIdentity {
         let directory = url.deletingLastPathComponent()
         let staging = directory.appendingPathComponent(
             ".\(url.lastPathComponent).\(UUID().uuidString).staging"
@@ -287,6 +356,7 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         defer {
             if !published { try? FileManager.default.removeItem(at: staging) }
         }
+        let publishedIdentity: FileIdentity
         do {
             // `open`'s mode argument is masked by the umask, which can only
             // clear bits — never add them — but an inherited restrictive umask
@@ -300,12 +370,17 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
             throw error
         }
         guard close(descriptor) == 0 else { throw errnoError() }
+        guard let stagedIdentity = try identity(ofFileAt: staging.path) else {
+            throw POSIXError(.ENOENT)
+        }
+        publishedIdentity = stagedIdentity
         // `rename` publishes the completed private staging inode. Check as
         // close to that commit point as possible so a cancellation observed
         // after I/O never makes an abandoned operation visible.
         try Task.checkCancellation()
         guard rename(staging.path, url.path) == 0 else { throw errnoError() }
         published = true
+        return publishedIdentity
     }
 
     private static func writeFully(_ data: Data, to descriptor: Int32) throws {
