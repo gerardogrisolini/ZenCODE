@@ -25,6 +25,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - `memory.write` also reports existing tags related to any tag the new entry
   introduced (`tagHints`, e.g. `linux-validation` → `linux`, `validation`),
   so the tag vocabulary converges instead of growing single-use tags.
+- Browser: `browser.act` gains a `scroll` action that moves the page, or the
+  scroll container of `ref`, by `direction` (`up`/`down`/`left`/`right`) and
+  `amount` (CSS pixels, about one viewport by default). It uses a real
+  mouse-wheel event, falls back to a programmatic scroll when the wheel had no
+  effect, and reports the new position, `moved`, and `reachedEnd`.
+- Browser: `press` accepts modifier combinations such as `Control+A`,
+  `Meta+Enter`, `Shift+Tab`, or `Control+Shift+ArrowLeft`; letters and digits
+  are accepted only with a Control, Meta, or Alt modifier. macOS editing
+  shortcuts (Cmd+A/C/X/V/Z, Cmd+Shift+Z) carry their editor command so they
+  take effect.
 
 ### Changed
 
@@ -114,6 +124,24 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Browser: `browser.act` fill now works in rich-text editors such as
+  social-media composers (Draft.js, Lexical, ProseMirror, Quill). It resolves
+  the editable host from a descendant or wrapper node, replaces the existing
+  text with trusted typed input (`Input.insertText`, line breaks as
+  Shift+Enter) instead of assigning `textContent`, reads the text back, and
+  falls back to the editor's `insertText` command. When the editor still does
+  not keep the text, the action fails explicitly instead of reporting success.
+  Text inputs and textareas are typed as well, with the native value setter
+  as fallback; the result reports `fill.method` and `fill.verified`.
+- Browser: refs from an `interactiveOnly` snapshot of a large page (for
+  example a long feed) no longer fail with "no longer available". Ref
+  resolution used a full snapshot truncated to the output budget; it now
+  searches the complete accessibility tree.
+- Browser: `click` and `double_click` check what receives input at the click
+  point. A target covered by an overlay, cookie banner, or modal is centered
+  and checked again, then fails with an error naming the covering element
+  instead of silently clicking it. `press Enter` and `press Space` now carry
+  their text, so Enter submits a form and Space toggles a control.
 - `JSONMemoryPersistence` caches the last decoded graph keyed by the file
   identity (device, inode, size, mtime in nanoseconds). `memory.read`,
   `memory.search`, automatic recall, and the lexical fallback no longer decode

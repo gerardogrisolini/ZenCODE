@@ -12,7 +12,7 @@ import Foundation
 extension CDPSession {
     func click(target: BrowserAccessibilityTarget, authorization: BrowserSnapshotAuthorization) async throws {
         try requireInteractive(target)
-        let point = try await interactionPoint(for: target, authorization: authorization)
+        let point = try await unobstructedInteractionPoint(for: target, authorization: authorization)
         // Intentionally pre-dispatch only: a click can navigate the document
         // as its expected side effect.
         try await validateSnapshotState(authorization)
@@ -21,7 +21,7 @@ extension CDPSession {
 
     func doubleClick(target: BrowserAccessibilityTarget, authorization: BrowserSnapshotAuthorization) async throws {
         try requireInteractive(target)
-        let point = try await interactionPoint(for: target, authorization: authorization)
+        let point = try await unobstructedInteractionPoint(for: target, authorization: authorization)
         // Chrome recognizes a double click from the ordinary first click and
         // the second clickCount=2 sequence. This preserves page click handlers
         // while remaining a fixed CDP input sequence.
@@ -56,33 +56,6 @@ extension CDPSession {
             _ = try await send(method: "DOM.scrollIntoViewIfNeeded", params: ["backendNodeId": target.backendDOMNodeID])
         } catch {
             throw BrowserInteractionError.targetNoLongerAvailable(target.ref)
-        }
-    }
-
-    func fill(target: BrowserAccessibilityTarget, value: String, authorization: BrowserSnapshotAuthorization) async throws {
-        try requireBoundedInput(value)
-        try await prepareActionTarget(target, authorization: authorization)
-        let element = try await elementInfo(for: target, authorization: authorization)
-        if element.isPasswordLike {
-            throw BrowserInteractionError.sensitiveInputRequiresUser
-        }
-        if element.isFileInput {
-            throw BrowserInteractionError.fileInputNotSupported
-        }
-        guard element.isSupportedFillTarget else { throw BrowserInteractionError.unsupportedFillTarget(target.ref) }
-
-        let result = try await callFixedFunction(Self.fillFunction, on: target, authorization: authorization, argument: ["value": value])
-        switch result {
-        case "filled":
-            return
-        case "disabled", "readonly":
-            throw BrowserInteractionError.inputIsDisabled
-        case "file":
-            throw BrowserInteractionError.fileInputNotSupported
-        case "password":
-            throw BrowserInteractionError.sensitiveInputRequiresUser
-        default:
-            throw BrowserInteractionError.unsupportedFillTarget(target.ref)
         }
     }
 
@@ -137,20 +110,37 @@ extension CDPSession {
             "code": key.code,
             "windowsVirtualKeyCode": key.virtualKeyCode,
             "nativeVirtualKeyCode": key.virtualKeyCode,
+            "modifiers": key.modifiers.rawValue,
         ]
-        _ = try await send(method: "Input.dispatchKeyEvent", params: params.merging(["type": "keyDown"]) { _, new in new })
+        // Mirror Chrome's own key sequence: a key that produces text is a
+        // `keyDown` carrying that text (so Enter can submit a form and Space
+        // can toggle a control); any other key is a `rawKeyDown`. macOS
+        // editing shortcuts additionally need their editor command, because
+        // Chrome does not derive it from a synthetic Cmd key event.
+        var down = params
+        if let text = key.text {
+            down["type"] = "keyDown"
+            down["text"] = text
+            down["unmodifiedText"] = text
+        } else {
+            down["type"] = "rawKeyDown"
+        }
+        if !key.commands.isEmpty {
+            down["commands"] = key.commands
+        }
+        _ = try await send(method: "Input.dispatchKeyEvent", params: down)
         _ = try await send(method: "Input.dispatchKeyEvent", params: params.merging(["type": "keyUp"]) { _, new in new })
     }
 
-    private func requireInteractive(_ target: BrowserAccessibilityTarget) throws {
+    func requireInteractive(_ target: BrowserAccessibilityTarget) throws {
         guard target.interactive else { throw BrowserInteractionError.targetIsNotInteractive(target.ref) }
     }
 
-    private func requireBoundedInput(_ value: String) throws {
+    func requireBoundedInput(_ value: String) throws {
         guard value.lengthOfBytes(using: .utf8) <= 16_000 else { throw BrowserInteractionError.inputValueTooLarge }
     }
 
-    private func callFixedFunction(
+    func callFixedFunction(
         _ declaration: String,
         on target: BrowserAccessibilityTarget,
         authorization: BrowserSnapshotAuthorization,
@@ -161,7 +151,7 @@ extension CDPSession {
         }
     }
 
-    private func prepareActionTarget(
+    func prepareActionTarget(
         _ target: BrowserAccessibilityTarget,
         authorization: BrowserSnapshotAuthorization
     ) async throws {
@@ -175,6 +165,14 @@ extension CDPSession {
         authorization: BrowserSnapshotAuthorization
     ) async throws -> (x: Double, y: Double) {
         try await prepareActionTarget(target, authorization: authorization)
+        return try await currentBoxCenter(of: target, authorization: authorization)
+    }
+
+    /// Reads the target's current content-box center without scrolling it.
+    func currentBoxCenter(
+        of target: BrowserAccessibilityTarget,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws -> (x: Double, y: Double) {
         let response = try await snapshotBoundRead(
             authorization,
             method: "DOM.getBoxModel",
@@ -190,7 +188,47 @@ extension CDPSession {
         return point
     }
 
-    private func dispatchMouseClick(at point: (x: Double, y: Double), clickCount: Int) async throws {
+    /// Resolves a click point and verifies that the target, not an overlay,
+    /// cookie banner, or modal backdrop, receives input there. A covered or
+    /// off-viewport target is centered once and re-checked before failing
+    /// with an explicit error, so a click never silently lands elsewhere.
+    func unobstructedInteractionPoint(
+        for target: BrowserAccessibilityTarget,
+        authorization: BrowserSnapshotAuthorization
+    ) async throws -> (x: Double, y: Double) {
+        var point = try await interactionPoint(for: target, authorization: authorization)
+        var hit = try await hitTest(target, at: point, authorization: authorization)
+        if hit == .clear { return point }
+
+        _ = try? await callFixedFunction(Self.centerIntoViewFunction, on: target, authorization: authorization, argument: ["value": 0])
+        try await Task.sleep(for: .milliseconds(100))
+        point = try await currentBoxCenter(of: target, authorization: authorization)
+        hit = try await hitTest(target, at: point, authorization: authorization)
+        switch hit {
+        case .clear:
+            return point
+        case .outsideViewport:
+            throw BrowserInteractionError.targetOutsideViewport(target.ref)
+        case let .covered(obstruction):
+            throw BrowserInteractionError.targetIsCovered(target.ref, obstruction)
+        }
+    }
+
+    private func hitTest(
+        _ target: BrowserAccessibilityTarget,
+        at point: (x: Double, y: Double),
+        authorization: BrowserSnapshotAuthorization
+    ) async throws -> BrowserHitTestResult {
+        let raw = try await callFixedFunction(
+            Self.hitTestFunction,
+            on: target,
+            authorization: authorization,
+            argument: ["value": ["x": point.x, "y": point.y]]
+        )
+        return BrowserHitTestResult.parse(raw)
+    }
+
+    func dispatchMouseClick(at point: (x: Double, y: Double), clickCount: Int) async throws {
         let commonParams: [String: Any] = [
             "x": point.x,
             "y": point.y,
@@ -207,7 +245,7 @@ extension CDPSession {
         )
     }
 
-    private func elementInfo(
+    func elementInfo(
         for target: BrowserAccessibilityTarget,
         authorization: BrowserSnapshotAuthorization
     ) async throws -> BrowserDOMElementInfo {
@@ -230,7 +268,7 @@ extension CDPSession {
         return BrowserDOMElementInfo(tagName: nodeName, attributes: attributes)
     }
 
-    private func withResolvedDOMObject<T>(
+    func withResolvedDOMObject<T>(
         _ target: BrowserAccessibilityTarget,
         authorization: BrowserSnapshotAuthorization,
         body: (String) async throws -> T
@@ -262,7 +300,7 @@ extension CDPSession {
         }
     }
 
-    private func callFunctionReturningString(
+    func callFunctionReturningString(
         objectID: String,
         functionDeclaration: String,
         arguments: [[String: Any]] = []
@@ -291,7 +329,7 @@ extension CDPSession {
         return value
     }
 
-    private func boxCenter(_ rawContent: [Any]) -> (x: Double, y: Double)? {
+    func boxCenter(_ rawContent: [Any]) -> (x: Double, y: Double)? {
         let values = rawContent.compactMap { value -> Double? in
             if let value = value as? Double { return value }
             if let value = value as? Int { return Double(value) }
@@ -312,26 +350,40 @@ extension CDPSession {
     }
     """#
 
-    private static let fillFunction = #"""
-    function (value) {
+    /// Fixed host-side function: centers the element in its scroll
+    /// containers so sticky headers and footers no longer cover it.
+    static let centerIntoViewFunction = #"""
+    function () {
+      if (!(this instanceof Element)) return 'unsupported';
+      this.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      return 'centered';
+    }
+    """#
+
+    /// Fixed host-side hit test. It accepts the target, its descendants
+    /// (including through shadow roots), a non-root ancestor that receives the
+    /// event, and a label bound to the target. Frames other than the top-level
+    /// document report `unknown` because their coordinates are frame-local.
+    static let hitTestFunction = #"""
+    function (point) {
       const element = this;
-      const tag = (element.tagName || '').toLowerCase();
-      if (tag !== 'input' && tag !== 'textarea' && !element.isContentEditable) return 'unsupported';
-      if (element.disabled) return 'disabled';
-      if (element.readOnly) return 'readonly';
-      if (tag === 'input' && (element.type || '').toLowerCase() === 'file') return 'file';
-      if (tag === 'input' && (element.type || '').toLowerCase() === 'password') return 'password';
-      element.focus({ preventScroll: true });
-      if (element.isContentEditable) {
-        element.textContent = value;
-      } else {
-        const prototype = tag === 'textarea' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
-        if (setter) setter.call(element, value); else element.value = value;
+      if (!(element instanceof Element)) return 'unknown';
+      if (window !== window.top) return 'unknown';
+      const root = element.getRootNode();
+      const hit = root && typeof root.elementFromPoint === 'function'
+        ? root.elementFromPoint(point.x, point.y)
+        : document.elementFromPoint(point.x, point.y);
+      if (!hit) return 'offscreen';
+      for (let node = hit; node; node = node.parentNode || node.host) {
+        if (node === element) return 'ok';
       }
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true }));
-      return 'filled';
+      if (hit !== document.body && hit !== document.documentElement && hit.contains(element)) return 'ok';
+      const label = hit.closest ? hit.closest('label') : null;
+      if (label && label.control === element) return 'ok';
+      const tag = (hit.tagName || 'element').toLowerCase();
+      const role = hit.getAttribute('role');
+      const name = (hit.getAttribute('aria-label') || hit.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+      return 'covered:<' + tag + (role ? ' role="' + role + '"' : '') + '>' + (name ? ' "' + name + '"' : '');
     }
     """#
 

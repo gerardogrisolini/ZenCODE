@@ -59,9 +59,8 @@ extension BrowserToolsFeatureTests {
         #expect(password.isPasswordLike)
         #expect(!password.isFileInput)
         #expect(upload.isFileInput)
-        #expect(upload.isSupportedFillTarget)
-        #expect(textArea.isSupportedFillTarget)
-        #expect(contentEditable.isSupportedFillTarget)
+        #expect(!textArea.isPasswordLike)
+        #expect(!contentEditable.isPasswordLike)
         #expect(try BrowserActionKind.resolve("CLICK") == .click)
         #expect(try BrowserDialogAction.resolve("dismiss") == .dismiss)
         #expect(try BrowserKeyStroke.resolve("Arrow_Down").key == "ArrowDown")
@@ -199,9 +198,12 @@ extension BrowserToolsFeatureTests {
         let action = try #require(actionProperties["action"] as? [String: Any])
         let actionValues = try #require(action["enum"] as? [String])
         let expectedActionValues: Set<String> = [
-            "click", "fill", "press", "hover", "double_click", "scroll_into_view", "select_option", "check", "uncheck",
+            "click", "fill", "press", "hover", "double_click", "scroll", "scroll_into_view", "select_option", "check", "uncheck",
         ]
         #expect(Set(actionValues) == expectedActionValues)
+        let direction = try #require(actionProperties["direction"] as? [String: Any])
+        #expect(Set(try #require(direction["enum"] as? [String])) == ["up", "down", "left", "right"])
+        #expect(actionProperties["amount"] != nil)
 
         let inspectSchema = try schemaObject(BrowserInspectTool.inputSchema)
         let required = try #require(inspectSchema["required"] as? [String])

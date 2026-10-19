@@ -137,6 +137,24 @@ enum BrowserAccessibilitySnapshot {
         )
     }
 
+    /// Resolves one ref against the complete accessibility tree. Unlike
+    /// `parse`, this applies no output byte or ref-count budget: those limits
+    /// bound what the model sees, while a ref it received from an
+    /// `interactiveOnly` snapshot can sit beyond the budget of a full one.
+    /// Authorization still comes from the recorded snapshot state.
+    static func target(for ref: String, in response: [String: Any]) throws -> BrowserAccessibilityTarget? {
+        guard let result = response["result"] as? [String: Any],
+              let rawNodes = result["nodes"] as? [[String: Any]]
+        else {
+            throw CDPError.invalidResponse("Accessibility.getFullAXTree did not return nodes")
+        }
+        for raw in rawNodes {
+            guard let nodeID = stringValue(raw["nodeId"]), "ax-\(nodeID)" == ref else { continue }
+            return makeNode(raw)?.target
+        }
+        return nil
+    }
+
     private static func makeNode(_ raw: [String: Any]) -> ParsedNode? {
         guard raw["ignored"] as? Bool != true,
               let nodeID = stringValue(raw["nodeId"]),
@@ -313,8 +331,11 @@ extension CDPSession {
     }
 
     func accessibilityTarget(for ref: String) async throws -> BrowserAccessibilityTarget {
-        let snapshot = try await accessibilitySnapshot(interactiveOnly: false)
-        guard let target = snapshot.targets[ref] else { throw BrowserInteractionError.targetNoLongerAvailable(ref) }
+        _ = try await send(method: "Accessibility.enable")
+        let response = try await send(method: "Accessibility.getFullAXTree")
+        guard let target = try BrowserAccessibilitySnapshot.target(for: ref, in: response) else {
+            throw BrowserInteractionError.targetNoLongerAvailable(ref)
+        }
         return target
     }
 }

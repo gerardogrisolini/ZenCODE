@@ -31,6 +31,11 @@ enum BrowserInteractionError: LocalizedError, Equatable {
     case targetIsDisabled
     case unableToSetCheckedState(String)
     case unsupportedKey(String)
+    case fillNotApplied(String)
+    case targetIsCovered(String, String)
+    case targetOutsideViewport(String)
+    case unsupportedScrollDirection(String)
+    case invalidScrollAmount
 
     var errorDescription: String? {
         switch self {
@@ -41,7 +46,7 @@ enum BrowserInteractionError: LocalizedError, Equatable {
         case let .targetIsNotInteractive(ref):
             "Browser element '\(ref)' is not an interactive semantic control."
         case let .unsupportedFillTarget(ref):
-            "Browser element '\(ref)' cannot be filled. Use a textbox, textarea, or contenteditable control from a fresh snapshot."
+            "Browser element '\(ref)' cannot be filled. Use a text input, textarea, or rich-text editor (contenteditable) from a fresh snapshot; if the composer is behind a button such as \"Start a post\", click it first."
         case .sensitiveInputRequiresUser:
             "Browser will not fill password-like fields. Ask the user to type the value directly into the visible Chrome window."
         case .fileInputNotSupported:
@@ -61,7 +66,17 @@ enum BrowserInteractionError: LocalizedError, Equatable {
         case let .unableToSetCheckedState(ref):
             "Browser element '\(ref)' did not reach the requested checked state. Take a fresh browser.snapshot before retrying."
         case let .unsupportedKey(key):
-            "Unsupported Browser key '\(key)'. Use a navigation or editing key such as Enter, Tab, Escape, ArrowDown, Backspace, or Delete."
+            "Unsupported Browser key '\(key)'. Use a navigation or editing key such as Enter, Tab, Escape, ArrowDown, Backspace, or Delete, optionally combined with Control, Meta, Alt, or Shift (for example Control+A, Meta+Enter, Shift+Tab). Letters and digits require a Control, Meta, or Alt modifier; use fill to enter text."
+        case let .fillNotApplied(ref):
+            "Browser typed into element '\(ref)', but the editor did not keep the requested text. Take a fresh browser.snapshot: the editor may have been replaced, or it may need a click to activate first."
+        case let .targetIsCovered(ref, obstruction):
+            "Browser element '\(ref)' is covered by another element (page content, untrusted: \(obstruction)), so a click would land on it instead. Close the overlay, dialog, or banner first (for example press Escape or click its close button from a fresh snapshot), then retry."
+        case let .targetOutsideViewport(ref):
+            "Browser element '\(ref)' could not be brought into the visible viewport. Use the scroll action on its container, then take a fresh browser.snapshot."
+        case let .unsupportedScrollDirection(direction):
+            "Unsupported Browser scroll direction '\(direction)'. Use up, down, left, or right."
+        case .invalidScrollAmount:
+            "Browser scroll amount must be between 1 and 100,000 CSS pixels."
         }
     }
 }
@@ -76,6 +91,7 @@ enum BrowserActionKind: String, Codable, Sendable {
     case selectOption = "select_option"
     case check
     case uncheck
+    case scroll
 
     static func resolve(_ rawValue: String?) throws -> Self {
         guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -85,7 +101,7 @@ enum BrowserActionKind: String, Codable, Sendable {
         }
         guard let action = Self(rawValue: rawValue.lowercased()) else {
             throw BrowserToolsFeatureError.browserError(
-                "Unsupported Browser action '\(rawValue)'. Use click, fill, press, hover, double_click, scroll_into_view, select_option, check, or uncheck."
+                "Unsupported Browser action '\(rawValue)'. Use click, fill, press, hover, double_click, scroll, scroll_into_view, select_option, check, or uncheck."
             )
         }
         return action
@@ -121,13 +137,24 @@ struct BrowserActionOutput: Codable, Sendable {
     let action: BrowserActionKind
     let targetRef: String?
     let dialog: BrowserDialogInfo?
+    let fill: BrowserFillReport?
+    let scroll: BrowserScrollReport?
     let note: String
 
-    init(page: BrowserPage, action: BrowserActionKind, targetRef: String?, dialog: BrowserDialogInfo?) {
+    init(
+        page: BrowserPage,
+        action: BrowserActionKind,
+        targetRef: String?,
+        dialog: BrowserDialogInfo?,
+        fill: BrowserFillReport? = nil,
+        scroll: BrowserScrollReport? = nil
+    ) {
         self.page = page
         self.action = action
         self.targetRef = targetRef
         self.dialog = dialog
+        self.fill = fill
+        self.scroll = scroll
         self.note = dialog == nil
             ? "The action was dispatched through Browser's constrained semantic interaction API."
             : "A JavaScript dialog is open. Call browser.dialog explicitly to accept or dismiss it."
@@ -187,39 +214,198 @@ private final class BrowserDialogObserver: Sendable {
 
 // MARK: - Key input
 
-struct BrowserKeyStroke {
+enum BrowserKeyPlatform: Sendable {
+    case macOS
+    case other
+
+    static var current: BrowserKeyPlatform {
+        #if os(macOS)
+        .macOS
+        #else
+        .other
+        #endif
+    }
+}
+
+struct BrowserKeyModifiers: OptionSet, Hashable, Sendable {
+    let rawValue: Int
+
+    // CDP Input.dispatchKeyEvent modifier bits.
+    static let alt = BrowserKeyModifiers(rawValue: 1)
+    static let control = BrowserKeyModifiers(rawValue: 2)
+    static let meta = BrowserKeyModifiers(rawValue: 4)
+    static let shift = BrowserKeyModifiers(rawValue: 8)
+
+    static func named(_ rawValue: String) -> BrowserKeyModifiers? {
+        switch rawValue.lowercased() {
+        case "ctrl", "control": .control
+        case "meta", "cmd", "command": .meta
+        case "alt", "option", "opt": .alt
+        case "shift": .shift
+        default: nil
+        }
+    }
+}
+
+struct BrowserKeyStroke: Equatable, Sendable {
     let key: String
     let code: String
     let virtualKeyCode: Int
+    let modifiers: BrowserKeyModifiers
+    /// Text the key produces; nil for keys that only trigger behavior.
+    let text: String?
+    /// Chrome editor commands that must accompany the key event.
+    let commands: [String]
 
-    static func resolve(_ rawValue: String?) throws -> BrowserKeyStroke {
+    init(
+        key: String,
+        code: String,
+        virtualKeyCode: Int,
+        modifiers: BrowserKeyModifiers = [],
+        text: String? = nil,
+        commands: [String] = []
+    ) {
+        self.key = key
+        self.code = code
+        self.virtualKeyCode = virtualKeyCode
+        self.modifiers = modifiers
+        self.text = text
+        self.commands = commands
+    }
+
+    private static let namedKeys: [String: BrowserKeyStroke] = [
+        "enter": .init(key: "Enter", code: "Enter", virtualKeyCode: 13, text: "\r"),
+        "tab": .init(key: "Tab", code: "Tab", virtualKeyCode: 9),
+        "escape": .init(key: "Escape", code: "Escape", virtualKeyCode: 27),
+        "esc": .init(key: "Escape", code: "Escape", virtualKeyCode: 27),
+        "space": .init(key: " ", code: "Space", virtualKeyCode: 32, text: " "),
+        "backspace": .init(key: "Backspace", code: "Backspace", virtualKeyCode: 8),
+        "delete": .init(key: "Delete", code: "Delete", virtualKeyCode: 46),
+        "arrowup": .init(key: "ArrowUp", code: "ArrowUp", virtualKeyCode: 38),
+        "arrowdown": .init(key: "ArrowDown", code: "ArrowDown", virtualKeyCode: 40),
+        "arrowleft": .init(key: "ArrowLeft", code: "ArrowLeft", virtualKeyCode: 37),
+        "arrowright": .init(key: "ArrowRight", code: "ArrowRight", virtualKeyCode: 39),
+        "home": .init(key: "Home", code: "Home", virtualKeyCode: 36),
+        "end": .init(key: "End", code: "End", virtualKeyCode: 35),
+        "pageup": .init(key: "PageUp", code: "PageUp", virtualKeyCode: 33),
+        "pagedown": .init(key: "PageDown", code: "PageDown", virtualKeyCode: 34),
+    ]
+
+    /// macOS editing shortcuts. Chrome performs them only when the editor
+    /// command travels with the synthetic key event.
+    private static let macOSCommandShortcuts: [String: String] = [
+        "a": "selectAll",
+        "c": "copy",
+        "x": "cut",
+        "v": "paste",
+        "z": "undo",
+    ]
+
+    /// Resolves `Key` or a `Modifier+...+Key` combination such as
+    /// `Control+A`, `Meta+Enter`, or `Shift+Tab`. A bare letter or digit is
+    /// rejected: text entry belongs to `fill`, and only a Control, Meta, or
+    /// Alt modifier turns a character into a shortcut.
+    static func resolve(_ rawValue: String?, platform: BrowserKeyPlatform = .current) throws -> BrowserKeyStroke {
         guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
               !rawValue.isEmpty
         else {
             throw BrowserToolsFeatureError.missingArgument("key")
         }
-        let normalized = rawValue
+        let parts = rawValue
+            .split(separator: "+", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let baseName = parts.last, parts.allSatisfy({ !$0.isEmpty }) else {
+            throw BrowserInteractionError.unsupportedKey(rawValue)
+        }
+        var modifiers: BrowserKeyModifiers = []
+        for name in parts.dropLast() {
+            guard let modifier = BrowserKeyModifiers.named(name), !modifiers.contains(modifier) else {
+                throw BrowserInteractionError.unsupportedKey(rawValue)
+            }
+            modifiers.insert(modifier)
+        }
+        let producesText = modifiers.isSubset(of: [.shift])
+
+        let normalized = baseName
             .lowercased()
             .filter { $0 != "-" && $0 != "_" && !$0.isWhitespace }
-        let supported: [String: BrowserKeyStroke] = [
-            "enter": .init(key: "Enter", code: "Enter", virtualKeyCode: 13),
-            "tab": .init(key: "Tab", code: "Tab", virtualKeyCode: 9),
-            "escape": .init(key: "Escape", code: "Escape", virtualKeyCode: 27),
-            "esc": .init(key: "Escape", code: "Escape", virtualKeyCode: 27),
-            "space": .init(key: " ", code: "Space", virtualKeyCode: 32),
-            "backspace": .init(key: "Backspace", code: "Backspace", virtualKeyCode: 8),
-            "delete": .init(key: "Delete", code: "Delete", virtualKeyCode: 46),
-            "arrowup": .init(key: "ArrowUp", code: "ArrowUp", virtualKeyCode: 38),
-            "arrowdown": .init(key: "ArrowDown", code: "ArrowDown", virtualKeyCode: 40),
-            "arrowleft": .init(key: "ArrowLeft", code: "ArrowLeft", virtualKeyCode: 37),
-            "arrowright": .init(key: "ArrowRight", code: "ArrowRight", virtualKeyCode: 39),
-            "home": .init(key: "Home", code: "Home", virtualKeyCode: 36),
-            "end": .init(key: "End", code: "End", virtualKeyCode: 35),
-            "pageup": .init(key: "PageUp", code: "PageUp", virtualKeyCode: 33),
-            "pagedown": .init(key: "PageDown", code: "PageDown", virtualKeyCode: 34),
-        ]
-        guard let key = supported[normalized] else { throw BrowserInteractionError.unsupportedKey(rawValue) }
-        return key
+        if let named = namedKeys[normalized] {
+            return BrowserKeyStroke(
+                key: named.key,
+                code: named.code,
+                virtualKeyCode: named.virtualKeyCode,
+                modifiers: modifiers,
+                text: producesText ? named.text : nil
+            )
+        }
+
+        guard baseName.count == 1,
+              let character = baseName.lowercased().first,
+              character.isASCII,
+              character.isLetter || character.isNumber,
+              !modifiers.isDisjoint(with: [.control, .meta, .alt])
+        else {
+            throw BrowserInteractionError.unsupportedKey(rawValue)
+        }
+        let upper = String(character).uppercased()
+        let virtualKeyCode = Int(upper.unicodeScalars.first?.value ?? 0)
+        var commands: [String] = []
+        if platform == .macOS, modifiers.contains(.meta), modifiers.isSubset(of: [.meta, .shift]) {
+            if character == "z", modifiers.contains(.shift) {
+                commands = ["redo"]
+            } else if !modifiers.contains(.shift), let command = macOSCommandShortcuts[String(character)] {
+                commands = [command]
+            }
+        }
+        return BrowserKeyStroke(
+            key: modifiers.contains(.shift) ? upper : String(character),
+            code: character.isLetter ? "Key\(upper)" : "Digit\(character)",
+            virtualKeyCode: virtualKeyCode,
+            modifiers: modifiers,
+            commands: commands
+        )
+    }
+
+    /// The platform's select-all shortcut, used before replacing editor text.
+    static func selectAll(platform: BrowserKeyPlatform = .current) -> BrowserKeyStroke {
+        // `try!` is safe: the literal is a supported combination.
+        try! resolve(platform == .macOS ? "Meta+A" : "Control+A", platform: platform)
+    }
+
+    /// A soft line break. Shift+Enter inserts a newline in rich-text editors
+    /// without triggering the "send on Enter" behavior of chat composers.
+    static let softLineBreak = BrowserKeyStroke(
+        key: "Enter",
+        code: "Enter",
+        virtualKeyCode: 13,
+        modifiers: .shift,
+        text: "\r"
+    )
+
+    static let backspace = BrowserKeyStroke(key: "Backspace", code: "Backspace", virtualKeyCode: 8)
+}
+
+// MARK: - Hit testing
+
+enum BrowserHitTestResult: Equatable, Sendable {
+    case clear
+    case outsideViewport
+    case covered(String)
+
+    static let maximumObstructionBytes = 160
+
+    static func parse(_ raw: String) -> BrowserHitTestResult {
+        if raw == "offscreen" { return .outsideViewport }
+        guard raw.hasPrefix("covered:") else {
+            // `ok`, `unknown` (for example an iframe) and unexpected values
+            // keep the previous behavior: click at the computed point.
+            return .clear
+        }
+        let detail = String(raw.dropFirst("covered:".count))
+        let clipped = detail.lengthOfBytes(using: .utf8) > maximumObstructionBytes
+            ? detail.prefixFitting(utf8Bytes: maximumObstructionBytes) + "…"
+            : detail
+        return .covered(clipped.isEmpty ? "unknown element" : clipped)
     }
 }
 
@@ -247,15 +433,6 @@ struct BrowserDOMElementInfo {
     var isFileInput: Bool {
         tagName == "input" && attributes["type"]?.lowercased() == "file"
     }
-
-    var isSupportedFillTarget: Bool {
-        let isContentEditable = attributes["contenteditable"].map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "false"
-        } ?? false
-        return tagName == "input"
-            || tagName == "textarea"
-            || isContentEditable
-    }
 }
 
 // MARK: - Public tools
@@ -271,6 +448,8 @@ struct BrowserActTool: FeatureTool {
         let ref: String?
         let value: String?
         let key: String?
+        let direction: String?
+        let amount: Double?
 
         var resolvedPageID: String? {
             BrowserPageInput.resolve(pageID: pageId, pageIDSnakeCase: page_id, id: id)
@@ -286,17 +465,19 @@ struct BrowserActTool: FeatureTool {
     }
 
     static let name = "browser.act"
-    static let description = "Performs one constrained semantic action on a ref returned by the current browser.snapshot: click, fill, press, hover, double_click, scroll_into_view, select_option, check, or uncheck. Password-like and file inputs are never filled. Actions can have external side effects."
+    static let description = "Performs one constrained semantic action on a ref returned by the current browser.snapshot: click, fill, press, hover, double_click, scroll, scroll_into_view, select_option, check, or uncheck. fill replaces the text of inputs, textareas, and rich-text editors (contenteditable, including social-media composers) with trusted typing and verifies the result. scroll moves the page or the scroll container of ref. Clicks fail with an explicit error when an overlay covers the target. Password-like and file inputs are never filled. Actions can have external side effects."
     static let inputSchema = buildInputSchema(
         [
             .string("pageId", description: "pageId returned by browser.open or browser.pages."),
             .string("page_id", description: "Snake-case alias for pageId."),
             .string("snapshotId", description: "snapshotId returned by the most recent browser.snapshot for this page."),
             .string("snapshot_id", description: "Snake-case alias for snapshotId."),
-            .string("action", enumValues: ["click", "fill", "press", "hover", "double_click", "scroll_into_view", "select_option", "check", "uncheck"], description: "Constrained semantic action."),
-            .string("ref", description: "Opaque element ref from that snapshot. Required for every action except press."),
-            .string("value", description: "Value for fill or exact option value for select_option. Never use this for passwords or secrets."),
-            .string("key", description: "Supported key for press, such as Enter, Tab, Escape, ArrowDown, Backspace, or Delete."),
+            .string("action", enumValues: ["click", "fill", "press", "hover", "double_click", "scroll", "scroll_into_view", "select_option", "check", "uncheck"], description: "Constrained semantic action."),
+            .string("ref", description: "Opaque element ref from that snapshot. Required for every action except press and scroll. For scroll, ref selects the element whose scroll container moves; omit it to scroll the page."),
+            .string("value", description: "Value for fill (replaces the current text; newlines become line breaks) or exact option value for select_option. Never use this for passwords or secrets."),
+            .string("key", description: "Supported key for press, such as Enter, Tab, Escape, ArrowDown, Backspace, or Delete, optionally with modifiers: Control+A, Meta+Enter, Shift+Tab, Control+Shift+ArrowLeft."),
+            .string("direction", enumValues: ["up", "down", "left", "right"], description: "Direction for scroll (defaults to down)."),
+            .number("amount", description: "Distance for scroll in CSS pixels (1 through 100000; defaults to about one viewport)."),
         ],
         required: ["pageId", "snapshotId", "action"]
     )
@@ -316,6 +497,8 @@ struct BrowserActTool: FeatureTool {
             }
             defer { session.removeEventHandler(token) }
 
+            var fillReport: BrowserFillReport?
+            var scrollReport: BrowserScrollReport?
             switch action {
             case .click:
                 guard ref != nil else { throw BrowserToolsFeatureError.missingArgument("ref") }
@@ -325,7 +508,7 @@ struct BrowserActTool: FeatureTool {
                 guard ref != nil else { throw BrowserToolsFeatureError.missingArgument("ref") }
                 guard let value = input.value else { throw BrowserToolsFeatureError.missingArgument("value") }
                 let target = try await session.resolveSnapshotTarget(authorization)
-                try await session.fill(target: target, value: value, authorization: authorization)
+                fillReport = try await session.fill(target: target, value: value, authorization: authorization)
             case .press:
                 if ref != nil {
                     let target = try await session.resolveSnapshotTarget(authorization)
@@ -347,6 +530,16 @@ struct BrowserActTool: FeatureTool {
                 guard ref != nil else { throw BrowserToolsFeatureError.missingArgument("ref") }
                 let target = try await session.resolveSnapshotTarget(authorization)
                 try await session.scrollIntoView(target: target, authorization: authorization)
+            case .scroll:
+                let direction = try BrowserScrollDirection.resolve(input.direction)
+                let amount = try BrowserScrollDirection.resolveAmount(input.amount)
+                let target = ref == nil ? nil : try await session.resolveSnapshotTarget(authorization)
+                scrollReport = try await session.scroll(
+                    target: target,
+                    direction: direction,
+                    amount: amount,
+                    authorization: authorization
+                )
             case .selectOption:
                 guard ref != nil else { throw BrowserToolsFeatureError.missingArgument("ref") }
                 guard let value = input.value else { throw BrowserToolsFeatureError.missingArgument("value") }
@@ -370,7 +563,14 @@ struct BrowserActTool: FeatureTool {
             let page = dialog == nil
                 ? (try? await session.pageMetadata(pageID: tab.id)) ?? BrowserPage(tab: tab)
                 : BrowserPage(tab: tab)
-            return BrowserActionOutput(page: page, action: action, targetRef: ref, dialog: dialog)
+            return BrowserActionOutput(
+                page: page,
+                action: action,
+                targetRef: ref,
+                dialog: dialog,
+                fill: fillReport,
+                scroll: scrollReport
+            )
         }
     }
 }
