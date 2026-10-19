@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.3.4] - 2026-10-20
+
 ### Added
 
 - Memory tools: `memory.get` (read-only) returns one journal entry by id,
