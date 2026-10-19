@@ -35,6 +35,26 @@ nonisolated struct MemoryEntryMetadata: Sendable {
         "next",
     ]
 
+    /// Whether `line` is one of the journal's timestamp annotations
+    /// (`Timestamp:` / `Updated:`), which never make a useful title.
+    static func isTimestampLine(_ line: String) -> Bool {
+        let lowered = line.trimmingCharacters(in: .whitespaces).lowercased()
+        return lowered.hasPrefix("timestamp:") || lowered.hasPrefix("updated:")
+    }
+
+    /// `Summary:` when present, otherwise the first line that is not a
+    /// timestamp annotation; `nil` when the content has no such line.
+    static func titleLine(of content: String) -> String? {
+        let metadata = MemoryEntryMetadata(content: content)
+        if let summary = metadata.summary {
+            return summary
+        }
+        return content
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty && !isTimestampLine($0) }
+    }
+
     private static func fields(in content: String) -> [String: String] {
         var result: [String: String] = [:]
         for rawLine in content.components(separatedBy: .newlines) {

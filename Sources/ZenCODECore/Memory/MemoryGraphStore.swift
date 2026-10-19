@@ -84,9 +84,20 @@ actor MemoryGraphStore {
     // recall maintenance onto the copy, and never persists.
 
     func entries(includeArchived: Bool, limit: Int) async throws -> [GraphEntry] {
+        try await entries(includeArchived: includeArchived, offset: 0, limit: limit, filter: .none)
+    }
+
+    /// Journal page: newest first, after `offset` matching entries.
+    func entries(
+        includeArchived: Bool,
+        offset: Int,
+        limit: Int,
+        filter: MemoryEntryFilter
+    ) async throws -> [GraphEntry] {
         let graph = try await engine.freshSnapshotForReadOnly()
         return Self.ordered(graph.memories.values)
-            .filter { includeArchived || $0.active }
+            .filter { (includeArchived || $0.active) && filter.matches($0) }
+            .dropFirst(max(offset, 0))
             .prefix(max(limit, 0))
             .map { $0 }
     }
@@ -94,7 +105,8 @@ actor MemoryGraphStore {
     func search(
         query: String,
         includeArchived: Bool,
-        limit: Int
+        limit: Int,
+        filter: MemoryEntryFilter = .none
     ) async throws -> [GraphEntry] {
         let cappedLimit = max(limit, 0)
         // Read-only: `memory.search` must not mutate retrievalCount/confidence/links
@@ -112,7 +124,7 @@ actor MemoryGraphStore {
             graph: fresh,
             limit: cappedLimit
         ).candidates
-        var active = recalled.map(\.memory).filter(\.active)
+        var active = recalled.map(\.memory).filter { $0.active && filter.matches($0) }
 
         guard includeArchived else {
             return Array(active.prefix(cappedLimit))
@@ -121,7 +133,7 @@ actor MemoryGraphStore {
         // Inactive nodes are excluded from both `recall` and the engine's
         // `lexicalBM25` by design, so archived entries are ranked separately,
         // with the same scoring over the archived subset.
-        let archivedEntries = fresh.memories.values.filter { !$0.active }
+        let archivedEntries = fresh.memories.values.filter { !$0.active && filter.matches($0) }
         let archived = MemorySearch.lexicalBM25(
             memories: Array(archivedEntries),
             query: query,
@@ -274,6 +286,42 @@ actor MemoryGraphStore {
         tags: [String],
         generatedTimestamp: Bool = false
     ) async throws -> (entry: GraphEntry, created: Bool) {
+        let outcome = try await writeDetailed(
+            content: content,
+            category: category,
+            tags: tags,
+            generatedTimestamp: generatedTimestamp
+        )
+        return (outcome.entry, outcome.created)
+    }
+
+    /// Result of a write: the stored entry, whether it was created, and the
+    /// active entries that lexically overlap it when it was created.
+    struct WriteResult: Sendable {
+        let entry: GraphEntry
+        let created: Bool
+        let similar: [SimilarEntry]
+    }
+
+    /// An active entry that already covers much of a newly written one.
+    struct SimilarEntry: Sendable {
+        let entry: GraphEntry
+        /// BM25 score of the existing entry for the new content, relative to
+        /// the new entry's own score for it: 1 means the same words.
+        let similarity: Float
+    }
+
+    /// Writes like ``write(content:category:tags:generatedTimestamp:)`` and,
+    /// for a created entry, reports the active entries it overlaps so the
+    /// caller can consolidate instead of keeping two notes on one fact. The
+    /// write itself is never blocked: judging whether the overlap is the same
+    /// fact remains the caller's call.
+    func writeDetailed(
+        content: String,
+        category: GraphCategory,
+        tags: [String],
+        generatedTimestamp: Bool = false
+    ) async throws -> WriteResult {
         let normalizedContent = MemoryContent.normalized(content)
         guard !normalizedContent.isEmpty else {
             throw MemoryServiceError.missingField("content")
@@ -288,7 +336,7 @@ actor MemoryGraphStore {
             matching: duplicationKey,
             in: await engine.snapshot()
         ) {
-            return (existing, false)
+            return WriteResult(entry: existing, created: false, similar: [])
         }
 
         let embedded = try await MemoryEmbeddingFallback.embed(
@@ -298,7 +346,7 @@ actor MemoryGraphStore {
             reporter: semanticFailureReporter
         )
         let id = MemoryIdentifier.makeNew()
-        return try await engine.transaction { graph in
+        let (entry, created) = try await engine.transaction { graph -> (GraphEntry, Bool) in
             if let existing = Self.activeDuplicate(matching: duplicationKey, in: graph) {
                 return (existing, false)
             }
@@ -318,6 +366,46 @@ actor MemoryGraphStore {
             graph.addMemory(entry)
             return (entry, true)
         }
+        guard created else {
+            return WriteResult(entry: entry, created: false, similar: [])
+        }
+        // Outside the lock, on the graph that now contains the new entry.
+        let similar = Self.similarActiveEntries(to: entry, in: await engine.snapshot())
+        return WriteResult(entry: entry, created: true, similar: similar)
+    }
+
+    /// Fraction of the new entry's own BM25 score (for its content as the
+    /// query) that an existing entry must reach to be reported as similar.
+    static let similarityThreshold: Float = 0.5
+    static let similarityLimit = 3
+
+    /// Active entries whose words cover much of `entry`'s content, scored
+    /// relative to the entry itself so the measure does not depend on corpus
+    /// statistics. Only the engine's lexical scoring is used: no embedding
+    /// request, no network.
+    static func similarActiveEntries(
+        to entry: GraphEntry,
+        in graph: MemoryGraph,
+        threshold: Float = similarityThreshold,
+        limit: Int = similarityLimit
+    ) -> [SimilarEntry] {
+        let corpus = graph.memories.values.filter(\.active)
+        guard corpus.count > 1 else { return [] }
+        let ranking = MemorySearch.lexicalBM25(
+            memories: Array(corpus),
+            query: entry.content,
+            scope: .all,
+            limit: corpus.count
+        )
+        guard let selfScore = ranking.first(where: { $0.id == entry.id })?.score, selfScore > 0 else {
+            return []
+        }
+        return ranking
+            .filter { $0.id != entry.id && $0.score / selfScore >= threshold }
+            .prefix(limit)
+            .compactMap { scored in
+                graph.memories[scored.id].map { SimilarEntry(entry: $0, similarity: scored.score / selfScore) }
+            }
     }
 
     /// Replaces the content of an existing entry in place, preserving its id,

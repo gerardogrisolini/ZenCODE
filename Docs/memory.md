@@ -295,11 +295,25 @@ not even the first entry fits, it is clipped rather than dropped and the
 notice says so. The fixed header, the tags and the notice are constant
 overhead on top of the budgeted payload.
 
-The main model owns durable memory explicitly through the five `memory.*` tools
-— `memory.read`, `memory.search`, `memory.write`, `memory.update`,
-`memory.archive` — guided by `MemoryService.toolUsagePromptSection()` (search
-before writing, update instead of duplicating, archive stale entries, prefer
-fresh evidence over memory). `MemoryTurnCoordinator` drives recall only, and
+The main model owns durable memory explicitly through the seven `memory.*`
+tools — read-only `memory.read`, `memory.search`, `memory.get`; mutating
+`memory.write`, `memory.update`, `memory.archive`, `memory.restore` — guided by
+`MemoryService.toolUsagePromptSection()` (search before writing, update
+instead of duplicating, archive stale entries, prefer fresh evidence over
+memory). `memory.read` pages the journal newest-first (`offset`, `limit`,
+`hasMore`) and both reads and searches accept a `MemoryEntryFilter` (`tags`,
+all required and case-insensitive; `category`). `memory.get` returns one entry
+by id, archived or not; `memory.restore` reactivates an archived entry.
+`memory.write` never blocks on similarity: after creating an entry it reports
+up to three active entries whose words cover much of the new content —
+scored with the engine's BM25 using the new content as the query, relative to
+the entry's own score, reported at 0.5 or above — so the model can consolidate
+with `memory.update` and archive the other note; exact duplicates are still
+deduplicated. `memory.update` preserves `Timestamp` and always stamps
+`Updated` with the time of the update, replacing a stale `Updated` line the
+caller carried over. An entry's title is its `Summary`, or else its first line
+that is not a `Timestamp`/`Updated` annotation. `MemoryTurnCoordinator`
+drives recall only, and
 `MemoryTurnCoordinator.discard(sessionID:)` drops only per-session recall health
 state on close/reset/rebuild. The engine's `learn(from:)`, its default
 `NoopMemoryExtractor` (which extracts nothing), and its LLM-backed extractor
@@ -415,8 +429,10 @@ access without touching `updatedAt`. It makes no LLM call and no network
 request: BM25/cascade scores have no absolute scale (they depend on corpus
 statistics), so the cutoff is relative to each recall's best hit rather than a
 fixed threshold. The engine's `MemoryVerifier` protocol is deprecated in favour
-of `MemorySelector`. The five `memory.*` tool names
-and the read-only vs mutating descriptor split are unchanged; `memory.write`
+of `MemorySelector`. The original five `memory.*` tool names are unchanged
+and the read-only vs mutating descriptor split is preserved — `memory.get`
+joined the read-only set and `memory.restore` the mutating one, so read-only
+profiles gain the lookup but never the reactivation; `memory.write`
 reports what actually happened — the tool emits `written`/`deduplicated` from
 the store's `(entry, created)` outcome (`writeEntryOutcome`), so a write that
 deduplicated against an active entry is reported as a duplicate returning the

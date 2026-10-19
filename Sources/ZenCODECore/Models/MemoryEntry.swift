@@ -129,12 +129,7 @@ public nonisolated struct MemoryEntry: Identifiable, Codable, Hashable, Sendable
     }
 
     public var title: String {
-        let firstLine = metadata.summary
-            ?? content
-                .components(separatedBy: .newlines)
-                .first?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            ?? "Memory"
+        let firstLine = MemoryEntryMetadata.titleLine(of: content) ?? "Memory"
         guard firstLine.count > 80 else {
             return firstLine.isEmpty ? "Memory" : firstLine
         }
@@ -232,12 +227,7 @@ extension GraphEntry {
     var isArchived: Bool { !active }
 
     var presentationTitle: String {
-        let firstLine = MemoryEntryMetadata(content: content).summary
-            ?? content
-                .components(separatedBy: .newlines)
-                .first?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            ?? "Memory"
+        let firstLine = MemoryEntryMetadata.titleLine(of: content) ?? "Memory"
         guard firstLine.count > 80 else {
             return firstLine.isEmpty ? "Memory" : firstLine
         }

@@ -41,7 +41,7 @@ public final class MemoryService: @unchecked Sendable {
             return """
             Memory tools (read-only):
             Treat durable project memory as first-class context, but remember that its contents are not preloaded into this prompt.
-            Project memory is a graph. Before each turn ZenCODE automatically recalls entries it deems relevant and injects them as a labelled `<project-memory>` block. When no such block is present, either nothing relevant was found or recall was unavailable for this turn: call `memory.search` before concluding that no prior context exists. Use `memory.search` for a focused lookup or `memory.read` with `detail: "index"` for a compact overview when more context is needed.
+            Project memory is a graph. Before each turn ZenCODE automatically recalls entries it deems relevant and injects them as a labelled `<project-memory>` block. When no such block is present, either nothing relevant was found or recall was unavailable for this turn: call `memory.search` before concluding that no prior context exists. Use `memory.search` for a focused lookup, `memory.get` for one entry by id, or `memory.read` with `detail: "index"` for a compact overview when more context is needed; `tags` and `category` narrow reads and searches, and `offset` pages through the journal.
             Semantic similarity requires a configured embedding endpoint; without one, retrieval and recall use BM25 keyword matching.
             Always verify retrieved entries against Git, files, builds, tests, releases, or current user messages before acting; fresh evidence wins when it conflicts with memory.
             This tool surface is read-only: do not claim to create, update, archive, or publish durable memory. Preserve durable facts or release evidence in your response so it can be recorded by an appropriate writer.
@@ -50,19 +50,19 @@ public final class MemoryService: @unchecked Sendable {
         return """
         Memory tools:
         Treat durable project memory as first-class context, but remember that its contents are not preloaded into this prompt.
-        Project memory is a graph. Before each turn ZenCODE automatically recalls the entries it deems most relevant to the current prompt and injects them as a labelled `<project-memory>` block in the outgoing message. When no such block is present, either nothing relevant was found or recall was unavailable for this turn: call `memory.search` before concluding that no prior context exists. When you need more, use `memory.search` (keyword and, when an embedding endpoint is configured, semantic retrieval with reciprocal-rank fusion and graph expansion) or `memory.read` with `detail: "index"` for a compact overview of the full store.
+        Project memory is a graph. Before each turn ZenCODE automatically recalls the entries it deems most relevant to the current prompt and injects them as a labelled `<project-memory>` block in the outgoing message. When no such block is present, either nothing relevant was found or recall was unavailable for this turn: call `memory.search` before concluding that no prior context exists. When you need more, use `memory.search` (keyword and, when an embedding endpoint is configured, semantic retrieval with reciprocal-rank fusion and graph expansion), `memory.get` for one entry by id, or `memory.read` with `detail: "index"` for a compact overview of the full store; `tags` and `category` narrow reads and searches, and `offset` pages through the journal.
         Semantic similarity requires a configured embedding endpoint; without one, retrieval and recall are pure BM25 keyword matching.
         Always verify the entries you retrieve against Git, files, builds, tests, or current user messages before acting.
         Journal a durable fact when substantial work reaches a verified handoff; architecture, compatibility, dependencies, or persisted formats change; a durable decision, blocker, or caveat affects future work; prior recorded state becomes obsolete; or a release, version, or publication is completed. For a release, record the version or identifier, what was published, and concrete evidence such as its tag, artifact, build, test, or deployment result; a version or changelog edit alone is not evidence that it was published.
-        Before writing, search for an active entry about the same durable project fact. Use `memory.update` when that entry should be brought current instead of appending a duplicate; if nothing materially changed, do not write.
-        `memory.update` rewrites the entry in place: the entry keeps its id, its creation date and its archive state, so an id stays valid after an update. It preserves the original `Timestamp` and adds an `Updated` timestamp when you omit them.
+        Before writing, search for an active entry about the same durable project fact. Use `memory.update` when that entry should be brought current instead of appending a duplicate; if nothing materially changed, do not write. `memory.write` reports similar active entries: if one covers the same fact, consolidate with `memory.update` and archive the other.
+        `memory.update` rewrites the entry in place: the entry keeps its id, its creation date and its archive state, so an id stays valid after an update. It preserves the original `Timestamp` and stamps `Updated` with the time of the update.
         Do not write user preferences or operating rules to memory; keep entries scoped to durable project facts.
         Saved-session pointers are maintained programmatically in the sessions index when a session is saved; do not duplicate them with memory tools.
         At the end of a substantial project turn, before the final answer, decide whether project memory should be created, updated, archived, or left unchanged. When a trigger above produced a completed, verified durable fact and mutation tools are available, perform the appropriate mutation before finishing; do not record intentions, unimplemented plans, or unverified results.
         A project journal entry should be concise and structured with `Summary` (the durable milestone or change), `State` (the current verified state and relevant caveats), and `Next` (the next useful open step, or `None currently`); `memory.write` adds `Timestamp` automatically when missing.
         Add `tags` when writing so related entries link together and later retrieval can follow those links.
         Do not write every command or tool call, raw outputs, detailed logs, large diffs, temporary task state, guesses, speculative plans, transient chatter, or facts already obvious from current files.
-        Use `memory.archive` when a note is stale, incorrect, or no longer useful; archived entries stop influencing retrieval but are not deleted.
+        Use `memory.archive` when a note is stale, incorrect, or no longer useful; archived entries stop influencing retrieval but are not deleted, and `memory.restore` brings one back.
         Prefer fresh evidence from files, tools, builds, tests, or current user messages when it conflicts with memory.
         """
     }
@@ -87,8 +87,26 @@ public final class MemoryService: @unchecked Sendable {
         includeArchived: Bool = false,
         limit: Int
     ) async throws -> [MemoryEntry] {
+        try await readEntries(
+            workspaceRootURL: workspaceRootURL,
+            includeArchived: includeArchived,
+            offset: 0,
+            limit: limit,
+            filter: .none
+        )
+    }
+
+    /// Journal page: newest first, skipping `offset` matching entries, narrowed
+    /// by `filter`.
+    public func readEntries(
+        workspaceRootURL: URL?,
+        includeArchived: Bool,
+        offset: Int,
+        limit: Int,
+        filter: MemoryEntryFilter
+    ) async throws -> [MemoryEntry] {
         try await store(for: workspaceRootURL)
-            .entries(includeArchived: includeArchived, limit: limit)
+            .entries(includeArchived: includeArchived, offset: offset, limit: limit, filter: filter)
             .map { MemoryEntry($0) }
     }
 
@@ -98,6 +116,23 @@ public final class MemoryService: @unchecked Sendable {
         includeArchived: Bool = false,
         limit: Int
     ) async throws -> [MemoryEntry] {
+        try await searchEntries(
+            query: query,
+            workspaceRootURL: workspaceRootURL,
+            includeArchived: includeArchived,
+            limit: limit,
+            filter: .none
+        )
+    }
+
+    /// Ranked lookup narrowed by `filter`.
+    public func searchEntries(
+        query: String,
+        workspaceRootURL: URL?,
+        includeArchived: Bool,
+        limit: Int,
+        filter: MemoryEntryFilter
+    ) async throws -> [MemoryEntry] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty else {
             throw MemoryServiceError.missingField("query")
@@ -105,7 +140,8 @@ public final class MemoryService: @unchecked Sendable {
         return try await store(for: workspaceRootURL).search(
             query: normalizedQuery,
             includeArchived: includeArchived,
-            limit: limit
+            limit: limit,
+            filter: filter
         ).map { MemoryEntry($0) }
     }
 
@@ -154,7 +190,7 @@ public final class MemoryService: @unchecked Sendable {
         tags: [String] = [],
         generatedTimestamp: Bool = false
     ) async throws -> MemoryWriteOutcome {
-        let result = try await store(for: workspaceRootURL).write(
+        let result = try await store(for: workspaceRootURL).writeDetailed(
             content: content,
             category: category.engineCategory,
             tags: tags,
@@ -165,7 +201,10 @@ public final class MemoryService: @unchecked Sendable {
         }
         return MemoryWriteOutcome(
             entry: MemoryEntry(result.entry),
-            created: result.created
+            created: result.created,
+            similar: result.similar.map {
+                MemoryWriteOutcome.Similar(entry: MemoryEntry($0.entry), similarity: $0.similarity)
+            }
         )
     }
 
@@ -196,6 +235,15 @@ public final class MemoryService: @unchecked Sendable {
         workspaceRootURL: URL?
     ) async throws -> MemoryEntry {
         try await setArchived(true, id: id, workspaceRootURL: workspaceRootURL)
+    }
+
+    /// Brings an archived entry back into retrieval and recall.
+    @discardableResult
+    public func restoreEntry(
+        id: String,
+        workspaceRootURL: URL?
+    ) async throws -> MemoryEntry {
+        try await setArchived(false, id: id, workspaceRootURL: workspaceRootURL)
     }
 
     @discardableResult
@@ -235,8 +283,10 @@ public final class MemoryService: @unchecked Sendable {
 
     // MARK: - Journal metadata
 
-    /// Preserves the original `Timestamp` and stamps `Updated` when the caller
-    /// did not supply them.
+    /// Preserves the original `Timestamp` (adding one from the update time
+    /// when the entry never had it) and stamps `Updated` with the time of the
+    /// update, replacing any `Updated` line the caller carried over so the
+    /// annotation always reflects the last real change.
     static func contentWithUpdateMetadata(
         _ content: String,
         existingEntry: GraphEntry,
@@ -251,15 +301,19 @@ public final class MemoryService: @unchecked Sendable {
                 ?? timestampString(updatedAt, timeZone: timeZone)
             lines.insert("Timestamp: \(timestamp)", at: 0)
         }
-        if metadata.updated == nil {
-            let updated = timestampString(updatedAt, timeZone: timeZone)
+        let updated = "Updated: \(timestampString(updatedAt, timeZone: timeZone))"
+        if let existingIndex = lines.firstIndex(where: { line in
+            line.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("updated:")
+        }) {
+            lines[existingIndex] = updated
+        } else {
             let insertionIndex = lines.firstIndex { line in
                 line.trimmingCharacters(in: .whitespaces)
                     .lowercased()
                     .hasPrefix("timestamp:")
             }
             .map { $0 + 1 } ?? 0
-            lines.insert("Updated: \(updated)", at: insertionIndex)
+            lines.insert(updated, at: insertionIndex)
         }
         return lines.joined(separator: "\n")
     }
@@ -271,8 +325,24 @@ public final class MemoryService: @unchecked Sendable {
 /// preserve the 1.1.x contract, and this carries the extra bit the tool layer
 /// needs to describe the result honestly.
 struct MemoryWriteOutcome: Sendable {
+    /// An active entry that already covers much of the written content.
+    struct Similar: Sendable {
+        let entry: MemoryEntry
+        /// Lexical overlap relative to the new entry itself, in (0, 1].
+        let similarity: Float
+    }
+
     let entry: MemoryEntry
     let created: Bool
+    /// Active entries overlapping a created entry, strongest first; empty for
+    /// a deduplicated write.
+    let similar: [Similar]
+
+    init(entry: MemoryEntry, created: Bool, similar: [Similar] = []) {
+        self.entry = entry
+        self.created = created
+        self.similar = similar
+    }
 
     /// The store found an equivalent active entry and reused it.
     var deduplicated: Bool { !created }

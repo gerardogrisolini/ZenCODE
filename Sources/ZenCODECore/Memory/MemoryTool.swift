@@ -33,14 +33,20 @@ public enum MemoryTool {
     private static let readDescriptor = ToolDescriptor(
             name: "memory.read",
             title: "Memory Read",
-            description: "Reads durable project journal entries, newest first. Use detail=index for compact Summary/timestamp/ID results before loading full content.",
+            description: "Reads durable project journal entries, newest first. Use detail=index for compact Summary/timestamp/ID results before loading full content; offset pages through the journal (hasMore tells whether entries remain), and tags (all required) or category narrow it.",
             inputSchema: """
             {
               "type": "object",
               "properties": {
                 "includeArchived": { "type": "boolean" },
                 "limit": { "type": "number" },
-                "detail": { "type": "string", "enum": ["full", "index"] }
+                "offset": { "type": "number" },
+                "detail": { "type": "string", "enum": ["full", "index"] },
+                "tags": { "type": "array", "items": { "type": "string" } },
+                "category": {
+                  "type": "string",
+                  "enum": ["fact", "preference", "entity", "correction"]
+                }
               }
             }
             """,
@@ -54,7 +60,7 @@ public enum MemoryTool {
     private static let searchDescriptor = ToolDescriptor(
             name: "memory.search",
             title: "Memory Search",
-            description: "Searches the durable project journal: BM25 keyword ranking, semantic similarity when an embedding endpoint is configured, and graph-related entries. Results are ranked by relevance; limit (1-50, default 8) caps them, and includeArchived reserves up to half of the limit for archived matches.",
+            description: "Searches the durable project journal: BM25 keyword ranking, semantic similarity when an embedding endpoint is configured, and graph-related entries. Results are ranked by relevance; limit (1-50, default 8) caps them, includeArchived reserves up to half of the limit for archived matches, and tags (all required) or category narrow them.",
             inputSchema: """
             {
               "type": "object",
@@ -62,7 +68,12 @@ public enum MemoryTool {
                 "query": { "type": "string" },
                 "includeArchived": { "type": "boolean" },
                 "limit": { "type": "number" },
-                "detail": { "type": "string", "enum": ["full", "index"] }
+                "detail": { "type": "string", "enum": ["full", "index"] },
+                "tags": { "type": "array", "items": { "type": "string" } },
+                "category": {
+                  "type": "string",
+                  "enum": ["fact", "preference", "entity", "correction"]
+                }
               },
               "required": ["query"]
             }
@@ -75,10 +86,31 @@ public enum MemoryTool {
             )
         )
 
+    private static let getDescriptor = ToolDescriptor(
+            name: "memory.get",
+            title: "Memory Get",
+            description: "Returns one durable journal entry by id with its full content and metadata, whether active or archived.",
+            inputSchema: """
+            {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" }
+              },
+              "required": ["id"]
+            }
+            """,
+            presentation: .standard(
+                title: "Memory entry",
+                action: "Get",
+                kind: .read,
+                targetKeyPaths: ["id"]
+            )
+        )
+
     private static let writeDescriptor = ToolDescriptor(
             name: "memory.write",
             title: "Memory Write",
-            description: "Adds a concise durable project-journal entry for a verified handoff, decision, blocker, or published release. Include Summary, State, Next, and publication evidence when relevant; Timestamp is added when missing and active duplicates are reused.",
+            description: "Adds a concise durable project-journal entry for a verified handoff, decision, blocker, or published release. Include Summary, State, Next, and publication evidence when relevant; Timestamp is added when missing and active duplicates are reused. The result lists active entries that overlap the new one (similar) so you can consolidate with memory.update instead of keeping two notes on one fact.",
             inputSchema: """
             {
               "type": "object",
@@ -103,7 +135,7 @@ public enum MemoryTool {
     private static let updateDescriptor = ToolDescriptor(
             name: "memory.update",
             title: "Memory Update",
-            description: "Updates an existing durable journal entry in place instead of duplicating changed facts. Its id, creation date, and archive state remain stable; Timestamp is preserved and Updated is added when omitted.",
+            description: "Updates an existing durable journal entry in place instead of duplicating changed facts. Its id, creation date, and archive state remain stable; Timestamp is preserved and Updated is stamped with the time of the update.",
             inputSchema: """
             {
               "type": "object",
@@ -126,7 +158,7 @@ public enum MemoryTool {
     private static let archiveDescriptor = ToolDescriptor(
             name: "memory.archive",
             title: "Memory Archive",
-            description: "Archives a stale, incorrect, or no-longer-useful journal entry by id. It stops influencing retrieval and resume context but is not deleted.",
+            description: "Archives a stale, incorrect, or no-longer-useful journal entry by id. It stops influencing retrieval and resume context but is not deleted; memory.restore brings it back.",
             inputSchema: """
             {
               "type": "object",
@@ -144,25 +176,50 @@ public enum MemoryTool {
             )
         )
 
+    private static let restoreDescriptor = ToolDescriptor(
+            name: "memory.restore",
+            title: "Memory Restore",
+            description: "Restores an archived journal entry by id so it takes part in retrieval and automatic recall again.",
+            inputSchema: """
+            {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" }
+              },
+              "required": ["id"]
+            }
+            """,
+            presentation: .standard(
+                title: "Memory entry",
+                action: "Restore",
+                kind: .edit,
+                targetKeyPaths: ["id"]
+            )
+        )
+
     /// Core memory descriptors that do not mutate durable project memory.
     public static let readOnlyToolDescriptors: [ToolDescriptor] = [
         readDescriptor,
-        searchDescriptor
+        searchDescriptor,
+        getDescriptor
     ]
 
     /// Core memory descriptors that can mutate durable project memory.
     public static let mutatingToolDescriptors: [ToolDescriptor] = [
         writeDescriptor,
         updateDescriptor,
-        archiveDescriptor
+        archiveDescriptor,
+        restoreDescriptor
     ]
 
     public static let toolDescriptors: [ToolDescriptor] = [
         readDescriptor,
         searchDescriptor,
+        getDescriptor,
         writeDescriptor,
         updateDescriptor,
-        archiveDescriptor
+        archiveDescriptor,
+        restoreDescriptor
     ]
 
     public static func isMemoryToolName(_ toolName: String) -> Bool {
@@ -196,6 +253,12 @@ public enum MemoryTool {
                 context: context,
                 memoryService: memoryService
             )
+        case "memory.get":
+            return try await get(
+                arguments: request.arguments,
+                context: context,
+                memoryService: memoryService
+            )
         case "memory.write":
             return try await write(
                 arguments: request.arguments,
@@ -214,6 +277,12 @@ public enum MemoryTool {
                 context: context,
                 memoryService: memoryService
             )
+        case "memory.restore":
+            return try await restore(
+                arguments: request.arguments,
+                context: context,
+                memoryService: memoryService
+            )
         default:
             throw ToolExecutionError.toolNotAvailable(request.name)
         }
@@ -226,18 +295,31 @@ public enum MemoryTool {
     ) async throws -> ToolExecutionOutput {
         let includeArchived = parsedIncludeArchived(from: arguments)
         let limit = parsedLimit(from: arguments)
+        let offset = parsedOffset(from: arguments)
         let detail = parsedDetail(from: arguments)
+        let filter = parsedFilter(from: arguments)
 
-        let resolvedEntries = try await memoryService.readEntries(
+        // One extra entry tells whether the journal continues past this page.
+        let page = try await memoryService.readEntries(
             workspaceRootURL: context.workingDirectory,
             includeArchived: includeArchived,
-            limit: limit
+            offset: offset,
+            limit: limit + 1,
+            filter: filter
         )
+        let hasMore = page.count > limit
+        let resolvedEntries = Array(page.prefix(limit))
 
+        var text = renderEntries(resolvedEntries, detail: detail)
+        if hasMore {
+            text += "\nMore entries follow: call memory.read again with offset \(offset + limit)."
+        }
         return ToolExecutionOutput(
-            text: renderEntries(resolvedEntries, detail: detail),
+            text: text,
             rawResult: .object([
                 "count": .number(Double(resolvedEntries.count)),
+                "offset": .number(Double(offset)),
+                "hasMore": .bool(hasMore),
                 "detail": .string(detail.rawValue),
                 "entries": .array(resolvedEntries.map { memoryJSONValue($0, detail: detail) })
             ])
@@ -258,12 +340,14 @@ public enum MemoryTool {
         let includeArchived = parsedIncludeArchived(from: arguments)
         let limit = parsedLimit(from: arguments)
         let detail = parsedDetail(from: arguments)
+        let filter = parsedFilter(from: arguments)
 
         let entries = try await memoryService.searchEntries(
             query: query,
             workspaceRootURL: context.workingDirectory,
             includeArchived: includeArchived,
-            limit: limit
+            limit: limit,
+            filter: filter
         )
 
         return ToolExecutionOutput(
@@ -276,6 +360,31 @@ public enum MemoryTool {
                 "count": .number(Double(entries.count)),
                 "detail": .string(detail.rawValue),
                 "entries": .array(entries.map { memoryJSONValue($0, detail: detail) })
+            ])
+        )
+    }
+
+    private static func get(
+        arguments: [String: JSONValue],
+        context: MemoryToolContext,
+        memoryService: MemoryService
+    ) async throws -> ToolExecutionOutput {
+        guard let rawIdentifier = arguments["id"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawIdentifier.isEmpty else {
+            throw MemoryServiceError.missingField("id")
+        }
+        guard let entry = try await memoryService.entry(
+            id: rawIdentifier,
+            workspaceRootURL: context.workingDirectory
+        ) else {
+            throw MemoryServiceError.entryNotFound(rawIdentifier)
+        }
+        return ToolExecutionOutput(
+            text: renderEntry(entry),
+            rawResult: .object([
+                "found": .bool(true),
+                "entry": memoryJSONValue(entry)
             ])
         )
     }
@@ -310,15 +419,34 @@ public enum MemoryTool {
             ? "Saved memory entry to project memory."
             : "Duplicate of an existing memory entry; nothing was written."
 
+        var text = """
+        \(headline)
+        \(renderEntry(outcome.entry))
+        """
+        if !outcome.similar.isEmpty {
+            let similarLines = outcome.similar.map { similar in
+                "- \(similar.entry.title) (ID: \(similar.entry.id), overlap \(Int((similar.similarity * 100).rounded()))%)"
+            }
+            text += """
+
+            Similar active entries already exist; if one covers the same fact, consolidate with memory.update and archive the other:
+            \(similarLines.joined(separator: "\n"))
+            """
+        }
+
         return ToolExecutionOutput(
-            text: """
-            \(headline)
-            \(renderEntry(outcome.entry))
-            """,
+            text: text,
             rawResult: .object([
                 "written": .bool(outcome.created),
                 "deduplicated": .bool(outcome.deduplicated),
-                "entry": memoryJSONValue(outcome.entry)
+                "entry": memoryJSONValue(outcome.entry),
+                "similar": .array(outcome.similar.map { similar in
+                    .object([
+                        "id": .string(similar.entry.id.uuidString),
+                        "title": .string(similar.entry.title),
+                        "similarity": .number(Double(similar.similarity))
+                    ])
+                })
             ])
         )
     }
@@ -386,6 +514,34 @@ public enum MemoryTool {
         )
     }
 
+    private static func restore(
+        arguments: [String: JSONValue],
+        context: MemoryToolContext,
+        memoryService: MemoryService
+    ) async throws -> ToolExecutionOutput {
+        guard let entryID = arguments["id"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !entryID.isEmpty else {
+            throw MemoryServiceError.missingField("id")
+        }
+
+        let entry = try await memoryService.restoreEntry(
+            id: entryID,
+            workspaceRootURL: context.workingDirectory
+        )
+
+        return ToolExecutionOutput(
+            text: """
+            Restored memory entry.
+            \(renderEntry(entry))
+            """,
+            rawResult: .object([
+                "restored": .bool(true),
+                "entry": memoryJSONValue(entry)
+            ])
+        )
+    }
+
     private static func parsedContent(from arguments: [String: JSONValue]) -> String? {
         let content = arguments["content"]?.stringValue
             ?? arguments["text"]?.stringValue
@@ -411,12 +567,32 @@ public enum MemoryTool {
     }
 
     private static func parsedCategory(from arguments: [String: JSONValue]) -> MemoryCategory {
+        parsedOptionalCategory(from: arguments) ?? .fact
+    }
+
+    private static func parsedOptionalCategory(from arguments: [String: JSONValue]) -> MemoryCategory? {
         switch arguments["category"]?.stringValue?.lowercased() {
+        case "fact": return .fact
         case "preference": return .preference
         case "entity": return .entity
         case "correction": return .correction
-        default: return .fact
+        default: return nil
         }
+    }
+
+    /// Read/search narrowing: every listed tag is required; `category` is
+    /// exact. Unknown category spellings are ignored rather than rejected.
+    private static func parsedFilter(from arguments: [String: JSONValue]) -> MemoryEntryFilter {
+        MemoryEntryFilter(
+            tags: parsedTags(from: arguments) ?? [],
+            category: parsedOptionalCategory(from: arguments)
+        )
+    }
+
+    private static func parsedOffset(from arguments: [String: JSONValue]) -> Int {
+        let raw = arguments["offset"]?.numberValue ?? 0
+        guard raw.isFinite, raw > 0 else { return 0 }
+        return Int(exactly: min(raw, 1_000_000).rounded(.towardZero)) ?? 0
     }
 
     /// Prepends the journal `Timestamp:` annotation when the author omitted it,

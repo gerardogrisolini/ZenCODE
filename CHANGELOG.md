@@ -10,8 +10,25 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Memory tools: `memory.get` (read-only) returns one journal entry by id,
+  archived or not; `memory.restore` (mutating) reactivates an archived entry.
+  `memory.read` pages the journal with `offset` and reports `hasMore`; both
+  `memory.read` and `memory.search` accept `tags` (all required) and
+  `category` filters (`MemoryEntryFilter` on `MemoryService`). `memory.write`
+  reports up to three active entries that lexically overlap the new one
+  (`similar`, BM25 relative to the entry itself, at 0.5 or above) so the
+  model can consolidate with `memory.update` instead of keeping two notes on
+  one fact; the write itself is never blocked. Read-only profiles gain
+  `memory.get` and never `memory.restore`.
+
 ### Changed
 
+- `memory.update` always stamps `Updated` with the time of the update, also
+  replacing a stale `Updated` line copied over from the previous content; an
+  entry's title now skips `Timestamp`/`Updated` lines when there is no
+  `Summary`.
 - ACP: the thinking-level config option now uses the standard
   `thought_level` category instead of `model`, so clients can tell it apart
   from the model selector. After a model change through

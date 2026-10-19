@@ -646,11 +646,13 @@ struct MemoryEnhancementTests {
         #expect(names == Set([
             "memory.read",
             "memory.search",
+            "memory.get",
             "memory.write",
             "memory.update",
             "memory.archive",
+            "memory.restore",
         ]))
-        let readOnlyMemoryNames: Set<String> = ["memory.read", "memory.search"]
+        let readOnlyMemoryNames: Set<String> = ["memory.read", "memory.search", "memory.get"]
         let mutatingMemoryNames = names.subtracting(readOnlyMemoryNames)
 
         #expect(planner.readOnly)
