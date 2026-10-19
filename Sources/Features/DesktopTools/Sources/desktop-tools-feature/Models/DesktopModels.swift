@@ -139,6 +139,8 @@ struct DesktopScreenshotArtifact: Codable, Sendable {
     let display_index: Int?
     let window_id: UInt32?
     let region: DesktopRect?
+    let desktop_bounds: DesktopRect?
+    let points_per_pixel: Double?
     let created_at: String
 }
 

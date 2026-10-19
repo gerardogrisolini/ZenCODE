@@ -6,8 +6,10 @@
 //
 //  Authorization gate for destructive direct tools beyond `local.exec`:
 //  irreversible filesystem deletion, remote history mutation, and worktree
-//  discard. The gate reuses the session's authorization handler so access
-//  modes and per-client permission flows keep applying.
+//  discard, plus `desktop.run` actions that run code or end processes (see
+//  DirectToolExecutor+DesktopGating.swift). The gate reuses the session's
+//  authorization handler so access modes and per-client permission flows
+//  keep applying.
 //
 
 import Foundation
@@ -15,11 +17,14 @@ import ToolCore
 
 extension DirectToolExecutor {
     /// Tool names that route through the destructive-operation authorization
-    /// gate. `local.exec` keeps its own dedicated command-level gate.
+    /// gate, including `desktop.run` (only for actions that open documents,
+    /// launch apps by path, or terminate processes). `local.exec` keeps its
+    /// own dedicated command-level gate.
     public static let destructiveGatedToolNames: Set<String> = [
         "local.delete",
         "git.push",
-        "git.restore"
+        "git.restore",
+        "desktop.run"
     ]
 
     /// Builds the authorization request for a destructive tool call, or nil
@@ -92,6 +97,13 @@ extension DirectToolExecutor {
                 kind: "destructive",
                 command: "git restore --worktree \(target)",
                 workingDirectory: workingDirectory.path,
+                delegatedIdentity: delegatedIdentity
+            )
+        case "desktop.run":
+            return desktopAuthorizationRequest(
+                sessionID: sessionID,
+                toolCall: toolCall,
+                workingDirectory: workingDirectory,
                 delegatedIdentity: delegatedIdentity
             )
         default:

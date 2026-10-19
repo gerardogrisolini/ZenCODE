@@ -256,4 +256,60 @@ extension DesktopController {
         let result = AXUIElementSetAttributeValue(element, attribute, value ? kCFBooleanTrue : kCFBooleanFalse)
         guard result == .success else { throw DesktopControlError.accessibilityFailed(operation, result) }
     }
+
+    /// Polls a boolean AX attribute every 100 ms until it reads `expected`, then
+    /// best-effort waits (within the remaining budget) for the frame to settle.
+    static func waitForAXBoolean(
+        _ element: AXUIElement, attribute: CFString, expected: Bool, budget: TimeInterval, failure: String
+    ) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(budget))
+        while copyAXBoolean(element, attribute: attribute) != expected {
+            guard clock.now < deadline else { throw DesktopControlError.operationFailed(failure) }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        var previous = axFrame(element)
+        while clock.now.advanced(by: .milliseconds(100)) < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+            let current = axFrame(element)
+            if current == previous { return }
+            previous = current
+        }
+    }
+
+    static func isWindowGone(_ selection: AXWindowSelection) -> Bool {
+        var role: CFTypeRef?
+        if AXUIElementCopyAttributeValue(selection.element, kAXRoleAttribute as CFString, &role) == .invalidUIElement {
+            return true
+        }
+        let application = AXUIElementCreateApplication(selection.pid)
+        var rawWindows: CFTypeRef?
+        if AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &rawWindows) == .success,
+           let elements = rawWindows as? [AXUIElement],
+           !elements.contains(where: { CFEqual($0, selection.element) }) {
+            return true
+        }
+        if let windowID = selection.expected?.window_id,
+           windowRecords(onScreenOnly: false, matching: DesktopRunInput(action: "list_windows", window_id: windowID)).isEmpty {
+            return true
+        }
+        return false
+    }
+
+    static func waitForWindowClosed(_ selection: AXWindowSelection, budget: TimeInterval = 2) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(budget))
+        while !isWindowGone(selection) {
+            guard clock.now < deadline else {
+                let children = copyAXRaw(selection.element, attribute: kAXChildrenAttribute as CFString) as? [AXUIElement] ?? []
+                let hasSheet = children.contains { copyAXString($0, attribute: kAXRoleAttribute as CFString) == kAXSheetRole }
+                throw DesktopControlError.operationFailed(
+                    hasSheet
+                        ? "The close request opened a sheet on the window (for example to save changes); the window is still open. Inspect it with a screenshot and resolve the sheet."
+                        : "The window is still open after the close request."
+                )
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+    }
 }

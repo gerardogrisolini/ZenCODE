@@ -194,6 +194,14 @@ clipboard, windows, app lifecycle, and PNG screenshots that are attached to the
 model's multimodal context — so macOS asks for Screen Recording and
 Accessibility consent on first use. Call `action=permissions` before anything
 else, and enable it only for a profile that is meant to control the machine.
+macOS attributes those permissions to the app that launched zen (for example
+Terminal), so that is the app to allow in System Settings. Screenshots are
+delivered at point scale: one image pixel is one desktop point, and the
+artifact's `desktop_bounds` and `points_per_pixel` convert image pixels into
+click coordinates. `zoom` captures a region at native resolution (long edge at
+most 2000 px) to read small details. Actions that can run code or end
+processes ask for approval like `local.exec`; see the authorization notes in
+[Terminal TUI Commands](#terminal-tui-commands).
 
 ## Diagnostics
 
@@ -440,7 +448,7 @@ These bindings follow the Emacs/readline conventions, so they work on every term
 
 On macOS, `Option+←/→` only reaches the prompt when the terminal sends the `Option` key as `Meta`: in Terminal.app enable *Settings → Profiles → Keyboard → Use Option as Meta key*, and in iTerm2 set *Settings → Profiles → Keys → Left Option key → Esc+*. `Ctrl+←/→` is captured by macOS Mission Control unless that system shortcut is disabled. `Ctrl+A`/`Ctrl+E` and `Alt+<`/`Alt+>` need no terminal configuration.
 
-Full access bypasses only `local.exec` approval checks. It does not expose disabled tools or bypass OS permissions. The status bar shows a red dot while active.
+Full access bypasses the `local.exec` and destructive-tool approval checks, including `desktop.run` consent. It does not expose disabled tools or bypass OS permissions. The status bar shows a red dot while active.
 
 `local.exec` authorization filters shell noise so that only significant commands trigger approval. Comments, decorative `echo`/`printf` (without output redirections), harmless built-ins (`true`, `false`, `cd`, `pwd`, …), environment assignments, wrappers (`env`, `command`, …), and control-flow keywords are stripped or skipped. Nested commands inside shell `-c` payloads, `$(...)`/backtick command substitutions, process substitutions `<(...)`/`>(...)`, and unquoted heredoc bodies are recursively inventoried, while `$((...))` arithmetic expansion and quoted heredoc bodies are treated as literal. Extended `[[ ... ]]` expressions, arithmetic `(( ... ))` commands, and `case` pattern alternatives remain opaque during pipeline segmentation, so regex, bitwise, and pattern `|` characters are not mistaken for shell pipes. Wrapper options that consume an operand (`env -u NAME`, `env -C DIR`, `time -o FILE`) are handled so the real executable surfaces, and introspection-only forms (`command -v`) are not authorized as executions. When parsing hits its recursion or candidate limits it fails closed by emitting a conservative fallback candidate. Each `local.exec` tool call presents one authorization request containing the full command; all parsed executable identities still participate in cache and persistence checks.
 
@@ -449,6 +457,16 @@ The terminal consent prompt makes the scope of **Always** explicit: for
 destructive direct tools it grants only the current process/session and is not
 persisted. Use **Run once** when the broader executable-level approval is not
 intended.
+
+`desktop.run` uses the same destructive-tool consent, but only for actions
+that can run code or end processes: `open` of anything other than a plain
+http/https URL (local files, `file:` URLs, other schemes, or an app given by
+path), `launch_app` and `activate_app` from an app path, and every
+`terminate_app`. The prompt shows the equivalent command, for example
+`open /path/run.command`, `open -a /tmp/Tool.app https://example.com`, or
+`terminate_app --force --pid 4242 # loginwindow` (a pid is shown with its
+process name). Screenshots, input, window actions, and plain web URLs run
+without a prompt.
 
 Delegated sub-agents ask for the same approvals as the coordinator. Their requests are routed on a runtime-minted delegation identity (the agent instance plus the operator session that owns its delegation tree) instead of the turn that spawned them, because delegated work keeps running after that turn returns. The prompt names the requesting agent, and a request whose root session is unknown to the runner is refused without asking. Full access bypasses these requests exactly as it does the coordinator's.
 

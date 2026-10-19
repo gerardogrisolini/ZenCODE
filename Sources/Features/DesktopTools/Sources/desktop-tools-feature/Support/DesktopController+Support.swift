@@ -21,7 +21,7 @@ extension DesktopController {
     static func requireEventPosting() throws {
         guard CGPreflightPostEventAccess() else {
             throw DesktopControlError.permissionRequired(
-                "Input control permission is required. Run action=request_permissions, then allow ZenCODE/macOS in System Settings > Privacy & Security > Accessibility."
+                "Input control permission is required. Run action=request_permissions, then allow \(DesktopHostApplication.subject()) in System Settings > Privacy & Security > Accessibility."
             )
         }
     }
@@ -29,7 +29,7 @@ extension DesktopController {
     static func requireAccessibility() throws {
         guard AXIsProcessTrusted() else {
             throw DesktopControlError.permissionRequired(
-                "Accessibility permission is required for window control. Run action=request_permissions, then allow ZenCODE/macOS in System Settings > Privacy & Security > Accessibility."
+                "Accessibility permission is required for window control. Run action=request_permissions, then allow \(DesktopHostApplication.subject()) in System Settings > Privacy & Security > Accessibility."
             )
         }
     }
@@ -54,14 +54,15 @@ extension DesktopController {
         }
         return screens.enumerated().map { offset, screen in
             let id = displayID(for: screen)
+            let mode = CGDisplayCopyDisplayMode(id)
             return DesktopDisplayInfo(
                 capture_index: offset + 1,
                 display_id: id,
                 name: screen.localizedName,
                 is_main: CGDisplayIsMain(id) != 0,
                 bounds: DesktopRect(CGDisplayBounds(id)),
-                pixel_width: CGDisplayPixelsWide(id),
-                pixel_height: CGDisplayPixelsHigh(id),
+                pixel_width: mode?.pixelWidth ?? CGDisplayPixelsWide(id),
+                pixel_height: mode?.pixelHeight ?? CGDisplayPixelsHigh(id),
                 scale_factor: Double(screen.backingScaleFactor)
             )
         }
@@ -93,7 +94,11 @@ extension DesktopController {
 
     static func runProcess(executable: String, arguments: [String]) async throws -> ProcessResult {
         let result = try await DesktopProcess.run(
-            executableURL: URL(fileURLWithPath: executable), arguments: arguments
+            executableURL: URL(fileURLWithPath: executable), arguments: arguments,
+            // Neutral cwd: /usr/bin/open treats an argument as a file when it matches an
+            // existing path relative to its cwd, so inheriting the session workspace
+            // would let a model-created file shadow a URL target. Callers pass absolute paths.
+            workingDirectory: URL(fileURLWithPath: "/", isDirectory: true)
         )
         return ProcessResult(status: result.exitCode, stderr: String(decoding: result.stderrData, as: UTF8.self))
     }

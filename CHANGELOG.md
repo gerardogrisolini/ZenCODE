@@ -35,6 +35,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   are accepted only with a Control, Meta, or Alt modifier. macOS editing
   shortcuts (Cmd+A/C/X/V/Z, Cmd+Shift+Z) carry their editor command so they
   take effect.
+- Desktop: new `zoom` action for `desktop.run` captures a region (`x`, `y`,
+  `width`, `height` in desktop points) at the display's native resolution,
+  downscaled only when its long edge exceeds 2000 px, and reports the same
+  coordinate mapping as screenshots (for example 0.5 points per pixel on a
+  Retina display).
 
 ### Changed
 
@@ -121,6 +126,31 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `State` and `Next`, and the notice reports how many entries were omitted.
   Visible memory diagnostics are no longer written to the raw stderr under
   the test harness when nothing captures them.
+- Desktop: screenshots are delivered at point scale, so one image pixel is one
+  desktop point, and the artifact reports `desktop_bounds` and
+  `points_per_pixel` to turn image pixels into click coordinates; a 5K display
+  is now captured at 2560x1440 px instead of 5120x2880. Window screenshots
+  leave out the shadow by default (`include_shadow: true` keeps it, without an
+  exact mapping), and display screenshots capture the bounds of the
+  `system_info` display with the same `display_index`. A region or zoom that
+  extends beyond the displays is captured as its visible part, which
+  `desktop_bounds` reports.
+- Desktop: `desktop.run` actions that can run code or end processes now ask
+  for operator approval through the same flow as `local.exec` and the
+  destructive tools (terminal Run once / Always for this session / Cancel,
+  ACP, Telegram, delegated sub-agents, fail-closed when headless, skipped in
+  full access): `open` of anything but a plain http/https URL (files, `file:`
+  URLs, other schemes, or an app given by path), `launch_app` and
+  `activate_app` from an app path, and every `terminate_app`. The prompt shows
+  the equivalent command, such as `open /path/run.command` or
+  `terminate_app --force --pid 4242 # loginwindow`.
+- Desktop: `terminate_app` accepts only an exact, case-insensitive app name or
+  bundle id, waits for the app to quit (`timeout`, default 5 s; 0 checks
+  once), and reports an error when it is still running, for example while it
+  asks to save changes.
+- Desktop: `press_key` resolves a single character on the current keyboard
+  layout, adding Shift or Option when the layout needs them, instead of the US
+  key position; named keys are unchanged.
 
 ### Fixed
 
@@ -148,6 +178,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
   an unchanged graph file again. Automatic recall on workspaces with large
   graphs never completed within its 150 ms deadline, because the JSON decode
   alone took about 175 ms, and the session was auto-suspended; it now completes.
+- Desktop: `system_info` reports the physical pixel size of Retina displays
+  (4096x2304 instead of 2048x1152 for a 2048x1152-point display).
+- Desktop: `scroll` scrolls at `x`/`y` when they are given instead of at the
+  current pointer position.
+- Desktop: `close_window`, `minimize_window`, and `set_fullscreen` wait for the
+  resulting window state and fail when it is not reached; `close_window`
+  reports a sheet that asks to save changes.
+- Desktop: `activate_app` and `focus_window` fall back to the Accessibility
+  frontmost attribute when macOS ignores cooperative activation from a
+  background process.
+- Desktop: permission errors name the app that launched zen (for example
+  Terminal), which is the app macOS asks to authorize, instead of ZenCODE.
+- Desktop: `open` treats `file:` URLs as file paths with the same existence
+  check, and runs `/usr/bin/open` from `/` so that a URL-looking target can
+  never resolve to a file in the workspace.
 
 ## [2.3.3] - 2026-10-18
 

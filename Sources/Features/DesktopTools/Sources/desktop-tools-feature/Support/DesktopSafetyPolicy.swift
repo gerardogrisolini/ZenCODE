@@ -129,6 +129,10 @@ enum DesktopProbePolicy {
         } while true
     }
 
+    /// `waitForApplicationProbe` with a zero budget would never probe; a zero
+    /// wait must instead mean exactly one immediate observation.
+    static func isSingleObservation(timeout: TimeInterval) -> Bool { timeout <= 0 }
+
     static func childTimeout(remaining: TimeInterval) -> TimeInterval? {
         guard remaining.isFinite, remaining > 0 else { return nil }
         return min(2, remaining)

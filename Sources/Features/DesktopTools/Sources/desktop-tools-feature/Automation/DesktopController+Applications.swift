@@ -1,6 +1,7 @@
 //  Created by Gerardo Grisolini on 30/05/26.
 //
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import FeatureKit
 import Foundation
@@ -26,7 +27,11 @@ extension DesktopController {
         }
     }
 
-    static func matchingRunningApp(_ input: DesktopRunInput, defaultToFrontmost: Bool) -> NSRunningApplication? {
+    static func matchingRunningApp(
+        _ input: DesktopRunInput,
+        defaultToFrontmost: Bool,
+        allowPartialName: Bool = true
+    ) -> NSRunningApplication? {
         if let pid = input.pid {
             return NSRunningApplication(processIdentifier: pid)
         }
@@ -36,16 +41,40 @@ extension DesktopController {
         }
         if let name = input.app_name?.nilIfBlank {
             return apps.first { $0.localizedName?.caseInsensitiveCompare(name) == .orderedSame }
-                ?? apps.first { $0.localizedName?.localizedCaseInsensitiveContains(name) == true }
+                ?? (allowPartialName ? apps.first { $0.localizedName?.localizedCaseInsensitiveContains(name) == true } : nil)
         }
         return defaultToFrontmost ? NSWorkspace.shared.frontmostApplication : nil
     }
 
-    static func selectedRunningApp(_ input: DesktopRunInput) throws -> NSRunningApplication {
-        guard let app = matchingRunningApp(input, defaultToFrontmost: false) else {
+    static func selectedRunningApp(_ input: DesktopRunInput, allowPartialName: Bool = true) throws -> NSRunningApplication {
+        guard let app = matchingRunningApp(input, defaultToFrontmost: false, allowPartialName: allowPartialName) else {
             throw DesktopControlError.appNotFound
         }
         return app
+    }
+
+    /// Cooperative activation (macOS 14+) often ignores `activate` from background
+    /// processes, so fall back to setting AXFrontmost when Accessibility is trusted.
+    static func activateApplication(_ app: NSRunningApplication) async throws -> DesktopAppProbe? {
+        let pid = app.processIdentifier
+        _ = app.activate(options: [.activateAllWindows])
+        if let probe = try await waitForApplicationProbe(pid: pid, timeout: 1, where: { $0.exists && $0.is_active }) {
+            return probe
+        }
+        guard AXIsProcessTrusted() else { return nil }
+        _ = AXUIElementSetAttributeValue(
+            AXUIElementCreateApplication(pid), kAXFrontmostAttribute as CFString, kCFBooleanTrue
+        )
+        return try await waitForApplicationProbe(pid: pid, timeout: 2, where: { $0.exists && $0.is_active })
+    }
+
+    /// Waits for the process to exit; a zero timeout still performs exactly one probe.
+    static func waitForApplicationExit(pid: pid_t, timeout: TimeInterval) async throws -> DesktopAppProbe? {
+        if DesktopProbePolicy.isSingleObservation(timeout: timeout) {
+            let probe = try await applicationProbe(pid: pid)
+            return probe.exists ? nil : probe
+        }
+        return try await waitForApplicationProbe(pid: pid, timeout: timeout, where: { !$0.exists })
     }
 
     static func applicationProbe(pid: pid_t, timeout: TimeInterval = 2) async throws -> DesktopAppProbe {
@@ -183,20 +212,10 @@ extension DesktopController {
     static func openTarget(_ input: DesktopRunInput, context: FeatureContext) async throws {
         let target = try requiredNonempty(input.target, name: "target", action: "open")
         let resolvedTarget: String
-        if let url = URL(string: target), let scheme = url.scheme, !scheme.isEmpty {
-            let deniedSchemes = ["javascript", "data"]
-            guard !deniedSchemes.contains(scheme.lowercased()) else {
-                throw DesktopControlError.invalidArgument("target", "the \(scheme) URL scheme is not allowed.")
-            }
-            resolvedTarget = target
-        } else {
-            let fileURL = context.resolvePath(target)
-            guard FileManager.default.fileExists(atPath: fileURL.path) else {
-                throw DesktopControlError.invalidArgument("target", "file does not exist: \(fileURL.path)")
-            }
-            resolvedTarget = fileURL.path
+        switch try DesktopOpenTarget.resolve(target, context: context, fileExists: { FileManager.default.fileExists(atPath: $0) }) {
+        case .url(let url): resolvedTarget = url
+        case .file(let path): resolvedTarget = path
         }
-
         let arguments = appSelectorArguments(input) + [resolvedTarget]
         let result = try await runProcess(executable: "/usr/bin/open", arguments: arguments)
         guard result.status == 0 else {
@@ -204,6 +223,28 @@ extension DesktopController {
         }
     }
 
+}
+
+enum DesktopOpenTarget: Equatable {
+    case url(String)
+    case file(String)
+
+    static func resolve(_ raw: String, context: FeatureContext, fileExists: (String) -> Bool) throws -> DesktopOpenTarget {
+        let path: String
+        if let url = URL(string: raw), let scheme = url.scheme, !scheme.isEmpty {
+            guard !(["javascript", "data"].contains(scheme.lowercased())) else {
+                throw DesktopControlError.invalidArgument("target", "the \(scheme) URL scheme is not allowed.")
+            }
+            guard url.isFileURL else { return .url(raw) }
+            path = url.standardizedFileURL.path
+        } else {
+            path = context.resolvePath(raw).path
+        }
+        guard fileExists(path) else {
+            throw DesktopControlError.invalidArgument("target", "file does not exist: \(path)")
+        }
+        return .file(path)
+    }
 }
 
 enum DesktopInternalCommand {
