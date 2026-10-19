@@ -204,6 +204,12 @@ public final class MemoryService: @unchecked Sendable {
             created: result.created,
             similar: result.similar.map {
                 MemoryWriteOutcome.Similar(entry: MemoryEntry($0.entry), similarity: $0.similarity)
+            },
+            tagHints: result.tagHints.map { hint in
+                MemoryWriteOutcome.TagHint(
+                    tag: hint.tag,
+                    existing: hint.existing.map { MemoryWriteOutcome.TagHint.Existing(name: $0.name, count: $0.count) }
+                )
             }
         )
     }
@@ -332,16 +338,30 @@ struct MemoryWriteOutcome: Sendable {
         let similarity: Float
     }
 
+    /// A tag the write introduced, with existing tags sharing a word with it.
+    struct TagHint: Sendable {
+        struct Existing: Sendable {
+            let name: String
+            let count: Int
+        }
+
+        let tag: String
+        let existing: [Existing]
+    }
+
     let entry: MemoryEntry
     let created: Bool
     /// Active entries overlapping a created entry, strongest first; empty for
     /// a deduplicated write.
     let similar: [Similar]
+    /// Single-use tags of a created entry that resemble existing ones.
+    let tagHints: [TagHint]
 
-    init(entry: MemoryEntry, created: Bool, similar: [Similar] = []) {
+    init(entry: MemoryEntry, created: Bool, similar: [Similar] = [], tagHints: [TagHint] = []) {
         self.entry = entry
         self.created = created
         self.similar = similar
+        self.tagHints = tagHints
     }
 
     /// The store found an equivalent active entry and reused it.

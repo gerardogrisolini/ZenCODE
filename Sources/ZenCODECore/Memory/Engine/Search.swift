@@ -206,9 +206,7 @@ enum MemorySearch {
     }
 
     public static func tokens(_ text: String) -> [String] {
-        text.lowercased()
-            .split { !$0.isLetter && !$0.isNumber }
-            .map(String.init)
+        MemoryTokenizer.tokens(text)
     }
 
     public static func scopeAllows(_ memoryScope: EngineMemoryScope, requested: EngineMemoryScope) -> Bool {

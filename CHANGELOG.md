@@ -22,9 +22,22 @@ Release tags follow the strict `vX.Y.Z` contract described in
   model can consolidate with `memory.update` instead of keeping two notes on
   one fact; the write itself is never blocked. Read-only profiles gain
   `memory.get` and never `memory.restore`.
+- `memory.write` also reports existing tags related to any tag the new entry
+  introduced (`tagHints`, e.g. `linux-validation` → `linux`, `validation`),
+  so the tag vocabulary converges instead of growing single-use tags.
 
 ### Changed
 
+- Lexical memory retrieval tokenizes with `MemoryTokenizer`: camel-case
+  identifiers yield the whole token and their segments
+  (`AgentCoreSessionRunner` → `agent core session runner`), and a light
+  English/Italian suffix stemmer unifies inflections (`tests`/`testing`,
+  `validated`/`validation`/`validazione`/`validata`, `memory`/`memoria`,
+  `stabilize`/`stabilizzati`). Applied at retrieval time to stored text and
+  queries alike; nothing is persisted. On the reference journal an inflected
+  query such as "flaky test stabilize diagnostics" now ranks the matching
+  Italian entry first instead of outside the top five, and the top score
+  separates more clearly from the runner-up on most queries.
 - `memory.update` always stamps `Updated` with the time of the update, also
   replacing a stale `Updated` line copied over from the previous content; an
   entry's title now skips `Timestamp`/`Updated` lines when there is no

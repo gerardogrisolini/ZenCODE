@@ -88,6 +88,58 @@ struct MemoryToolSurfaceTests {
     }
 
     @Test
+    func writeSuggestsExistingTagsRelatedToNewOnes() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            for index in 1...3 {
+                _ = try await service.writeEntry(
+                    content: "Summary: linux note \(index).",
+                    workspaceRootURL: workspace.workspaceURL,
+                    tags: ["linux"]
+                )
+            }
+            _ = try await service.writeEntry(
+                content: "Summary: validation note.",
+                workspaceRootURL: workspace.workspaceURL,
+                tags: ["validation"]
+            )
+
+            let written = try await Self.execute("memory.write", [
+                "content": .string("Summary: the arm64 machine validated the build."),
+                "tags": .array([.string("linux-validation"), .string("linux")])
+            ], in: workspace, service: service)
+            #expect(written.result["written"] == .bool(true))
+            guard case let .array(hints)? = written.result["tagHints"] else {
+                Issue.record("Expected tag hints.")
+                return
+            }
+            // `linux` already exists and is reused: no hint. `linux-validation`
+            // is new and shares words with two existing tags, most used first.
+            #expect(hints.count == 1)
+            guard case let .object(hint)? = hints.first,
+                  case let .array(existing)? = hint["existing"] else {
+                Issue.record("Expected one hint with existing tags.")
+                return
+            }
+            #expect(hint["tag"] == .string("linux-validation"))
+            let names = existing.compactMap { value -> String? in
+                guard case let .object(item) = value, case let .string(name)? = item["name"] else { return nil }
+                return name
+            }
+            #expect(names == ["linux", "validation"])
+            #expect(written.text.contains("linux-validation is new; existing related tags: linux (4), validation (1)"))
+
+            let plain = try await Self.execute("memory.write", [
+                "content": .string("Summary: a note without tags."),
+            ], in: workspace, service: service)
+            #expect(plain.result["tagHints"] == .array([]))
+            #expect(!plain.text.contains("Tag hints"))
+        }
+    }
+
+    @Test
     func readPagesWithOffsetAndReportsWhetherMoreRemain() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }

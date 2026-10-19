@@ -295,12 +295,14 @@ actor MemoryGraphStore {
         return (outcome.entry, outcome.created)
     }
 
-    /// Result of a write: the stored entry, whether it was created, and the
-    /// active entries that lexically overlap it when it was created.
+    /// Result of a write: the stored entry, whether it was created, the
+    /// active entries that lexically overlap it and, for tags the entry
+    /// introduced, existing tags they resemble.
     struct WriteResult: Sendable {
         let entry: GraphEntry
         let created: Bool
         let similar: [SimilarEntry]
+        let tagHints: [TagHint]
     }
 
     /// An active entry that already covers much of a newly written one.
@@ -309,6 +311,18 @@ actor MemoryGraphStore {
         /// BM25 score of the existing entry for the new content, relative to
         /// the new entry's own score for it: 1 means the same words.
         let similarity: Float
+    }
+
+    /// A tag the written entry introduced, with existing tags that share a
+    /// word with it, most used first.
+    struct TagHint: Sendable {
+        struct Existing: Sendable {
+            let name: String
+            let count: Int
+        }
+
+        let tag: String
+        let existing: [Existing]
     }
 
     /// Writes like ``write(content:category:tags:generatedTimestamp:)`` and,
@@ -336,7 +350,7 @@ actor MemoryGraphStore {
             matching: duplicationKey,
             in: await engine.snapshot()
         ) {
-            return WriteResult(entry: existing, created: false, similar: [])
+            return WriteResult(entry: existing, created: false, similar: [], tagHints: [])
         }
 
         let embedded = try await MemoryEmbeddingFallback.embed(
@@ -367,11 +381,41 @@ actor MemoryGraphStore {
             return (entry, true)
         }
         guard created else {
-            return WriteResult(entry: entry, created: false, similar: [])
+            return WriteResult(entry: entry, created: false, similar: [], tagHints: [])
         }
         // Outside the lock, on the graph that now contains the new entry.
-        let similar = Self.similarActiveEntries(to: entry, in: await engine.snapshot())
-        return WriteResult(entry: entry, created: true, similar: similar)
+        let snapshot = await engine.snapshot()
+        return WriteResult(
+            entry: entry,
+            created: true,
+            similar: Self.similarActiveEntries(to: entry, in: snapshot),
+            tagHints: Self.tagHints(for: entry, in: snapshot)
+        )
+    }
+
+    /// For every tag that only the written entry carries, the existing tags
+    /// sharing a word with it (`linux-validation` → `linux`, `validation`),
+    /// so vocabulary converges instead of growing one single-use tag per note.
+    static func tagHints(for entry: GraphEntry, in graph: MemoryGraph, limit: Int = 5) -> [TagHint] {
+        let usage: [(name: String, count: Int)] = graph.tags.values
+            .map { (name: $0.name, count: Int($0.count)) }
+            .filter { $0.count > 0 }
+        return entry.tags.compactMap { tag -> TagHint? in
+            let ownCount = usage.first { $0.name == tag }?.count ?? 0
+            guard ownCount <= 1 else { return nil }
+            let words = Set(MemorySearch.tokens(tag))
+            guard !words.isEmpty else { return nil }
+            let related = usage
+                .filter { $0.name != tag && !words.isDisjoint(with: MemorySearch.tokens($0.name)) }
+                .sorted { lhs, rhs in
+                    if lhs.count != rhs.count { return lhs.count > rhs.count }
+                    return lhs.name < rhs.name
+                }
+                .prefix(limit)
+                .map { TagHint.Existing(name: $0.name, count: $0.count) }
+            guard !related.isEmpty else { return nil }
+            return TagHint(tag: tag, existing: Array(related))
+        }
     }
 
     /// Fraction of the new entry's own BM25 score (for its content as the

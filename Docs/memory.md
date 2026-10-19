@@ -108,7 +108,19 @@ alike. `scope` is accepted on the wrappers for source compatibility and only
 is BM25-first: `ZenMemory.recall` always runs lexical retrieval through the
 pluggable `MemoryIndex` protocol (default `BM25MemoryIndex`) and uses those hits
 as seeds, then a breadth-first relation cascade with depth decay and a
-per-retrieval confidence boost of the selected entries. Every score carries an
+per-retrieval confidence boost of the selected entries. Lexical tokens come
+from `MemoryTokenizer`, applied identically to stored text and queries at
+retrieval time (nothing derived from it is persisted): words are cut on
+non-alphanumerics and on camel-case humps — `AgentCoreSessionRunner` yields
+the whole lower-cased identifier and `agent`, `core`, `session`, `runner`, so
+both an exact identifier and a prose query reach it — and every token goes
+through a light English/Italian suffix stemmer (`tests`/`testing` → `test`,
+`validated`/`validation`/`validazione`/`validata` → `valid`,
+`memory`/`memories`/`memoria` → `memori`, `stabilize`/`stabilizzati` →
+`stabiliz`), so the bilingual journal meets on shared roots where suffixes
+allow it; digit-bearing tokens are never altered. It is a heuristic, not a
+dictionary, and it does not translate: cross-language matches beyond shared
+roots are the semantic path's job. Every score carries an
 age discount (`MemoryAgePolicy`, `EngineMemoryEntry.effectiveConfidence`):
 age is measured from the last content change (`max(createdAt, updatedAt)` —
 a write, an update or an archive toggle; retrieval maintenance never touches
@@ -309,7 +321,10 @@ up to three active entries whose words cover much of the new content —
 scored with the engine's BM25 using the new content as the query, relative to
 the entry's own score, reported at 0.5 or above — so the model can consolidate
 with `memory.update` and archive the other note; exact duplicates are still
-deduplicated. `memory.update` preserves `Timestamp` and always stamps
+deduplicated. For every tag that only the new entry carries, the result also
+lists existing tags sharing a word with it (`tagHints`, most used first, e.g.
+`linux-validation` → `linux`, `validation`), so the tag vocabulary converges
+instead of growing one single-use tag per note. `memory.update` preserves `Timestamp` and always stamps
 `Updated` with the time of the update, replacing a stale `Updated` line the
 caller carried over. An entry's title is its `Summary`, or else its first line
 that is not a `Timestamp`/`Updated` annotation. `MemoryTurnCoordinator`

@@ -110,7 +110,7 @@ public enum MemoryTool {
     private static let writeDescriptor = ToolDescriptor(
             name: "memory.write",
             title: "Memory Write",
-            description: "Adds a concise durable project-journal entry for a verified handoff, decision, blocker, or published release. Include Summary, State, Next, and publication evidence when relevant; Timestamp is added when missing and active duplicates are reused. The result lists active entries that overlap the new one (similar) so you can consolidate with memory.update instead of keeping two notes on one fact.",
+            description: "Adds a concise durable project-journal entry for a verified handoff, decision, blocker, or published release. Include Summary, State, Next, and publication evidence when relevant; Timestamp is added when missing and active duplicates are reused. The result lists active entries that overlap the new one (similar) so you can consolidate with memory.update instead of keeping two notes on one fact, and existing tags related to any new tag (tagHints): reuse existing tags so related entries stay linked.",
             inputSchema: """
             {
               "type": "object",
@@ -433,6 +433,17 @@ public enum MemoryTool {
             \(similarLines.joined(separator: "\n"))
             """
         }
+        if !outcome.tagHints.isEmpty {
+            let hintLines = outcome.tagHints.map { hint in
+                let existing = hint.existing.map { "\($0.name) (\($0.count))" }.joined(separator: ", ")
+                return "- \(hint.tag) is new; existing related tags: \(existing)"
+            }
+            text += """
+
+            Tag hints — prefer existing tags so related entries stay linked:
+            \(hintLines.joined(separator: "\n"))
+            """
+        }
 
         return ToolExecutionOutput(
             text: text,
@@ -445,6 +456,17 @@ public enum MemoryTool {
                         "id": .string(similar.entry.id.uuidString),
                         "title": .string(similar.entry.title),
                         "similarity": .number(Double(similar.similarity))
+                    ])
+                }),
+                "tagHints": .array(outcome.tagHints.map { hint in
+                    .object([
+                        "tag": .string(hint.tag),
+                        "existing": .array(hint.existing.map { existing in
+                            .object([
+                                "name": .string(existing.name),
+                                "count": .number(Double(existing.count))
+                            ])
+                        })
                     ])
                 })
             ])
