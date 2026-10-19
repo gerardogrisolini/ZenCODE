@@ -25,6 +25,19 @@ import ToolCore
 actor MemoryTurnCoordinator {
     static let shared = MemoryTurnCoordinator()
 
+    /// Delivers the once-per-event visible warnings (recall paused, semantic
+    /// bound missed). Injected so tests observe them without the process-wide
+    /// presentation sink.
+    private let emitVisibleWarning: @Sendable (String) -> Void
+
+    init(
+        visibleWarning: @escaping @Sendable (String) -> Void = {
+            MemorySemanticFallbackDiagnostics.emitVisibleWarning(message: $0)
+        }
+    ) {
+        emitVisibleWarning = visibleWarning
+    }
+
     /// Identifies one session's recall state within one workspace. Both parts
     /// are required: a session id alone collides across workspaces, while a
     /// workspace alone would merge an operator and its delegated sub-agents.
@@ -40,6 +53,9 @@ actor MemoryTurnCoordinator {
         var consecutiveFailures = 0
         var disabledUntil: Date?
         var lastTouchedAt = Date()
+        /// The once-per-session visible notice that semantic recall missed its
+        /// bound has been emitted.
+        var reportedSemanticDeadline = false
 
         func isDisabled(at moment: Date) -> Bool {
             guard let disabledUntil else {
@@ -80,7 +96,7 @@ actor MemoryTurnCoordinator {
             return nil
         }
 
-        let raw = await Self.racingDeadline(
+        let outcome = await Self.racingDeadline(
             local: MemoryAutomationSettings.recallTimeout,
             semantic: MemoryAutomationSettings.semanticRecallTimeout,
             store: {
@@ -94,13 +110,16 @@ actor MemoryTurnCoordinator {
             }
         )
 
-        guard let raw else {
+        guard let raw = outcome.value else {
             // The store failed, the task was cancelled, or the deadline expired
             // before either semantic recall or its lexical fallback was usable.
             noteFailure(key)
             return nil
         }
         noteSuccess(key)
+        if case .deadline(fallbackAvailable: true) = outcome.resolution {
+            noteDeadlineFallback(key, semantic: outcome.storeHasEmbedder == true)
+        }
 
         // An empty selection is a successful query, not a failure.
         guard let block = Self.formattedBlock(raw) else {
@@ -157,13 +176,21 @@ actor MemoryTurnCoordinator {
     /// during a cold open or a non-cooperative embedding request. The registry
     /// retains its in-flight open task, so an abandoned first attempt can still
     /// warm the cache for a later turn.
+    /// How a recall race ended, alongside the value it produced.
+    private struct RaceOutcome<T: Sendable>: Sendable {
+        let value: T?
+        let resolution: FirstResultLatch<T>.Resolution
+        /// Whether the resolved store embeds; `nil` if no racer obtained it.
+        let storeHasEmbedder: Bool?
+    }
+
     private static func racingDeadline<T: Sendable>(
         local localTimeout: Duration,
         semantic semanticTimeout: Duration,
         store: @escaping @Sendable () async throws -> MemoryGraphStore,
         operation: @escaping @Sendable (MemoryGraphStore) async throws -> T,
         fallback: @escaping @Sendable (MemoryGraphStore) async throws -> T?
-    ) async -> T? {
+    ) async -> RaceOutcome<T> {
         let latch = FirstResultLatch<T>()
         let work = Task<Void, Never> {
             do {
@@ -174,7 +201,7 @@ actor MemoryTurnCoordinator {
                 // Preserve the established failure contract: an unusable full
                 // retrieval resolves to nil immediately rather than masking a
                 // graph/persistence error with a second read.
-                await latch.resolve(nil)
+                await latch.fail()
             }
         }
         let lexicalFallback = Task<Void, Never> {
@@ -196,14 +223,18 @@ actor MemoryTurnCoordinator {
             }
             await latch.resolveUsingFallback()
         }
-        let result = await latch.value()
+        let (result, resolution) = await latch.value()
         // Best effort only: no loser is awaited, so an endpoint that ignores
         // cancellation cannot hold the model turn beyond its deadline. Engine
         // cancellation checks prevent such a loser from applying maintenance.
         work.cancel()
         lexicalFallback.cancel()
         deadline.cancel()
-        return result
+        return RaceOutcome(
+            value: result,
+            resolution: resolution,
+            storeHasEmbedder: await latch.storeHasEmbedder
+        )
     }
 
     /// Wraps the engine's formatted bullet list in an explicitly labelled,
@@ -297,12 +328,39 @@ actor MemoryTurnCoordinator {
             // Start a fresh budget after the cooldown instead of immediately
             // re-pausing on the next failed attempt.
             state.consecutiveFailures = 0
-            ZenLogger.debug(
+            ZenLogger.warning(
                 .memory,
                 "automatic memory recall paused for session=\(key.sessionID) for \(Int(Self.disabledCooldown))s after \(Self.failureBudget) consecutive unusable attempts."
             )
+            // Once per pause: a silent pause looks like "nothing relevant" and
+            // can hide a broken graph or endpoint for the whole cooldown.
+            emitVisibleWarning(
+                "automatic memory recall paused for \(Int(Self.disabledCooldown)) s after \(Self.failureBudget) consecutive unusable attempts (session=\(key.sessionID)); memory.search and memory.read remain available."
+            )
         }
         store(state, for: key)
+    }
+
+    /// The deadline injected the prepared lexical result. For a store with an
+    /// embedder this means the semantic request did not finish within its
+    /// bound: logged on every occurrence and shown once per session, so an
+    /// endpoint that is chronically slow cannot silently turn recall lexical.
+    private func noteDeadlineFallback(_ key: Key, semantic: Bool) {
+        let bound = semantic
+            ? MemoryAutomationSettings.semanticRecallTimeoutMilliseconds
+            : MemoryAutomationSettings.recallTimeoutMilliseconds
+        ZenLogger.debug(
+            .memory,
+            "automatic memory recall injected the lexical fallback: the \(semantic ? "semantic" : "local") retrieval exceeded its \(bound) ms bound (session=\(key.sessionID))."
+        )
+        guard semantic else { return }
+        var state = sessionStates[key] ?? SessionState()
+        guard !state.reportedSemanticDeadline else { return }
+        state.reportedSemanticDeadline = true
+        store(state, for: key)
+        emitVisibleWarning(
+            "semantic memory recall exceeded its \(bound) ms bound (session=\(key.sessionID)); the keyword (BM25) fallback was injected instead. Reported once per session; raise \(MemoryAutomationSettings.environmentSemanticRecallTimeoutKey) to wait longer."
+        )
     }
 
     private func store(_ state: SessionState, for key: Key) {
@@ -323,9 +381,17 @@ actor MemoryTurnCoordinator {
 /// One-shot first-result latch used to bound recall without awaiting an
 /// uncooperative loser.
 private actor FirstResultLatch<T: Sendable> {
-    /// The outer optional means “resolved”; the inner value may legitimately be
-    /// nil when the operation fails or no fallback was ready at the deadline.
-    private var resolved: T??
+    /// How the latch was resolved.
+    enum Resolution: Sendable {
+        /// The full retrieval finished within its bound.
+        case completed
+        /// The full retrieval failed; no value, regardless of the fallback.
+        case failed
+        /// The deadline fired; the prepared fallback was used when available.
+        case deadline(fallbackAvailable: Bool)
+    }
+
+    private var resolved: (value: T?, resolution: Resolution)?
     /// Best lexical result produced while the semantic operation is in flight.
     /// It never resolves the latch by itself: semantic retrieval retains the
     /// entire configured budget and wins whenever it completes in time.
@@ -333,7 +399,7 @@ private actor FirstResultLatch<T: Sendable> {
     /// Whether the resolved workspace store embeds; `nil` until a racer has
     /// obtained the store. Read by the deadline task to size its wait.
     private(set) var storeHasEmbedder: Bool?
-    private var waiters: [CheckedContinuation<T?, Never>] = []
+    private var waiters: [CheckedContinuation<(T?, Resolution), Never>] = []
 
     func noteStore(hasEmbedder: Bool) {
         storeHasEmbedder = hasEmbedder
@@ -345,24 +411,32 @@ private actor FirstResultLatch<T: Sendable> {
     }
 
     func resolveUsingFallback() {
-        resolve(fallback)
+        settle(fallback, as: .deadline(fallbackAvailable: fallback != nil))
     }
 
-    func resolve(_ value: T?) {
+    func resolve(_ value: T) {
+        settle(value, as: .completed)
+    }
+
+    func fail() {
+        settle(nil, as: .failed)
+    }
+
+    private func settle(_ value: T?, as resolution: Resolution) {
         guard resolved == nil else {
             return
         }
-        resolved = .some(value)
+        resolved = (value, resolution)
         let pending = waiters
         waiters.removeAll()
         for waiter in pending {
-            waiter.resume(returning: value)
+            waiter.resume(returning: (value, resolution))
         }
     }
 
-    func value() async -> T? {
+    func value() async -> (T?, Resolution) {
         if let resolved {
-            return resolved
+            return (resolved.value, resolved.resolution)
         }
         return await withCheckedContinuation { continuation in
             waiters.append(continuation)

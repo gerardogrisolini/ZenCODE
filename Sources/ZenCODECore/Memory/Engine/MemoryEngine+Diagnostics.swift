@@ -101,15 +101,33 @@ enum MemorySemanticFallbackDiagnostics {
     private static let visibleErrorSinks = Mutex<[SinkRegistration]>([])
 
     /// The visible line, with a trailing newline for the raw descriptor.
-    static func visibleLine(message: String) -> String {
-        ZenLogger.formattedMessage(level: .error, category: .memory, message: message) + "\n"
+    static func visibleLine(message: String, level: ZenLogLevel = .error) -> String {
+        ZenLogger.formattedMessage(level: level, category: .memory, message: message) + "\n"
     }
 
     static func emitVisibleError(
         message: String,
         stderrWriter: ((Data) throws -> Void)? = nil
     ) {
-        let line = visibleLine(message: message)
+        emitVisible(level: .error, message: message, stderrWriter: stderrWriter)
+    }
+
+    /// Same channels as ``emitVisibleError(message:stderrWriter:)`` at warning
+    /// level: for degradations that keep working — recall paused, a semantic
+    /// bound missed — which the operator should still see once.
+    static func emitVisibleWarning(
+        message: String,
+        stderrWriter: ((Data) throws -> Void)? = nil
+    ) {
+        emitVisible(level: .warning, message: message, stderrWriter: stderrWriter)
+    }
+
+    private static func emitVisible(
+        level: ZenLogLevel,
+        message: String,
+        stderrWriter: ((Data) throws -> Void)?
+    ) {
+        let line = visibleLine(message: message, level: level)
         let data = Data(line.utf8)
         if let stderrWriter {
             try? stderrWriter(data)
@@ -119,7 +137,11 @@ enum MemorySemanticFallbackDiagnostics {
             try? AgentOutput.standardError.write(contentsOf: data)
         }
         // Opt-in system-log copy, separate from the always-written visible line.
-        ZenLogger.error(.memory, message)
+        if level == .warning {
+            ZenLogger.warning(.memory, message)
+        } else {
+            ZenLogger.error(.memory, message)
+        }
     }
 
     /// Redirects terminal-visible diagnostics; the token scopes teardown so one

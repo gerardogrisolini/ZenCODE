@@ -39,6 +39,21 @@ struct MemoryServiceTests {
     }
 
     @Test
+    func promptsExplainAMissingRecallBlock() {
+        // A silent absence of the recall block must not read as "no prior
+        // context": both prompt variants send the model to memory.search.
+        for prompt in [
+            MemoryService.toolUsagePromptSection(),
+            MemoryService.toolUsagePromptSection(readOnly: true)
+        ] {
+            #expect(prompt.contains("`<project-memory>` block"))
+            #expect(prompt.contains("When no such block is present"))
+            #expect(prompt.contains("call `memory.search` before concluding that no prior context exists"))
+            #expect(!prompt.contains("you do not need to call a tool"))
+        }
+    }
+
+    @Test
     func writingAndReadingEntriesRoundTripsAndDeduplicates() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }

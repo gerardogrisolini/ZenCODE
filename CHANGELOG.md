@@ -65,6 +65,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   (`decayRejectedBy` defaults to 0). On the reference journal the median age of
   recalled entries moves from 5 to about 26 days and relevant entries older
   than 60 days become retrievable again.
+- Automatic memory recall now reports its degradations: pausing a session
+  after three consecutive unusable attempts emits one visible warning line,
+  and a lexical fallback injected because the semantic request missed its
+  bound emits one visible warning per session (every occurrence is logged at
+  debug level), on the same channels as the embedding-failure diagnostics.
+  The memory-tool prompt explains that a missing `<project-memory>` block
+  means either nothing relevant or recall unavailable, and asks the model to
+  call `memory.search` before concluding that no prior context exists.
 
 ### Fixed
 

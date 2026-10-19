@@ -1141,9 +1141,140 @@ struct MemoryAutomationFlowTests {
         try await JSONMemoryPersistence(url: workspace.graphURL()).save(graph)
     }
 
+    // MARK: - Visible signals: a pause and a missed semantic bound are reported
+    // once, through the coordinator's warning emitter.
+
+    @Test
+    func pausingRecallEmitsOneVisibleWarning() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let graphURL = MemoryGraphLocation.graphURL(for: workspace.workspaceURL)
+            try FileManager.default.createDirectory(
+                at: graphURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("{ this is not valid graph json ".utf8).write(to: graphURL)
+
+            let warnings = WarningRecorder()
+            let coordinator = MemoryTurnCoordinator(visibleWarning: { warnings.record($0) })
+            let sessionID = "pause-signal-\(UUID().uuidString)"
+            for _ in 0..<4 {
+                _ = await coordinator.memoryBlock(
+                    sessionID: sessionID,
+                    workspaceRootURL: workspace.workspaceURL,
+                    prompt: "anything"
+                )
+            }
+            #expect(await coordinator.isRecallPaused(sessionID: sessionID, workspaceRootURL: workspace.workspaceURL))
+            // Three failures pause the session and emit one notice; the fourth
+            // attempt is skipped while paused and adds nothing.
+            let recorded = warnings.lines
+            #expect(recorded.count == 1)
+            #expect(recorded.first?.contains("paused") == true)
+            #expect(recorded.first?.contains(sessionID) == true)
+            #expect(recorded.first?.contains("memory.search") == true)
+        }
+    }
+
+    @Test
+    func missedSemanticBoundIsReportedOncePerSession() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            try await seedFlangeEntry(in: workspace)
+
+            try await scopedEnv([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1",
+                MemoryAutomationSettings.environmentRecallTimeoutKey: "100"
+            ]) {
+                try await MemoryEmbedding.withProvider(
+                    DelayedMemoryEmbeddingProvider(delay: .seconds(2))
+                ) {
+                    let reader = try await MemoryGraphStoreRegistry.shared.store(graphURL: workspace.graphURL())
+                    _ = try await reader.lexicalFallbackContext(for: "how do I calibrate the frobnicator")
+
+                    let warnings = WarningRecorder()
+                    let coordinator = MemoryTurnCoordinator(visibleWarning: { warnings.record($0) })
+                    let sessionID = "deadline-signal-\(UUID().uuidString)"
+                    for _ in 0..<2 {
+                        let block = await coordinator.memoryBlock(
+                            sessionID: sessionID,
+                            workspaceRootURL: workspace.workspaceURL,
+                            prompt: "how do I calibrate the frobnicator"
+                        )
+                        #expect(block?.contains("quantum flange") == true)
+                    }
+                    // Two fallbacks, one notice for the session.
+                    #expect(warnings.lines.count == 1)
+                    #expect(warnings.lines.first?.contains("exceeded its 100 ms bound") == true)
+                    #expect(warnings.lines.first?.contains(sessionID) == true)
+
+                    // Another session gets its own notice.
+                    let otherSession = "deadline-signal-\(UUID().uuidString)"
+                    _ = await coordinator.memoryBlock(
+                        sessionID: otherSession,
+                        workspaceRootURL: workspace.workspaceURL,
+                        prompt: "how do I calibrate the frobnicator"
+                    )
+                    #expect(warnings.lines.count == 2)
+                    #expect(warnings.lines.last?.contains(otherSession) == true)
+                }
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
+    @Test
+    func localDeadlineWithoutAnEmbedderIsNotReportedAsSemantic() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            try await seedFlangeEntry(in: workspace)
+
+            try await scopedEnv([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1",
+                MemoryAutomationSettings.environmentRecallTimeoutKey: nil,
+                MemoryAutomationSettings.environmentSemanticRecallTimeoutKey: nil
+            ]) {
+                try await MemoryEmbedding.withProvider(nil) {
+                    _ = try await MemoryGraphStoreRegistry.shared.store(graphURL: workspace.graphURL())
+                    let warnings = WarningRecorder()
+                    let coordinator = MemoryTurnCoordinator(visibleWarning: { warnings.record($0) })
+                    let block = await coordinator.memoryBlock(
+                        sessionID: "local-\(UUID().uuidString)",
+                        workspaceRootURL: workspace.workspaceURL,
+                        prompt: "how do I calibrate the frobnicator"
+                    )
+                    #expect(block?.contains("quantum flange") == true)
+                    #expect(warnings.lines.isEmpty)
+                }
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
 }
 
 // MARK: - Test doubles and helpers
+
+/// Collects the coordinator's visible warnings for assertions.
+private final class WarningRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+
+    func record(_ line: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        recorded.append(line)
+    }
+
+    var lines: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
+}
 
 /// Fixed embedding provider that cooperatively exceeds the automatic-recall
 /// deadline. It is local and deterministic; no test network request is made.

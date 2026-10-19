@@ -235,7 +235,17 @@ to no block, which makes the outgoing request byte-identical to one sent with
 memory switched off. A session is auto-disabled after three consecutive
 unusable attempts; a delivered lexical fallback counts as a success, any other
 success resets the counter, and closing or resetting a session discards its
-state.
+state. Both degradations are visible rather than silent: a pause emits one
+warning line per pause event, and a lexical fallback injected because the
+semantic request missed its bound emits one warning line per session (every
+occurrence is also logged at debug level), on the same channels as the
+embedding-failure diagnostics — an installed TUI sink or the preserved stderr
+descriptor, plus the opt-in `ZenLogger` copy — so a broken graph or a
+chronically slow endpoint cannot quietly turn recall off or lexical. The
+request itself stays byte-identical. The memory-tool prompt tells the model
+that a missing `<project-memory>` block means either nothing relevant was
+found or recall was unavailable, and to call `memory.search` before concluding
+that no prior context exists.
 
 The engine's N→N+1 `submitContext(_:)` / `takePending()` pipeline is
 deliberately not used. `ZenMemory.pending` is a single unkeyed array on the
