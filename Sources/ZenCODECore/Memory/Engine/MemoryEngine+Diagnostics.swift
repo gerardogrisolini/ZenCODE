@@ -133,7 +133,10 @@ enum MemorySemanticFallbackDiagnostics {
             try? stderrWriter(data)
         } else if let sink = visibleErrorSinks.withLock({ $0.last?.sink }) {
             sink(line)
-        } else {
+        } else if !AppStorageDirectory.isRunningUnderTestHarness {
+            // The raw descriptor is the production fallback; under the test
+            // harness a line nobody captures would only clutter the runner's
+            // output (the writer seam above stays available to tests).
             try? AgentOutput.standardError.write(contentsOf: data)
         }
         // Opt-in system-log copy, separate from the always-written visible line.

@@ -146,6 +146,11 @@ protocol MemoryContextFormatter: Sendable {
 }
 
 /// Formats selected memories as a compact block that can be inserted into an agent prompt.
+///
+/// Every entry is one bullet whose first line carries the entry id, so a model
+/// can `memory.update` / `memory.archive` what it was shown without a lookup
+/// first; continuation lines are indented, which keeps each bullet a single
+/// unit for the per-turn budget (see `MemoryTurnCoordinator.budgeted`).
 struct BulletMemoryContextFormatter: MemoryContextFormatter {
     public var heading: String
     public var includeScores: Bool
@@ -157,13 +162,17 @@ struct BulletMemoryContextFormatter: MemoryContextFormatter {
 
     public func format(_ memories: [MemoryCandidate]) -> String {
         guard !memories.isEmpty else { return "" }
-        let lines = memories.map { candidate in
+        let entries = memories.map { candidate -> String in
+            var label = "[id: \(candidate.memory.id)]"
             if includeScores {
-                return "- [\(String(format: "%.3f", candidate.score))] \(candidate.memory.content)"
+                label += " [\(String(format: "%.3f", candidate.score))]"
             }
-            return "- \(candidate.memory.content)"
+            let lines = candidate.memory.content.components(separatedBy: .newlines)
+            let first = "- \(label) \(lines.first ?? "")"
+            let continuation = lines.dropFirst().map { "  \($0)" }
+            return ([first] + continuation).joined(separator: "\n")
         }
-        return ([heading + ":"] + lines).joined(separator: "\n")
+        return ([heading + ":"] + entries).joined(separator: "\n")
     }
 }
 

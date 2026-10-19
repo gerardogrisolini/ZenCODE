@@ -278,14 +278,22 @@ or force a `createSession` on every turn.
 
 The block is an explicitly labelled container (`<project-memory>` …
 `</project-memory>`) so the model reads it as background context, not as text
-the user just typed. Two properties are enforced when it is built: recalled
-content is escaped so no `project-memory` tag inside an entry can close the
-container (both the `<project-memory` and `</project-memory` spellings are
-rewritten to `&lt;project-memory` / `&lt;/project-memory`, case-insensitively,
-leaving code otherwise untouched), and the payload is
-truncated to the recall character budget on line boundaries, appending a
-truncation notice when the selection did not fit. The fixed header, the tags
-and the notice are constant overhead on top of the budgeted payload.
+the user just typed. Inside it, `BulletMemoryContextFormatter` renders every
+selected entry as one bullet whose first line carries the entry id
+(`- [id: <UUID>] …`) — the same id `memory.update` and `memory.archive`
+accept, so the model can act on what it was shown without a lookup first —
+with the entry's remaining lines indented beneath it. Two properties are
+enforced when the block is built: recalled content is escaped so no
+`project-memory` tag inside an entry can close the container (both the
+`<project-memory` and `</project-memory` spellings are rewritten to
+`&lt;project-memory` / `&lt;/project-memory`, case-insensitively, leaving code
+otherwise untouched), and the payload is truncated to the recall character
+budget on entry boundaries, in ranking order: a bullet and its continuation
+lines are one unit, so a journal entry is never cut between its `Summary`,
+`State` and `Next`, and a notice reports how many entries were omitted. When
+not even the first entry fits, it is clipped rather than dropped and the
+notice says so. The fixed header, the tags and the notice are constant
+overhead on top of the budgeted payload.
 
 The main model owns durable memory explicitly through the five `memory.*` tools
 — `memory.read`, `memory.search`, `memory.write`, `memory.update`,

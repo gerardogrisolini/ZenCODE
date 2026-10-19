@@ -262,9 +262,14 @@ actor MemoryTurnCoordinator {
 
     static let blockOpeningTag = "<project-memory>"
     static let blockClosingTag = "</project-memory>"
-    /// Appended when the payload does not fit, so the model can distinguish a
-    /// partial block from a complete retrieval result.
+    /// Appended when a single entry had to be clipped, so the model can
+    /// distinguish a partial block from a complete retrieval result.
     static let truncationNotice = "[…] truncated to fit the per-turn memory budget."
+
+    /// Appended when whole entries were left out to fit the budget.
+    static func omittedEntriesNotice(count: Int) -> String {
+        "[…] \(count) more \(count == 1 ? "entry" : "entries") omitted to fit the per-turn memory budget."
+    }
 
     /// Neutralizes only project-memory delimiters inside recalled content. Code
     /// and ordinary angle brackets remain untouched.
@@ -282,31 +287,58 @@ actor MemoryTurnCoordinator {
             )
     }
 
-    /// Truncates `text` to `characters`, preferring complete lines. One line
-    /// longer than the budget is clipped rather than dropped so a nonempty
-    /// relevant result is still useful.
+    /// Truncates `text` to `characters`, keeping whole entries in ranking
+    /// order. An entry is a bullet (a line starting with `- `) together with
+    /// its continuation lines, so a multi-line journal entry is never cut
+    /// between its `Summary`, `State` and `Next`; lines outside bullets, such
+    /// as the heading, are units of their own. Entries that do not fit are
+    /// counted in the notice. When not even the first entry fits, it is
+    /// clipped rather than dropped so a nonempty relevant result is still
+    /// useful.
     static func budgeted(_ text: String, characters: Int) -> String {
         let budget = max(characters, 0)
         guard text.count > budget else {
             return text
         }
-        var kept: [Substring] = []
+        var kept: [String] = []
         var used = 0
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let cost = line.count + (kept.isEmpty ? 0 : 1)
+        var omitted = 0
+        let units = entryUnits(of: text)
+        for (index, unit) in units.enumerated() {
+            let cost = unit.count + (kept.isEmpty ? 0 : 1)
             guard used + cost <= budget else {
+                omitted = units.count - index
                 break
             }
-            kept.append(line)
+            kept.append(unit)
             used += cost
         }
-        let head = kept.isEmpty
-            ? String(text.prefix(budget))
-            : kept.joined(separator: "\n")
+
+        if kept.contains(where: { $0.hasPrefix("- ") }) {
+            // At least one whole entry fits; the rest are reported by count.
+            return "\(kept.joined(separator: "\n"))\n\(omittedEntriesNotice(count: omitted))"
+        }
+        // Nothing but non-entry lines fit (or nothing at all): clip the text
+        // itself to the budget so the strongest match is still delivered.
+        let head = String(text.prefix(budget))
         guard let head = head.nilIfBlank else {
             return ""
         }
         return "\(head)\n\(truncationNotice)"
+    }
+
+    /// Splits formatted recall text into budget units: each bullet with its
+    /// continuation lines, and every other line on its own.
+    private static func entryUnits(of text: String) -> [String] {
+        var units: [String] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("- ") || units.isEmpty || !(units.last?.hasPrefix("- ") ?? false) {
+                units.append(String(line))
+            } else {
+                units[units.count - 1] += "\n" + line
+            }
+        }
+        return units
     }
 
     // MARK: - Session health

@@ -120,7 +120,7 @@ struct MemoryAutomationFlowTests {
         // reproducible rather than a function of whatever the graph returned
         // this time.
         #expect(block == again)
-        #expect(block.contains(MemoryTurnCoordinator.truncationNotice))
+        #expect(block.contains("more entries omitted to fit the per-turn memory budget"))
         // Whole lines only: a half-sentence fact is worse than one fact fewer.
         #expect(block.contains("- durable fact number 1 about the frobnicator"))
         #expect(!block.contains("- durable fact number 200 about the frobnicator"))
@@ -144,6 +144,86 @@ struct MemoryAutomationFlowTests {
         #expect(block.contains(String(repeating: "x", count: 300)))
         #expect(!block.contains(String(repeating: "x", count: 301)))
         #expect(block.contains(MemoryTurnCoordinator.truncationNotice))
+    }
+
+    @Test
+    func multiLineEntriesAreKeptWholeAndOmittedOnesAreCounted() throws {
+        // Formatter shape: a heading, then one bullet per entry whose
+        // continuation lines are indented.
+        func entry(_ index: Int) -> String {
+            """
+            - [id: \(UUID().uuidString)] Summary: durable fact number \(index).
+              State: verified and current.
+              Next: nothing for entry \(index).
+            """
+        }
+        let entries = (1...20).map(entry)
+        let payload = (["Relevant memory:"] + entries).joined(separator: "\n")
+        let budget = entries[0].count * 3 + 40
+
+        let block = try #require(MemoryTurnCoordinator.formattedBlock(payload, budgetCharacters: budget))
+
+        // Every kept entry is complete: no Summary without its State and Next.
+        let keptSummaries = block.components(separatedBy: "\n").filter { $0.contains("Summary: durable fact") }
+        let keptNexts = block.components(separatedBy: "\n").filter { $0.contains("Next: nothing for entry") }
+        #expect(keptSummaries.count == keptNexts.count)
+        #expect(keptSummaries.count >= 1)
+        #expect(keptSummaries.count < 20)
+        #expect(block.contains("Summary: durable fact number 1."))
+        #expect(block.contains("Relevant memory:"))
+        // The notice counts exactly what was left out.
+        let omitted = 20 - keptSummaries.count
+        #expect(block.contains(MemoryTurnCoordinator.omittedEntriesNotice(count: omitted)))
+        #expect(!block.contains(MemoryTurnCoordinator.truncationNotice))
+    }
+
+    @Test
+    func whenNoEntryFitsTheFirstOneIsClippedRatherThanDropped() throws {
+        let payload = """
+        Relevant memory:
+        - [id: \(UUID().uuidString)] \(String(repeating: "long ", count: 400))
+        - [id: \(UUID().uuidString)] short second entry
+        """
+        let block = try #require(MemoryTurnCoordinator.formattedBlock(payload, budgetCharacters: 200))
+        #expect(block.contains("- [id: "))
+        #expect(block.contains(MemoryTurnCoordinator.truncationNotice))
+        #expect(!block.contains("short second entry"))
+    }
+
+    @Test
+    func recalledBlockCarriesEntryIdentifiers() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let entry = try await MemoryService().writeEntry(
+                content: """
+                Summary: the quantum flange calibrates every frobnicator.
+                State: verified.
+                Next: none.
+                """,
+                workspaceRootURL: workspace.workspaceURL
+            )
+            try await scopedEnv([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1",
+                MemoryAutomationSettings.environmentRecallTimeoutKey: nil,
+                MemoryAutomationSettings.environmentSemanticRecallTimeoutKey: nil
+            ]) {
+                try await MemoryEmbedding.withProvider(nil) {
+                    _ = try await MemoryGraphStoreRegistry.shared.store(graphURL: workspace.graphURL())
+                    let block = try #require(await MemoryTurnCoordinator.shared.memoryBlock(
+                        sessionID: "ids-\(UUID().uuidString)",
+                        workspaceRootURL: workspace.workspaceURL,
+                        prompt: "how do I calibrate the frobnicator"
+                    ))
+                    // The id the tools accept, on the entry's first line, with
+                    // the remaining journal lines indented beneath it.
+                    #expect(block.contains("- [id: \(entry.id.uuidString)] Summary: the quantum flange calibrates every frobnicator."))
+                    #expect(block.contains("\n  State: verified."))
+                    #expect(block.contains("\n  Next: none."))
+                }
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
     }
 
     @Test

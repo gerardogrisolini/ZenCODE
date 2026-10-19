@@ -73,6 +73,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   The memory-tool prompt explains that a missing `<project-memory>` block
   means either nothing relevant or recall unavailable, and asks the model to
   call `memory.search` before concluding that no prior context exists.
+- The recalled `<project-memory>` block now carries each entry's id on its
+  first line (`- [id: <UUID>] …`, with the remaining lines indented), so the
+  model can update or archive what it was shown without a lookup first, and
+  the per-turn budget truncates on entry boundaries instead of line
+  boundaries: a multi-line journal entry is never cut between its `Summary`,
+  `State` and `Next`, and the notice reports how many entries were omitted.
+  Visible memory diagnostics are no longer written to the raw stderr under
+  the test harness when nothing captures them.
 
 ### Fixed
 
