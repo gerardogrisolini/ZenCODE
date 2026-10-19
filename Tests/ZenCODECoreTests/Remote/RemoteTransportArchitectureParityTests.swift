@@ -17,7 +17,7 @@ struct RemoteTransportArchitectureParityTests {
 
         for relativePath in [
             "Sources/CLibCURLWebSocket",
-            "Sources/ZenCODECore/ZenCODE/Remote/Providers/ChatGPT/Streaming/ChatGPTSubscriptionCurlWebSocket.swift"
+            "Sources/ZenCODECore/Remote/Providers/ChatGPT/Streaming/ChatGPTSubscriptionCurlWebSocket.swift"
         ] {
             #expect(
                 !fileManager.fileExists(
@@ -63,15 +63,15 @@ struct RemoteTransportArchitectureParityTests {
     func generationEnginesRemainIndependentOfPlatformNetworking() throws {
         let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
         let sourceRoots = [
-            "Sources/ZenCODECore/ZenCODE/Remote/Transport",
-            "Sources/ZenCODECore/ZenCODE/Remote/Generation/Client",
-            "Sources/ZenCODECore/ZenCODE/Remote/Generation/Streaming",
-            "Sources/ZenCODECore/ZenCODE/Remote/Providers/ChatGPT/Client",
-            "Sources/ZenCODECore/ZenCODE/Remote/Providers/ChatGPT/Requests",
-            "Sources/ZenCODECore/ZenCODE/Remote/Providers/ChatGPT/Streaming",
-            "Sources/ZenCODECore/ZenCODE/Remote/Providers/Anthropic/Client",
-            "Sources/ZenCODECore/ZenCODE/Remote/Providers/Anthropic/Requests",
-            "Sources/ZenCODECore/ZenCODE/Remote/Providers/Anthropic/Streaming"
+            "Sources/ZenCODECore/Remote/Transport",
+            "Sources/ZenCODECore/Remote/Generation/Client",
+            "Sources/ZenCODECore/Remote/Generation/Streaming",
+            "Sources/ZenCODECore/Remote/Providers/ChatGPT/Client",
+            "Sources/ZenCODECore/Remote/Providers/ChatGPT/Requests",
+            "Sources/ZenCODECore/Remote/Providers/ChatGPT/Streaming",
+            "Sources/ZenCODECore/Remote/Providers/Anthropic/Client",
+            "Sources/ZenCODECore/Remote/Providers/Anthropic/Requests",
+            "Sources/ZenCODECore/Remote/Providers/Anthropic/Streaming"
         ]
         let sources = try sourceRoots.flatMap { relativePath in
             try sourceFiles(
@@ -114,7 +114,7 @@ struct RemoteTransportArchitectureParityTests {
 
         let core = try source(
             at: packageRoot.appendingPathComponent(
-                "Sources/ZenCODECore/ZenCODE/Remote/Transport/RemoteTransportCore.swift"
+                "Sources/ZenCODECore/Remote/Transport/RemoteTransportCore.swift"
             )
         )
         for token in ["import NIOCore", "import NIOHTTP1", "import NIOWebSocket"] {

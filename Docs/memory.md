@@ -5,7 +5,7 @@ This guide is part of the compatibility contract in
 durable memory storage, retrieval, embedding, recall, and persisted formats.
 
 Project memory is owned by the internal `ZenMemory` engine at
-`Sources/ZenCODECore/ZenCODE/Memory/Engine`; ZenCODECore's public `Memory`
+`Sources/ZenCODECore/Memory/Engine`; ZenCODECore's public `Memory`
 domain is a thin async facade over it (`MemoryService` →
 `MemoryGraphStore` → `ZenMemory` actor). The authoritative store is the
 per-workspace graph file at
@@ -50,7 +50,7 @@ never rewrites the file — the on-disk graph stays byte-identical until an
 explicit save (a mutation) writes the current version.
 
 ZenCODECore exposes its own public DTOs (`MemoryEntry`, `MemoryScope`,
-`MemoryCategory`) declared under `ZenCODE/Models`; the internal `ZenMemory`
+`MemoryCategory`) declared under `Models`; the internal `ZenMemory`
 engine implementation stays behind the facade (internal aliases bridge the two).
 The facade API is async first: `MemoryService`'s
 primary methods (`readEntries`, `searchEntries`, `entry`, `writeEntry`,

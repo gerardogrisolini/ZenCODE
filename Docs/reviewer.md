@@ -20,7 +20,7 @@ Findings include severity and concrete `file:line` references.
 
 ```text
 /review                              # review tracked session changes
-/review Sources/ZenCODECore/ZenCODETUI/Chat   # focus on a path
+/review Sources/ZenCODECore/TUI/Chat   # focus on a path
 /review check the session restore flow          # focus on a concern
 ```
 

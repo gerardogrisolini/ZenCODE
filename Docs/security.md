@@ -5,7 +5,7 @@
 ZenCODE persists provider API keys, subscription credentials, Telegram settings,
 and durable command approvals in its application support manifests. The storage
 boundary is centralized in
-`Sources/ZenCODECore/Shared/Services/SensitiveFilePermissions.swift`.
+`Sources/ZenCODECore/Support/Storage/SensitiveFilePermissions.swift`.
 
 On macOS, Linux, and WSL, that boundary applies the following protections to
 `settings.json`, `permissions.json`, and `agents.json`:

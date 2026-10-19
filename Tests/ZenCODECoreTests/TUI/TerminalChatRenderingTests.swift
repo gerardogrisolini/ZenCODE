@@ -3035,7 +3035,7 @@ struct TerminalChatRenderingTests {
                 modelID: "chatgpt:gpt-5.6-terra",
                 currentActivity: "inspecting the shared runtime for delegated work \(index)",
                 currentToolName: "search.grep",
-                currentToolTarget: "Sources/ZenCODECore/ZenCODETUI/Chat/Tools",
+                currentToolTarget: "Sources/ZenCODECore/TUI/Chat/Tools",
                 latestOutput: nil,
                 latestError: nil,
                 createdAt: now,

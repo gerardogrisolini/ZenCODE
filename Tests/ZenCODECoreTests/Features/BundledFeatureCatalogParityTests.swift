@@ -71,10 +71,13 @@ struct BundledFeatureCatalogParityTests {
         #expect(!rootManifest.contains("XcodeToolsFeature"))
 
         let coreRoot = packageRoot.appendingPathComponent("Sources/ZenCODECore", isDirectory: true)
-        let legacyShim = coreRoot.appendingPathComponent(
-            "ZenCODE/Support/LinuxXcodeToolCompatibility.swift"
-        )
-        #expect(!FileManager.default.fileExists(atPath: legacyShim.path))
+        for relativePath in [
+            "ZenCODE/Support/LinuxXcodeToolCompatibility.swift",
+            "Support/Compatibility/LinuxXcodeToolCompatibility.swift"
+        ] {
+            let legacyShim = coreRoot.appendingPathComponent(relativePath)
+            #expect(!FileManager.default.fileExists(atPath: legacyShim.path))
+        }
         #expect(
             !FileManager.default.fileExists(
                 atPath: packageRoot.appendingPathComponent("Sources/XcodeToolsFeature").path

@@ -202,14 +202,14 @@ struct SwiftFeaturePromotionTests {
         )
 
         let metadataRoot = checkoutRoot.appendingPathComponent("Sources/ZenPackageMetadata", isDirectory: true)
-        let runtimeRoot = checkoutRoot.appendingPathComponent("Sources/ZenCODECore/ZenCODE/Features", isDirectory: true)
+        let runtimeRoot = checkoutRoot.appendingPathComponent("Sources/ZenCODECore/Features", isDirectory: true)
         try fileManager.createDirectory(at: metadataRoot, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: runtimeRoot, withIntermediateDirectories: true)
         let repositoryRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
         for path in [
             "Sources/ZenPackageMetadata/ZenBundledFeatureCatalog.swift",
             "Sources/ZenPackageMetadata/feature-catalog.json",
-            "Sources/ZenCODECore/ZenCODE/Features/SwiftBundledFeatureCatalog.swift",
+            "Sources/ZenCODECore/Features/Catalog/SwiftBundledFeatureCatalog.swift",
             "Sources/FeatureKit",
             "Sources/ToolCore"
         ] {
@@ -295,7 +295,7 @@ struct SwiftFeaturePromotionTests {
         #expect(swiftCatalog.contains("promotion-fixture"))
         let runtimeCatalog = try String(
             contentsOf: checkoutRoot.appendingPathComponent(
-                "Sources/ZenCODECore/ZenCODE/Features/SwiftBundledFeatureCatalog.swift"
+                "Sources/ZenCODECore/Features/Catalog/SwiftBundledFeatureCatalog.swift"
             ),
             encoding: .utf8
         )
