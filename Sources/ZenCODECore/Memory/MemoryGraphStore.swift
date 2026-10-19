@@ -20,6 +20,9 @@ actor MemoryGraphStore {
     /// Kept from `open`: `update`/`write` must embed with the provider the engine
     /// was opened with, or entries would carry vectors the engine refuses to compare.
     private let embedder: (any EmbeddingProvider)?
+    /// Whether recall on this store includes a request to an embedding
+    /// endpoint; the turn coordinator sizes its deadline accordingly.
+    nonisolated let hasEmbedder: Bool
     /// Shared with the engine so mutation-time embedding degradation is
     /// observable without making the operation fail.
     private let semanticFailureReporter: @Sendable (String) -> Void
@@ -33,6 +36,7 @@ actor MemoryGraphStore {
         self.graphURL = graphURL
         self.engine = engine
         self.embedder = embedder
+        self.hasEmbedder = embedder != nil
         self.semanticFailureReporter = semanticFailureReporter
     }
 

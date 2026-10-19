@@ -81,18 +81,16 @@ actor MemoryTurnCoordinator {
         }
 
         let raw = await Self.racingDeadline(
-            MemoryAutomationSettings.recallTimeout,
-            operation: {
-                try await Self.retrievedContext(
-                    workspaceRootURL: standardizedRoot,
-                    prompt: normalizedPrompt
-                )
+            local: MemoryAutomationSettings.recallTimeout,
+            semantic: MemoryAutomationSettings.semanticRecallTimeout,
+            store: {
+                try await Self.store(workspaceRootURL: standardizedRoot)
             },
-            fallback: {
-                try await Self.retrievedLexicalFallback(
-                    workspaceRootURL: standardizedRoot,
-                    prompt: normalizedPrompt
-                )
+            operation: { store in
+                try await store.context(for: normalizedPrompt)
+            },
+            fallback: { store in
+                try await store.lexicalFallbackContext(for: normalizedPrompt)
             }
         )
 
@@ -134,36 +132,25 @@ actor MemoryTurnCoordinator {
         return sessionStates[key]?.isDisabled(at: Date()) ?? false
     }
 
-    private static func retrievedContext(
-        workspaceRootURL: URL,
-        prompt: String
-    ) async throws -> String {
-        let store = try await store(workspaceRootURL: workspaceRootURL)
-        return try await store.context(for: prompt)
-    }
-
-    /// Local-only safety net for a semantic recall that reaches the turn
-    /// deadline. Both paths resolve the same cached workspace store; this one
-    /// skips the configured embedder and performs no retrieval maintenance.
-    private static func retrievedLexicalFallback(
-        workspaceRootURL: URL,
-        prompt: String
-    ) async throws -> String? {
-        let store = try await store(workspaceRootURL: workspaceRootURL)
-        return try await store.lexicalFallbackContext(for: prompt)
-    }
-
     private static func store(workspaceRootURL: URL) async throws -> MemoryGraphStore {
         try await MemoryGraphStoreRegistry.shared.store(
             graphURL: MemoryGraphLocation.graphURL(for: workspaceRootURL)
         )
     }
 
-    /// Runs the full semantic recall against a deadline while preparing a
-    /// maintenance-free lexical result in parallel. If semantic retrieval wins,
+    /// Runs the full recall against a deadline while preparing a
+    /// maintenance-free lexical result in parallel. If the full retrieval wins,
     /// behavior is unchanged. If the deadline wins, the already-computed BM25
     /// block is returned instead of dropping all memory context. Store/open
     /// failures preserve the previous nil degradation behavior.
+    ///
+    /// Both racers resolve the same cached workspace store and report whether
+    /// it has an embedding provider. The deadline task sleeps the local bound
+    /// first; if by then the store is known to embed — the full retrieval is
+    /// waiting on an endpoint, not on local ranking — it keeps waiting up to the
+    /// semantic bound before falling back. A store still opening at the local
+    /// bound cannot extend the wait, so the first turn on a cold workspace keeps
+    /// the local bound and may be served lexically.
     ///
     /// This intentionally does not use a task group: waiting for cancelled group
     /// children would turn a cooperative cancellation into an unbounded wait
@@ -171,14 +158,18 @@ actor MemoryTurnCoordinator {
     /// retains its in-flight open task, so an abandoned first attempt can still
     /// warm the cache for a later turn.
     private static func racingDeadline<T: Sendable>(
-        _ timeout: Duration,
-        operation: @escaping @Sendable () async throws -> T,
-        fallback: @escaping @Sendable () async throws -> T?
+        local localTimeout: Duration,
+        semantic semanticTimeout: Duration,
+        store: @escaping @Sendable () async throws -> MemoryGraphStore,
+        operation: @escaping @Sendable (MemoryGraphStore) async throws -> T,
+        fallback: @escaping @Sendable (MemoryGraphStore) async throws -> T?
     ) async -> T? {
         let latch = FirstResultLatch<T>()
         let work = Task<Void, Never> {
             do {
-                await latch.resolve(try await operation())
+                let store = try await store()
+                await latch.noteStore(hasEmbedder: store.hasEmbedder)
+                await latch.resolve(try await operation(store))
             } catch {
                 // Preserve the established failure contract: an unusable full
                 // retrieval resolves to nil immediately rather than masking a
@@ -188,14 +179,21 @@ actor MemoryTurnCoordinator {
         }
         let lexicalFallback = Task<Void, Never> {
             do {
-                await latch.offerFallback(try await fallback())
+                let store = try await store()
+                await latch.noteStore(hasEmbedder: store.hasEmbedder)
+                await latch.offerFallback(try await fallback(store))
             } catch {
                 // The full retrieval still owns the result. A failed safety-net
                 // lookup simply leaves no value for the deadline to use.
             }
         }
         let deadline = Task<Void, Never> {
-            try? await Task.sleep(for: timeout)
+            try? await Task.sleep(for: localTimeout)
+            if semanticTimeout > localTimeout,
+               await latch.storeHasEmbedder == true,
+               !Task.isCancelled {
+                try? await Task.sleep(for: semanticTimeout - localTimeout)
+            }
             await latch.resolveUsingFallback()
         }
         let result = await latch.value()
@@ -332,7 +330,14 @@ private actor FirstResultLatch<T: Sendable> {
     /// It never resolves the latch by itself: semantic retrieval retains the
     /// entire configured budget and wins whenever it completes in time.
     private var fallback: T?
+    /// Whether the resolved workspace store embeds; `nil` until a racer has
+    /// obtained the store. Read by the deadline task to size its wait.
+    private(set) var storeHasEmbedder: Bool?
     private var waiters: [CheckedContinuation<T?, Never>] = []
+
+    func noteStore(hasEmbedder: Bool) {
+        storeHasEmbedder = hasEmbedder
+    }
 
     func offerFallback(_ value: T?) {
         guard resolved == nil else { return }

@@ -39,6 +39,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   reference graph (239 entries, 4096 dimensions) the file shrinks from about
   21 MB to about 6 MB, and encoding drops from about 280 ms to about 11 ms per
   save.
+- Automatic memory recall has a separate semantic bound,
+  `ZENCODE_MEMORY_RECALL_SEMANTIC_TIMEOUT_MS` (default 1500 ms, clamped to
+  [10, 10000]), used when an embedding endpoint is configured.
+  `ZENCODE_MEMORY_RECALL_TIMEOUT_MS` (default 150 ms) remains the local bound;
+  if it is set explicitly and the semantic variable is not, it governs both
+  paths. Effect: the semantic request is no longer cancelled systematically at
+  150 ms, while the BM25 fallback remains the upper limit of the wait.
 
 ### Fixed
 

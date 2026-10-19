@@ -14,18 +14,22 @@ import ToolCore
 ///
 /// Recall runs over the workspace graph inline before each turn. With no
 /// embedding endpoint configured it is pure lexical BM25 plus graph expansion,
-/// which is local and sub-millisecond. When an endpoint is configured, semantic
-/// similarity adds a bounded HTTP call to that endpoint — but never a second LLM
-/// call: a maintenance-free BM25 result is prepared in parallel and becomes the
-/// turn's context if the semantic call misses the deadline. The selected block is
-/// folded into the main turn's outgoing request, so the timeout and character
-/// budget protect turn latency and prompt size independently of the configured
-/// chat provider.
+/// which is local and bounded by the recall timeout. When an endpoint is
+/// configured, semantic similarity adds a bounded HTTP call to that endpoint —
+/// but never a second LLM call: a maintenance-free BM25 result is prepared in
+/// parallel and becomes the turn's context if the semantic call misses its own,
+/// longer, semantic bound. The selected block is folded into the main turn's
+/// outgoing request, so the timeouts and the character budget protect turn
+/// latency and prompt size independently of the configured chat provider.
 enum MemoryAutomationSettings {
     /// Enables automatic recall. Absent ⇒ true.
     static let environmentAutoRecallKey = "ZENCODE_MEMORY_AUTO_RECALL"
     /// Upper bound, in milliseconds, on how long a turn may wait for recall.
     static let environmentRecallTimeoutKey = "ZENCODE_MEMORY_RECALL_TIMEOUT_MS"
+    /// Upper bound, in milliseconds, on how long a turn may wait for recall
+    /// when the workspace store has an embedding provider, i.e. when the
+    /// pipeline includes a request to the embedding endpoint.
+    static let environmentSemanticRecallTimeoutKey = "ZENCODE_MEMORY_RECALL_SEMANTIC_TIMEOUT_MS"
     /// Upper bound, in characters, on the recalled payload of the injected
     /// block.
     static let environmentRecallBudgetKey = "ZENCODE_MEMORY_RECALL_MAX_CHARACTERS"
@@ -39,6 +43,15 @@ enum MemoryAutomationSettings {
     /// Hard bounds so a mistyped value cannot defeat the latency guarantee.
     static let minimumRecallTimeoutMilliseconds = 10
     static let maximumRecallTimeoutMilliseconds = 5_000
+
+    /// A hosted embedding endpoint answers in hundreds of milliseconds, well
+    /// beyond the local bound: under it the semantic request would be cancelled
+    /// on nearly every turn and recall would silently stay lexical although an
+    /// endpoint was configured. The semantic bound therefore has its own default;
+    /// the lexical fallback prepared beside the request still caps the wait.
+    static let defaultSemanticRecallTimeoutMilliseconds = 1_500
+    static let minimumSemanticRecallTimeoutMilliseconds = 10
+    static let maximumSemanticRecallTimeoutMilliseconds = 10_000
 
     /// Budgets are expressed in characters because that unit is exact,
     /// provider-independent and stable across runs. The estimate is reporting
@@ -70,6 +83,29 @@ enum MemoryAutomationSettings {
             max(parsed, minimumRecallTimeoutMilliseconds),
             maximumRecallTimeoutMilliseconds
         )
+    }
+
+    static var semanticRecallTimeout: Duration {
+        .milliseconds(semanticRecallTimeoutMilliseconds)
+    }
+
+    /// Resolution order: an explicit semantic value; otherwise an explicit
+    /// `ZENCODE_MEMORY_RECALL_TIMEOUT_MS`, which then governs both paths so one
+    /// variable keeps meaning "bound every recall by this"; otherwise the
+    /// semantic default. An unparseable value counts as absent.
+    static var semanticRecallTimeoutMilliseconds: Int {
+        if let raw = environment[environmentSemanticRecallTimeoutKey]?.nilIfBlank,
+           let parsed = Int(raw) {
+            return min(
+                max(parsed, minimumSemanticRecallTimeoutMilliseconds),
+                maximumSemanticRecallTimeoutMilliseconds
+            )
+        }
+        if let raw = environment[environmentRecallTimeoutKey]?.nilIfBlank,
+           Int(raw) != nil {
+            return recallTimeoutMilliseconds
+        }
+        return defaultSemanticRecallTimeoutMilliseconds
     }
 
     static var recallBudgetCharacters: Int {

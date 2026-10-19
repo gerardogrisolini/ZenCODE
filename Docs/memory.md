@@ -182,16 +182,30 @@ LLM call — what reaches the wire is the formatted block, which
 does add input tokens to the outgoing request and is therefore bounded by a
 character budget (`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`, default 4 000
 characters, clamped to [200, 32 000]; ZenCODE counts roughly four characters
-per token, so the default is about 1k tokens of recalled memory). The whole
-pipeline, including the one-time JSON graph open on a cold workspace,
-is bounded by `ZENCODE_MEMORY_RECALL_TIMEOUT_MS` (default
-150 ms, clamped to [10, 5000]). At steady state the graph read is served from
-the reload cache, so an unchanged file is not decoded again. When an embedding
-provider is configured, `MemoryTurnCoordinator` prepares a maintenance-free
-local BM25 result alongside the full semantic recall. A semantic result
-completed within the deadline wins;
-if the endpoint is still pending, the prepared lexical block is injected instead
-and the losing request is cancelled without being awaited. If the graph cannot
+per token, so the default is about 1k tokens of recalled memory). The local part
+of the pipeline, including the one-time JSON graph open on a cold workspace,
+is bounded by `ZENCODE_MEMORY_RECALL_TIMEOUT_MS` (default 150 ms, clamped to
+[10, 5000]). When an embedding endpoint is configured, the total budget of the
+recall, including the HTTP request to the embedding service, is governed by
+`ZENCODE_MEMORY_RECALL_SEMANTIC_TIMEOUT_MS` (default 1 500 ms, clamped to
+[10, 10 000]) instead. Resolution: an explicit
+semantic value wins; otherwise, if `ZENCODE_MEMORY_RECALL_TIMEOUT_MS` is set and
+parseable, it also governs the semantic path, so one variable limits every
+recall; otherwise the 1 500 ms default applies. Unparseable values count as
+unset. At steady state the graph read is served from the reload cache, so an
+unchanged file is not decoded again. When an embedding provider is configured,
+`MemoryTurnCoordinator` prepares a maintenance-free local BM25 result alongside
+the full semantic recall. The deadline task sleeps for the local bound; if the
+store is already resolved and has an embedder at that point, it keeps waiting
+up to the semantic bound before the prepared lexical block is injected. A
+semantic result completed within that bound wins, and the losing request is
+cancelled without being awaited. A store still opening at the local bound (cold
+open) cannot extend the wait: the first turn on a cold workspace keeps the local
+bound and may be served by the lexical fallback. Without an embedder nothing
+changes. The extension exists because hosted endpoints such as OpenRouter answer
+in a few hundred milliseconds, and a single 150 ms bound cancelled the semantic
+request on nearly every turn, leaving recall silently lexical despite a
+configured endpoint. If the graph cannot
 open or the local fallback itself is not ready at the deadline, recall resolves
 to no block, which makes the outgoing request byte-identical to one sent with
 memory switched off. A session is auto-disabled after three consecutive

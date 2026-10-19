@@ -970,6 +970,177 @@ struct MemoryAutomationFlowTests {
         }
     }
 
+    // MARK: - Semantic recall budget
+
+    @Test
+    func semanticRecallTimeoutResolvesFromExplicitValuesThenDefault() async {
+        let recallKey = MemoryAutomationSettings.environmentRecallTimeoutKey
+        let semanticKey = MemoryAutomationSettings.environmentSemanticRecallTimeoutKey
+        let defaultMs = MemoryAutomationSettings.defaultSemanticRecallTimeoutMilliseconds
+
+        await scopedEnv([recallKey: nil, semanticKey: nil]) {
+            #expect(MemoryAutomationSettings.semanticRecallTimeoutMilliseconds == defaultMs)
+            #expect(MemoryAutomationSettings.semanticRecallTimeout == .milliseconds(1500))
+        }
+        await scopedEnv([recallKey: "100", semanticKey: nil]) {
+            #expect(MemoryAutomationSettings.recallTimeoutMilliseconds == 100)
+            #expect(MemoryAutomationSettings.semanticRecallTimeoutMilliseconds == 100)
+        }
+        await scopedEnv([recallKey: "100", semanticKey: "2500"]) {
+            #expect(MemoryAutomationSettings.semanticRecallTimeoutMilliseconds == 2500)
+            #expect(MemoryAutomationSettings.recallTimeoutMilliseconds == 100)
+        }
+        await scopedEnv([recallKey: nil, semanticKey: "5"]) {
+            #expect(MemoryAutomationSettings.semanticRecallTimeoutMilliseconds
+                == MemoryAutomationSettings.minimumSemanticRecallTimeoutMilliseconds)
+        }
+        await scopedEnv([recallKey: nil, semanticKey: "999999"]) {
+            #expect(MemoryAutomationSettings.semanticRecallTimeoutMilliseconds
+                == MemoryAutomationSettings.maximumSemanticRecallTimeoutMilliseconds)
+        }
+        await scopedEnv([recallKey: "100", semanticKey: "not-a-number"]) {
+            #expect(MemoryAutomationSettings.semanticRecallTimeoutMilliseconds == 100)
+        }
+        await scopedEnv([recallKey: nil, semanticKey: "not-a-number"]) {
+            #expect(MemoryAutomationSettings.semanticRecallTimeoutMilliseconds == defaultMs)
+        }
+        await scopedEnv([recallKey: "not-a-number", semanticKey: nil]) {
+            #expect(MemoryAutomationSettings.semanticRecallTimeoutMilliseconds == defaultMs)
+        }
+    }
+
+    @Test
+    func semanticRecallWinsWithinItsOwnBudget() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            var graph = MemoryGraph()
+            graph.addMemory(
+                EngineMemoryEntry(
+                    id: UUID().uuidString,
+                    category: .fact,
+                    content: "zeta omega vector only",
+                    embedding: [1],
+                    embeddingModel: "delayed-memory-embedding"
+                )
+            )
+            try await JSONMemoryPersistence(url: workspace.graphURL()).save(graph)
+
+            try await scopedEnv([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1",
+                MemoryAutomationSettings.environmentRecallTimeoutKey: nil,
+                MemoryAutomationSettings.environmentSemanticRecallTimeoutKey: nil
+            ]) {
+                try await MemoryEmbedding.withProvider(
+                    DelayedMemoryEmbeddingProvider(delay: .milliseconds(300))
+                ) {
+                    let reader = try await MemoryGraphStoreRegistry.shared.store(graphURL: workspace.graphURL())
+                    let lexical = try await reader.lexicalFallbackContext(for: "calibrate the frobnicator")
+                    #expect(lexical?.contains("zeta omega") != true)
+
+                    let started = ContinuousClock.now
+                    let block = await MemoryTurnCoordinator.shared.memoryBlock(
+                        sessionID: "semantic-wins-\(UUID().uuidString)",
+                        workspaceRootURL: workspace.workspaceURL,
+                        prompt: "calibrate the frobnicator"
+                    )
+                    let elapsed = started.duration(to: ContinuousClock.now)
+
+                    let resolved = try #require(block)
+                    #expect(resolved.contains("<project-memory>"))
+                    #expect(resolved.contains("zeta omega"))
+                    #expect(elapsed >= .milliseconds(300))
+                    #expect(elapsed < .milliseconds(1400))
+                }
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
+    @Test
+    func explicitSemanticBoundCapsTheWaitBeforeTheLexicalFallback() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            try await seedFlangeEntry(in: workspace)
+
+            try await scopedEnv([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1",
+                MemoryAutomationSettings.environmentRecallTimeoutKey: nil,
+                MemoryAutomationSettings.environmentSemanticRecallTimeoutKey: "300"
+            ]) {
+                try await MemoryEmbedding.withProvider(
+                    DelayedMemoryEmbeddingProvider(delay: .seconds(2))
+                ) {
+                    let reader = try await MemoryGraphStoreRegistry.shared.store(graphURL: workspace.graphURL())
+                    let initial = try await reader.lexicalFallbackContext(for: "how do I calibrate the frobnicator")
+                    #expect(initial?.contains("quantum flange") == true)
+
+                    let started = ContinuousClock.now
+                    let block = await MemoryTurnCoordinator.shared.memoryBlock(
+                        sessionID: "semantic-cap-\(UUID().uuidString)",
+                        workspaceRootURL: workspace.workspaceURL,
+                        prompt: "how do I calibrate the frobnicator"
+                    )
+                    let elapsed = started.duration(to: ContinuousClock.now)
+
+                    let resolved = try #require(block)
+                    #expect(resolved.contains("quantum flange"))
+                    #expect(elapsed >= .milliseconds(300))
+                    #expect(elapsed < .seconds(1))
+                }
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
+    @Test
+    func withoutAnEmbedderTheLocalBoundStillApplies() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            try await seedFlangeEntry(in: workspace)
+
+            try await scopedEnv([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1",
+                MemoryAutomationSettings.environmentRecallTimeoutKey: nil,
+                MemoryAutomationSettings.environmentSemanticRecallTimeoutKey: "3000"
+            ]) {
+                try await MemoryEmbedding.withProvider(nil) {
+                    _ = try await MemoryGraphStoreRegistry.shared.store(graphURL: workspace.graphURL())
+
+                    let started = ContinuousClock.now
+                    let block = await MemoryTurnCoordinator.shared.memoryBlock(
+                        sessionID: "no-embedder-\(UUID().uuidString)",
+                        workspaceRootURL: workspace.workspaceURL,
+                        prompt: "how do I calibrate the frobnicator"
+                    )
+                    let elapsed = started.duration(to: ContinuousClock.now)
+
+                    let resolved = try #require(block)
+                    #expect(resolved.contains("quantum flange"))
+                    #expect(elapsed < .milliseconds(1000))
+                }
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
+    private func seedFlangeEntry(in workspace: MemoryTestWorkspace) async throws {
+        var graph = MemoryGraph()
+        graph.addMemory(
+            EngineMemoryEntry(
+                id: UUID().uuidString,
+                category: .fact,
+                content: "The quantum flange calibrates every frobnicator before deploy."
+            )
+        )
+        try await JSONMemoryPersistence(url: workspace.graphURL()).save(graph)
+    }
+
 }
 
 // MARK: - Test doubles and helpers
