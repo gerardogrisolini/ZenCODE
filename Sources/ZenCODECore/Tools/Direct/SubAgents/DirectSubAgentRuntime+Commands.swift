@@ -596,7 +596,17 @@ extension DirectSubAgentRuntime {
         )
     }
 
-    public func waitForAgents(arguments: [String: JSONValue]) async -> String {
+    /// Polls until the targeted agents finish or the timeout elapses.
+    ///
+    /// When `roomID` is provided, the wait also returns early as soon as the
+    /// calling participant's live-chat mailbox holds a message from someone
+    /// else. The mailbox is only probed, never drained: the caller's executor
+    /// delivers the batch inline in this same tool result. A nil `roomID`
+    /// keeps the original completion/timeout-only behaviour.
+    public func waitForAgents(
+        arguments: [String: JSONValue],
+        roomID: String? = nil
+    ) async -> String {
         let requestedTimeout = Self.firstNumber(
             ["timeoutSeconds", "timeout_seconds", "timeout"],
             in: arguments
@@ -613,6 +623,9 @@ extension DirectSubAgentRuntime {
         guard !targetIDs.isEmpty else {
             return "No active delegated sub-agents."
         }
+        let mailboxParticipantID = roomID.map {
+            AgentSharedChat.mailboxParticipantID(senderID: sharedChatSenderID, roomID: $0)
+        }
 
         while true {
             let currentSnapshots = snapshots(for: targetIDs)
@@ -623,6 +636,15 @@ extension DirectSubAgentRuntime {
             if Date() >= deadline {
                 return "Timed out waiting for delegated sub-agents.\n"
                     + Self.renderSnapshots(currentSnapshots, includeLatestOutput: true)
+            }
+            if let roomID, let mailboxParticipantID,
+               await sharedChat.hasPendingMessages(
+                   roomID: roomID,
+                   participantID: mailboxParticipantID
+               ) {
+                // Re-read after the await: agent state may have changed.
+                return Self.liveChatMessagesWaitingNotice + "\n"
+                    + Self.renderSnapshots(snapshots(for: targetIDs), includeLatestOutput: true)
             }
 
             do {
@@ -637,6 +659,9 @@ extension DirectSubAgentRuntime {
             }
         }
     }
+
+    static let liveChatMessagesWaitingNotice =
+        "Live chat messages are waiting for you; reply with agent.message, then call agent.wait again."
 
     @discardableResult
     public func closeAgent(id: String) async -> Bool {

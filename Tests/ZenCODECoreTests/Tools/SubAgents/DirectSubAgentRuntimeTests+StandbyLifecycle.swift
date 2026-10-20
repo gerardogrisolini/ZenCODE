@@ -370,6 +370,72 @@ extension DirectSubAgentRuntimeTests {
         await runtime.shutdown()
     }
 
+    // MARK: - awaitReply in a standby turn
+
+    @Test
+    func awaitReplyInAStandbyTurnReceivesTheReplyWithoutSpendingExtraBudget() async throws {
+        let backend = BlockingSubAgentRuntimeBackend(responseText: "follow-up done")
+        let (_, runtime) = try await standbyRuntime(backend: backend)
+        let agent = try #require(await runtime.snapshots().first)
+        #expect(agent.status == .standby)
+        let waiting = try await startStandbyAwaitReply(agentID: agent.id, runtime: runtime, backend: backend)
+
+        _ = try await runtime.execute(
+            rootSessionID: "root",
+            toolCall: presentedToolCall(
+                id: "standby-reply",
+                name: "agent.message",
+                argumentsObject: ["id": agent.id, "message": "Package.swift"],
+                argumentsJSON: #"{"id":"\#(agent.id)","message":"Package.swift"}"#
+            ),
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            allowedToolNames: nil
+        )
+        let output = try await waiting.value
+        #expect(output.contains("[Live chat reply received while you were waiting]"))
+        #expect(output.contains("Package.swift"))
+
+        await backend.release()
+        await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agent.id)
+        // One standby turn was spent, regardless of how long it waited.
+        #expect(await runtime.agents[agent.id]?.standbyTurns == 1)
+        #expect(await runtime.snapshots().first { $0.id == agent.id }?.status == .standby)
+        await runtime.shutdown()
+    }
+
+    @Test
+    func awaitReplyInAStandbyTurnStopsWhenStandbyEligibilityEnds() async throws {
+        let backend = BlockingSubAgentRuntimeBackend(responseText: "follow-up done")
+        let (orchestrator, runtime) = try await standbyRuntime(backend: backend)
+        let agent = try #require(await runtime.snapshots().first)
+        await runtime.removeGraphObserver(rootSessionID: "root")
+        let waiting = try await startStandbyAwaitReply(agentID: agent.id, runtime: runtime, backend: backend)
+
+        _ = try await orchestrator.validateTaskResult(
+            sessionID: "root",
+            taskID: "task-a",
+            succeeded: true
+        )
+        let ready = try #require(try await orchestrator.graphSnapshot(
+            sessionID: "root",
+            graphID: "workflow"
+        ))
+        _ = try await orchestrator.updateWorkflow(
+            sessionID: "root", graphID: ready.id, state: .completed,
+            message: nil, expectedRevision: ready.revision
+        )
+
+        let output = try await waiting.value
+        #expect(output.contains(DirectSubAgentRuntime.sharedChatReplyStandbyEndedText))
+        #expect(!output.contains(DirectSubAgentRuntime.sharedChatReplyCancelledText))
+
+        _ = await runtime.releaseTerminatedStandbyGraphs(rootSessionID: "root")
+        await backend.release()
+        await backend.waitUntilShutdown()
+        #expect(await runtime.snapshots().first { $0.id == agent.id }?.status == .closed)
+        await runtime.shutdown()
+    }
+
     // Note on the git-status refresh behaviour (review #13, last bullet): that
     // predicate lives in the TerminalChat/TUI layer and is not reachable from a
     // `DirectSubAgentRuntime` unit test without driving a real TerminalChat. It
@@ -378,6 +444,44 @@ extension DirectSubAgentRuntimeTests {
 }
 
 private enum StandbyFixtureError: Error { case agentNotReady }
+
+/// Starts a blocked standby follow-up turn for `agentID`, then opens an
+/// `agent.message` awaitReply wait from that turn and returns once the
+/// question reached the coordinator mailbox (with a 5 s deadline).
+private func startStandbyAwaitReply(
+    agentID: String,
+    runtime: DirectSubAgentRuntime,
+    backend: BlockingSubAgentRuntimeBackend
+) async throws -> Task<String, any Error> {
+    await backend.blockNextPrompt()
+    _ = try await runtime.messageAgents(
+        arguments: ["id": .string(agentID), "message": .string("What did you change?")]
+    )
+    await backend.waitUntilBlocked()
+    let waiting = Task {
+        try await runtime.executeBorrowedSubAgentTool(
+            senderID: agentID,
+            rootSessionID: "root",
+            toolCall: AgentBorrowedToolCall(
+                id: UUID().uuidString,
+                name: "agent.message",
+                argumentsJSON: #"{"to":"coordinator","message":"Which file?","awaitReply":true,"replyTimeoutSeconds":10}"#
+            )
+        )
+    }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !(await runtime.sharedChat.hasPendingMessages(
+        roomID: "root",
+        participantID: AgentSharedChat.coordinatorID(for: "root")
+    )) {
+        guard ContinuousClock.now < deadline else {
+            Issue.record("Timed out waiting for the standby agent's question")
+            break
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    return waiting
+}
 
 /// Builds an active single-task graph and one task-bound agent that has finished
 /// its attempt and entered `.standby`. Shared setup for the standby lifecycle

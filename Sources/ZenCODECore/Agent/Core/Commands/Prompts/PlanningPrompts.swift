@@ -17,7 +17,10 @@ extension PlanningCommandKernel {
         "\(planAuthorAgentName)", role "Planner", and profile "\(planner.id)".
         - Give that Planner the complete requested goal and every relevant constraint from the \
         conversation. Its runtime profile policy owns the brainstorming and plan-authoring protocol.
-        - Wait for the Planner with agent.wait.
+        - Wait for the Planner with agent.wait. It returns early when the Planner asks you a question in chat: \
+        answer with agent.message, using only facts and constraints already present in the conversation, \
+        then call agent.wait again. Material decisions that belong to the operator must not be answered \
+        by you; tell the Planner in chat to put them in its "Planner questions" block.
         - The initial turn is valid only when the Planner returns the required "Planner questions" \
         block. If it returns a final plan instead, use agent.message to require the same Planner to \
         replace it with its required focused question block, then wait again.

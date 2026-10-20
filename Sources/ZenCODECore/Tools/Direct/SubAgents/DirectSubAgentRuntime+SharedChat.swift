@@ -24,15 +24,36 @@ extension DirectSubAgentRuntime {
         guard let text = Self.firstString(["message", "prompt", "input"], in: arguments) else {
             throw DirectSubAgentRuntimeError.missingArgument("message")
         }
-        let roomID = sharedChatRootSessionID ?? rootSessionID.nilIfBlank ?? "default"
+        let roomID = AgentSharedChat.resolvedRoomID(
+            sharedChatRootSessionID: sharedChatRootSessionID,
+            sessionID: rootSessionID
+        )
         let effectiveSenderID = senderIDOverride ?? sharedChatSenderID
-        let senderID: String
-        if let effectiveSenderID {
-            senderID = effectiveSenderID
-        } else {
-            _ = try await sharedChat.registerCoordinator(roomID: roomID)
-            senderID = AgentSharedChat.coordinatorID(for: roomID)
+        let awaitsReply = Self.firstBool(["awaitReply", "await_reply"], in: arguments) ?? false
+        // Validate before sending so a rejected request never delivers.
+        if awaitsReply, effectiveSenderID == nil {
+            throw DirectSubAgentRuntimeError.invalidArgument(
+                "awaitReply is only available to delegated sub-agents; the coordinator "
+                    + "receives replies through agent.wait and inline live-chat delivery"
+            )
         }
+        let requestedReplyTimeout = Self.firstNumber(
+            ["replyTimeoutSeconds", "reply_timeout_seconds"],
+            in: arguments
+        ) ?? Self.defaultSharedChatReplyTimeoutSeconds
+        // Clamp before converting: a finite value such as 1e100 would trap in
+        // `Int(_)`, while the bounded value is always representable.
+        let replyTimeoutSeconds = Int(min(
+            max(requestedReplyTimeout, 1),
+            Self.maximumSharedChatReplyTimeoutSeconds
+        ))
+        if effectiveSenderID == nil {
+            _ = try await sharedChat.registerCoordinator(roomID: roomID)
+        }
+        let senderID = AgentSharedChat.mailboxParticipantID(
+            senderID: effectiveSenderID,
+            roomID: roomID
+        )
 
         let destination = try sharedChatDestination(
             arguments: arguments,
@@ -72,7 +93,160 @@ extension DirectSubAgentRuntime {
         // always includes the actor-owned kind and stable identifier, with the
         // display name only as an explicitly non-authoritative field.
         let recipients = AgentSharedChat.deliveryRecipientSummary(for: delivery.recipients)
-        return "Delivered live message to \(recipients)."
+        let deliveredText = "Delivered live message to \(recipients)."
+        guard awaitsReply, let effectiveSenderID else {
+            return deliveredText
+        }
+        let outcome = await awaitSharedChatReply(
+            senderID: effectiveSenderID,
+            roomID: roomID,
+            timeoutSeconds: replyTimeoutSeconds
+        )
+        return deliveredText + "\n\n" + outcome
+    }
+
+    static let defaultSharedChatReplyTimeoutSeconds: Double = 600
+    static let maximumSharedChatReplyTimeoutSeconds: Double = 900
+    static let sharedChatReplyPollInterval: Duration = .milliseconds(500)
+
+    /// Keeps a delegated agent's `agent.message` tool call open until a live
+    /// reply reaches its mailbox, so the agent's turn (a task attempt or a
+    /// standby follow-up) stays open while it waits instead of ending.
+    ///
+    /// Draining here is the single destructive owner of the sender's mailbox:
+    /// the sender is `.running` for the whole tool call, so
+    /// ``drainSharedChatMailbox(for:)`` leaves the mailbox untouched, and the
+    /// executor's inline delivery only runs after this result is returned.
+    /// Messages left beyond one batch stay queued for that inline delivery.
+    ///
+    /// Liveness is evaluated once per iteration by
+    /// ``sharedChatReplyLiveness(senderID:)``, whose final `.running` check is
+    /// synchronous and is followed directly by the drain: no other await sits
+    /// between them, so the mailbox is never drained for an agent whose turn
+    /// was already finished (for example set `.idle` by
+    /// `finishTaskBoundAttemptWork`).
+    ///
+    /// The wait never consumes standby turns: the budget is charged once, when
+    /// the standby turn itself completes.
+    func awaitSharedChatReply(
+        senderID: String,
+        roomID: String,
+        timeoutSeconds: Int
+    ) async -> String {
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(timeoutSeconds)
+        while true {
+            if Task.isCancelled {
+                return Self.sharedChatReplyCancelledText
+            }
+            switch await sharedChatReplyLiveness(senderID: senderID) {
+            case .live:
+                break
+            case .senderStopped:
+                return Self.sharedChatReplySenderStoppedText
+            case .attemptClosed:
+                return Self.sharedChatReplyAttemptInactiveText
+            case .standbyEnded:
+                return Self.sharedChatReplyStandbyEndedText
+            }
+            // Keep this drain immediately after the liveness check above.
+            let messages = await sharedChat.drain(
+                roomID: roomID,
+                participantID: senderID,
+                limit: AgentSharedChat.maximumMessagesPerInjectedPrompt
+            )
+            let replies = messages.filter { $0.sender.id != senderID }
+            if !replies.isEmpty {
+                return Self.awaitedSharedChatReplyBlock(replies)
+            }
+            let now = clock.now
+            guard now < deadline else {
+                return Self.sharedChatReplyTimeoutText(seconds: timeoutSeconds)
+            }
+            do {
+                try await Task.sleep(
+                    for: min(Self.sharedChatReplyPollInterval, now.duration(to: deadline))
+                )
+            } catch {
+                // Cancellation during the sleep only: nothing was drained in
+                // this iteration, so pending messages stay in the mailbox for
+                // the end-of-turn drain. A drain that already returned replies
+                // is handed back to the turn above and never reaches this path.
+                return Self.sharedChatReplyCancelledText
+            }
+        }
+    }
+
+    enum SharedChatReplyLiveness: Equatable {
+        case live
+        /// The agent is closed or failed.
+        case senderStopped
+        /// The task attempt is no longer active and the agent is not on a
+        /// standby turn, or its turn already finished.
+        case attemptClosed
+        /// A standby turn whose standby eligibility ended (terminal graph,
+        /// superseded attempt, pending release, failed/cancelled task, or
+        /// exhausted budget).
+        case standbyEnded
+    }
+
+    /// Single per-iteration liveness rule for an `awaitReply` wait: the sender
+    /// is not closed/failed, its turn is still `.running`, and it either owns
+    /// an active task attempt or is a standby resident that is still standby
+    /// eligible. The standby idle timeout is ignored: an in-flight turn is not
+    /// idle, the reaper never touches pending agents, and `standbySince` is
+    /// refreshed when the standby turn completes.
+    ///
+    /// Agent state is re-read after every await. The returned `.live` is
+    /// decided by a final synchronous read, so callers can drain right after.
+    func sharedChatReplyLiveness(senderID: String) async -> SharedChatReplyLiveness {
+        guard let sender = agents[senderID], Self.canAwaitSharedChatReply(sender) else {
+            return .senderStopped
+        }
+        let isStandbyTurn: Bool
+        if await hasActiveTaskAttempt(sender) {
+            isStandbyTurn = false
+        } else if let resident = agents[senderID], isStandbyResident(resident) {
+            guard await isStandbyEligible(resident, ignoringIdleTimeout: true) else {
+                return .standbyEnded
+            }
+            isStandbyTurn = true
+        } else {
+            return .attemptClosed
+        }
+        guard let current = agents[senderID], Self.canAwaitSharedChatReply(current) else {
+            return .senderStopped
+        }
+        guard current.status == .running else {
+            return isStandbyTurn ? .standbyEnded : .attemptClosed
+        }
+        if isStandbyTurn, current.pendingRelease || current.supersededByAttemptID != nil {
+            return .standbyEnded
+        }
+        return .live
+    }
+
+    private static func canAwaitSharedChatReply(_ agent: AgentRecord) -> Bool {
+        agent.status != .closed && agent.status != .failed
+    }
+
+    static let sharedChatReplyCancelledText =
+        "Stopped waiting for a live reply: the wait was cancelled."
+    static let sharedChatReplySenderStoppedText =
+        "Stopped waiting for a live reply: this agent is closed or has failed."
+    static let sharedChatReplyAttemptInactiveText =
+        "Stopped waiting for a live reply: this task attempt closed and standby is not "
+            + "available. Do not resume implementation; end your turn and report what is "
+            + "still open."
+    static let sharedChatReplyStandbyEndedText =
+        "Stopped waiting for a live reply: this agent's standby ended (the task graph may be "
+            + "terminal, the attempt superseded or released, or the standby budget exhausted). "
+            + "End your turn; new work needs a new task attempt."
+
+    static func sharedChatReplyTimeoutText(seconds: Int) -> String {
+        "No live reply arrived within \(seconds) seconds. Do not proceed on assumptions: "
+            + "call agent.message with awaitReply again to send a short reminder or, "
+            + "if the blocker persists, end your attempt and report it as a blocker."
     }
 
     /// Public bridge used exclusively by the terminal input surface. It gives
@@ -84,7 +258,10 @@ extension DirectSubAgentRuntime {
         rootSessionID: String,
         messageID: UUID = UUID()
     ) async throws -> AgentSharedChat.Delivery {
-        let roomID = sharedChatRootSessionID ?? rootSessionID.nilIfBlank ?? "default"
+        let roomID = AgentSharedChat.resolvedRoomID(
+            sharedChatRootSessionID: sharedChatRootSessionID,
+            sessionID: rootSessionID
+        )
         _ = try await sharedChat.registerCoordinator(roomID: roomID)
         let delivery = try await sharedChat.sendFromOperator(
             roomID: roomID,
@@ -144,7 +321,10 @@ extension DirectSubAgentRuntime {
     public func drainCoordinatorSharedChatMessages(
         rootSessionID: String
     ) async -> [AgentSharedChat.Message] {
-        let roomID = sharedChatRootSessionID ?? rootSessionID.nilIfBlank ?? "default"
+        let roomID = AgentSharedChat.resolvedRoomID(
+            sharedChatRootSessionID: sharedChatRootSessionID,
+            sessionID: rootSessionID
+        )
         return await sharedChat.drain(
             roomID: roomID,
             participantID: AgentSharedChat.coordinatorID(for: roomID),
@@ -160,7 +340,10 @@ extension DirectSubAgentRuntime {
     public func sharedChatTranscriptMessages(
         rootSessionID: String
     ) async -> [AgentSharedChat.Message] {
-        let roomID = sharedChatRootSessionID ?? rootSessionID.nilIfBlank ?? "default"
+        let roomID = AgentSharedChat.resolvedRoomID(
+            sharedChatRootSessionID: sharedChatRootSessionID,
+            sessionID: rootSessionID
+        )
         return await sharedChat.messages(roomID: roomID)
     }
 
@@ -339,6 +522,20 @@ extension DirectSubAgentRuntime {
 
         \(AgentSharedChat.promptTrustBoundaryNote)
         Reply to the sender through this chat using the `agent.message` tool: address another agent by its `id`/`name`, use `to: "operator"` to reply directly to the human operator, or use `to: "coordinator"` to reach only the coordinator. Your ordinary output does not reach this chat, so any reply to a chat message must be sent via `agent.message`. Then continue the current work when appropriate.
+        """
+    }
+
+    /// Model-facing reply returned by `agent.message` with `awaitReply`. Every
+    /// drained message counts as the reply, whoever sent it, so none is lost.
+    static func awaitedSharedChatReplyBlock(
+        _ messages: [AgentSharedChat.Message]
+    ) -> String {
+        """
+        [Live chat reply received while you were waiting]
+        \(AgentSharedChat.promptTranscript(for: messages))
+
+        \(AgentSharedChat.promptTrustBoundaryNote)
+        Act on this reply, then resume your assigned work. If this does not answer your question, call agent.message with awaitReply again.
         """
     }
 

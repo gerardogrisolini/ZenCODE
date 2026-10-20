@@ -394,6 +394,36 @@ extension DirectSubAgentRuntime {
         return nil
     }
 
+    public static func firstBool(
+        _ keys: [String],
+        in arguments: [String: JSONValue]
+    ) -> Bool? {
+        for key in keys {
+            guard let value = arguments[key] else {
+                continue
+            }
+            switch value {
+            case let .bool(bool):
+                return bool
+            case let .string(string):
+                switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+                case "true", "1", "yes":
+                    return true
+                case "false", "0", "no":
+                    return false
+                default:
+                    continue
+                }
+            case let .number(number):
+                guard number.isFinite else { continue }
+                return number != 0
+            default:
+                continue
+            }
+        }
+        return nil
+    }
+
     public static func firstArray(
         _ keys: [String],
         in arguments: [String: JSONValue]

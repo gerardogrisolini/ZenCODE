@@ -28,7 +28,14 @@ extension DirectSubAgentRuntime {
     /// - The agent's own task is not failed or cancelled.
     /// - The standby turn budget and idle timeout are not exhausted.
     /// - The agent has not been superseded by a newer attempt.
-    func isStandbyEligible(_ agent: AgentRecord) async -> Bool {
+    ///
+    /// `ignoringIdleTimeout` skips only the idle-timeout condition. It is used
+    /// while a standby turn is in flight (an `awaitReply` wait): that turn is
+    /// not idle, and `standbySince` is refreshed when it completes.
+    func isStandbyEligible(
+        _ agent: AgentRecord,
+        ignoringIdleTimeout: Bool = false
+    ) async -> Bool {
         guard let taskID = agent.taskID,
               agent.status != .closed,
               agent.status != .failed,
@@ -40,7 +47,8 @@ extension DirectSubAgentRuntime {
         guard agent.standbyTurns < Self.maximumStandbyTurnsPerAgent else {
             return false
         }
-        if let standbySince = agent.standbySince,
+        if !ignoringIdleTimeout,
+           let standbySince = agent.standbySince,
            Date().timeIntervalSince(standbySince) > Self.standbyIdleTimeout {
             return false
         }

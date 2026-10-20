@@ -211,7 +211,7 @@ extension TerminalChat {
       \(codeReviewDelegationRules)
 
       After delegating:
-      - Wait for the Reviewers to finish with agent.wait.
+      \(reviewerChatWaitInstructions)
       - Read and consolidate their reviews into a single prioritized summary grouped \
       by severity, removing duplicates.
       - Include a distinct task/plan coverage report with one classification per task, concrete \
@@ -226,6 +226,13 @@ extension TerminalChat {
       internal review prompt is written in English.
       """
   }
+
+  /// Shared "After delegating" chat guidance for both review prompts.
+  nonisolated static let reviewerChatWaitInstructions = """
+    - Wait for the Reviewers to finish with agent.wait. It returns early when a Reviewer asks \
+    you a question in chat: answer immediately with agent.message, then call agent.wait again.
+    - Before consolidating, you may ask a Reviewer (even one in standby) in chat to clarify a finding.
+    """
 
   nonisolated static func taskGraphReviewSection(_ graph: TaskGraphSnapshot) -> String {
     var lines = [
@@ -337,7 +344,7 @@ extension TerminalChat {
       each with file:line references and a severity.
 
       After delegating:
-      - Wait for the Reviewers to finish with agent.wait.
+      \(reviewerChatWaitInstructions)
       - Read and consolidate their reviews into a single prioritized summary grouped \
       by severity, removing duplicates.
       - If the findings warrant changes, compile a concrete correction plan: the \

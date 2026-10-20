@@ -92,6 +92,11 @@ struct DirectToolCatalogSchemaTests {
         #expect(to["type"] as? String == "string")
         #expect(to["enum"] as? [String] == ["direct", "operator", "coordinator", "peers", "all"])
         #expect(properties["target"] != nil)
+        let awaitReply = try #require(properties["awaitReply"] as? [String: Any])
+        #expect(awaitReply["type"] as? String == "boolean")
+        let replyTimeout = try #require(properties["replyTimeoutSeconds"] as? [String: Any])
+        #expect(replyTimeout["type"] as? String == "number")
+        #expect(schema["required"] as? [String] == ["message"])
     }
 
     @Test

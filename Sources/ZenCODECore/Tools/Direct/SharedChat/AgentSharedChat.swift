@@ -278,6 +278,21 @@ public actor AgentSharedChat {
         return result
     }
 
+    /// Non-destructive mailbox probe. Returns true when the participant's
+    /// mailbox holds at least one message from someone other than itself. It
+    /// never removes anything, so the mailbox's single destructive owner (the
+    /// executor's inline delivery or the idle drain) still delivers the batch.
+    public func hasPendingMessages(
+        roomID rawRoomID: String,
+        participantID: String
+    ) -> Bool {
+        let roomID = normalizedRoomID(rawRoomID)
+        guard let state = rooms[roomID]?.participants[participantID] else {
+            return false
+        }
+        return state.mailbox.contains { $0.sender.id != participantID }
+    }
+
     @discardableResult
     public func send(
         roomID rawRoomID: String,
@@ -327,6 +342,21 @@ public actor AgentSharedChat {
 
     public static func coordinatorID(for roomID: String) -> String {
         "\(reservedCoordinatorPrefix)\(boundedRoomIdentifier(roomID))"
+    }
+
+    /// The mailbox owner for a tool execution: the delegated agent identified
+    /// by `senderID`, or the room's coordinator when no agent identity is set.
+    public static func mailboxParticipantID(senderID: String?, roomID: String) -> String {
+        senderID ?? coordinatorID(for: roomID)
+    }
+
+    /// Resolves the shared-chat room for a tool execution: an explicit shared
+    /// root session wins, then the non-blank session id, then `"default"`.
+    public static func resolvedRoomID(
+        sharedChatRootSessionID: String?,
+        sessionID: String?
+    ) -> String {
+        sharedChatRootSessionID ?? sessionID?.nilIfBlank ?? "default"
     }
 
     /// Stable transcript identity for the terminal operator. It is never

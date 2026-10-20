@@ -180,6 +180,9 @@ public enum AgentSessionComposition {
             SystemPromptBuilder.taskOrchestrationSection(
                 allowedToolNames: allowedToolNames
             ),
+            SystemPromptBuilder.collaborationSection(
+                allowedToolNames: allowedToolNames
+            ),
             memoryToolEnabled
                 ? MemoryService.toolUsagePromptSection(
                     readOnly: memoryToolsAreReadOnly(allowedToolNames)

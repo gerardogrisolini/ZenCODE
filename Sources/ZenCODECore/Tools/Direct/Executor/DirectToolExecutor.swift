@@ -611,8 +611,14 @@ public actor DirectToolExecutor {
         _ result: DirectAgentToolResult,
         sessionID: String?
     ) async -> DirectAgentToolResult {
-        let roomID = sharedChatRootSessionID ?? sessionID?.nilIfBlank ?? "default"
-        let participantID = sharedChatSenderID ?? AgentSharedChat.coordinatorID(for: roomID)
+        let roomID = AgentSharedChat.resolvedRoomID(
+            sharedChatRootSessionID: sharedChatRootSessionID,
+            sessionID: sessionID
+        )
+        let participantID = AgentSharedChat.mailboxParticipantID(
+            senderID: sharedChatSenderID,
+            roomID: roomID
+        )
         let messages = await sharedChat.drain(
             roomID: roomID,
             participantID: participantID,

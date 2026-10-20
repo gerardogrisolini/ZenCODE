@@ -316,11 +316,27 @@ public struct TaskRecord: Codable, Equatable, Sendable, Identifiable {
         + "When a role/tool-compatible profile exposes a binding whose capability is lower than "
         + "the main session model and still meets the task complexity, delegate the task to the "
         + "cheapest sufficient binding even when direct execution would be faster; keep "
-        + "coordination, a precise brief (files, constraints, acceptance criteria), and "
-        + "validation of the result for yourself. Only complexity-1 work whose context is already "
+        + "coordination (including live steering through the shared chat), a precise brief "
+        + "(files, constraints, acceptance criteria), and validation of the result for yourself. Only complexity-1 work whose context is already "
         + "in hand stays direct. When no compatible profile has bindings, delegation saves nothing: "
         + "work directly unless real parallelism, separate ownership, or a different tool grant "
         + "justifies a sub-agent."
+
+    /// The canonical coordinator policy for the shared chat (`agent.message`).
+    /// The chat is the standard coordination channel; the only technical limit
+    /// is that a closed attempt cannot resume implementation.
+    public static let collaborationPolicy =
+        "Collaboration policy: the shared chat (agent.message) is the standard channel to "
+        + "coordinate delegated agents; prefer it to guessing or waiting silently. Answer a "
+        + "sub-agent's question immediately and precisely, then call agent.wait again; it "
+        + "returns early when chat messages are waiting for you. Steer agents in chat while "
+        + "their work is in progress instead of waiting for it to finish, and forward to "
+        + "parallel agents the information that concerns them. Sub-agents stop and wait for "
+        + "your reply when they hit an ambiguity or a decision outside their brief, and they "
+        + "do not send progress reports. Use the chat to clarify, steer, and query agents, "
+        + "including standby ones, for example to learn what an agent did before deciding on a "
+        + "retry; new implementation work after an attempt closed needs tasks.retry and a new "
+        + "agent.create item with `taskID`."
 
     public let id: String
     public var title: String

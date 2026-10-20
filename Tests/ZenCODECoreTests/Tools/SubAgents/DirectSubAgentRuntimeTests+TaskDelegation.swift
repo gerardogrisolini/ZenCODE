@@ -192,6 +192,9 @@ extension DirectSubAgentRuntimeTests {
         )
 
         #expect(tasklessPrompt.contains("Task workflow policy:"))
+        #expect(tasklessPrompt.contains("awaitReply=true"))
+        #expect(taskBoundPrompt.contains("awaitReply=true"))
+        #expect(taskBoundPrompt.contains("Do not use the chat for progress reports"))
         #expect(taskBoundPrompt.contains("must not change dependencies"))
         #expect(!taskBoundPrompt.contains("Task workflow policy:"))
     }

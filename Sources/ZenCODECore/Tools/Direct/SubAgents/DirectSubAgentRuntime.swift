@@ -509,9 +509,10 @@ public actor DirectSubAgentRuntime {
     ) async throws -> String {
         let request = Self.normalizedToolRequest(for: toolCall)
 
-        let resolvedRootSessionID = sharedChatRootSessionID
-            ?? rootSessionID?.nilIfBlank
-            ?? "default"
+        let resolvedRootSessionID = AgentSharedChat.resolvedRoomID(
+            sharedChatRootSessionID: sharedChatRootSessionID,
+            sessionID: rootSessionID
+        )
         switch request.name {
         case "agent.create":
             return try await createAgents(
@@ -531,7 +532,10 @@ public actor DirectSubAgentRuntime {
                 parentAllowedToolNames: allowedToolNames
             )
         case "agent.wait":
-            return await waitForAgents(arguments: request.arguments)
+            return await waitForAgents(
+                arguments: request.arguments,
+                roomID: resolvedRootSessionID
+            )
         case "agent.close":
             return try await closeAgent(arguments: request.arguments)
         default:

@@ -180,7 +180,7 @@ public actor DirectTaskToolAdapter {
                     + "binding and "
                     + "report the capability gap. For a profile without bindings, omit model in "
                     + "agent.create to inherit the main session model and provider. Put taskID in "
-                    + "the new agents item; never reopen a completed attempt with agent.message."
+                    + "the new agents item; the chat (agent.message) can clarify or steer agents but cannot reopen a closed attempt."
             }
             return rendered
 

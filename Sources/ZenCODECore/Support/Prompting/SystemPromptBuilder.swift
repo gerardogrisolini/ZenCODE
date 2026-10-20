@@ -133,6 +133,7 @@ public enum SystemPromptBuilder {
             ]),
             dynamicContext: joined([
                 taskOrchestrationSection(allowedToolNames: allowedToolNames),
+                collaborationSection(allowedToolNames: allowedToolNames),
                 agentsSection,
                 memorySection,
                 selectedSkillSection == staticSkillSection ? nil : selectedSkillSection
@@ -187,8 +188,8 @@ public enum SystemPromptBuilder {
             After a delegated `/goal` implementation task completes, validate its result. If validation \
             is negative, record the task as failed, call tasks.retry, then claim the new attempt \
             with tasks.update in_progress for direct execution or a new canonical agent.create \
-            item containing `taskID` for delegation; do not use agent.message \
-            to reopen a completed task.
+            item containing `taskID` for delegation. The shared chat can clarify what a \
+            completed agent did, but implementation after an attempt closed always needs a new attempt.
             """
         } else {
             delegationInstruction = """
@@ -233,6 +234,20 @@ public enum SystemPromptBuilder {
         Outside `/goal`, a single self-contained delegation or a short disposable lookup does not require a \
         task graph.
         """
+    }
+
+    /// Coordinator guidance for the shared chat, included whenever the tool
+    /// surface can both delegate (`agent.create`) and message (`agent.message`),
+    /// with or without a task graph.
+    public static func collaborationSection(
+        allowedToolNames: Set<String>?
+    ) -> String? {
+        if let allowedToolNames,
+           !tool("agent.create", isAllowedBy: allowedToolNames)
+            || !tool("agent.message", isAllowedBy: allowedToolNames) {
+            return nil
+        }
+        return TaskRecord.collaborationPolicy
     }
 
     public static func taskWorkflowToolsAreAvailable(

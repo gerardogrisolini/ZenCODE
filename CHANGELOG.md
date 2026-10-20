@@ -26,9 +26,23 @@ Release tags follow the strict `vX.Y.Z` contract described in
   publishing them, and keeps the project, channels, strategy, and lessons in
   `memory`, asking the user when any of them is missing. It carries no model
   binding.
+- Delegated sub-agents can ask the coordinator a question and wait for the
+  answer: `agent.message` accepts `awaitReply` (sub-agents only, also in a
+  standby turn) and `replyTimeoutSeconds` (default 600, range 1-900), keeping
+  the call and the task attempt open until a live reply arrives. `agent.wait`
+  now returns early when chat messages are waiting for the caller.
 
 ### Changed
 
+- The shared chat is now the standard coordination channel between the
+  coordinator and delegated agents. A new Collaboration policy in the
+  coordinator prompt asks it to answer sub-agent questions immediately, steer
+  work in progress, forward relevant information between parallel agents, and
+  query standby agents; sub-agents stop and ask instead of proceeding on
+  assumptions, without sending progress reports. `/goal`, `/plan`, and
+  `/review` follow the same policy, and prompts no longer discourage
+  `agent.message`: only new implementation work after a closed attempt still
+  requires `tasks.retry` and a new `agent.create` item with `taskID`.
 - Memory retrieval with an embedding endpoint: semantic hits are now gated per
   prompt (a hit must exceed the median cosine of the prompt's similarity
   distribution by 2.5 robust standard deviations, on top of the 0.4 floor, with

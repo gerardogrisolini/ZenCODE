@@ -43,8 +43,8 @@ extension PlanningCommandKernel {
         the canonical agent.create `agents` array with `taskID` inside its item, never at the root.
         - Respect dependencies; never claim a task twice.
         - After failure, use tasks.retry before starting a new attempt. For delegated corrections, \
-        use a new canonical agent.create item containing `taskID`; never use agent.message to \
-        reopen a completed attempt. For direct retries, start again with tasks.update in_progress.
+        use a new canonical agent.create item containing `taskID`; the chat can clarify or steer \
+        agents, but an attempt that closed cannot resume implementation. For direct retries, start again with tasks.update in_progress.
         - Use the active workflow graph \(graphID); do not recreate or replace it.
         - Your final summary must follow the session response language from the system \
         prompt. Do not answer in English merely because this internal prompt is in English.
@@ -207,14 +207,16 @@ extension PlanningCommandKernel {
         that item's `taskID` field. Batch \
         independent runnable tasks in a single agent.create call when \
         parallel execution is safe and useful.
-        - When delegating, wait for sub-agents with agent.wait — they run in parallel.
+        - When delegating, wait with agent.wait — agents run in parallel. Follow the Collaboration \
+        policy: agent.wait returns early when chat messages are waiting for you; answer sub-agent \
+        questions in chat with agent.message, then call agent.wait again.
         - When sub-agents complete, review their output with tasks.get. Verify results \
         against acceptance criteria and current files.
         - For a delegated task awaiting validation, record successful validation with tasks.update. If \
         validation is negative, record the task as failed with tasks.update, call tasks.retry, \
         then start a new delegated attempt with a new canonical agent.create item containing `taskID` and \
-        using a suitable profile, or execute the retry directly with tasks.update. Do \
-        not use agent.message to request corrections from an agent after its task completed.
+        using a suitable profile, or execute the retry directly with tasks.update: new implementation \
+        work after an attempt closed always needs tasks.retry and a new agent.create item with `taskID`.
         - Repeat: call tasks.list again to pick up newly unblocked tasks, execute directly or delegate, \
         and review until all tasks are completed. If progress is blocked, exhaust the clarification, \
         evidence, suitable-agent, and retry paths in the Completion contract before stopping.
