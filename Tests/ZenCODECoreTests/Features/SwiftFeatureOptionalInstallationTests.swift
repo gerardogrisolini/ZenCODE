@@ -23,7 +23,7 @@ struct SwiftFeatureOptionalInstallationTests {
             dependencies: [
                 .package(path: "../vendor/other"),
                 // zencode:package-path
-                .package(path: "../../.."),
+                .package(name: "ZenCODE", path: "../../.."),
             ]
         )
         """
@@ -34,14 +34,39 @@ struct SwiftFeatureOptionalInstallationTests {
             packageURL: URL(fileURLWithPath: "/tmp/Package.swift")
         )
 
-        #expect(rewritten.contains(#"        .package(path: "/opt/zencode/source"),"#))
+        #expect(rewritten.contains(#"        .package(name: "ZenCODE", path: "/opt/zencode/source"),"#))
         #expect(rewritten.contains(#".package(path: "../vendor/other"),"#))
-        #expect(!rewritten.contains(#".package(path: "../../..")"#))
+        #expect(!rewritten.contains(#""../../..""#))
         #expect(rewritten.contains(SwiftFeatureRuntime.zenPackagePathMarker))
         #expect(
             rewritten.components(separatedBy: "\n").count
                 == contents.components(separatedBy: "\n").count
         )
+    }
+
+    @Test
+    func rewritingNormalizesTheLegacyUnnamedDependency() throws {
+        let contents = """
+        // swift-tools-version: 6.4
+        import PackageDescription
+
+        let package = Package(
+            name: "git-tools-feature",
+            dependencies: [
+                // zencode:package-path
+                .package(path: "../../..")
+            ]
+        )
+        """
+
+        let rewritten = try SwiftFeatureRuntime.packageManifestRewritingZenPackagePath(
+            contents,
+            zenPackagePath: "/opt/zencode/source",
+            packageURL: URL(fileURLWithPath: "/tmp/Package.swift")
+        )
+
+        #expect(rewritten.contains(#"        .package(name: "ZenCODE", path: "/opt/zencode/source")"#))
+        #expect(!rewritten.contains(#""../../..""#))
     }
 
     @Test
@@ -134,8 +159,8 @@ struct SwiftFeatureOptionalInstallationTests {
         )
 
         let package = try String(contentsOf: materialized.packageURL, encoding: .utf8)
-        #expect(package.contains(#".package(path: "/opt/zencode/source")"#))
-        #expect(!package.contains(#".package(path: "../../..")"#))
+        #expect(package.contains(#".package(name: "ZenCODE", path: "/opt/zencode/source")"#))
+        #expect(!package.contains(#""../../..""#))
 
         let manifest = try JSONDecoder().decode(
             SwiftFeatureManifest.self,
@@ -602,7 +627,7 @@ struct SwiftFeatureOptionalInstallationTests {
             ],
             dependencies: [
                 // zencode:package-path
-                .package(path: "../../..")
+                .package(name: "ZenCODE", path: "../../..")
             ],
             targets: [
                 .executableTarget(name: "\(productName)")

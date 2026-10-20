@@ -262,7 +262,7 @@ extension SwiftFeatureRuntime {
             ],
             dependencies: [
                 // zencode:package-path
-                .package(path: \(swiftStringLiteral(packagePath)))
+                .package(name: "ZenCODE", path: \(swiftStringLiteral(packagePath)))
             ],
             targets: [
                 .executableTarget(

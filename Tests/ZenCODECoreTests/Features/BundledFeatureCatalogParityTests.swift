@@ -43,7 +43,7 @@ struct BundledFeatureCatalogParityTests {
             let manifest = try String(contentsOf: manifestURL, encoding: .utf8)
             #expect(
                 manifest.contains(
-                    "\(SwiftFeatureRuntime.zenPackagePathMarker)\n        .package(path: \"../../..\")"
+                    "\(SwiftFeatureRuntime.zenPackagePathMarker)\n        .package(name: \"ZenCODE\", path: \"../../..\")"
                 )
             )
 
@@ -120,7 +120,7 @@ struct BundledFeatureCatalogParityTests {
         // explicit means dropping a platform gate, or adding a macOS-only
         // feature without one, both fail here instead of silently shipping an
         // uninstallable package to Linux users.
-        let macOSOnlyIDs: Set<String> = ["xcode-tools", "figma-tools", "desktop-tools"]
+        let macOSOnlyIDs: Set<String> = ["xcode-tools", "figma-tools", "desktop-tools", "macOS"]
         let linuxProducts = Set(ZenBundledFeatureCatalog.linuxInstallerProductNames)
         let linuxFeatureIDs = Set(
             ZenBundledFeatureCatalog.all

@@ -14,7 +14,7 @@ let package = Package(
     ],
     dependencies: [
         // zencode:package-path
-        .package(path: "../../.."),
+        .package(name: "ZenCODE", path: "../../.."),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0")
     ],
     targets: [

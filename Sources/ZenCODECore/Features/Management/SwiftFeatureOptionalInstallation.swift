@@ -122,7 +122,7 @@ public struct SwiftFeatureOptionalInstallReport: Codable, Sendable {
 public typealias SwiftFeatureOptionalInstallProgress = @Sendable (String) async -> Void
 
 extension SwiftFeatureRuntime {
-    /// Marker line that precedes the ZenCODE `.package(path:)` dependency in
+    /// Marker line that precedes the ZenCODE `.package(name: "ZenCODE", path:)` dependency in
     /// every optional feature `Package.swift`. Copying a feature package out of
     /// the checkout only requires rewriting the line that follows it.
     public static let zenPackagePathMarker = "// zencode:package-path"
@@ -319,7 +319,7 @@ extension SwiftFeatureRuntime {
     }
 
     /// Resolves the ZenCODE checkout used both as feature source and as the
-    /// rewritten `.package(path:)` dependency.
+    /// rewritten `.package(name: "ZenCODE", path:)` dependency.
     ///
     /// Resolution order: explicit argument, the checkout this binary was built
     /// from, the persistent installer copy under the support directory, then the

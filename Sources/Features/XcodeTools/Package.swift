@@ -14,7 +14,7 @@ let package = Package(
     ],
     dependencies: [
         // zencode:package-path
-        .package(path: "../../..")
+        .package(name: "ZenCODE", path: "../../..")
     ],
     targets: [
         .target(

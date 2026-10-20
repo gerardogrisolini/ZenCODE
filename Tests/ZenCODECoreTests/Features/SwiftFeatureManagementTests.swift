@@ -804,10 +804,10 @@ extension SwiftFeatureRuntimeTests {
         #expect(package.contains("name: \"xcode-tools-feature\""))
         #expect(!package.contains("XCODE_TOOLS_FEATURE_ADOPTED"))
         #expect(!package.contains("AdoptedXcodeToolsFeature"))
-        #expect(!package.contains(".package(path: \"../../..\")"))
+        #expect(!package.contains("\"../../..\""))
         #expect(package.contains(SwiftFeatureRuntime.zenPackagePathMarker))
         let zenPackageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
-        #expect(package.contains(".package(path: \"\(zenPackageRoot.path)\")"))
+        #expect(package.contains(".package(name: \"ZenCODE\", path: \"\(zenPackageRoot.path)\")"))
 
         let buildOutput = try await runtime.executeManagementTool(
             toolCall: featureManagementCall(

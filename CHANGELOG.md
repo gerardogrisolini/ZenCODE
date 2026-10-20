@@ -61,6 +61,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
   configured, the full text of every prompt and of every memory entry written
   or updated is sent to that endpoint.
 
+### Fixed
+
+- Optional feature packages now declare their ZenCODE dependency as
+  `.package(name: "ZenCODE", path: …)` after the `// zencode:package-path`
+  marker, the form `feature.promote` already wrote. Installing an optional
+  feature previously rejected that form, so the bundled `macOS` feature failed
+  the catalog parity check and could not be installed; packages scaffolded by
+  Builder or installed from a checkout whose directory is not named `ZenCODE`
+  also failed to resolve their `ZenCODE` products. Installation still accepts
+  the legacy unnamed form and normalizes it.
+
 ## [2.3.4] - 2026-10-20
 
 ### Added

@@ -172,9 +172,11 @@ extension SwiftFeatureRuntime {
         )
     }
 
-    /// Rewrites the `.package(path:)` dependency that follows the
+    /// Rewrites the `.package(name: "ZenCODE", path: "…")` dependency that follows the
     /// `// zencode:package-path` marker so a copied feature package points at an
-    /// absolute ZenCODE checkout instead of its in-repository relative path.
+    /// absolute ZenCODE checkout instead of its in-repository relative path. The
+    /// legacy unnamed `.package(path: "…")` form is accepted and normalized to the
+    /// named form on output.
     static func packageManifestRewritingZenPackagePath(
         _ contents: String,
         zenPackagePath: String,
@@ -187,7 +189,7 @@ extension SwiftFeatureRuntime {
             throw DirectToolError.permissionDenied(
                 """
                 \(packageURL.path) does not declare the '\(zenPackagePathMarker)' marker \
-                before its ZenCODE '.package(path:)' dependency.
+                before its ZenCODE '.package(name: "ZenCODE", path: "…")' dependency.
                 """
             )
         }
@@ -201,8 +203,8 @@ extension SwiftFeatureRuntime {
               let rewritten = rewrittenPackagePathLine(lines[dependencyIndex], zenPackagePath: zenPackagePath) else {
             throw DirectToolError.permissionDenied(
                 """
-                \(packageURL.path) must declare a '.package(path: "…")' dependency \
-                on the line following '\(zenPackagePathMarker)'.
+                \(packageURL.path) must declare a '.package(name: "ZenCODE", path: "…")' \
+                dependency on the line following '\(zenPackagePathMarker)'.
                 """
             )
         }
@@ -214,7 +216,7 @@ extension SwiftFeatureRuntime {
         _ line: String,
         zenPackagePath: String
     ) -> String? {
-        let pattern = #"^(\s*)\.package\(\s*path:\s*"(?:[^"\\]|\\.)*"\s*\)(.*)$"#
+        let pattern = #"^(\s*)\.package\(\s*(?:name:\s*"ZenCODE"\s*,\s*)?path:\s*"(?:[^"\\]|\\.)*"\s*\)(.*)$"#
         guard let expression = try? NSRegularExpression(pattern: pattern),
               let match = expression.firstMatch(
                   in: line,
@@ -225,7 +227,7 @@ extension SwiftFeatureRuntime {
             return nil
         }
         return line[indentRange]
-            + ".package(path: \(swiftStringLiteral(zenPackagePath)))"
+            + ".package(name: \"ZenCODE\", path: \(swiftStringLiteral(zenPackagePath)))"
             + line[trailingRange]
     }
 }
