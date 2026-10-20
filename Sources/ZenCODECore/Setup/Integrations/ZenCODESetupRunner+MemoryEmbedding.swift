@@ -16,9 +16,10 @@ extension ZenCODESetupRunner {
     }
 
     /// The precompiled OpenRouter embedding proposal produced only when at least
-    /// one configured provider in `settings.json` is OpenRouter. `providerID`
-    /// pins the provider whose API key the resolver reuses at runtime; it is a
-    /// non-secret UUID reference, never a duplicated credential.
+    /// one configured provider in `settings.json` is OpenRouter. `model` is the
+    /// default preselected in the model submenu. `providerID` pins the provider
+    /// whose API key the resolver reuses at runtime; it is a non-secret UUID
+    /// reference, never a duplicated credential.
     struct MemoryEmbeddingOpenRouterProposal: Equatable, Sendable {
         let endpoint: String
         let model: String
@@ -46,16 +47,17 @@ extension ZenCODESetupRunner {
 
     /// Configures optional semantic embeddings for memory retrieval.
     ///
-    /// The prompt deliberately asks for only an endpoint (plus an optional
-    /// model when a provider preset applies). It validates the URL locally and
-    /// does not contact the endpoint, enumerate models, or ask for credentials.
+    /// The manual path asks only for an endpoint, validates the URL locally,
+    /// and never contacts it or asks for credentials. Only the OpenRouter
+    /// preset loads the public OpenRouter embedding catalog (no API key) to
+    /// offer a model submenu, falling back to a built-in list when offline.
     /// Before the menu it shows ``memoryEmbeddingDisclosureNotice``, which states
     /// that prompt and memory entry text is sent to a configured endpoint.
     /// Choosing no endpoint leaves retrieval on pure BM25.
     static func configureMemoryEmbedding(
         in manifest: AgentSettingsManifest?
-    ) throws -> AgentSettingsManifest {
-        let selection = try promptMemoryEmbeddingSettings(
+    ) async throws -> AgentSettingsManifest {
+        let selection = try await promptMemoryEmbeddingSettings(
             existingSettings: manifest?.memoryEmbedding,
             openRouterProposal: openRouterEmbeddingProposal(in: manifest)
         )
@@ -119,7 +121,7 @@ extension ZenCODESetupRunner {
                 TerminalCheckboxMenuItem(
                     value: .openRouter,
                     title: "Use OpenRouter embeddings",
-                    detail: "\(openRouterProposal.endpoint) · \(openRouterProposal.model)"
+                    detail: "\(openRouterProposal.endpoint) · choose a model"
                 ),
                 at: 1
             )
@@ -143,7 +145,7 @@ extension ZenCODESetupRunner {
     static func promptMemoryEmbeddingSettings(
         existingSettings: AgentMemoryEmbeddingSettingsManifest?,
         openRouterProposal: MemoryEmbeddingOpenRouterProposal?
-    ) throws -> MemoryEmbeddingSetupSelection {
+    ) async throws -> MemoryEmbeddingSetupSelection {
         let menu = memoryEmbeddingSetupMenu(
             existingSettings: existingSettings,
             openRouterProposal: openRouterProposal
@@ -161,9 +163,23 @@ extension ZenCODESetupRunner {
             guard let openRouterProposal else {
                 throw ZenCODESetupError.invalidMemoryEmbeddingEndpoint
             }
+            let catalog = await loadOpenRouterEmbeddingModels()
+            let modelMenu = openRouterEmbeddingModelMenu(
+                models: catalog.models,
+                existingSettings: existingSettings,
+                defaultModel: openRouterProposal.model
+            )
+            guard let defaultModel = modelMenu.defaultChoice else {
+                throw ZenCODESetupError.invalidMemoryEmbeddingEndpoint
+            }
+            let model = try promptMenuChoice(
+                title: "OpenRouter embedding model",
+                items: modelMenu.items,
+                selected: defaultModel
+            )
             return MemoryEmbeddingSetupSelection(
                 endpoint: openRouterProposal.endpoint,
-                model: openRouterProposal.model,
+                model: model,
                 providerID: openRouterProposal.providerID
             )
         case .configureEndpoint:

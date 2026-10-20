@@ -372,7 +372,7 @@ struct MemoryEmbeddingSetupTests {
         #expect(openRouterItem.title == "Use OpenRouter embeddings")
         #expect(
             openRouterItem.detail
-                == "https://openrouter.ai/api/v1/embeddings · qwen/qwen3-embedding-8b"
+                == "https://openrouter.ai/api/v1/embeddings · choose a model"
         )
         #expect(proposed.items.map(\.value) == [.bm25Only, .openRouter, .configureEndpoint])
         // Existing UX preserved: enabling still defaults to BM25 only.
@@ -682,5 +682,140 @@ extension MemoryEmbeddingSetupTests {
                     == "Bearer embedding-secret"
             )
         }
+    }
+
+    // MARK: - OpenRouter embedding model catalog
+
+    @Test
+    func openRouterEmbeddingCatalogDecodesStringAndNumericPrices() throws {
+        let data = Data(
+            #"""
+            {
+              "data": [
+                {"id": "openai/text-embedding-3-small", "name": "OpenAI: Text Embedding 3 Small", "context_length": 8192, "pricing": {"prompt": "0.00000002"}},
+                {"id": "qwen/qwen3-embedding-8b", "context_length": 40960, "pricing": {"prompt": 0.00000001}},
+                {"id": "  ", "name": "blank id"},
+                {"name": "missing id"}
+              ]
+            }
+            """#.utf8
+        )
+        let models = try ZenCODESetupRunner.decodeOpenRouterEmbeddingModels(from: data)
+
+        #expect(models.map(\.id) == ["openai/text-embedding-3-small", "qwen/qwen3-embedding-8b"])
+        #expect(models[0].name == "OpenAI: Text Embedding 3 Small")
+        #expect(models[0].contextLength == 8192)
+        #expect(models[0].promptPricePerToken == 0.00000002)
+        // A missing name falls back to the identifier.
+        #expect(models[1].name == "qwen/qwen3-embedding-8b")
+        #expect(models[1].promptPricePerToken == 0.00000001)
+
+        #expect(throws: RemoteModelCatalogClientError.self) {
+            _ = try ZenCODESetupRunner.decodeOpenRouterEmbeddingModels(from: Data("nope".utf8))
+        }
+    }
+
+    @Test
+    func openRouterEmbeddingCatalogUsesLiveModelsAndFallsBackWhenUnavailable() async {
+        let live = await ZenCODESetupRunner.loadOpenRouterEmbeddingModels {
+            [
+                .init(id: "z/model", name: "Z", contextLength: nil, promptPricePerToken: nil),
+                .init(id: "a/model", name: "A", contextLength: nil, promptPricePerToken: nil)
+            ]
+        }
+        #expect(!live.isFallback)
+        #expect(live.models.map(\.id) == ["a/model", "z/model"])
+
+        struct Offline: Error {}
+        let failed = await ZenCODESetupRunner.loadOpenRouterEmbeddingModels {
+            throw Offline()
+        }
+        #expect(failed.isFallback)
+        #expect(failed.models == ZenCODESetupRunner.openRouterEmbeddingModelsFallback)
+
+        let empty = await ZenCODESetupRunner.loadOpenRouterEmbeddingModels { [] }
+        #expect(empty.isFallback)
+    }
+
+    @Test
+    func builtInEmbeddingCatalogIncludesOpenAIAndDefaultModels() {
+        let ids = ZenCODESetupRunner.openRouterEmbeddingModelsFallback.map(\.id)
+
+        #expect(ids.contains(AgentMemoryEmbeddingSettingsManifest.openRouterEmbeddingsModel))
+        #expect(ids.contains("openai/text-embedding-3-small"))
+        #expect(ids.contains("openai/text-embedding-3-large"))
+        #expect(ids.contains("openai/text-embedding-ada-002"))
+        #expect(Set(ids).count == ids.count)
+        #expect(ids == ids.sorted())
+    }
+
+    @Test
+    func openRouterEmbeddingModelMenuPreselectsCurrentThenDefaultThenFirst() {
+        let models: [ZenCODESetupRunner.MemoryEmbeddingModelOption] = [
+            .init(id: "a/first", name: "First", contextLength: 512, promptPricePerToken: 0),
+            .init(id: "openai/text-embedding-3-small", name: "Small", contextLength: 8192, promptPricePerToken: 0.00000002),
+            .init(id: "qwen/qwen3-embedding-8b", name: "Qwen", contextLength: 40960, promptPricePerToken: 0.00000001)
+        ]
+        let defaultModel = "qwen/qwen3-embedding-8b"
+
+        // Nothing configured: the preset default is preselected.
+        let fresh = ZenCODESetupRunner.openRouterEmbeddingModelMenu(
+            models: models,
+            existingSettings: nil,
+            defaultModel: defaultModel
+        )
+        #expect(fresh.items.map(\.value) == models.map(\.id))
+        #expect(fresh.defaultChoice == defaultModel)
+        #expect(fresh.items[0].detail == "First · free · 512 input tokens")
+        #expect(fresh.items[1].detail == "Small · $0.02/M tokens · 8192 input tokens")
+
+        // The configured OpenRouter model is preselected.
+        let current = ZenCODESetupRunner.openRouterEmbeddingModelMenu(
+            models: models,
+            existingSettings: AgentMemoryEmbeddingSettingsManifest(
+                endpoint: "https://openrouter.ai/api/v1/embeddings",
+                model: "openai/text-embedding-3-small",
+                providerID: UUID()
+            ),
+            defaultModel: defaultModel
+        )
+        #expect(current.defaultChoice == "openai/text-embedding-3-small")
+
+        // A model on a non-OpenRouter endpoint is not a preselection hint.
+        let foreign = ZenCODESetupRunner.openRouterEmbeddingModelMenu(
+            models: models,
+            existingSettings: AgentMemoryEmbeddingSettingsManifest(
+                endpoint: "https://embeddings.example.test/v1/embeddings",
+                model: "openai/text-embedding-3-small"
+            ),
+            defaultModel: defaultModel
+        )
+        #expect(foreign.defaultChoice == defaultModel)
+
+        // Default not listed: the first model is preselected.
+        let missingDefault = ZenCODESetupRunner.openRouterEmbeddingModelMenu(
+            models: models,
+            existingSettings: nil,
+            defaultModel: "missing/model"
+        )
+        #expect(missingDefault.defaultChoice == "a/first")
+
+        let none = ZenCODESetupRunner.openRouterEmbeddingModelMenu(
+            models: [],
+            existingSettings: nil,
+            defaultModel: defaultModel
+        )
+        #expect(none.defaultChoice == nil)
+    }
+
+    @Test
+    func embeddingPriceFormatsPerMillionTokens() {
+        #expect(ZenCODESetupRunner.formattedEmbeddingPrice(0.00000002) == "$0.02/M tokens")
+        #expect(ZenCODESetupRunner.formattedEmbeddingPrice(0.00000013) == "$0.13/M tokens")
+        #expect(ZenCODESetupRunner.formattedEmbeddingPrice(0.000000004) == "$0.004/M tokens")
+        #expect(ZenCODESetupRunner.formattedEmbeddingPrice(0.000001) == "$1/M tokens")
+        #expect(ZenCODESetupRunner.formattedEmbeddingPrice(0) == "free")
+        #expect(ZenCODESetupRunner.formattedEmbeddingPrice(nil) == nil)
+        #expect(ZenCODESetupRunner.formattedEmbeddingPrice(-1) == nil)
     }
 }

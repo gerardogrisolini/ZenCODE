@@ -235,7 +235,7 @@ public enum ZenCODESetupRunner {
             )
         case .memoryEmbedding:
             return SetupSectionConfigurationResult(
-                manifest: try configureMemoryEmbedding(in: manifest)
+                manifest: try await configureMemoryEmbedding(in: manifest)
             )
         case .agentModels:
             let currentManifest = try requireExistingManifest(manifest)

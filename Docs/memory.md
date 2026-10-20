@@ -201,12 +201,20 @@ interactively ("Memory embeddings": BM25 only / add / change / remove endpoint,
 detail line "BM25 only" or the stored endpoint, with the model appended when
 present). When at least one configured provider is OpenRouter, setup proposes an
 OpenRouter choice immediately, precompiled to the canonical endpoint
-`https://openrouter.ai/api/v1/embeddings` with model `qwen/qwen3-embedding-8b`
-and the referenced provider's ID; without an OpenRouter provider no such
-proposal appears. The manual add/change-endpoint path stays endpoint-only by
+`https://openrouter.ai/api/v1/embeddings` and the referenced provider's ID;
+without an OpenRouter provider no such proposal appears. Choosing it opens an
+"OpenRouter embedding model" submenu listing the models of the public
+OpenRouter catalog `GET https://openrouter.ai/api/v1/embeddings/models`
+(requested without any API key, bounded by a 15-second timeout), each with its
+name, price per million input tokens, and input-token limit. When the catalog
+cannot be loaded or is empty, setup says so and shows a built-in snapshot of
+that catalog instead. The submenu preselects the currently configured model
+when the existing endpoint is OpenRouter and the model is listed, otherwise
+`qwen/qwen3-embedding-8b`. This catalog request is the only network work setup
+performs for embeddings. The manual add/change-endpoint path stays endpoint-only by
 design: it never carries over the preset's model/provider reference, so an
-edited endpoint cannot silently reuse the provider's key. Setup validates the
-URL format entirely locally: it never
+edited endpoint cannot silently reuse the provider's key. For that manual
+endpoint, setup validates the URL format entirely locally: it never
 probes the endpoint, never enumerates models, and never asks for credentials.
 When an endpoint is configured, setup shows a note stating that the full text of
 every prompt (operator and sub-agent turns, for automatic recall) and of every

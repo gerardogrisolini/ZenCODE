@@ -34,6 +34,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The "Use OpenRouter embeddings" choice in the "Memory embeddings" setup
+  section now opens a model submenu instead of always configuring
+  `qwen/qwen3-embedding-8b`. It lists every embedding model in OpenRouter's
+  public catalog (including OpenAI `text-embedding-3-small`,
+  `text-embedding-3-large`, and `text-embedding-ada-002`), each with its price
+  per million input tokens and input limit, and preselects the current model.
+  The catalog is loaded without an API key; when it is unreachable, setup
+  shows a built-in list instead. Entries embedded with a different model fall
+  back to lexical retrieval after a model change.
 - The shared chat is now the standard coordination channel between the
   coordinator and delegated agents. A new Collaboration policy in the
   coordinator prompt asks it to answer sub-agent questions immediately, steer
