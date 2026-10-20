@@ -129,7 +129,7 @@ a write, an update or an archive toggle; retrieval maintenance never touches
 0.2, so between two old entries relevance decides rather than a near-zero
 factor; a logarithmic access boost lifts frequently selected entries and the
 stored `confidence` scales the whole. The discount is applied to each ranking
-*before* reciprocal-rank fusion — each stage over-fetches and re-sorts by
+*before* fusion — each stage over-fetches and re-sorts by
 relevance × freshness, so a slightly older but better match keeps its rank,
 whereas applying it after fusion would act on near-flat rank scores and sort
 by age alone — and, after the cascade, only to the graph neighbours that
@@ -156,9 +156,38 @@ concurrent forget/archive/scope change made stale while the selector was
 awaiting, and co-relevance linking only ever connects live endpoints (linking
 a missing or inactive node is a no-op), so no dangling edges are persisted and
 the returned result never contains eliminated entries. Without an embedder,
-BM25 is the sole seed source; reciprocal-rank fusion is applied only when an
-embedder is configured, merging the semantic and lexical rankings before the
-cascade.
+BM25 is the sole seed source. With an embedder, the semantic ranking is
+**gated per prompt** and the rankings are merged by **max-normalised score
+fusion** before the cascade; both rules were chosen by an A/B measurement of
+the engine on a real 197-entry graph (14 Italian/English queries with
+hand-judged relevance; harness: the opt-in `MemoryEmbeddingABLiveTests`).
+Sentence embeddings are anisotropic: the cosine of a prompt against unrelated
+entries is not 0 but a prompt-specific baseline (about 0.35–0.45 with
+`qwen3-embedding-8b`) with a narrow spread, so the absolute floor
+(`similarityThreshold`, 0.4) never filtered anything and every prompt —
+including one with no relevant memory — produced a full semantic list.
+`MemorySearch.semantic` therefore keeps a hit only when its cosine exceeds the
+median of the prompt's distribution by `semanticMinimumZScore` (2.5) robust
+standard deviations (1.4826 × median absolute deviation, which a few genuine
+matches cannot inflate the way the standard deviation is; it falls back to the
+standard deviation when more than half of the values coincide), still above
+the absolute floor; a flat distribution yields no semantic seed. The gate
+applies only with at least `MemorySearch.minimumGateSampleSize` (8) eligible
+vectors, because with fewer a single outlier cannot reach the required z; small
+graphs keep the absolute floor alone. Fusion then divides every ranking's
+scores by that ranking's top score and sums the normalised values
+(`MemorySearch.normalizedScoreFusion`, CombSUM): a hit that dominates one list
+keeps a score no mid-ranked entry of two lists can reach, while an entry near
+the top of both still outranks the top of either. Reciprocal-rank fusion
+(`MemoryRankFusion.reciprocalRank`, k = 60) remains selectable as the measured
+reference: its contributions are nearly flat, so any entry present in both
+lists outranked an exact lexical hit whenever the semantic list was long and
+noisy. Measured on that graph (automatic-recall configuration, ranked
+candidates): BM25 alone MRR 0.74, recall@5 0.51, 3 queries with no relevant
+entry in the top-5; the previous RRF + absolute-threshold pipeline 0.86 / 0.65 /
+2 and one exact lexical top-1 displaced; the current defaults 1.00 / 0.74 / 0
+with none displaced. Centering the vectors on the corpus centroid was also
+measured and rejected (it lowered the pure-cosine rank of the relevant entries).
 
 Embeddings are opt-in and off by default. With no provider configured, entries
 carry no vector and retrieval is pure BM25 plus graph expansion. The persisted
@@ -179,6 +208,10 @@ design: it never carries over the preset's model/provider reference, so an
 edited endpoint cannot silently reuse the provider's key. Setup validates the
 URL format entirely locally: it never
 probes the endpoint, never enumerates models, and never asks for credentials.
+When an endpoint is configured, setup shows a note stating that the full text of
+every prompt (operator and sub-agent turns, for automatic recall) and of every
+memory entry written or updated is sent to that endpoint; without an endpoint,
+retrieval stays local (BM25).
 The embedding request never duplicates the provider's API key: when
 `providerID` is set the resolver reads
 `remoteAPIKeysByProviderID[providerID.uuidString.lowercased()]` at runtime only
@@ -223,11 +256,11 @@ of the pipeline, including the one-time JSON graph open on a cold workspace,
 is bounded by `ZENCODE_MEMORY_RECALL_TIMEOUT_MS` (default 150 ms, clamped to
 [10, 5000]). When an embedding endpoint is configured, the total budget of the
 recall, including the HTTP request to the embedding service, is governed by
-`ZENCODE_MEMORY_RECALL_SEMANTIC_TIMEOUT_MS` (default 1 500 ms, clamped to
+`ZENCODE_MEMORY_RECALL_SEMANTIC_TIMEOUT_MS` (default 6 000 ms, clamped to
 [10, 10 000]) instead. Resolution: an explicit
 semantic value wins; otherwise, if `ZENCODE_MEMORY_RECALL_TIMEOUT_MS` is set and
 parseable, it also governs the semantic path, so one variable limits every
-recall; otherwise the 1 500 ms default applies. Unparseable values count as
+recall; otherwise the 6 000 ms default applies. Unparseable values count as
 unset. At steady state the graph read is served from the reload cache, so an
 unchanged file is not decoded again. When an embedding provider is configured,
 `MemoryTurnCoordinator` prepares a maintenance-free local BM25 result alongside
@@ -241,7 +274,11 @@ bound and may be served by the lexical fallback. Without an embedder nothing
 changes. The extension exists because hosted endpoints such as OpenRouter answer
 in a few hundred milliseconds, and a single 150 ms bound cancelled the semantic
 request on nearly every turn, leaving recall silently lexical despite a
-configured endpoint. If the graph cannot
+configured endpoint; the semantic default was then raised from 1 500 ms to
+6 000 ms because, measured against OpenRouter on a real graph, the embedding
+request takes 0.5–2 s at the median with tails of several seconds, so the
+shorter bound still dropped a third to a half of the recalls onto the lexical
+fallback. If the graph cannot
 open or the local fallback itself is not ready at the deadline, recall resolves
 to no block, which makes the outgoing request byte-identical to one sent with
 memory switched off. A session is auto-disabled after three consecutive

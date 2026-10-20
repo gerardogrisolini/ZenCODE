@@ -15,8 +15,30 @@ enum MemoryIntelligenceFailurePolicy: String, Codable, Sendable, Equatable {
     case propagate
 }
 
+/// How the lexical and semantic rankings are merged into retrieval seeds.
+enum MemoryRankFusion: String, Codable, Sendable, Equatable {
+    /// Reciprocal-rank fusion: every ranking contributes `1 / (k + rank)`.
+    /// With the conventional `k = 60` the contributions are nearly flat, so an
+    /// entry present in two rankings outranks the top hit of either one — on a
+    /// real graph this displaced exact lexical hits whenever the semantic
+    /// ranking was long and noisy. Kept as a measured reference.
+    case reciprocalRank
+    /// Max-normalised score fusion (CombSUM): every ranking's scores are
+    /// divided by that ranking's top score and the normalised scores are
+    /// summed, so a dominant hit of a single ranking keeps its rank. The
+    /// default.
+    case normalizedScore
+}
+
 struct MemoryEngineConfiguration: Sendable, Equatable {
+    /// Absolute floor on the raw cosine of a semantic hit.
     public var similarityThreshold: Float
+    /// A semantic hit must also stand out from the prompt's similarity
+    /// distribution by at least this many standard deviations; `0` keeps every
+    /// hit above `similarityThreshold` (see ``MemorySearch/semantic``).
+    public var semanticMinimumZScore: Float
+    /// How lexical and semantic rankings are merged into retrieval seeds.
+    public var fusion: MemoryRankFusion
     public var maxSemanticHits: Int
     public var maxLexicalHits: Int
     public var maxAnalyzedQueries: Int
@@ -44,6 +66,8 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
 
     public init(
         similarityThreshold: Float = 0.4,
+        semanticMinimumZScore: Float = 2.5,
+        fusion: MemoryRankFusion = .normalizedScore,
         maxSemanticHits: Int = 10,
         maxLexicalHits: Int = 10,
         maxAnalyzedQueries: Int = 4,
@@ -62,6 +86,8 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
         recallMaintenanceCheckpointSize: Int = 4
     ) {
         self.similarityThreshold = similarityThreshold
+        self.semanticMinimumZScore = max(0, semanticMinimumZScore)
+        self.fusion = fusion
         self.maxSemanticHits = maxSemanticHits
         self.maxLexicalHits = maxLexicalHits
         self.maxAnalyzedQueries = max(1, maxAnalyzedQueries)

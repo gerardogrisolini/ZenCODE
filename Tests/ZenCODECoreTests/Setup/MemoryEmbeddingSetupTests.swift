@@ -144,6 +144,15 @@ struct MemoryEmbeddingSetupTests {
     }
 
     @Test
+    func memoryEmbeddingDisclosureNoticeStatesTextIsSentToEndpoint() {
+        let notice = ZenCODESetupRunner.memoryEmbeddingDisclosureNotice
+
+        #expect(notice.contains("sent to that endpoint"))
+        #expect(notice.contains("prompt"))
+        #expect(notice.hasSuffix("\n"))
+    }
+
+    @Test
     func setupDetailReflectsThreeStates() {
         let absent = AgentSettingsManifest(models: [])
         #expect(ZenCODESetupRunner.memoryEmbeddingSetupDetail(absent) == "not configured")

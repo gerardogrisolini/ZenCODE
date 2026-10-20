@@ -10,6 +10,26 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Memory retrieval with an embedding endpoint: semantic hits are now gated per
+  prompt (a hit must exceed the median cosine of the prompt's similarity
+  distribution by 2.5 robust standard deviations, on top of the 0.4 floor, with
+  at least 8 vectors), and the lexical and semantic rankings are merged by
+  max-normalised score fusion instead of reciprocal-rank fusion. Measured on a
+  real 197-entry graph with 14 Italian/English queries: MRR 0.86 → 1.00,
+  recall@5 0.65 → 0.74, no query left without a relevant entry in the top-5,
+  and an exact keyword hit is no longer displaced by a noisy semantic list.
+  Without an endpoint nothing changes.
+- The default semantic recall bound (`ZENCODE_MEMORY_RECALL_SEMANTIC_TIMEOUT_MS`)
+  is now 6000 ms instead of 1500 ms: measured against OpenRouter, the embedding
+  request takes 0.5–2 s at the median with multi-second tails, so the shorter
+  bound still dropped a third to a half of the recalls onto the lexical
+  fallback. An explicit value keeps overriding it.
+- The "Memory embeddings" setup now discloses that, with an embedding endpoint
+  configured, the full text of every prompt and of every memory entry written
+  or updated is sent to that endpoint.
+
 ## [2.3.4] - 2026-10-20
 
 ### Added

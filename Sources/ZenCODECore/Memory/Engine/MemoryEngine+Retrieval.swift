@@ -159,12 +159,16 @@ extension MemoryEngine {
             for query in semanticQueries {
                 do {
                     let queryEmbedding = try await embedder.embed(query)
+                    // Gated per prompt (see `MemorySearch.semantic`): a prompt
+                    // with no semantic outlier contributes no semantic seeds
+                    // instead of a noise-filled list.
                     let semantic = MemorySearch.semantic(
                         graph: graph,
                         queryEmbedding: queryEmbedding,
                         modelID: embedder.modelID,
                         scope: scope,
                         threshold: configuration.similarityThreshold,
+                        minimumZScore: configuration.semanticMinimumZScore,
                         limit: semanticLimit * overfetch
                     )
                     if !semantic.isEmpty { rankings.append(weighted(semantic, keeping: semanticLimit)) }
@@ -195,11 +199,22 @@ extension MemoryEngine {
         if rankings.count == 1 {
             seeds = Array(rankings[0].prefix(seedLimit))
         } else {
-            seeds = MemorySearch.reciprocalRankFusion(
-                rankedLists: rankings,
-                rankConstant: configuration.rrfRankConstant,
-                limit: seedLimit
-            )
+            // Measured on a real graph (see Docs/memory.md): max-normalised
+            // score fusion keeps an exact lexical hit on top where reciprocal
+            // ranks let any entry present in both lists outrank it.
+            switch configuration.fusion {
+            case .reciprocalRank:
+                seeds = MemorySearch.reciprocalRankFusion(
+                    rankedLists: rankings,
+                    rankConstant: configuration.rrfRankConstant,
+                    limit: seedLimit
+                )
+            case .normalizedScore:
+                seeds = MemorySearch.normalizedScoreFusion(
+                    rankedLists: rankings,
+                    limit: seedLimit
+                )
+            }
         }
 
         guard !seeds.isEmpty else {

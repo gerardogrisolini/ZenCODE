@@ -49,7 +49,11 @@ enum MemoryAutomationSettings {
     /// on nearly every turn and recall would silently stay lexical although an
     /// endpoint was configured. The semantic bound therefore has its own default;
     /// the lexical fallback prepared beside the request still caps the wait.
-    static let defaultSemanticRecallTimeoutMilliseconds = 1_500
+    /// Measured against OpenRouter on a real graph the request takes 0.5–2 s at
+    /// the median with tails of several seconds, so the earlier 1 500 ms bound
+    /// still dropped a third to a half of the recalls onto the lexical fallback;
+    /// 6 s keeps nearly every answer while bounding a stalled endpoint.
+    static let defaultSemanticRecallTimeoutMilliseconds = 6_000
     static let minimumSemanticRecallTimeoutMilliseconds = 10
     static let maximumSemanticRecallTimeoutMilliseconds = 10_000
 

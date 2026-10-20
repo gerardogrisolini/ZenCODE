@@ -1060,7 +1060,8 @@ struct MemoryAutomationFlowTests {
 
         await scopedEnv([recallKey: nil, semanticKey: nil]) {
             #expect(MemoryAutomationSettings.semanticRecallTimeoutMilliseconds == defaultMs)
-            #expect(MemoryAutomationSettings.semanticRecallTimeout == .milliseconds(1500))
+            #expect(defaultMs == 6_000)
+            #expect(MemoryAutomationSettings.semanticRecallTimeout == .milliseconds(6_000))
         }
         await scopedEnv([recallKey: "100", semanticKey: nil]) {
             #expect(MemoryAutomationSettings.recallTimeoutMilliseconds == 100)

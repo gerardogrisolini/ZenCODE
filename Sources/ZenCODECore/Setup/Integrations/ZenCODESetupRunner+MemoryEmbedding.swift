@@ -39,11 +39,18 @@ extension ZenCODESetupRunner {
         }
     }
 
+    /// Disclosure shown before the embedding menu: with an endpoint configured,
+    /// the full text of prompts and memory entries is sent to that endpoint.
+    static let memoryEmbeddingDisclosureNotice =
+        "Note: with an embedding endpoint configured, the full text of every prompt (operator and sub-agent turns, for automatic recall) and of every memory entry you write is sent to that endpoint. Without an endpoint, memory retrieval stays local (BM25).\n"
+
     /// Configures optional semantic embeddings for memory retrieval.
     ///
     /// The prompt deliberately asks for only an endpoint (plus an optional
     /// model when a provider preset applies). It validates the URL locally and
     /// does not contact the endpoint, enumerate models, or ask for credentials.
+    /// Before the menu it shows ``memoryEmbeddingDisclosureNotice``, which states
+    /// that prompt and memory entry text is sent to a configured endpoint.
     /// Choosing no endpoint leaves retrieval on pure BM25.
     static func configureMemoryEmbedding(
         in manifest: AgentSettingsManifest?
@@ -141,6 +148,7 @@ extension ZenCODESetupRunner {
             existingSettings: existingSettings,
             openRouterProposal: openRouterProposal
         )
+        AgentOutput.standardError.writeString(memoryEmbeddingDisclosureNotice)
         let choice = try promptMenuChoice(
             title: "Memory embeddings",
             items: menu.items,

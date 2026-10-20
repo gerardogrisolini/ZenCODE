@@ -37,29 +37,102 @@ enum MemorySearch {
         return dot / (sqrtf(lhsNorm) * sqrtf(rhsNorm))
     }
 
+    /// Semantic ranking of the active, in-scope entries that carry a vector
+    /// from `modelID`, best first.
+    ///
+    /// Sentence embeddings are anisotropic: the cosine of a prompt against
+    /// unrelated entries is not 0 but a prompt-specific baseline (about 0.35 to
+    /// 0.45 for a 4096-dimensional model) with a narrow spread, so an absolute
+    /// `threshold` cannot tell a real match from the top of that noise band and
+    /// a prompt with no relevant memory still yields a full list. With
+    /// `minimumZScore > 0` the ranking is gated per prompt: a hit must stand
+    /// out from the bulk of the prompt's similarity distribution by that many
+    /// robust standard deviations (median and scaled median absolute
+    /// deviation, which a handful of genuine matches cannot inflate), so a
+    /// flat distribution yields no hit at all. The gate needs at least
+    /// ``minimumGateSampleSize`` eligible vectors — below that a single
+    /// outlier cannot reach the required z — and `threshold` always applies
+    /// as an absolute floor on the raw cosine.
     public static func semantic(
         graph: MemoryGraph,
         queryEmbedding: [Float],
         modelID: String,
         scope: EngineMemoryScope = .all,
         threshold: Float = 0.4,
+        minimumZScore: Float = 0,
         limit: Int = 10
     ) -> [ScoredMemoryID] {
-        graph.memories.values
-            .lazy
-            .filter { $0.active && scopeAllows($0.scope, requested: scope) && $0.embeddingMatches(model: modelID) }
-            .compactMap { entry -> ScoredMemoryID? in
-                guard let embedding = entry.embedding else { return nil }
-                let score = cosineSimilarity(queryEmbedding, embedding)
-                guard score >= threshold else { return nil }
-                return ScoredMemoryID(id: entry.id, score: score)
+        guard limit > 0 else { return [] }
+        let scored = semanticSimilarities(
+            graph: graph,
+            queryEmbedding: queryEmbedding,
+            modelID: modelID,
+            scope: scope
+        )
+        guard !scored.isEmpty else { return [] }
+
+        var floor = threshold
+        if minimumZScore > 0, scored.count >= minimumGateSampleSize {
+            // A degenerate spread means nothing stands out for this prompt.
+            guard let gate = robustOutlierGate(scored.map(\.score), zScore: minimumZScore) else {
+                return []
             }
+            floor = max(floor, gate)
+        }
+
+        return scored
+            .filter { $0.score >= floor }
             .sorted {
                 if $0.score == $1.score { return $0.id < $1.id }
                 return $0.score > $1.score
             }
             .prefix(limit)
             .map { $0 }
+    }
+
+    /// Fewest eligible vectors for which the z-score gate is applied.
+    static let minimumGateSampleSize = 8
+
+    /// `median + z · scale`, where `scale` is the median absolute deviation
+    /// scaled to the standard deviation of a normal distribution (× 1.4826),
+    /// falling back to the standard deviation when more than half of the
+    /// values coincide. `nil` when the values have no spread at all.
+    static func robustOutlierGate(_ values: [Float], zScore: Float) -> Float? {
+        guard values.count >= 2 else { return nil }
+        let sorted = values.sorted()
+        let median = medianOfSorted(sorted)
+        let deviations = values.map { abs($0 - median) }.sorted()
+        var scale = 1.4826 * medianOfSorted(deviations)
+        if scale <= 0 {
+            let mean = values.reduce(0, +) / Float(values.count)
+            scale = sqrtf(values.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Float(values.count))
+        }
+        guard scale > 0 else { return nil }
+        return median + zScore * scale
+    }
+
+    private static func medianOfSorted(_ sorted: [Float]) -> Float {
+        let middle = sorted.count / 2
+        return sorted.count.isMultiple(of: 2) ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
+    }
+
+    /// Unfiltered, unsorted raw cosine of every eligible entry to the prompt.
+    static func semanticSimilarities(
+        graph: MemoryGraph,
+        queryEmbedding: [Float],
+        modelID: String,
+        scope: EngineMemoryScope
+    ) -> [ScoredMemoryID] {
+        let dimensions = queryEmbedding.count
+        guard dimensions > 0 else { return [] }
+        return graph.memories.values.compactMap { entry in
+            guard entry.active,
+                  scopeAllows(entry.scope, requested: scope),
+                  entry.embeddingMatches(model: modelID),
+                  let embedding = entry.embedding,
+                  embedding.count == dimensions else { return nil }
+            return ScoredMemoryID(id: entry.id, score: cosineSimilarity(queryEmbedding, embedding))
+        }
     }
 
     public static func lexicalBM25(
@@ -162,6 +235,35 @@ enum MemorySearch {
         for list in rankedLists where !list.isEmpty {
             for (rank, item) in list.enumerated() {
                 scores[item.id, default: 0] += 1 / (rankConstant + Float(rank + 1))
+            }
+        }
+        return scores.map { ScoredMemoryID(id: $0.key, score: $0.value) }
+            .sorted {
+                if $0.score == $1.score { return $0.id < $1.id }
+                return $0.score > $1.score
+            }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    /// Max-normalised score fusion (CombSUM). Every ranking's scores are divided
+    /// by that ranking's top score, so each list contributes values in `(0, 1]`
+    /// regardless of its native scale (BM25 weights, cosines), and the
+    /// per-entry contributions are summed. Unlike reciprocal-rank fusion the
+    /// shape of each ranking survives: a hit that dominates one list keeps a
+    /// score no mid-ranked entry of two lists can reach, while an entry near
+    /// the top of both lists still outranks the top of either. Lists with a
+    /// non-positive top score contribute nothing.
+    public static func normalizedScoreFusion(
+        rankedLists: [[ScoredMemoryID]],
+        limit: Int = 10
+    ) -> [ScoredMemoryID] {
+        guard limit > 0 else { return [] }
+        var scores: [String: Float] = [:]
+        for list in rankedLists {
+            guard let top = list.map(\.score).max(), top > 0 else { continue }
+            for item in list where item.score > 0 {
+                scores[item.id, default: 0] += item.score / top
             }
         }
         return scores.map { ScoredMemoryID(id: $0.key, score: $0.value) }
