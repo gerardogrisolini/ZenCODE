@@ -749,16 +749,19 @@ struct MemoryServiceTests {
         let profiles = AgentProfileStore.defaultProfiles()
         let names = Set(profiles.map(\.name))
 
-        #expect(names == Set([
+        var expectedNames: Set<String> = [
             "Developer",
             "Builder",
             "Minimal",
             "Reviewer",
             "Reporter",
             "Planner",
-            "Organizer",
             "Promoter"
-        ]))
+        ]
+        #if os(macOS)
+        expectedNames.insert("Organizer")
+        #endif
+        #expect(names == expectedNames)
         #expect(Set(profiles.map(\.id)).count == profiles.count)
         #expect(try AgentProfileStore.developerProfile(in: profiles).name == "Developer")
     }

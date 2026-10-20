@@ -53,9 +53,14 @@ extension AgentConfigurationTests {
         let reviewerProfile = try #require(profiles["Reviewer"])
         let reporterProfile = try #require(profiles["Reporter"])
         let plannerProfile = try #require(profiles["Planner"])
-        let organizerProfile = try #require(profiles["Organizer"])
         let promoterProfile = try #require(profiles["Promoter"])
+        #if os(macOS)
+        let organizerProfile = try #require(profiles["Organizer"])
         #expect(profiles.count == 8)
+        #else
+        #expect(profiles["Organizer"] == nil)
+        #expect(profiles.count == 7)
+        #endif
         #expect(profiles["Xcode"] == nil)
         #expect(reviewerProfile.tools == AgentProfileStore.reviewerToolNames)
         #expect(reviewerProfile.instructions?.contains("Reviewer agent") == true)
@@ -138,6 +143,7 @@ extension AgentConfigurationTests {
         #expect(!minimalProfile.tools.contains("sub-agents"))
         #expect(minimalProfile.tools == AgentProfileStore.minimalToolNames)
         #expect(minimalProfile.instructions?.contains("Minimal agent") == true)
+        #if os(macOS)
         let macOSKey = TerminalToolSelectionCatalog.featurePackageKey(id: "macOS")
         #expect(organizerProfile.id == AgentProfileStore.organizerAgentID.uuidString)
         #expect(organizerProfile.tools == AgentProfileStore.organizerToolNames)
@@ -154,6 +160,7 @@ extension AgentConfigurationTests {
         #expect(!organizerAllowedToolNames.contains("local.readFile"))
         #expect(!organizerAllowedToolNames.contains("local.writeFile"))
         #expect(!organizerAllowedToolNames.contains("local.exec"))
+        #endif
         let browserKey = TerminalToolSelectionCatalog.featurePackageKey(id: "browser-tools")
         #expect(promoterProfile.id == AgentProfileStore.promoterAgentID.uuidString)
         #expect(promoterProfile.tools == AgentProfileStore.promoterToolNames)
@@ -205,9 +212,13 @@ extension AgentConfigurationTests {
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reviewer"])).contains("Read-only reviewer"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reporter"])).contains("evidence-based reports"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Planner"])).contains("Read-only planner"))
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Organizer"])).contains("Personal assistant"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Promoter"])).contains("project promotion"))
+        #if os(macOS)
+        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Organizer"])).contains("Personal assistant"))
         #expect(profiles.count == 8)
+        #else
+        #expect(profiles.count == 7)
+        #endif
 
         let customAgent = AgentProfile(
             id: "custom",

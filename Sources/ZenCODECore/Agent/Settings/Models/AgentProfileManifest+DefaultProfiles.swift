@@ -7,7 +7,7 @@ import Foundation
 
 extension AgentProfileStore {
     public static func defaultProfiles() -> [AgentProfile] {
-        [
+        let profiles = [
             AgentProfile(
                 id: developerAgentID.uuidString,
                 name: developerAgentName,
@@ -146,5 +146,12 @@ extension AgentProfileStore {
                 tools: promoterToolNames
             )
         ]
+        #if os(macOS)
+        return profiles
+        #else
+        // Organizer depends on the macOS feature tools, so it is recommended
+        // only on macOS.
+        return profiles.filter { $0.id != organizerAgentID.uuidString }
+        #endif
     }
 }

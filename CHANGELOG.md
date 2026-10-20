@@ -16,7 +16,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   uses the `macOS` feature tools (calendar, reminders, contacts, mail, messages,
   notes, photos, permissions), tracks project state with `memory`, and
   delegates project work to other profiles through `sub-agents`. It has no
-  direct file or shell access and carries no model binding. Existing
+  direct file or shell access and carries no model binding. It is recommended
+  only on macOS and is not included in the default profiles on Linux. Existing
   `agents.json` manifests are not changed; regenerate the recommended profiles
   in setup to add it.
 - A new recommended `Promoter` agent profile runs one daily step of a

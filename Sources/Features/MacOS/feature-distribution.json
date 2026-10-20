@@ -1,0 +1,570 @@
+{
+  "build" : {
+    "configuration" : "release",
+    "executablePath" : ".build/release/macOS",
+    "packagePath" : ".",
+    "product" : "macOS",
+    "system" : "swiftpm"
+  },
+  "description" : "Personal assistant for the user's macOS apps, one tool per app: macos.calendar, macos.reminders, macos.contacts, macos.mail, macos.messages, macos.photos, macos.notes, plus macos.permissions for privacy access (read, search, create, update, send, and delete with confirmation).",
+  "displayName" : "macOS",
+  "distributionSchemaVersion" : 1,
+  "executable" : ".build/release/macOS",
+  "id" : "macOS",
+  "invocationTimeoutSeconds" : 180,
+  "isInstalledOnLinux" : false,
+  "origin" : {
+    "by" : "ZenCODE",
+    "createdAt" : "2026-10-20T10:39:47Z",
+    "promotionReady" : true
+  },
+  "platforms" : [
+    "macOS"
+  ],
+  "productName" : "macOS",
+  "schemaVersion" : 2,
+  "sourceRelativePath" : "Sources/Features/MacOS",
+  "toolNamePrefixes" : [
+    "macos."
+  ],
+  "tools" : [
+    {
+      "description" : "Personal-assistant access to the user's Calendar (EventKit): list calendars, list events in a date range with recurrences expanded, create, update, and delete events (single occurrences or whole series). Needs the Calendar privacy grant: check it with macos.permissions first. Dates are ISO 8601; values without a UTC offset are in the user's local time zone and outputs carry the local offset. Ids returned by list/search actions are the handles for get/update/delete actions. Destructive or outbound actions (delete_event) require confirm=true: ask the user for explicit approval before setting it. The tool never runs caller-supplied AppleScript, JavaScript, or shell code.",
+      "inputSchema" : "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\"action\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"list\", \"events\", \"create_event\", \"update_event\", \"delete_event\"], \"description\": \"list: calendars. events: events in [start, end] (default: the next 7 days). create_event \\/ update_event \\/ delete_event: manage one event; recurring events are addressed by event_id plus occurrence_start and span.\" },\n    \"confirm\": { \"type\": \"boolean\", \"description\": \"Must be true for delete_event. Set it only after the user explicitly approved that exact operation.\" },\n    \"limit\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 500, \"description\": \"Maximum events returned by events (default 100).\" },\n    \"query\": { \"type\": \"string\", \"description\": \"events: substring filter on title, location, and notes.\" },\n    \"start\": { \"type\": \"string\", \"description\": \"ISO 8601 date or date-time (local time zone unless an offset is given; also now/today/tomorrow). Range start for events (default today 00:00); event start for create_event and update_event.\" },\n    \"end\": { \"type\": \"string\", \"description\": \"ISO 8601 date or date-time. Range end for events (default start + 7 days; a plain date is inclusive); event end for create_event (default start + 1 hour) and update_event.\" },\n    \"calendar\": { \"type\": \"string\", \"description\": \"Calendar title or id (see list). Filters events; target calendar for create_event and update_event (default: the user's default calendar).\" },\n    \"event_id\": { \"type\": \"string\", \"description\": \"Event id from events, for update_event and delete_event.\" },\n    \"occurrence_start\": { \"type\": \"string\", \"description\": \"ISO start of the specific occurrence of a recurring event to update or delete; omit for non-recurring events.\" },\n    \"span\": { \"type\": \"string\", \"enum\": [\"this\", \"future\"], \"description\": \"Recurring events: 'this' (default) changes only the selected occurrence, 'future' changes it and all later ones.\" },\n    \"title\": { \"type\": \"string\", \"description\": \"Event title for create_event and update_event.\" },\n    \"all_day\": { \"type\": \"boolean\", \"description\": \"All-day event flag; defaults to true when start is a plain date.\" },\n    \"location\": { \"type\": \"string\", \"description\": \"Event location (empty string clears it).\" },\n    \"notes\": { \"type\": \"string\", \"description\": \"Event notes (empty string clears them).\" },\n    \"url\": { \"type\": \"string\", \"description\": \"URL attached to the event (empty string clears it).\" },\n    \"alarm_minutes\": { \"type\": \"array\", \"items\": { \"type\": \"integer\", \"minimum\": 0 }, \"description\": \"Alerts in minutes before the event start (0 = at the start).\" },\n    \"recurrence\": { \"type\": \"string\", \"enum\": [\"none\", \"daily\", \"weekly\", \"monthly\", \"yearly\"], \"description\": \"Repeat rule; 'none' removes it.\" },\n    \"recurrence_interval\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 365, \"description\": \"Repeat every N units of the recurrence (default 1).\" },\n    \"recurrence_end\": { \"type\": \"string\", \"description\": \"ISO date when the repetition stops.\" },\n    \"recurrence_count\": { \"type\": \"integer\", \"minimum\": 1, \"description\": \"Number of occurrences, as an alternative to recurrence_end.\" }\n  }\n}",
+      "name" : "macos.calendar",
+      "outputSchema" : "{\n  \"type\": \"object\",\n  \"required\": [\"ok\", \"action\", \"summary\"],\n  \"properties\": {\n    \"ok\": { \"type\": \"boolean\", \"const\": true },\n    \"action\": { \"type\": \"string\" },\n    \"summary\": { \"type\": \"string\" },\n    \"hint\": { \"type\": \"string\" },\n    \"count\": { \"type\": \"integer\", \"minimum\": 0 },\n    \"calendars\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/calendar\" } },\n    \"events\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/event\" } },\n    \"event\": { \"$ref\": \"#/$defs/event\" }\n  },\n  \"$defs\": {\n    \"calendar\": {\n      \"type\": \"object\", \"required\": [\"id\", \"title\", \"type\", \"allows_modifications\", \"is_subscribed\", \"is_default\"],\n      \"properties\": { \"id\": { \"type\": \"string\" }, \"title\": { \"type\": \"string\" }, \"type\": { \"type\": \"string\" }, \"source\": { \"type\": \"string\" }, \"color\": { \"type\": \"string\" }, \"allows_modifications\": { \"type\": \"boolean\" }, \"is_subscribed\": { \"type\": \"boolean\" }, \"is_default\": { \"type\": \"boolean\" } }\n    },\n    \"participant\": { \"type\": \"object\", \"required\": [\"status\", \"is_current_user\"], \"properties\": { \"name\": { \"type\": \"string\" }, \"email\": { \"type\": \"string\" }, \"status\": { \"type\": \"string\" }, \"is_current_user\": { \"type\": \"boolean\" } } },\n    \"event\": {\n      \"type\": \"object\", \"required\": [\"id\", \"calendar\", \"calendar_id\", \"all_day\", \"status\", \"availability\", \"is_recurring\", \"is_detached_occurrence\"],\n      \"properties\": {\n        \"id\": { \"type\": \"string\" }, \"calendar\": { \"type\": \"string\" }, \"calendar_id\": { \"type\": \"string\" }, \"title\": { \"type\": \"string\" },\n        \"start\": { \"type\": \"string\" }, \"end\": { \"type\": \"string\" }, \"all_day\": { \"type\": \"boolean\" }, \"location\": { \"type\": \"string\" },\n        \"notes\": { \"type\": \"string\" }, \"url\": { \"type\": \"string\" }, \"status\": { \"type\": \"string\" }, \"availability\": { \"type\": \"string\" },\n        \"organizer\": { \"$ref\": \"#/$defs/participant\" }, \"attendees\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/participant\" } },\n        \"is_recurring\": { \"type\": \"boolean\" }, \"recurrence\": { \"type\": \"string\" }, \"is_detached_occurrence\": { \"type\": \"boolean\" },\n        \"alarm_minutes_before\": { \"type\": \"array\", \"items\": { \"type\": \"integer\" } }, \"time_zone\": { \"type\": \"string\" },\n        \"created\": { \"type\": \"string\" }, \"modified\": { \"type\": \"string\" }\n      }\n    }\n  }\n}",
+      "presentation" : {
+        "action" : "Assist",
+        "kind" : "manage",
+        "metadata" : [
+          {
+            "label" : "subject",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "text",
+              "keyPaths" : [
+                "query",
+                "title",
+                "event_id",
+                "calendar",
+                "start"
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "sections" : [
+          {
+            "kind" : "parameters",
+            "label" : "parameters",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "json",
+              "keyPaths" : [
+
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "summary" : {
+          "label" : "summary",
+          "modes" : [
+            "compact",
+            "expanded"
+          ],
+          "strategy" : "firstLine",
+          "value" : {
+            "format" : "text",
+            "keyPaths" : [
+
+            ],
+            "source" : "resultSummary"
+          }
+        },
+        "target" : {
+          "format" : "text",
+          "keyPaths" : [
+            "action"
+          ],
+          "source" : "arguments"
+        },
+        "title" : "Calendar"
+      }
+    },
+    {
+      "description" : "Personal-assistant access to the user's Contacts: search by name, email address, or phone number; get a full contact card; create, update, and delete contacts (names, organization, emails, phones, URLs, postal addresses, birthday). Needs the Contacts privacy grant: check it with macos.permissions first. Dates are ISO 8601; values without a UTC offset are in the user's local time zone and outputs carry the local offset. Ids returned by list/search actions are the handles for get/update/delete actions. Destructive or outbound actions (delete) require confirm=true: ask the user for explicit approval before setting it. The tool never runs caller-supplied AppleScript, JavaScript, or shell code.",
+      "inputSchema" : "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\"action\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"search\", \"get\", \"create\", \"update\", \"delete\"], \"description\": \"search: find contacts by query. get \\/ update \\/ delete: one contact by contact_id. create: a new person (given_name\\/family_name) or company (organization only). List arguments of update replace the existing list.\" },\n    \"confirm\": { \"type\": \"boolean\", \"description\": \"Must be true for delete. Set it only after the user explicitly approved that exact operation.\" },\n    \"limit\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 500, \"description\": \"Maximum contacts returned by search (default 25).\" },\n    \"query\": { \"type\": \"string\", \"description\": \"search: a name, an email address, or a phone number.\" },\n    \"contact_id\": { \"type\": \"string\", \"description\": \"Contact id from search, for get, update, and delete.\" },\n    \"given_name\": { \"type\": \"string\", \"description\": \"First name.\" },\n    \"family_name\": { \"type\": \"string\", \"description\": \"Last name.\" },\n    \"middle_name\": { \"type\": \"string\" },\n    \"organization\": { \"type\": \"string\", \"description\": \"Company; a contact with only an organization is stored as a company.\" },\n    \"job_title\": { \"type\": \"string\" },\n    \"nickname\": { \"type\": \"string\" },\n    \"emails\": { \"type\": \"array\", \"items\": { \"type\": \"object\", \"required\": [\"value\"], \"properties\": { \"label\": { \"type\": \"string\" }, \"value\": { \"type\": \"string\" } } }, \"description\": \"Email addresses as {label, value} (labels: home, work, icloud, other, or custom). Replaces the existing list.\" },\n    \"phones\": { \"type\": \"array\", \"items\": { \"type\": \"object\", \"required\": [\"value\"], \"properties\": { \"label\": { \"type\": \"string\" }, \"value\": { \"type\": \"string\" } } }, \"description\": \"Phone numbers as {label, value} (labels: mobile, iphone, home, work, main, other, or custom). Replaces the existing list.\" },\n    \"urls\": { \"type\": \"array\", \"items\": { \"type\": \"object\", \"required\": [\"value\"], \"properties\": { \"label\": { \"type\": \"string\" }, \"value\": { \"type\": \"string\" } } }, \"description\": \"URLs as {label, value}. Replaces the existing list.\" },\n    \"addresses\": { \"type\": \"array\", \"items\": { \"type\": \"object\", \"properties\": { \"label\": { \"type\": \"string\" }, \"street\": { \"type\": \"string\" }, \"city\": { \"type\": \"string\" }, \"state\": { \"type\": \"string\" }, \"postal_code\": { \"type\": \"string\" }, \"country\": { \"type\": \"string\" } } }, \"description\": \"Postal addresses. Replaces the existing list.\" },\n    \"birthday\": { \"type\": \"string\", \"description\": \"Birthday as yyyy-MM-dd or --MM-dd (empty string clears it).\" }\n  }\n}",
+      "name" : "macos.contacts",
+      "outputSchema" : "{\n  \"type\": \"object\",\n  \"required\": [\"ok\", \"action\", \"summary\"],\n  \"properties\": {\n    \"ok\": { \"type\": \"boolean\", \"const\": true },\n    \"action\": { \"type\": \"string\" },\n    \"summary\": { \"type\": \"string\" },\n    \"hint\": { \"type\": \"string\" },\n    \"count\": { \"type\": \"integer\", \"minimum\": 0 },\n    \"contacts\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/contact\" } },\n    \"contact\": { \"$ref\": \"#/$defs/contact\" }\n  },\n  \"$defs\": {\n    \"labeled_value\": { \"type\": \"object\", \"required\": [\"value\"], \"properties\": { \"label\": { \"type\": \"string\" }, \"value\": { \"type\": \"string\" } } },\n    \"contact\": {\n      \"type\": \"object\", \"required\": [\"id\", \"name\", \"is_company\", \"emails\", \"phones\", \"addresses\", \"urls\", \"social_profiles\", \"has_image\"],\n      \"properties\": {\n        \"id\": { \"type\": \"string\" }, \"name\": { \"type\": \"string\" }, \"given_name\": { \"type\": \"string\" }, \"family_name\": { \"type\": \"string\" },\n        \"middle_name\": { \"type\": \"string\" }, \"nickname\": { \"type\": \"string\" }, \"organization\": { \"type\": \"string\" }, \"job_title\": { \"type\": \"string\" },\n        \"department\": { \"type\": \"string\" }, \"is_company\": { \"type\": \"boolean\" },\n        \"emails\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/labeled_value\" } }, \"phones\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/labeled_value\" } },\n        \"addresses\": { \"type\": \"array\", \"items\": { \"type\": \"object\", \"properties\": { \"label\": { \"type\": \"string\" }, \"street\": { \"type\": \"string\" }, \"city\": { \"type\": \"string\" }, \"state\": { \"type\": \"string\" }, \"postal_code\": { \"type\": \"string\" }, \"country\": { \"type\": \"string\" } } } },\n        \"urls\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/labeled_value\" } },\n        \"social_profiles\": { \"type\": \"array\", \"items\": { \"type\": \"object\", \"properties\": { \"service\": { \"type\": \"string\" }, \"username\": { \"type\": \"string\" }, \"url\": { \"type\": \"string\" } } } },\n        \"birthday\": { \"type\": \"string\" }, \"has_image\": { \"type\": \"boolean\" }\n      }\n    }\n  }\n}",
+      "presentation" : {
+        "action" : "Assist",
+        "kind" : "manage",
+        "metadata" : [
+          {
+            "label" : "subject",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "text",
+              "keyPaths" : [
+                "query",
+                "contact_id",
+                "given_name",
+                "family_name",
+                "organization"
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "sections" : [
+          {
+            "kind" : "parameters",
+            "label" : "parameters",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "json",
+              "keyPaths" : [
+
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "summary" : {
+          "label" : "summary",
+          "modes" : [
+            "compact",
+            "expanded"
+          ],
+          "strategy" : "firstLine",
+          "value" : {
+            "format" : "text",
+            "keyPaths" : [
+
+            ],
+            "source" : "resultSummary"
+          }
+        },
+        "target" : {
+          "format" : "text",
+          "keyPaths" : [
+            "action"
+          ],
+          "source" : "arguments"
+        },
+        "title" : "Contacts"
+      }
+    },
+    {
+      "description" : "Personal-assistant access to the user's Mail app: accounts and mailboxes with unread counts, list and search messages, read a message with its content and attachments, send a new message, reply, mark read/unread or flagged, move between mailboxes, and delete. Mail is driven through Apple Events: macOS asks for Automation consent on first use (see macos.permissions). Dates are ISO 8601; values without a UTC offset are in the user's local time zone and outputs carry the local offset. Ids returned by list/search actions are the handles for get/update/delete actions. Destructive or outbound actions (send, reply, delete) require confirm=true: ask the user for explicit approval before setting it. The tool never runs caller-supplied AppleScript, JavaScript, or shell code.",
+      "inputSchema" : "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\"action\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"accounts\", \"list\", \"get\", \"send\", \"reply\", \"mark\", \"move\", \"delete\"], \"description\": \"accounts: accounts and their mailboxes. list: messages of a mailbox (default inbox). get: one message with its content. send: a new message. reply: reply to a message. mark: read\\/unread or flagged. move: to another mailbox. delete: move to the trash.\" },\n    \"confirm\": { \"type\": \"boolean\", \"description\": \"Must be true for send, reply, delete. Set it only after the user explicitly approved that exact operation.\" },\n    \"limit\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 500, \"description\": \"Maximum messages returned by list (default 25).\" },\n    \"query\": { \"type\": \"string\", \"description\": \"list: substring filter on subject and sender.\" },\n    \"since\": { \"type\": \"string\", \"description\": \"list: ISO 8601 lower bound on the received date.\" },\n    \"until\": { \"type\": \"string\", \"description\": \"list: ISO 8601 upper bound on the received date.\" },\n    \"unread_only\": { \"type\": \"boolean\", \"description\": \"list: only unread messages.\" },\n    \"account\": { \"type\": \"string\", \"description\": \"Account name (see accounts) that scopes mailbox; also the account of the message for get, mark, move, and delete outside the inbox.\" },\n    \"mailbox\": { \"type\": \"string\", \"description\": \"Mailbox for list, get, mark, move, and delete: inbox (default), sent, drafts, trash, junk, outbox, or a mailbox name from accounts (combine with account).\" },\n    \"message_id\": { \"type\": \"integer\", \"minimum\": 1, \"description\": \"Message id from list, for get, reply, mark, move, and delete. Pass mailbox and account too for messages outside the inbox.\" },\n    \"to\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"Recipient email addresses for send.\" },\n    \"cc\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"CC addresses for send and reply.\" },\n    \"bcc\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"BCC addresses for send.\" },\n    \"subject\": { \"type\": \"string\", \"description\": \"Subject for send.\" },\n    \"body\": { \"type\": \"string\", \"description\": \"Plain-text body for send and reply.\" },\n    \"from\": { \"type\": \"string\", \"description\": \"Sender for send, e.g. 'Name <user@example.com>'; must belong to a configured account (default: the account's primary address).\" },\n    \"attachments\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"File paths to attach with send or reply.\" },\n    \"reply_all\": { \"type\": \"boolean\", \"description\": \"reply: reply to every recipient.\" },\n    \"read\": { \"type\": \"boolean\", \"description\": \"mark: mark as read (true) or unread (false).\" },\n    \"flagged\": { \"type\": \"boolean\", \"description\": \"mark: set or clear the flag.\" },\n    \"target_mailbox\": { \"type\": \"string\", \"description\": \"Destination mailbox for move (inbox, trash, junk, or a mailbox name).\" },\n    \"target_account\": { \"type\": \"string\", \"description\": \"Account of the destination mailbox for move (default: the message's account).\" },\n    \"max_chars\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 200000, \"description\": \"get: content truncation (default 20000).\" }\n  }\n}",
+      "name" : "macos.mail",
+      "outputSchema" : "{\n  \"type\": \"object\",\n  \"required\": [\"ok\", \"action\", \"summary\"],\n  \"properties\": {\n    \"ok\": { \"type\": \"boolean\", \"const\": true },\n    \"action\": { \"type\": \"string\" },\n    \"summary\": { \"type\": \"string\" },\n    \"hint\": { \"type\": \"string\" },\n    \"count\": { \"type\": \"integer\", \"minimum\": 0 },\n    \"mail_accounts\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/mail_account\" } },\n    \"messages\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/mail_message\" } },\n    \"message\": { \"$ref\": \"#/$defs/mail_message_detail\" }\n  },\n  \"$defs\": {\n    \"mail_account\": {\n      \"type\": \"object\", \"required\": [\"name\", \"email_addresses\", \"mailboxes\"],\n      \"properties\": {\n        \"name\": { \"type\": \"string\" }, \"id\": { \"type\": \"string\" }, \"type\": { \"type\": \"string\" }, \"email_addresses\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n        \"full_name\": { \"type\": \"string\" }, \"enabled\": { \"type\": \"boolean\" },\n        \"mailboxes\": { \"type\": \"array\", \"items\": { \"type\": \"object\", \"required\": [\"name\"], \"properties\": { \"name\": { \"type\": \"string\" }, \"unread_count\": { \"type\": \"integer\" } } } }\n      }\n    },\n    \"mail_message\": {\n      \"type\": \"object\", \"required\": [\"id\"],\n      \"properties\": {\n        \"id\": { \"type\": \"integer\" }, \"account\": { \"type\": \"string\" }, \"mailbox\": { \"type\": \"string\" }, \"subject\": { \"type\": \"string\" }, \"sender\": { \"type\": \"string\" },\n        \"date_received\": { \"type\": \"string\" }, \"date_sent\": { \"type\": \"string\" }, \"read\": { \"type\": \"boolean\" }, \"flagged\": { \"type\": \"boolean\" }, \"message_id\": { \"type\": \"string\" }\n      }\n    },\n    \"mail_message_detail\": {\n      \"type\": \"object\", \"required\": [\"id\", \"to\", \"cc\", \"content\", \"content_truncated\", \"attachments\"],\n      \"properties\": {\n        \"id\": { \"type\": \"integer\" }, \"account\": { \"type\": \"string\" }, \"mailbox\": { \"type\": \"string\" }, \"subject\": { \"type\": \"string\" }, \"sender\": { \"type\": \"string\" },\n        \"reply_to\": { \"type\": \"string\" }, \"date_received\": { \"type\": \"string\" }, \"date_sent\": { \"type\": \"string\" }, \"read\": { \"type\": \"boolean\" }, \"flagged\": { \"type\": \"boolean\" },\n        \"to\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }, \"cc\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }, \"message_id\": { \"type\": \"string\" },\n        \"content\": { \"type\": \"string\" }, \"content_truncated\": { \"type\": \"boolean\" },\n        \"attachments\": { \"type\": \"array\", \"items\": { \"type\": \"object\", \"properties\": { \"name\": { \"type\": \"string\" }, \"mime_type\": { \"type\": \"string\" }, \"size\": { \"type\": \"integer\" }, \"downloaded\": { \"type\": \"boolean\" } } } }\n      }\n    }\n  }\n}",
+      "presentation" : {
+        "action" : "Assist",
+        "kind" : "manage",
+        "metadata" : [
+          {
+            "label" : "subject",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "text",
+              "keyPaths" : [
+                "query",
+                "subject",
+                "message_id",
+                "mailbox",
+                "account"
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "sections" : [
+          {
+            "kind" : "parameters",
+            "label" : "parameters",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "json",
+              "keyPaths" : [
+
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "summary" : {
+          "label" : "summary",
+          "modes" : [
+            "compact",
+            "expanded"
+          ],
+          "strategy" : "firstLine",
+          "value" : {
+            "format" : "text",
+            "keyPaths" : [
+
+            ],
+            "source" : "resultSummary"
+          }
+        },
+        "target" : {
+          "format" : "text",
+          "keyPaths" : [
+            "action"
+          ],
+          "source" : "arguments"
+        },
+        "title" : "Mail"
+      }
+    },
+    {
+      "description" : "Personal-assistant access to the user's Messages app (iMessage/SMS): list conversations, read the history of a conversation, and send a text. Reading the history needs Full Disk Access for the application hosting ZenCODE (check with macos.permissions); sending goes through Apple Events and asks for Automation consent on first use. Dates are ISO 8601; values without a UTC offset are in the user's local time zone and outputs carry the local offset. Ids returned by list/search actions are the handles for get/update/delete actions. Destructive or outbound actions (send) require confirm=true: ask the user for explicit approval before setting it. The tool never runs caller-supplied AppleScript, JavaScript, or shell code.",
+      "inputSchema" : "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\"action\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"chats\", \"read\", \"send\"], \"description\": \"chats: recent conversations. read: messages of a conversation (chat_id or handle), newest first. send: a text to a conversation (chat_id) or to a handle\\/contact (to).\" },\n    \"confirm\": { \"type\": \"boolean\", \"description\": \"Must be true for send. Set it only after the user explicitly approved that exact operation.\" },\n    \"limit\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 500, \"description\": \"Maximum results: chats (default 50) and read (default 30).\" },\n    \"query\": { \"type\": \"string\", \"description\": \"chats: substring filter on handle and name. read: substring filter on the text.\" },\n    \"since\": { \"type\": \"string\", \"description\": \"read: ISO 8601 lower bound on the message date.\" },\n    \"chat_id\": { \"type\": \"string\", \"description\": \"Conversation id from chats, for read and send.\" },\n    \"handle\": { \"type\": \"string\", \"description\": \"Phone number or email of the other party, for read and send.\" },\n    \"to\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"send: one handle (phone number in international format or iMessage email) or an exact contact name.\" },\n    \"text\": { \"type\": \"string\", \"description\": \"send: the message text.\" }\n  }\n}",
+      "name" : "macos.messages",
+      "outputSchema" : "{\n  \"type\": \"object\",\n  \"required\": [\"ok\", \"action\", \"summary\"],\n  \"properties\": {\n    \"ok\": { \"type\": \"boolean\", \"const\": true },\n    \"action\": { \"type\": \"string\" },\n    \"summary\": { \"type\": \"string\" },\n    \"hint\": { \"type\": \"string\" },\n    \"count\": { \"type\": \"integer\", \"minimum\": 0 },\n    \"chats\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/chat\" } },\n    \"texts\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/text_message\" } }\n  },\n  \"$defs\": {\n    \"chat\": {\n      \"type\": \"object\", \"required\": [\"id\", \"participants\"],\n      \"properties\": { \"id\": { \"type\": \"string\" }, \"name\": { \"type\": \"string\" }, \"participants\": { \"type\": \"array\", \"items\": { \"type\": \"object\", \"properties\": { \"handle\": { \"type\": \"string\" }, \"name\": { \"type\": \"string\" } } } } }\n    },\n    \"text_message\": {\n      \"type\": \"object\", \"required\": [\"id\", \"sender\", \"is_from_me\", \"has_attachments\"],\n      \"properties\": {\n        \"id\": { \"type\": \"integer\" }, \"chat_identifier\": { \"type\": \"string\" }, \"chat_name\": { \"type\": \"string\" }, \"sender\": { \"type\": \"string\" }, \"is_from_me\": { \"type\": \"boolean\" },\n        \"date\": { \"type\": \"string\" }, \"text\": { \"type\": \"string\" }, \"service\": { \"type\": \"string\" }, \"has_attachments\": { \"type\": \"boolean\" }, \"is_read\": { \"type\": \"boolean\" }\n      }\n    }\n  }\n}",
+      "presentation" : {
+        "action" : "Assist",
+        "kind" : "manage",
+        "metadata" : [
+          {
+            "label" : "subject",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "text",
+              "keyPaths" : [
+                "query",
+                "text",
+                "chat_id",
+                "handle",
+                "to"
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "sections" : [
+          {
+            "kind" : "parameters",
+            "label" : "parameters",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "json",
+              "keyPaths" : [
+
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "summary" : {
+          "label" : "summary",
+          "modes" : [
+            "compact",
+            "expanded"
+          ],
+          "strategy" : "firstLine",
+          "value" : {
+            "format" : "text",
+            "keyPaths" : [
+
+            ],
+            "source" : "resultSummary"
+          }
+        },
+        "target" : {
+          "format" : "text",
+          "keyPaths" : [
+            "action"
+          ],
+          "source" : "arguments"
+        },
+        "title" : "Messages"
+      }
+    },
+    {
+      "description" : "Personal-assistant access to the user's Notes app: accounts and folders, list notes of a folder, search by title or body, read a note as text or HTML, create, update (replace or append), and delete notes. Notes is driven through Apple Events: macOS asks for Automation consent on first use (see macos.permissions). Dates are ISO 8601; values without a UTC offset are in the user's local time zone and outputs carry the local offset. Ids returned by list/search actions are the handles for get/update/delete actions. Destructive or outbound actions (delete) require confirm=true: ask the user for explicit approval before setting it. The tool never runs caller-supplied AppleScript, JavaScript, or shell code.",
+      "inputSchema" : "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\"action\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"folders\", \"list\", \"search\", \"get\", \"create\", \"update\", \"delete\"], \"description\": \"folders: accounts and folders with note counts. list: notes of a folder (default: all), newest first. search: notes matching query. get: one note with its content. create: a new note. update: replace the body\\/title or append text. delete: move to Recently Deleted.\" },\n    \"confirm\": { \"type\": \"boolean\", \"description\": \"Must be true for delete. Set it only after the user explicitly approved that exact operation.\" },\n    \"limit\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 500, \"description\": \"Maximum results: list (default 50) and search (default 25).\" },\n    \"query\": { \"type\": \"string\", \"description\": \"search: substring match on title and body.\" },\n    \"account\": { \"type\": \"string\", \"description\": \"Account name to scope folders (see folders).\" },\n    \"folder\": { \"type\": \"string\", \"description\": \"Folder name, path (Parent/Child), or id for list, search, and create (default: the default folder).\" },\n    \"note_id\": { \"type\": \"string\", \"description\": \"Note id from list or search, for get, update, and delete.\" },\n    \"title\": { \"type\": \"string\", \"description\": \"Note title for create and update.\" },\n    \"body\": { \"type\": \"string\", \"description\": \"Note content for create and update (HTML when format=html).\" },\n    \"append\": { \"type\": \"string\", \"description\": \"update: text appended to the note instead of replacing its content.\" },\n    \"format\": { \"type\": \"string\", \"enum\": [\"text\", \"html\"], \"description\": \"get: output format; create and update: body format (default text).\" },\n    \"max_chars\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 200000, \"description\": \"get: content truncation (default 20000).\" }\n  }\n}",
+      "name" : "macos.notes",
+      "outputSchema" : "{\n  \"type\": \"object\",\n  \"required\": [\"ok\", \"action\", \"summary\"],\n  \"properties\": {\n    \"ok\": { \"type\": \"boolean\", \"const\": true },\n    \"action\": { \"type\": \"string\" },\n    \"summary\": { \"type\": \"string\" },\n    \"hint\": { \"type\": \"string\" },\n    \"count\": { \"type\": \"integer\", \"minimum\": 0 },\n    \"note_folders\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/note_folder\" } },\n    \"notes\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/note\" } },\n    \"note\": { \"$ref\": \"#/$defs/note_detail\" }\n  },\n  \"$defs\": {\n    \"note_folder\": { \"type\": \"object\", \"required\": [\"account\", \"name\", \"id\"], \"properties\": { \"account\": { \"type\": \"string\" }, \"name\": { \"type\": \"string\" }, \"id\": { \"type\": \"string\" }, \"note_count\": { \"type\": \"integer\" } } },\n    \"note\": {\n      \"type\": \"object\", \"required\": [\"id\"],\n      \"properties\": {\n        \"id\": { \"type\": \"string\" }, \"name\": { \"type\": \"string\" }, \"folder\": { \"type\": \"string\" }, \"account\": { \"type\": \"string\" }, \"created\": { \"type\": \"string\" }, \"modified\": { \"type\": \"string\" },\n        \"snippet\": { \"type\": \"string\" }, \"password_protected\": { \"type\": \"boolean\" }, \"shared\": { \"type\": \"boolean\" }\n      }\n    },\n    \"note_detail\": {\n      \"type\": \"object\", \"required\": [\"id\", \"format\", \"content\", \"content_truncated\"],\n      \"properties\": {\n        \"id\": { \"type\": \"string\" }, \"name\": { \"type\": \"string\" }, \"folder\": { \"type\": \"string\" }, \"account\": { \"type\": \"string\" }, \"created\": { \"type\": \"string\" }, \"modified\": { \"type\": \"string\" },\n        \"format\": { \"type\": \"string\" }, \"content\": { \"type\": \"string\" }, \"content_truncated\": { \"type\": \"boolean\" }, \"password_protected\": { \"type\": \"boolean\" }, \"shared\": { \"type\": \"boolean\" }\n      }\n    }\n  }\n}",
+      "presentation" : {
+        "action" : "Assist",
+        "kind" : "manage",
+        "metadata" : [
+          {
+            "label" : "subject",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "text",
+              "keyPaths" : [
+                "query",
+                "title",
+                "note_id",
+                "folder"
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "sections" : [
+          {
+            "kind" : "parameters",
+            "label" : "parameters",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "json",
+              "keyPaths" : [
+
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "summary" : {
+          "label" : "summary",
+          "modes" : [
+            "compact",
+            "expanded"
+          ],
+          "strategy" : "firstLine",
+          "value" : {
+            "format" : "text",
+            "keyPaths" : [
+
+            ],
+            "source" : "resultSummary"
+          }
+        },
+        "target" : {
+          "format" : "text",
+          "keyPaths" : [
+            "action"
+          ],
+          "source" : "arguments"
+        },
+        "title" : "Notes"
+      }
+    },
+    {
+      "description" : "Reports and requests the privacy access that the macos.* tools need. Call action=check before the first use of macos.calendar, macos.reminders, macos.contacts, or macos.messages: Calendar, Reminders, and Contacts need privacy grants (action=request triggers their system prompts), reading the Messages history needs Full Disk Access, and Mail, Messages, Photos, and Notes ask for Automation consent on first use. Every grant is attributed to the application hosting ZenCODE (Terminal, iTerm, Xcode, ...); a denied status must be changed in System Settings > Privacy & Security. The tool never runs caller-supplied AppleScript, JavaScript, or shell code.",
+      "inputSchema" : "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\"action\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"check\", \"request\"], \"description\": \"check reports the current access state; request triggers the Calendar, Reminders, and Contacts permission prompts and then reports the state.\" }\n  }\n}",
+      "name" : "macos.permissions",
+      "outputSchema" : "{\n  \"type\": \"object\",\n  \"required\": [\"ok\", \"action\", \"summary\"],\n  \"properties\": {\n    \"ok\": { \"type\": \"boolean\", \"const\": true },\n    \"action\": { \"type\": \"string\" },\n    \"summary\": { \"type\": \"string\" },\n    \"hint\": { \"type\": \"string\" },\n    \"count\": { \"type\": \"integer\", \"minimum\": 0 },\n    \"permissions\": { \"$ref\": \"#/$defs/permissions\" }\n  },\n  \"$defs\": {\n    \"permissions\": {\n      \"type\": \"object\",\n      \"required\": [\"calendar\", \"reminders\", \"contacts\", \"messages_database\", \"automation\"],\n      \"properties\": {\n        \"calendar\": { \"type\": \"string\" }, \"reminders\": { \"type\": \"string\" }, \"contacts\": { \"type\": \"string\" },\n        \"messages_database\": { \"type\": \"string\" }, \"automation\": { \"type\": \"string\" }\n      }\n    }\n  }\n}",
+      "presentation" : {
+        "action" : "Assist",
+        "kind" : "manage",
+        "metadata" : [
+          {
+            "label" : "subject",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "text",
+              "keyPaths" : [
+
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "sections" : [
+          {
+            "kind" : "parameters",
+            "label" : "parameters",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "json",
+              "keyPaths" : [
+
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "summary" : {
+          "label" : "summary",
+          "modes" : [
+            "compact",
+            "expanded"
+          ],
+          "strategy" : "firstLine",
+          "value" : {
+            "format" : "text",
+            "keyPaths" : [
+
+            ],
+            "source" : "resultSummary"
+          }
+        },
+        "target" : {
+          "format" : "text",
+          "keyPaths" : [
+            "action"
+          ],
+          "source" : "arguments"
+        },
+        "title" : "macOS permissions"
+      }
+    },
+    {
+      "description" : "Personal-assistant access to the user's Photos library: albums, semantic search (scenes, objects, people), list items by album, capture date, or favorites, export items to a folder, import files, create albums, add items to an album, and edit title, caption, favorite flag, and keywords. Photos cannot delete media items. Photos is driven through Apple Events: macOS asks for Automation consent on first use (see macos.permissions). Dates are ISO 8601; values without a UTC offset are in the user's local time zone and outputs carry the local offset. Ids returned by list/search actions are the handles for get/update/delete actions. The tool never runs caller-supplied AppleScript, JavaScript, or shell code.",
+      "inputSchema" : "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\"action\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"albums\", \"search\", \"list\", \"export\", \"import\", \"create_album\", \"add_to_album\", \"update\"], \"description\": \"albums: albums with item counts. search: Photos semantic search by query. list: items by album, date range, or favorites. export \\/ import: files to and from the library. create_album \\/ add_to_album: album management. update: title, description, favorite, or keywords of one item.\" },\n    \"limit\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 500, \"description\": \"Maximum results: search (default 25) and list (default 50).\" },\n    \"query\": { \"type\": \"string\", \"description\": \"search: Photos semantic search text (e.g. 'beach', 'dog', a person name).\" },\n    \"since\": { \"type\": \"string\", \"description\": \"list: ISO 8601 lower bound on the capture date.\" },\n    \"until\": { \"type\": \"string\", \"description\": \"list: ISO 8601 upper bound on the capture date.\" },\n    \"favorites_only\": { \"type\": \"boolean\", \"description\": \"list: only favorites.\" },\n    \"album\": { \"type\": \"string\", \"description\": \"Album name, folder/album path, or id for list, add_to_album, and import.\" },\n    \"media_id\": { \"type\": \"string\", \"description\": \"Media item id for update.\" },\n    \"media_ids\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"Media item ids for export and add_to_album (max 100 per call).\" },\n    \"directory\": { \"type\": \"string\", \"description\": \"Export folder for export (default: ~/Downloads/ZenCODE Photos/<timestamp>).\" },\n    \"use_originals\": { \"type\": \"boolean\", \"description\": \"export: export unmodified originals instead of the current versions.\" },\n    \"paths\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"Image or video files to import.\" },\n    \"skip_duplicates\": { \"type\": \"boolean\", \"description\": \"import: skip the duplicate check.\" },\n    \"name\": { \"type\": \"string\", \"description\": \"Album name for create_album.\" },\n    \"title\": { \"type\": \"string\", \"description\": \"update: title.\" },\n    \"description\": { \"type\": \"string\", \"description\": \"update: caption.\" },\n    \"favorite\": { \"type\": \"boolean\", \"description\": \"update: mark or unmark as favorite.\" },\n    \"keywords\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"update: replace the keywords.\" }\n  }\n}",
+      "name" : "macos.photos",
+      "outputSchema" : "{\n  \"type\": \"object\",\n  \"required\": [\"ok\", \"action\", \"summary\"],\n  \"properties\": {\n    \"ok\": { \"type\": \"boolean\", \"const\": true },\n    \"action\": { \"type\": \"string\" },\n    \"summary\": { \"type\": \"string\" },\n    \"hint\": { \"type\": \"string\" },\n    \"count\": { \"type\": \"integer\", \"minimum\": 0 },\n    \"albums\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/album\" } },\n    \"media_items\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/media_item\" } },\n    \"exported_files\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }\n  },\n  \"$defs\": {\n    \"album\": { \"type\": \"object\", \"required\": [\"id\"], \"properties\": { \"id\": { \"type\": \"string\" }, \"name\": { \"type\": \"string\" }, \"item_count\": { \"type\": \"integer\" } } },\n    \"media_item\": {\n      \"type\": \"object\", \"required\": [\"id\"],\n      \"properties\": {\n        \"id\": { \"type\": \"string\" }, \"filename\": { \"type\": \"string\" }, \"title\": { \"type\": \"string\" }, \"description\": { \"type\": \"string\" }, \"date\": { \"type\": \"string\" },\n        \"favorite\": { \"type\": \"boolean\" }, \"width\": { \"type\": \"integer\" }, \"height\": { \"type\": \"integer\" }, \"keywords\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n        \"latitude\": { \"type\": \"number\" }, \"longitude\": { \"type\": \"number\" }, \"altitude\": { \"type\": \"number\" }\n      }\n    }\n  }\n}",
+      "presentation" : {
+        "action" : "Assist",
+        "kind" : "manage",
+        "metadata" : [
+          {
+            "label" : "subject",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "text",
+              "keyPaths" : [
+                "query",
+                "name",
+                "media_id",
+                "album",
+                "title"
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "sections" : [
+          {
+            "kind" : "parameters",
+            "label" : "parameters",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "json",
+              "keyPaths" : [
+
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "summary" : {
+          "label" : "summary",
+          "modes" : [
+            "compact",
+            "expanded"
+          ],
+          "strategy" : "firstLine",
+          "value" : {
+            "format" : "text",
+            "keyPaths" : [
+
+            ],
+            "source" : "resultSummary"
+          }
+        },
+        "target" : {
+          "format" : "text",
+          "keyPaths" : [
+            "action"
+          ],
+          "source" : "arguments"
+        },
+        "title" : "Photos"
+      }
+    },
+    {
+      "description" : "Personal-assistant access to the user's Reminders (EventKit): reminder lists, list and search reminders by status and due date, create, update, complete/reopen, and delete reminders with due dates, alerts, priorities, and repeat rules. Needs the Reminders privacy grant: check it with macos.permissions first. Dates are ISO 8601; values without a UTC offset are in the user's local time zone and outputs carry the local offset. Ids returned by list/search actions are the handles for get/update/delete actions. Destructive or outbound actions (delete) require confirm=true: ask the user for explicit approval before setting it. The tool never runs caller-supplied AppleScript, JavaScript, or shell code.",
+      "inputSchema" : "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\"action\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"lists\", \"list\", \"create\", \"update\", \"complete\", \"delete\"], \"description\": \"lists: reminder lists. list: reminders (default: incomplete ones, across all lists, including reminders without a due date; since\\/until restrict to reminders with a due date in range). create \\/ update \\/ complete \\/ delete: manage one reminder by reminder_id.\" },\n    \"confirm\": { \"type\": \"boolean\", \"description\": \"Must be true for delete. Set it only after the user explicitly approved that exact operation.\" },\n    \"limit\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 500, \"description\": \"Maximum reminders returned by list (default 100).\" },\n    \"query\": { \"type\": \"string\", \"description\": \"list: substring filter on title and notes.\" },\n    \"since\": { \"type\": \"string\", \"description\": \"list: ISO 8601 (or today/tomorrow) lower bound on the due date. Omit it to list reminders regardless of due date: when since or until is set, reminders without a due date are excluded unless include_undated is true.\" },\n    \"until\": { \"type\": \"string\", \"description\": \"list: ISO 8601 (or today/tomorrow) upper bound on the due date (a plain date includes the whole day). Same undated rule as since.\" },\n    \"include_undated\": { \"type\": \"boolean\", \"description\": \"list: when since/until are set, also return reminders without a due date (default false). Ignored without date bounds, where undated reminders are always included.\" },\n    \"status\": { \"type\": \"string\", \"enum\": [\"incomplete\", \"completed\", \"all\"], \"description\": \"list filter (default incomplete).\" },\n    \"list\": { \"type\": \"string\", \"description\": \"Reminder list title or id (see lists). Filters list; target list for create and update (default: the default list).\" },\n    \"reminder_id\": { \"type\": \"string\", \"description\": \"Reminder id from list, for update, complete, and delete.\" },\n    \"title\": { \"type\": \"string\", \"description\": \"Reminder title for create and update.\" },\n    \"notes\": { \"type\": \"string\", \"description\": \"Reminder notes (empty string clears them).\" },\n    \"url\": { \"type\": \"string\", \"description\": \"URL attached to the reminder (empty string clears it).\" },\n    \"due\": { \"type\": \"string\", \"description\": \"Due date (plain date) or date-time (local time zone unless an offset is given; also now/today/tomorrow) for create and update.\" },\n    \"clear_due\": { \"type\": \"boolean\", \"description\": \"update: remove the due date and its alerts.\" },\n    \"priority\": { \"type\": \"string\", \"description\": \"Priority: none, low, medium, high (or 0-9, 1 = highest).\" },\n    \"completed\": { \"type\": \"boolean\", \"description\": \"complete: true (default) completes the reminder, false reopens it; also accepted by update.\" },\n    \"alarm_minutes\": { \"type\": \"array\", \"items\": { \"type\": \"integer\", \"minimum\": 0 }, \"description\": \"Alerts in minutes before the due time (0 = at the due time). A reminder with a due time gets an alert at that time unless specified.\" },\n    \"recurrence\": { \"type\": \"string\", \"enum\": [\"none\", \"daily\", \"weekly\", \"monthly\", \"yearly\"], \"description\": \"Repeat rule; 'none' removes it.\" },\n    \"recurrence_interval\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 365, \"description\": \"Repeat every N units of the recurrence (default 1).\" },\n    \"recurrence_end\": { \"type\": \"string\", \"description\": \"ISO date when the repetition stops.\" },\n    \"recurrence_count\": { \"type\": \"integer\", \"minimum\": 1, \"description\": \"Number of occurrences, as an alternative to recurrence_end.\" }\n  }\n}",
+      "name" : "macos.reminders",
+      "outputSchema" : "{\n  \"type\": \"object\",\n  \"required\": [\"ok\", \"action\", \"summary\"],\n  \"properties\": {\n    \"ok\": { \"type\": \"boolean\", \"const\": true },\n    \"action\": { \"type\": \"string\" },\n    \"summary\": { \"type\": \"string\" },\n    \"hint\": { \"type\": \"string\" },\n    \"count\": { \"type\": \"integer\", \"minimum\": 0 },\n    \"reminder_lists\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/reminder_list\" } },\n    \"reminders\": { \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/reminder\" } },\n    \"reminder\": { \"$ref\": \"#/$defs/reminder\" }\n  },\n  \"$defs\": {\n    \"reminder_list\": {\n      \"type\": \"object\", \"required\": [\"id\", \"title\", \"allows_modifications\", \"is_default\"],\n      \"properties\": { \"id\": { \"type\": \"string\" }, \"title\": { \"type\": \"string\" }, \"source\": { \"type\": \"string\" }, \"color\": { \"type\": \"string\" }, \"allows_modifications\": { \"type\": \"boolean\" }, \"is_default\": { \"type\": \"boolean\" } }\n    },\n    \"reminder\": {\n      \"type\": \"object\", \"required\": [\"id\", \"list\", \"list_id\", \"completed\", \"due_has_time\", \"priority\", \"priority_value\", \"is_recurring\"],\n      \"properties\": {\n        \"id\": { \"type\": \"string\" }, \"list\": { \"type\": \"string\" }, \"list_id\": { \"type\": \"string\" }, \"title\": { \"type\": \"string\" }, \"notes\": { \"type\": \"string\" },\n        \"completed\": { \"type\": \"boolean\" }, \"completion_date\": { \"type\": \"string\" }, \"due\": { \"type\": \"string\" }, \"due_has_time\": { \"type\": \"boolean\" },\n        \"priority\": { \"type\": \"string\" }, \"priority_value\": { \"type\": \"integer\" }, \"alarms\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n        \"url\": { \"type\": \"string\" }, \"is_recurring\": { \"type\": \"boolean\" }, \"created\": { \"type\": \"string\" }, \"modified\": { \"type\": \"string\" }\n      }\n    }\n  }\n}",
+      "presentation" : {
+        "action" : "Assist",
+        "kind" : "manage",
+        "metadata" : [
+          {
+            "label" : "subject",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "text",
+              "keyPaths" : [
+                "query",
+                "title",
+                "reminder_id",
+                "list"
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "sections" : [
+          {
+            "kind" : "parameters",
+            "label" : "parameters",
+            "modes" : [
+              "expanded"
+            ],
+            "value" : {
+              "format" : "json",
+              "keyPaths" : [
+
+              ],
+              "source" : "arguments"
+            }
+          }
+        ],
+        "summary" : {
+          "label" : "summary",
+          "modes" : [
+            "compact",
+            "expanded"
+          ],
+          "strategy" : "firstLine",
+          "value" : {
+            "format" : "text",
+            "keyPaths" : [
+
+            ],
+            "source" : "resultSummary"
+          }
+        },
+        "target" : {
+          "format" : "text",
+          "keyPaths" : [
+            "action"
+          ],
+          "source" : "arguments"
+        },
+        "title" : "Reminders"
+      }
+    }
+  ]
+}

@@ -132,10 +132,35 @@ enum SwiftBundledFeatureCatalog {
                 // legitimately span several seconds of desktop interaction.
                 invocationTimeoutSeconds: 180
             )
-        ]
+,
+        SwiftFeatureRuntime.BundledFeatureDefinition(
+            id: "macOS",
+            executableName: "macOS",
+            description: "Personal assistant for the user's macOS apps, one tool per app: macos.calendar, macos.reminders, macos.contacts, macos.mail, macos.messages, macos.photos, macos.notes, plus macos.permissions for privacy access (read, search, create, update, send, and delete with confirmation).",
+            sourceRelativePath: "Sources/Features/MacOS",
+            tools: [],
+            toolNamePrefixes: ["macos."],
+            toolNameAliases: [],
+            discoversToolsAtRuntime: false,
+            supportsPersistentSession: false,
+                        invocationTimeoutSeconds: 180.0
+        )        ]
     }
 
     private static func metadata(for id: String) -> ZenBundledFeatureMetadata {
+        guard let feature = ZenBundledFeatureCatalog.feature(id: id) else {
+            preconditionFailure("Missing bundled feature metadata for \(id).")
+        }
+        return feature
+    }
+
+    private static func searchToolDescriptors() -> [ToolDescriptor] {
+        DirectToolCatalog.localSearchDescriptors.map(\.toolDescriptor)
+    }
+
+
+}
+(for id: String) -> ZenBundledFeatureMetadata {
         guard let feature = ZenBundledFeatureCatalog.feature(id: id) else {
             preconditionFailure("Missing bundled feature metadata for \(id).")
         }

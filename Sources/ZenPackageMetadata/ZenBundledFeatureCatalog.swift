@@ -52,6 +52,12 @@ public enum ZenBundledFeatureCatalog {
             isInstalledOnLinux: true,
         ),
         ZenBundledFeatureMetadata(
+            id: "macOS",
+            productName: "macOS",
+            sourceRelativePath: "Sources/Features/MacOS",
+            isInstalledOnLinux: false,
+        ),
+        ZenBundledFeatureMetadata(
             id: "search-tools",
             productName: "search-tools-feature",
             sourceRelativePath: "Sources/Features/SearchTools",

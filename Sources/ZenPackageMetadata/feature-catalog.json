@@ -59,6 +59,17 @@
       ]
     },
     {
+      "description" : "Personal assistant for the user's macOS apps, one tool per app: macos.calendar, macos.reminders, macos.contacts, macos.mail, macos.messages, macos.photos, macos.notes, plus macos.permissions for privacy access (read, search, create, update, send, and delete with confirmation).",
+      "id" : "macOS",
+      "invocationTimeoutSeconds" : 180,
+      "isInstalledOnLinux" : false,
+      "productName" : "macOS",
+      "sourceRelativePath" : "Sources/Features/MacOS",
+      "toolNamePrefixes" : [
+        "macos."
+      ]
+    },
+    {
       "description" : "Find files by glob and search file contents with grep.",
       "id" : "search-tools",
       "isInstalledOnLinux" : true,
