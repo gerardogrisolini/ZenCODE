@@ -53,7 +53,9 @@ extension AgentConfigurationTests {
         let reviewerProfile = try #require(profiles["Reviewer"])
         let reporterProfile = try #require(profiles["Reporter"])
         let plannerProfile = try #require(profiles["Planner"])
-        #expect(profiles.count == 6)
+        let organizerProfile = try #require(profiles["Organizer"])
+        let promoterProfile = try #require(profiles["Promoter"])
+        #expect(profiles.count == 8)
         #expect(profiles["Xcode"] == nil)
         #expect(reviewerProfile.tools == AgentProfileStore.reviewerToolNames)
         #expect(reviewerProfile.instructions?.contains("Reviewer agent") == true)
@@ -109,7 +111,7 @@ extension AgentConfigurationTests {
             ).isDisjoint(with: mutatingCoreNames)
         )
 
-        for profile in profiles.values where profile.name != "Planner" {
+        for profile in profiles.values where !["Planner", "Organizer", "Promoter"].contains(profile.name) {
             #expect(!profile.tools.contains(xcodeKey))
             #expect(!profile.tools.contains(figmaKey))
             #expect(profile.tools.contains("files"))
@@ -136,6 +138,39 @@ extension AgentConfigurationTests {
         #expect(!minimalProfile.tools.contains("sub-agents"))
         #expect(minimalProfile.tools == AgentProfileStore.minimalToolNames)
         #expect(minimalProfile.instructions?.contains("Minimal agent") == true)
+        let macOSKey = TerminalToolSelectionCatalog.featurePackageKey(id: "macOS")
+        #expect(organizerProfile.id == AgentProfileStore.organizerAgentID.uuidString)
+        #expect(organizerProfile.tools == AgentProfileStore.organizerToolNames)
+        #expect(organizerProfile.tools == [macOSKey, "memory", "sub-agents"])
+        #expect(!organizerProfile.readOnly)
+        #expect(organizerProfile.modelBindings.isEmpty)
+        #expect(organizerProfile.defaultModelBindingID == nil)
+        #expect(organizerProfile.instructions?.contains("Organizer agent") == true)
+        let organizerAllowedToolNames = organizerProfile.allowedToolNames(
+            featureStatuses: unavailableOptionalFeatureStatuses
+        )
+        #expect(organizerAllowedToolNames.contains("memory.write"))
+        #expect(organizerAllowedToolNames.contains("agent.create"))
+        #expect(!organizerAllowedToolNames.contains("local.readFile"))
+        #expect(!organizerAllowedToolNames.contains("local.writeFile"))
+        #expect(!organizerAllowedToolNames.contains("local.exec"))
+        let browserKey = TerminalToolSelectionCatalog.featurePackageKey(id: "browser-tools")
+        #expect(promoterProfile.id == AgentProfileStore.promoterAgentID.uuidString)
+        #expect(promoterProfile.tools == AgentProfileStore.promoterToolNames)
+        #expect(promoterProfile.tools == ["memory", browserKey])
+        #expect(!promoterProfile.readOnly)
+        #expect(promoterProfile.modelBindings.isEmpty)
+        #expect(promoterProfile.defaultModelBindingID == nil)
+        #expect(promoterProfile.instructions?.contains("Promoter agent") == true)
+        #expect(promoterProfile.instructions?.contains("ZenCODE") == false)
+        #expect(promoterProfile.instructions?.contains("NEVER click the final publish") == true)
+        let promoterAllowedToolNames = promoterProfile.allowedToolNames(
+            featureStatuses: unavailableOptionalFeatureStatuses
+        )
+        #expect(promoterAllowedToolNames.contains("memory.write"))
+        #expect(!promoterAllowedToolNames.contains("agent.create"))
+        #expect(!promoterAllowedToolNames.contains("local.writeFile"))
+        #expect(!promoterAllowedToolNames.contains("local.exec"))
     }
 
     @Test
@@ -170,7 +205,9 @@ extension AgentConfigurationTests {
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reviewer"])).contains("Read-only reviewer"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reporter"])).contains("evidence-based reports"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Planner"])).contains("Read-only planner"))
-        #expect(profiles.count == 6)
+        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Organizer"])).contains("Personal assistant"))
+        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Promoter"])).contains("project promotion"))
+        #expect(profiles.count == 8)
 
         let customAgent = AgentProfile(
             id: "custom",

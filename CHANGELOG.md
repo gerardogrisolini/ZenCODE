@@ -10,6 +10,22 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- A new recommended `Organizer` agent profile acts as a personal assistant: it
+  uses the `macOS` feature tools (calendar, reminders, contacts, mail, messages,
+  notes, photos, permissions), tracks project state with `memory`, and
+  delegates project work to other profiles through `sub-agents`. It has no
+  direct file or shell access and carries no model binding. Existing
+  `agents.json` manifests are not changed; regenerate the recommended profiles
+  in setup to add it.
+- A new recommended `Promoter` agent profile runs one daily step of a
+  long-running promotion strategy for the user's project: it researches with
+  the `browser-tools` feature, prepares drafts in the Browser without ever
+  publishing them, and keeps the project, channels, strategy, and lessons in
+  `memory`, asking the user when any of them is missing. It carries no model
+  binding.
+
 ### Changed
 
 - Memory retrieval with an embedding endpoint: semantic hits are now gated per

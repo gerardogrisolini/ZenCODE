@@ -214,6 +214,10 @@ extension TerminalChat {
             return "Read-only code analysis and evidence-based reports"
         case AgentProfileStore.plannerAgentID.uuidString.lowercased():
             return "Read-only planner for implementation workflows"
+        case AgentProfileStore.organizerAgentID.uuidString.lowercased():
+            return "Personal assistant with macOS apps, memory, and delegation"
+        case AgentProfileStore.promoterAgentID.uuidString.lowercased():
+            return "Daily project promotion with browser drafts and memory"
         default:
             return customAgentToolSummary(agent.tools)
         }

@@ -755,7 +755,9 @@ struct MemoryServiceTests {
             "Minimal",
             "Reviewer",
             "Reporter",
-            "Planner"
+            "Planner",
+            "Organizer",
+            "Promoter"
         ]))
         #expect(Set(profiles.map(\.id)).count == profiles.count)
         #expect(try AgentProfileStore.developerProfile(in: profiles).name == "Developer")

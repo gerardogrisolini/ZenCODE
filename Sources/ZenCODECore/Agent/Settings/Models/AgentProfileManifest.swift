@@ -410,9 +410,13 @@ public enum AgentProfileStore {
     public static let minimalAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000008")!
     public static let reviewerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
     public static let plannerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000011")!
+    public static let organizerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000014")!
+    public static let promoterAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000015")!
     public static let builderAgentName = "Builder"
     public static let reviewerAgentName = "Reviewer"
     public static let plannerAgentName = "Planner"
+    public static let organizerAgentName = "Organizer"
+    public static let promoterAgentName = "Promoter"
     public static let manifestFilename = "agents.json"
     public static let minimalToolNames: [String] = [
         "shell",
@@ -449,6 +453,15 @@ public enum AgentProfileStore {
         TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools"),
         "memory",
         TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools")
+    ]
+    public static let organizerToolNames: [String] = [
+        TerminalToolSelectionCatalog.featurePackageKey(id: "macOS"),
+        "memory",
+        "sub-agents"
+    ]
+    public static let promoterToolNames: [String] = [
+        "memory",
+        TerminalToolSelectionCatalog.featurePackageKey(id: "browser-tools")
     ]
     public static let featureManagementToolNames = Set(DirectToolCatalog.featureDescriptors.map(\.name))
 
