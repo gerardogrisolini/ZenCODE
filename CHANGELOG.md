@@ -88,8 +88,24 @@ Release tags follow the strict `vX.Y.Z` contract described in
   call for the current document, so messages logged before that call are not
   recorded.
 
+- DS4 setup now selects one or more GGUF files from the DS4 folder (all regular
+  `.gguf` files, with the already configured ones preselected), each becoming a
+  model of the DS4 provider with its own launch parameters: backend (chosen with
+  a menu), context window, SSD streaming, MTP and power are asked for each
+  selected model, defaulting to that model's saved values, and the API model
+  id of a GGUF outside the catalog is inferred from its file name. The hardware
+  probe, the compatibility advisor and the confirmation prompt were removed, and
+  the DS4 model catalog was reduced to what setup still uses. A model's own DS4
+  runtime now takes precedence over the provider's, so each DS4 model keeps its
+  own GGUF and launch parameters after settings are saved.
+
 ### Fixed
 
+- DS4 setup now recognizes the GGUF that `download_model.sh ds41f-q2`
+  currently downloads (`DeepSeek-V4.1-Flash-1017-IQ2_XXS-Q2_K-imatrix.gguf`)
+  and lists it as `DeepSeek V4.1 Flash Q2` instead of the raw file name. The
+  earlier `DeepSeek-V4.1-Flash-Q2.gguf` name is still recognized, and models
+  already configured keep their id and title.
 - Xcode tools that change files (`XcodeUpdate`, `XcodeWrite`, `XcodeRM`,
   `XcodeMV`) now report their edits. The changes appear as diffs in ACP clients
   and in the terminal, as local file tools already did. Before this fix the
@@ -107,6 +123,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   Builder or installed from a checkout whose directory is not named `ZenCODE`
   also failed to resolve their `ZenCODE` products. Installation still accepts
   the legacy unnamed form and normalizes it.
+
+- Adding or reconfiguring a model of the DS4 provider from "Providers & models"
+  no longer crashes setup with `Unable to load /models`: DS4 is not running
+  during setup, so `/models` is never requested for it.
 
 ## [2.3.4] - 2026-10-20
 

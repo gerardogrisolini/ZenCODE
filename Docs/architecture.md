@@ -365,14 +365,17 @@ The public contract has three user-facing levels:
    performs a read-only scan of only `<root>/*.gguf` and `<root>/gguf/*.gguf`.
    `DS4InstallationScanner` ignores arbitrary nested project paths, symlinked
    directories/files, non-regular artifacts, and unavailable sizes.
-2. **Compatibility and staged setup.** `DS4ModelCatalog` is static,
-   evidence-backed metadata for artifact paths, download identities, resource
-   estimates, and supported backends. `DS4HardwareProbe` is bounded and
-   diagnostic-only; `DS4CompatibilityAdvisor` may propose an operational model
-   only when an installed catalog artifact and a proven backend/memory profile
-   agree. Setup never downloads, builds, parses GGUF headers, starts DS4, or
-   infers CPU as an operational backend. The resulting provider/model is staged
-   and reaches settings only through the normal setup transaction.
+2. **Staged setup.** `DS4ModelCatalog` is small, static metadata: catalog id,
+   display name, artifact paths/roles, and the API model id. Setup offers every
+   regular GGUF found by the scanner (except shards of multi-artifact catalog
+   entries) in a multi-select menu, then asks once for the backend (single
+   choice) and the runtime tuning. There is no hardware probe or compatibility
+   advice. Each selected file becomes one model of the DS4 provider, sharing the
+   same `ds4Runtime` settings except `modelRelativePath`. Setup never downloads,
+   builds, parses GGUF headers, starts DS4, or calls `/models`. The same staged
+   flow serves the DS4 setup section and the DS4 provider reconfigured from
+   "Providers & models". The resulting provider/models are staged and reach
+   settings only through the normal setup transaction.
 3. **Managed local runtime.** On first model use, `DS4ServerSupervisor` launches
    the existing checkout executable, binds a loopback address, waits for the
    OpenAI-compatible `/v1/models` response, and then lets the common remote
@@ -385,14 +388,16 @@ building DS4, launching a server during setup, embedding a model, and running
 inference in ZenCODE remain explicit non-goals. The complete operational guide
 and level table are in [ds4.md](ds4.md).
 
-### Compatibility and identity rules
+### Identity rules
 
 The checkout's catalog/download identity and the server's wire model identity
 are separate compatibility surfaces. A catalog entry exposes `apiModelID`,
 which maps a download/quantization key to the canonical ID emitted by the
-checked-out DS4 server. Fresh setup may retain a stable ZenCODE selection key
-such as `ds4:<catalog-id>`, but provider payloads and supervisor readiness use
-that canonical API ID. The supervisor accepts readiness only when `/v1/models`
+checked-out DS4 server; for a GGUF outside the catalog the API ID is inferred
+from the file name (`DS4ModelCatalog.inferredAPIModelID`) or chosen among the
+ids the server serves. Fresh setup may retain a stable ZenCODE selection key
+such as `ds4:<catalog-id>` or `ds4:<file stem>`, but provider payloads and
+supervisor readiness use that canonical API ID. The supervisor accepts readiness only when `/v1/models`
 advertises the expected ID; it does not invent an alias or accept an unrelated
 model.
 
@@ -403,13 +408,12 @@ files, bounded readiness/output bodies, and direct argv. Supervisor-owned
 flags (host, port, model path, working directory, backend, context, SSD
 streaming, MTP, power, and related server/security flags) cannot be replaced by
 `additionalArguments`.
-Operational recommendations represent proven Metal, CUDA, or ROCm backends;
-CPU remains diagnostic/reference-only. SSD streaming and batching are
-compatibility options only when the catalog and host evidence support them.
+The backend is chosen by the user from `metal`, `cuda`, `rocm` and `cpu`;
+setup does not verify it against the host.
 
 ### Ownership and lifecycle
 
-`ZenCODECore` owns the DS4 scanner, catalog/advisor, setup integration,
+`ZenCODECore` owns the DS4 scanner, catalog, setup integration,
 persisted DTOs, remote-client endpoint adaptation, and
 `DS4ServerSupervisor`. `zen` remains the only composition root that selects and
 injects a backend. Terminal UI, Telegram, ACP, and delegated-agent presentation
@@ -437,10 +441,12 @@ unchanged when no local DS4 endpoint is active.
 ### Persistence boundary
 
 `ds4Runtime` is an additive optional field in provider and model manifests.
-Provider metadata is authoritative once a model is linked to a provider; the
-model-level copy exists for standalone/staged model records and round-trips for
-compatibility. Manifests without this field remain decodable. The persisted
-runtime contract contains only:
+A model-level runtime is authoritative for that model, so one DS4 provider can
+serve several GGUFs from the same folder, each recorded on its own model
+manifest; the provider runtime is the fallback for models that carry none.
+Manifests written before this rule stored the same runtime on both records and
+therefore resolve identically. Manifests without this field remain decodable.
+The persisted runtime contract contains only:
 
 - canonical absolute `rootDirectory`;
 - relative `modelRelativePath` below that root;
@@ -453,7 +459,7 @@ Path validation canonicalizes the root and rejects absolute/traversal model
 paths, escapes, symlink components, missing required files, and non-regular
 files. The manifest deliberately excludes process IDs, ports, endpoint URLs
 selected at runtime, executable discovery, readiness/diagnostic state, process
-handles, and hardware snapshots. The persisted provider URL is an explicit
+handles, and hardware information. The persisted provider URL is an explicit
 loopback adoption hint (the setup default is `http://127.0.0.1:8000/v1`,
 matching ds4-server's conventional port). The supervisor first probes that
 bounded candidate and verifies `/v1/models` plus the expected model alias. If no
@@ -461,8 +467,8 @@ compatible listener answers, it falls back to a dynamically reserved loopback
 port for a child it starts; runtime endpoint/port state remains transient.
 
 Setup stages a complete candidate and commits it only through the existing
-cooperative manifest transaction. A failed scan, compatibility decision,
-validation, cancellation, or declined confirmation returns the prior manifest;
+cooperative manifest transaction. A failed scan, validation, cancellation, or
+empty selection returns the prior manifest;
 non-DS4 providers, models, credentials, and unrelated settings are retained.
 Runtime process state is reconstructed lazily from the persisted metadata after
 backend creation and is not part of session snapshots, task checkpoints, cache

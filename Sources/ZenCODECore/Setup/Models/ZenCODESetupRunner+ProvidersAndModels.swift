@@ -159,7 +159,19 @@ extension ZenCODESetupRunner {
         for index in selectedProviderIndexes.sorted() where providerInputs.indices.contains(index) {
             let providerInput = providerInputs[index]
             let provider = providerManifest(from: providerInput)
-            if isChatGPTSubscriptionProvider(provider) {
+            if provider.ds4Runtime != nil {
+                // DS4 is never running during setup: models come from the
+                // GGUF files in the DS4 folder, never from `/models`.
+                let reservedModelIDs = Set(
+                    providerInputs.enumerated()
+                        .filter { $0.offset != index }
+                        .flatMap { $0.element.models.map(\.id) }
+                )
+                providerInputs[index] = reconfigureDS4ProviderInput(
+                    providerInput,
+                    reservedModelIDs: reservedModelIDs
+                )
+            } else if isChatGPTSubscriptionProvider(provider) {
                 providerInputs[index] = try await readChatGPTSubscriptionProvider(
                     existingModels: providerInput.models
                 )

@@ -89,8 +89,9 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
     public let apiKey: String?
     public let thinkingOptions: [AgentThinkingSelection]?
     public let defaultThinkingSelection: AgentThinkingSelection?
-    /// Explicit model-level runtime metadata when no provider record has yet
-    /// been attached. Once resolved, provider metadata is authoritative.
+    /// Model-level runtime metadata. It is authoritative for this model: one
+    /// DS4 provider may serve several GGUFs, each recorded on its own model.
+    /// When absent, the linked provider's runtime is used.
     public let ds4Runtime: AgentDS4RuntimeConfiguration?
 
     public init(
@@ -273,12 +274,15 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
         var resolvedProvider = provider
             ?? providerID.flatMap { providersByID[$0]?.remoteProvider(modelID: modelID) }
         let providerIDForRuntime: UUID? = resolvedProvider?.id ?? providerID
-        let resolvedRuntime = resolvedProvider?.ds4Runtime
+        // A model-level runtime is authoritative: one DS4 provider may serve
+        // several GGUFs, each recorded on its own model manifest. The provider
+        // runtime is only the fallback for models that carry none.
+        let resolvedRuntime = ds4Runtime
+            ?? resolvedProvider?.ds4Runtime
             ?? providerIDForRuntime.flatMap { providersByID[$0]?.ds4Runtime }
-            ?? ds4Runtime
         if let existingProvider = resolvedProvider,
-           existingProvider.ds4Runtime == nil,
-           resolvedRuntime != nil {
+           resolvedRuntime != nil,
+           existingProvider.ds4Runtime != resolvedRuntime {
             resolvedProvider = existingProvider.withDS4Runtime(resolvedRuntime)
         }
         if kind == .remoteAPI,

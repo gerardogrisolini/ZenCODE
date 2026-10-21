@@ -13,7 +13,7 @@ The architecture and persistence contract behind this guide is in
 | Level | Supported contract | What ZenCODE owns |
 | --- | --- | --- |
 | Folder discovery | Point setup at an existing checkout. Discovery scans only the checkout root and its `gguf/` directory for regular `.gguf` files. | A read-only installation snapshot; no checkout changes. |
-| Compatibility and staged setup | Compare the installed artifacts with the static catalog and a bounded, read-only hardware probe. Confirm one installed, catalog-recognized, operational model. | A staged provider/model manifest; the normal setup transaction persists it. |
+| Staged setup | Select one or more of the discovered GGUF files, then a backend and tuning values for each of them. No hardware probe or compatibility check is performed. | A staged provider with one model per selected file, each with its own launch parameters; the normal setup transaction persists it. |
 | Managed local runtime | On first model use, start the existing DS4 executable on loopback, wait for `/v1/models`, and send OpenAI-compatible generation requests to the ready endpoint. | One actor-isolated supervisor and the child process for that backend lifetime. |
 | Injected endpoint | A composition root or test may inject a ready `DS4ServerEndpoint`. | The embedding composition root owns readiness and any external process; this is not a user setup mode. |
 
@@ -31,59 +31,60 @@ Before opening setup, prepare the checkout outside ZenCODE:
 - Place at least one supported, regular GGUF artifact in either the checkout
   root or `gguf/`. Symlinked artifacts, directories named `*.gguf`, and files in
   arbitrary nested directories are ignored.
-- Use a model represented by the bundled catalog. The catalog records download
-  identities, artifact paths, approximate disk/RAM requirements, and supported
-  backends; an unknown file is not silently treated as a supported model.
+- Every regular `.gguf` found is selectable. Files known to the bundled catalog
+  get its display name and API model id; other files use the file name as the
+  title and the API model id is inferred from the file name (see below). Only
+  files the catalog marks as shards of a multi-artifact entry are not offered.
 - For generation after setup, keep a runnable DS4 executable in the checkout's
   conventional location (`ds4-server`, `ds4`, `bin/ds4-server`, or `bin/ds4`),
   unless an internal composition root supplies an explicit executable. Setup
   itself does not launch or validate that process.
-- Have a proven operational GPU backend and enough physical memory for the
-  selected catalog proposal. Metal, CUDA, and ROCm are represented when the
-  bounded probe proves them. CPU is diagnostic/reference-only and is not an
-  operational setup recommendation.
 
-The scanner and advisor are offline with respect to model acquisition. Disk
-capacity is not substituted for physical RAM, and unknown hardware or memory
-never becomes a positive compatibility claim.
+Setup performs no hardware probe and no compatibility advice: choosing a GGUF
+and backend that fit the machine is up to you.
 
 ## Setup flow
 
-1. Open `/setup` and select **DS4 local runtime**.
-2. Enter the existing DS4 checkout folder. A prior canonical folder is offered
-   as the default when one is already configured.
-3. ZenCODE scans only `<folder>/*.gguf` and `<folder>/gguf/*.gguf`, then prints
-   the discovered artifacts, platform, architecture, physical RAM, GPU/backend
-   evidence, and catalog proposals. These operations are read-only.
-4. Select an installed proposal when more than one operational proposal is
-   available. Confirmation is offered only for a complete, catalog-recognized,
-   single-artifact model with a proven operational backend. Shard-only or
-   multi-artifact proposals are not reduced to their first file.
-5. Confirm the proposal. Setup stages a local provider at
-   `http://127.0.0.1:8000/v1`, the conventional ds4-server loopback endpoint;
-   runtime first probes this bounded candidate and verifies the requested model
-   alias before adopting it. If no compatible listener is active, ZenCODE
-   starts its own child on a dynamically reserved loopback port. Setup itself
-   still does not start DS4. Cancelling, declining, supplying an invalid folder,
-   finding no GGUF, or finding no operational proposal leaves the existing
-   manifest unchanged.
-6. After confirming the proposal, choose the managed runtime tuning values:
-   context window (`--ctx`, default 65,536 tokens), SSD streaming
-   (`--ssd-streaming`, defaulting to the prior value or the compatibility
-   proposal), embedded MTP (`--mtp`, off by default), and GPU duty-cycle power
-   (`--power`, 1–100, default 100). Existing values are offered again when
-   reconfiguring the same DS4 runtime; cancelling any tuning prompt leaves the
-   manifest unchanged.
-7. Finish setup normally. Only the final setup transaction writes settings.
+1. Open `/setup` and select **DS4 local runtime**, or reconfigure the DS4
+   provider from **Providers & models**. Both use the same flow and never call
+   `/models` (DS4 is not running during setup).
+2. Enter the existing DS4 folder. A prior canonical folder is offered as the
+   default when one is already configured.
+3. ZenCODE scans only `<folder>/*.gguf` and `<folder>/gguf/*.gguf` (read-only)
+   and shows every regular GGUF in a multi-select menu. The files already
+   configured are preselected. Each selected file becomes one model of the DS4
+   provider; an empty selection or cancelling leaves the manifest unchanged.
+4. For each selected model, choose its backend from a single-choice menu
+   (`metal`, `cuda`, `rocm`, `cpu`). The default is that model's previous
+   backend, otherwise `metal` on macOS and `cpu` elsewhere.
+5. For each selected model, choose its managed runtime tuning values: context
+   window (`--ctx`, default 65,536 tokens), SSD streaming
+   (`--ssd-streaming`, defaulting to the model's prior value, otherwise off), embedded
+   MTP (`--mtp`, off by default), and GPU duty-cycle power (`--power`, 1–100,
+   default 100). When reconfiguring, each model is offered its own saved
+   values; a newly added model starts from the defaults and never inherits
+   another model's settings. Cancelling any prompt leaves the manifest unchanged.
+6. Finish setup normally. Only the final setup transaction writes settings.
    Existing non-DS4 providers, models, API-key entries, and unrelated settings
-   are retained. Re-running the section updates the existing DS4 entry and
-   retains its runtime tuning where possible.
+   are retained. Re-running the flow replaces the DS4 models with the new
+   selection while preserving the id, title, parameter overrides and thinking
+   options of models whose file is still selected. The provider is staged at
+   `http://127.0.0.1:8000/v1` (the conventional ds4-server loopback endpoint)
+   when new; runtime first probes this bounded candidate and verifies the
+   requested model id before adopting it, otherwise it starts its own child on a
+   dynamically reserved loopback port. Setup itself never starts DS4.
 
-A fresh model keeps a ZenCODE selection identity such as `ds4:<catalog-id>`.
-The model ID sent to DS4 and checked against `/v1/models` is the catalog entry's
-canonical API ID (for example, a download/quantization identity can map to the
-server's advertised `deepseek-v4-flash` ID). These identities must not be
-interchanged when inspecting a manifest or diagnosing readiness.
+A fresh model keeps a ZenCODE selection identity: `ds4:<catalog-id>` for a
+catalog file or `ds4:<lowercased file stem>` otherwise (made unique when needed).
+The model ID sent to DS4 and checked against `/v1/models` is the API id: the
+catalog entry's canonical id, or for other files the id inferred from the file
+name (case-insensitive, first match wins): `deepseek-v4.1` →
+`deepseek-v4.1-flash`; `deepseek-v4-pro`/`v4-pro` → `deepseek-v4-pro`;
+`deepseek-v4-flash` → `deepseek-v4-flash`; `qwen3.8` → `qwen3.8-flash-next`;
+`glm-5.3` → `glm-5.3-flash`; `glm-5.2` → `glm-5.2`. If the name does not match,
+setup asks you to pick one of those six ids, which are the only ones the ds4
+server serves. These identities must not be interchanged when inspecting a
+manifest or diagnosing readiness.
 
 ## What is persisted
 
@@ -98,7 +99,7 @@ manifests that have no DS4 section. It records:
   cache/preload tuning when selected).
 
 It never records a PID, listening port, endpoint URL discovered at runtime,
-readiness state, process handle, hardware snapshot, or diagnostic output. The
+readiness state, process handle, or diagnostic output. The
 provider's loopback URL is an adoption hint: setup defaults to
 `http://127.0.0.1:8000/v1`, while a managed child may use a transient dynamic
 port when that candidate is absent or incompatible. API-key storage remains
@@ -107,7 +108,7 @@ suppress credentials when sent to the loopback child.
 
 ## Runtime ownership and lifecycle
 
-- `ZenCODECore` owns the scanner, catalog/advisor, setup integration, manifest
+- `ZenCODECore` owns the scanner, catalog, setup integration, manifest
   DTOs, remote client adaptation, and `DS4ServerSupervisor`. `zen` remains the
   composition root; terminal, Telegram, and ACP layers do not own DS4
   processes.
@@ -139,9 +140,8 @@ suppress credentials when sent to the loopback child.
 | Observation | Meaning | Action |
 | --- | --- | --- |
 | No GGUF found | The folder-only scanner found no usable artifact in its two scan locations. | Place an existing regular GGUF in the root or `gguf/`, then rerun setup. |
-| Artifact is not in the catalog | ZenCODE has no evidence-backed mapping for that file/model. | Use a catalog-supported artifact; do not assume a filename is compatible. |
-| Hardware or memory is unknown | The diagnostic probe could not prove an operational choice. | Resolve the host/tooling issue outside setup; no automatic fallback is made. |
-| No operational proposal | The artifact may be partial, unsupported by the proven backend, or too large for the documented mode. | Choose another already-installed catalog artifact or configure the host externally. |
+| Artifact is not in the catalog | The file is still selectable; its API model id is inferred from the file name, or asked. | Rename the file to include its family (for example `qwen3.8`) or pick one of the six served ids. |
+| Multi-shard catalog artifact missing from the list | Shards of multi-artifact catalog entries cannot run on their own. | Join the shards into a single GGUF first. |
 | Runtime executable/readiness failure | Setup succeeded as metadata staging, but the existing DS4 binary did not become a compatible loopback server. | Inspect the DS4 checkout and its own diagnostics; ZenCODE will not download or build it. |
 
 For final validation, use fixture-based DS4 and setup tests. Do not point tests at
