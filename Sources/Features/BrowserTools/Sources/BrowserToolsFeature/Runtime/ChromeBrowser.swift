@@ -30,6 +30,9 @@ enum ChromeBrowserError: LocalizedError, Sendable {
     case invalidTabResponse(String)
     case pageNotFound(String)
     case unsafeRootExecution
+    case profileInUseByLoginSession
+    case loginRequiresVisibleBrowser
+    case automatedBrowserDidNotExit
 
     var errorDescription: String? {
         switch self {
@@ -47,6 +50,12 @@ enum ChromeBrowserError: LocalizedError, Sendable {
             "Browser page '\(pageID)' no longer exists. Open or list pages and use a current pageId."
         case .unsafeRootExecution:
             "Browser refuses to launch Chrome as root without its sandbox. Run ZenCODE as a non-root user, or set ZENCODE_BROWSER_ALLOW_UNSANDBOXED_ROOT=1 only inside an externally isolated environment."
+        case .profileInUseByLoginSession:
+            "The Browser profile is open in a manual login window started by browser.login. Ask the user to finish signing in and quit that Chrome window, then retry."
+        case .loginRequiresVisibleBrowser:
+            "browser.login needs a visible Chrome window, but ZENCODE_BROWSER_HEADLESS is enabled. Unset it on a machine with a display to sign in manually."
+        case .automatedBrowserDidNotExit:
+            "The automated Browser Chrome instance did not exit, so the manual login window cannot use its profile. Quit Chrome for the Browser profile and retry."
         }
     }
 }
@@ -196,7 +205,28 @@ final class ChromeBrowserManager: Sendable {
             return
         }
 
-        try await spawnChrome()
+        // A Chrome that owns the profile without exposing CDP is normally the
+        // manual browser.login window. Launching another instance would only
+        // forward the arguments to it and never open a debugging port. Give a
+        // concurrently starting automated instance time to publish its port
+        // before reporting the profile as busy.
+        if Self.profileLockOwnerPID(profileDirectory: configuration.profileDirectory) != nil {
+            for _ in 0..<Self.cdpReadyPollIterations {
+                try Task.checkCancellation()
+                try await Task.sleep(nanoseconds: Self.cdpReadyPollInterval)
+                if await discoverLivePort() != nil {
+                    return
+                }
+                if Self.profileLockOwnerPID(profileDirectory: configuration.profileDirectory) == nil {
+                    break
+                }
+            }
+            if Self.profileLockOwnerPID(profileDirectory: configuration.profileDirectory) != nil {
+                throw ChromeBrowserError.profileInUseByLoginSession
+            }
+        }
+
+        try await spawnChrome(arguments: Self.automationLaunchArguments(configuration: configuration))
         for _ in 0..<Self.cdpReadyPollIterations {
             try Task.checkCancellation()
             if await discoverLivePort() != nil {
@@ -262,6 +292,91 @@ final class ChromeBrowserManager: Sendable {
             return port
         }
         return nil
+    }
+
+    // MARK: - Manual login session
+
+    /// Opens the dedicated Browser profile in an ordinary Chrome window with no
+    /// remote debugging and no injected scripts, so the user can sign in to
+    /// sites that reject automated browsers. A running automated instance is
+    /// closed first because one profile can be used by only one Chrome process.
+    /// Returns whether an automated instance was closed.
+    @discardableResult
+    func launchLoginSession(url: URL?) async throws -> Bool {
+        guard !configuration.launchesHeadless else {
+            throw ChromeBrowserError.loginRequiresVisibleBrowser
+        }
+
+        var closedAutomatedBrowser = false
+        if let port = await discoverLivePort() {
+            await closeAutomatedBrowser(port: port)
+            closedAutomatedBrowser = true
+            var exited = false
+            for _ in 0..<Self.cdpReadyPollIterations {
+                try Task.checkCancellation()
+                if Self.profileLockOwnerPID(profileDirectory: configuration.profileDirectory) == nil,
+                   await !endpointIsAlive(on: port)
+                {
+                    exited = true
+                    break
+                }
+                try await Task.sleep(nanoseconds: Self.cdpReadyPollInterval)
+            }
+            guard exited else { throw ChromeBrowserError.automatedBrowserDidNotExit }
+            state.withLock { state in
+                state.resolvedPort = nil
+                return
+            }
+        }
+
+        try await spawnChrome(
+            arguments: Self.loginLaunchArguments(configuration: configuration, url: url),
+            inForeground: true
+        )
+        return closedAutomatedBrowser
+    }
+
+    private func closeAutomatedBrowser(port: Int) async {
+        guard let url = cdpHTTPURL(port: port, path: "/json/version"),
+              let (data, response) = try? await urlSession.data(from: url),
+              (try? validateHTTP(response)) != nil,
+              let version = try? JSONDecoder().decode(CDPVersionInfo.self, from: data),
+              let debuggerURL = URL(string: version.webSocketDebuggerURL),
+              Self.isTrustedDebuggerURL(debuggerURL, expectedPort: port)
+        else {
+            return
+        }
+        let session = CDPSession(
+            webSocketURL: debuggerURL,
+            configuration: CDPSessionConfiguration(environment: configuration.environment)
+        )
+        session.connect()
+        defer { session.disconnect() }
+        // Chrome may drop the socket before acknowledging Browser.close.
+        _ = try? await session.send(method: "Browser.close")
+    }
+
+    /// Returns the live process that owns the profile's `SingletonLock`, if
+    /// any. Chrome stores the owner as a `hostname-pid` symlink target.
+    static func profileLockOwnerPID(profileDirectory: URL) -> Int32? {
+        let lockPath = profileDirectory.appendingPathComponent("SingletonLock").path
+        guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: lockPath) else {
+            return nil
+        }
+        return profileLockOwnerPID(lockTarget: target) { pid in
+            kill(pid, 0) == 0 || errno == EPERM
+        }
+    }
+
+    static func profileLockOwnerPID(lockTarget: String, isAlive: (Int32) -> Bool) -> Int32? {
+        guard let separator = lockTarget.lastIndex(of: "-"),
+              let pid = Int32(lockTarget[lockTarget.index(after: separator)...]),
+              pid > 0,
+              isAlive(pid)
+        else {
+            return nil
+        }
+        return pid
     }
 
     // MARK: - CDP HTTP API
@@ -421,7 +536,7 @@ final class ChromeBrowserManager: Sendable {
 
     // MARK: - Spawning
 
-    private func spawnChrome() async throws {
+    private func spawnChrome(arguments: [String], inForeground: Bool = false) async throws {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: configuration.profileDirectory, withIntermediateDirectories: true)
         #if canImport(Darwin) || canImport(Glibc)
@@ -443,52 +558,68 @@ final class ChromeBrowserManager: Sendable {
         if let appName = Self.macOSAppName(environment: configuration.environment),
            FileManager.default.isExecutableFile(atPath: "/usr/bin/open")
         {
-            try launchViaOpen(appName: appName)
+            try launchViaOpen(appName: appName, arguments: arguments, inForeground: inForeground)
         } else {
-            try launchDirect(executable: executable)
+            try launchDirect(executable: executable, arguments: arguments)
         }
         #else
-        try launchDirect(executable: executable)
+        try launchDirect(executable: executable, arguments: arguments)
         #endif
     }
 
-    private func launchArguments() -> [String] {
+    /// Arguments shared by the automated and the manual login instance. Both
+    /// must agree on the profile and on credential storage, otherwise cookies
+    /// saved during a manual login could not be decrypted by the automated
+    /// instance. On macOS Chrome uses the real Keychain like a normal install.
+    static func profileLaunchArguments(configuration: ChromeBrowserConfiguration) -> [String] {
+        var arguments = [
+            "--user-data-dir=\(configuration.profileDirectory.path)",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ]
+        #if !os(macOS)
+        // Linux machines (including headless ones) may have no keyring daemon;
+        // a keyring prompt would block the automated instance.
+        arguments.append("--password-store=basic")
+        #endif
+        return arguments
+    }
+
+    static func automationLaunchArguments(configuration: ChromeBrowserConfiguration) -> [String] {
         let port = configuration.portOverride ?? 0
         var arguments = [
             "--remote-debugging-address=127.0.0.1",
             "--remote-debugging-port=\(port)",
-            "--user-data-dir=\(configuration.profileDirectory.path)",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-sync",
-            "--password-store=basic",
-            "--mute-audio",
         ]
+        arguments += profileLaunchArguments(configuration: configuration)
+        arguments.append("--mute-audio")
         if configuration.launchesHeadless {
             arguments.append("--headless=new")
         }
-        #if os(macOS)
-        arguments.append("--use-mock-keychain")
-        #endif
         arguments.append("about:blank")
         return arguments
     }
 
+    /// A manual login instance deliberately exposes no debugging endpoint.
+    static func loginLaunchArguments(configuration: ChromeBrowserConfiguration, url: URL?) -> [String] {
+        profileLaunchArguments(configuration: configuration) + [url?.absoluteString ?? "about:blank"]
+    }
+
     #if os(macOS)
-    private func launchViaOpen(appName: String) throws {
+    private func launchViaOpen(appName: String, arguments: [String], inForeground: Bool) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-g", "-na", appName, "--args"] + launchArguments()
+        process.arguments = (inForeground ? [] : ["-g"]) + ["-na", appName, "--args"] + arguments
         discardProcessOutput(process)
         try process.run()
         rememberSpawnedProcess(process)
     }
     #endif
 
-    private func launchDirect(executable: String) throws {
+    private func launchDirect(executable: String, arguments: [String]) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = launchArguments()
+        process.arguments = arguments
         discardProcessOutput(process)
         do {
             try process.run()

@@ -129,7 +129,6 @@ struct BrowserOpenTool: FeatureTool {
                     context: context,
                     allowsLoopback: allowsLoopback
                 ) { session, resolvedTab in
-                    try await session.ensureConsoleCapture()
                     if let url = requestedURL {
                         try await session.navigate(to: url.absoluteString)
                     }
@@ -202,7 +201,6 @@ struct BrowserGotoTool: FeatureTool {
             context: context,
             allowsLoopback: allowsLoopback
         ) { session, tab in
-            try await session.ensureConsoleCapture()
             try await session.navigate(to: url.absoluteString)
             return try await session.pageMetadata(pageID: tab.id)
         }
@@ -280,6 +278,53 @@ struct BrowserClosePageTool: FeatureTool {
             throw BrowserToolsFeatureError.browserError(error.localizedDescription)
         }
     }
+}
+
+struct BrowserLoginTool: FeatureTool {
+    struct Input: Decodable, Sendable {
+        let url: String?
+    }
+
+    static let name = "browser.login"
+    static let description = """
+    Opens the Browser profile in a normal, visible Chrome window without \
+    automation so the user can sign in manually to sites that reject \
+    automated browsers. Any automated Browser instance is closed first and \
+    its pageIds become invalid. Ask the user to complete the login and then \
+    quit that Chrome window; the next Browser tool reuses the saved session.
+    """
+    static let inputSchema = buildInputSchema([
+        .string("url", description: "Optional HTTP or HTTPS sign-in page to open.")
+    ])
+
+    func run(_ input: Input, context: FeatureContext) async throws -> BrowserLoginOutput {
+        let requestedURL = try input.url?.nilIfBlank.map {
+            try BrowserURLPolicy(environment: context.environment).validate($0)
+        }
+        let browser = ChromeBrowserManager(configuration: ChromeBrowserConfiguration(environment: context.environment))
+        do {
+            let closedAutomatedBrowser = try await browser.launchLoginSession(url: requestedURL)
+            return BrowserLoginOutput(
+                url: requestedURL?.absoluteString,
+                closedAutomatedBrowser: closedAutomatedBrowser,
+                instructions: BrowserLoginOutput.userInstructions
+            )
+        } catch let error as ChromeBrowserError {
+            throw BrowserToolsFeatureError.browserError(error.localizedDescription)
+        }
+    }
+}
+
+struct BrowserLoginOutput: Codable, Sendable {
+    static let userInstructions = """
+    A normal Chrome window is open on the Browser profile. Sign in there, then \
+    quit that Chrome window (Cmd+Q on macOS). Browser tools cannot use the \
+    profile until the window is closed; afterwards they reuse the saved session.
+    """
+
+    let url: String?
+    let closedAutomatedBrowser: Bool
+    let instructions: String
 }
 
 // MARK: - Shared browser runner
@@ -464,6 +509,7 @@ public enum BrowserToolsFeatureRunner {
             AnyFeatureTool(BrowserActTool()),
             AnyFeatureTool(BrowserDialogTool()),
             AnyFeatureTool(BrowserClosePageTool()),
+            AnyFeatureTool(BrowserLoginTool()),
         ]
     }
 
@@ -513,5 +559,11 @@ extension BrowserReadTool {
 extension BrowserClosePageTool {
     static var presentation: ToolPresentationDefinition {
         .standard(title: "Browser page", action: "Close", kind: .delete, targetKeyPaths: ["pageId", "page_id"])
+    }
+}
+
+extension BrowserLoginTool {
+    static var presentation: ToolPresentationDefinition {
+        .standard(title: "Browser login", action: "Open", kind: .execute, targetKeyPaths: ["url"], targetFormat: .url)
     }
 }

@@ -31,6 +31,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   standby turn) and `replyTimeoutSeconds` (default 600, range 1-900), keeping
   the call and the task attempt open until a live reply arrives. `agent.wait`
   now returns early when chat messages are waiting for the caller.
+- Browser: new `browser.login` tool opens the Browser profile in a normal,
+  visible Chrome window with no remote debugging and no injected scripts, so
+  the user can sign in manually to sites that block automated browsers
+  (Google, X, ...). A running automated instance is closed first; once the
+  user quits the login window, the next Browser tool reuses the saved session.
+  While the login window is open, Browser tools report that the profile is
+  busy instead of timing out. `browser.login` is refused when
+  `ZENCODE_BROWSER_HEADLESS` is set.
 
 ### Changed
 
@@ -69,6 +77,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - The "Memory embeddings" setup now discloses that, with an embedding endpoint
   configured, the full text of every prompt and of every memory entry written
   or updated is sent to that endpoint.
+- Browser: the automated Chrome instance looks more like an ordinary browser.
+  Sync is no longer disabled and, on macOS, Chrome uses the real Keychain
+  instead of a mock keychain and a basic password store (Linux keeps
+  `--password-store=basic`). Cookies saved in the Browser profile with the old
+  mock keychain can no longer be decrypted, so existing logins in that profile
+  must be done once more.
+- Browser: `browser.open` and `browser.goto` no longer inject the console
+  capture script into every page. `browser.console` installs it on its first
+  call for the current document, so messages logged before that call are not
+  recorded.
 
 ### Fixed
 
