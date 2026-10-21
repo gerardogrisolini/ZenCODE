@@ -1,5 +1,3 @@
-![ZenCODE](Docs/Images/social-preview.png)
-
 [![CI](https://github.com/gerardogrisolini/ZenCODE/actions/workflows/ci.yml/badge.svg)](https://github.com/gerardogrisolini/ZenCODE/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/gerardogrisolini/ZenCODE?sort=semver)](https://github.com/gerardogrisolini/ZenCODE/releases)
 [![Swift 6.4](https://img.shields.io/badge/Swift-6.4-F05138?logo=swift&logoColor=white)](https://www.swift.org)
