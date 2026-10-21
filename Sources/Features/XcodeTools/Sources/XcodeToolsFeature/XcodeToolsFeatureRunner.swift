@@ -118,6 +118,21 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration, PersistentMCP
         inputData: Data,
         environment: [String: String]
     ) async throws -> String {
+        try await invokeResult(
+            toolName: toolName,
+            inputData: inputData,
+            workingDirectoryPath: nil,
+            environment: environment
+        ).output
+    }
+
+    /// One-shot invocation with on-disk file-change evidence.
+    func invokeResult(
+        toolName: String,
+        inputData: Data,
+        workingDirectoryPath: String?,
+        environment: [String: String]
+    ) async throws -> MCPFeatureInvocationResult {
         guard isAvailable(environment: environment),
               let config = XcodeMCPServerConfiguration.configuration(fromEnvironment: environment) else {
             throw MCPFeatureError.unavailable(featureName)
@@ -135,11 +150,15 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration, PersistentMCP
 
         let executor = XcodeToolExecutor(configuration: config)
         do {
-            let output = try await executor.execute(
-                ToolRequest(name: rawToolName, arguments: normalizedRequest.arguments)
+            let result = try await executor.executeCapturingFileChanges(
+                ToolRequest(name: rawToolName, arguments: normalizedRequest.arguments),
+                workingDirectoryPath: workingDirectoryPath
             )
             await executor.disconnect()
-            return output.text
+            return MCPFeatureInvocationResult(
+                output: result.output.text,
+                fileChanges: result.fileChanges
+            )
         } catch {
             await executor.disconnect()
             throw error
@@ -212,6 +231,18 @@ actor XcodePersistentMCPFeatureSession: MCPFeaturePersistentSession {
     }
 
     func invoke(toolName: String, inputData: Data) async throws -> String {
+        try await invokeResult(
+            toolName: toolName,
+            inputData: inputData,
+            workingDirectoryPath: nil
+        ).output
+    }
+
+    func invokeResult(
+        toolName: String,
+        inputData: Data,
+        workingDirectoryPath: String?
+    ) async throws -> MCPFeatureInvocationResult {
         let arguments = try RemoteMCPFeatureRunner.decodeArguments(from: inputData)
         let request = ToolRequest(name: toolName, arguments: arguments)
         guard let normalizedRequest = XcodeToolIntegration.normalizedRequest(request) else {
@@ -223,10 +254,14 @@ actor XcodePersistentMCPFeatureSession: MCPFeaturePersistentSession {
             : normalizedRequest.name
         let executor = executorOrCreate()
         do {
-            let output = try await executor.execute(
-                ToolRequest(name: rawToolName, arguments: normalizedRequest.arguments)
+            let result = try await executor.executeCapturingFileChanges(
+                ToolRequest(name: rawToolName, arguments: normalizedRequest.arguments),
+                workingDirectoryPath: workingDirectoryPath
             )
-            return output.text
+            return MCPFeatureInvocationResult(
+                output: result.output.text,
+                fileChanges: result.fileChanges
+            )
         } catch {
             if XcodeToolsFeatureRunner.shouldDiscardPersistentExecutor(after: error) {
                 await discardExecutor()

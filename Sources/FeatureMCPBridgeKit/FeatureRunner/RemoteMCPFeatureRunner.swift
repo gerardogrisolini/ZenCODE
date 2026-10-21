@@ -47,6 +47,16 @@ public protocol MCPFeatureConfiguration {
     /// Invokes a tool by name. Default implementation uses `RemoteMCPToolExecutor`.
     func invoke(toolName: String, inputData: Data, environment: [String: String]) async throws -> String
 
+    /// Invokes a tool and returns any on-disk file-change evidence it captured.
+    /// The default forwards to `invoke(toolName:inputData:environment:)` and
+    /// reports no evidence, so existing features keep their exact envelope.
+    func invokeResult(
+        toolName: String,
+        inputData: Data,
+        workingDirectoryPath: String?,
+        environment: [String: String]
+    ) async throws -> MCPFeatureInvocationResult
+
     /// Maps feature-specific errors (e.g. consent denied) into
     /// user-visible errors.
     func mapError(_ error: Error) -> Error
@@ -58,7 +68,38 @@ public protocol MCPFeatureConfiguration {
 public protocol MCPFeaturePersistentSession: Sendable {
     func listTools() async throws -> [FeatureToolDescriptor]
     func invoke(toolName: String, inputData: Data) async throws -> String
+    /// Evidence-aware invocation. The default forwards to `invoke` and reports
+    /// no file changes.
+    func invokeResult(
+        toolName: String,
+        inputData: Data,
+        workingDirectoryPath: String?
+    ) async throws -> MCPFeatureInvocationResult
     func shutdown() async
+}
+
+extension MCPFeaturePersistentSession {
+    public func invokeResult(
+        toolName: String,
+        inputData: Data,
+        workingDirectoryPath: String?
+    ) async throws -> MCPFeatureInvocationResult {
+        MCPFeatureInvocationResult(
+            output: try await invoke(toolName: toolName, inputData: inputData)
+        )
+    }
+}
+
+/// Output of one MCP feature invocation plus optional transient evidence of
+/// files it changed on disk.
+public struct MCPFeatureInvocationResult: Sendable {
+    public let output: String
+    public let fileChanges: [FeatureInvocationFileChange]
+
+    public init(output: String, fileChanges: [FeatureInvocationFileChange] = []) {
+        self.output = output
+        self.fileChanges = fileChanges
+    }
 }
 
 /// Optional refinement for MCP features that explicitly support the private
@@ -122,6 +163,21 @@ extension MCPFeatureConfiguration {
         }
     }
 
+    public func invokeResult(
+        toolName: String,
+        inputData: Data,
+        workingDirectoryPath: String?,
+        environment: [String: String]
+    ) async throws -> MCPFeatureInvocationResult {
+        MCPFeatureInvocationResult(
+            output: try await invoke(
+                toolName: toolName,
+                inputData: inputData,
+                environment: environment
+            )
+        )
+    }
+
     public func mapError(_ error: Error) -> Error {
         error
     }
@@ -151,14 +207,20 @@ public enum RemoteMCPFeatureRunner {
                     FeatureListToolsResponse(tools: FeatureToolDescriptor.canonicalized(tools))
                 )
 
-            case let .invoke(toolName, _):
+            case let .invoke(toolName, workingDirectory):
                 let inputData = FileHandle.standardInput.readDataToEndOfFile()
-                let output = try await configuration.invoke(
+                let result = try await configuration.invokeResult(
                     toolName: toolName,
                     inputData: inputData,
+                    workingDirectoryPath: workingDirectory?.path,
                     environment: environment
                 )
-                try FeatureProcessProtocol.emitJSON(InvocationResponse(ok: true, output: .string(output), error: nil))
+                try FeatureProcessProtocol.emitJSON(InvocationResponse(
+                    ok: true,
+                    output: .string(result.output),
+                    error: nil,
+                    fileChanges: result.fileChanges
+                ))
 
             case .usage:
                 try FeatureProcessProtocol.emitJSON(
@@ -197,12 +259,18 @@ public enum RemoteMCPFeatureRunner {
                         throw MCPFeatureError.invalidArguments
                     }
                     do {
-                        let output = try await session.invoke(
+                        let result = try await session.invokeResult(
                             toolName: toolName,
-                            inputData: request.inputData ?? Data()
+                            inputData: request.inputData ?? Data(),
+                            workingDirectoryPath: request.workingDirectoryPath
                         )
                         return try FeatureProcessProtocol.renderJSON(
-                            InvocationResponse(ok: true, output: .string(output), error: nil)
+                            InvocationResponse(
+                                ok: true,
+                                output: .string(result.output),
+                                error: nil,
+                                fileChanges: result.fileChanges
+                            )
                         )
                     } catch {
                         let mapped = configuration.mapError(error)
@@ -252,11 +320,34 @@ public struct InvocationResponse: Encodable {
     public let ok: Bool
     public let output: JSONValue?
     public let error: String?
+    /// Optional on-disk change evidence. Encoded only when non-empty so the
+    /// legacy envelope stays byte-for-byte unchanged for ordinary tools.
+    public let fileChanges: [FeatureInvocationFileChange]
 
-    public init(ok: Bool, output: JSONValue?, error: String?) {
+    public init(
+        ok: Bool,
+        output: JSONValue?,
+        error: String?,
+        fileChanges: [FeatureInvocationFileChange] = []
+    ) {
         self.ok = ok
         self.output = output
         self.error = error
+        self.fileChanges = fileChanges
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case ok, output, error, fileChanges
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(ok, forKey: .ok)
+        try container.encodeIfPresent(output, forKey: .output)
+        try container.encodeIfPresent(error, forKey: .error)
+        if !fileChanges.isEmpty {
+            try container.encode(fileChanges, forKey: .fileChanges)
+        }
     }
 }
 

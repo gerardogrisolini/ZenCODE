@@ -256,6 +256,20 @@ text tool result followed by a grouped user image message, Responses receives a
 the image content inside `tool_result`. A feature-generated image path must
 never be sent to the remote provider as a substitute for the image bytes.
 
+MCP-backed features whose tools change files in another process may also add an
+optional `fileChanges` array to the successful `--invoke` and `--serve`
+invocation envelopes. Each `FeatureInvocationFileChange` carries an absolute
+path, optional before/after text, and an optional explanation when no diff is
+available. `RemoteMCPFeatureRunner` emits the field only when it is non-empty,
+so the legacy envelope stays byte-for-byte unchanged. The evidence is
+transient and advisory. `ZenCODECore` drops undecodable lists, relative paths,
+and entries beyond the cap instead of failing the tool. It records the rest
+through `ExternalFileChangeEvidence` under the same byte, binary, and
+compact-diff policy as local writes; the evidence is never persisted.
+`xcode-tools` produces this evidence by reading the local filesystem around
+`XcodeUpdate`, `XcodeWrite`, `XcodeRM`, and `XcodeMV` calls. It never makes
+extra Xcode content reads.
+
 Feature manifests may opt into the additive `supportsPersistentSession` flag.
 For those features, the session-owned `SwiftFeatureRuntime` starts one private
 `--serve` JSON-lines process and reuses it for runtime discovery plus subsequent

@@ -137,6 +137,17 @@ enum LocalOperationWrite {
                 explanation: "Diff unavailable: an opaque operation overlapped this file mutation."))
             return
         }
+        recordEvidence(recorder: recorder, path: path, existed: existed, before: before, after: after)
+    }
+
+    /// Shared bounded-evidence policy. Callers own the certainty decision.
+    static func recordEvidence(
+        recorder: OperationFileChangeRecorder,
+        path: URL,
+        existed: Bool,
+        before: Data?,
+        after: String?
+    ) {
         let oldBytes = before?.count ?? 0
         let newBytes = after?.utf8.count ?? 0
         let needsCompactDiff = max(oldBytes, newBytes) > OperationFileChangeRecorder.maximumTextBytes

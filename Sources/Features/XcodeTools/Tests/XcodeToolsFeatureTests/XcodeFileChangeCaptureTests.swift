@@ -1,0 +1,188 @@
+import FeatureKit
+import FeatureMCPBridgeKit
+import Foundation
+import ToolCore
+@testable import XcodeToolsFeature
+import Testing
+
+@Suite
+struct XcodeFileChangeCaptureTests {
+    private func makeProject() throws -> (root: URL, sources: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("xcode-capture-\(UUID().uuidString)", isDirectory: true)
+        let sources = root.appendingPathComponent("App/Core", isDirectory: true)
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        return (root, sources)
+    }
+
+    @Test
+    func resolvesNavigatorPathsWithAndWithoutTheProjectGroupPrefix() {
+        let root = URL(fileURLWithPath: "/tmp/Project")
+        let candidates = XcodeFileChangeCapture.candidates(
+            for: "Project/App/Core/Net.swift",
+            roots: [root]
+        ).map(\.path)
+
+        #expect(candidates == [
+            "/tmp/Project/Project/App/Core/Net.swift",
+            "/tmp/Project/App/Core/Net.swift"
+        ])
+        #expect(XcodeFileChangeCapture.candidates(for: "/abs/File.swift", roots: [root])
+            .map(\.path) == ["/abs/File.swift"])
+        #expect(XcodeFileChangeCapture.candidates(for: "../Escape.swift", roots: [root]).isEmpty)
+        #expect(XcodeFileChangeCapture.candidates(for: "Relative.swift", roots: []).isEmpty)
+    }
+
+    @Test
+    func updateReportsOnlyTheCandidateThatChangedOnDisk() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let file = project.sources.appendingPathComponent("Net.swift")
+        try "let reachable = false\n".write(to: file, atomically: true, encoding: .utf8)
+
+        let request = ToolRequest(
+            name: "XcodeUpdate",
+            arguments: ["filePath": .string("Project/App/Core/Net.swift")]
+        )
+        let capture = try #require(XcodeFileChangeCapture(request: request, roots: [project.root]))
+        try "let reachable = true\n".write(to: file, atomically: true, encoding: .utf8)
+
+        let changes = capture.finish(succeeded: true)
+        #expect(changes == [
+            FeatureInvocationFileChange(
+                path: file.standardizedFileURL.path,
+                oldText: "let reachable = false\n",
+                newText: "let reachable = true\n"
+            )
+        ])
+    }
+
+    @Test
+    func writeOfANewFileIsReportedAsAnAddition() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let file = project.sources.appendingPathComponent("New.swift")
+
+        let request = ToolRequest(
+            name: "XcodeWrite",
+            arguments: ["filePath": .string("Project/App/Core/New.swift")]
+        )
+        let capture = try #require(XcodeFileChangeCapture(request: request, roots: [project.root]))
+        try "struct New {}\n".write(to: file, atomically: true, encoding: .utf8)
+
+        let change = try #require(capture.finish(succeeded: true).first)
+        #expect(change.path == file.standardizedFileURL.path)
+        #expect(change.oldText == nil)
+        #expect(change.newText == "struct New {}\n")
+        #expect(change.explanation == nil)
+    }
+
+    @Test
+    func removeAndMoveReportDeletionAndAddition() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let removed = project.sources.appendingPathComponent("Old.swift")
+        let source = project.sources.appendingPathComponent("A.swift")
+        let destination = project.sources.appendingPathComponent("B.swift")
+        try "old\n".write(to: removed, atomically: true, encoding: .utf8)
+        try "moved\n".write(to: source, atomically: true, encoding: .utf8)
+
+        let remove = try #require(XcodeFileChangeCapture(
+            request: ToolRequest(name: "XcodeRM", arguments: ["path": .string("App/Core/Old.swift")]),
+            roots: [project.root]
+        ))
+        let move = try #require(XcodeFileChangeCapture(
+            request: ToolRequest(name: "XcodeMV", arguments: [
+                "sourcePath": .string("App/Core/A.swift"),
+                "destinationPath": .string("App/Core/B.swift")
+            ]),
+            roots: [project.root]
+        ))
+        try FileManager.default.removeItem(at: removed)
+        try FileManager.default.moveItem(at: source, to: destination)
+
+        #expect(remove.finish(succeeded: true) == [
+            FeatureInvocationFileChange(path: removed.standardizedFileURL.path, oldText: "old\n", newText: nil)
+        ])
+        #expect(move.finish(succeeded: true) == [
+            FeatureInvocationFileChange(path: source.standardizedFileURL.path, oldText: "moved\n", newText: nil),
+            FeatureInvocationFileChange(path: destination.standardizedFileURL.path, oldText: nil, newText: "moved\n")
+        ])
+    }
+
+    @Test
+    func successWithoutAnOnDiskChangeKeepsThePathVisibleWithAnExplanation() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let file = project.sources.appendingPathComponent("Same.swift")
+        try "same\n".write(to: file, atomically: true, encoding: .utf8)
+        let request = ToolRequest(
+            name: "XcodeUpdate",
+            arguments: ["filePath": .string("Project/App/Core/Same.swift")]
+        )
+
+        let succeeded = try #require(XcodeFileChangeCapture(request: request, roots: [project.root]))
+        #expect(succeeded.finish(succeeded: true) == [
+            FeatureInvocationFileChange(
+                path: file.standardizedFileURL.path,
+                oldText: nil,
+                newText: nil,
+                explanation: XcodeFileChangeCapture.notFoundExplanation
+            )
+        ])
+
+        let failed = try #require(XcodeFileChangeCapture(request: request, roots: [project.root]))
+        #expect(failed.finish(succeeded: false).isEmpty)
+    }
+
+    @Test
+    func binaryContentIsReportedWithoutText() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let file = project.sources.appendingPathComponent("Blob.bin")
+        try Data([0x00, 0x01]).write(to: file)
+        let capture = try #require(XcodeFileChangeCapture(
+            request: ToolRequest(name: "XcodeWrite", arguments: ["filePath": .string(file.path)]),
+            roots: []
+        ))
+        try Data([0x00, 0x02]).write(to: file)
+
+        let change = try #require(capture.finish(succeeded: true).first)
+        #expect(change.oldText == nil && change.newText == nil)
+        #expect(change.explanation == XcodeFileChangeCapture.unavailableExplanation)
+    }
+
+    @Test
+    func readOnlyAndDirectoryToolsAreNotTracked() {
+        #expect(!XcodeFileChangeCapture.tracksChanges(toolName: "XcodeRead"))
+        #expect(!XcodeFileChangeCapture.tracksChanges(toolName: "XcodeMakeDir"))
+        #expect(!XcodeFileChangeCapture.tracksChanges(toolName: "BuildProject"))
+        #expect(XcodeFileChangeCapture.tracksChanges(toolName: "XcodeUpdate"))
+        #expect(XcodeFileChangeCapture(
+            request: ToolRequest(name: "XcodeRead", arguments: ["filePath": .string("/tmp/x")]),
+            roots: []
+        ) == nil)
+    }
+
+    @Test
+    func invocationEnvelopeCarriesFileChangesOnlyWhenPresent() throws {
+        let plain = try JSONSerialization.jsonObject(with: JSONEncoder().encode(
+            InvocationResponse(ok: true, output: .string("done"), error: nil)
+        )) as? [String: Any]
+        #expect(plain?.keys.sorted() == ["ok", "output"])
+
+        let evidenced = try JSONSerialization.jsonObject(with: JSONEncoder().encode(
+            InvocationResponse(
+                ok: true,
+                output: .string("done"),
+                error: nil,
+                fileChanges: [
+                    FeatureInvocationFileChange(path: "/tmp/A.swift", oldText: "a", newText: "b")
+                ]
+            )
+        )) as? [String: Any]
+        let changes = try #require(evidenced?["fileChanges"] as? [[String: Any]])
+        #expect(changes.first?["path"] as? String == "/tmp/A.swift")
+        #expect(changes.first?["newText"] as? String == "b")
+    }
+}

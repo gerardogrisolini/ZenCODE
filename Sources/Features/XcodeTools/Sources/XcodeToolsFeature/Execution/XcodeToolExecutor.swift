@@ -6,11 +6,15 @@
 //
 
 import Foundation
+import FeatureKit
 public import FeatureMCPBridgeKit
 import ToolCore
 
 public actor XcodeToolExecutor {
     private let client: MCPClient
+    /// Project roots per Xcode tab, resolved once through `XcodeListWindows`.
+    /// A failed lookup is cached as empty so it never repeats per call.
+    private var workspaceRootsByTabIdentifier: [String: [URL]] = [:]
 
     public init(configuration: MCPServerConfiguration) {
         self.client = MCPClient(
@@ -33,6 +37,68 @@ public actor XcodeToolExecutor {
             text: renderedResult,
             rawResult: result
         )
+    }
+
+    /// Executes a request and, for tools that change files, samples the local
+    /// filesystem around the call to report what changed on disk.
+    func executeCapturingFileChanges(
+        _ request: ToolRequest,
+        workingDirectoryPath: String?
+    ) async throws -> (output: ToolExecutionOutput, fileChanges: [FeatureInvocationFileChange]) {
+        guard XcodeFileChangeCapture.tracksChanges(toolName: request.name) else {
+            return (try await execute(request), [])
+        }
+        let roots = await evidenceRoots(
+            tabIdentifier: request.arguments["tabIdentifier"]?.stringValue,
+            workingDirectoryPath: workingDirectoryPath
+        )
+        let capture = XcodeFileChangeCapture(request: request, roots: roots)
+        let output = try await execute(request)
+        let fileChanges = capture?.finish(
+            succeeded: !Self.isErrorResult(output.rawResult)
+        ) ?? []
+        return (output, fileChanges)
+    }
+
+    private func evidenceRoots(
+        tabIdentifier: String?,
+        workingDirectoryPath: String?
+    ) async -> [URL] {
+        var roots: [URL] = []
+        if let tabIdentifier = tabIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !tabIdentifier.isEmpty {
+            roots += await workspaceRoots(tabIdentifier: tabIdentifier)
+        }
+        if let workingDirectoryPath = workingDirectoryPath?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           workingDirectoryPath.hasPrefix("/") {
+            roots.append(URL(fileURLWithPath: workingDirectoryPath).standardizedFileURL)
+        }
+        var seen = Set<String>()
+        return roots.filter { seen.insert($0.path).inserted }
+    }
+
+    private func workspaceRoots(tabIdentifier: String) async -> [URL] {
+        if let cached = workspaceRootsByTabIdentifier[tabIdentifier] {
+            return cached
+        }
+        var roots: [URL] = []
+        if let result = try? await client.callTool(named: "XcodeListWindows", arguments: [:]) {
+            roots = XcodeWorkspaceContext.contexts(fromListWindowsResult: result)
+                .filter { $0.defaultTabIdentifier == tabIdentifier }
+                .compactMap(\.normalizedWorkspaceRootPath)
+                .filter { $0.hasPrefix("/") }
+                .map { URL(fileURLWithPath: $0).standardizedFileURL }
+        }
+        workspaceRootsByTabIdentifier[tabIdentifier] = roots
+        return roots
+    }
+
+    private static func isErrorResult(_ result: JSONValue?) -> Bool {
+        guard case let .object(object) = result else {
+            return false
+        }
+        return object["isError"]?.boolValue == true
     }
 
     private func executeRequestRetryingIndentationMismatchIfNeeded(

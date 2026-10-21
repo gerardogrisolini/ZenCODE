@@ -7,11 +7,13 @@
 
 import Foundation
 import FeatureKit
+import LocalToolsSupport
 import ToolCore
 
 struct SwiftFeatureInvocationResult: Sendable {
     let output: String
     let attachments: [AgentRuntimeAttachment]
+    var fileChanges: [FeatureInvocationFileChange] = []
 }
 
 extension SwiftFeatureRuntime {
@@ -64,7 +66,21 @@ extension SwiftFeatureRuntime {
             attachments: try runtimeAttachments(
                 from: response.attachments,
                 feature: feature
-            )
+            ),
+            fileChanges: validatedFileChanges(response.fileChanges)
+        )
+    }
+
+    /// File-change evidence is transient and advisory. The mutation already
+    /// happened, so malformed declarations are dropped instead of failing the
+    /// tool result: only absolute paths are kept, up to the evidence cap.
+    private static func validatedFileChanges(
+        _ declarations: [FeatureInvocationFileChange]
+    ) -> [FeatureInvocationFileChange] {
+        Array(
+            declarations
+                .filter { $0.path.hasPrefix("/") }
+                .prefix(ExternalFileChangeEvidence.maximumChanges)
         )
     }
 
@@ -166,9 +182,10 @@ private struct SwiftFeatureInvocationResponse: Decodable {
     let output: JSONValue?
     let error: String?
     let attachments: [FeatureInvocationAttachment]
+    let fileChanges: [FeatureInvocationFileChange]
 
     private enum CodingKeys: String, CodingKey {
-        case ok, output, error, attachments
+        case ok, output, error, attachments, fileChanges
     }
 
     init(from decoder: Decoder) throws {
@@ -180,5 +197,10 @@ private struct SwiftFeatureInvocationResponse: Decodable {
             [FeatureInvocationAttachment].self,
             forKey: .attachments
         ) ?? []
+        // Advisory evidence: an undecodable list must not fail the tool call.
+        self.fileChanges = ((try? container.decodeIfPresent(
+            [FeatureInvocationFileChange].self,
+            forKey: .fileChanges
+        )) ?? nil) ?? []
     }
 }

@@ -5,7 +5,9 @@
 //  Created by Gerardo Grisolini on 26/05/26.
 //
 
+import FeatureKit
 import Foundation
+import LocalToolsSupport
 import ToolCore
 
 struct DirectToolExecutionOutput: Sendable {
@@ -149,6 +151,14 @@ extension DirectToolExecutor {
             toolCall: toolCall,
             workingDirectory: workingDirectory
         ) {
+            for change in result.fileChanges {
+                ExternalFileChangeEvidence.record(
+                    path: URL(fileURLWithPath: change.path),
+                    oldText: change.oldText,
+                    newText: change.newText,
+                    explanation: change.explanation
+                )
+            }
             return DirectToolExecutionOutput(
                 output: result.output,
                 attachments: result.attachments

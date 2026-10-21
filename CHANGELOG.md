@@ -90,6 +90,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Xcode tools that change files (`XcodeUpdate`, `XcodeWrite`, `XcodeRM`,
+  `XcodeMV`) now report their edits. The changes appear as diffs in ACP clients
+  and in the terminal, as local file tools already did. Before this fix the
+  edit happened but no diff was recorded.
+  The `xcode-tools` feature reads the affected files from the local disk before
+  and after each call, with no extra Xcode tool calls. It finds them through the
+  session's working directory and the Xcode window's project folder. When no
+  change is found on disk, the path is still shown, but without a diff.
+  Reinstall the `xcode-tools` feature to get the fix.
 - Optional feature packages now declare their ZenCODE dependency as
   `.package(name: "ZenCODE", path: …)` after the `// zencode:package-path`
   marker, the form `feature.promote` already wrote. Installing an optional

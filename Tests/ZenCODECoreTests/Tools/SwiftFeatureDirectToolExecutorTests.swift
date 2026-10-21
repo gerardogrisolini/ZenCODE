@@ -154,6 +154,144 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
+    func directToolExecutorRecordsFeatureInvocationFileChanges() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-file-changes-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+
+        let editedPath = rootURL.appendingPathComponent("Sources/App.swift").path
+        let unresolvedPath = rootURL.appendingPathComponent("Sources/Other.swift").path
+        let responseURL = rootURL.appendingPathComponent("response.json")
+        let responseData = try JSONSerialization.data(withJSONObject: [
+            "ok": true,
+            "output": "edited",
+            "fileChanges": [
+                ["path": editedPath, "oldText": "let a = 1\n", "newText": "let a = 2\n"],
+                ["path": "relative/Ignored.swift", "oldText": "x", "newText": "y"],
+                ["path": unresolvedPath, "explanation": "Diff unavailable: fixture."]
+            ]
+        ])
+        try responseData.write(to: responseURL)
+
+        let executableURL = rootURL.appendingPathComponent("feature")
+        try """
+        #!/bin/sh
+        cat >/dev/null
+        cat '\(responseURL.path)'
+        """.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+
+        let runtime = SwiftFeatureRuntime(
+            features: [
+                SwiftFeatureBundle(
+                    id: "file-change-fixture",
+                    executableURL: executableURL,
+                    tools: [
+                        ToolDescriptor(
+                            name: "edit.fixture",
+                            description: "Edits a file out of process",
+                            inputSchema: #"{"type":"object","properties":{}}"#
+                        )
+                    ]
+                )
+            ]
+        )
+        let executor = DirectToolExecutor(
+            swiftFeatureRuntime: runtime,
+            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+        )
+
+        let result = await executor.execute(
+            sessionID: "test-session",
+            toolCall: DirectAgentToolCall(
+                id: "feature-file-change-call",
+                name: "edit.fixture",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            workingDirectory: rootURL,
+            allowedToolNames: ["edit.fixture"]
+        )
+
+        #expect(result.output == "edited")
+        #expect(result.status == .completed)
+        #expect(result.fileChanges.map(\.path) == [editedPath, unresolvedPath])
+        let edited = try #require(result.fileChanges.first)
+        #expect(edited.oldText == "let a = 1\n")
+        #expect(edited.newText == "let a = 2\n")
+        #expect(edited.explanation == nil)
+        #expect(result.fileChanges.last?.explanation == "Diff unavailable: fixture.")
+    }
+
+    @Test
+    func directToolExecutorIgnoresMalformedFeatureFileChanges() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-bad-file-changes-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+        let executableURL = rootURL.appendingPathComponent("feature")
+        try """
+        #!/bin/sh
+        cat >/dev/null
+        printf '{"ok":true,"output":"still-ok","fileChanges":"not-a-list"}\\n'
+        """.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+
+        let runtime = SwiftFeatureRuntime(
+            features: [
+                SwiftFeatureBundle(
+                    id: "bad-file-change-fixture",
+                    executableURL: executableURL,
+                    tools: [
+                        ToolDescriptor(
+                            name: "bad.fixture",
+                            description: "Returns malformed evidence",
+                            inputSchema: #"{"type":"object","properties":{}}"#
+                        )
+                    ]
+                )
+            ]
+        )
+        let executor = DirectToolExecutor(
+            swiftFeatureRuntime: runtime,
+            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+        )
+
+        let result = await executor.execute(
+            sessionID: "test-session",
+            toolCall: DirectAgentToolCall(
+                id: "feature-bad-file-change-call",
+                name: "bad.fixture",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            workingDirectory: rootURL,
+            allowedToolNames: ["bad.fixture"]
+        )
+
+        #expect(result.output == "still-ok")
+        #expect(result.status == .completed)
+        #expect(result.fileChanges.isEmpty)
+    }
+
+    @Test
     func directToolExecutorAllowsFeaturePackageToolsWithFeatureGroupToken() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-feature-generated-token-\(UUID().uuidString)", isDirectory: true)
