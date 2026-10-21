@@ -13,6 +13,10 @@ subscription — no API key required. ZenCODE itself is one compiled binary with
 Node runtime, running on macOS, Linux, and Windows (via WSL), all the way down to a
 Raspberry Pi.
 
+![ZenCODE coordinating two sub-agents that edit Swift files and talk in the live shared chat](Docs/Images/zencode-subagents.gif)
+
+*Two Developer sub-agents work in parallel on a Swift package, agree on the API in the shared chat (with an `@all` reply from the operator), and the coordinator verifies the result with `swift test`.*
+
 ## Highlights
 
 - **Provider-agnostic** — any OpenAI-compatible endpoint (OpenRouter, local servers, any `/v1` API), or a browser sign-in with your ChatGPT or Claude subscription.
