@@ -10,6 +10,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Installing or updating the optional `macOS` feature (setup → Features →
+  "Update installed", or `zen --install-features macOS`) no longer fails
+  validation with "Feature must declare at least one tool". The feature now
+  discovers its tools from the executable at runtime, so the update completes
+  and stops being offered again.
+- The `macOS` feature's Mail reply no longer goes out with an empty body: the
+  reply content is assigned without being read first, the send is refused if
+  Mail did not accept the body, and an unsent reply is closed without saving.
+
 ## [2.3.5] - 2026-10-21
 
 ### Added

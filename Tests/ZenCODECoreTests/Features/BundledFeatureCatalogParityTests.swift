@@ -211,6 +211,18 @@ struct BundledFeatureCatalogParityTests {
         #expect(missingBundled.isEmpty)
     }
 
+    /// The generated install manifest is only valid when it declares tools or
+    /// discovers them at runtime; otherwise installing or updating the
+    /// optional feature always fails validation.
+    @Test
+    func everyOptionalFeatureDeclaresOrDiscoversTools() {
+        let toollessIDs = SwiftFeatureRuntime
+            .bundledFeatureDefinitions()
+            .filter { !$0.isCore && !$0.discoversToolsAtRuntime && $0.tools.isEmpty }
+            .map(\.id)
+        #expect(toollessIDs.isEmpty)
+    }
+
     private func dumpedPackageProducts(at packageRoot: URL) throws -> DumpedPackageProducts {
         let environment = ProcessInfo.processInfo.environment
 

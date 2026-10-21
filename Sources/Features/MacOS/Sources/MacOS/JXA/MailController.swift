@@ -203,12 +203,16 @@ enum MailController {
       const m = findMessage(mail, p.message_id, p.mailbox, p.account);
       const reply = mail.reply(m, {openingWindow: false, replyToAll: !!p.reply_all});
       try {
-        const existing = safe(() => str(reply.content()), "") || "";
-        reply.content = (p.body || "") + (existing ? "\n\n" + existing : "");
+        // Never read reply.content() before assigning it: Mail silently ignores a
+        // content assignment on a reply whose content was read first, so the reply
+        // went out with an empty body. A window-less reply starts empty anyway.
+        reply.content = p.body || "";
         (p.cc || []).forEach(a => reply.ccRecipients.push(mail.CcRecipient({address: a})));
         (p.attachments || []).forEach(path => reply.attachments.push(mail.Attachment({fileName: Path(path)})));
+        const written = safe(() => str(reply.content()), "") || "";
+        if ((p.body || "").trim() && !written.trim()) { fail("Mail did not accept the reply body; the reply was not sent."); }
       } catch (e) {
-        safe(() => mail.delete(reply), null);
+        safe(() => reply.close({saving: "no"}), null);
         throw e;
       }
       const subject = safe(() => str(reply.subject()), null);

@@ -31,6 +31,7 @@ enum SwiftBundledFeatureCatalog {
         let xcode = metadata(for: "xcode-tools")
         let figma = metadata(for: "figma-tools")
         let desktop = metadata(for: "desktop-tools")
+        let macOS = metadata(for: "macOS")
 
         return [
             SwiftFeatureRuntime.BundledFeatureDefinition(
@@ -133,16 +134,17 @@ enum SwiftBundledFeatureCatalog {
                 invocationTimeoutSeconds: 180
             ),
             SwiftFeatureRuntime.BundledFeatureDefinition(
-                id: "macOS",
-                executableName: "macOS",
+                id: macOS.id,
+                executableName: macOS.productName,
                 description: "Personal assistant for the user's macOS apps, one tool per app: macos.calendar, macos.reminders, macos.contacts, macos.mail, macos.messages, macos.photos, macos.notes, plus macos.permissions for privacy access (read, search, create, update, send, and delete with confirmation).",
-                sourceRelativePath: "Sources/Features/MacOS",
+                sourceRelativePath: macOS.sourceRelativePath,
                 tools: [],
                 toolNamePrefixes: ["macos."],
-                toolNameAliases: [],
-                discoversToolsAtRuntime: false,
-                supportsPersistentSession: false,
-                invocationTimeoutSeconds: 180.0
+                // The generated install manifest has no static tool list, so the
+                // tools must come from the executable's `--list-tools`;
+                // otherwise install and update fail validation.
+                discoversToolsAtRuntime: true,
+                invocationTimeoutSeconds: 180
             )
         ]
     }
