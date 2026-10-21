@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.3.5] - 2026-10-21
+
 ### Added
 
 - A new recommended `Organizer` agent profile acts as a personal assistant: it
