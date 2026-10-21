@@ -53,7 +53,7 @@ enum MemoryAutomationSettings {
     /// the median with tails of several seconds, so the earlier 1 500 ms bound
     /// still dropped a third to a half of the recalls onto the lexical fallback;
     /// 6 s keeps nearly every answer while bounding a stalled endpoint.
-    static let defaultSemanticRecallTimeoutMilliseconds = 6_000
+    static let defaultSemanticRecallTimeoutMilliseconds = 8_000
     static let minimumSemanticRecallTimeoutMilliseconds = 10
     static let maximumSemanticRecallTimeoutMilliseconds = 10_000
 
