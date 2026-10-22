@@ -10,6 +10,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Xcode: file-change evidence for `XcodeUpdate`, `XcodeWrite`, `XcodeRM` and
+  `XcodeMV` now finds files whose project-navigator path does not map directly
+  onto the disk, such as local packages nested under `Modules/`. The project
+  folder is searched once, with a bounded walk that skips hidden directories,
+  packages, `DerivedData` and `node_modules`, and the discovered location is
+  reused for later edits. The terminal no longer prints a spurious "Diff
+  unavailable: … no on-disk change was found" entry next to the real diff.
+
 ## [2.3.6] - 2026-10-22
 
 ### Changed

@@ -15,6 +15,11 @@ public actor XcodeToolExecutor {
     /// Project roots per Xcode tab, resolved once through `XcodeListWindows`.
     /// A failed lookup is cached as empty so it never repeats per call.
     private var workspaceRootsByTabIdentifier: [String: [URL]] = [:]
+    /// Base directories that searches confirmed for navigator paths not
+    /// mapping directly onto the disk, most recent first. They let later
+    /// paths under the same mapping resolve without another search.
+    private var evidenceSearchBases: [URL] = []
+    private static let maximumEvidenceSearchBases = 32
 
     public init(configuration: MCPServerConfiguration) {
         self.client = MCPClient(
@@ -52,12 +57,30 @@ public actor XcodeToolExecutor {
             tabIdentifier: request.arguments["tabIdentifier"]?.stringValue,
             workingDirectoryPath: workingDirectoryPath
         )
-        let capture = XcodeFileChangeCapture(request: request, roots: roots)
+        let capture = XcodeFileChangeCapture(
+            request: request,
+            roots: roots,
+            knownBases: evidenceSearchBases.filter { base in
+                roots.contains { XcodeFileChangeCapture.isWithin(base, root: $0) }
+            }
+        )
         let output = try await execute(request)
         let fileChanges = capture?.finish(
             succeeded: !Self.isErrorResult(output.rawResult)
         ) ?? []
+        if let capture {
+            rememberEvidenceSearchBases(capture.confirmedSearchBases(in: fileChanges))
+        }
         return (output, fileChanges)
+    }
+
+    private func rememberEvidenceSearchBases(_ bases: [URL]) {
+        guard !bases.isEmpty else { return }
+        let paths = Set(bases.map(\.path))
+        evidenceSearchBases = Array(
+            (bases + evidenceSearchBases.filter { !paths.contains($0.path) })
+                .prefix(Self.maximumEvidenceSearchBases)
+        )
     }
 
     private func evidenceRoots(

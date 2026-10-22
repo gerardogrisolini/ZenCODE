@@ -136,6 +136,96 @@ struct XcodeFileChangeCaptureTests {
     }
 
     @Test
+    func navigatorPathsOfNestedPackagesAreFoundBySearchingTheProject() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let modules = project.root.appendingPathComponent("Modules", isDirectory: true)
+        let views = modules.appendingPathComponent("Institutional/Sources/Institutional/View", isDirectory: true)
+        try FileManager.default.createDirectory(at: views, withIntermediateDirectories: true)
+        let file = views.appendingPathComponent("Prize.swift")
+        try "let padding = 16\n".write(to: file, atomically: true, encoding: .utf8)
+
+        let capture = try #require(XcodeFileChangeCapture(
+            request: ToolRequest(name: "XcodeUpdate", arguments: [
+                "filePath": .string("Institutional/Sources/Institutional/View/Prize.swift")
+            ]),
+            roots: [project.root]
+        ))
+        try "let padding = 24\n".write(to: file, atomically: true, encoding: .utf8)
+
+        let changes = capture.finish(succeeded: true)
+        #expect(changes == [
+            FeatureInvocationFileChange(
+                path: file.standardizedFileURL.path,
+                oldText: "let padding = 16\n",
+                newText: "let padding = 24\n"
+            )
+        ])
+        #expect(capture.confirmedSearchBases(in: changes).map(\.path) == [modules.standardizedFileURL.path])
+
+        // A confirmed base resolves sibling packages without another search.
+        let catalog = modules.appendingPathComponent("Catalog/Sources", isDirectory: true)
+        try FileManager.default.createDirectory(at: catalog, withIntermediateDirectories: true)
+        let list = catalog.appendingPathComponent("List.swift")
+        try "list\n".write(to: list, atomically: true, encoding: .utf8)
+        let sibling = try #require(XcodeFileChangeCapture(
+            request: ToolRequest(name: "XcodeUpdate", arguments: [
+                "filePath": .string("Catalog/Sources/List.swift")
+            ]),
+            roots: [project.root],
+            knownBases: [modules]
+        ))
+        #expect(sibling.paths.first?.urls.map(\.path).contains(list.standardizedFileURL.path) == true)
+        #expect(sibling.paths.allSatisfy { $0.searchBases.isEmpty })
+    }
+
+    @Test
+    func newFilesOfNestedPackagesAreLocatedThroughTheirDirectory() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let sources = project.root.appendingPathComponent("Modules/Feature/Sources/Feature", isDirectory: true)
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        let file = sources.appendingPathComponent("New.swift")
+
+        let capture = try #require(XcodeFileChangeCapture(
+            request: ToolRequest(name: "XcodeWrite", arguments: [
+                "filePath": .string("Feature/Sources/Feature/New.swift")
+            ]),
+            roots: [project.root]
+        ))
+        try "struct New {}\n".write(to: file, atomically: true, encoding: .utf8)
+
+        #expect(capture.finish(succeeded: true) == [
+            FeatureInvocationFileChange(
+                path: file.standardizedFileURL.path,
+                oldText: nil,
+                newText: "struct New {}\n"
+            )
+        ])
+    }
+
+    @Test
+    func searchSkipsHiddenAndBuildDirectoriesAndIsBounded() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        for directory in [".build/checkouts", "DerivedData/SourcePackages"] {
+            let sources = project.root.appendingPathComponent("\(directory)/Pkg/Sources", isDirectory: true)
+            try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+            try "x\n".write(to: sources.appendingPathComponent("X.swift"), atomically: true, encoding: .utf8)
+        }
+        let components = ["Pkg", "Sources", "X.swift"]
+        #expect(XcodeFileChangeCapture.search(components, in: [project.root]).isEmpty)
+
+        let visible = project.root.appendingPathComponent("Modules/Pkg/Sources", isDirectory: true)
+        try FileManager.default.createDirectory(at: visible, withIntermediateDirectories: true)
+        try "x\n".write(to: visible.appendingPathComponent("X.swift"), atomically: true, encoding: .utf8)
+        #expect(XcodeFileChangeCapture.search(components, in: [project.root]).map(\.url.path) == [
+            visible.appendingPathComponent("X.swift").standardizedFileURL.path
+        ])
+        #expect(XcodeFileChangeCapture.search(components, in: [project.root], entryLimit: 1).isEmpty)
+    }
+
+    @Test
     func binaryContentIsReportedWithoutText() throws {
         let project = try makeProject()
         defer { try? FileManager.default.removeItem(at: project.root) }
