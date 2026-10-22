@@ -24,7 +24,7 @@ extension SwiftToolsSupport {
             throw SwiftToolsFeatureError.invalidArgument("File is not valid UTF-8: \(fileURL.path)")
         }
 
-        let lines = text.isEmpty ? [] : text.components(separatedBy: .newlines)
+        let lines = text.isEmpty ? [] : splitLines(text)
         let maxEntries = max(maxSymbols ?? 120, 1)
         let outline = swiftOutlineEntries(in: lines, maxEntries: maxEntries)
         var output = [
@@ -46,6 +46,15 @@ extension SwiftToolsSupport {
             }
         }
         return output.joined(separator: "\n")
+    }
+
+    /// Splits on LF, CRLF or CR so a Windows-style file keeps one entry per
+    /// line; `components(separatedBy: .newlines)` would split `\r\n` twice and
+    /// double every reported line number.
+    static func splitLines(_ text: String) -> [String] {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
     }
 
     static func swiftOutlineEntries(
@@ -133,8 +142,8 @@ extension SwiftToolsSupport {
         }
 
         switch keyword {
-        case "class" where tokens.count > 2 && tokens[1] == "func":
-            return entry("func", qualified(tokens[2], parent: parentTypeName))
+        case "class" where tokens.count > 1 && tokens[1] == "func":
+            return tokens.count > 2 ? entry("func", qualified(tokens[2], parent: parentTypeName)) : nil
         case "struct", "class", "enum", "actor", "protocol", "extension":
             return tokens.count > 1 ? entry(keyword, tokens[1]) : nil
         case "func":

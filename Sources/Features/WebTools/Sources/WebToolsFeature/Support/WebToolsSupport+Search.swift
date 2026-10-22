@@ -12,10 +12,16 @@ struct WebSearchResult {
 extension WebToolsSupport {
     static func normalizedDomains(from domains: [String]) -> [String] {
         domains
-            .map {
-                $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .lowercased()
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .map { domain -> String in
+                var value = domain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                // Tolerate `https://example.com/path` style entries: only the host matters.
+                if let schemeRange = value.range(of: "://") {
+                    value = String(value[schemeRange.upperBound...])
+                }
+                if let slash = value.firstIndex(of: "/") {
+                    value = String(value[..<slash])
+                }
+                return value.trimmingCharacters(in: CharacterSet(charactersIn: "."))
             }
             .filter { !$0.isEmpty }
     }
@@ -71,15 +77,16 @@ extension WebToolsSupport {
         return results
     }
 
-    private static func resolvedSearchResultURL(from rawHref: String) -> URL? {
+    static func resolvedSearchResultURL(from rawHref: String) -> URL? {
         let href = decodeHTMLEntities(rawHref)
         let normalizedHref = href.hasPrefix("//") ? "https:\(href)" : href
         guard let url = URL(string: normalizedHref) else { return nil }
         if let host = url.host?.lowercased(),
-           host.contains("duckduckgo.com"),
+           host == "duckduckgo.com" || host.hasSuffix(".duckduckgo.com"),
            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-           let encodedTarget = components.queryItems?.first(where: { $0.name == "uddg" })?.value,
-           let decodedTarget = encodedTarget.removingPercentEncoding,
+           // `queryItems` already percent-decodes the value once; decoding
+           // again would corrupt targets that legitimately contain `%xx`.
+           let decodedTarget = components.queryItems?.first(where: { $0.name == "uddg" })?.value,
            let targetURL = URL(string: decodedTarget) {
             return targetURL
         }
@@ -123,20 +130,55 @@ extension WebToolsSupport {
             ) ?? text
     }
 
-    private static func decodeHTMLEntities(_ text: String) -> String {
-        var decoded = text
-        let replacements = [
-            "&amp;": "&",
-            "&quot;": "\"",
-            "&#39;": "'",
-            "&apos;": "'",
-            "&lt;": "<",
-            "&gt;": ">",
-            "&nbsp;": " "
-        ]
-        for (entity, replacement) in replacements {
-            decoded = decoded.replacingOccurrences(of: entity, with: replacement)
+    private static let namedEntities: [String: String] = [
+        "amp": "&", "quot": "\"", "apos": "'", "lt": "<", "gt": ">", "nbsp": " ",
+        "ndash": "\u{2013}", "mdash": "\u{2014}", "hellip": "\u{2026}", "laquo": "\u{00AB}", "raquo": "\u{00BB}",
+        "ldquo": "\u{201C}", "rdquo": "\u{201D}", "lsquo": "\u{2018}", "rsquo": "\u{2019}", "copy": "\u{00A9}",
+        "reg": "\u{00AE}", "trade": "\u{2122}", "euro": "\u{20AC}", "middot": "\u{00B7}", "bull": "\u{2022}",
+    ]
+
+    /// Single-pass entity decoder: every `&name;`, `&#NNN;` and `&#xHH;` is
+    /// replaced exactly once from the original text, so `&amp;lt;` decodes to
+    /// `&lt;` deterministically rather than depending on replacement order.
+    static func decodeHTMLEntities(_ text: String) -> String {
+        guard text.contains("&") else { return text }
+        guard let regex = try? NSRegularExpression(pattern: #"&(#[xX][0-9A-Fa-f]{1,6}|#[0-9]{1,7}|[A-Za-z][A-Za-z0-9]{1,31});"#) else {
+            return text
         }
+        var decoded = ""
+        var cursor = text.startIndex
+        for match in regex.matches(in: text, options: [], range: NSRange(text.startIndex..<text.endIndex, in: text)) {
+            guard let matchRange = Range(match.range, in: text), let bodyRange = Range(match.range(at: 1), in: text) else {
+                continue
+            }
+            decoded += text[cursor..<matchRange.lowerBound]
+            let body = text[bodyRange]
+            if let replacement = decodedEntityBody(body) {
+                decoded += replacement
+            } else {
+                decoded += text[matchRange]
+            }
+            cursor = matchRange.upperBound
+        }
+        decoded += text[cursor...]
         return decoded
+    }
+
+    private static func decodedEntityBody(_ body: Substring) -> String? {
+        if body.hasPrefix("#") {
+            let digits = body.dropFirst()
+            let value: UInt32?
+            if digits.hasPrefix("x") || digits.hasPrefix("X") {
+                value = UInt32(digits.dropFirst(), radix: 16)
+            } else {
+                value = UInt32(digits, radix: 10)
+            }
+            // Control characters and surrogates are not meaningful text.
+            guard let value, value >= 0x20 || value == 0x09 || value == 0x0A, let scalar = Unicode.Scalar(value) else {
+                return nil
+            }
+            return String(Character(scalar))
+        }
+        return namedEntities[String(body)]
     }
 }

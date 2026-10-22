@@ -96,5 +96,76 @@ struct XcodeToolIntegrationTests {
             workspaceRootPath: context.normalizedWorkspaceRootPath,
             preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/Workspace/Sources")
         ))
+        #expect(XcodeWorkspaceContext.normalizedProjectRootPath(
+            explicitPath: nil,
+            workspacePath: "/tmp/Workspace/App.xcworkspace/"
+        ) == "/tmp/Workspace")
+        #expect(!XcodeToolIntegration.workspaceMatches(
+            workspaceRootPath: "/tmp/Other",
+            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/Workspace")
+        ))
+    }
+
+    @Test
+    func preferredWorkspaceSelectsTheMatchingContextAmongSeveral() {
+        let first = XcodeWorkspaceContext(workspacePath: "/tmp/A/A.xcodeproj", defaultTabIdentifier: "a")
+        let second = XcodeWorkspaceContext(workspacePath: "/tmp/B/B.xcworkspace", defaultTabIdentifier: "b")
+        let nested = XcodeWorkspaceContext(workspacePath: "/tmp/B/Modules/M.xcodeproj", defaultTabIdentifier: "m")
+
+        #expect(XcodeToolIntegration.matchedWorkspaceContext(
+            in: [first, second, nested],
+            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/B")
+        ) == second)
+        #expect(XcodeToolIntegration.matchedWorkspaceContext(
+            in: [first, second, nested],
+            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/C")
+        ) == nil)
+        #expect(XcodeToolIntegration.matchedWorkspaceContext(
+            in: [first, second],
+            preferredWorkspaceRootURL: nil
+        ) == first)
+        #expect(XcodeToolIntegration.matchedWorkspaceContext(
+            in: [],
+            preferredWorkspaceRootURL: nil
+        ) == XcodeWorkspaceContext(workspacePath: nil, defaultTabIdentifier: nil))
+    }
+
+    @Test
+    func updatePresentationBindsTheDiffToTheBridgeArgumentNames() throws {
+        let presentation = XcodeToolIntegration.presentation(for: ToolDescriptor(
+            name: "xcode.XcodeUpdate",
+            description: "Edit",
+            inputSchema: "{}",
+            presentation: .standard(title: "Xcode file", action: "Edit", kind: .edit)
+        ))
+        let encoded = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(presentation)
+        ) as? [String: Any]
+        let sections = try #require(encoded?["sections"] as? [[String: Any]])
+        let diff = try #require(sections.first { $0["kind"] as? String == "diff" })
+        let oldKeys = try #require((diff["oldValue"] as? [String: Any])?["keyPaths"] as? [String])
+        let newKeys = try #require((diff["newValue"] as? [String: Any])?["keyPaths"] as? [String])
+
+        #expect(oldKeys.first == "oldString")
+        #expect(newKeys.first == "newString")
+        #expect(oldKeys.contains("old") && newKeys.contains("new"))
+    }
+
+    @Test
+    func listWindowsResultsWithoutWorkspacesAreIgnoredSafely() {
+        #expect(XcodeWorkspaceContext.contexts(fromListWindowsResult: .string("oops")).isEmpty)
+        #expect(XcodeWorkspaceContext.contexts(fromListWindowsResult: .object([
+            "isError": .bool(true),
+            "structuredContent": .object(["windows": .array([.object(["tabIdentifier": .string("t")])])])
+        ])).isEmpty)
+        #expect(XcodeWorkspaceContext.contexts(fromListWindowsResult: .object([
+            "structuredContent": .object(["windows": .array([.string("not an object"), .null])])
+        ])).isEmpty)
+        let message = XcodeWorkspaceContext.contexts(fromListWindowsResult: .object([
+            "structuredContent": .object([
+                "message": .string("Windows:\n* tabIdentifier: t1, workspacePath: /tmp/P/P.xcodeproj\n* junk")
+            ])
+        ]))
+        #expect(message == [XcodeWorkspaceContext(workspacePath: "/tmp/P", defaultTabIdentifier: "t1")])
     }
 }

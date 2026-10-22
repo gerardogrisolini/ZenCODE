@@ -39,7 +39,9 @@ enum JiraIssueParser {
 
         let names = result["names"]?.objectValue ?? [:]
         let summary = fields["summary"]?.stringValue?.nilIfBlank ?? key
-        let fieldTexts = fields.compactMap { fieldKey, fieldValue -> (name: String, value: String)? in
+        // Dictionary iteration order is random; sort by field id so the
+        // rendered sections (and the 12-field cap below) are deterministic.
+        let fieldTexts = fields.sorted { $0.key < $1.key }.compactMap { fieldKey, fieldValue -> (name: String, value: String)? in
             let name = names[fieldKey]?.stringValue?.nilIfBlank ?? fieldKey
             guard let value = fieldValue.flattenedText().nilIfBlank else { return nil }
             return (name, value)

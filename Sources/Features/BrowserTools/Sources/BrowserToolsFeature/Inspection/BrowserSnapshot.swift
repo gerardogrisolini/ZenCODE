@@ -227,10 +227,10 @@ enum BrowserAccessibilitySnapshot {
     }
 
     private static func integerValue(_ raw: Any?) -> Int? {
-        if let value = raw as? Int { return value }
-        if let value = raw as? Double { return Int(value) }
-        if let value = raw as? NSNumber { return value.intValue }
-        return nil
+        // Chrome sends integers, but JSONSerialization may surface a Double;
+        // the shared helper rejects NaN/infinite/out-of-range values instead of
+        // trapping on `Int(Double)`.
+        BrowserNetworkValue.integer(raw)
     }
 
     private static func truthy(_ value: String) -> Bool {

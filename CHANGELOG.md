@@ -10,8 +10,116 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Git: for the tools that take no file pathspec (`git.status`, `git.log`,
+  `git.branch`, `git.remote`, `git.lsFiles`, `git.commit`, `git.push`,
+  `git.fetch`, `git.pull`, `git.stash`, `git.switch`) the `path` argument now
+  selects the repository directory, as the schema documents, instead of being
+  ignored; `workingDirectory` wins when both are given. A missing or
+  non-directory `workingDirectory`/`path` fails with a clear error naming the
+  argument instead of an opaque process error.
+- Git: `git.grep` `maxResults` is now a total cap on matching lines enforced by
+  the tool (it was git's per-file `-m`, which also requires git ≥ 2.38, so the
+  tool failed on older Linux distributions); context lines and group
+  separators do not consume the budget (`git grep -z --column`, git ≥ 2.19).
+  `git.lsFiles` `maxResults` counts only file lines and keeps the exit code and
+  stderr. Truncated output carries an explicit note. Git never prompts for
+  credentials on the terminal (`GIT_TERMINAL_PROMPT=0` unless already set).
+- Desktop: `read_clipboard` truncates `clipboard_text` to 100 000 characters
+  on a character boundary and reports the omitted count in `note`; `count`
+  still reports the full length.
+- Jira: the local browser setup page requires a one-time form token and a
+  loopback `Origin`/`Host`, binds explicitly to `127.0.0.1`, caps request size,
+  and sends `no-store`/`no-referrer` headers, so another website open in the
+  browser cannot plant foreign Jira credentials. REST calls have 30 s/120 s
+  timeouts and clearer errors for 403, 404 (issue not found), 429 (with
+  `Retry-After`) and refused redirects.
+- Web: `web.fetch` WebKit rendering now validates subframe navigations too and
+  installs a content blocker that refuses every resource load to loopback,
+  private, link-local and `.local` destinations; it fails closed, falling back
+  to the raw fetch of the main document when the blocker cannot be compiled. It
+  uses a non-persistent data store and an overall render deadline. Response
+  bodies of `web.fetch`/`web.search` are streamed and cut at the byte limit
+  instead of fully downloaded, redirect chains are capped at 10 hops, and a
+  blocked redirect reports the policy reason instead of a bare 3xx status.
+- Xcode: `XcodeUpdate` snippet normalization no longer inserts a leading `.`
+  after ordinary closures (`Task { }`, `withAnimation { }`,
+  `DispatchQueue.main.async { }`, `lock.withLock { }`), which could write a
+  compile error into the file; only SwiftUI container and modifier chains
+  (`VStack { }`, `Button(...) { }`, `.onAppear { }`) are still repaired. A
+  listed Xcode tool the compatibility table does not know is forwarded to Xcode
+  instead of failing with "Xcode MCP is not available"; unknown names report
+  "Unknown Xcode tool".
+
 ### Fixed
 
+- Browser: a request the policy had allowed but Chrome refused to continue is
+  no longer reported as "Browser blocked a network request". The URL policy
+  fails closed on zone-scoped or unparseable IPv6 literals (such as
+  `[fe80::1%25en0]`) and on every numeric IPv4 spelling (`0x7f.1`,
+  `2130706433`, `127.1`), while hostnames made only of hexadecimal letters
+  (`adac.de`) are no longer rejected before DNS. Browser tools fail fast when
+  the CDP connection drops instead of waiting the full command timeout per
+  command; hostile numeric values in CDP payloads can no longer crash the
+  feature process; `browser.pages` returns titles with HTML entities decoded;
+  `browser.open` closes its half-initialised page when cancelled during setup.
+- Web: hosts whose last label is all-hex but not numeric (`abc.de`) are no
+  longer rejected as IPv4 literals, while octal/hex/short/decimal IPv4 forms,
+  IPv6 zone IDs, 6to4/NAT64 embedded IPv4 and reserved IPv6 ranges are. Body
+  text decoding honours the response or `<meta>` charset and no longer fails on
+  truncated UTF-8; `maxBytes` truncation is byte-accurate and never splits a
+  character. `web.search` no longer double-decodes result URLs, decodes HTML
+  entities deterministically, and no longer leaks a URLSession per call.
+- Jira: search queries containing `+` and other reserved characters are sent
+  correctly; `jira.read` with a text query that matches nothing says so instead
+  of asking to run `jira.search` first; `jira.signOut` no longer fails when
+  Jira was never configured; issue "Additional fields" render in a stable order
+  and integral numbers are no longer shown in exponent notation; the setup
+  server start is bounded (5 s) instead of hanging when the listener never
+  becomes ready.
+- Git: `git.blame` honours `startLine` or `endLine` given alone and rejects
+  non-positive line numbers.
+- Swift: option-like values for `configuration`, `target`, `product`, `filter`
+  and `executable` are rejected with a clear error instead of reaching
+  SwiftPM as options; `swift.run` forwards program arguments verbatim; a missing
+  or non-directory package directory fails with a clear error; `swift.test` no
+  longer counts XCTest assertion failures as build errors, and diagnostics whose
+  path contains "error" or "warning" are parsed correctly; `swift.outline`
+  reports correct line numbers for CRLF files.
+- Xcode: the `XcodeUpdate` indentation retry also works for standard MCP error
+  results, keeps closest matches whose code starts with a digit intact, and
+  never re-sends an identical edit; the `XcodeUpdate` diff panel shows the
+  `oldString`/`newString` change (it was empty); file-change evidence follows
+  symlinked source files and is suppressed for failed edits reported through
+  `structuredContent.success`; cancelled or rejected operations are no longer
+  misreported as "consent denied"; `tab_id`/`tab_identifier` aliases are
+  honoured for `BuildProject`, `GetTestList`, `RunAllTests` and the other
+  pass-through tools.
+- Figma: the Figma Desktop reachability probe closes its connection on every
+  outcome and answers "not running" immediately when the port refuses
+  connections.
+- Desktop: `open` with a relative `file:` URL resolves against the session
+  working directory (like plain relative paths) and rejects authority-only file
+  URLs; `type_text` no longer silently truncates grapheme clusters longer than
+  20 UTF-16 units (complex emoji sequences); fixed a possible crash in window
+  listing when two running-application records share a pid and a non-strict
+  display sort in `system_info`.
+- macOS: `macos.messages` no longer crashes the feature process on a damaged
+  or truncated `attributedBody` row, and a Full Disk Access denial is reported
+  as such (with the fix hint) instead of "history not found"; its `read`
+  description now states the chronological order of the results. The JXA tools
+  pass caller data to `osascript` on stdin instead of a command-line argument
+  (no longer visible to other local users via `ps`, no `ARG_MAX` failure on
+  long bodies). Dates accept ISO 8601 with an offset and no seconds
+  (`2026-10-21T15:00+02:00`) and wall-clock times inside a DST gap.
+  `macos.calendar` `update_event` applies `all_day` before `end` (a plain end
+  date is inclusive, as in `create_event`), `recurrence_end` as a plain date
+  includes that day, and recurrence arguments without `recurrence` are rejected
+  on update too; `macos.reminders` validates `alarm_minutes` before modifying
+  alarms and reports an alert request on a reminder without a due time;
+  `macos.mail` `list` and `macos.photos` `list` treat a plain-date `until` as
+  inclusive and reject `until <= since`.
 - Installing or updating the optional `macOS` feature (setup → Features →
   "Update installed", or `zen --install-features macOS`) no longer fails
   validation with "Feature must declare at least one tool". The feature now

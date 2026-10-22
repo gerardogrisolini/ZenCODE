@@ -160,4 +160,25 @@ struct DesktopSafetyPolicyTests {
             try DesktopSafetyPolicy.validateTypingBudget(characterCount: 1, interval: interval)
         }
     }
+
+    @Test
+    func clipboardTextIsBoundedOnCharacterBoundaries() {
+        let short = DesktopSafetyPolicy.boundedClipboardText("abc", maximumCharacters: 3)
+        #expect(short.text == "abc" && short.omittedCharacters == 0)
+        let family = "👨\u{200D}👩\u{200D}👧\u{200D}👦"
+        let text = "ab" + family + "e\u{301}xyz"
+        #expect(text.count == 7)
+        let cut = DesktopSafetyPolicy.boundedClipboardText(text, maximumCharacters: 4)
+        #expect(cut.text == "ab" + family + "e\u{301}")
+        #expect(cut.omittedCharacters == 3)
+        let clusterCut = DesktopSafetyPolicy.boundedClipboardText(text, maximumCharacters: 3)
+        #expect(clusterCut.text == "ab" + family)
+        #expect(clusterCut.text.unicodeScalars.count == 9)
+        #expect(clusterCut.omittedCharacters == 4)
+        let nothing = DesktopSafetyPolicy.boundedClipboardText(text, maximumCharacters: 0)
+        #expect(nothing.text.isEmpty && nothing.omittedCharacters == 7)
+        let defaults = DesktopSafetyPolicy.boundedClipboardText(String(repeating: "x", count: DesktopSafetyPolicy.maximumClipboardTextCharacters + 5))
+        #expect(defaults.text.count == DesktopSafetyPolicy.maximumClipboardTextCharacters)
+        #expect(defaults.omittedCharacters == 5)
+    }
 }

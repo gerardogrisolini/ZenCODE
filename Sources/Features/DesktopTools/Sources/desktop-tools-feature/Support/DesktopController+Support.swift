@@ -46,10 +46,9 @@ extension DesktopController {
 
     static func displays() -> [DesktopDisplayInfo] {
         let screens = NSScreen.screens.sorted { lhs, rhs in
-            let lhsID = displayID(for: lhs)
-            let rhsID = displayID(for: rhs)
-            if CGDisplayIsMain(lhsID) != 0 { return true }
-            if CGDisplayIsMain(rhsID) != 0 { return false }
+            let lhsMain = CGDisplayIsMain(displayID(for: lhs)) != 0
+            let rhsMain = CGDisplayIsMain(displayID(for: rhs)) != 0
+            if lhsMain != rhsMain { return lhsMain }
             return lhs.frame.origin.x < rhs.frame.origin.x
         }
         return screens.enumerated().map { offset, screen in

@@ -126,7 +126,7 @@ enum RemindersController {
         var output = MacOSRunOutput(
             action: .remindersCreate,
             summary: "Created reminder '\(title)' in '\(reminder.calendar.title)'"
-                + (reminder.dueDateComponents.flatMap { Calendar.current.date(from: $0) }.flatMap(MacOSDate.format).map { " due \($0)" } ?? "")
+                + (reminder.dueDateComponents.flatMap { Calendar.current.date(from: $0) }.flatMap { MacOSDate.format($0) }.map { " due \($0)" } ?? "")
                 + "."
         )
         output.reminder = info(reminder)
@@ -248,27 +248,18 @@ enum RemindersController {
                 components.timeZone = TimeZone.current
             }
             reminder.dueDateComponents = components
-            reminder.alarms?.forEach(reminder.removeAlarm)
-            if hasTime {
-                let minutes = input.alarm_minutes ?? [0]
-                for value in minutes {
-                    guard (0...(60 * 24 * 365)).contains(value) else {
-                        throw MacOSControlError.invalidArgument("alarm_minutes", "each value must be between 0 and 525600 minutes before the due time.")
-                    }
-                    reminder.addAlarm(EKAlarm(absoluteDate: due.addingTimeInterval(TimeInterval(-value * 60))))
-                }
+            // Alarms follow the due time: a dated reminder alerts at its due
+            // time unless alarm_minutes says otherwise.
+            if !hasTime, let minutes = input.alarm_minutes, !minutes.isEmpty {
+                throw MacOSControlError.invalidArgument("alarm_minutes", "alerts need a due time; pass due with a time of day.")
             }
-        } else if let minutes = input.alarm_minutes,
-                  let dueComponents = reminder.dueDateComponents,
-                  dueComponents.hour != nil,
-                  let due = Calendar.current.date(from: dueComponents) {
-            reminder.alarms?.forEach(reminder.removeAlarm)
-            for value in minutes {
-                guard (0...(60 * 24 * 365)).contains(value) else {
-                    throw MacOSControlError.invalidArgument("alarm_minutes", "each value must be between 0 and 525600 minutes before the due time.")
-                }
-                reminder.addAlarm(EKAlarm(absoluteDate: due.addingTimeInterval(TimeInterval(-value * 60))))
+            try replaceAlarms(of: reminder, due: hasTime ? due : nil, minutes: hasTime ? (input.alarm_minutes ?? [0]) : [])
+        } else if let minutes = input.alarm_minutes {
+            guard let dueComponents = reminder.dueDateComponents, dueComponents.hour != nil,
+                  let due = Calendar.current.date(from: dueComponents) else {
+                throw MacOSControlError.invalidArgument("alarm_minutes", "alerts need a due time; pass due with a time of day.")
             }
+            try replaceAlarms(of: reminder, due: due, minutes: minutes)
         }
         if let recurrence = input.recurrence {
             if recurrence.lowercased() == "none" {
@@ -279,21 +270,34 @@ enum RemindersController {
         }
     }
 
-    private static func priorityValue(_ raw: String) throws -> Int {
+    /// Validates every offset before touching the reminder, then replaces its
+    /// alarms with absolute alerts relative to `due`.
+    private static func replaceAlarms(of reminder: EKReminder, due: Date?, minutes: [Int]) throws {
+        for value in minutes {
+            try EventKitSupport.validateAlarmMinutes(value, reference: "due time")
+        }
+        reminder.alarms?.forEach(reminder.removeAlarm)
+        guard let due else { return }
+        for value in minutes {
+            reminder.addAlarm(EKAlarm(absoluteDate: due.addingTimeInterval(TimeInterval(-value * 60))))
+        }
+    }
+
+    static func priorityValue(_ raw: String) throws -> Int {
         switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "", "none", "0": return 0
         case "high", "1": return 1
         case "medium", "5": return 5
         case "low", "9": return 9
         default:
-            if let value = Int(raw), (0...9).contains(value) {
+            if let value = Int(raw.trimmingCharacters(in: .whitespacesAndNewlines)), (0...9).contains(value) {
                 return value
             }
             throw MacOSControlError.invalidArgument("priority", "use none, low, medium, high, or an integer from 0 (none) to 9 (lowest).")
         }
     }
 
-    private static func priorityLabel(_ value: Int) -> String {
+    static func priorityLabel(_ value: Int) -> String {
         switch value {
         case 0: return "none"
         case 1...4: return "high"

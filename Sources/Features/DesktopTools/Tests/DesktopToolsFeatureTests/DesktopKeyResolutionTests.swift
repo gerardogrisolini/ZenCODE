@@ -107,6 +107,49 @@ struct DesktopKeyResolutionTests {
         #expect(key("a") == nil)
     }
 
+    @Test
+    func unicodeFallbackChunksLongClustersAtTheEventLimit() {
+        #expect(DesktopKeyResolver.unicodeEventChunks([]).isEmpty)
+        let single = Array("é".utf16)
+        #expect(DesktopKeyResolver.unicodeEventChunks(single) == [single])
+        // A 25-unit cluster exceeds what one CGEvent can carry; every unit must
+        // still be posted, in order, across consecutive events.
+        let units = Array((0..<25).map { UniChar($0 + 0x41) })
+        let chunks = DesktopKeyResolver.unicodeEventChunks(units)
+        #expect(chunks.count == 2)
+        #expect(chunks.allSatisfy { !$0.isEmpty && $0.count <= DesktopKeyResolver.maximumUnicodeUnitsPerEvent })
+        #expect(chunks.flatMap { $0 } == units)
+        let exact = Array(repeating: UniChar(0x41), count: DesktopKeyResolver.maximumUnicodeUnitsPerEvent)
+        #expect(DesktopKeyResolver.unicodeEventChunks(exact) == [exact])
+    }
+
+    @Test
+    func unicodeFallbackNeverSplitsASurrogatePairAcrossEvents() {
+        // 19 BMP units followed by a surrogate pair put the pair on units 20-21,
+        // straddling the 20-unit event boundary; a naive cut would post a lone
+        // high surrogate in the first event and a lone low surrogate in the next.
+        let limit = DesktopKeyResolver.maximumUnicodeUnitsPerEvent
+        let units = Array(repeating: UniChar(0x41), count: limit - 1) + Array("😀".utf16) + Array("abc".utf16)
+        #expect(UTF16.isLeadSurrogate(units[limit - 1]) && UTF16.isTrailSurrogate(units[limit]))
+
+        let chunks = DesktopKeyResolver.unicodeEventChunks(units)
+        #expect(chunks.count == 2)
+        #expect(chunks.first?.count == limit - 1)
+        #expect(chunks.allSatisfy { !$0.isEmpty && $0.count <= limit })
+        #expect(chunks.allSatisfy { !UTF16.isLeadSurrogate($0.last!) && !UTF16.isTrailSurrogate($0.first!) })
+        #expect(chunks.flatMap { $0 } == units)
+
+        // Consecutive pairs across several boundaries keep every pair intact.
+        let emoji = Array(String(repeating: "😀", count: 25).utf16)
+        let emojiChunks = DesktopKeyResolver.unicodeEventChunks(emoji)
+        #expect(emojiChunks.allSatisfy { !$0.isEmpty && $0.count <= limit })
+        #expect(emojiChunks.allSatisfy { !UTF16.isLeadSurrogate($0.last!) && !UTF16.isTrailSurrogate($0.first!) })
+        #expect(emojiChunks.flatMap { $0 } == emoji)
+
+        // A lone high surrogate as the only unit is still posted (never an empty chunk).
+        #expect(DesktopKeyResolver.unicodeEventChunks([0xD83D]) == [[0xD83D]])
+    }
+
     @MainActor
     @Test
     func carbonTranslatorSmoke() throws {

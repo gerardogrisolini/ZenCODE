@@ -169,27 +169,54 @@ enum BrowserNetworkOutputBounds {
 enum BrowserNetworkValue {
     static func integer(_ value: Any?) -> Int? {
         if let value = value as? Int { return value }
-        if let value = value as? Double, value.isFinite,
-           value >= Double(Int.min), value <= Double(Int.max)
-        {
-            return Int(value)
+        if let value = value as? Double { return truncatedInteger(value) }
+        if let value = value as? NSNumber {
+            if let exact = integralInt64(value) { return Int(exactly: exact) }
+            return truncatedInteger(value.doubleValue)
         }
-        if let value = value as? NSNumber { return value.intValue }
         return nil
     }
 
     static func nonNegativeInt64(_ value: Any?) -> Int64? {
         if let value = value as? Int64 { return max(0, value) }
         if let value = value as? Int { return Int64(max(0, value)) }
-        if let value = value as? Double,
-           value.isFinite,
-           value >= 0,
-           value <= Double(Int64.max)
-        {
-            return Int64(value)
+        if let value = value as? Double { return truncatedInt64(value).map { max(0, $0) } }
+        if let value = value as? NSNumber {
+            if let exact = integralInt64(value) { return max(0, exact) }
+            return truncatedInt64(value.doubleValue).map { max(0, $0) }
         }
-        if let value = value as? NSNumber { return max(0, value.int64Value) }
         return nil
+    }
+
+    /// Integral `NSNumber`s (including those decoded by `JSONSerialization`)
+    /// are read exactly: routing them through `Double` would lose precision
+    /// above 2^53. Floating `NSNumber`s return nil and take the Double path,
+    /// which rejects NaN and infinity. The `objCType` check is portable to
+    /// swift-corelibs-foundation, where `CFNumberIsFloatType` is unavailable.
+    private static func integralInt64(_ value: NSNumber) -> Int64? {
+        switch value.objCType.pointee {
+        case 0x63, 0x73, 0x69, 0x6C, 0x71: // c s i l q
+            return value.int64Value
+        case 0x43, 0x53, 0x49, 0x4C: // C S I L
+            return value.int64Value
+        case 0x51: // Q: unsigned 64-bit may exceed Int64
+            return Int64(exactly: value.uint64Value)
+        default:
+            return nil
+        }
+    }
+
+    /// `Int(_: Double)` traps on NaN, infinity, and values at or beyond the
+    /// integer range (including `Double(Int.max)`, which rounds up to 2^63).
+    /// Page-influenced CDP payloads must never be able to reach that trap.
+    private static func truncatedInteger(_ value: Double) -> Int? {
+        guard value.isFinite else { return nil }
+        return Int(exactly: value.rounded(.towardZero))
+    }
+
+    private static func truncatedInt64(_ value: Double) -> Int64? {
+        guard value.isFinite else { return nil }
+        return Int64(exactly: value.rounded(.towardZero))
     }
 
     static func double(_ value: Any?) -> Double? {

@@ -232,15 +232,14 @@ enum PhotosController {
     }
 
     static func list(_ input: MacOSRunInput) async throws -> MacOSRunOutput {
-        let since = try MacOSDate.parse(input.since ?? input.start, argument: "since", action: input.action)
-        let until = try MacOSDate.parse(input.until ?? input.end, argument: "until", action: input.action)
+        let (since, until) = try MacOSDate.listBounds(since: input.since ?? input.start, until: input.until ?? input.end, action: input.action)
         var parameters: [String: JSONValue] = [
             "limit": .number(Double(input.boundedLimit(default: 50, maximum: 500))),
             "favorites_only": .bool(input.favorites_only ?? false),
         ]
         if let album = input.album { parameters["album"] = .string(album) }
-        if let since { parameters["since"] = .string(MailController.javaScriptDate(since)) }
-        if let until { parameters["until"] = .string(MailController.javaScriptDate(until)) }
+        if let since { parameters["since"] = .string(MacOSDate.javaScript(since)) }
+        if let until { parameters["until"] = .string(MacOSDate.javaScript(until)) }
         let result = try await JXARunner.run(listScript, parameters: parameters, as: ItemsResult.self)
         var scope = input.album.map { "album '\($0)'" } ?? (input.favorites_only == true ? "favorites" : "the library")
         if let since { scope += " since \(MacOSDate.formatDay(since) ?? "")" }

@@ -146,6 +146,27 @@ enum DesktopKeyResolver {
     /// Typing keycodes searched in ascending order; return, tab and space are excluded, JIS keys come last.
     static let typingKeyCodes: [CGKeyCode] = (0...50).filter { $0 != 36 && $0 != 48 && $0 != 49 }.map { CGKeyCode($0) } + [93, 94]
 
+    /// `CGEventKeyboardSetUnicodeString` silently drops everything after the
+    /// 20th UTF-16 unit, so longer clusters are split into consecutive events.
+    static let maximumUnicodeUnitsPerEvent = 20
+
+    /// A chunk never ends on a high surrogate: splitting a surrogate pair across
+    /// two events would post a lone surrogate to the target app, so such a
+    /// chunk is shortened by one unit and the pair opens the next chunk.
+    static func unicodeEventChunks(_ units: [UniChar]) -> [[UniChar]] {
+        var chunks: [[UniChar]] = []
+        var start = 0
+        while start < units.count {
+            var end = min(start + maximumUnicodeUnitsPerEvent, units.count)
+            if end < units.count, end - start > 1, UTF16.isLeadSurrogate(units[end - 1]) {
+                end -= 1
+            }
+            chunks.append(Array(units[start..<end]))
+            start = end
+        }
+        return chunks
+    }
+
     static let namedKeyCodes: [String: CGKeyCode] = [
         "return": 36, "enter": 36, "tab": 48, "space": 49,
         "delete": 51, "backspace": 51, "escape": 53, "esc": 53,

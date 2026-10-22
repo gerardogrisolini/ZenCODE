@@ -45,9 +45,16 @@ extension SwiftToolsSupport {
 
     static func renderTestResult(_ result: FeatureProcessResult, command: String) -> String {
         let combined = result.stdout + "\n" + result.stderr
-        let diagnostics = parseDiagnostics(from: combined)
-        let buildErrors = diagnostics.filter { $0.severity == .error }
         let failures = parseTestFailures(from: combined)
+        // An XCTest assertion is reported as `File.swift:12: error: Suite.test : XCTAssert… failed`
+        // (`-[Suite test]` on Darwin), which is a test failure, not a compiler
+        // diagnostic: keep those lines out of the build-error count so a red
+        // test is never presented as a build break.
+        let failureLines = Set(failures)
+        let diagnosticsInput = combined.components(separatedBy: "\n")
+            .filter { !failureLines.contains($0.trimmingCharacters(in: .whitespaces)) }
+            .joined(separator: "\n")
+        let buildErrors = parseDiagnostics(from: diagnosticsInput).filter { $0.severity == .error }
         let summaries = parseTestSummaries(from: combined)
 
         var lines = headerLines(result, command: command, success: "passed")

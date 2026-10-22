@@ -4,156 +4,160 @@ import Testing
 #if os(macOS)
 @testable import jira_tools_feature
 
-@Suite(.serialized)
-struct JiraHTTPSOnlyConfigurationTests {
-    // MARK: - Site URL normalization
+// Nested in `JiraProcessEnvironmentSuite` (serialized) because the stored
+// configuration tests mutate `ZENCODE_SUPPORT_DIRECTORY`; see that type.
+extension JiraProcessEnvironmentSuite {
+    @Suite
+    struct JiraHTTPSOnlyConfigurationTests {
+        // MARK: - Site URL normalization
 
-    @Test
-    func acceptsHTTPSAndDefaultsMissingSchemeToHTTPS() throws {
-        let explicit = try JiraStoredConfiguration(
-            siteURLString: "https://example.atlassian.net",
-            email: "person@example.com"
-        )
-        #expect(explicit.siteURL.scheme == "https")
-        #expect(explicit.siteURL.host == "example.atlassian.net")
-
-        let schemeless = try JiraStoredConfiguration(
-            siteURLString: "example.atlassian.net",
-            email: "person@example.com"
-        )
-        #expect(schemeless.siteURL.scheme == "https")
-        #expect(schemeless.siteURL.host == "example.atlassian.net")
-    }
-
-    @Test
-    func upperCaseHTTPSIsAcceptedAndNormalized() throws {
-        let configuration = try JiraStoredConfiguration(
-            siteURLString: "HTTPS://Example.Atlassian.NET",
-            email: "person@example.com"
-        )
-        // Foundation preserves host case; only the scheme is normalized, and
-        // the host is compared case-insensitively at request time.
-        #expect(configuration.siteURL.scheme == "https")
-        #expect(configuration.siteURL.host?.lowercased() == "example.atlassian.net")
-    }
-
-    @Test
-    func rejectsHTTPSiteURLWithExplicitGuidance() {
-        #expect(throws: JiraToolsError.self) {
-            _ = try JiraStoredConfiguration(
-                siteURLString: "http://example.atlassian.net",
+        @Test
+        func acceptsHTTPSAndDefaultsMissingSchemeToHTTPS() throws {
+            let explicit = try JiraStoredConfiguration(
+                siteURLString: "https://example.atlassian.net",
                 email: "person@example.com"
             )
-        }
-        do {
-            _ = try JiraStoredConfiguration(
-                siteURLString: "http://example.atlassian.net",
+            #expect(explicit.siteURL.scheme == "https")
+            #expect(explicit.siteURL.host == "example.atlassian.net")
+
+            let schemeless = try JiraStoredConfiguration(
+                siteURLString: "example.atlassian.net",
                 email: "person@example.com"
             )
-        } catch let error as JiraToolsError {
-            let message = error.localizedDescription
-            #expect(message.contains("HTTPS"))
-            #expect(message.contains("https://example.atlassian.net"))
-            #expect(message.contains("unencrypted"))
-        } catch {
-            Issue.record("Expected JiraToolsError, got \(error)")
+            #expect(schemeless.siteURL.scheme == "https")
+            #expect(schemeless.siteURL.host == "example.atlassian.net")
         }
-    }
 
-    @Test
-    func rejectsUnsupportedSchemes() {
-        let unsupported = ["ftp://example.atlassian.net", "file:///etc/hosts", "gopher://example.com"]
-        for value in unsupported {
+        @Test
+        func upperCaseHTTPSIsAcceptedAndNormalized() throws {
+            let configuration = try JiraStoredConfiguration(
+                siteURLString: "HTTPS://Example.Atlassian.NET",
+                email: "person@example.com"
+            )
+            // Foundation preserves host case; only the scheme is normalized, and
+            // the host is compared case-insensitively at request time.
+            #expect(configuration.siteURL.scheme == "https")
+            #expect(configuration.siteURL.host?.lowercased() == "example.atlassian.net")
+        }
+
+        @Test
+        func rejectsHTTPSiteURLWithExplicitGuidance() {
             #expect(throws: JiraToolsError.self) {
-                _ = try JiraStoredConfiguration(siteURLString: value, email: "person@example.com")
+                _ = try JiraStoredConfiguration(
+                    siteURLString: "http://example.atlassian.net",
+                    email: "person@example.com"
+                )
+            }
+            do {
+                _ = try JiraStoredConfiguration(
+                    siteURLString: "http://example.atlassian.net",
+                    email: "person@example.com"
+                )
+            } catch let error as JiraToolsError {
+                let message = error.localizedDescription
+                #expect(message.contains("HTTPS"))
+                #expect(message.contains("https://example.atlassian.net"))
+                #expect(message.contains("unencrypted"))
+            } catch {
+                Issue.record("Expected JiraToolsError, got \(error)")
             }
         }
-    }
 
-    @Test
-    func rejectsURLsWithoutHostAndEmbeddedCredentials() {
-        #expect(throws: JiraToolsError.self) {
-            _ = try JiraStoredConfiguration(siteURLString: "https://", email: "person@example.com")
+        @Test
+        func rejectsUnsupportedSchemes() {
+            let unsupported = ["ftp://example.atlassian.net", "file:///etc/hosts", "gopher://example.com"]
+            for value in unsupported {
+                #expect(throws: JiraToolsError.self) {
+                    _ = try JiraStoredConfiguration(siteURLString: value, email: "person@example.com")
+                }
+            }
         }
-        #expect(throws: JiraToolsError.self) {
-            _ = try JiraStoredConfiguration(siteURLString: "not a url", email: "person@example.com")
+
+        @Test
+        func rejectsURLsWithoutHostAndEmbeddedCredentials() {
+            #expect(throws: JiraToolsError.self) {
+                _ = try JiraStoredConfiguration(siteURLString: "https://", email: "person@example.com")
+            }
+            #expect(throws: JiraToolsError.self) {
+                _ = try JiraStoredConfiguration(siteURLString: "not a url", email: "person@example.com")
+            }
+            #expect(throws: JiraToolsError.self) {
+                _ = try JiraStoredConfiguration(
+                    siteURLString: "https://user:pass@example.atlassian.net",
+                    email: "person@example.com"
+                )
+            }
         }
-        #expect(throws: JiraToolsError.self) {
-            _ = try JiraStoredConfiguration(
-                siteURLString: "https://user:pass@example.atlassian.net",
+
+        @Test
+        func normalizationStripsPathQueryAndFragment() throws {
+            let configuration = try JiraStoredConfiguration(
+                siteURLString: "https://example.atlassian.net/browse/PROJ-1?tab=details#anchor",
                 email: "person@example.com"
             )
+            #expect(configuration.siteURL.absoluteString == "https://example.atlassian.net")
         }
-    }
 
-    @Test
-    func normalizationStripsPathQueryAndFragment() throws {
-        let configuration = try JiraStoredConfiguration(
-            siteURLString: "https://example.atlassian.net/browse/PROJ-1?tab=details#anchor",
-            email: "person@example.com"
-        )
-        #expect(configuration.siteURL.absoluteString == "https://example.atlassian.net")
-    }
+        // MARK: - Stored configuration (decoding path)
 
-    // MARK: - Stored configuration (decoding path)
-
-    private func makeTemporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("JiraHTTPSOnly-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
-    @Test
-    func storedHTTPConfigurationFailsWithExplicitGuidance() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-
-        let json = #"{"siteURLString":"http://example.atlassian.net","email":"person@example.com"}"#
-        try Data(json.utf8).write(to: directory.appendingPathComponent("jira.json"))
-
-        setenv("ZENCODE_SUPPORT_DIRECTORY", directory.path, 1)
-        defer { unsetenv("ZENCODE_SUPPORT_DIRECTORY") }
-
-        do {
-            _ = try JiraConfigurationStore.load()
-            Issue.record("Expected load() to reject a stored http:// site URL")
-        } catch let error as JiraToolsError {
-            let message = error.localizedDescription
-            #expect(message.contains("http://example.atlassian.net"))
-            #expect(message.contains("https://example.atlassian.net"))
-        } catch {
-            Issue.record("Expected JiraToolsError, got \(error)")
+        private func makeTemporaryDirectory() throws -> URL {
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("JiraHTTPSOnly-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            return url
         }
-    }
 
-    @Test
-    func storedHTTPSConfigurationDecodes() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
+        @Test
+        func storedHTTPConfigurationFailsWithExplicitGuidance() throws {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
 
-        let json = #"{"siteURLString":"https://example.atlassian.net","email":"person@example.com"}"#
-        try Data(json.utf8).write(to: directory.appendingPathComponent("jira.json"))
+            let json = #"{"siteURLString":"http://example.atlassian.net","email":"person@example.com"}"#
+            try Data(json.utf8).write(to: directory.appendingPathComponent("jira.json"))
 
-        setenv("ZENCODE_SUPPORT_DIRECTORY", directory.path, 1)
-        defer { unsetenv("ZENCODE_SUPPORT_DIRECTORY") }
+            setenv("ZENCODE_SUPPORT_DIRECTORY", directory.path, 1)
+            defer { unsetenv("ZENCODE_SUPPORT_DIRECTORY") }
 
-        let configuration = try JiraConfigurationStore.load()
-        #expect(configuration.siteURL.scheme == "https")
-        #expect(configuration.siteURL.host == "example.atlassian.net")
-    }
+            do {
+                _ = try JiraConfigurationStore.load()
+                Issue.record("Expected load() to reject a stored http:// site URL")
+            } catch let error as JiraToolsError {
+                let message = error.localizedDescription
+                #expect(message.contains("http://example.atlassian.net"))
+                #expect(message.contains("https://example.atlassian.net"))
+            } catch {
+                Issue.record("Expected JiraToolsError, got \(error)")
+            }
+        }
 
-    @Test
-    func configurationStoreRoundTripPreservesHTTPS() throws {
-        let configuration = try JiraStoredConfiguration(
-            siteURLString: "example.atlassian.net",
-            email: "person@example.com"
-        )
-        let encoder = JSONEncoder()
-        let data = try encoder.encode(configuration)
-        let decoded = try JSONDecoder().decode(JiraStoredConfiguration.self, from: data)
-        #expect(decoded.siteURL.scheme == "https")
-        #expect(decoded.siteURLString == "https://example.atlassian.net")
+        @Test
+        func storedHTTPSConfigurationDecodes() throws {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+
+            let json = #"{"siteURLString":"https://example.atlassian.net","email":"person@example.com"}"#
+            try Data(json.utf8).write(to: directory.appendingPathComponent("jira.json"))
+
+            setenv("ZENCODE_SUPPORT_DIRECTORY", directory.path, 1)
+            defer { unsetenv("ZENCODE_SUPPORT_DIRECTORY") }
+
+            let configuration = try JiraConfigurationStore.load()
+            #expect(configuration.siteURL.scheme == "https")
+            #expect(configuration.siteURL.host == "example.atlassian.net")
+        }
+
+        @Test
+        func configurationStoreRoundTripPreservesHTTPS() throws {
+            let configuration = try JiraStoredConfiguration(
+                siteURLString: "example.atlassian.net",
+                email: "person@example.com"
+            )
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(configuration)
+            let decoded = try JSONDecoder().decode(JiraStoredConfiguration.self, from: data)
+            #expect(decoded.siteURL.scheme == "https")
+            #expect(decoded.siteURLString == "https://example.atlassian.net")
+        }
     }
 }
 

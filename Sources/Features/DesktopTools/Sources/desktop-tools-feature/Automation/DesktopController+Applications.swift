@@ -236,7 +236,14 @@ enum DesktopOpenTarget: Equatable {
                 throw DesktopControlError.invalidArgument("target", "the \(scheme) URL scheme is not allowed.")
             }
             guard url.isFileURL else { return .url(raw) }
-            path = url.standardizedFileURL.path
+            // A relative file URL (`file:doc.txt`) must resolve against the session
+            // working directory, never the feature process cwd, so the path the
+            // operator approved in the host is the path that gets opened.
+            let urlPath = url.path
+            guard !urlPath.isEmpty else {
+                throw DesktopControlError.invalidArgument("target", "file URL has no path.")
+            }
+            path = urlPath.hasPrefix("/") ? url.standardizedFileURL.path : context.resolvePath(urlPath).path
         } else {
             path = context.resolvePath(raw).path
         }

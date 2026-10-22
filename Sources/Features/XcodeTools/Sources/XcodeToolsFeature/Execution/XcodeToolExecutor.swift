@@ -83,22 +83,37 @@ public actor XcodeToolExecutor {
             return cached
         }
         var roots: [URL] = []
-        if let result = try? await client.callTool(named: "XcodeListWindows", arguments: [:]) {
+        do {
+            let result = try await client.callTool(named: "XcodeListWindows", arguments: [:])
             roots = XcodeWorkspaceContext.contexts(fromListWindowsResult: result)
                 .filter { $0.defaultTabIdentifier == tabIdentifier }
                 .compactMap(\.normalizedWorkspaceRootPath)
                 .filter { $0.hasPrefix("/") }
                 .map { URL(fileURLWithPath: $0).standardizedFileURL }
+        } catch is CancellationError {
+            // A cancelled lookup is not a failed one: leave it uncached so the
+            // next call can resolve the roots.
+            return []
+        } catch {
+            // Evidence is best effort; the tool call itself surfaces the error.
         }
         workspaceRootsByTabIdentifier[tabIdentifier] = roots
         return roots
     }
 
-    private static func isErrorResult(_ result: JSONValue?) -> Bool {
+    /// Mirrors the renderer's "Tool error" detection so file-change evidence
+    /// is suppressed for every failure shape the bridge produces.
+    static func isErrorResult(_ result: JSONValue?) -> Bool {
         guard case let .object(object) = result else {
             return false
         }
-        return object["isError"]?.boolValue == true
+        if object["isError"]?.boolValue == true {
+            return true
+        }
+        let structured = object["structuredContent"]?.objectValue
+        return structured?["isError"]?.boolValue == true
+            || structured?["success"]?.boolValue == false
+            || object["success"]?.boolValue == false
     }
 
     private func executeRequestRetryingIndentationMismatchIfNeeded(
@@ -117,6 +132,8 @@ public actor XcodeToolExecutor {
             return initialResult
         }
 
+        // A cancelled caller must not trigger a second mutation.
+        try Task.checkCancellation()
         return try await client.callTool(
             named: retryRequest.name,
             arguments: retryRequest.arguments

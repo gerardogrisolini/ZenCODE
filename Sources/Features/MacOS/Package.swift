@@ -29,6 +29,14 @@ let package = Package(
                 .product(name: "ToolCore", package: "ZenCODE")
             ],
             swiftSettings: memberImportVisibilitySettings
+        ),
+        .testTarget(
+            name: "MacOSTests",
+            dependencies: [
+                "MacOS",
+                .product(name: "ToolCore", package: "ZenCODE")
+            ],
+            swiftSettings: memberImportVisibilitySettings
         )
     ]
 )

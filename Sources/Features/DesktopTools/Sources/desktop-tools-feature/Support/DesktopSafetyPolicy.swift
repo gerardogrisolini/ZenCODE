@@ -90,6 +90,16 @@ enum DesktopSafetyPolicy {
             throw DesktopControlError.invalidArgument("text/interval", "typing exceeds the safe 150-second budget; split the request or explicitly choose a shorter interval.")
         }
     }
+
+    static let maximumClipboardTextCharacters = 100_000
+
+    /// Clipboard text bounded for the model context. The cut is on a
+    /// `Character` boundary, so no grapheme cluster is split.
+    static func boundedClipboardText(_ text: String, maximumCharacters: Int = maximumClipboardTextCharacters) -> (text: String, omittedCharacters: Int) {
+        let total = text.count
+        guard maximumCharacters >= 0, total > maximumCharacters else { return (text, 0) }
+        return (String(text.prefix(maximumCharacters)), total - maximumCharacters)
+    }
 }
 
 /// Each attempt remains a fresh one-shot AppKit snapshot. No cached state or

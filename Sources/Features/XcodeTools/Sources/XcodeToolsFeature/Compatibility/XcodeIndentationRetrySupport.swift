@@ -8,6 +8,11 @@
 import Foundation
 import ToolCore
 
+/// Extracts the code snippet that follows Xcode's "Closest match found"
+/// marker. Text on the marker's own line (`:`/`at line 12:`) is header, every
+/// following line belongs to the snippet. Line numbers are stripped only when
+/// the snippet is actually numbered in the `XcodeRead` format, so a plain
+/// snippet whose code starts with a digit (`0.5 * x`) is left intact.
 public nonisolated func xcodeClosestMatchSnippetFromMessage(
     _ message: String?
 ) -> String? {
@@ -16,21 +21,19 @@ public nonisolated func xcodeClosestMatchSnippetFromMessage(
         return nil
     }
 
-    let snippetStart = message[markerRange.upperBound...]
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !snippetStart.isEmpty else {
-        return nil
+    var lines = message[markerRange.upperBound...].components(separatedBy: .newlines)
+    let headerRemainder = lines.removeFirst()
+    if lines.isEmpty, xcodeReadLinePrefixMatch(in: headerRemainder).matches {
+        lines = [headerRemainder]
     }
 
-    var lines = snippetStart.components(separatedBy: .newlines)
-    if let firstLine = lines.first,
-       !xcodeReadLinePrefixMatch(in: firstLine).matches {
-        lines.removeFirst()
-    }
-
-    return lines
+    let isNumbered = lines.contains { xcodeReadLinePrefixMatch(in: $0).matches }
+    let snippet = lines
         .map { line in
-            line.replacingOccurrences(
+            guard isNumbered else {
+                return line
+            }
+            return line.replacingOccurrences(
                 of: #"^\s*\d+\t?"#,
                 with: "",
                 options: .regularExpression
@@ -38,6 +41,7 @@ public nonisolated func xcodeClosestMatchSnippetFromMessage(
         }
         .joined(separator: "\n")
         .trimmingCharacters(in: .newlines)
+    return snippet.isEmpty ? nil : snippet
 }
 
 nonisolated func indentationInsensitiveSnippetEquivalent(
@@ -154,8 +158,29 @@ nonisolated func xcodeMutationResultObject(
     return rootObject
 }
 
+/// The human-readable message of a mutation result: the structured `message`
+/// when present, otherwise the text items of a standard MCP `content` array
+/// (which is where `isError` results carry their explanation).
+nonisolated func xcodeMutationResultMessage(
+    from result: JSONValue
+) -> String? {
+    guard let rootObject = result.objectValue else {
+        return nil
+    }
+    if let message = xcodeMutationResultObject(from: result)?["message"]?.stringValue
+        ?? rootObject["message"]?.stringValue {
+        return message
+    }
+    guard case let .array(items) = rootObject["content"] else {
+        return nil
+    }
+    let texts = items.compactMap { $0.objectValue?["text"]?.stringValue }
+    return texts.isEmpty ? nil : texts.joined(separator: "\n")
+}
+
 nonisolated func xcodeMutationResultNeedsIndentationRetry(
-    _ object: [String: JSONValue]
+    _ object: [String: JSONValue],
+    message: String? = nil
 ) -> Bool {
     let rawEditsApplied = object["editsApplied"]?.numberValue ?? 0
     if rawEditsApplied.isFinite, rawEditsApplied > 0 {
@@ -166,5 +191,5 @@ nonisolated func xcodeMutationResultNeedsIndentationRetry(
         return success == false
     }
 
-    return object["message"]?.stringValue?.contains("Closest match found") == true
+    return (message ?? object["message"]?.stringValue)?.contains("Closest match found") == true
 }

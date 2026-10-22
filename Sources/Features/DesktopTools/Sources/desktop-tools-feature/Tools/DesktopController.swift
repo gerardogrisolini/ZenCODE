@@ -270,11 +270,15 @@ enum DesktopController {
 
         case .readClipboard:
             let value = NSPasteboard.general.string(forType: .string)
+            let bounded = value.map { DesktopSafetyPolicy.boundedClipboardText($0) }
             return DesktopRunOutput(
                 action: action,
                 summary: value == nil ? "The clipboard does not contain plain text." : "Read \(value?.count ?? 0) character(s) from the clipboard.",
-                clipboard_text: value,
-                count: value?.count ?? 0
+                clipboard_text: bounded?.text,
+                count: value?.count ?? 0,
+                note: (bounded?.omittedCharacters ?? 0) > 0
+                    ? "clipboard_text was truncated to \(DesktopSafetyPolicy.maximumClipboardTextCharacters) characters; \(bounded?.omittedCharacters ?? 0) character(s) were omitted."
+                    : nil
             )
 
         case .writeClipboard:

@@ -68,8 +68,8 @@ struct GitRestoreTool: FeatureTool {
     }
 }
 
-struct GitCommitTool: FeatureTool {
-    struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
+struct GitCommitTool: GitArgumentTool {
+    struct Input: Decodable, Sendable, GitRepositoryDirectoryInput {
         let path: String?
         let workingDirectory: String?
         let message: String?
@@ -84,18 +84,21 @@ struct GitCommitTool: FeatureTool {
         required: ["message"]
     )
 
-    func run(_ input: Input, context: FeatureContext) async throws -> String {
+    static func arguments(for input: Input) throws -> [String] {
         guard let message = input.message?.nilIfBlank else { throw GitToolsFeatureError.missingArgument("message") }
-        var args = ["commit", "-m", message]
+        var args = ["commit"]
         if input.all == true {
-            args.insert("-a", at: 1)
+            args.append("-a")
         }
-        return try await GitToolsSupport.runGit(args, input: input, context: context)
+        // `-m` takes the next argv element verbatim, so a message starting with
+        // `-` is never parsed as an option.
+        args.append(contentsOf: ["-m", message])
+        return args
     }
 }
 
 struct GitPushTool: GitArgumentTool {
-    struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
+    struct Input: Decodable, Sendable, GitRepositoryDirectoryInput {
         let path: String?
         let workingDirectory: String?
         let remote: String?
@@ -153,7 +156,7 @@ struct GitPushTool: GitArgumentTool {
 }
 
 struct GitFetchTool: GitArgumentTool {
-    struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
+    struct Input: Decodable, Sendable, GitRepositoryDirectoryInput {
         let path: String?
         let workingDirectory: String?
         let remote: String?
@@ -191,7 +194,7 @@ struct GitFetchTool: GitArgumentTool {
 }
 
 struct GitPullTool: GitArgumentTool {
-    struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
+    struct Input: Decodable, Sendable, GitRepositoryDirectoryInput {
         let path: String?
         let workingDirectory: String?
         let remote: String?
@@ -232,7 +235,7 @@ struct GitPullTool: GitArgumentTool {
 }
 
 struct GitStashTool: FeatureTool {
-    struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
+    struct Input: Decodable, Sendable, GitRepositoryDirectoryInput {
         let path: String?
         let workingDirectory: String?
         let action: String?
@@ -258,7 +261,7 @@ struct GitStashTool: FeatureTool {
 }
 
 struct GitSwitchTool: GitArgumentTool {
-    struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
+    struct Input: Decodable, Sendable, GitRepositoryDirectoryInput {
         let path: String?
         let workingDirectory: String?
         let branch: String?

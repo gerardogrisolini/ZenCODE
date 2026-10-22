@@ -140,10 +140,8 @@ enum BrowserPerformanceSnapshot {
     }
 
     private static func doubleValue(_ value: Any?) -> Double? {
-        if let value = value as? Double { return value }
-        if let value = value as? Int { return Double(value) }
-        if let value = value as? NSNumber { return value.doubleValue }
-        return nil
+        // Non-finite values cannot be encoded in the JSON tool output.
+        BrowserNetworkValue.double(value)
     }
 }
 

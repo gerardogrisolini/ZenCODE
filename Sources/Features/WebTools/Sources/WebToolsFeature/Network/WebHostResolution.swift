@@ -46,6 +46,9 @@ enum WebNetworkGuardError: LocalizedError {
     case noResolvedAddresses(String)
     case unexpectedResolvedLoopback(String)
     case blockedRequest(String)
+    case tooManyRedirects(Int)
+    case blockedRedirect(String, underlying: String)
+    case contentBlockerUnavailable(String)
 
     var errorDescription: String? {
         switch self {
@@ -59,6 +62,12 @@ enum WebNetworkGuardError: LocalizedError {
             "Web tools blocked '\(url)' because its non-loopback host resolved to a loopback address."
         case let .blockedRequest(url):
             "Web tools blocked a network request to '\(url)' under its URL and private-network policy."
+        case let .tooManyRedirects(limit):
+            "Web tools stopped following redirects after \(limit) hops."
+        case let .blockedRedirect(url, underlying):
+            "Web tools blocked a redirect to '\(url)': \(underlying)"
+        case let .contentBlockerUnavailable(reason):
+            "Web tools could not install the WebKit content blocker that keeps subresource loads on public hosts, so rendering was refused: \(reason)"
         }
     }
 }
@@ -128,20 +137,23 @@ struct WebSystemHostResolver: WebHostResolving {
     }
 }
 
-/// Thread-safe single-shot holder that bridges a blocking DNS resolver to
-/// async Swift code, mirroring BrowserOffloadResolutionBox. Exactly one of the
-/// resolver result or a cancellation error resumes the continuation.
-final class WebOffloadResolutionBox: Sendable {
+/// Thread-safe single-shot holder that bridges a callback or blocking
+/// operation to async Swift code, mirroring BrowserOffloadResolutionBox.
+/// Exactly one of the operation result or a cancellation error resumes the
+/// continuation, whichever arrives first; later resumes are ignored.
+final class WebSingleResumeBox<Value: Sendable>: Sendable {
     private struct State: Sendable {
-        var continuation: CheckedContinuation<[String], Error>?
-        var pending: Result<[String], Error>?
+        var continuation: CheckedContinuation<Value, Error>?
+        var pending: Result<Value, Error>?
+        var isResumed = false
     }
     private let state = Mutex(State())
 
-    func attach(_ continuation: CheckedContinuation<[String], Error>) {
-        let early: Result<[String], Error>? = state.withLock { state in
+    func attach(_ continuation: CheckedContinuation<Value, Error>) {
+        let early: Result<Value, Error>? = state.withLock { state in
             if let pending = state.pending {
                 state.pending = nil
+                state.isResumed = true
                 return pending
             }
             state.continuation = continuation
@@ -152,18 +164,26 @@ final class WebOffloadResolutionBox: Sendable {
         }
     }
 
-    func resume(with result: Result<[String], Error>) {
-        let continuation: CheckedContinuation<[String], Error>? = state.withLock { state in
+    func resume(with result: Result<Value, Error>) {
+        let continuation: CheckedContinuation<Value, Error>? = state.withLock { state in
+            guard !state.isResumed else { return nil }
             if let continuation = state.continuation {
                 state.continuation = nil
+                state.isResumed = true
                 return continuation
             }
-            state.pending = result
+            if state.pending == nil {
+                state.pending = result
+            }
             return nil
         }
         if let continuation {
             continuation.resume(with: result)
         }
+    }
+
+    func resume(returning value: Value) {
+        resume(with: .success(value))
     }
 
     func resume(throwing error: Error) {

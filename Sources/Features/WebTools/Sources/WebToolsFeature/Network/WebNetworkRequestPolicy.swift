@@ -2,6 +2,7 @@
 
 import Dispatch
 import Foundation
+import Synchronization
 
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -28,9 +29,11 @@ struct WebNetworkRequestPolicy: Sendable {
         self.resolver = resolver
     }
 
-    func validateRequestURL(_ rawURL: String) throws {
-        let host = try validatedHost(of: rawURL)
+    @discardableResult
+    func validateRequestURL(_ rawURL: String) throws -> URL {
+        let (url, host) = try validatedHost(of: rawURL)
         try validate(addresses: try resolver.resolve(host: host), of: host, rawURL: rawURL)
+        return url
     }
 
     /// Async counterpart of ``validateRequestURL(_:)`` that resolves the
@@ -38,12 +41,13 @@ struct WebNetworkRequestPolicy: Sendable {
     /// lookup cannot stall request interception. It is cancellation-aware.
     func validateRequestURLOffloaded(_ rawURL: String) async throws {
         try Task.checkCancellation()
-        let host = try validatedHost(of: rawURL)
+        let (_, host) = try validatedHost(of: rawURL)
         try validate(addresses: try await resolveHostOffloaded(host), of: host, rawURL: rawURL)
     }
 
-    /// Checks scheme and URL policy, returning the host that must be resolved.
-    private func validatedHost(of rawURL: String) throws -> String {
+    /// Checks scheme and URL policy, returning the validated URL and the host
+    /// that must be resolved.
+    private func validatedHost(of rawURL: String) throws -> (URL, String) {
         guard let components = URLComponents(string: rawURL),
               let scheme = components.scheme?.lowercased(),
               !scheme.isEmpty
@@ -56,13 +60,15 @@ struct WebNetworkRequestPolicy: Sendable {
         guard let host = validatedURL.host, !host.isEmpty else {
             throw WebNetworkGuardError.unresolvedHost(components.host ?? "")
         }
-        return host
+        return (validatedURL, host)
     }
 
     /// A loopback host name must resolve only to loopback, and any other name
     /// must never resolve to loopback (rebinding); every address is then
-    /// checked against the private-network policy.
+    /// checked against the private-network policy. An empty answer fails
+    /// closed, as in the Browser guard: with nothing to check, nothing is allowed.
     private func validate(addresses: [String], of host: String, rawURL: String) throws {
+        guard !addresses.isEmpty else { throw WebNetworkGuardError.noResolvedAddresses(host) }
         let isExplicitLoopback = urlPolicy.isLoopbackHost(host)
         for address in addresses {
             if urlPolicy.isLoopbackHost(address) != isExplicitLoopback {
@@ -77,7 +83,7 @@ struct WebNetworkRequestPolicy: Sendable {
     /// with the resolver's result or, if the surrounding task is cancelled
     /// first, with ``CancellationError``.
     private func resolveHostOffloaded(_ host: String) async throws -> [String] {
-        let box = WebOffloadResolutionBox()
+        let box = WebSingleResumeBox<[String]>()
         let resolver = self.resolver
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[String], Error>) in
@@ -94,14 +100,30 @@ struct WebNetworkRequestPolicy: Sendable {
 }
 
 /// URLSession delegate that applies the request policy to every HTTP redirect
-/// hop. A denied redirect fails the whole task; URLSession surfaces the thrown
-/// policy error to the caller instead of silently following the redirect.
-final class WebRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+/// hop. A denied redirect is not followed: URLSession then delivers the 3xx
+/// response itself as the final response, and callers consult
+/// ``blockedRedirectError(for:)`` to report the real reason instead of a bare
+/// status code. Redirect chains are capped per task so a misbehaving server
+/// cannot keep a request alive indefinitely.
+class WebRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    static let maximumRedirects = 10
+
     private let policy: WebNetworkRequestPolicy
+    private let redirectState = Mutex(RedirectState())
+
+    private struct RedirectState: Sendable {
+        var redirectCounts: [Int: Int] = [:]
+        var blockedErrors: [Int: any Error] = [:]
+    }
 
     init(policy: WebNetworkRequestPolicy) {
         self.policy = policy
         super.init()
+    }
+
+    /// The policy error that stopped a redirect of `task`, if any.
+    func blockedRedirectError(for task: URLSessionTask) -> (any Error)? {
+        redirectState.withLock { $0.blockedErrors[task.taskIdentifier] }
     }
 
     func urlSession(
@@ -112,11 +134,24 @@ final class WebRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Senda
         completionHandler: @Sendable @escaping (URLRequest?) -> Void
     ) {
         let rawURL = request.url?.absoluteString ?? ""
+        let taskID = task.taskIdentifier
+        let hops = redirectState.withLock { state in
+            state.redirectCounts[taskID, default: 0] += 1
+            return state.redirectCounts[taskID, default: 0]
+        }
+        guard hops <= Self.maximumRedirects else {
+            redirectState.withLock {
+                $0.blockedErrors[taskID] = WebNetworkGuardError.tooManyRedirects(Self.maximumRedirects)
+            }
+            completionHandler(nil)
+            return
+        }
         DispatchQueue.global(qos: .userInitiated).async { [policy] in
             do {
                 try policy.validateRequestURL(rawURL)
                 completionHandler(request)
             } catch {
+                self.redirectState.withLock { $0.blockedErrors[taskID] = error }
                 completionHandler(nil)
             }
         }

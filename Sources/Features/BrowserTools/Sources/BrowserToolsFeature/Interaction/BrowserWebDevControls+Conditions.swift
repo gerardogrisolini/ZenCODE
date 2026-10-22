@@ -339,6 +339,9 @@ extension CDPSession {
                 }
             } catch is CancellationError {
                 throw CancellationError()
+            } catch where isTerminated {
+                // A closed session cannot recover within the deadline.
+                throw error
             } catch {
                 // A navigation can briefly invalidate Runtime.evaluate. Do not
                 // turn that routine wait race into a tool crash.

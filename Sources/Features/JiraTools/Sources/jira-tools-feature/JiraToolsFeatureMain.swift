@@ -61,7 +61,12 @@ struct JiraSignOutTool: FeatureTool {
     static let inputSchema = #"{"type":"object","properties":{}}"#
 
     func run(_: Input, context _: FeatureContext) async throws -> String {
-        let configuration = try JiraConfigurationStore.load()
+        let configuration: JiraStoredConfiguration
+        do {
+            configuration = try JiraConfigurationStore.load()
+        } catch JiraToolsError.notConfigured {
+            return "Jira is not configured; there are no credentials to clear."
+        }
         try JiraCredentialStore.remove(account: configuration.credentialAccount)
         return "Jira credentials cleared. The next Jira tool call will start setup again."
     }
@@ -91,7 +96,7 @@ extension JiraSearchTool {
 
 extension JiraReadTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Jira issue", action: "Read", kind: .read, targetKeyPaths: ["issue", "key", "url", "id"])
+        .standard(title: "Jira issue", action: "Read", kind: .read, targetKeyPaths: ["issueKey", "issue_key", "key", "url", "query"])
     }
 }
 

@@ -21,6 +21,11 @@ extension JSONValue {
         case let .string(value):
             return value
         case let .number(value):
+            // `%g` keeps only six significant digits, which would mangle
+            // integral identifiers such as 1234567 into "1.23457e+06".
+            if value.isFinite, value == value.rounded(), abs(value) < 1e15 {
+                return String(Int64(value))
+            }
             return String(format: "%g", value)
         case let .bool(value):
             return value ? "true" : "false"

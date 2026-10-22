@@ -471,10 +471,8 @@ enum BrowserDOMInspection {
     }
 
     private static func integerValue(_ rawValue: Any?) -> Int? {
-        if let value = rawValue as? Int { return value }
-        if let value = rawValue as? NSNumber { return value.intValue }
-        if let value = rawValue as? Double { return Int(value) }
-        return nil
+        // Rejects NaN/infinite/out-of-range doubles instead of trapping.
+        BrowserNetworkValue.integer(rawValue)
     }
 
     private static func doubleValue(_ rawValue: Any?) -> Double? {

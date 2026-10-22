@@ -182,42 +182,9 @@ struct BrowserNetworkRequestPolicy: Sendable {
     }
 
     func validateRequestURL(_ rawURL: String) throws {
-        guard var components = URLComponents(string: rawURL),
-              let scheme = components.scheme?.lowercased(),
-              !scheme.isEmpty
-        else {
-            throw BrowserNetworkGuardError.unsupportedRequestScheme("<missing>")
-        }
-
-        switch scheme {
-        case "about", "blob", "data":
-            return
-        case "http", "https":
-            break
-        case "ws":
-            components.scheme = "http"
-        case "wss":
-            components.scheme = "https"
-        default:
-            throw BrowserNetworkGuardError.unsupportedRequestScheme(scheme)
-        }
-
-        guard let navigationURL = components.url else { throw BrowserNetworkGuardError.unsupportedRequestScheme(scheme) }
-        let validatedURL = try urlPolicy.validate(navigationURL.absoluteString)
-        guard let host = validatedURL.host, !host.isEmpty else {
-            throw BrowserNetworkGuardError.unresolvedHost(components.host ?? "")
-        }
-        let isExplicitLoopback = urlPolicy.isLoopbackHost(host)
-        guard !isExplicitLoopback || allowsLoopback else {
-            throw BrowserNetworkGuardError.loopbackNotAuthorized(BrowserNetworkURLRedaction.apply(to: rawURL))
-        }
-        let addresses = try resolver.resolve(host: host)
-        for address in addresses {
-            guard isExplicitLoopback || !urlPolicy.isLoopbackHost(address) else {
-                throw BrowserNetworkGuardError.unexpectedResolvedLoopback(BrowserNetworkURLRedaction.apply(to: rawURL))
-            }
-            try urlPolicy.validateResolvedAddress(address)
-        }
+        guard let host = try validatedRequestHost(rawURL) else { return }
+        let addresses = try resolver.resolve(host: host.name)
+        try validateResolvedAddresses(addresses, for: host, rawURL: rawURL)
     }
 
     /// Async counterpart of ``validateRequestURL(_:)`` that applies the same
@@ -230,7 +197,21 @@ struct BrowserNetworkRequestPolicy: Sendable {
     /// ``validateRequestURL(_:)`` is unchanged.
     func validateRequestURLOffloaded(_ rawURL: String) async throws {
         try Task.checkCancellation()
+        guard let host = try validatedRequestHost(rawURL) else { return }
+        let addresses = try await resolveHostOffloaded(host.name)
+        try validateResolvedAddresses(addresses, for: host, rawURL: rawURL)
+    }
 
+    /// The request host after scheme and URL-policy checks. Shared by the
+    /// synchronous and offloaded validators so the two cannot drift apart.
+    private struct RequestHost {
+        let name: String
+        let isExplicitLoopback: Bool
+    }
+
+    /// Returns nil only for schemes that never reach the network (`about`,
+    /// `blob`, `data`); every other accepted scheme yields a host to resolve.
+    private func validatedRequestHost(_ rawURL: String) throws -> RequestHost? {
         guard var components = URLComponents(string: rawURL),
               let scheme = components.scheme?.lowercased(),
               !scheme.isEmpty
@@ -240,7 +221,7 @@ struct BrowserNetworkRequestPolicy: Sendable {
 
         switch scheme {
         case "about", "blob", "data":
-            return
+            return nil
         case "http", "https":
             break
         case "ws":
@@ -260,12 +241,16 @@ struct BrowserNetworkRequestPolicy: Sendable {
         guard !isExplicitLoopback || allowsLoopback else {
             throw BrowserNetworkGuardError.loopbackNotAuthorized(BrowserNetworkURLRedaction.apply(to: rawURL))
         }
+        return RequestHost(name: host, isExplicitLoopback: isExplicitLoopback)
+    }
 
-        let addresses = try await resolveHostOffloaded(host)
-
+    private func validateResolvedAddresses(_ addresses: [String], for host: RequestHost, rawURL: String) throws {
+        // Fail closed: a resolver answer without any numeric address cannot
+        // prove the destination is public, so the request must not continue.
+        guard !addresses.isEmpty else { throw BrowserNetworkGuardError.noResolvedAddresses(host.name) }
         let redactedURL = BrowserNetworkURLRedaction.apply(to: rawURL)
         for address in addresses {
-            guard isExplicitLoopback || !urlPolicy.isLoopbackHost(address) else {
+            guard host.isExplicitLoopback || !urlPolicy.isLoopbackHost(address) else {
                 throw BrowserNetworkGuardError.unexpectedResolvedLoopback(redactedURL)
             }
             try urlPolicy.validateResolvedAddress(address)
@@ -454,9 +439,6 @@ final class BrowserNetworkGuard: Sendable {
     private func decide(requestID: String, url: String) async {
         do {
             try await requestPolicy.validateRequestURLOffloaded(url)
-            try Task.checkCancellation()
-            guard acceptsDecisions else { return }
-            _ = try await session.send(method: "Fetch.continueRequest", params: ["requestId": requestID])
         } catch is CancellationError {
             // `stop()` owns cancellation. Do not record a policy violation or
             // issue a new CDP command while that teardown is in progress.
@@ -472,7 +454,15 @@ final class BrowserNetworkGuard: Sendable {
                     "errorReason": "BlockedByClient",
                 ]
             )
+            return
         }
+
+        // The policy allowed the request. A failed continueRequest (for
+        // example the request was already cancelled by the page or the
+        // session is closing) is a transport outcome, not a policy violation,
+        // so it must not be reported as a blocked request.
+        guard !Task.isCancelled, acceptsDecisions else { return }
+        _ = try? await session.send(method: "Fetch.continueRequest", params: ["requestId": requestID])
     }
 
     private var acceptsDecisions: Bool {

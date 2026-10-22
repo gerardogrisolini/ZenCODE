@@ -89,7 +89,7 @@ enum CalendarController {
                 : start.addingTimeInterval(3_600)
         } else if allDay, MacOSDate.isDateOnly(input.end), let resolved = end, resolved > start {
             // An inclusive end day for multi-day all-day events.
-            end = Calendar.current.date(byAdding: .second, value: -1, to: Calendar.current.date(byAdding: .day, value: 1, to: resolved) ?? resolved)
+            end = MacOSDate.endOfDay(resolved)
         }
         guard let end, end >= start else {
             throw MacOSControlError.invalidArgument("end", "must not be earlier than start.")
@@ -110,7 +110,7 @@ enum CalendarController {
         event.startDate = start
         event.endDate = end
         event.isAllDay = allDay
-        try apply(input, to: event, isCreation: true)
+        try apply(input, to: event)
         do {
             try store.save(event, span: .thisEvent, commit: true)
         } catch {
@@ -132,7 +132,11 @@ enum CalendarController {
             throw MacOSControlError.operationFailed("Event '\(event.title ?? "")' lives in the read-only calendar '\(event.calendar.title)'.")
         }
         if let title = input.title {
-            event.title = title
+            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                throw MacOSControlError.invalidArgument("title", "must not be empty.")
+            }
+            event.title = trimmed
         }
         if let start = try MacOSDate.parse(input.start, argument: "start", action: input.action) {
             let duration = event.endDate.timeIntervalSince(event.startDate)
@@ -141,14 +145,18 @@ enum CalendarController {
                 event.endDate = start.addingTimeInterval(max(duration, 0))
             }
         }
-        if let end = try MacOSDate.parse(input.end, argument: "end", action: input.action) {
+        if let allDay = input.all_day {
+            event.isAllDay = allDay
+        }
+        if var end = try MacOSDate.parse(input.end, argument: "end", action: input.action) {
+            if event.isAllDay, MacOSDate.isDateOnly(input.end), end > event.startDate {
+                // An inclusive end day, as in create_event.
+                end = MacOSDate.endOfDay(end)
+            }
             event.endDate = end
         }
         guard event.endDate >= event.startDate else {
             throw MacOSControlError.invalidArgument("end", "must not be earlier than start.")
-        }
-        if let allDay = input.all_day {
-            event.isAllDay = allDay
         }
         if let selector = input.calendar {
             let target = try EventKitSupport.calendar(named: selector, in: store, entity: .event)
@@ -157,7 +165,7 @@ enum CalendarController {
             }
             event.calendar = target
         }
-        try apply(input, to: event, isCreation: false)
+        try apply(input, to: event)
         do {
             try store.save(event, span: span, commit: true)
         } catch {
@@ -190,7 +198,7 @@ enum CalendarController {
 
     // MARK: - Helpers
 
-    private static func apply(_ input: MacOSRunInput, to event: EKEvent, isCreation: Bool) throws {
+    private static func apply(_ input: MacOSRunInput, to event: EKEvent) throws {
         if let location = input.location {
             event.location = location.isEmpty ? nil : location
         }
@@ -215,7 +223,7 @@ enum CalendarController {
             } else {
                 event.recurrenceRules = nil
             }
-        } else if isCreation, input.recurrence_interval != nil || input.recurrence_end != nil || input.recurrence_count != nil {
+        } else if input.recurrence_interval != nil || input.recurrence_end != nil || input.recurrence_count != nil {
             throw MacOSControlError.invalidArgument("recurrence", "recurrence_interval/recurrence_end/recurrence_count require recurrence.")
         }
     }

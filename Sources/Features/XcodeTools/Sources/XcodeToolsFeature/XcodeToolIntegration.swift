@@ -180,7 +180,9 @@ public nonisolated enum XcodeToolIntegration {
             return .fileEdit(
                 title: tool.title ?? "Xcode file",
                 action: "Edit",
-                targetKeyPaths: pathKeys
+                targetKeyPaths: pathKeys,
+                oldKeyPaths: ["oldString", "old_string", "old"],
+                newKeyPaths: ["newString", "new_string", "new"]
             )
         case "XcodeMakeDir":
             return .standard(

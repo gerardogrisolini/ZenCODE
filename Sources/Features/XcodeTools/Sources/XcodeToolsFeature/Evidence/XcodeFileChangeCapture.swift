@@ -169,9 +169,20 @@ struct XcodeFileChangeCapture: Sendable {
             return .opaque(type: "unreadable", size: 0, modified: nil)
         }
 
-        let type = (attributes[.type] as? FileAttributeType) ?? .typeUnknown
-        let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-        let modified = attributes[.modificationDate] as? Date
+        var type = (attributes[.type] as? FileAttributeType) ?? .typeUnknown
+        var size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        var modified = attributes[.modificationDate] as? Date
+        if type == .typeSymbolicLink {
+            // Xcode edits the file the link points to, so sample the target;
+            // a dangling link stays opaque and its own metadata is kept.
+            let target = url.resolvingSymlinksInPath()
+            if target.path != url.path,
+               let targetAttributes = try? FileManager.default.attributesOfItem(atPath: target.path) {
+                type = (targetAttributes[.type] as? FileAttributeType) ?? .typeUnknown
+                size = (targetAttributes[.size] as? NSNumber)?.uint64Value ?? 0
+                modified = targetAttributes[.modificationDate] as? Date
+            }
+        }
         let opaque = Snapshot.opaque(type: type.rawValue, size: size, modified: modified)
         guard type == .typeRegular,
               size <= UInt64(OperationFileChangeRecorder.maximumSnapshotBytes),

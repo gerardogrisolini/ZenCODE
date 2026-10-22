@@ -19,6 +19,11 @@ struct WebSearchTool: FeatureTool {
         required: ["query"]
     )
 
+    /// The engine's HTML result page is a few hundred KiB at most; anything
+    /// larger is not a result page and is cut off.
+    static let maxResponseBytes = 2_000_000
+    static let requestTimeout: TimeInterval = 20
+
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         guard let query = input.query?.nilIfBlank else { throw WebToolsFeatureError.missingArgument("query") }
 
@@ -33,11 +38,18 @@ struct WebSearchTool: FeatureTool {
             throw WebToolsFeatureError.permissionDenied("Unable to build the web search request.")
         }
 
-        let session = WebToolsSupport.makeURLSession(policy: WebNetworkRequestPolicy(environment: context.environment))
-        let (data, response) = try await WebToolsSupport.fetchWithRetry(url: url, session: session)
-        try WebToolsSupport.validateHTTPResponse(response)
+        let policy = WebNetworkRequestPolicy(environment: context.environment)
+        let session = WebToolsSupport.makeURLSession(policy: policy, timeout: Self.requestTimeout)
+        defer { session.finishTasksAndInvalidate() }
+        let result = try await WebToolsSupport.fetchWithRetry(
+            url: url,
+            session: session,
+            maxBytes: Self.maxResponseBytes,
+            timeout: Self.requestTimeout
+        )
+        try WebToolsSupport.validateHTTPResponse(result.response)
 
-        let html = String(decoding: data, as: UTF8.self)
+        let html = WebToolsSupport.decodeBody(result.data, response: result.response)
         let results = WebToolsSupport.parseDuckDuckGoHTMLResults(html, limit: limit, domains: domains)
         guard !results.isEmpty else { return "Query: \(query)\nNo public web results found." }
 

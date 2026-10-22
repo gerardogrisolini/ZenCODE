@@ -115,6 +115,9 @@ private struct CDPRoutingState: Sendable {
     var completedIDs: Set<Int> = []
     var eventHandlers: [UUID: @Sendable (CDPEvent) -> Void] = [:]
     var receiveTask: Task<Void, Never>?
+    /// Set once the transport failed or the session was disconnected. Later
+    /// commands fail immediately instead of waiting for the command timeout.
+    var terminalError: Error?
 }
 
 /// Manages a single WebSocket connection to a Chrome DevTools Protocol target
@@ -148,6 +151,7 @@ final class CDPSession: Sendable {
     deinit {
         webSocket.cancel()
         failAll(CDPError.disconnected)
+        session.invalidateAndCancel()
     }
 
     /// Starts the WebSocket and the background receive loop.
@@ -174,6 +178,9 @@ final class CDPSession: Sendable {
         failAll(CDPError.disconnected)
         webSocket.cancel(with: .goingAway, reason: nil)
         taskToCancel?.cancel()
+        // The session is never reused; release its connection resources now
+        // rather than at process exit.
+        session.invalidateAndCancel()
     }
 
     /// Registers a handler for asynchronous CDP notifications such as network,
@@ -192,6 +199,14 @@ final class CDPSession: Sendable {
         routingState.withLock { state in
             state.eventHandlers.removeValue(forKey: token)
             return
+        }
+    }
+
+    /// True once the transport failed or the session was disconnected. Poll
+    /// loops use it to stop retrying: no later command can ever succeed.
+    var isTerminated: Bool {
+        routingState.withLock { state in
+            state.terminalError != nil
         }
     }
 
@@ -312,6 +327,8 @@ final class CDPSession: Sendable {
                     try await sleep(milliseconds: 800)
                     return
                 }
+            } catch where isTerminated {
+                throw error
             } catch {
                 // Runtime may briefly fail during initial load — keep polling.
             }
@@ -365,6 +382,8 @@ final class CDPSession: Sendable {
                 if sawRealURL, isReady, iteration >= 24 {
                     return
                 }
+            } catch where isTerminated {
+                throw error
             } catch {
                 // Probe may fail transiently — keep polling.
             }
@@ -422,6 +441,12 @@ final class CDPSession: Sendable {
             if let early = state.earlyResults.removeValue(forKey: id) {
                 state.completedIDs.insert(id)
                 return early
+            }
+            // A dead transport can never answer: fail now instead of letting
+            // the caller wait for the full command timeout.
+            if let terminalError = state.terminalError {
+                state.completedIDs.insert(id)
+                return .failure(terminalError)
             }
             // Otherwise register the continuation for a future outcome.
             state.pending[id] = continuation
@@ -518,6 +543,11 @@ final class CDPSession: Sendable {
         let allPending: [(Int, CheckedContinuation<Data, Error>)] = routingState.withLock { state in
             let pending = state.pending
             state.pending.removeAll()
+            // Keep the first terminal cause so later commands report why the
+            // session is unusable rather than a generic timeout.
+            if state.terminalError == nil {
+                state.terminalError = error
+            }
             // Mark all known IDs as completed and supersede any not-yet-registered
             // outcomes with the terminal failure so a later registerPending cannot
             // resume a command with a stale per-command result once the session is gone.

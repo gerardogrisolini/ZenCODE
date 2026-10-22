@@ -49,7 +49,13 @@ enum JiraBrowserSetup {
             }
         )
 
-        let port = try await server.start()
+        let port: UInt16
+        do {
+            port = try await server.start()
+        } catch {
+            server.stop()
+            throw error
+        }
         let setupURL = URL(string: "http://127.0.0.1:\(port)/")!
 
         writeLine("Jira setup: complete the connection in your browser.", stderr: true)
@@ -124,8 +130,19 @@ enum JiraBrowserSetup {
 
 /// Loopback HTTP server that renders the Jira setup form, receives the submitted
 /// credentials, and resolves once the supplied validator accepts them.
+///
+/// The server only ever binds `127.0.0.1`. Every POST must carry the one-time
+/// form token embedded in the page served by this process and must come from a
+/// loopback origin, so a cross-site form submission from another website open
+/// in the same browser (or a DNS-rebinding page) cannot plant foreign Jira
+/// credentials.
 final class JiraBrowserSetupServer: Sendable {
     typealias Validator = @Sendable (JiraSetupSubmission) async -> Result<JiraAuthenticatedConfiguration, JiraSetupValidationError>
+
+    /// Upper bound for a single HTTP request; the form is a few hundred bytes.
+    static let maximumRequestSize = 256 * 1024
+    /// How long the listener may take to report `.ready` before setup fails.
+    static let startTimeout: TimeInterval = 5
 
     private let queue = DispatchQueue(label: "JiraTools.JiraBrowserSetupServer")
     private let listener: NWListener
@@ -133,14 +150,21 @@ final class JiraBrowserSetupServer: Sendable {
     private let defaults: JiraStoredConfiguration?
     private let validate: Validator
     private let state = JiraBrowserSetupState()
+    /// One-time token embedded as a hidden form field and required on POST.
+    let formToken: String
 
     init(reason: JiraAuthenticationReason, defaults: JiraStoredConfiguration?, validate: @escaping Validator) throws {
         self.reason = reason
         self.defaults = defaults
         self.validate = validate
+        self.formToken = Self.makeFormToken()
 
         let parameters = NWParameters.tcp
         parameters.requiredInterfaceType = .loopback
+        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
+        // Defense in depth: refuse any non-local peer even if the binding is
+        // ever widened.
+        parameters.acceptLocalOnly = true
         parameters.allowLocalEndpointReuse = true
         do {
             self.listener = try NWListener(using: parameters)
@@ -155,8 +179,24 @@ final class JiraBrowserSetupServer: Sendable {
     func start() async throws -> UInt16 {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async { [weak self] in
-                guard let self else { return }
-                state.setReadiness(continuation)
+                guard let self else {
+                    continuation.resume(throwing: JiraToolsError.browserSetupFailed("The Jira setup server was stopped."))
+                    return
+                }
+                // A listener stuck in `.waiting` never reports `.ready` or
+                // `.failed`; bound the wait so setup fails with an actionable
+                // error instead of hanging the tool call.
+                let state = self.state
+                let timeout = Task(name: "JiraBrowserSetup.start-timeout") {
+                    try? await Task.sleep(nanoseconds: UInt64(Self.startTimeout * 1_000_000_000))
+                    guard !Task.isCancelled else { return }
+                    state.resumeReadiness(
+                        with: .failure(
+                            JiraToolsError.browserSetupFailed("The local Jira setup server did not become ready in time.")
+                        )
+                    )
+                }
+                state.setReadiness(continuation, timeout: timeout)
                 listener.stateUpdateHandler = { [weak self] state in
                     self?.handleListenerState(state)
                 }
@@ -250,6 +290,10 @@ final class JiraBrowserSetupServer: Sendable {
                 connection.cancel()
                 return
             }
+            if buffer.count > Self.maximumRequestSize {
+                self.sendHTML(JiraSetupPage.notFound, statusCode: 413, on: connection)
+                return
+            }
             if let request = JiraHTTPRequest.parse(buffer), request.isComplete {
                 self.route(request, on: connection)
                 return
@@ -267,6 +311,13 @@ final class JiraBrowserSetupServer: Sendable {
             sendHTML(JiraSetupPage.notFound, statusCode: 404, on: connection)
             return
         }
+        // A browser only sends a non-loopback Host for a DNS-rebinding page
+        // whose name resolves to 127.0.0.1; such a page must not be able to
+        // read the form token or submit the form.
+        guard Self.isLoopbackHost(request.headers["host"]) else {
+            sendHTML(JiraSetupPage.notFound, statusCode: 403, on: connection)
+            return
+        }
 
         switch request.method {
         case "GET":
@@ -278,6 +329,19 @@ final class JiraBrowserSetupServer: Sendable {
                 email: fields["email"] ?? "",
                 token: fields["token"] ?? ""
             )
+
+            guard Self.isLoopbackOrigin(request.headers["origin"]),
+                  Self.constantTimeEquals(fields["state"] ?? "", formToken) else {
+                sendHTML(
+                    formPage(
+                        error: "The submission did not come from this Jira setup page. Reload the page and try again.",
+                        values: submission
+                    ),
+                    statusCode: 403,
+                    on: connection
+                )
+                return
+            }
 
             guard state.beginSubmission() else {
                 sendHTML(
@@ -322,7 +386,8 @@ final class JiraBrowserSetupServer: Sendable {
             reason: reason,
             error: error,
             site: values?.site ?? defaults?.siteURLString ?? "",
-            email: values?.email ?? defaults?.email ?? ""
+            email: values?.email ?? defaults?.email ?? "",
+            formToken: formToken
         )
     }
 
@@ -332,6 +397,11 @@ final class JiraBrowserSetupServer: Sendable {
             "HTTP/1.1 \(statusCode) \(JiraBrowserSetupServer.reasonPhrase(for: statusCode))",
             "Content-Type: text/html; charset=utf-8",
             "Content-Length: \(body.count)",
+            // The form page embeds the one-time token; never let it be cached
+            // or leak through the Referer of the Atlassian help link.
+            "Cache-Control: no-store",
+            "Referrer-Policy: no-referrer",
+            "X-Content-Type-Options: nosniff",
             "Connection: close",
             "",
             ""
@@ -347,6 +417,62 @@ final class JiraBrowserSetupServer: Sendable {
     private static func reasonPhrase(for statusCode: Int) -> String {
         HTTPURLResponse.localizedString(forStatusCode: statusCode).capitalized
     }
+
+    private static func makeFormToken() -> String {
+        var generator = SystemRandomNumberGenerator()
+        return (0..<32)
+            .map { _ in String(format: "%02x", UInt8.random(in: .min ... .max, using: &generator)) }
+            .joined()
+    }
+
+    /// Compares two tokens without short-circuiting on the first mismatch.
+    static func constantTimeEquals(_ lhs: String, _ rhs: String) -> Bool {
+        let left = Array(lhs.utf8)
+        let right = Array(rhs.utf8)
+        guard left.count == right.count, !left.isEmpty else { return false }
+        var difference: UInt8 = 0
+        for index in left.indices {
+            difference |= left[index] ^ right[index]
+        }
+        return difference == 0
+    }
+
+    /// Accepts `127.0.0.1`, `localhost` and `[::1]` with or without a port. A
+    /// missing header is tolerated (HTTP/1.0 clients); browsers always send it.
+    static func isLoopbackHost(_ hostHeader: String?) -> Bool {
+        guard let hostHeader = hostHeader?.trimmingCharacters(in: .whitespaces).nilIfBlank else { return true }
+        return isLoopbackAuthority(hostHeader)
+    }
+
+    /// Accepts a missing `Origin` (same-origin form posts from some clients
+    /// omit it) or an explicit loopback `http://` origin. A cross-site form
+    /// post always carries the foreign origin and is rejected.
+    static func isLoopbackOrigin(_ originHeader: String?) -> Bool {
+        guard let origin = originHeader?.trimmingCharacters(in: .whitespaces).nilIfBlank else { return true }
+        guard origin.lowercased() != "null",
+              let components = URLComponents(string: origin),
+              components.scheme?.lowercased() == "http",
+              let host = components.host else {
+            return false
+        }
+        return isLoopbackAuthority(host)
+    }
+
+    private static func isLoopbackAuthority(_ authority: String) -> Bool {
+        let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+        var value = authority.lowercased()
+        if loopbackHosts.contains(value) {
+            return true
+        }
+        if value.hasPrefix("[") {
+            // Bracketed IPv6 literal, optionally followed by `:port`.
+            guard let close = value.firstIndex(of: "]") else { return false }
+            value = String(value[value.index(after: value.startIndex)..<close])
+        } else if let colon = value.lastIndex(of: ":"), value[colon...].dropFirst().allSatisfy(\.isNumber) {
+            value = String(value[..<colon])
+        }
+        return loopbackHosts.contains(value)
+    }
 }
 
 /// Thread-safe continuation storage for the setup server, shared across the
@@ -354,6 +480,7 @@ final class JiraBrowserSetupServer: Sendable {
 final class JiraBrowserSetupState: Sendable {
     private struct State: Sendable {
         var readinessContinuation: CheckedContinuation<Void, Error>?
+        var readinessTimeout: Task<Void, Never>?
         var resultContinuation: CheckedContinuation<JiraAuthenticatedConfiguration, Error>?
         var pendingResult: Result<JiraAuthenticatedConfiguration, Error>?
         var didResumeReadiness = false
@@ -364,21 +491,25 @@ final class JiraBrowserSetupState: Sendable {
     }
     private let state = Mutex(State())
 
-    func setReadiness(_ continuation: CheckedContinuation<Void, Error>) {
+    func setReadiness(_ continuation: CheckedContinuation<Void, Error>, timeout: Task<Void, Never>? = nil) {
         state.withLock { state in
             state.readinessContinuation = continuation
+            state.readinessTimeout = timeout
             return
         }
     }
 
     func resumeReadiness(with result: Result<Void, Error>) {
-        let continuation: CheckedContinuation<Void, Error>? = state.withLock { state in
+        let resumption: (CheckedContinuation<Void, Error>, Task<Void, Never>?)? = state.withLock { state in
             guard !state.didResumeReadiness, let continuation = state.readinessContinuation else { return nil }
             state.didResumeReadiness = true
             state.readinessContinuation = nil
-            return continuation
+            let timeout = state.readinessTimeout
+            state.readinessTimeout = nil
+            return (continuation, timeout)
         }
-        if let continuation {
+        if let (continuation, timeout) = resumption {
+            timeout?.cancel()
             continuation.resume(with: result)
         }
     }

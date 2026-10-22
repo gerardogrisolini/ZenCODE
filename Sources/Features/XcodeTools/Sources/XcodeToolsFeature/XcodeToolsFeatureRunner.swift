@@ -69,9 +69,37 @@ public enum XcodeToolsFeatureRunner {
             return true
         }
     }
+
+    /// Builds the raw bridge request for one public invocation: aliases and
+    /// argument names are canonicalized, and a `xcode.`-prefixed name the
+    /// compatibility table does not know (a tool the bridge listed under a new
+    /// name) is forwarded unchanged so that every listed tool stays callable.
+    static func bridgeRequest(
+        toolName: String,
+        inputData: Data,
+        toolNamePrefix: String
+    ) throws -> ToolRequest {
+        let arguments = try RemoteMCPFeatureRunner.decodeArguments(from: inputData)
+        let request = ToolRequest(name: toolName, arguments: arguments)
+        if let normalizedRequest = XcodeToolIntegration.normalizedRequest(request) {
+            return ToolRequest(
+                name: XcodeToolIntegration.rawToolName(fromPublicName: normalizedRequest.name),
+                arguments: normalizedRequest.arguments
+            )
+        }
+        let trimmedName = toolName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedName.hasPrefix(toolNamePrefix),
+              trimmedName.count > toolNamePrefix.count else {
+            throw XcodeFeatureError.unknownTool(toolName)
+        }
+        return ToolRequest(
+            name: String(trimmedName.dropFirst(toolNamePrefix.count)),
+            arguments: arguments
+        )
+    }
 }
 
-private struct XcodeFeatureConfiguration: MCPFeatureConfiguration, PersistentMCPFeatureConfiguration {
+struct XcodeFeatureConfiguration: MCPFeatureConfiguration, PersistentMCPFeatureConfiguration {
     let featureName = "Xcode"
     let toolNamePrefix = XcodeToolIntegration.toolPrefix
     let descriptionPrefix = XcodeToolIntegration.priorityDescriptionPrefix
@@ -138,20 +166,16 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration, PersistentMCP
             throw MCPFeatureError.unavailable(featureName)
         }
 
-        let arguments = try RemoteMCPFeatureRunner.decodeArguments(from: inputData)
-        let request = ToolRequest(name: toolName, arguments: arguments)
-        guard let normalizedRequest = XcodeToolIntegration.normalizedRequest(request) else {
-            throw MCPFeatureError.unavailable(featureName)
-        }
-
-        let rawToolName = normalizedRequest.name.hasPrefix(toolNamePrefix)
-            ? String(normalizedRequest.name.dropFirst(toolNamePrefix.count))
-            : normalizedRequest.name
+        let bridgeRequest = try XcodeToolsFeatureRunner.bridgeRequest(
+            toolName: toolName,
+            inputData: inputData,
+            toolNamePrefix: toolNamePrefix
+        )
 
         let executor = XcodeToolExecutor(configuration: config)
         do {
             let result = try await executor.executeCapturingFileChanges(
-                ToolRequest(name: rawToolName, arguments: normalizedRequest.arguments),
+                bridgeRequest,
                 workingDirectoryPath: workingDirectoryPath
             )
             await executor.disconnect()
@@ -174,9 +198,15 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration, PersistentMCP
 
     // MARK: - Consent detection
 
+    /// Transport-classified consent failures arrive as `MCPClientError`; the
+    /// text fallback only covers errors raised outside the MCP client and must
+    /// not mistake an ordinary cancellation or rejection for a consent problem.
     private func isXcodeConsentDenied(_ error: Error) -> Bool {
         if let clientError = error as? MCPClientError {
             return XcodeToolIntegration.isPermissionDenied(clientError)
+        }
+        if error is CancellationError || error is XcodeFeatureError {
+            return false
         }
         return messageLooksLikeConsentDenied(error.localizedDescription)
     }
@@ -185,16 +215,7 @@ private struct XcodeFeatureConfiguration: MCPFeatureConfiguration, PersistentMCP
         let lowered = message.lowercased()
         return lowered.contains("xcode.mcpbridge.authorization")
             || lowered.contains("authorization error")
-            || lowered.contains("consent denied")
-            || lowered.contains("permission denied")
-            || lowered.contains("not authorized")
-            || lowered.contains("not authorised")
-            || lowered.contains("not allowed")
-            || lowered.contains("not permitted")
-            || lowered.contains("rejected")
-            || lowered.contains("declined")
-            || lowered.contains("cancelled")
-            || lowered.contains("canceled")
+            || XcodeToolIntegration.messageLooksLikePermissionDenied(message)
     }
 
     func presentation(for tool: ToolDescriptor) -> ToolPresentationDefinition {
@@ -243,19 +264,15 @@ actor XcodePersistentMCPFeatureSession: MCPFeaturePersistentSession {
         inputData: Data,
         workingDirectoryPath: String?
     ) async throws -> MCPFeatureInvocationResult {
-        let arguments = try RemoteMCPFeatureRunner.decodeArguments(from: inputData)
-        let request = ToolRequest(name: toolName, arguments: arguments)
-        guard let normalizedRequest = XcodeToolIntegration.normalizedRequest(request) else {
-            throw MCPFeatureError.unavailable("Xcode")
-        }
-
-        let rawToolName = normalizedRequest.name.hasPrefix(toolNamePrefix)
-            ? String(normalizedRequest.name.dropFirst(toolNamePrefix.count))
-            : normalizedRequest.name
+        let bridgeRequest = try XcodeToolsFeatureRunner.bridgeRequest(
+            toolName: toolName,
+            inputData: inputData,
+            toolNamePrefix: toolNamePrefix
+        )
         let executor = executorOrCreate()
         do {
             let result = try await executor.executeCapturingFileChanges(
-                ToolRequest(name: rawToolName, arguments: normalizedRequest.arguments),
+                bridgeRequest,
                 workingDirectoryPath: workingDirectoryPath
             )
             return MCPFeatureInvocationResult(
@@ -290,13 +307,16 @@ actor XcodePersistentMCPFeatureSession: MCPFeaturePersistentSession {
     }
 }
 
-private enum XcodeFeatureError: LocalizedError {
+enum XcodeFeatureError: LocalizedError, Equatable {
     case consentDenied
+    case unknownTool(String)
 
     var errorDescription: String? {
         switch self {
         case .consentDenied:
             return "Xcode MCP consent denied. Open Xcode and allow the connection in the consent dialog, then retry."
+        case let .unknownTool(name):
+            return "Unknown Xcode tool '\(name)'. Use a tool name listed by the xcode-tools feature."
         }
     }
 }

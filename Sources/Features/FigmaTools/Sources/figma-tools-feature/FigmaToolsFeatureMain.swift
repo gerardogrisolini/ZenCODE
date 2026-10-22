@@ -25,15 +25,20 @@ private enum FigmaDesktopMCP {
         preferredProtocolVersion: "2025-03-26"
     )
 
+    /// Opens one TCP connection to the Figma Desktop MCP port and reports
+    /// whether it accepted. The probe always ends by cancelling the connection,
+    /// whichever of readiness, failure, or the timeout comes first, so no
+    /// connection or queue outlives the check.
     static func isRunning(timeout: TimeInterval = 0.5) async -> Bool {
         guard let endpointURL = configuration.endpointURL,
               let host = endpointURL.host,
               let portValue = endpointURL.port,
-              let port = NWEndpoint.Port(rawValue: UInt16(portValue)) else {
+              let port = NWEndpoint.Port(rawValue: UInt16(clamping: portValue)) else {
             return false
         }
+        let queue = DispatchQueue(label: "FigmaTools.FigmaDesktopMCPReachability")
+        let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
         return await withCheckedContinuation { continuation in
-            let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
             let state = Mutex(false)
             let finish: @Sendable (Bool) -> Void = { reachable in
                 let shouldResume = state.withLock { finished in
@@ -41,23 +46,27 @@ private enum FigmaDesktopMCP {
                     finished = true
                     return true
                 }
-                if shouldResume { continuation.resume(returning: reachable) }
+                guard shouldResume else { return }
+                connection.stateUpdateHandler = nil
+                connection.cancel()
+                continuation.resume(returning: reachable)
             }
             connection.stateUpdateHandler = { connectionState in
                 switch connectionState {
                 case .ready:
                     finish(true)
-                    connection.cancel()
                 case .failed, .cancelled:
+                    finish(false)
+                case .waiting:
+                    // Loopback `waiting` means connection refused (Figma not
+                    // listening); do not sit on the retry until the timeout.
                     finish(false)
                 default:
                     break
                 }
             }
-            let queue = DispatchQueue(label: "FigmaTools.FigmaDesktopMCPReachability")
             queue.asyncAfter(deadline: .now() + timeout) {
                 finish(false)
-                connection.cancel()
             }
             connection.start(queue: queue)
         }

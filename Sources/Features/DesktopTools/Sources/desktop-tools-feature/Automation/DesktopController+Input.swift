@@ -149,18 +149,26 @@ extension DesktopController {
                 continue
             }
             let units = Array(String(character).utf16)
-            guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
-                throw DesktopControlError.operationFailed("Could not create Unicode keyboard events.")
+            // CGEvent delivers at most 20 UTF-16 units per keyboard event, so
+            // long grapheme clusters (emoji sequences) are posted in chunks.
+            for chunk in DesktopKeyResolver.unicodeEventChunks(units) {
+                try postUnicodeKeyEvents(chunk, source: source)
             }
-            units.withUnsafeBufferPointer { buffer in
-                down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
-                up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
-            }
-            down.post(tap: .cghidEventTap)
-            up.post(tap: .cghidEventTap)
             if interval > 0 { Thread.sleep(forTimeInterval: interval) }
         }
+    }
+
+    private static func postUnicodeKeyEvents(_ units: [UniChar], source: CGEventSource) throws {
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+            throw DesktopControlError.operationFailed("Could not create Unicode keyboard events.")
+        }
+        units.withUnsafeBufferPointer { buffer in
+            down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
+            up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
+        }
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
     }
 
     static func pressKey(_ name: String, modifiers: CGEventFlags, repeatCount: Int, interval: Double) throws {

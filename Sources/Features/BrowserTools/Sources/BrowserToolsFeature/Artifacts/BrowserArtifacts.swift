@@ -110,7 +110,10 @@ struct BrowserOwnedScreenshot: Sendable {
 /// Performs the interprocess portion of Browser state-store locking.
 enum BrowserInterprocessLock {
     static func withExclusiveLock<T>(at lockURL: URL, error: () -> Error, body: () throws -> T) throws -> T {
-        let descriptor = open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        // O_CLOEXEC keeps the lock descriptor (and therefore the flock) from
+        // leaking into a Chrome process spawned by this feature invocation;
+        // O_NOFOLLOW refuses to lock through a symlink planted in the profile.
+        let descriptor = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, S_IRUSR | S_IWUSR)
         guard descriptor >= 0 else { throw error() }
         defer {
             _ = flock(descriptor, LOCK_UN)

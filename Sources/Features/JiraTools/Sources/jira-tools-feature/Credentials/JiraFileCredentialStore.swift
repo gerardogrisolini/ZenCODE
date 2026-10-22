@@ -103,9 +103,10 @@ struct JiraFileCredentialStore: Sendable {
             }
         }
         try data.withUnsafeBytes { buffer in
+            guard let base = buffer.baseAddress else { return }
             var offset = 0
             while offset < buffer.count {
-                let written = write(descriptor, buffer.baseAddress! + offset, buffer.count - offset)
+                let written = write(descriptor, base + offset, buffer.count - offset)
                 if written < 0 {
                     if errno == EINTR { continue }
                     throw JiraToolsError.invalidConfiguration(

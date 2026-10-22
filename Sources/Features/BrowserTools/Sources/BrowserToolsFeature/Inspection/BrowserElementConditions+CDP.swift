@@ -105,6 +105,8 @@ extension CDPSession {
                     didResolveTarget = true
                 } catch is CancellationError {
                     throw CancellationError()
+                } catch where isTerminated {
+                    throw error
                 } catch let error as BrowserInteractionError {
                     if case .staleSnapshot = error {
                         throw error
@@ -147,6 +149,9 @@ extension CDPSession {
                 }
             } catch is CancellationError {
                 throw CancellationError()
+            } catch where isTerminated {
+                // A closed session cannot recover within the deadline.
+                throw error
             } catch let error as BrowserInteractionError {
                 if case .staleSnapshot = error {
                     throw error

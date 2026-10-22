@@ -160,7 +160,11 @@ enum EventKitSupport {
             throw MacOSControlError.invalidArgument("recurrence_interval", "must be between 1 and 365.")
         }
         var end: EKRecurrenceEnd?
-        if let endDate = try MacOSDate.parse(input.recurrence_end, argument: "recurrence_end", action: input.action) {
+        if var endDate = try MacOSDate.parse(input.recurrence_end, argument: "recurrence_end", action: input.action) {
+            if MacOSDate.isDateOnly(input.recurrence_end) {
+                // A plain date is inclusive: occurrences on that day still happen.
+                endDate = MacOSDate.endOfDay(endDate)
+            }
             end = EKRecurrenceEnd(end: endDate)
         } else if let count = input.recurrence_count {
             guard count > 0 else {
@@ -174,10 +178,14 @@ enum EventKitSupport {
     static func alarms(fromMinutes minutes: [Int]?) throws -> [EKAlarm]? {
         guard let minutes else { return nil }
         return try minutes.map { value in
-            guard (0...(60 * 24 * 365)).contains(value) else {
-                throw MacOSControlError.invalidArgument("alarm_minutes", "each value must be between 0 and 525600 minutes before the start.")
-            }
+            try validateAlarmMinutes(value, reference: "start")
             return EKAlarm(relativeOffset: TimeInterval(-value * 60))
+        }
+    }
+
+    static func validateAlarmMinutes(_ value: Int, reference: String) throws {
+        guard (0...(60 * 24 * 365)).contains(value) else {
+            throw MacOSControlError.invalidArgument("alarm_minutes", "each value must be between 0 and 525600 minutes before the \(reference).")
         }
     }
 

@@ -71,6 +71,31 @@ struct XcodeFeatureCharacterizationTests {
         ))
     }
 
+    @Test
+    func consentMappingOnlyRewritesRealAuthorizationFailures() {
+        let configuration = XcodeFeatureConfiguration()
+        struct PlainError: LocalizedError {
+            let errorDescription: String?
+        }
+
+        #expect(configuration.mapError(MCPClientError.authorizationRequired(
+            service: "Xcode",
+            message: "Consent required"
+        )) as? XcodeFeatureError == .consentDenied)
+        #expect(configuration.mapError(PlainError(
+            errorDescription: "com.apple.dt.Xcode.MCPBridge.Authorization error 1"
+        )) as? XcodeFeatureError == .consentDenied)
+
+        // A cancelled task, an unknown tool, and an ordinary rejected edit are
+        // not consent problems and keep their own messages.
+        #expect(configuration.mapError(CancellationError()) is CancellationError)
+        #expect(configuration.mapError(XcodeFeatureError.unknownTool("x")) as? XcodeFeatureError
+            == .unknownTool("x"))
+        let serverError = MCPClientError.serverError(code: -32000, message: "Build cancelled by user")
+        #expect(configuration.mapError(serverError) as? XcodeFeatureError == nil)
+        #expect(configuration.mapError(PlainError(errorDescription: "Operation cancelled")) is PlainError)
+    }
+
     #if os(macOS)
     @Test
     func mcpBridgeUsesOptimisticInitializedHandshake() async throws {

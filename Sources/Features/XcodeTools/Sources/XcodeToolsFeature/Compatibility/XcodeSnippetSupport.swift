@@ -1,5 +1,5 @@
 //
-//  ToolRequestCompatibilitySupport+XcodeSnippetSupport.swift
+//  XcodeSnippetSupport.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 26/05/26.
@@ -119,7 +119,7 @@ nonisolated func restoredLikelySwiftMemberAccessPrefixes(
     }
 
     var repairedLines = lines
-    var blockAnchorIndents: [Int] = []
+    var blockAnchors: [SwiftBlockAnchor] = []
     var previousNonEmptyLine: (text: String, indent: Int)?
     var repairedAnyLine = false
 
@@ -133,9 +133,9 @@ nonisolated func restoredLikelySwiftMemberAccessPrefixes(
         let indentation = leadingWhitespacePrefix(in: originalLine)
         let indentCount = indentation.count
 
-        while let lastAnchorIndent = blockAnchorIndents.last,
-              indentCount < lastAnchorIndent {
-            blockAnchorIndents.removeLast()
+        while let lastAnchor = blockAnchors.last,
+              indentCount < lastAnchor.indent {
+            blockAnchors.removeLast()
         }
 
         var normalizedLine = trimmedLine
@@ -143,7 +143,7 @@ nonisolated func restoredLikelySwiftMemberAccessPrefixes(
             for: trimmedLine,
             indentCount: indentCount,
             previousNonEmptyLine: previousNonEmptyLine,
-            blockAnchorIndents: blockAnchorIndents
+            blockAnchors: blockAnchors
         ) {
             normalizedLine = "." + trimmedLine
             repairedLines[index] = indentation + normalizedLine
@@ -155,10 +155,19 @@ nonisolated func restoredLikelySwiftMemberAccessPrefixes(
             continue
         }
 
-        if normalizedLine.hasSuffix("{"),
-           isLikelySwiftExpressionAnchor(normalizedLine),
-           blockAnchorIndents.last != indentCount {
-            blockAnchorIndents.append(indentCount)
+        // Every block opener is recorded, including ones that never qualify
+        // (`if x {`, `Task {`, `} else {`), so that a qualifying anchor at the
+        // same indentation cannot outlive the block that replaced it.
+        if normalizedLine.hasSuffix("{") {
+            let anchor = SwiftBlockAnchor(
+                indent: indentCount,
+                restoresMemberAccess: swiftBlockOpenerRestoresMemberAccess(normalizedLine)
+            )
+            if blockAnchors.last?.indent == indentCount {
+                blockAnchors[blockAnchors.count - 1] = anchor
+            } else {
+                blockAnchors.append(anchor)
+            }
         }
 
         previousNonEmptyLine = (normalizedLine, indentCount)
@@ -227,11 +236,56 @@ nonisolated let swiftMemberAccessExcludedKeywords: Set<String> = [
     "while"
 ]
 
+/// One opened `{` block, tracked so a call that follows its closing `}` at the
+/// same indentation can be recognized as a modifier whose leading `.` was lost.
+nonisolated struct SwiftBlockAnchor: Equatable, Sendable {
+    let indent: Int
+    /// `true` only for SwiftUI-style containers (`VStack {`, `Button(...) {`)
+    /// and modifier chains (`.onAppear {`). Plain closures and statements
+    /// (`Task {`, `withAnimation {`, `DispatchQueue.main.async {`, `if x {`)
+    /// are legitimately followed by ordinary calls, which must stay untouched.
+    let restoresMemberAccess: Bool
+}
+
+/// Uppercase closure openers that are well-known non-view types.
+nonisolated let swiftMemberAccessNonViewBlockOpeners: Set<String> = [
+    "AnyCancellable",
+    "BlockOperation",
+    "DispatchWorkItem",
+    "MainActor",
+    "Task",
+    "Thread"
+]
+
+nonisolated func swiftBlockOpenerRestoresMemberAccess(
+    _ trimmedLine: String
+) -> Bool {
+    guard trimmedLine.hasSuffix("{"),
+          isLikelySwiftExpressionAnchor(trimmedLine) else {
+        return false
+    }
+    if trimmedLine.hasPrefix(".") {
+        return true
+    }
+
+    guard let identifier = initialSwiftIdentifier(in: trimmedLine),
+          let firstCharacter = identifier.first,
+          firstCharacter.isUppercase,
+          !swiftMemberAccessNonViewBlockOpeners.contains(identifier) else {
+        return false
+    }
+
+    // `DispatchQueue.main.async {` or `Task.detached {` name a member path,
+    // not a view container.
+    let callee = trimmedLine.prefix { $0 != "(" && $0 != "{" }
+    return !callee.contains(".")
+}
+
 nonisolated func shouldRestoreSwiftMemberAccessPrefix(
     for trimmedLine: String,
     indentCount: Int,
     previousNonEmptyLine: (text: String, indent: Int)?,
-    blockAnchorIndents: [Int]
+    blockAnchors: [SwiftBlockAnchor]
 ) -> Bool {
     guard isLikelySwiftMemberAccessCandidate(trimmedLine) else {
         return false
@@ -242,7 +296,9 @@ nonisolated func shouldRestoreSwiftMemberAccessPrefix(
     }
 
     if previousNonEmptyLine.text == "}",
-       blockAnchorIndents.last == indentCount {
+       let anchor = blockAnchors.last,
+       anchor.indent == indentCount,
+       anchor.restoresMemberAccess {
         return true
     }
 

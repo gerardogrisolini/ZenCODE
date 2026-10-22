@@ -4,7 +4,7 @@ import Foundation
 enum JiraSetupPage {
     private static let apiTokenURL = "https://id.atlassian.com/manage-profile/security/api-tokens"
 
-    static func form(reason: JiraAuthenticationReason, error: String?, site: String, email: String) -> String {
+    static func form(reason: JiraAuthenticationReason, error: String?, site: String, email: String, formToken: String) -> String {
         let errorBanner = error.map { message in
             "<p class=\"error\">\(escape(message))</p>"
         } ?? ""
@@ -16,6 +16,7 @@ enum JiraSetupPage {
             <p class="subtitle">\(escape(reason.message))</p>
             \(errorBanner)
             <form method="POST" action="/">
+              <input type="hidden" name="state" value="\(escape(formToken))">
               <label for="site">Jira site URL</label>
               <input id="site" name="site" type="url" placeholder="https://your-domain.atlassian.net" value="\(escape(site))" required autofocus>
 
@@ -23,7 +24,7 @@ enum JiraSetupPage {
               <input id="email" name="email" type="email" placeholder="you@example.com" value="\(escape(email))" required>
 
               <label for="token">Atlassian API token</label>
-              <input id="token" name="token" type="password" placeholder="Paste your API token" required>
+              <input id="token" name="token" type="password" placeholder="Paste your API token" autocomplete="off" required>
               <p class="hint">Need a token? <a href="\(apiTokenURL)" target="_blank" rel="noopener">Create an API token</a>, then paste it here.</p>
 
               <button type="submit">Connect</button>

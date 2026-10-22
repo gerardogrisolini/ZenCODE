@@ -21,13 +21,12 @@ enum MessagesDatabase {
 
     /// Reports whether the history can be opened without throwing.
     static func accessibility() -> String {
-        guard FileManager.default.fileExists(atPath: databaseURL.path) else {
-            return "missing"
-        }
         do {
             let db = try open()
             sqlite3_close(db)
             return "readable"
+        } catch MacOSControlError.notFound {
+            return "missing"
         } catch {
             return "denied"
         }
@@ -69,17 +68,24 @@ enum MessagesDatabase {
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         for (index, binding) in bindings.enumerated() {
             let position = Int32(index + 1)
+            let rc: Int32
             switch binding {
             case let .text(value):
-                sqlite3_bind_text(statement, position, value, -1, transient)
+                rc = sqlite3_bind_text(statement, position, value, -1, transient)
             case let .integer(value):
-                sqlite3_bind_int64(statement, position, value)
+                rc = sqlite3_bind_int64(statement, position, value)
+            }
+            guard rc == SQLITE_OK else {
+                throw MacOSControlError.operationFailed("Could not query the Messages history: \(String(cString: sqlite3_errmsg(db))).")
             }
         }
 
         var texts: [TextMessageInfo] = []
         var scanned = 0
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var stepResult = SQLITE_DONE
+        while true {
+            stepResult = sqlite3_step(statement)
+            guard stepResult == SQLITE_ROW else { break }
             scanned += 1
             let rowID = Int(sqlite3_column_int64(statement, 0))
             let rawDate = sqlite3_column_int64(statement, 1)
@@ -118,6 +124,13 @@ enum MessagesDatabase {
                 break
             }
         }
+        guard stepResult == SQLITE_DONE || stepResult == SQLITE_ROW else {
+            let message = String(cString: sqlite3_errmsg(db))
+            if stepResult == SQLITE_AUTH || stepResult == SQLITE_CANTOPEN || stepResult == SQLITE_IOERR {
+                throw MacOSControlError.permissionRequired("Cannot read the Messages history (\(message)). \(fullDiskAccessHint)")
+            }
+            throw MacOSControlError.operationFailed("Could not read the Messages history: \(message).")
+        }
         // Chronological order reads naturally as a conversation.
         return ReadResult(texts: texts.reversed(), scannedLimitReached: query != nil && scanned >= scanWindow && texts.count < limit)
     }
@@ -130,16 +143,24 @@ enum MessagesDatabase {
     }
 
     private static func open() throws -> OpaquePointer {
+        // `fileExists` is false for an unreadable protected file: tell a missing
+        // history apart from a Full Disk Access denial via `stat`.
         guard FileManager.default.fileExists(atPath: databaseURL.path) else {
+            var info = stat()
+            if stat(databaseURL.path, &info) == 0 || errno == EACCES || errno == EPERM {
+                throw MacOSControlError.permissionRequired("Cannot open the Messages history at \(databaseURL.path). \(fullDiskAccessHint)")
+            }
             throw MacOSControlError.notFound("The Messages history was not found at \(databaseURL.path).")
         }
         var db: OpaquePointer?
-        let uri = "file:\(databaseURL.path)?mode=ro"
+        // Read-only, but not `immutable=1`: chat.db is in WAL mode and the
+        // immutable flag would skip the `-wal` file, hiding the newest messages.
+        let uri = "file:\(encodedPath(databaseURL.path))?mode=ro"
         let rc = sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil)
         guard rc == SQLITE_OK, let db else {
             let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "sqlite error \(rc)"
             if let db { sqlite3_close(db) }
-            if rc == SQLITE_AUTH || rc == SQLITE_CANTOPEN || message.lowercased().contains("authorization denied") {
+            if rc == SQLITE_AUTH || rc == SQLITE_CANTOPEN || rc == SQLITE_PERM || message.lowercased().contains("authorization denied") {
                 throw MacOSControlError.permissionRequired("Cannot open the Messages history (\(message)). \(fullDiskAccessHint)")
             }
             throw MacOSControlError.operationFailed("Cannot open the Messages history: \(message).")
@@ -165,9 +186,17 @@ enum MessagesDatabase {
         return String(cString: pointer)
     }
 
+    /// Percent-encodes a file path for an SQLite URI filename (`?`, `#`, and
+    /// `%` would otherwise be read as query or fragment delimiters).
+    static func encodedPath(_ path: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "?#%;")
+        return path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
+    }
+
     /// `message.date` is stored as nanoseconds since 2001-01-01 on current
     /// macOS releases and as seconds on legacy rows.
-    private static func date(fromRaw raw: Int64) -> Date? {
+    static func date(fromRaw raw: Int64) -> Date? {
         guard raw > 0 else { return nil }
         let seconds = raw > 1_000_000_000_000 ? Double(raw) / 1_000_000_000 : Double(raw)
         return Date(timeIntervalSinceReferenceDate: seconds)
@@ -175,7 +204,7 @@ enum MessagesDatabase {
 
     /// Accepts Messages.app chat ids (`iMessage;-;+39...`, `any;-;name@x`),
     /// chat.db guids, plain handles, or group chat identifiers.
-    private static func normalizedSelector(_ selector: String?) -> String? {
+    static func normalizedSelector(_ selector: String?) -> String? {
         guard let selector = selector?.trimmingCharacters(in: .whitespacesAndNewlines), !selector.isEmpty else {
             return nil
         }
@@ -188,16 +217,15 @@ enum MessagesDatabase {
 
 /// Extracts the plain text stored in `message.attributedBody`, a typedstream
 /// archive of an NSAttributedString used when the `text` column is NULL.
+/// The archive is read directly: `NSUnarchiver` raises an Objective-C
+/// exception (uncatchable from Swift, so it would kill the process) on a
+/// truncated or damaged blob.
 enum AttributedBodyDecoder {
     static func text(from data: Data) -> String? {
-        if let heuristic = heuristicText(from: data), !heuristic.isEmpty {
-            return heuristic
+        guard let heuristic = heuristicText(from: data), !heuristic.isEmpty else {
+            return nil
         }
-        if let unarchiver = NSUnarchiver(forReadingWith: data),
-           let attributed = unarchiver.decodeObject() as? NSAttributedString {
-            return attributed.string
-        }
-        return nil
+        return heuristic
     }
 
     /// The string payload follows the `NSString` class marker and a `+` tag;

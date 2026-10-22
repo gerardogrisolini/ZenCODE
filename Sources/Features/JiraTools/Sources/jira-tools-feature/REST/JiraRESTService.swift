@@ -36,11 +36,19 @@ actor JiraRESTService {
     /// `Authorization` header is replayed (see ``JiraRESTSessionDelegate``).
     private let urlSession: URLSession
 
+    /// Upper bound for a single Jira REST call. The feature invocation
+    /// timeout is much longer, but a stalled connection must not consume it.
+    static let requestTimeout: TimeInterval = 30
+    static let resourceTimeout: TimeInterval = 120
+
     init(configuration: JiraStoredConfiguration, apiToken: String) {
         self.configuration = configuration
         self.apiToken = apiToken
         let delegate = JiraRESTSessionDelegate(siteHost: configuration.siteURL.host ?? "")
-        self.urlSession = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.timeoutIntervalForRequest = Self.requestTimeout
+        sessionConfiguration.timeoutIntervalForResource = Self.resourceTimeout
+        self.urlSession = URLSession(configuration: sessionConfiguration, delegate: delegate, delegateQueue: nil)
     }
 
     deinit {
@@ -85,6 +93,11 @@ actor JiraRESTService {
         let matches = try await searchIssues(matching: query)
         guard matches.count == 1,
               let issueKey = matches.first?.key else {
+            if matches.isEmpty {
+                throw JiraToolsError.requestFailed(
+                    "No Jira issues matched '\(query)'. Pass an issue key or URL, or refine the query with jira.search."
+                )
+            }
             throw JiraToolsError.requestFailed(
                 "Jira search returned \(matches.count) issues. Call jira.search first, then call jira.read with the selected issue key."
             )
@@ -98,7 +111,8 @@ actor JiraRESTService {
             queryItems: [
                 URLQueryItem(name: "fields", value: "*all"),
                 URLQueryItem(name: "expand", value: "names")
-            ]
+            ],
+            notFound: { message in .issueNotFound(issueKey, message: message) }
         )
         guard let detail = JiraIssueParser.issueDetail(from: result, siteURL: configuration.siteURL) else {
             throw JiraToolsError.issueNotFound(issueKey)
@@ -117,14 +131,37 @@ actor JiraRESTService {
         }
     }
 
-    private func request(path: String, queryItems: [URLQueryItem]) async throws -> JSONValue {
+    /// RFC 3986 unreserved characters. Everything else in a query name or
+    /// value is percent-encoded, including `+`, which Jira (like every
+    /// `application/x-www-form-urlencoded` parser) would otherwise decode as a
+    /// space, and `&`/`=`, which would split the parameter.
+    private static let queryUnreserved = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+    )
+
+    static func percentEncodedQuery(_ items: [URLQueryItem]) -> String? {
+        guard !items.isEmpty else { return nil }
+        func encode(_ value: String) -> String {
+            value.addingPercentEncoding(withAllowedCharacters: queryUnreserved) ?? ""
+        }
+        return items
+            .map { item in
+                guard let value = item.value else { return encode(item.name) }
+                return "\(encode(item.name))=\(encode(value))"
+            }
+            .joined(separator: "&")
+    }
+
+    private func request(
+        path: String,
+        queryItems: [URLQueryItem],
+        notFound: ((String) -> JiraToolsError)? = nil
+    ) async throws -> JSONValue {
         guard var components = URLComponents(url: configuration.siteURL, resolvingAgainstBaseURL: false) else {
             throw JiraToolsError.requestFailed("Unable to build Jira request URL.")
         }
         components.path = path.hasPrefix("/") ? path : "/\(path)"
-        if !queryItems.isEmpty {
-            components.queryItems = queryItems
-        }
+        components.percentEncodedQuery = Self.percentEncodedQuery(queryItems)
         guard let url = components.url else { throw JiraToolsError.requestFailed("Unable to build Jira request URL.") }
         try Self.requireHTTPS(url)
 
@@ -138,10 +175,31 @@ actor JiraRESTService {
             throw JiraToolsError.requestFailed("Invalid Jira response.")
         }
         let responseText = responseMessage(from: data)
-        if httpResponse.statusCode == 401 {
+        switch httpResponse.statusCode {
+        case 200..<300:
+            break
+        case 300..<400:
+            // The redirect delegate refused to follow a hop that would have
+            // left the configured origin (see `JiraRedirectPolicy`).
+            throw JiraToolsError.requestFailed(
+                "Jira redirected the request (HTTP \(httpResponse.statusCode)) to another origin; the redirect was refused to protect your credentials. Check the configured Jira site URL."
+            )
+        case 401:
             throw JiraToolsError.authenticationFailed(statusCode: httpResponse.statusCode, message: responseText)
-        }
-        guard (200..<300).contains(httpResponse.statusCode) else {
+        case 403:
+            throw JiraToolsError.requestFailed(
+                "Jira denied access (HTTP 403). The account may lack permission for this project or issue. \(responseText)"
+            )
+        case 404:
+            if let notFound {
+                throw notFound(responseText)
+            }
+            throw JiraToolsError.requestFailed("Jira request failed with HTTP 404. \(responseText)")
+        case 429:
+            let retryAfter = Self.headerValue("Retry-After", in: httpResponse)
+            let retryHint = retryAfter.map { " Retry after \($0) seconds." } ?? " Retry later."
+            throw JiraToolsError.requestFailed("Jira rate limit exceeded (HTTP 429).\(retryHint) \(responseText)")
+        default:
             throw JiraToolsError.requestFailed(
                 "Jira request failed with HTTP \(httpResponse.statusCode). \(responseText)"
             )
@@ -157,6 +215,16 @@ actor JiraRESTService {
     private var authorizationHeader: String {
         let credentials = "\(configuration.email):\(apiToken)"
         return "Basic \(Data(credentials.utf8).base64EncodedString())"
+    }
+
+    /// Case-insensitive header lookup that works identically on Darwin and
+    /// swift-corelibs-foundation.
+    private static func headerValue(_ name: String, in response: HTTPURLResponse) -> String? {
+        for (key, value) in response.allHeaderFields {
+            guard let key = key as? String, key.caseInsensitiveCompare(name) == .orderedSame else { continue }
+            return (value as? String)?.nilIfBlank
+        }
+        return nil
     }
 
     private func responseMessage(from data: Data) -> String {

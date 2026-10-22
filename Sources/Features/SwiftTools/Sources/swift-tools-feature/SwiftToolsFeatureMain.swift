@@ -32,19 +32,19 @@ struct SwiftBuildTool: FeatureTool {
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         var args = ["build"]
         if let configuration = input.configuration?.nilIfBlank {
-            args.append(contentsOf: ["-c", configuration])
+            args.append(contentsOf: ["-c", try SwiftToolsSupport.optionValue(configuration, named: "configuration")])
         }
         if let target = input.target?.nilIfBlank {
-            args.append(contentsOf: ["--target", target])
+            args.append(contentsOf: ["--target", try SwiftToolsSupport.optionValue(target, named: "target")])
         }
         if let product = input.product?.nilIfBlank {
-            args.append(contentsOf: ["--product", product])
+            args.append(contentsOf: ["--product", try SwiftToolsSupport.optionValue(product, named: "product")])
         }
         let result = try await SwiftToolsSupport.execute(
             args, path: input.path, workingDirectory: input.workingDirectory,
             timeout: input.timeoutSeconds ?? input.timeout, defaultTimeout: 900, context: context
         )
-        return SwiftToolsSupport.renderBuildResult(result, command: "swift " + args.joined(separator: " "))
+        return SwiftToolsSupport.renderBuildResult(result, command: SwiftToolsSupport.renderCommand(["swift"] + args))
     }
 }
 
@@ -77,10 +77,10 @@ struct SwiftTestTool: FeatureTool {
     func run(_ input: Input, context: FeatureContext) async throws -> String {
         var args = ["test"]
         if let configuration = input.configuration?.nilIfBlank {
-            args.append(contentsOf: ["-c", configuration])
+            args.append(contentsOf: ["-c", try SwiftToolsSupport.optionValue(configuration, named: "configuration")])
         }
         if let filter = (input.filter?.nilIfBlank ?? input.target?.nilIfBlank) {
-            args.append(contentsOf: ["--filter", filter])
+            args.append(contentsOf: ["--filter", try SwiftToolsSupport.optionValue(filter, named: "filter")])
         }
         args.append(contentsOf: SwiftToolsSupport.additionalArguments(input.arguments ?? input.args))
         let result = try await SwiftToolsSupport.execute(
@@ -118,19 +118,26 @@ struct SwiftRunTool: FeatureTool {
     )
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
-        var args = ["run"]
-        if let configuration = input.configuration?.nilIfBlank {
-            args.append(contentsOf: ["-c", configuration])
-        }
-        if let executable = (input.executable ?? input.product)?.nilIfBlank {
-            args.append(executable)
-        }
-        args.append(contentsOf: (input.arguments ?? input.args ?? []).compactMap { $0.nilIfBlank })
+        let args = try Self.arguments(for: input)
         let result = try await SwiftToolsSupport.execute(
             args, path: input.path, workingDirectory: input.workingDirectory,
             timeout: input.timeoutSeconds ?? input.timeout, defaultTimeout: 900, context: context
         )
-        return SwiftToolsSupport.renderRunResult(result, command: "swift " + args.joined(separator: " "))
+        return SwiftToolsSupport.renderRunResult(result, command: SwiftToolsSupport.renderCommand(["swift"] + args))
+    }
+
+    static func arguments(for input: Input) throws -> [String] {
+        var args = ["run"]
+        if let configuration = input.configuration?.nilIfBlank {
+            args.append(contentsOf: ["-c", try SwiftToolsSupport.optionValue(configuration, named: "configuration")])
+        }
+        if let executable = (input.executable ?? input.product)?.nilIfBlank {
+            args.append(try SwiftToolsSupport.optionValue(executable, named: "executable"))
+        }
+        // SwiftPM stops parsing its own options at the executable name, so the
+        // program arguments are forwarded verbatim (not trimmed) after it.
+        args.append(contentsOf: SwiftToolsSupport.additionalArguments(input.arguments ?? input.args))
+        return args
     }
 }
 
@@ -169,7 +176,7 @@ struct SwiftPackageTool: FeatureTool {
             defaultTimeout: (action == "update" || action == "resolve") ? 600 : 120,
             context: context
         )
-        return SwiftToolsSupport.renderPackageResult(result, command: "swift " + args.joined(separator: " "))
+        return SwiftToolsSupport.renderPackageResult(result, command: SwiftToolsSupport.renderCommand(["swift"] + args))
     }
 }
 

@@ -73,11 +73,13 @@ public nonisolated func retriedXcodeUpdateRequestForIndentationMismatch(
     guard originalRequest.name == "XcodeUpdate",
           let oldString = originalRequest.arguments["oldString"]?.stringValue,
           let newString = originalRequest.arguments["newString"]?.stringValue,
-          let resultObject = xcodeMutationResultObject(from: failureResult),
-          xcodeMutationResultNeedsIndentationRetry(resultObject),
-          let closestMatch = xcodeClosestMatchSnippetFromMessage(
-              resultObject["message"]?.stringValue
-          ),
+          let resultObject = xcodeMutationResultObject(from: failureResult) else {
+        return nil
+    }
+    let message = xcodeMutationResultMessage(from: failureResult)
+    guard xcodeMutationResultNeedsIndentationRetry(resultObject, message: message),
+          let closestMatch = xcodeClosestMatchSnippetFromMessage(message),
+          closestMatch != oldString,
           indentationInsensitiveSnippetEquivalent(oldString, closestMatch) else {
         return nil
     }
@@ -87,10 +89,6 @@ public nonisolated func retriedXcodeUpdateRequestForIndentationMismatch(
         originalNewString: newString,
         matchedOldString: closestMatch
     ) ?? newString
-
-    guard closestMatch != oldString || adjustedNewString != newString else {
-        return nil
-    }
 
     var retriedArguments = originalRequest.arguments
     retriedArguments["oldString"] = .string(closestMatch)

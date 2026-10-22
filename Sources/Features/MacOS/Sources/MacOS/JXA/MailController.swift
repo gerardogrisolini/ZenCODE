@@ -347,16 +347,15 @@ enum MailController {
     }
 
     static func list(_ input: MacOSRunInput) async throws -> MacOSRunOutput {
-        let since = try MacOSDate.parse(input.since ?? input.start, argument: "since", action: input.action)
-        let until = try MacOSDate.parse(input.until ?? input.end, argument: "until", action: input.action)
+        let (since, until) = try MacOSDate.listBounds(since: input.since ?? input.start, until: input.until ?? input.end, action: input.action)
         var parameters: [String: JSONValue] = [
             "limit": .number(Double(input.boundedLimit(default: 25, maximum: 200))),
             "unread_only": .bool(input.unread_only ?? false),
         ]
         if let mailbox = input.mailbox { parameters["mailbox"] = .string(mailbox) }
         if let account = input.account { parameters["account"] = .string(account) }
-        if let since { parameters["since"] = .string(javaScriptDate(since)) }
-        if let until { parameters["until"] = .string(javaScriptDate(until)) }
+        if let since { parameters["since"] = .string(MacOSDate.javaScript(since)) }
+        if let until { parameters["until"] = .string(MacOSDate.javaScript(until)) }
         if let query = input.query?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty {
             parameters["query"] = .string(query)
         }
@@ -370,7 +369,7 @@ enum MailController {
         )
         output.messages = result.messages.map(\.info)
         output.count = result.total
-        if since == nil, input.query == nil, input.unread_only != true {
+        if since == nil, until == nil, parameters["query"] == nil, input.unread_only != true {
             output.hint = "Pass since (ISO date), query, or unread_only to focus the list."
         }
         return output
@@ -412,7 +411,9 @@ enum MailController {
             "bcc": .array((input.bcc?.values ?? []).map(JSONValue.string)),
             "attachments": .array(attachments.map(JSONValue.string)),
         ]
-        if let from = input.from { parameters["from"] = .string(from) }
+        if let from = input.from?.trimmingCharacters(in: .whitespacesAndNewlines), !from.isEmpty {
+            parameters["from"] = .string(from)
+        }
         let result = try await JXARunner.run(sendScript, parameters: parameters, as: SendResult.self)
         guard result.sent else {
             throw MacOSControlError.operationFailed("Mail did not send the message.")
@@ -512,12 +513,5 @@ enum MailController {
             }
             return url.standardizedFileURL.path
         }
-    }
-
-    static func javaScriptDate(_ date: Date) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        return formatter.string(from: date)
     }
 }

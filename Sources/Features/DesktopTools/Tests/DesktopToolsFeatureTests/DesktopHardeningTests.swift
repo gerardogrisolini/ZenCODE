@@ -59,6 +59,29 @@ struct DesktopHardeningTests {
         #expect(checked == [expected])
     }
 
+    @Test
+    func relativeFileURLResolvesAgainstContextNotProcessDirectory() throws {
+        let dir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let context = FeatureContext(workingDirectory: dir)
+        var checked: [String] = []
+        let target = try DesktopOpenTarget.resolve("file:sub/../doc.txt", context: context, fileExists: { checked.append($0); return true })
+        let expected = context.workingDirectory.appendingPathComponent("doc.txt").path
+        #expect(target == .file(expected))
+        #expect(checked == [expected])
+        #expect(expected != URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("doc.txt").path)
+    }
+
+    @Test(arguments: ["file://", "file://relative.txt"])
+    func fileURLWithoutPathIsRejectedBeforeAnyLookup(_ raw: String) {
+        let context = FeatureContext(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        var lookups = 0
+        #expect(throws: DesktopControlError.self) {
+            _ = try DesktopOpenTarget.resolve(raw, context: context, fileExists: { _ in lookups += 1; return true })
+        }
+        #expect(lookups == 0)
+    }
+
     @Test(arguments: ["javascript:alert(1)", "data:text/html,hi", "JavaScript:void(0)"])
     func deniedSchemesAreRejected(_ raw: String) {
         let context = FeatureContext(workingDirectory: URL(fileURLWithPath: "/tmp"))

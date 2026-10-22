@@ -4,7 +4,10 @@ import ToolCore
 
 /// Runs fixed JavaScript-for-Automation scripts through `osascript`. Scripts
 /// are static program text owned by this feature; caller data only travels as
-/// a JSON argument, so no caller-supplied code is ever evaluated.
+/// a JSON object literal (`PARAMS`), so no caller-supplied code is ever
+/// evaluated. The whole program is written to stdin: command-line arguments
+/// are visible to every local user through `ps` and are capped by `ARG_MAX`,
+/// which message bodies and note contents could exceed.
 enum JXARunner {
     static let defaultTimeout: TimeInterval = 150
     private static let osascriptURL = URL(fileURLWithPath: "/usr/bin/osascript")
@@ -21,12 +24,24 @@ enum JXARunner {
     function clampLimit(value, fallback, max) { let n = parseInt(value, 10); if (!Number.isFinite(n) || n <= 0) { n = fallback; } return Math.min(n, max); }
     function date(value) { if (!value) { return null; } const d = new Date(value); return isNaN(d.getTime()) ? null : d; }
     function fail(message) { throw new Error(message); }
-    function run(argv) {
-      const params = JSON.parse(argv.length > 0 ? argv[0] : "{}");
-      const result = main(params || {});
+    function run() {
+      const result = main(PARAMS || {});
       return JSON.stringify(result === undefined ? {} : result);
     }
     """#
+
+    /// Assembles the program text: the parameters as a JSON literal, the
+    /// shared prelude, and the script. JSON is a syntactic subset of a
+    /// JavaScript expression; U+2028/U+2029, which JSON leaves raw, are
+    /// escaped as well so the literal stays valid for every parser.
+    static func program(_ script: String, parameters: [String: JSONValue]) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let parameterJSON = String(decoding: try encoder.encode(parameters), as: UTF8.self)
+            .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
+            .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
+        return "const PARAMS = " + parameterJSON + ";\n" + prelude + "\n" + script + "\n"
+    }
 
     static func run<Result: Decodable>(
         _ script: String,
@@ -50,16 +65,13 @@ enum JXARunner {
         parameters: [String: JSONValue],
         timeout: TimeInterval
     ) async throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let parameterJSON = String(decoding: try encoder.encode(parameters), as: UTF8.self)
-        let program = prelude + "\n" + script + "\n"
+        let program = try program(script, parameters: parameters)
 
         let result: FeatureProcessResult
         do {
             result = try await FeatureProcessRunner.run(
                 executableURL: osascriptURL,
-                arguments: ["-l", "JavaScript", "-", parameterJSON],
+                arguments: ["-l", "JavaScript", "-"],
                 stdinData: Data(program.utf8),
                 timeout: timeout,
                 maximumOutputBytesPerStream: 32 * 1_024 * 1_024
@@ -102,6 +114,8 @@ enum JXARunner {
             message += " macOS denied Automation access: allow the application hosting ZenCODE to control this app in System Settings > Privacy & Security > Automation."
         } else if message.contains("-600") || message.contains("-10810") {
             message += " The target app could not be launched."
+        } else if message.contains("-1712") {
+            message += " The app did not answer before the Apple event timed out; narrow the request and retry."
         }
         return message
     }

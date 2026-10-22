@@ -146,7 +146,12 @@ private struct CDPHTTPPageInfo: Decodable {
         else {
             throw ChromeBrowserError.invalidTabResponse("Missing or untrusted webSocketDebuggerUrl")
         }
-        return CDPTabInfo(id: id, title: title ?? "", url: url ?? "", webSocketDebuggerURL: webSocketURL)
+        return CDPTabInfo(
+            id: id,
+            title: ChromeBrowserManager.unescapedTargetTitle(title ?? ""),
+            url: url ?? "",
+            webSocketDebuggerURL: webSocketURL
+        )
     }
 }
 
@@ -176,6 +181,10 @@ final class ChromeBrowserManager: Sendable {
         urlConfiguration.timeoutIntervalForRequest = Self.connectTimeout
         urlConfiguration.timeoutIntervalForResource = 30
         self.urlSession = URLSession(configuration: urlConfiguration)
+    }
+
+    deinit {
+        urlSession.invalidateAndCancel()
     }
 
     // MARK: - Lifecycle
@@ -475,6 +484,20 @@ final class ChromeBrowserManager: Sendable {
             && url.path.hasPrefix("/devtools/")
     }
 
+    /// Chrome's `/json/list` and `/json/new` endpoints HTML-escape target
+    /// titles (`base::EscapeForHTML`: `<`, `>`, `&`, `"`, `'`). Undo exactly
+    /// that escaping so `browser.pages` reports the same title as
+    /// `document.title` does for the other page tools.
+    static func unescapedTargetTitle(_ title: String) -> String {
+        guard title.contains("&") else { return title }
+        return title
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&amp;", with: "&")
+    }
+
     // MARK: - Chrome discovery
 
     static func discoverExecutable(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
@@ -630,9 +653,11 @@ final class ChromeBrowserManager: Sendable {
     }
 
     private func discardProcessOutput(_ process: Process) {
-        guard let devNull = FileHandle(forWritingAtPath: "/dev/null") else { return }
-        process.standardOutput = devNull
-        process.standardError = devNull
+        // `FileHandle.nullDevice` needs no explicit close in the parent, unlike
+        // a handle opened on /dev/null for every spawn.
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
     }
 
     private func rememberSpawnedProcess(_ process: Process) {

@@ -31,11 +31,7 @@ extension SwiftToolsSupport {
         var seen = Set<String>()
         for line in output.components(separatedBy: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard let severity = severity(in: trimmed) else {
-                continue
-            }
-            let marker = severity == .error ? "error:" : "warning:"
-            guard let markerRange = trimmed.range(of: marker) else {
+            guard let (severity, markerRange) = severityMarker(in: trimmed) else {
                 continue
             }
             let location = String(trimmed[..<markerRange.lowerBound])
@@ -53,13 +49,19 @@ extension SwiftToolsSupport {
         return diagnostics
     }
 
-    private static func severity(in line: String) -> Severity? {
-        // Require a "file:line:..." style prefix to avoid matching prose.
-        if line.contains(": error:") || line.hasPrefix("error: ") {
-            return .error
-        }
-        if line.contains(": warning:") || line.hasPrefix("warning: ") {
-            return .warning
+    /// The severity and the range of its `error:`/`warning:` marker. The marker
+    /// must either open the line or follow a `file:line:col` prefix (`: error:`),
+    /// so prose and paths that merely contain the word are not matched, and the
+    /// location is cut at the marker rather than at an earlier occurrence of
+    /// the word inside the path.
+    private static func severityMarker(in line: String) -> (Severity, Range<String.Index>)? {
+        for (severity, word) in [(Severity.error, "error:"), (.warning, "warning:")] {
+            if line.hasPrefix(word + " ") || line == word, let range = line.range(of: word) {
+                return (severity, range)
+            }
+            if let range = line.range(of: ": " + word) {
+                return (severity, line.index(range.lowerBound, offsetBy: 2) ..< range.upperBound)
+            }
         }
         return nil
     }

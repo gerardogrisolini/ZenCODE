@@ -20,9 +20,11 @@ enum JiraSetupRunner {
         return JiraRESTService(configuration: result.configuration, apiToken: result.apiToken)
     }
 
-    /// Runs the browser-based setup flow (macOS) or the environment-variable setup (other platforms). The user completes the connection in a
-    /// local web form; no terminal prompt is used, so it works while running as a
-    /// tool subprocess.
+    /// Runs the browser-based setup flow on macOS: the user completes the
+    /// connection in a local web form; no terminal prompt is used, so it works
+    /// while running as a tool subprocess. On other platforms the configuration
+    /// is read from the `ZENCODE_JIRA_*` environment variables, validated
+    /// against Jira, and only then persisted.
     private static func authenticate(reason: JiraAuthenticationReason) async throws -> JiraAuthenticatedConfiguration {
         #if os(macOS)
         let defaults = try? JiraConfigurationStore.load()

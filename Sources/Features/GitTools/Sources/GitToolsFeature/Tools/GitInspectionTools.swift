@@ -3,7 +3,7 @@ import FeatureKit
 import ToolCore
 
 struct GitStatusTool: FeatureTool {
-    struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
+    struct Input: Decodable, Sendable, GitRepositoryDirectoryInput {
         let path: String?
         let workingDirectory: String?
     }
@@ -91,7 +91,7 @@ struct GitShowTool: GitArgumentTool {
 }
 
 struct GitLogTool: FeatureTool {
-    struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
+    struct Input: Decodable, Sendable, GitRepositoryDirectoryInput {
         let path: String?
         let workingDirectory: String?
         let limit: Int?
@@ -112,7 +112,7 @@ struct GitLogTool: FeatureTool {
 }
 
 struct GitBranchTool: GitArgumentTool {
-    struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
+    struct Input: Decodable, Sendable, GitRepositoryDirectoryInput {
         let path: String?
         let workingDirectory: String?
         let all: Bool?
@@ -142,7 +142,7 @@ struct GitBranchTool: GitArgumentTool {
 }
 
 struct GitRemoteTool: FeatureTool {
-    struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
+    struct Input: Decodable, Sendable, GitRepositoryDirectoryInput {
         let path: String?
         let workingDirectory: String?
     }
@@ -157,7 +157,7 @@ struct GitRemoteTool: FeatureTool {
 }
 
 struct GitLsFilesTool: FeatureTool {
-    struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
+    struct Input: Decodable, Sendable, GitRepositoryDirectoryInput {
         let path: String?
         let workingDirectory: String?
         let includeUntracked: Bool?
@@ -178,15 +178,13 @@ struct GitLsFilesTool: FeatureTool {
         if input.includeUntracked == true {
             args.append(contentsOf: ["--cached", "--others", "--exclude-standard"])
         }
-        let output = try await GitToolsSupport.runGit(args, input: input, context: context)
+        let result = try await GitToolsSupport.runGitResult(args, input: input, context: context)
         let maxResults = max(1, min(input.maxResults ?? input.max_results ?? 500, 10_000))
-        return output.components(separatedBy: .newlines)
-            .prefix(maxResults)
-            .joined(separator: "\n")
+        return GitToolsSupport.renderLimitedStdout(result, maxLines: maxResults)
     }
 }
 
-struct GitGrepTool: GitArgumentTool {
+struct GitGrepTool: FeatureTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
@@ -213,13 +211,20 @@ struct GitGrepTool: GitArgumentTool {
     static func arguments(for input: Input) throws -> [String] {
         guard let pattern = input.pattern?.nilIfBlank else { throw GitToolsFeatureError.missingArgument("pattern") }
         try GitToolsSupport.rejectControlCharacters(pattern, named: "pattern")
-        let maxResults = max(1, min(input.maxResults ?? input.max_results ?? 200, 10_000))
         let filesOnly = input.filesOnly ?? input.files_only ?? false
         var args: [String]
         if filesOnly {
             args = ["grep", "-I", "-l"]
         } else {
-            args = ["grep", "-n", "-I", "-m", "\(maxResults)"]
+            // `maxResults` is enforced in `run` as a total cap on MATCH lines
+            // (git's own `-m` is a per-file limit and only exists since git 2.38).
+            // `-z --column` (git >= 2.19) lets `GitToolsSupport.renderLimitedGrep`
+            // tell matches from context lines exactly, whatever the path contains:
+            // with `-z` every separator is NUL, and the column is only printed on
+            // match lines, so a match is `path\0LINE\0COLUMN\0text` and a context
+            // line is `path\0LINE\0text`. The renderer restores the usual
+            // `path:LINE:text` / `path-LINE-text` form.
+            args = ["grep", "-n", "-I", "-z", "--column"]
             if let contextLines = input.context, contextLines > 0 {
                 args.append(contentsOf: ["-C", "\(min(contextLines, 20))"])
             }
@@ -233,9 +238,22 @@ struct GitGrepTool: GitArgumentTool {
         }
         return args
     }
+
+    static func maxResults(for input: Input) -> Int {
+        max(1, min(input.maxResults ?? input.max_results ?? 200, 10_000))
+    }
+
+    func run(_ input: Input, context: FeatureContext) async throws -> String {
+        let result = try await GitToolsSupport.runGitResult(try Self.arguments(for: input), input: input, context: context)
+        let maxResults = Self.maxResults(for: input)
+        if input.filesOnly ?? input.files_only ?? false {
+            return GitToolsSupport.renderLimitedStdout(result, maxLines: maxResults)
+        }
+        return GitToolsSupport.renderLimitedGrep(result, maxMatches: maxResults)
+    }
 }
 
-struct GitBlameTool: FeatureTool {
+struct GitBlameTool: GitArgumentTool {
     struct Input: Decodable, Sendable, GitWorkingDirectoryInput {
         let path: String?
         let workingDirectory: String?
@@ -254,17 +272,37 @@ struct GitBlameTool: FeatureTool {
         required: ["file"]
     )
 
-    func run(_ input: Input, context: FeatureContext) async throws -> String {
+    static func arguments(for input: Input) throws -> [String] {
         guard let file = firstNonBlank(input.file, input.path, input.file_path) else {
             throw GitToolsFeatureError.missingArgument("file")
         }
         var args = ["blame"]
-        if let startLine = input.startLine,
-           let endLine = input.endLine {
-            args.append(contentsOf: ["-L", "\(startLine),\(endLine)"])
+        if let range = try lineRange(startLine: input.startLine, endLine: input.endLine) {
+            args.append(contentsOf: ["-L", range])
         }
         args.append("--")
         args.append(file)
-        return try await GitToolsSupport.runGit(args, input: input, context: context)
+        return args
+    }
+
+    /// `-L` value for the requested bounds: `start,end`, an open `start,` or
+    /// `,end` when only one bound is given, nil when none is. Line numbers are
+    /// 1-based; a non-positive bound is rejected instead of being handed to git.
+    static func lineRange(startLine: Int?, endLine: Int?) throws -> String? {
+        for (name, value) in [("startLine", startLine), ("endLine", endLine)] {
+            if let value, value < 1 {
+                throw GitToolsFeatureError.permissionDenied("Argument '\(name)' must be a 1-based line number, got \(value).")
+            }
+        }
+        switch (startLine, endLine) {
+        case (nil, nil):
+            return nil
+        case let (start?, end?):
+            return "\(start),\(end)"
+        case let (start?, nil):
+            return "\(start),"
+        case let (nil, end?):
+            return ",\(end)"
+        }
     }
 }

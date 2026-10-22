@@ -40,10 +40,26 @@ struct WebFetchTool: FeatureTool {
         let timeout = TimeInterval(max(1, min(input.timeoutSeconds ?? 20, 120)))
 
         #if canImport(WebKit)
-        let page = try await WebKitPageRenderer.render(url: url, timeout: timeout, requestPolicy: requestPolicy)
-        let markdown = String(page.markdown.prefix(maxBytes))
-        let truncatedSuffix = page.markdown.utf8.count > markdown.utf8.count
-            ? "\n\n<truncated: \(page.markdown.utf8.count - markdown.utf8.count) bytes omitted>"
+        let page: RenderedPage
+        do {
+            page = try await WebKitPageRenderer.render(url: url, timeout: timeout, requestPolicy: requestPolicy)
+        } catch let error as WebNetworkGuardError {
+            guard case .contentBlockerUnavailable = error else { throw error }
+            // Never render in WebKit without the content blocker. The raw
+            // path only fetches the main document through the guarded
+            // session, so it is safe without one.
+            let preview = try await WebToolsSupport.rawFetchPreview(
+                url: url,
+                maxBytes: maxBytes,
+                timeout: timeout,
+                policy: requestPolicy
+            )
+            return "note: \(error.localizedDescription)\n" + preview
+        }
+        let fullMarkdown = page.markdown
+        let markdown = Self.truncated(fullMarkdown, toBytes: maxBytes)
+        let truncatedSuffix = fullMarkdown.utf8.count > markdown.utf8.count
+            ? "\n\n<truncated: \(fullMarkdown.utf8.count - markdown.utf8.count) bytes omitted>"
             : ""
         return """
         url: \(page.finalURL)
@@ -61,4 +77,21 @@ struct WebFetchTool: FeatureTool {
         )
         #endif
     }
+
+    /// Cuts `text` so that it fits in `maxBytes` of UTF-8 without splitting
+    /// a character; `prefix(_:)` on `String` counts characters, so a page of
+    /// multi-byte text could otherwise exceed the requested byte budget.
+    static func truncated(_ text: String, toBytes maxBytes: Int) -> String {
+        guard text.utf8.count > maxBytes else { return text }
+        var index = text.utf8.index(text.utf8.startIndex, offsetBy: maxBytes)
+        while index > text.startIndex, !text.utf8[index].isUTF8ScalarStart {
+            index = text.utf8.index(before: index)
+        }
+        return String(text[..<index])
+    }
+}
+
+private extension UInt8 {
+    /// True when a UTF-8 code unit begins a scalar (not a continuation byte).
+    var isUTF8ScalarStart: Bool { self & 0xC0 != 0x80 }
 }

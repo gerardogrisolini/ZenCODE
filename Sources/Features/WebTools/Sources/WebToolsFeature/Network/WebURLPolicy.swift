@@ -64,7 +64,7 @@ struct WebURLPolicy: Sendable {
         if host == "localhost" || host.hasSuffix(".localhost") || host == "::1" {
             return true
         }
-        if let octets = ipv4Octets(host) {
+        if let octets = ipv4Octets(host) ?? Self.parseIPv4Literal(host) {
             return octets[0] == 127
         }
         guard let bytes = ipv6Bytes(host) else { return false }
@@ -75,6 +75,64 @@ struct WebURLPolicy: Sendable {
     private func embedsIPv4(_ bytes: [UInt8]) -> Bool {
         bytes[0..<12].allSatisfy { $0 == 0 }
             || (bytes[0..<10].allSatisfy { $0 == 0 } && bytes[10] == 0xff && bytes[11] == 0xff)
+    }
+
+    /// WHATWG URL "ends in a number": the last label is all ASCII digits or
+    /// `0x` followed by hex digits (possibly empty). Such hosts are IPv4
+    /// literal candidates and are never sent to DNS by browsers.
+    static func endsInNumber(_ host: String) -> Bool {
+        guard let last = host.split(separator: ".", omittingEmptySubsequences: false).last, !last.isEmpty else {
+            return false
+        }
+        if last.allSatisfy(\.isASCIIDigit) { return true }
+        if last.hasPrefix("0x") {
+            return last.dropFirst(2).allSatisfy(\.isASCIIHexDigit)
+        }
+        return false
+    }
+
+    /// Parses every IPv4 literal form accepted by `inet_aton` and the WHATWG
+    /// URL host parser (octal `0177.0.0.1`, hex `0x7f.1`, decimal
+    /// `2130706433`, short `127.1`), returning the four octets or nil when the
+    /// value is not a valid IPv4 literal. Callers reject nil fail-closed when
+    /// the host ends in a number.
+    static func parseIPv4Literal(_ host: String) -> [UInt8]? {
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...4).contains(parts.count), !parts.contains(where: \.isEmpty) else { return nil }
+        var numbers = [UInt64]()
+        for part in parts {
+            guard let number = parseIPv4Number(part) else { return nil }
+            numbers.append(number)
+        }
+        let last = numbers.removeLast()
+        guard numbers.allSatisfy({ $0 <= 255 }) else { return nil }
+        let remaining = 4 - numbers.count
+        guard last < (UInt64(1) << (8 * UInt64(remaining))) else { return nil }
+        var value: UInt64 = 0
+        for number in numbers {
+            value = (value << 8) | number
+        }
+        value = (value << (8 * UInt64(remaining))) | last
+        return [
+            UInt8((value >> 24) & 0xff), UInt8((value >> 16) & 0xff),
+            UInt8((value >> 8) & 0xff), UInt8(value & 0xff),
+        ]
+    }
+
+    private static func parseIPv4Number(_ part: Substring) -> UInt64? {
+        var digits = part
+        var radix = 10
+        if digits.hasPrefix("0x") {
+            digits = digits.dropFirst(2)
+            radix = 16
+            if digits.isEmpty { return 0 }
+        } else if digits.count > 1, digits.first == "0" {
+            digits = digits.dropFirst()
+            radix = 8
+        }
+        // `UInt64(_:radix:)` accepts a leading sign; an address label never has one.
+        guard !digits.isEmpty, digits.count <= 16, digits.allSatisfy(\.isASCIIHexDigit) else { return nil }
+        return UInt64(digits, radix: radix)
     }
 
     private func normalizedHost(_ host: String) -> String {
@@ -89,13 +147,20 @@ struct WebURLPolicy: Sendable {
         if host == "localhost" || host.hasSuffix(".localhost") || host == "local" || host.hasSuffix(".local") {
             return true
         }
+        if host.contains(":") {
+            return isRestrictedIPv6(host)
+        }
         if let octets = ipv4Octets(host) {
             return isRestrictedIPv4(octets)
         }
-        if isAmbiguousNumericHost(host) {
-            return true
+        if Self.endsInNumber(host) {
+            // Browsers and the C resolver treat this as an IPv4 literal (octal,
+            // hex, short or decimal form) rather than a DNS name. Evaluate the
+            // address it denotes; an unparsable candidate fails closed.
+            guard let octets = Self.parseIPv4Literal(host) else { return true }
+            return isRestrictedIPv4(octets)
         }
-        return isRestrictedIPv6(host)
+        return false
     }
 
     private func ipv4Octets(_ host: String) -> [UInt8]? {
@@ -143,15 +208,38 @@ struct WebURLPolicy: Sendable {
     }
 
     private func isRestrictedIPv6(_ host: String) -> Bool {
-        guard host.contains(":"),
-              let bytes = ipv6Bytes(host)
-        else {
-            return false
-        }
+        // A host containing ':' can only be an IPv6 literal. Anything that
+        // does not parse (zone identifiers such as fe80::1%en0, malformed
+        // literals) fails closed: it can never denote a public destination.
+        guard let bytes = ipv6Bytes(host) else { return true }
 
         // :: (unspecified) and ::1 (loopback) are not public destinations.
         if bytes[0..<15].allSatisfy({ $0 == 0 }) && bytes[15] <= 1 {
             return true
+        }
+        // 100::/64 discard-only (RFC 6666).
+        if bytes[0] == 0x01 && bytes[1..<8].allSatisfy({ $0 == 0 }) {
+            return true
+        }
+        if bytes[0] == 0x20 && bytes[1] == 0x01 {
+            // 2001:db8::/32 documentation, 2001:2::/48 benchmarking,
+            // 2001:10::/28 and 2001:20::/28 ORCHID are not routable.
+            if bytes[2] == 0x0d && bytes[3] == 0xb8 { return true }
+            if bytes[2] == 0x00 && bytes[3] == 0x02 && bytes[4] == 0 && bytes[5] == 0 { return true }
+            if bytes[2] == 0x00 && (bytes[3] & 0xf0) == 0x10 { return true }
+            if bytes[2] == 0x00 && (bytes[3] & 0xf0) == 0x20 { return true }
+        }
+        // 6to4 (2002:a.b.c.d::/48) embeds the IPv4 relay in bytes 2..5.
+        if bytes[0] == 0x20 && bytes[1] == 0x02 {
+            return isRestrictedIPv4(Array(bytes[2..<6]))
+        }
+        // NAT64 well-known prefix 64:ff9b::/96 embeds IPv4 in the last four
+        // bytes; 64:ff9b:1::/48 is the local-use prefix (RFC 8215).
+        if bytes[0] == 0x00 && bytes[1] == 0x64 && bytes[2] == 0xff && bytes[3] == 0x9b {
+            if bytes[4] == 0 && bytes[5] == 1 { return true }
+            if bytes[4..<12].allSatisfy({ $0 == 0 }) {
+                return isRestrictedIPv4(Array(bytes[12..<16]))
+            }
         }
         // Link-local fe80::/10, legacy site-local fec0::/10, unique-local
         // fc00::/7, and multicast ff00::/8 are not public destinations.
@@ -181,17 +269,9 @@ struct WebURLPolicy: Sendable {
         }
     }
 
-    private func isAmbiguousNumericHost(_ host: String) -> Bool {
-        let allowedCharacters = CharacterSet(charactersIn: "0123456789abcdefx.:[]")
-        guard !host.isEmpty,
-              host.unicodeScalars.allSatisfy({ allowedCharacters.contains($0) })
-        else {
-            return false
-        }
-        // Canonical IPv4 and IPv6 forms were handled above. Anything else made
-        // exclusively from numeric-address characters may be accepted by the
-        // network stack as an alternative literal representation, so fail
-        // closed.
-        return ipv4Octets(host) == nil && !host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).contains(":")
-    }
+}
+
+private extension Character {
+    var isASCIIDigit: Bool { isASCII && isNumber }
+    var isASCIIHexDigit: Bool { isASCII && isHexDigit }
 }

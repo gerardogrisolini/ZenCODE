@@ -153,6 +153,62 @@ struct XcodeFileChangeCaptureTests {
     }
 
     @Test
+    func symlinkedSourceFilesReportTheTargetContents() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let target = project.root.appendingPathComponent("Shared.swift")
+        let link = project.sources.appendingPathComponent("Linked.swift")
+        try "v1\n".write(to: target, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        let capture = try #require(XcodeFileChangeCapture(
+            request: ToolRequest(name: "XcodeUpdate", arguments: ["filePath": .string("App/Core/Linked.swift")]),
+            roots: [project.root]
+        ))
+        // Edit through the link without replacing it, as an editor would.
+        try "v2\n".write(to: link, atomically: false, encoding: .utf8)
+
+        #expect(capture.finish(succeeded: true) == [
+            FeatureInvocationFileChange(
+                path: link.standardizedFileURL.path,
+                oldText: "v1\n",
+                newText: "v2\n"
+            )
+        ])
+
+        let dangling = project.sources.appendingPathComponent("Dangling.swift")
+        try FileManager.default.createSymbolicLink(
+            at: dangling,
+            withDestinationURL: project.root.appendingPathComponent("Missing.swift")
+        )
+        guard case .opaque = XcodeFileChangeCapture.snapshot(dangling) else {
+            Issue.record("A dangling symlink must stay opaque, not absent or readable.")
+            return
+        }
+    }
+
+    @Test
+    func failedResultsIncludeStructuredSuccessFlags() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let file = project.sources.appendingPathComponent("Same.swift")
+        try "same\n".write(to: file, atomically: true, encoding: .utf8)
+        let capture = try #require(XcodeFileChangeCapture(
+            request: ToolRequest(name: "XcodeUpdate", arguments: ["filePath": .string(file.path)]),
+            roots: []
+        ))
+
+        #expect(capture.finish(succeeded: !XcodeToolExecutor.isErrorResult(.object([
+            "structuredContent": .object(["success": .bool(false), "message": .string("No match")])
+        ]))).isEmpty)
+        #expect(XcodeToolExecutor.isErrorResult(.object(["isError": .bool(true)])))
+        #expect(!XcodeToolExecutor.isErrorResult(.object([
+            "structuredContent": .object(["success": .bool(true)])
+        ])))
+        #expect(!XcodeToolExecutor.isErrorResult(.string("plain")))
+    }
+
+    @Test
     func readOnlyAndDirectoryToolsAreNotTracked() {
         #expect(!XcodeFileChangeCapture.tracksChanges(toolName: "XcodeRead"))
         #expect(!XcodeFileChangeCapture.tracksChanges(toolName: "XcodeMakeDir"))

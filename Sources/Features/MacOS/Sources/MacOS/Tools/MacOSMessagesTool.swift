@@ -13,7 +13,7 @@ struct MacOSMessagesTool: FeatureTool {
 
     static let inputSchema = MacOSToolSupport.inputSchema(
         app,
-        actionDescription: "chats: recent conversations. read: messages of a conversation (chat_id or handle), newest first. send: a text to a conversation (chat_id) or to a handle/contact (to).",
+        actionDescription: "chats: recent conversations. read: the most recent messages of a conversation (chat_id or handle), returned in chronological order. send: a text to a conversation (chat_id) or to a handle/contact (to).",
         properties: #"""
         "limit": { "type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum results: chats (default 50) and read (default 30)." },
             "query": { "type": "string", "description": "chats: substring filter on handle and name. read: substring filter on the text." },

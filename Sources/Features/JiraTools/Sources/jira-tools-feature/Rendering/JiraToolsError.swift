@@ -1,4 +1,5 @@
 import Foundation
+import ToolCore
 
 enum JiraToolsError: LocalizedError {
     case missingArgument(String)
@@ -9,7 +10,7 @@ enum JiraToolsError: LocalizedError {
     case browserSetupFailed(String)
     case browserSetupTimedOut
     case requestFailed(String)
-    case issueNotFound(String)
+    case issueNotFound(String, message: String? = nil)
     case keychain(Int32)
     case environmentConfigurationRequired(missing: [String], reason: String? = nil)
 
@@ -31,8 +32,11 @@ enum JiraToolsError: LocalizedError {
             return "Jira setup timed out waiting for the browser sign-in. Run the Jira tool again to retry."
         case let .requestFailed(message):
             return message
-        case let .issueNotFound(issueKey):
-            return "Unable to load Jira issue \(issueKey) from the REST API."
+        case let .issueNotFound(issueKey, message):
+            guard let message = message?.nilIfBlank else {
+                return "Unable to load Jira issue \(issueKey) from the REST API."
+            }
+            return "Jira issue \(issueKey) was not found (HTTP 404): the issue does not exist or the account cannot view it. \(message)"
         case let .keychain(status):
             return "Unable to access the Jira API token in Keychain (\(status))."
         case let .environmentConfigurationRequired(missing, reason):

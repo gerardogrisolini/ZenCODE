@@ -14,7 +14,10 @@ extension DesktopController {
         guard let dictionaries = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return []
         }
-        let appsByPID = Dictionary(uniqueKeysWithValues: NSWorkspace.shared.runningApplications.map { ($0.processIdentifier, $0) })
+        let appsByPID = Dictionary(
+            NSWorkspace.shared.runningApplications.map { ($0.processIdentifier, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         return dictionaries.compactMap { dictionary in
             guard let number = (dictionary[kCGWindowNumber as String] as? NSNumber)?.uint32Value,

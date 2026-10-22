@@ -5,9 +5,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **ZenCODE** is a fast, native-Swift coding agent for the terminal and ACP. Bring any
-OpenAI-compatible API key, use an existing local DS4 checkout as an optional
+OpenAI-compatible API key, use an existing local [DS4](https://github.com/antirez/ds4) checkout as an optional
 OpenAI-compatible provider, or sign in with your existing ChatGPT or Claude
-subscription — no API key required. ZenCODE itself is one compiled binary with no
+subscription. 
+ZenCODE itself is one compiled binary with no
 Node runtime, running on macOS, Linux, and Windows (via WSL), all the way down to a
 Raspberry Pi.
 

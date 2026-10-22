@@ -203,7 +203,9 @@ public nonisolated enum XcodeToolRequestCompatibility {
                 in: &normalized
             )
         default:
-            normalized = arguments
+            // Unknown or schema-less tools pass their arguments through, but a
+            // tab identifier alias canonicalized above must survive the merge.
+            normalized = arguments.merging(normalized) { _, canonical in canonical }
         }
 
         return normalized

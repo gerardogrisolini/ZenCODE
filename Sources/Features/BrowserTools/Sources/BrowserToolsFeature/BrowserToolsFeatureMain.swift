@@ -138,7 +138,7 @@ struct BrowserOpenTool: FeatureTool {
                 // A page becomes persistent only after successful setup. Do
                 // not leave a partially initialized target behind on failures
                 // or task cancellation.
-                await browser.closeTab(id: tab.id)
+                await BrowserToolsRunner.closeTabAfterOperation(browser, id: tab.id)
                 throw error
             }
         } catch let error as CDPError {
@@ -474,7 +474,11 @@ enum BrowserToolsRunner {
         }
     }
 
-    private static func closeTabAfterOperation(_ browser: ChromeBrowserManager, id: String) async {
+    /// Closes a tab from a detached task so the HTTP request still completes
+    /// when the surrounding tool invocation has already been cancelled;
+    /// otherwise the cancelled URLSession call would return immediately and
+    /// leave the tab open.
+    static func closeTabAfterOperation(_ browser: ChromeBrowserManager, id: String) async {
         await Task.detached(name: "BrowserTools.closeTab") { @Sendable in
             await browser.closeTab(id: id)
         }.value

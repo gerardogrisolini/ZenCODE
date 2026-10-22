@@ -192,11 +192,12 @@ struct BrowserURLPolicy: Sendable {
     }
 
     private func isRestrictedIPv6(_ host: String) -> Bool {
-        guard host.contains(":"),
-              let bytes = ipv6Bytes(host)
-        else {
-            return false
-        }
+        guard host.contains(":") else { return false }
+        // A colon can only belong to an IPv6 literal here (URLComponents never
+        // leaves a port in the host). Anything inet_pton cannot parse, such as
+        // a zone-scoped link-local literal (`fe80::1%en0`), cannot be
+        // classified and must fail closed rather than bypass the checks below.
+        guard let bytes = ipv6Bytes(host) else { return true }
 
         // :: is unspecified; ::1 was handled as loopback above.
         if bytes.allSatisfy({ $0 == 0 }) {
@@ -238,17 +239,33 @@ struct BrowserURLPolicy: Sendable {
         }
     }
 
+    /// Chrome parses a host as an IPv4 address whenever its last dot-separated
+    /// label "ends in a number" (WHATWG URL): all decimal digits, or `0x`
+    /// followed by hexadecimal digits. Canonical dotted-quad literals were
+    /// classified by `ipv4Octets` already, so any other host of that shape is
+    /// either an alternative literal (octal/hex/short/decimal forms such as
+    /// `0177.0.0.1`, `0x7f.1`, or `2130706433`) or an invalid URL; both fail
+    /// closed. Ordinary hostnames whose labels merely use hexadecimal letters
+    /// (`adac.de`, `abc.de`) are not numeric and stay subject to the normal
+    /// resolved-address checks instead.
     private func isAmbiguousNumericHost(_ host: String) -> Bool {
-        let allowedCharacters = CharacterSet(charactersIn: "0123456789abcdefx.:[]")
         guard !host.isEmpty,
-              host.unicodeScalars.allSatisfy({ allowedCharacters.contains($0) })
+              !host.contains(":"),
+              let lastLabel = host.split(separator: ".", omittingEmptySubsequences: false).last,
+              !lastLabel.isEmpty,
+              ipv4Octets(host) == nil
         else {
             return false
         }
-        // Canonical IPv4 and IPv6 forms were handled above. Anything else made
-        // exclusively from numeric-address characters may be accepted by Chrome
-        // as an alternative literal representation, so fail closed.
-        return ipv4Octets(host) == nil && !host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).contains(":")
+        let decimalDigits = CharacterSet(charactersIn: "0123456789")
+        let hexadecimalDigits = CharacterSet(charactersIn: "0123456789abcdef")
+        if lastLabel.unicodeScalars.allSatisfy(decimalDigits.contains) {
+            return true
+        }
+        if lastLabel.hasPrefix("0x") {
+            return lastLabel.dropFirst(2).unicodeScalars.allSatisfy(hexadecimalDigits.contains)
+        }
+        return false
     }
 }
 
