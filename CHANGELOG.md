@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.3.6] - 2026-10-22
+
 ### Changed
 
 - Git: for the tools that take no file pathspec (`git.status`, `git.log`,
