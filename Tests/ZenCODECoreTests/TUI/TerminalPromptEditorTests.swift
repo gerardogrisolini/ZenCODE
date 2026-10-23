@@ -677,6 +677,19 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
+    func escapeStopsReadingAloudWithoutClearingTheDraft() {
+        var editor = makeEditor("/fea")
+        let speaking = TerminalPromptEditorContext(
+            suggestions: commandCatalog,
+            isSpeaking: true
+        )
+
+        // Stopping the reading wins over dismissing completions or clearing.
+        #expect(editor.apply(.cancel, context: speaking) == .cancelRequested)
+        #expect(String(editor.buffer) == "/fea")
+    }
+
+    @Test
     func escapeStopsGenerationEvenWhenCommandSuggestionsAreVisible() {
         var editor = makeEditor("/fea")
         let context = TerminalPromptEditorContext(

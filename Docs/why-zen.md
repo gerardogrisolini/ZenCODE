@@ -44,5 +44,6 @@ Why this project exists and where it differs from other coding agents.
 
 ## Extras
 
-- Remote control via Telegram, with optional voice-message transcription configured in setup.
+- Voice mode with any agent: `/voice on` turns speech into prompts and reads the answers aloud, with speech recognition and synthesis on your machine (Apple speech frameworks on macOS, sherpa-onnx on Linux). See [voice.md](voice.md).
+- Remote control via Telegram, with voice notes transcribed on the machine into prompts on macOS and Linux.
 - Simple installation via script.

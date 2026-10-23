@@ -20,7 +20,7 @@ extension TerminalChat {
               let fence = telegramWireFence(for: origin) else { return }
         guard isVoiceConfigured() else {
             await sendTelegramSystemMessage(
-                "Voice-message transcription is not configured. Run the /setup command in zen and enable voice-message transcription.",
+                AgentVoiceTranscriptionError.notEnabledMessage,
                 to: chatID,
                 origin: origin
             )

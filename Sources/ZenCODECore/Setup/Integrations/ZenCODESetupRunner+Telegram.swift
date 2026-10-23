@@ -20,7 +20,7 @@ extension ZenCODESetupRunner {
             selectedModelID: manifest.selectedModelID,
             selectedThinkingSelection: manifest.selectedThinkingSelection,
             telegram: telegram,
-            voice: voiceSettings(for: telegram),
+            voice: voiceSettings(for: telegram, existing: manifest.voice),
             remoteAPIKeysByProviderID: manifest.remoteAPIKeysByProviderID,
             localExecAllowedCommands: manifest.localExecAllowedCommands,
             chatGPTSubscriptionCredentials: manifest.chatGPTSubscriptionCredentials,
@@ -30,23 +30,27 @@ extension ZenCODESetupRunner {
         )
     }
 
-    /// Voice transcription is a Telegram capability, supported only by the
-    /// built-in macOS speech frameworks. Keep it absent whenever Telegram is
-    /// not active so disabling Telegram cannot leave voice enabled.
+    /// Voice-message transcription is a Telegram capability, on whenever
+    /// Telegram is active: macOS transcribes with the system speech
+    /// frameworks, Linux with the sherpa-onnx files of `/setup` > Voice mode.
+    /// Keep it absent whenever Telegram is not active so disabling Telegram
+    /// cannot leave voice enabled. The language follows the response language.
+    /// The reading voice and the options chosen in `/setup` > Voice mode
+    /// belong to terminal voice mode, so they survive either way (and on
+    /// Linux, where the reading voice is inert).
     static func voiceSettings(
-        for telegram: AgentTelegramSettingsManifest?
+        for telegram: AgentTelegramSettingsManifest?,
+        existing: AgentVoiceSettingsManifest? = nil
     ) -> AgentVoiceSettingsManifest? {
-        #if os(macOS)
-        guard telegram?.isEnabled == true else {
-            return nil
-        }
-        return AgentVoiceSettingsManifest(
-            enabled: true,
-            language: AgentVoiceSettingsManifest.defaultLanguage
+        let settings = AgentVoiceSettingsManifest(
+            enabled: telegram?.isEnabled == true,
+            macOSVoiceIdentifier: existing?.macOSVoiceIdentifier,
+            utteranceSilenceSeconds: existing?.utteranceSilenceSeconds,
+            maximumSpokenCharacters: existing?.maximumSpokenCharacters,
+            sendMode: existing?.sendMode,
+            sendKeyword: existing?.sendKeyword
         )
-        #else
-        return nil
-        #endif
+        return settings.isEmpty ? nil : settings
     }
 
     static func promptTelegramSettings(

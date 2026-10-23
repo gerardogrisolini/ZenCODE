@@ -61,6 +61,12 @@ extension TerminalChat {
 
     func runInteractivePanelLoop() async throws {
         let eventQueue = interactiveRuntimeEventQueueForTesting ?? TerminalChatEventQueue()
+        // An observation replays the room's retained transcript. Voice mode
+        // announces only what is sent from now on, never that replay; taken
+        // before the observation starts so a message sent in between is new.
+        var voiceAnnouncementsSince = Date.now
+        // `/voice on` feeds dictated utterances into this FIFO.
+        voiceEventQueue = eventQueue
         // This loop owns the only Telegram ingress consumer, so replies to a
         // forwarded card can actually be delivered while it runs.
         readsTelegramIngress = true
@@ -139,6 +145,15 @@ extension TerminalChat {
             Task(name: "ZenCODE.TUI.shared-chat-reader-remove") { [statusBar] in
                 await statusBar.removeSharedChatReader()
             }
+            // Synchronous fallback for early exits; the normal exit path stops
+            // voice mode explicitly below.
+            let voice = voiceController
+            voiceController = nil
+            voiceEventQueue = nil
+            cancelVoiceDialogueDeadline()
+            Task(name: "ZenCODE.TUI.voice-stop") {
+                await voice?.stop()
+            }
         }
 
         func scheduleQueuedPromptIfNeeded() {
@@ -182,12 +197,16 @@ extension TerminalChat {
             // the intentionally persistent compact zero-message dock.
             await statusBar.removeSharedChatReader()
             sharedChatRoomID = sessionID
+            voiceAnnouncementsSince = Date.now
             sharedChatObservation = await startInteractiveSharedChatObservation(
                 roomID: sharedChatRoomID,
                 eventQueue: eventQueue
             )
             sharedChatReadingBuffer = TerminalSharedChatReadingBuffer()
             isSharedChatReaderOpen = false
+            // The retired room's messages are never announced in the new one,
+            // and an announcement of its being read stops here.
+            await interruptVoicePlayback()
             await showCompactSharedChatDock()
             interactiveReader.setSharedChatReaderOpen(false)
             readableSharedChatMentionHandles = await sessionRunner.sharedChatMentionHandles(
@@ -364,6 +383,258 @@ extension TerminalChat {
             }
         }
 
+        /// A typed or dictated line. Returns `false` when the loop must end.
+        func handleSubmittedInputLine(_ line: String) async -> Bool {
+            // A valid leading mention is live control input, not a
+            // regular prompt. Route it before the busy/queued-prompt
+            // branches so an operator can reach active agents and the
+            // coordinator while the terminal is generating. The Core
+            // coordinator still serializes any coordinator turn.
+            switch Self.parseSharedChatMention(
+                from: line,
+                readableHandles: readableSharedChatMentionHandles
+            ) {
+            case let .route(route):
+                await sendSharedChatMention(route)
+                return true
+            case .missingText:
+                await writeFailureMessage(
+                    "ZenCODE message: add a message after the live mention.\n"
+                )
+                return true
+            case .none:
+                break
+            }
+            if !isGenerating, !queuedPrompts.isEmpty {
+                guard queuedPrompts.enqueue(
+                    TerminalQueuedPrompt(text: line, origin: .local)
+                ) else {
+                    await writeFailureMessage(
+                        "ZenCODE: prompt queue is full; wait for a queued prompt to start.\n"
+                    )
+                    return true
+                }
+                await refreshQueuedPromptCount()
+                scheduleQueuedPromptIfNeeded()
+                return true
+            }
+
+            if isGenerating {
+                switch Self.submittedLineRole(for: line) {
+                case .empty, .prompt:
+                    guard queuedPrompts.enqueue(
+                        TerminalQueuedPrompt(text: line, origin: .local)
+                    ) else {
+                        await writeFailureMessage(
+                            "ZenCODE: prompt queue is full; wait for the current prompt to finish.\n"
+                        )
+                        return true
+                    }
+                    await refreshQueuedPromptCount()
+                    return true
+                case .slashCommand:
+                    if Self.isAvailableDuringGeneration(for: line) {
+                        break
+                    }
+                    await writeFailureMessage(generatingSlashCommandMessage(for: line))
+                    return true
+                }
+            }
+
+            return await handleSubmittedPanelLine(line)
+        }
+
+        /// A transcribed voice prompt (Telegram voice note, or a dictated
+        /// slash-like utterance) always runs as a plain prompt.
+        func handleVoicePromptCompleted(_ result: TerminalVoicePromptResult) async {
+            switch result.outcome {
+            case let .success(prompt):
+                if isGenerating || !queuedPrompts.isEmpty {
+                    guard queuedPrompts.enqueue(
+                        TerminalQueuedPrompt(
+                            text: prompt,
+                            origin: result.origin,
+                            mode: .directPrompt
+                        )
+                    ) else {
+                        let message = "ZenCODE: prompt queue is full; voice prompt was not queued."
+                        await writeFailureMessage(message + "\n")
+                        await sendTelegramSystemMessageIfLinked(
+                            message,
+                            origin: result.origin
+                        )
+                        return
+                    }
+                    await refreshQueuedPromptCount()
+                    scheduleQueuedPromptIfNeeded()
+                } else {
+                    await startDirectPrompt(prompt, origin: result.origin)
+                }
+            case let .failure(message):
+                await writeFailureMessage("ZenCODE: \(message)\n")
+                await sendTelegramSystemMessageIfLinked(
+                    "Voice transcription failed: \(message)",
+                    origin: result.origin
+                )
+            }
+        }
+
+        // MARK: Live chat by voice
+
+        /// The voice controller while it listens: the live-chat dialogue
+        /// announces, reads and asks only then.
+        func availableVoiceController() async -> (any TerminalVoiceController)? {
+            guard let controller = voiceController,
+                  await controller.isActive,
+                  await !controller.isPaused else {
+                return nil
+            }
+            return controller
+        }
+
+        /// Reads a dialogue text whole; `false` when nothing was started.
+        func speakVoiceDialogue(_ text: String) async -> Bool {
+            guard let controller = await availableVoiceController() else {
+                return false
+            }
+            return await controller.speak(text, rendering: .plainText)
+        }
+
+        /// Reads a dialogue question or request; when nothing can be read the
+        /// dialogue cannot go on and is dropped, so a later utterance is never
+        /// taken for the answer to a question nobody heard.
+        func speakVoiceDialogueOrCancel(_ text: String) async {
+            if await !speakVoiceDialogue(text) {
+                await cancelVoiceChatDialogue()
+            }
+        }
+
+        func voiceLanguageCode() async -> String? {
+            await availableVoiceController()?.languageCode
+        }
+
+        /// A spoken question lapses in silence when its answer is overdue.
+        func armVoiceDialogueDeadline(_ token: UUID) {
+            cancelVoiceDialogueDeadline()
+            let timeout = voiceDialogueAnswerTimeout
+            voiceDialogueDeadlineTask = Task(name: "ZenCODE.TUI.voice-dialogue-deadline") {
+                try? await Task.sleep(for: timeout)
+                guard !Task.isCancelled else { return }
+                _ = await eventQueue.sendWithBackpressure(.voiceDialogueTimedOut(token))
+            }
+        }
+
+        /// Announces the next queued message, unless voice mode is off or
+        /// paused, something is still being read, or a question is pending.
+        /// Messages read in the dock meanwhile are skipped.
+        func startNextVoiceAnnouncement() async {
+            guard let controller = await availableVoiceController(),
+                  await !controller.isSpeaking else {
+                return
+            }
+            guard let announcement = voiceChatDialogue.beginAnnouncement(
+                skipping: { !sharedChatReadingBuffer.isUnread($0) }
+            ) else {
+                return
+            }
+            await syncVoiceDialogueAnswerState()
+            let message = announcement.message
+            let text = TerminalVoiceChatPhrases.announcement(
+                sender: AgentSharedChat.displayName(for: message.sender),
+                isBroadcast: message.recipientIDs.count > 1,
+                remaining: announcement.remaining,
+                languageCode: controller.languageCode
+            )
+            if await !controller.speak(text, rendering: .plainText) {
+                voiceChatDialogue.announcementNotSpoken()
+                await syncVoiceDialogueAnswerState()
+            }
+        }
+
+        /// Repaints the dock from the reading buffer, e.g. after new messages
+        /// or once voice mode consumed one.
+        func refreshSharedChatDock() async {
+            let entries = await sharedChatReaderEntries()
+            await withBottomOverlayTransition {
+                await statusBar.setSharedChatReader(
+                    entries: entries,
+                    unreadCount: sharedChatReadingBuffer.unreadCount,
+                    isExpanded: isSharedChatReaderOpen,
+                    observationID: sharedChatObservation.observation.id
+                )
+            }
+        }
+
+        /// Carries out what the dialogue decided for a dictated utterance.
+        /// Returns `false` when the loop must end.
+        func handleVoiceUtterance(_ utterance: String) async -> Bool {
+            // Nothing was heard: the question, if any, stays open.
+            guard !utterance.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return true
+            }
+            cancelVoiceDialogueDeadline()
+            let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sharedChatRoomID)
+            let action = voiceChatDialogue.interpret(utterance, participants: participants)
+            await syncVoiceDialogueAnswerState()
+            switch action {
+            case .prompt:
+                switch Self.dictatedPromptEvent(for: utterance) {
+                case let .input(.submitted(line)):
+                    return await handleSubmittedInputLine(line)
+                case let .voicePromptCompleted(result):
+                    await handleVoicePromptCompleted(result)
+                default:
+                    break
+                }
+            case let .read(message):
+                let languageCode = await voiceLanguageCode()
+                let text = TerminalVoiceChatPhrases.readAloud(
+                    text: TerminalVoiceSpeechText.speakable(
+                        fromMarkdown: Self.sharedChatTerminalSafeText(message.text),
+                        languageCode: languageCode
+                    ),
+                    languageCode: languageCode
+                )
+                guard await speakVoiceDialogue(text) else {
+                    await cancelVoiceChatDialogue()
+                    return true
+                }
+                // Reading aloud consumes the message like opening it in the dock.
+                sharedChatReadingBuffer.markRead(id: message.id)
+                await refreshSharedChatDock()
+            case .declined, .skip:
+                await startNextVoiceAnnouncement()
+            case .askReplyText:
+                await speakVoiceDialogueOrCancel(TerminalVoiceChatPhrases.replyPrompt(languageCode: voiceLanguageCode()))
+            case .askMessageText:
+                await speakVoiceDialogueOrCancel(TerminalVoiceChatPhrases.messagePrompt(languageCode: voiceLanguageCode()))
+            case let .send(destination, text, label):
+                let languageCode = await voiceLanguageCode()
+                // Checked here as well so the spoken reason names the agent;
+                // the terminal gets the same notice a typed mention would.
+                guard await isCurrentSharedChatDirectDestination(destination) else {
+                    await writeFailureMessage("ZenCODE message: selected agent is no longer active.\n")
+                    _ = await speakVoiceDialogue(
+                        TerminalVoiceChatPhrases.agentInactive(name: label, languageCode: languageCode)
+                    )
+                    return true
+                }
+                let sent = await sendSharedChatMention(
+                    SharedChatMentionRoute(destination: destination, text: text)
+                )
+                _ = await speakVoiceDialogue(
+                    sent
+                        ? TerminalVoiceChatPhrases.sent(languageCode: languageCode)
+                        : TerminalVoiceChatPhrases.sendFailed(languageCode: languageCode)
+                )
+            case let .unknownAgent(name):
+                _ = await speakVoiceDialogue(
+                    TerminalVoiceChatPhrases.unknownAgent(name: name, languageCode: voiceLanguageCode())
+                )
+            }
+            return true
+        }
+
         eventLoop: for await event in eventQueue.events {
             // A slash command may have swapped the session between two events.
             await rebindSharedChatObservationIfNeeded()
@@ -391,67 +662,12 @@ extension TerminalChat {
             case let .input(inputEvent):
                 switch inputEvent {
                 case let .submitted(line):
-                    // A valid leading mention is live control input, not a
-                    // regular prompt. Route it before the busy/queued-prompt
-                    // branches so an operator can reach active agents and the
-                    // coordinator while the terminal is generating. The Core
-                    // coordinator still serializes any coordinator turn.
-                    switch Self.parseSharedChatMention(
-                        from: line,
-                        readableHandles: readableSharedChatMentionHandles
-                    ) {
-                    case let .route(route):
-                        await sendSharedChatMention(route)
-                        continue
-                    case .missingText:
-                        await writeFailureMessage(
-                            "ZenCODE message: add a message after the live mention.\n"
-                        )
-                        continue
-                    case .none:
-                        break
-                    }
-                    if !isGenerating, !queuedPrompts.isEmpty {
-                        guard queuedPrompts.enqueue(
-                            TerminalQueuedPrompt(text: line, origin: .local)
-                        ) else {
-                            await writeFailureMessage(
-                                "ZenCODE: prompt queue is full; wait for a queued prompt to start.\n"
-                            )
-                            continue
-                        }
-                        await refreshQueuedPromptCount()
-                        scheduleQueuedPromptIfNeeded()
-                        continue
-                    }
-
-                    if isGenerating {
-                        switch Self.submittedLineRole(for: line) {
-                        case .empty, .prompt:
-                            guard queuedPrompts.enqueue(
-                                TerminalQueuedPrompt(text: line, origin: .local)
-                            ) else {
-                                await writeFailureMessage(
-                                    "ZenCODE: prompt queue is full; wait for the current prompt to finish.\n"
-                                )
-                                continue
-                            }
-                            await refreshQueuedPromptCount()
-                            continue
-                        case .slashCommand:
-                            if Self.isAvailableDuringGeneration(for: line) {
-                                break
-                            }
-                            await writeFailureMessage(generatingSlashCommandMessage(for: line))
-                            continue
-                        }
-                    }
-
-                    guard await handleSubmittedPanelLine(line) else {
+                    guard await handleSubmittedInputLine(line) else {
                         break eventLoop
                     }
                 case .cancelRequested:
                     generationTask?.cancel()
+                    await interruptVoicePlayback()
                 case .toggleAccessModeRequested:
                     let accessMode = await sessionRunner.toggleLocalExecAccessMode()
                     await statusBar.update(localExecAccessMode: accessMode)
@@ -545,6 +761,16 @@ extension TerminalChat {
                 // not keep advertising attachments that already left.
                 await synchronizePanelPendingAttachmentCount()
                 await finishPromptResult(result)
+                var isReadingAnswer = false
+                if case let .success(success) = result {
+                    isReadingAnswer = await speakVoiceResponse(success.finalAssistantContent)
+                }
+                if !isReadingAnswer {
+                    // No answer to read (failed turn, nothing to say, voice
+                    // paused): a message set aside for the turn can be
+                    // announced right away.
+                    await startNextVoiceAnnouncement()
+                }
                 await refreshSharedChatPanelSuggestions()
                 await refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
                 // Release the room only once the queue state is final, so the
@@ -606,16 +832,16 @@ extension TerminalChat {
                 // or its unread counter twice.
                 let newMessages = sharedChatReadingBuffer.append(messages)
                 guard !newMessages.isEmpty else { continue }
-                let entries = await sharedChatReaderEntries()
-                await withBottomOverlayTransition {
-                    await statusBar.setSharedChatReader(
-                        entries: entries,
-                        unreadCount: sharedChatReadingBuffer.unreadCount,
-                        isExpanded: isSharedChatReaderOpen,
-                        observationID: sharedChatObservation.observation.id
-                    )
-                }
+                await refreshSharedChatDock()
                 await refreshSharedChatPanelSuggestions()
+                // Voice mode announces the messages for the operator sent while
+                // it listens, one at a time, after whatever is being read. A
+                // replayed transcript is older than the observation and stays
+                // silent.
+                if await availableVoiceController() != nil {
+                    voiceChatDialogue.enqueue(newMessages.filter { $0.sentAt >= voiceAnnouncementsSince })
+                    await startNextVoiceAnnouncement()
+                }
             case let .sharedChatObservationEnded(_, observationID):
                 // Ignore a delayed completion from an observation we already
                 // retired. A current stream ending is a lifecycle boundary even
@@ -701,35 +927,34 @@ extension TerminalChat {
                     scheduleQueuedPromptIfNeeded()
                 }
             case let .voicePromptCompleted(result):
-                switch result.outcome {
-                case let .success(prompt):
-                    if isGenerating || !queuedPrompts.isEmpty {
-                        guard queuedPrompts.enqueue(
-                            TerminalQueuedPrompt(
-                                text: prompt,
-                                origin: result.origin,
-                                mode: .directPrompt
-                            )
-                        ) else {
-                            let message = "ZenCODE: prompt queue is full; voice prompt was not queued."
-                            await writeFailureMessage(message + "\n")
-                            await sendTelegramSystemMessageIfLinked(
-                                message,
-                                origin: result.origin
-                            )
-                            continue
-                        }
-                        await refreshQueuedPromptCount()
-                        scheduleQueuedPromptIfNeeded()
-                    } else {
-                        await startDirectPrompt(prompt, origin: result.origin)
-                    }
-                case let .failure(message):
-                    await writeFailureMessage("ZenCODE: \(message)\n")
-                    await sendTelegramSystemMessageIfLinked(
-                        "Voice transcription failed: \(message)",
-                        origin: result.origin
-                    )
+                await handleVoicePromptCompleted(result)
+            case let .voiceUtterance(utterance):
+                guard await handleVoiceUtterance(utterance) else {
+                    break eventLoop
+                }
+            case let .voiceSpeakingChanged(isSpeaking):
+                // Only the end of speech moves the dialogue on, and only when
+                // nothing newer is being read.
+                guard !isSpeaking,
+                      let controller = voiceController,
+                      await !controller.isSpeaking else {
+                    continue
+                }
+                switch voiceChatDialogue.speechEnded() {
+                case let .armDeadline(token):
+                    await syncVoiceDialogueAnswerState()
+                    armVoiceDialogueDeadline(token)
+                case .announceNext:
+                    await startNextVoiceAnnouncement()
+                case .none:
+                    break
+                }
+            case let .voiceDialogueTimedOut(token):
+                // The question lapses in silence; its message stays unread.
+                if voiceChatDialogue.deadlineElapsed(token) {
+                    cancelVoiceDialogueDeadline()
+                    await syncVoiceDialogueAnswerState()
+                    await startNextVoiceAnnouncement()
                 }
             }
         }
@@ -754,6 +979,7 @@ extension TerminalChat {
         await stopTaskGraphObserver()
         await finalizeTelegramTurnProgressReporting()
         await remoteTranscriptions.cancelAllAndWait(shuttingDown: true)
+        await stopVoiceMode()
 
         await stopPanelInput()
     }

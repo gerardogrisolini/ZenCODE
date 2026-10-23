@@ -2,33 +2,21 @@ import Foundation
 import ToolCore
 
 enum JiraIssueParser {
-    static func issueSummaries(fromPickerResult result: JSONValue, siteURL: URL) -> [JiraIssueSummary] {
-        let sections = result["sections"]?.arrayValue
-            ?? result["issueSections"]?.arrayValue
-            ?? []
-        var summaries: [JiraIssueSummary] = []
-
-        for section in sections {
-            for issue in section["issues"]?.arrayValue ?? [] {
-                guard let key = issue["key"]?.stringValue?.nilIfBlank else { continue }
-                let summary = [
-                    issue["summaryText"]?.stringValue,
-                    issue["summary"]?.flattenedText()
-                ].compactMap { $0?.nilIfBlank }.first ?? key
-                summaries.append(
-                    JiraIssueSummary(
-                        key: key,
-                        summary: summary,
-                        status: issue["status"]?.flattenedText().nilIfBlank,
-                        issueType: issue["issuetype"]?.flattenedText().nilIfBlank,
-                        assignee: issue["assignee"]?.flattenedText().nilIfBlank,
-                        url: browseURL(siteURL: siteURL, key: key)
-                    )
-                )
-            }
+    /// Parses a `/rest/api/3/search/jql` response requested with
+    /// ``JiraRESTService/searchFields``.
+    static func issueSummaries(fromSearchResult result: JSONValue, siteURL: URL) -> [JiraIssueSummary] {
+        (result["issues"]?.arrayValue ?? []).compactMap { issue in
+            guard let key = issue["key"]?.stringValue?.nilIfBlank else { return nil }
+            let fields = issue["fields"]
+            return JiraIssueSummary(
+                key: key,
+                summary: fields?["summary"]?.stringValue?.nilIfBlank ?? key,
+                status: fields?["status"]?["name"]?.stringValue?.nilIfBlank,
+                issueType: fields?["issuetype"]?["name"]?.stringValue?.nilIfBlank,
+                assignee: fields?["assignee"]?["displayName"]?.stringValue?.nilIfBlank,
+                url: browseURL(siteURL: siteURL, key: key)
+            )
         }
-
-        return summaries
     }
 
     static func issueDetail(from result: JSONValue, siteURL: URL) -> JiraIssueDetail? {

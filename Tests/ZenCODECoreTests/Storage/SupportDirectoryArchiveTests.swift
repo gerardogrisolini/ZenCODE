@@ -282,6 +282,39 @@ struct SupportDirectoryArchiveTests {
     }
 
     @Test
+    func exportSkipsDownloadedVoiceModeFilesIncludingSymlinks() throws {
+        let sourceURL = try makeTemporaryDirectory("voice")
+        _ = try populateSupportDirectory(sourceURL)
+        let voiceURL = sourceURL.appendingPathComponent(
+            SherpaOnnxVoiceInstallation.directoryName,
+            isDirectory: true
+        )
+        let modelDirectory = voiceURL.appendingPathComponent("model", isDirectory: true)
+        try fileManager.createDirectory(at: modelDirectory, withIntermediateDirectories: true)
+        try Data("weights".utf8).write(to: modelDirectory.appendingPathComponent("encoder.onnx"))
+        // A symlink anywhere else in the source makes export fail; inside the
+        // voice directory it is never visited.
+        try fileManager.createSymbolicLink(
+            at: modelDirectory.appendingPathComponent("link.onnx"),
+            withDestinationURL: modelDirectory.appendingPathComponent("encoder.onnx")
+        )
+        // Only the top-level voice directory is skipped.
+        let nestedVoiceURL = sourceURL.appendingPathComponent("nested/voice", isDirectory: true)
+        try fileManager.createDirectory(at: nestedVoiceURL, withIntermediateDirectories: true)
+        try Data("kept".utf8).write(to: nestedVoiceURL.appendingPathComponent("note.txt"))
+
+        let archiveURL = fileManager.temporaryDirectory
+            .appendingPathComponent("voice-\(UUID().uuidString).tar.gz")
+        defer { try? fileManager.removeItem(at: archiveURL) }
+        _ = try SupportDirectoryArchive.export(from: sourceURL, to: archiveURL)
+
+        let paths = Set(try SupportDirectoryArchive.validate(archiveURL: archiveURL).entries.map(\.path))
+        #expect(!paths.contains { $0.hasPrefix("voice/") })
+        #expect(paths.contains("nested/voice/note.txt"))
+        #expect(paths.contains("settings.json"))
+    }
+
+    @Test
     func exportReplacementKeepsTemporaryAndPublishedArchivesPrivate() throws {
         #if canImport(Darwin) || canImport(Glibc)
         let sourceURL = try makeTemporaryDirectory("private-export-src")

@@ -82,43 +82,120 @@ public struct AgentTelegramSettingsManifest: Codable, Equatable, Sendable {
 
 }
 
+/// Voice settings. The language of voice transcription and voice mode is not
+/// stored here: it follows the response language (`responseLanguage`), else
+/// the system language. A `language` key written by earlier versions is
+/// ignored when decoding and dropped on the next save.
 public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled
-        case language
+        case macOSVoiceIdentifier
+        case utteranceSilenceSeconds
+        case maximumSpokenCharacters
+        case sendMode
+        case sendKeyword
     }
 
-    public static let defaultLanguage = "it"
+    /// How voice mode decides that an utterance is complete and sends it.
+    public enum SendMode: String, Codable, Sendable {
+        /// After the silence of `utteranceSilenceSeconds`.
+        case pause
+        /// When the utterance ends with `sendKeyword`; silence never sends.
+        case keyword
+    }
 
+    /// Telegram voice-message transcription.
     public let enabled: Bool
-    public let language: String?
+    /// The `AVSpeechSynthesisVoice` identifier chosen in `/setup` > Voice mode
+    /// on macOS to read answers aloud; nil selects the best installed voice.
+    /// Independent of `enabled`, and inert on Linux.
+    public let macOSVoiceIdentifier: String?
+    /// Whole seconds of silence that end a spoken utterance in voice mode,
+    /// chosen in `/setup` > Voice mode; nil applies the built-in default.
+    public let utteranceSilenceSeconds: Int?
+    /// Characters of an answer read aloud before only its final sentences
+    /// are read, chosen in `/setup` > Voice mode; nil applies the built-in
+    /// default and 0 reads every answer whole.
+    public let maximumSpokenCharacters: Int?
+    /// How an utterance is sent, chosen in `/setup` > Voice mode; nil means
+    /// `.pause`. `.keyword` applies only while `sendKeyword` is set.
+    public let sendMode: SendMode?
+    /// The spoken word that ends and sends an utterance in `.keyword` mode,
+    /// kept when the mode goes back to `.pause`.
+    public let sendKeyword: String?
 
     public init(
         enabled: Bool = false,
-        language: String? = Self.defaultLanguage
+        macOSVoiceIdentifier: String? = nil,
+        utteranceSilenceSeconds: Int? = nil,
+        maximumSpokenCharacters: Int? = nil,
+        sendMode: SendMode? = nil,
+        sendKeyword: String? = nil
     ) {
-        let normalizedLanguage = language?.nilIfBlank
         self.enabled = enabled
-        self.language = enabled ? normalizedLanguage : nil
+        self.macOSVoiceIdentifier = macOSVoiceIdentifier?.nilIfBlank
+        self.utteranceSilenceSeconds = utteranceSilenceSeconds.flatMap { $0 > 0 ? $0 : nil }
+        self.maximumSpokenCharacters = maximumSpokenCharacters.flatMap { $0 >= 0 ? $0 : nil }
+        self.sendMode = sendMode
+        self.sendKeyword = sendKeyword?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
-            language: try container.decodeIfPresent(String.self, forKey: .language)
+            macOSVoiceIdentifier: try container.decodeIfPresent(
+                String.self,
+                forKey: .macOSVoiceIdentifier
+            ),
+            utteranceSilenceSeconds: try container.decodeIfPresent(
+                Int.self,
+                forKey: .utteranceSilenceSeconds
+            ),
+            maximumSpokenCharacters: try container.decodeIfPresent(
+                Int.self,
+                forKey: .maximumSpokenCharacters
+            ),
+            // An unknown mode written by a newer version falls back to pause.
+            sendMode: try container.decodeIfPresent(String.self, forKey: .sendMode)
+                .flatMap(SendMode.init(rawValue:)),
+            sendKeyword: try container.decodeIfPresent(String.self, forKey: .sendKeyword)
         )
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(enabled, forKey: .enabled)
-        if let language {
-            try container.encode(language, forKey: .language)
+        if let macOSVoiceIdentifier {
+            try container.encode(macOSVoiceIdentifier, forKey: .macOSVoiceIdentifier)
+        }
+        if let utteranceSilenceSeconds {
+            try container.encode(utteranceSilenceSeconds, forKey: .utteranceSilenceSeconds)
+        }
+        if let maximumSpokenCharacters {
+            try container.encode(maximumSpokenCharacters, forKey: .maximumSpokenCharacters)
+        }
+        if let sendMode {
+            try container.encode(sendMode, forKey: .sendMode)
+        }
+        if let sendKeyword {
+            try container.encode(sendKeyword, forKey: .sendKeyword)
         }
     }
 
+    /// Whether Telegram voice-message transcription is on.
     public var isConfigured: Bool {
         enabled
+    }
+
+    /// Nothing worth storing: transcription is off and no reading voice or
+    /// voice mode option is chosen.
+    public var isEmpty: Bool {
+        !enabled
+            && macOSVoiceIdentifier == nil
+            && utteranceSilenceSeconds == nil
+            && maximumSpokenCharacters == nil
+            && sendMode == nil
+            && sendKeyword == nil
     }
 }

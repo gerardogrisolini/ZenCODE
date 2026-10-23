@@ -316,6 +316,12 @@ enum TerminalPromptCompletionCatalog {
             TerminalCommandSuggestion(command: "on", summary: "start Telegram control"),
             TerminalCommandSuggestion(command: "off", summary: "stop Telegram control")
         ],
+        "/voice": [
+            TerminalCommandSuggestion(command: "on", summary: "start voice mode"),
+            TerminalCommandSuggestion(command: "off", summary: "stop voice mode"),
+            TerminalCommandSuggestion(command: "pause", summary: "stop listening and reading aloud"),
+            TerminalCommandSuggestion(command: "resume", summary: "listen and read aloud again")
+        ],
         "/skills": [
             TerminalCommandSuggestion(command: "all", summary: "select all installed skills"),
             TerminalCommandSuggestion(command: "none", summary: "clear the skill selection"),

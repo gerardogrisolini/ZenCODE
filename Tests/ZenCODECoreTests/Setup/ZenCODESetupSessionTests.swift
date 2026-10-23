@@ -192,12 +192,21 @@ struct ZenCODESetupSessionTests {
         let sections = ZenCODESetupRunner.setupSectionOptions(currentManifest: manifest)
             .map(\.section)
 
+        #if os(Linux) || os(macOS)
+        #expect(sections == [
+            .providersAndModels, .agents,
+            .agentModels, .responseLanguage, .features, .memoryEmbedding,
+            .ds4Runtime, .telegram, .voiceMode, .dataManagement,
+            .finish, .cancel,
+        ])
+        #else
         #expect(sections == [
             .providersAndModels, .agents,
             .agentModels, .responseLanguage, .features, .memoryEmbedding,
             .ds4Runtime, .telegram, .dataManagement,
             .finish, .cancel,
         ])
+        #endif
         for alias in ["default", "default model", "selected model", "thinking", "default thinking"] {
             #expect(!sections.contains { $0.matches(alias) })
         }
@@ -213,7 +222,7 @@ struct ZenCODESetupSessionTests {
     }
 
     @Test
-    func telegramVoiceSettingsFollowPlatformAndTelegramState() {
+    func telegramVoiceSettingsFollowTelegramStateOnEveryPlatform() {
         let enabledTelegram = AgentTelegramSettingsManifest(
             enabled: true,
             botToken: "token",
@@ -223,18 +232,56 @@ struct ZenCODESetupSessionTests {
             routes: [AgentTelegramRouteManifest(roomID: "default")]
         )
 
-        #if os(macOS)
+        // macOS and Linux both transcribe voice messages; the language
+        // follows the response language and is not stored.
         #expect(
             ZenCODESetupRunner.voiceSettings(for: enabledTelegram) ==
-                AgentVoiceSettingsManifest(
-                    enabled: true,
-                    language: AgentVoiceSettingsManifest.defaultLanguage
-                )
+                AgentVoiceSettingsManifest(enabled: true)
         )
-        #else
-        #expect(ZenCODESetupRunner.voiceSettings(for: enabledTelegram) == nil)
-        #endif
         #expect(ZenCODESetupRunner.voiceSettings(for: nil) == nil)
+    }
+
+    /// Re-running Telegram setup, enabled or not, keeps the reading voice
+    /// chosen in `/setup` > Voice mode.
+    @Test
+    func telegramSetupKeepsTheMacOSReadingVoice() {
+        let enabledTelegram = AgentTelegramSettingsManifest(
+            enabled: true,
+            botToken: "token",
+            linkedChatID: 1,
+            ownerUserID: 2,
+            routes: [AgentTelegramRouteManifest(roomID: "default")]
+        )
+        let readingVoiceOnly = AgentVoiceSettingsManifest(
+            enabled: false,
+            macOSVoiceIdentifier: "com.apple.voice.premium.it-IT.Federica"
+        )
+        let transcriptionAndVoice = AgentVoiceSettingsManifest(
+            enabled: true,
+            macOSVoiceIdentifier: "com.apple.voice.premium.it-IT.Federica"
+        )
+
+        // Telegram turned off: transcription goes, the reading voice stays.
+        for existing in [readingVoiceOnly, transcriptionAndVoice] {
+            #expect(ZenCODESetupRunner.voiceSettings(for: nil, existing: existing) == readingVoiceOnly)
+        }
+        #expect(
+            ZenCODESetupRunner.voiceSettings(
+                for: nil,
+                existing: AgentVoiceSettingsManifest(enabled: true)
+            ) == nil
+        )
+
+        // Telegram active: transcription is on, on every platform.
+        let reenabled = ZenCODESetupRunner.voiceSettings(for: enabledTelegram, existing: readingVoiceOnly)
+        #expect(reenabled == transcriptionAndVoice)
+
+        // The rebuilt settings manifest keeps it too.
+        let manifest = AgentSettingsManifest(
+            models: [],
+            voice: ZenCODESetupRunner.voiceSettings(for: nil, existing: readingVoiceOnly)
+        )
+        #expect(manifest.voice == readingVoiceOnly)
     }
 
     @Test

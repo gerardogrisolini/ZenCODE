@@ -10,8 +10,129 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Voice: the interactive terminal has a voice mode that works with any agent
+  on macOS and Linux. `/voice on` starts it, `/voice off` stops it,
+  `/voice pause` stops listening and reading answers aloud, `/voice resume`
+  restarts both, and `/voice` alone toggles pause and resume. Voice mode lasts
+  only for the current TUI session and survives agent and session switches.
+  Each utterance becomes an ordinary prompt after a pause, and every final
+  answer, including results of delegated agents, is read aloud without
+  Markdown and with code blocks replaced by a short notice; an answer longer
+  than about 600 characters is read from its final sentences after a short
+  notice, since the end usually holds the questions on how to continue; Esc
+  stops the reading. The language follows the response language, then the
+  system language. Dictated prompts are saved with the session like typed
+  ones; audio is never written to disk.
+  - macOS uses Apple speech recognition (on-device when the language supports
+    it) and the best installed system voice, after the system permission
+    prompts. Capture and playback share one audio engine with system echo
+    cancellation, so the microphone stays open and speaking while the
+    assistant talks interrupts it. When the current audio output cannot run
+    echo cancellation, voice mode starts without it and names the output,
+    suggesting a local output or headphones. The `/setup` > Voice mode
+    section, which downloads nothing on macOS, chooses the voice that reads
+    answers among the system voices installed for the voice mode language
+    (name and quality shown; Siri voices are not available to other apps), or
+    keeps "Automatic". Choosing a voice, or "Automatic" while an installed
+    voice reads the language, opens a submenu: "▶ Listen" reads a short
+    sample that says the voice's name (Italian or English) through the system
+    output while the menu stays usable, a new sample or leaving the submenu
+    stops the one playing, "Use this voice" applies the choice and "Back"
+    returns to the list unchanged; the sample uses no microphone and is never
+    saved. The choice is saved as `voice.macOSVoiceIdentifier` in
+    `settings.json` and survives re-running Telegram setup; a voice that is no
+    longer installed, or that reads another language, falls back to the
+    automatic voice.
+  - Linux runs the sherpa-onnx programs: Parakeet TDT 0.6B v3 speech
+    recognition (25 European languages, recognized automatically) and a Piper
+    voice, which reads answers in its own language. The microphone is
+    off while an answer is read and turns back on when the reading ends or
+    Esc stops it. The files (about 580 MB) are downloaded from the new
+    `/setup` > Voice mode section, where you choose the voice from those
+    available for your language; every file is checked against a pinned
+    SHA-256 checksum and stored in `~/.zencode/voice`. Unpacking needs `tar`
+    and `bzip2`; playback and capture use ALSA (`libasound.so.2`). The section
+    also removes the files. Data management backups skip this directory.
+  - Live chat by voice: while voice mode listens, a new live-chat message
+    from the coordinator or an agent addressed to you (`→ Operator` or
+    `→ All`) is announced aloud, one at a time ("New message from Reviewer,
+    2 more waiting. Do you want me to read it?"). Yes reads the whole message
+    as plain text, however long, then asks "Do you want to reply?"; a second
+    yes is followed by "Tell me your reply." and the next utterance goes to
+    the sender with a spoken "Sent.". No moves on to the next message, any
+    other utterance closes the question and is handled as usual, and an
+    unanswered question lapses after 60 seconds. One phrase sends a live
+    message at any time: "message to the coordinator: stop", "message to
+    all, take a break", "message to Reviewer: check the diff"; without a text
+    voice mode asks "Tell me the message.". The yes/no words and the
+    "message to …" phrases are recognised in English, Italian, Spanish,
+    French, German and Portuguese whatever the voice language; announcements
+    and questions follow the voice language. Announcements wait for an answer
+    being read, while an answer that completes during the dialogue is read
+    first: a "Do you want me to read it?" question is then asked again, a
+    reading or an unanswered "Do you want to reply?" is dropped, and a reply
+    or message already asked for is still awaited. Messages replayed after
+    `/resume` or a reconnection are never announced. Reading a message aloud
+    marks it as read in the dock; a declined or lapsed question leaves it
+    unread. Typed input is never intercepted. `Esc`, `/voice pause`,
+    `/voice off`, `/new` and `/resume` drop the pending question and the
+    queue.
+  - Voice mode options: the first items of `/setup` > Voice mode, on
+    macOS and Linux alike, choose the send mode and the spoken answer limit.
+    The send mode is "After a pause" (default), which goes on to the pause
+    that ends an utterance and sends it (2, 3, 5, 8 or 10 seconds; default 5,
+    raised from 2.5), or "On a word": you type one word of your own (no
+    default, e.g. "vai" or "done"), and an utterance is then sent only when it
+    ends with that word, which is removed from the prompt; silence never
+    sends, so no pause is asked, a long pause mid-sentence no longer sends
+    half a prompt, and everything said before the word is sent together. The
+    word alone sends what was dictated so far, the same word mid-sentence is
+    ordinary text, a spoken yes/no word is refused as the keyword, and a bare
+    yes or no still answers a live-chat question at once without the word.
+    The pause and the spoken answer limit (the length past which an answer is
+    read from its final sentences only: 300, 600, 1000 or 2000 characters, or
+    the whole answer; default 600) are preset lists with the current value
+    preselected and the default marked; Back keeps the current value and the
+    Voice mode menu comes back. The
+    choices are saved with the other settings as `voice.sendMode`,
+    `voice.sendKeyword`, `voice.utteranceSilenceSeconds` and
+    `voice.maximumSpokenCharacters` (`0` for the whole answer) in
+    `settings.json`, survive re-running Telegram setup and apply the next
+    time `/voice on` starts; a value that differs from the default is shown
+    next to the Voice mode status in the setup menu.
+- Telegram: voice notes are transcribed on Linux as well. Telegram setup now
+  turns voice-message transcription on with Telegram on every platform, and the
+  setup summary shows it. Linux transcribes on the machine with the files of
+  `/setup` > Voice mode (any voice) and Parakeet, which recognizes the spoken
+  language by itself; the note is first decoded with `opusdec` (package
+  `opus-tools`) or, when it is missing, `ffmpeg` into a private temporary WAV
+  file that is deleted afterwards. A missing decoder or missing Voice mode
+  files are reported in the terminal and in the chat. On Linux settings saved
+  before this version, open the Telegram section of `/setup` again (the
+  pairing can be kept) to turn transcription on.
+- Docs: the new [voice guide](Docs/voice.md) covers voice mode and Telegram
+  voice messages on macOS and Linux; the README, the ZenCODE guide, Why
+  ZenCODE and the docs index link to it.
+
+### Changed
+
+- Voice: Telegram voice-message transcription and voice mode use the response
+  language, else the system language. Telegram setup no longer saves a fixed
+  Italian `voice.language`, which overrode the response language; an existing
+  value is ignored and removed from `settings.json` on the next save.
+
 ### Fixed
 
+- Jira: `jira.search` now finds issues. Free-text queries went to Jira's
+  issue-picker suggestions, which only cover issues in the account's own
+  history, so searches almost always came back empty and JQL was never
+  understood. Free text now runs a full-text JQL search (`text ~ "…"`, most
+  recently updated first) through `/rest/api/3/search/jql`, and the new `jql`
+  argument sends a JQL expression as is; pass either `query` or `jql`, not
+  both. Issue keys and URLs still open the issue directly, and `jira.read` with
+  free text uses the same search.
 - Xcode: file-change evidence for `XcodeUpdate`, `XcodeWrite`, `XcodeRM` and
   `XcodeMV` now finds files whose project-navigator path does not map directly
   onto the disk, such as local packages nested under `Modules/`. The project

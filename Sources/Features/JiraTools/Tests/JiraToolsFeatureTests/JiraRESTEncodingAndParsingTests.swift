@@ -35,6 +35,72 @@ struct JiraRESTEncodingTests {
         #expect(JiraIssueKeyExtractor.issueKey(in: "login page is broken") == nil)
         #expect(JiraIssueKeyExtractor.issueKey(in: "") == nil)
     }
+
+    @Test
+    func searchQueryItemsRequestRenderedFieldsAndEncodeJQL() throws {
+        let encoded = try #require(JiraRESTService.percentEncodedQuery(
+            JiraRESTService.searchQueryItems(jql: #"project = ABC AND text ~ "C++""#)
+        ))
+        #expect(
+            encoded
+                == "jql=project%20%3D%20ABC%20AND%20text%20~%20%22C%2B%2B%22&maxResults=12&fields=summary%2Cstatus%2Cissuetype%2Cassignee"
+        )
+    }
+}
+
+@Suite
+struct JiraSearchRequestTests {
+    @Test
+    func issueKeysAndURLsInQueryReadTheIssueDirectly() throws {
+        #expect(try JiraSearchRequest.resolve(query: "proj-12", jql: nil) == .issueKey("PROJ-12"))
+        #expect(
+            try JiraSearchRequest.resolve(query: "https://example.atlassian.net/browse/ABC-7", jql: nil)
+                == .issueKey("ABC-7")
+        )
+    }
+
+    @Test
+    func freeTextQueryBecomesFullTextJQL() throws {
+        #expect(
+            try JiraSearchRequest.resolve(query: "  login page broken ", jql: nil)
+                == .jql(#"text ~ "login page broken" ORDER BY updated DESC"#)
+        )
+    }
+
+    @Test
+    func jqlIsSentAsIsEvenWhenItMentionsAnIssueKey() throws {
+        #expect(
+            try JiraSearchRequest.resolve(query: nil, jql: " key = ABC-1 ORDER BY created ")
+                == .jql("key = ABC-1 ORDER BY created")
+        )
+        #expect(try JiraSearchRequest.resolve(query: "  ", jql: "project = ABC") == .jql("project = ABC"))
+    }
+
+    @Test
+    func searchRequiresExactlyOneOfQueryAndJQL() {
+        let missing = #expect(throws: JiraToolsError.self) {
+            try JiraSearchRequest.resolve(query: " ", jql: nil)
+        }
+        #expect(missing?.errorDescription == "Missing Jira tool argument: query or jql.")
+
+        let both = #expect(throws: JiraToolsError.self) {
+            try JiraSearchRequest.resolve(query: "login", jql: "project = ABC")
+        }
+        #expect(both?.errorDescription?.contains("not both") == true)
+    }
+
+    @Test
+    func textSearchEscapesTheJQLStringLiteralOnly() {
+        #expect(
+            JiraJQL.textSearch(#"say "hi" C:\temp"# + "\nnext\tline")
+                == #"text ~ "say \"hi\" C:\\temp next line" ORDER BY updated DESC"#
+        )
+        // Quotes inside the query keep Jira's exact-phrase syntax.
+        #expect(
+            JiraJQL.textSearch(#""jira software" crash*"#)
+                == #"text ~ "\"jira software\" crash*" ORDER BY updated DESC"#
+        )
+    }
 }
 
 @Suite
@@ -91,22 +157,39 @@ struct JiraIssueParserTests {
     }
 
     @Test
-    func pickerSummariesSkipIssuesWithoutKeys() {
+    func searchSummariesReadRequestedFieldsAndSkipIssuesWithoutKeys() {
         let payload = JSONValue.object([
-            "sections": .array([
+            "issues": .array([
                 .object([
-                    "issues": .array([
-                        .object(["key": .string("A-1"), "summaryText": .string("First")]),
-                        .object(["summaryText": .string("No key")]),
-                        .object(["key": .string("A-2"), "summary": .string("Second")])
+                    "id": .string("10001"),
+                    "key": .string("A-1"),
+                    "fields": .object([
+                        "summary": .string("First"),
+                        "status": .object(["name": .string("In Progress")]),
+                        "issuetype": .object(["name": .string("Bug")]),
+                        "assignee": .object(["displayName": .string("Ada Lovelace")])
                     ])
-                ])
-            ])
+                ]),
+                .object(["id": .string("10002"), "fields": .object(["summary": .string("No key")])]),
+                .object(["id": .string("10003"), "key": .string("A-2"), "fields": .object(["assignee": .null])])
+            ]),
+            "isLast": .bool(true)
         ])
-        let summaries = JiraIssueParser.issueSummaries(fromPickerResult: payload, siteURL: Self.siteURL)
+        let summaries = JiraIssueParser.issueSummaries(fromSearchResult: payload, siteURL: Self.siteURL)
         #expect(summaries.map(\.key) == ["A-1", "A-2"])
-        #expect(summaries.map(\.summary) == ["First", "Second"])
+        #expect(summaries.map(\.summary) == ["First", "A-2"])
+        #expect(summaries.first?.status == "In Progress")
+        #expect(summaries.first?.issueType == "Bug")
+        #expect(summaries.first?.assignee == "Ada Lovelace")
+        #expect(summaries.last?.status == nil)
+        #expect(summaries.last?.assignee == nil)
         #expect(summaries.first?.url.absoluteString == "https://example.atlassian.net/browse/A-1")
+    }
+
+    @Test
+    func searchSummariesAreEmptyWithoutIssues() {
+        #expect(JiraIssueParser.issueSummaries(fromSearchResult: .object(["issues": .array([])]), siteURL: Self.siteURL).isEmpty)
+        #expect(JiraIssueParser.issueSummaries(fromSearchResult: .object([:]), siteURL: Self.siteURL).isEmpty)
     }
 
     @Test

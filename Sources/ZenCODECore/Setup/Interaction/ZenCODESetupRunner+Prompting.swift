@@ -127,12 +127,8 @@ extension ZenCODESetupRunner {
         settingsWillBeWritten: Bool
     ) {
         let telegramStatus = manifest.telegram?.isEnabled == true ? "enabled" : "disabled"
-        #if canImport(Speech)
         let voiceStatus = manifest.voice?.isConfigured == true ? "enabled" : "disabled"
         let voiceSummary = "\n  Voice-message transcription: \(voiceStatus)"
-        #else
-        let voiceSummary = ""
-        #endif
         let agentsDetail = agentsSetupDetail()
         let responseLanguageDetail = responseLanguageSetupDetail(manifest)
         let memoryEmbeddingDetail = memoryEmbeddingSetupDetail(manifest)

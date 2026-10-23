@@ -190,6 +190,12 @@ extension TerminalInteractiveLineReader {
             }
             return "Enter queue · Ctrl+G access · Ctrl+Y chat · Esc stop"
         }
+        if state.panelIsSpeaking {
+            if hasActiveCommandSuggestionsLocked(state: state) {
+                return "↑/↓ select · Tab complete · Enter choose · Esc stop reading"
+            }
+            return "Enter send · Ctrl+G access · Ctrl+Y chat · Esc stop reading"
+        }
         if hasActiveCommandSuggestionsLocked(state: state) {
             return "↑/↓ select · Tab complete · Enter choose · Esc dismiss"
         }
@@ -208,6 +214,9 @@ extension TerminalInteractiveLineReader {
         }
         if state.panelIsProcessing {
             return "Enter queue · Esc stop · Ctrl+G access · Ctrl+Y chat"
+        }
+        if state.panelIsSpeaking {
+            return "Enter send · Esc stop reading · Ctrl+G access · Ctrl+Y chat"
         }
         return "Enter send · Esc clear · Ctrl+G access · Ctrl+Y chat"
     }

@@ -273,6 +273,39 @@ struct TerminalSharedChatReaderDockTests {
         #expect(buffer.unreadCount == 0)
     }
 
+    /// Voice mode consumes exactly the message it read aloud, by identity.
+    @Test
+    func markingOneMessageReadByIdentityConsumesOnlyThatMessage() {
+        let first = message(1)
+        let second = message(2)
+        let outbound = operatorMessage(3)
+        var buffer = TerminalSharedChatReadingBuffer()
+        buffer.append([first, outbound, second])
+        #expect(buffer.unreadCount == 2)
+        #expect(buffer.isUnread(first.id))
+        #expect(buffer.isUnread(second.id))
+        #expect(!buffer.isUnread(outbound.id))
+
+        buffer.markRead(id: second.id)
+        #expect(buffer.unreadCount == 1)
+        #expect(!buffer.isUnread(second.id))
+        #expect(buffer.isUnread(first.id))
+        #expect(buffer.readerOpeningMessageID == first.id)
+
+        // Unknown, operator or already-read identifiers change nothing.
+        buffer.markRead(id: UUID())
+        buffer.markRead(id: outbound.id)
+        buffer.markRead(id: second.id)
+        #expect(buffer.unreadCount == 1)
+
+        buffer.markRead(id: first.id)
+        #expect(buffer.unreadCount == 0)
+        #expect(!buffer.isUnread(first.id))
+        // A replay of a read message never reopens it.
+        #expect(buffer.append([first, second]).isEmpty)
+        #expect(buffer.unreadCount == 0)
+    }
+
     @Test
     func operatorMessagesDoNotShiftUnreadBoundaryWhenInterleaved() {
         let first = message(1)
