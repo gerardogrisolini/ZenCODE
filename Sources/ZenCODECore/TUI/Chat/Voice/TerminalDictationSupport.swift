@@ -237,7 +237,34 @@ final class TerminalVoiceSpeechState: Sendable {
 
 /// Plain spoken text from an assistant Markdown answer.
 enum TerminalVoiceSpeechText {
+    /// Spoken answers longer than this, about 40 seconds of reading, keep only
+    /// their final sentences: the end of an answer usually holds the outcome
+    /// and the questions on how to continue. The terminal still shows the
+    /// whole answer.
+    static let maximumSpokenCharacters = 600
+
+    /// The text read aloud for an answer: its plain spoken text, or, past
+    /// `maximumSpokenCharacters`, a short notice followed by the final
+    /// sentences that fit the limit.
+    static func spokenAnswer(
+        fromMarkdown markdown: String,
+        languageCode: String?,
+        maximumCharacters: Int = maximumSpokenCharacters
+    ) -> String {
+        let lines = speakableLines(fromMarkdown: markdown, languageCode: languageCode)
+        let text = lines.joined(separator: " ")
+        guard text.count > maximumCharacters else {
+            return text
+        }
+        let tail = finalSentences(of: lines, maximumCharacters: maximumCharacters)
+        return longAnswerNotice(languageCode: languageCode) + " " + tail
+    }
+
     static func speakable(fromMarkdown markdown: String, languageCode: String?) -> String {
+        speakableLines(fromMarkdown: markdown, languageCode: languageCode).joined(separator: " ")
+    }
+
+    private static func speakableLines(fromMarkdown markdown: String, languageCode: String?) -> [String] {
         var sentences: [String] = []
         var isInsideFence = false
         for rawLine in markdown.components(separatedBy: .newlines) {
@@ -256,13 +283,82 @@ enum TerminalVoiceSpeechText {
                 sentences.append(sentence)
             }
         }
-        return sentences.joined(separator: " ")
+        return sentences
+    }
+
+    /// The last whole sentences of `lines` within `maximumCharacters`. When
+    /// even the last sentence is longer, its end is kept from a word boundary.
+    private static func finalSentences(of lines: [String], maximumCharacters: Int) -> String {
+        let sentences = lines.flatMap(splitSentences(in:))
+        var kept: [String] = []
+        var length = 0
+        for sentence in sentences.reversed() {
+            let added = kept.isEmpty ? sentence.count : sentence.count + 1
+            guard length + added <= maximumCharacters else {
+                break
+            }
+            kept.insert(sentence, at: 0)
+            length += added
+        }
+        if !kept.isEmpty {
+            return kept.joined(separator: " ")
+        }
+        guard let last = sentences.last else {
+            return ""
+        }
+        let suffix = last.suffix(maximumCharacters)
+        guard let space = suffix.firstIndex(where: \.isWhitespace) else {
+            return String(suffix)
+        }
+        let fromWord = suffix[space...].trimmingCharacters(in: .whitespaces)
+        return fromWord.isEmpty ? String(suffix) : fromWord
+    }
+
+    /// Splits a spoken line after `.`, `!`, `?` or `…` followed by whitespace.
+    private static func splitSentences(in line: String) -> [String] {
+        var sentences: [String] = []
+        var current = ""
+        var previous: Character?
+        for character in line {
+            if character.isWhitespace, let previous, ".!?…".contains(previous) {
+                let sentence = current.trimmingCharacters(in: .whitespaces)
+                if !sentence.isEmpty {
+                    sentences.append(sentence)
+                }
+                current = ""
+            } else {
+                current.append(character)
+            }
+            previous = character
+        }
+        let sentence = current.trimmingCharacters(in: .whitespaces)
+        if !sentence.isEmpty {
+            sentences.append(sentence)
+        }
+        return sentences
     }
 
     static func codeBlockNotice(languageCode: String?) -> String {
-        let code = languageCode?.lowercased().split(separator: "-").first.map(String.init) ?? "en"
-        return codeBlockNotices[code] ?? codeBlockNotices["en"]!
+        localized(codeBlockNotices, languageCode: languageCode)
     }
+
+    static func longAnswerNotice(languageCode: String?) -> String {
+        localized(longAnswerNotices, languageCode: languageCode)
+    }
+
+    private static func localized(_ notices: [String: String], languageCode: String?) -> String {
+        let code = languageCode?.lowercased().split(separator: "-").first.map(String.init) ?? "en"
+        return notices[code] ?? notices["en"]!
+    }
+
+    private static let longAnswerNotices: [String: String] = [
+        "en": "Long answer, reading only the end.",
+        "it": "Risposta lunga, leggo solo la parte finale.",
+        "es": "Respuesta larga, leo solo la parte final.",
+        "fr": "Réponse longue, je ne lis que la fin.",
+        "de": "Lange Antwort, ich lese nur den Schluss.",
+        "pt": "Resposta longa, leio só a parte final."
+    ]
 
     private static let codeBlockNotices: [String: String] = [
         "en": "Code block omitted.",

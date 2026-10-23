@@ -149,6 +149,60 @@ struct TerminalDictationVoiceTests {
     }
 
     @Test
+    func shortAnswersAreReadWhole() {
+        let markdown = "## Fatto\n\nHo aggiornato il file. Vuoi che faccia il commit?"
+        let spoken = TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: markdown, languageCode: "it")
+        #expect(spoken == TerminalVoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it"))
+        #expect(spoken == "Fatto. Ho aggiornato il file. Vuoi che faccia il commit?")
+    }
+
+    @Test
+    func longAnswersReadOnlyTheirFinalSentences() {
+        let markdown = """
+        ## Riepilogo
+
+        Ho modificato tre file. Ho aggiunto i test.
+        - Primo punto completato
+        Vuoi che faccia il commit? Oppure preferisci rivedere?
+        """
+        let spoken = TerminalVoiceSpeechText.spokenAnswer(
+            fromMarkdown: markdown,
+            languageCode: "it",
+            maximumCharacters: 60
+        )
+        #expect(spoken == "Risposta lunga, leggo solo la parte finale. Vuoi che faccia il commit? Oppure preferisci rivedere?")
+    }
+
+    @Test
+    func anOverlongFinalSentenceKeepsItsEndFromAWordBoundary() {
+        let spoken = TerminalVoiceSpeechText.spokenAnswer(
+            fromMarkdown: "Uno due tre quattro cinque sei sette otto nove dieci",
+            languageCode: "en",
+            maximumCharacters: 20
+        )
+        #expect(spoken == "Long answer, reading only the end. otto nove dieci.")
+    }
+
+    @Test
+    func theDefaultLimitBoundsTheSpokenTail() {
+        let filler = Array(repeating: "Questa riga riempie la risposta.", count: 100).joined(separator: "\n")
+        let markdown = filler + "\nCome vuoi procedere?"
+        let spoken = TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: markdown, languageCode: "it")
+        let notice = TerminalVoiceSpeechText.longAnswerNotice(languageCode: "it")
+        #expect(spoken.hasPrefix(notice + " "))
+        #expect(spoken.hasSuffix("Questa riga riempie la risposta. Come vuoi procedere?"))
+        #expect(spoken.count - notice.count - 1 <= TerminalVoiceSpeechText.maximumSpokenCharacters)
+    }
+
+    @Test
+    func longAnswerNoticeFollowsTheLanguage() {
+        #expect(TerminalVoiceSpeechText.longAnswerNotice(languageCode: "it-IT") == "Risposta lunga, leggo solo la parte finale.")
+        #expect(TerminalVoiceSpeechText.longAnswerNotice(languageCode: "de") == "Lange Antwort, ich lese nur den Schluss.")
+        #expect(TerminalVoiceSpeechText.longAnswerNotice(languageCode: "ja") == "Long answer, reading only the end.")
+        #expect(TerminalVoiceSpeechText.longAnswerNotice(languageCode: nil) == "Long answer, reading only the end.")
+    }
+
+    @Test
     func voiceLanguageFollowsTheResponseLanguageThenTheSystem() {
         #expect(VoiceLanguage.resolvedCode(responseLanguage: "FR", systemLanguage: "de") == "fr")
         #expect(VoiceLanguage.resolvedCode(responseLanguage: " ", systemLanguage: "de") == "de")

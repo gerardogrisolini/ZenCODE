@@ -19,10 +19,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   only for the current TUI session and survives agent and session switches.
   Each utterance becomes an ordinary prompt after a pause, and every final
   answer, including results of delegated agents, is read aloud without
-  Markdown and with code blocks replaced by a short notice; Esc stops the
-  reading. The language follows the response language, then the system
-  language. Dictated prompts are saved with the session like typed ones;
-  audio is never written to disk.
+  Markdown and with code blocks replaced by a short notice; an answer longer
+  than about 600 characters is read from its final sentences after a short
+  notice, since the end usually holds the questions on how to continue; Esc
+  stops the reading. The language follows the response language, then the
+  system language. Dictated prompts are saved with the session like typed
+  ones; audio is never written to disk.
   - macOS uses Apple speech recognition (on-device when the language supports
     it) and the best installed system voice, after the system permission
     prompts. Capture and playback share one audio engine with system echo

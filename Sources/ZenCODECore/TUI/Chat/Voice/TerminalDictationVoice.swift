@@ -486,7 +486,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         guard phase == .listening, !isPaused, let speaker else {
             return
         }
-        let text = TerminalVoiceSpeechText.speakable(fromMarkdown: response, languageCode: languageCode)
+        let text = TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: response, languageCode: languageCode)
         guard !text.isEmpty else {
             return
         }

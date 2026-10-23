@@ -67,7 +67,11 @@ command, and `zen -p`, `--jsonl` and ACP do not have it.
    cell by cell, and every code block is replaced by a short notice such as
    "Code block omitted." (in English, Italian, Spanish, French, German or
    Portuguese, following the voice mode language). A new answer replaces the
-   one being read. On Linux an answer is truncated after 100 000 bytes.
+   one being read. An answer longer than about 600 characters (some 40
+   seconds of reading) is not read whole: after a short notice such as "Long
+   answer, reading only the end." only its final sentences are read, since the
+   end of an answer usually holds the outcome and the questions on how to
+   continue. The terminal always shows the whole answer.
 5. `Esc` stops the reading without clearing the draft. While a prompt is
    running, `Esc` stops both the generation and the reading.
 

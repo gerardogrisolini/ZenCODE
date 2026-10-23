@@ -341,7 +341,7 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
             return
         }
         let text = Self.cappedForArgument(
-            TerminalVoiceSpeechText.speakable(fromMarkdown: response, languageCode: languageCode)
+            TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: response, languageCode: languageCode)
         )
         guard !text.isEmpty else {
             return
