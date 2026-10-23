@@ -171,6 +171,7 @@ swift build -c release --product zen
 /sessions    Manage sessions and checkpoint trees
 /attach      Attach image or video files to the next prompt
 /open        Open a referenced file, URL, or attachment
+/artifacts   Show the current session's file artifacts, grouped by turn
 /changes     Review the latest tracked file changes
 /undo        Revert the latest tracked agent changes
 /tasks       Inspect, retry, cancel, or clear the session task graph

@@ -310,6 +310,7 @@ Commands start with `/`:
 
 **Files and changes:**
 - `/open [file-or-url]` — list and open referenced files/URLs, or open one directly.
+- `/artifacts` — show the current session's file artifacts, grouped by turn; it accepts no arguments. See [Session File Artifacts](#session-file-artifacts).
 - `/changes` — show tracked file change summary.
 - `/changes diff` — include patches.
 - `/undo` — revert the most recent agent-tracked changes.
