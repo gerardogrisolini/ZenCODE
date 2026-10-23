@@ -68,21 +68,31 @@ actor JiraRESTService {
             ?? configuration.email
     }
 
-    func searchIssues(matching query: String) async throws -> [JiraIssueSummary] {
-        if let issueKey = JiraIssueKeyExtractor.issueKey(in: query) {
+    /// Maximum number of issues returned by one search.
+    static let searchResultLimit = 12
+
+    /// Fields rendered for each search result. `/search/jql` returns only the
+    /// issue `id` unless the fields are requested explicitly.
+    static let searchFields = "summary,status,issuetype,assignee"
+
+    func searchIssues(_ searchRequest: JiraSearchRequest) async throws -> [JiraIssueSummary] {
+        switch searchRequest {
+        case let .issueKey(issueKey):
             let issue = try await fetchIssue(issueKey: issueKey)
             return [JiraIssueParser.summary(from: issue)]
+        case let .jql(jql):
+            let result = try await request(path: "/rest/api/3/search/jql", queryItems: Self.searchQueryItems(jql: jql))
+            let summaries = JiraIssueParser.issueSummaries(fromSearchResult: result, siteURL: configuration.siteURL)
+            return Array(summaries.prefix(Self.searchResultLimit))
         }
+    }
 
-        let result = try await request(
-            path: "/rest/api/3/issue/picker",
-            queryItems: [
-                URLQueryItem(name: "query", value: query),
-                URLQueryItem(name: "currentJQL", value: "")
-            ]
-        )
-        let summaries = JiraIssueParser.issueSummaries(fromPickerResult: result, siteURL: configuration.siteURL)
-        return Array(summaries.prefix(12))
+    static func searchQueryItems(jql: String) -> [URLQueryItem] {
+        [
+            URLQueryItem(name: "jql", value: jql),
+            URLQueryItem(name: "maxResults", value: String(searchResultLimit)),
+            URLQueryItem(name: "fields", value: searchFields)
+        ]
     }
 
     func loadIssue(matching query: String) async throws -> JiraIssueDetail {
@@ -90,7 +100,7 @@ actor JiraRESTService {
             return try await fetchIssue(issueKey: issueKey)
         }
 
-        let matches = try await searchIssues(matching: query)
+        let matches = try await searchIssues(.jql(JiraJQL.textSearch(query)))
         guard matches.count == 1,
               let issueKey = matches.first?.key else {
             if matches.isEmpty {

@@ -4,20 +4,22 @@ import ToolCore
 struct JiraSearchTool: FeatureTool {
     struct Input: Decodable, Sendable {
         let query: String?
+        let jql: String?
     }
 
     static let name = "jira.search"
-    static let description = "Searches Jira issues by issue key, issue URL, or text and returns selectable issue summaries."
-    static let inputSchema = #"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#
+    static let description = "Searches Jira issues and returns up to 12 selectable issue summaries. Pass either query or jql, not both. query accepts an issue key, an issue URL, or free text matched against summary, description, comments and text fields (wrap words in double quotes for an exact phrase). jql accepts a JQL expression sent as is, for example project = ABC AND status = \"In Progress\" ORDER BY updated DESC; it must contain at least one search condition."
+    static let inputSchema = #"{"type":"object","properties":{"query":{"type":"string"},"jql":{"type":"string"}}}"#
 
     func run(_ input: Input, context _: FeatureContext) async throws -> String {
-        guard let query = input.query?.nilIfBlank else { throw JiraToolsError.missingArgument("query") }
+        let searchRequest = try JiraSearchRequest.resolve(query: input.query, jql: input.jql)
+        let label = input.jql?.nilIfBlank ?? input.query?.nilIfBlank ?? ""
 
         let issues = try await JiraAuthenticatedService.run { service in
-            try await service.searchIssues(matching: query)
+            try await service.searchIssues(searchRequest)
         }
-        guard !issues.isEmpty else { return "Jira search: \(query)\nNo issues found." }
-        return JiraToolRenderer.renderSearchResults(issues, query: query)
+        guard !issues.isEmpty else { return "Jira search: \(label)\nNo issues found." }
+        return JiraToolRenderer.renderSearchResults(issues, query: label)
     }
 }
 
@@ -90,7 +92,7 @@ struct JiraToolsFeatureMain {
 
 extension JiraSearchTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Jira issues", action: "Search", kind: .search, targetKeyPaths: ["query"])
+        .standard(title: "Jira issues", action: "Search", kind: .search, targetKeyPaths: ["query", "jql"])
     }
 }
 

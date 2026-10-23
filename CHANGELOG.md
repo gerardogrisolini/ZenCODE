@@ -102,6 +102,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Jira: `jira.search` now finds issues. Free-text queries went to Jira's
+  issue-picker suggestions, which only cover issues in the account's own
+  history, so searches almost always came back empty and JQL was never
+  understood. Free text now runs a full-text JQL search (`text ~ "…"`, most
+  recently updated first) through `/rest/api/3/search/jql`, and the new `jql`
+  argument sends a JQL expression as is; pass either `query` or `jql`, not
+  both. Issue keys and URLs still open the issue directly, and `jira.read` with
+  free text uses the same search.
 - Xcode: file-change evidence for `XcodeUpdate`, `XcodeWrite`, `XcodeRM` and
   `XcodeMV` now finds files whose project-navigator path does not map directly
   onto the disk, such as local packages nested under `Modules/`. The project
