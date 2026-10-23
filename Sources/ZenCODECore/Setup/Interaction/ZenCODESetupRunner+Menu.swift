@@ -106,6 +106,8 @@ extension ZenCODESetupRunner {
             return setupStatusMarker(manifest?.memoryEmbedding != nil, optional: true)
         case .ds4Runtime:
             return setupStatusMarker(ds4RuntimeSetupDetail(manifest) != "not configured", optional: true)
+        case .voiceMode:
+            return setupStatusMarker(voiceModeIsReady(), optional: true)
         case .dataManagement, .resetRemoteConfiguration, .finish, .cancel, .responseLanguage:
             return nil
         }
@@ -114,7 +116,7 @@ extension ZenCODESetupRunner {
     static func setupSectionOptions(
         currentManifest manifest: AgentSettingsManifest?
     ) -> [SetupSectionOption] {
-        let options: [SetupSectionOption] = [
+        var options: [SetupSectionOption] = [
             SetupSectionOption(
                 section: .providersAndModels,
                 detail: providersAndModelsSetupDetail(manifest)
@@ -154,6 +156,16 @@ extension ZenCODESetupRunner {
             SetupSectionOption(section: .finish, detail: "save and exit"),
             SetupSectionOption(section: .cancel, detail: "discard changes")
         ]
+        #if os(Linux)
+        // macOS voice mode uses the system speech frameworks and needs no
+        // download; only Linux offers the sherpa-onnx files.
+        if let telegramIndex = options.firstIndex(where: { $0.section == .telegram }) {
+            options.insert(
+                SetupSectionOption(section: .voiceMode, detail: voiceModeSetupDetail()),
+                at: telegramIndex + 1
+            )
+        }
+        #endif
         return groupedByCategory(options)
     }
 

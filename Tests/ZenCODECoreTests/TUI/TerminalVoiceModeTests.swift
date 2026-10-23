@@ -45,7 +45,7 @@ struct TerminalVoiceModeTests {
                 == TerminalChat.voiceRequiresInteractiveTerminalMessage
         )
         #expect(await output(of: "/voice loud", in: chat) == TerminalVoiceCommandAction.usageMessage)
-        #expect(chat.dictationVoiceController == nil)
+        #expect(chat.voiceController == nil)
     }
 
     @Test

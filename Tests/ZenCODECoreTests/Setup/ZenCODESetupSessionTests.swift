@@ -192,12 +192,21 @@ struct ZenCODESetupSessionTests {
         let sections = ZenCODESetupRunner.setupSectionOptions(currentManifest: manifest)
             .map(\.section)
 
+        #if os(Linux)
+        #expect(sections == [
+            .providersAndModels, .agents,
+            .agentModels, .responseLanguage, .features, .memoryEmbedding,
+            .ds4Runtime, .telegram, .voiceMode, .dataManagement,
+            .finish, .cancel,
+        ])
+        #else
         #expect(sections == [
             .providersAndModels, .agents,
             .agentModels, .responseLanguage, .features, .memoryEmbedding,
             .ds4Runtime, .telegram, .dataManagement,
             .finish, .cancel,
         ])
+        #endif
         for alias in ["default", "default model", "selected model", "thinking", "default thinking"] {
             #expect(!sections.contains { $0.matches(alias) })
         }

@@ -38,6 +38,9 @@ struct TerminalPromptEditorContext: Sendable {
     var isOverlayActive = false
     /// A generation is running, so `Esc` means "stop" rather than "clear".
     var isProcessing = false
+    /// Voice mode is reading an answer aloud, so `Esc` stops the reading
+    /// rather than clearing the draft.
+    var isSpeaking = false
     /// The fallback reader has no completion menu, so it must not consume
     /// `Tab` or change `Enter` semantics.
     var supportsCompletions = true
@@ -52,6 +55,7 @@ struct TerminalPromptEditorContext: Sendable {
         suggestions: [TerminalCommandSuggestion] = [],
         isOverlayActive: Bool = false,
         isProcessing: Bool = false,
+        isSpeaking: Bool = false,
         supportsCompletions: Bool = true,
         clearsDraftOnCancel: Bool = true,
         supportsPressAndHold: Bool = false
@@ -60,6 +64,7 @@ struct TerminalPromptEditorContext: Sendable {
         self.suggestions = suggestions
         self.isOverlayActive = isOverlayActive
         self.isProcessing = isProcessing
+        self.isSpeaking = isSpeaking
         self.supportsCompletions = supportsCompletions
         self.clearsDraftOnCancel = clearsDraftOnCancel
         self.supportsPressAndHold = supportsPressAndHold
@@ -560,7 +565,7 @@ struct TerminalPromptEditor: Equatable, Sendable {
     private mutating func cancel(
         context: TerminalPromptEditorContext
     ) -> TerminalPromptEditorEffect {
-        if context.isProcessing {
+        if context.isProcessing || context.isSpeaking {
             return .cancelRequested
         }
         // Hiding the menu is the least destructive reading of `Esc` while

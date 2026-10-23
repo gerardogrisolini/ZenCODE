@@ -296,7 +296,7 @@ extension TerminalChat {
         TerminalChatCommandDescriptor(
             command: "/voice",
             summary: "voice mode on/off/pause/resume",
-            help: "/voice on starts voice mode with any agent in the interactive terminal on macOS: utterances are dictated with local speech recognition and answers are read aloud. /voice off stops it; /voice pause stops listening and reading aloud, /voice resume restarts both, and /voice alone toggles pause/resume. Voice mode lasts only for this TUI session."
+            help: "/voice on starts voice mode with any agent in the interactive terminal: utterances become prompts through local speech recognition and answers are read aloud (macOS uses the system speech frameworks; Linux uses the sherpa-onnx files downloaded from /setup > Voice mode and turns the microphone off while reading). Esc stops the reading. /voice off stops voice mode; /voice pause stops listening and reading aloud, /voice resume restarts both, and /voice alone toggles pause/resume. Voice mode lasts only for this TUI session."
         ),
         TerminalChatCommandDescriptor(
             command: "/exit",

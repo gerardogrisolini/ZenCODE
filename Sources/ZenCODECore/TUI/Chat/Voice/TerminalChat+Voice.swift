@@ -38,8 +38,8 @@ extension TerminalChat {
 
     /// The running voice controller, or `nil` when voice mode is off or its
     /// controller failed.
-    private func activeVoiceController() async -> TerminalDictationVoiceController? {
-        guard let controller = dictationVoiceController, await controller.isActive else {
+    private func activeVoiceController() async -> (any TerminalVoiceController)? {
+        guard let controller = voiceController, await controller.isActive else {
             return nil
         }
         return controller
@@ -55,12 +55,6 @@ extension TerminalChat {
             await writeFailureMessage(Self.voiceRequiresInteractiveTerminalMessage)
             return
         }
-        guard TerminalDictationVoiceController.isSupported else {
-            await writeFailureMessage(
-                "ZenCODE: \(TerminalDictationError.unsupportedPlatform.localizedDescription)\n"
-            )
-            return
-        }
         // A failed controller is replaced, so the language is read again.
         await stopVoiceMode()
         let manifest = AgentSettingsManifestStore.load()
@@ -69,15 +63,22 @@ extension TerminalChat {
             responseLanguage: manifest?.responseLanguage,
             systemLanguage: ResponseLanguageResolver.systemLanguageCode()
         )
-        let controller = TerminalDictationVoiceController(
+        let controller: any TerminalVoiceController
+        switch TerminalVoicePlatform.makeController(
             languageCode: languageCode,
-            locale: AgentVoiceTranscriptionService.locale(for: languageCode),
-            callbacks: dictationVoiceCallbacks(eventQueue: eventQueue)
-        )
-        dictationVoiceController = controller
-        // Starting may wait on the system permission prompts; never hold the
-        // terminal event loop on them. The controller reports when it listens.
-        Task(name: "ZenCODE.TUI.dictation-start") {
+            callbacks: voiceCallbacks(eventQueue: eventQueue)
+        ) {
+        case let .ready(ready):
+            controller = ready
+        case let .unavailable(message):
+            await writeFailureMessage(message)
+            return
+        }
+        voiceController = controller
+        // Starting may wait on the system permission prompts or on loading
+        // the speech models; never hold the terminal event loop on it. The
+        // controller reports when it listens.
+        Task(name: "ZenCODE.TUI.voice-start") {
             await controller.start()
         }
     }
@@ -111,27 +112,30 @@ extension TerminalChat {
     }
 
     func stopVoiceMode() async {
-        guard let controller = dictationVoiceController else {
+        guard let controller = voiceController else {
             return
         }
-        dictationVoiceController = nil
+        voiceController = nil
         await controller.stop()
+        await interactiveReader.setPanelSpeaking(false)
     }
 
     /// Reads a completed answer aloud while voice mode runs and is not paused.
     func speakVoiceResponse(_ response: String) async {
-        await dictationVoiceController?.speak(response)
+        await voiceController?.speak(response)
     }
 
-    /// Stops assistant speech that is still playing, e.g. after Esc.
+    /// Stops the answer being read aloud, e.g. after Esc. On Linux this also
+    /// turns the microphone back on.
     func interruptVoicePlayback() async {
-        await dictationVoiceController?.interruptPlayback()
+        await voiceController?.interruptPlayback()
     }
 
-    private func dictationVoiceCallbacks(
+    private func voiceCallbacks(
         eventQueue: TerminalChatEventQueue
-    ) -> TerminalDictationVoiceController.Callbacks {
-        TerminalDictationVoiceController.Callbacks(
+    ) -> TerminalVoiceCallbacks {
+        let reader = interactiveReader
+        return TerminalVoiceCallbacks(
             systemMessage: { [weak self] text in
                 await self?.writeSystemMessage(text)
             },
@@ -142,6 +146,9 @@ extension TerminalChat {
                 _ = await eventQueue.sendWithBackpressure(
                     Self.dictatedPromptEvent(for: utterance)
                 )
+            },
+            speakingChanged: { isSpeaking in
+                await reader.setPanelSpeaking(isSpeaking)
             }
         )
     }

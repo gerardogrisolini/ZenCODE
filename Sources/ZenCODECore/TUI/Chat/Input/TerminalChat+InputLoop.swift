@@ -143,11 +143,11 @@ extension TerminalChat {
             }
             // Synchronous fallback for early exits; the normal exit path stops
             // voice mode explicitly below.
-            let dictationVoice = dictationVoiceController
-            dictationVoiceController = nil
+            let voice = voiceController
+            voiceController = nil
             voiceEventQueue = nil
             Task(name: "ZenCODE.TUI.voice-stop") {
-                await dictationVoice?.stop()
+                await voice?.stop()
             }
         }
 

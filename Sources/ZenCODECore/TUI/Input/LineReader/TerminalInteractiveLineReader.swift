@@ -165,6 +165,8 @@ public final class TerminalInteractiveLineReader: Sendable {
         /// Every live terminal panel uses the conservative repeat heuristic.
         var panelSupportsPressAndHold = true
         var panelIsProcessing = false
+        /// Voice mode is reading an answer aloud; `Esc` stops it.
+        var panelIsSpeaking = false
         var panelQueuedPromptCount = 0
         var panelPendingAttachmentCount = 0
         var panelOverlayOverride: TerminalPanelModeOverride?

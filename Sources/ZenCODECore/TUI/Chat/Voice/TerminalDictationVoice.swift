@@ -306,16 +306,12 @@ final class TerminalVoiceSpeaker {
 }
 #endif
 
-/// Owns the dictation voice loop of one interactive terminal: microphone and
-/// speech permissions, continuous recognition split into utterances, barge-in
-/// and spoken answers. Recognized utterances become ordinary prompts; audio is
-/// never persisted.
-actor TerminalDictationVoiceController {
-    struct Callbacks: Sendable {
-        let systemMessage: @Sendable (String) async -> Void
-        let failureMessage: @Sendable (String) async -> Void
-        let utteranceRecognized: @Sendable (String) async -> Void
-    }
+/// Owns the dictation voice loop of one interactive terminal on macOS:
+/// microphone and speech permissions, continuous recognition split into
+/// utterances, barge-in and spoken answers. Recognized utterances become
+/// ordinary prompts; audio is never persisted.
+actor TerminalDictationVoiceController: TerminalVoiceController {
+    typealias Callbacks = TerminalVoiceCallbacks
 
     enum Phase: Sendable, Equatable {
         case idle
@@ -362,6 +358,7 @@ actor TerminalDictationVoiceController {
     private var generation: UInt64 = 0
     private var generationStartedAt = ContinuousClock.now
     private var rapidEndings = 0
+    private var reportedSpeaking = false
     private var eventTask: Task<Void, Never>?
     private var silenceTask: Task<Void, Never>?
     private var isAudioRunning = false
@@ -477,12 +474,14 @@ actor TerminalDictationVoiceController {
         }
         device.interruptPlayback()
         await speaker.speak(text)
+        await reportSpeakingState()
     }
 
     /// Stops the answer being spoken, e.g. after Esc or barge-in.
     func interruptPlayback() async {
         await speaker?.stop()
         device.interruptPlayback()
+        await reportSpeakingState()
     }
 
     /// `false` once the controller failed or was stopped; `/voice on` then
@@ -532,6 +531,7 @@ actor TerminalDictationVoiceController {
             isAudioRunning = false
         }
         segmenter.reset()
+        await reportSpeakingState()
     }
 
     // MARK: - Recognition
@@ -586,6 +586,7 @@ actor TerminalDictationVoiceController {
     }
 
     private func tick() async {
+        await reportSpeakingState()
         guard phase == .listening, !isPaused else {
             return
         }
@@ -618,6 +619,18 @@ actor TerminalDictationVoiceController {
         generationStartedAt = .now
     }
 
+    /// Tells the terminal when reading aloud starts or ends, so `Esc` stops
+    /// it. Polled by the silence task because the synthesizer reports the end
+    /// of speech only through its played buffers.
+    private func reportSpeakingState() async {
+        let isSpeaking = speaker?.state.isSpeaking() ?? false
+        guard isSpeaking != reportedSpeaking else {
+            return
+        }
+        reportedSpeaking = isSpeaking
+        await callbacks.speakingChanged(isSpeaking)
+    }
+
     private func fail(_ message: String) async {
         phase = .failed
         eventTask?.cancel()
@@ -633,6 +646,7 @@ actor TerminalDictationVoiceController {
             isAudioRunning = false
         }
         segmenter.reset()
+        await reportSpeakingState()
         await callbacks.failureMessage(message)
     }
 }

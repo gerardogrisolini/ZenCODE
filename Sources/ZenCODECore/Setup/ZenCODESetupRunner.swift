@@ -254,6 +254,9 @@ public enum ZenCODESetupRunner {
             return SetupSectionConfigurationResult(
                 manifest: try await configureDS4Runtime(existingManifest: manifest)
             )
+        case .voiceMode:
+            try await configureVoiceMode(manifest: manifest)
+            return SetupSectionConfigurationResult(manifest: manifest)
         }
     }
 }

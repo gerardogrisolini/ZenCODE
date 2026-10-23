@@ -12,23 +12,33 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
-- Voice: on macOS the interactive terminal has a voice mode that works with
-  any agent. `/voice on` starts it (after the system permission prompts),
-  `/voice off` stops it, `/voice pause` stops listening and reading answers
-  aloud, `/voice resume` restarts both, and `/voice` alone toggles pause and
-  resume. Voice mode lasts only for the current TUI session and survives agent
-  and session switches. Apple speech recognition (on-device when the language
-  supports it) turns each utterance into an ordinary prompt after a pause, and
-  every final answer, including results of delegated agents, is read aloud
-  with the best installed system voice, without Markdown and with code blocks
-  replaced by a short notice. Capture and playback share one audio engine with
-  system echo cancellation, so the microphone stays open and speaking while the
-  assistant talks interrupts it; Esc also stops speech that is playing. When
-  the current audio output cannot run echo cancellation, voice mode starts
-  without it and names the output, suggesting a local output or headphones.
-  The language follows the voice language, then the response language, then
-  the system language. Dictated prompts are saved with the session like typed
-  ones; audio is never written to disk.
+- Voice: the interactive terminal has a voice mode that works with any agent
+  on macOS and Linux. `/voice on` starts it, `/voice off` stops it,
+  `/voice pause` stops listening and reading answers aloud, `/voice resume`
+  restarts both, and `/voice` alone toggles pause and resume. Voice mode lasts
+  only for the current TUI session and survives agent and session switches.
+  Each utterance becomes an ordinary prompt after a pause, and every final
+  answer, including results of delegated agents, is read aloud without
+  Markdown and with code blocks replaced by a short notice; Esc stops the
+  reading. The language follows the voice language, then the response
+  language, then the system language. Dictated prompts are saved with the
+  session like typed ones; audio is never written to disk.
+  - macOS uses Apple speech recognition (on-device when the language supports
+    it) and the best installed system voice, after the system permission
+    prompts. Capture and playback share one audio engine with system echo
+    cancellation, so the microphone stays open and speaking while the
+    assistant talks interrupts it. When the current audio output cannot run
+    echo cancellation, voice mode starts without it and names the output,
+    suggesting a local output or headphones.
+  - Linux runs the sherpa-onnx programs: Parakeet TDT 0.6B v3 speech
+    recognition (25 European languages) and a Piper voice. The microphone is
+    off while an answer is read and turns back on when the reading ends or
+    Esc stops it. The files (about 580 MB) are downloaded from the new
+    `/setup` > Voice mode section, where you choose the voice from those
+    available for your language; every file is checked against a pinned
+    SHA-256 checksum and stored in `~/.zencode/voice`. Unpacking needs `tar`
+    and `bzip2`; playback and capture use ALSA (`libasound.so.2`). The section
+    also removes the files. Data management backups skip this directory.
 
 ### Fixed
 

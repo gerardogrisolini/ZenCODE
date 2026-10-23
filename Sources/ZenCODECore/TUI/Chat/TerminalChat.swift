@@ -79,10 +79,11 @@ public final class TerminalChat {
     /// session, or an interrupted turn whose non-empty graph was preserved.
     /// Never copy this into snapshots or persisted session models.
     var activeWorkflow: WorkflowCommandRuntimeState?
-    /// Live dictation voice loop of the interactive panel, started by
-    /// `/voice on` with any agent. Transient: it lasts only for this TUI
-    /// session and audio is never persisted.
-    var dictationVoiceController: TerminalDictationVoiceController?
+    /// Live voice loop of the interactive panel, started by `/voice on` with
+    /// any agent: local dictation on macOS, sherpa-onnx programs on Linux.
+    /// Transient: it lasts only for this TUI session and audio is never
+    /// persisted.
+    var voiceController: (any TerminalVoiceController)?
     /// Event queue of the running interactive panel loop; `nil` outside it,
     /// where voice mode cannot run.
     var voiceEventQueue: TerminalChatEventQueue?

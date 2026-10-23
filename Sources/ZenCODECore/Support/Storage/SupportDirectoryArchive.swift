@@ -422,6 +422,12 @@ enum SupportDirectoryArchive {
                 guard !child.hasPrefix(importStagingNamePrefix) else {
                     continue
                 }
+                // Downloaded voice-mode programs and models are large and
+                // re-downloadable from /setup; they never enter a backup.
+                guard directoryURL != sourceURL
+                    || child != SherpaOnnxVoiceInstallation.directoryName else {
+                    continue
+                }
                 let values = try childURL.resourceValues(
                     forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey]
                 )

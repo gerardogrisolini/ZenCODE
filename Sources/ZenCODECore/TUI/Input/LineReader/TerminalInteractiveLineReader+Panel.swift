@@ -295,6 +295,20 @@ extension TerminalInteractiveLineReader {
         await renderPanel()
     }
 
+    /// Voice mode reports when it starts and stops reading an answer aloud.
+    func setPanelSpeaking(_ isSpeaking: Bool) async {
+        let changed = withPanelLock { state -> Bool in
+            guard state.panelIsSpeaking != isSpeaking else {
+                return false
+            }
+            state.panelIsSpeaking = isSpeaking
+            return true
+        }
+        if changed {
+            await renderPanel()
+        }
+    }
+
     public func setPanelCommandSuggestions(_ suggestions: [TerminalCommandSuggestion]) async {
         withPanelLock { state in
             state.panelCommandSuggestions = suggestions
@@ -646,6 +660,7 @@ extension TerminalInteractiveLineReader {
             suggestions: state.panelCommandSuggestions,
             isOverlayActive: state.panelOverlayOverride != nil,
             isProcessing: state.panelIsProcessing,
+            isSpeaking: state.panelIsSpeaking,
             supportsCompletions: true,
             clearsDraftOnCancel: true,
             supportsPressAndHold: state.panelSupportsPressAndHold
