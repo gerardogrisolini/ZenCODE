@@ -10,6 +10,37 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Voice: on macOS the interactive terminal runs a voice mode whenever the
+  Organizer agent is active; it starts automatically (after the system
+  permission prompts) and `/voice` pauses or resumes the microphone. Capture
+  and playback share one audio engine with system echo cancellation, so the
+  microphone stays open and speaking while the assistant talks interrupts it;
+  Esc also stops speech that is playing. When the current audio output cannot
+  run echo cancellation, voice mode starts without it and
+  names the output, suggesting a local output or headphones. The mode depends
+  on the Organizer's effective model:
+  - With an OpenAI realtime model (any `gpt-realtime*` model of an OpenAI API
+    provider) it holds a live spoken conversation. Spoken answers are played
+    back and their transcript is shown as the turn's response. Tools such as
+    memory and macOS run inside the spoken turn, and results of delegated
+    agents are announced when they arrive. Input audio is never transcribed,
+    and the voice conversation is never persisted: no audio or transcript is
+    written to disk, `/sessions save` reports that the session is not
+    available to save, and a lost connection or the provider's 60-minute
+    session limit starts a new, empty conversation. Realtime models are
+    rejected on other platforms and for delegated agents, which need their own
+    model binding.
+  - With any other model, including subscription models, it runs dictation:
+    Apple speech recognition (on-device when the language supports it) turns
+    each utterance into an ordinary prompt after a short pause, and every
+    final answer, including results of delegated agents, is read aloud with
+    the best installed system voice, without Markdown and with code blocks
+    replaced by a short notice. The language follows the voice language, then
+    the response language, then the system language. Dictated prompts are
+    saved with the session like typed ones; audio is never written to disk.
+
 ### Fixed
 
 - Xcode: file-change evidence for `XcodeUpdate`, `XcodeWrite`, `XcodeRM` and

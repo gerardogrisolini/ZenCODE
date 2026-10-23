@@ -110,12 +110,18 @@ extension AgentCoreSessionRunner {
 
         // Bounded and best-effort: this returns nil on timeout, failure, or an
         // empty graph, and the turn then proceeds with a request that is
-        // byte-identical to one sent with memory switched off.
-        let memoryBlock = await MemoryTurnCoordinator.shared.memoryBlock(
-            sessionID: configuration.sessionID,
-            workspaceRootURL: configuration.workingDirectory,
-            prompt: prompt
-        )
+        // byte-identical to one sent with memory switched off. A realtime
+        // voice turn skips recall entirely so speech is answered without
+        // waiting for retrieval.
+        let memoryBlock: String? = if Self.shouldRecallMemory(forPrompt: prompt) {
+            await MemoryTurnCoordinator.shared.memoryBlock(
+                sessionID: configuration.sessionID,
+                workspaceRootURL: configuration.workingDirectory,
+                prompt: prompt
+            )
+        } else {
+            nil
+        }
 
         do {
             let response = try await AgentToolAuthorizationContext.$turnID.withValue(promptID) {

@@ -153,8 +153,11 @@ public actor AgentVoiceTranscriptionService {
         // Leave the system free to use the best available recognizer instead.
         request.requiresOnDeviceRecognition = false
     }
+    #endif
 
-    private static func locale(for language: String?) -> Locale {
+    /// Maps a voice language code to the recognizer locale. Platform neutral:
+    /// the terminal's dictation mode resolves its language with it as well.
+    static func locale(for language: String?) -> Locale {
         guard let language = language?.nilIfBlank?.lowercased() else {
             return Locale(identifier: "en-US")
         }
@@ -176,7 +179,6 @@ public actor AgentVoiceTranscriptionService {
         "zh": "zh-CN",
         "ru": "ru-RU"
     ]
-    #endif
 }
 
 #if canImport(Speech)

@@ -96,6 +96,8 @@ extension TerminalChat {
             return ["status", "list", "ls"].contains(action)
         case "/telegram":
             return true
+        case "/voice":
+            return true
         default:
             return false
         }
@@ -290,6 +292,11 @@ extension TerminalChat {
             summary: "turn Telegram on/off",
             help: "/telegram shows Telegram status. Use /telegram on or /telegram off for this TUI session.",
             availability: .telegramEnabled
+        ),
+        TerminalChatCommandDescriptor(
+            command: "/voice",
+            summary: "pause/resume the voice microphone",
+            help: "/voice pauses or resumes the microphone of voice mode, which runs automatically with the Organizer agent in the interactive terminal on macOS: a live conversation with gpt-realtime models, or dictation with spoken answers with any other model. Realtime voice conversations are never saved."
         ),
         TerminalChatCommandDescriptor(
             command: "/exit",
