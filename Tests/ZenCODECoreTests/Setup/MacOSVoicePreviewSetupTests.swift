@@ -223,7 +223,7 @@ struct MacOSVoicePreviewSetupTests {
     @Test
     func withoutVoicesAutomaticAppliesWithoutPreview() throws {
         let saved = MacOSVoiceModeSetupTests.manifest(
-            voice: AgentVoiceSettingsManifest(enabled: true, language: "ja", macOSVoiceIdentifier: "ja-voice"),
+            voice: AgentVoiceSettingsManifest(enabled: true, macOSVoiceIdentifier: "ja-voice"),
             responseLanguage: "ja"
         )
         let player = RecordingPlayer()
@@ -231,7 +231,7 @@ struct MacOSVoicePreviewSetupTests {
         #expect(run.previewTitles.isEmpty)
         #expect(player.playedVoices.isEmpty)
         #expect(!run.output.contains("Choose a voice to listen"))
-        #expect(try #require(run.manifest).voice == AgentVoiceSettingsManifest(enabled: true, language: "ja"))
+        #expect(try #require(run.manifest).voice == AgentVoiceSettingsManifest(enabled: true))
     }
 
     @Test

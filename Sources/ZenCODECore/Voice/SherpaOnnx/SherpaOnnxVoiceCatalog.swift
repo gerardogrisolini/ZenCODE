@@ -117,6 +117,9 @@ enum SherpaOnnxVoiceCatalog {
     /// Programs used by voice mode, inside the runtime's `bin` directory.
     static let recognizerProgramName = "sherpa-onnx-vad-alsa-offline-asr"
     static let synthesizerProgramName = "sherpa-onnx-offline-tts-play-alsa"
+    /// Transcribes an audio file (Telegram voice messages) with the same
+    /// voice activity detector and speech recognition model.
+    static let fileRecognizerProgramName = "sherpa-onnx-vad-with-offline-asr"
 
     static let runtimeX64 = archive(
         title: "sherpa-onnx \(runtimeVersion) programs (x86_64)",

@@ -59,11 +59,7 @@ extension TerminalChat {
         // voice are read again.
         await stopVoiceMode()
         let manifest = AgentSettingsManifestStore.load()
-        let languageCode = TerminalVoiceLanguage.resolvedCode(
-            voiceLanguage: manifest?.voice?.language,
-            responseLanguage: manifest?.responseLanguage,
-            systemLanguage: ResponseLanguageResolver.systemLanguageCode()
-        )
+        let languageCode = VoiceLanguage.resolvedCode(manifest: manifest)
         let controller: any TerminalVoiceController
         switch TerminalVoicePlatform.makeController(
             languageCode: languageCode,

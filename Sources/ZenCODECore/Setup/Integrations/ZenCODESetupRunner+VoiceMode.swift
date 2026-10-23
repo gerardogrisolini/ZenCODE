@@ -39,14 +39,10 @@ extension ZenCODESetupRunner {
         return false
     }
 
-    /// The voice language, else the response language, else the system
-    /// language — the same order voice mode uses at runtime.
+    /// The response language, else the system language — the same order
+    /// voice mode uses at runtime.
     static func voiceModeLanguageCode(manifest: AgentSettingsManifest?) -> String {
-        TerminalVoiceLanguage.resolvedCode(
-            voiceLanguage: manifest?.voice?.language,
-            responseLanguage: manifest?.responseLanguage,
-            systemLanguage: ResponseLanguageResolver.systemLanguageCode()
-        )
+        VoiceLanguage.resolvedCode(manifest: manifest)
     }
 
     /// Voices for `languageCode`, or every voice when none matches.

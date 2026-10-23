@@ -82,18 +82,18 @@ public struct AgentTelegramSettingsManifest: Codable, Equatable, Sendable {
 
 }
 
+/// Voice settings. The language of voice transcription and voice mode is not
+/// stored here: it follows the response language (`responseLanguage`), else
+/// the system language. A `language` key written by earlier versions is
+/// ignored when decoding and dropped on the next save.
 public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled
-        case language
         case macOSVoiceIdentifier
     }
 
-    public static let defaultLanguage = "it"
-
     /// Telegram voice-message transcription.
     public let enabled: Bool
-    public let language: String?
     /// The `AVSpeechSynthesisVoice` identifier chosen in `/setup` > Voice mode
     /// on macOS to read answers aloud; nil selects the best installed voice.
     /// Independent of `enabled`, and inert on Linux.
@@ -101,12 +101,9 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
 
     public init(
         enabled: Bool = false,
-        language: String? = Self.defaultLanguage,
         macOSVoiceIdentifier: String? = nil
     ) {
-        let normalizedLanguage = language?.nilIfBlank
         self.enabled = enabled
-        self.language = enabled ? normalizedLanguage : nil
         self.macOSVoiceIdentifier = macOSVoiceIdentifier?.nilIfBlank
     }
 
@@ -114,7 +111,6 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
-            language: try container.decodeIfPresent(String.self, forKey: .language),
             macOSVoiceIdentifier: try container.decodeIfPresent(
                 String.self,
                 forKey: .macOSVoiceIdentifier
@@ -125,9 +121,6 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(enabled, forKey: .enabled)
-        if let language {
-            try container.encode(language, forKey: .language)
-        }
         if let macOSVoiceIdentifier {
             try container.encode(macOSVoiceIdentifier, forKey: .macOSVoiceIdentifier)
         }

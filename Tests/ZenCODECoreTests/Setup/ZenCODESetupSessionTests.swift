@@ -222,7 +222,7 @@ struct ZenCODESetupSessionTests {
     }
 
     @Test
-    func telegramVoiceSettingsFollowPlatformAndTelegramState() {
+    func telegramVoiceSettingsFollowTelegramStateOnEveryPlatform() {
         let enabledTelegram = AgentTelegramSettingsManifest(
             enabled: true,
             botToken: "token",
@@ -232,17 +232,12 @@ struct ZenCODESetupSessionTests {
             routes: [AgentTelegramRouteManifest(roomID: "default")]
         )
 
-        #if os(macOS)
+        // macOS and Linux both transcribe voice messages; the language
+        // follows the response language and is not stored.
         #expect(
             ZenCODESetupRunner.voiceSettings(for: enabledTelegram) ==
-                AgentVoiceSettingsManifest(
-                    enabled: true,
-                    language: AgentVoiceSettingsManifest.defaultLanguage
-                )
+                AgentVoiceSettingsManifest(enabled: true)
         )
-        #else
-        #expect(ZenCODESetupRunner.voiceSettings(for: enabledTelegram) == nil)
-        #endif
         #expect(ZenCODESetupRunner.voiceSettings(for: nil) == nil)
     }
 
@@ -263,7 +258,6 @@ struct ZenCODESetupSessionTests {
         )
         let transcriptionAndVoice = AgentVoiceSettingsManifest(
             enabled: true,
-            language: "it",
             macOSVoiceIdentifier: "com.apple.voice.premium.it-IT.Federica"
         )
 
@@ -274,22 +268,13 @@ struct ZenCODESetupSessionTests {
         #expect(
             ZenCODESetupRunner.voiceSettings(
                 for: nil,
-                existing: AgentVoiceSettingsManifest(enabled: true, language: "it")
+                existing: AgentVoiceSettingsManifest(enabled: true)
             ) == nil
         )
 
-        // Telegram active.
+        // Telegram active: transcription is on, on every platform.
         let reenabled = ZenCODESetupRunner.voiceSettings(for: enabledTelegram, existing: readingVoiceOnly)
-        #if os(macOS)
-        #expect(reenabled == AgentVoiceSettingsManifest(
-            enabled: true,
-            language: AgentVoiceSettingsManifest.defaultLanguage,
-            macOSVoiceIdentifier: "com.apple.voice.premium.it-IT.Federica"
-        ))
-        #else
-        // Linux has no transcription; the inert field is kept for macOS.
-        #expect(reenabled == readingVoiceOnly)
-        #endif
+        #expect(reenabled == transcriptionAndVoice)
 
         // The rebuilt settings manifest keeps it too.
         let manifest = AgentSettingsManifest(

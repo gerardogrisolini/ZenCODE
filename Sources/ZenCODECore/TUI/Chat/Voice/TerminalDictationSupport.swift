@@ -319,22 +319,3 @@ enum TerminalVoiceSpeechText {
         text.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
     }
 }
-
-/// Language of the dictation recognizer and the spoken answers.
-enum TerminalVoiceLanguage {
-    /// The configured voice language, else the response language, else the
-    /// system language, else English.
-    static func resolvedCode(
-        voiceLanguage: String?,
-        responseLanguage: String?,
-        systemLanguage: String?
-    ) -> String {
-        for candidate in [voiceLanguage, responseLanguage, systemLanguage] {
-            if let code = candidate?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-               !code.isEmpty {
-                return code
-            }
-        }
-        return "en"
-    }
-}

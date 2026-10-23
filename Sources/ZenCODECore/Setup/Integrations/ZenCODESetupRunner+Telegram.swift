@@ -30,25 +30,24 @@ extension ZenCODESetupRunner {
         )
     }
 
-    /// Voice transcription is a Telegram capability, supported only by the
-    /// built-in macOS speech frameworks. Keep it absent whenever Telegram is
-    /// not active so disabling Telegram cannot leave voice enabled. The
-    /// reading voice chosen in `/setup` > Voice mode belongs to terminal voice
-    /// mode, so it survives either way (and on Linux, where it is inert).
+    /// Voice-message transcription is a Telegram capability, on whenever
+    /// Telegram is active: macOS transcribes with the system speech
+    /// frameworks, Linux with the sherpa-onnx files of `/setup` > Voice mode.
+    /// Keep it absent whenever Telegram is not active so disabling Telegram
+    /// cannot leave voice enabled. The language follows the response language.
+    /// The reading voice chosen in `/setup` > Voice mode belongs to terminal
+    /// voice mode, so it survives either way (and on Linux, where it is inert).
     static func voiceSettings(
         for telegram: AgentTelegramSettingsManifest?,
         existing: AgentVoiceSettingsManifest? = nil
     ) -> AgentVoiceSettingsManifest? {
         let readingVoice = existing?.macOSVoiceIdentifier
-        #if os(macOS)
         if telegram?.isEnabled == true {
             return AgentVoiceSettingsManifest(
                 enabled: true,
-                language: AgentVoiceSettingsManifest.defaultLanguage,
                 macOSVoiceIdentifier: readingVoice
             )
         }
-        #endif
         return readingVoice.map {
             AgentVoiceSettingsManifest(enabled: false, macOSVoiceIdentifier: $0)
         }

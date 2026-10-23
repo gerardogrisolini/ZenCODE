@@ -43,17 +43,17 @@ struct MacOSVoiceModeSetupTests {
     }
 
     @Test
-    func localeFollowsTheVoiceLanguageChain() {
+    func localeFollowsTheResponseLanguage() {
         #expect(ZenCODESetupRunner.speechVoiceLocaleIdentifier(manifest: Self.manifest()) == "it-IT")
         #expect(
             ZenCODESetupRunner.speechVoiceLocaleIdentifier(manifest: Self.manifest(responseLanguage: "fr"))
                 == "fr-FR"
         )
-        // The voice language (set with Telegram transcription) comes first.
-        let telegramVoice = AgentVoiceSettingsManifest(enabled: true, language: "en")
+        // Telegram transcription no longer carries a language of its own.
+        let telegramVoice = AgentVoiceSettingsManifest(enabled: true)
         #expect(
             ZenCODESetupRunner.speechVoiceLocaleIdentifier(manifest: Self.manifest(voice: telegramVoice))
-                == "en-US"
+                == "it-IT"
         )
     }
 
@@ -87,7 +87,7 @@ struct MacOSVoiceModeSetupTests {
 
     @Test
     func choosingAVoiceStagesItAndKeepsTelegramTranscription() throws {
-        let telegramVoice = AgentVoiceSettingsManifest(enabled: true, language: "it")
+        let telegramVoice = AgentVoiceSettingsManifest(enabled: true)
         let original = Self.manifest(voice: telegramVoice)
         var offered: [TerminalCheckboxMenuItem<Action>] = []
         var preselected: Action?
@@ -101,7 +101,6 @@ struct MacOSVoiceModeSetupTests {
         let manifest = try #require(result.manifest)
         #expect(manifest.voice == AgentVoiceSettingsManifest(
             enabled: true,
-            language: "it",
             macOSVoiceIdentifier: Voices.luca.identifier
         ))
         #expect(manifest.responseLanguage == "it")
@@ -134,11 +133,10 @@ struct MacOSVoiceModeSetupTests {
 
         let withTelegram = Self.manifest(voice: AgentVoiceSettingsManifest(
             enabled: true,
-            language: "it",
             macOSVoiceIdentifier: Voices.alice.identifier
         ))
         let kept = Self.configure(withTelegram) { _, _ in .automatic }
-        #expect(try #require(kept.manifest).voice == AgentVoiceSettingsManifest(enabled: true, language: "it"))
+        #expect(try #require(kept.manifest).voice == AgentVoiceSettingsManifest(enabled: true))
     }
 
     @Test

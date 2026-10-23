@@ -175,7 +175,6 @@ extension ZenCODESetupRunner {
             telegram: manifest?.telegram,
             voice: AgentVoiceSettingsManifest(
                 enabled: current?.enabled ?? false,
-                language: current?.language,
                 macOSVoiceIdentifier: identifier
             ),
             remoteAPIKeysByProviderID: manifest?.remoteAPIKeysByProviderID ?? [:],

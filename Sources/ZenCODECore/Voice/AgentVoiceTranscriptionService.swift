@@ -39,11 +39,42 @@ public struct AgentVoiceAudioInput: Equatable, Sendable {
 
 public actor AgentVoiceTranscriptionService {
     private let settings: AgentVoiceSettingsManifest?
+    /// Language of the macOS recognizer, e.g. `it`. Linux recognizes the
+    /// spoken language by itself.
+    private let languageCode: String
+    /// The sherpa-onnx files of `/setup` > Voice mode that transcribe on Linux.
+    private let voiceInstallation: SherpaOnnxVoiceInstallation
+
+    /// Reads the voice settings and the response language from `manifest`,
+    /// by default the saved settings.
+    public init(
+        manifest: AgentSettingsManifest? = AgentSettingsManifestStore.load()
+    ) {
+        self.init(
+            settings: manifest?.voice,
+            languageCode: VoiceLanguage.resolvedCode(manifest: manifest)
+        )
+    }
 
     public init(
-        settings: AgentVoiceSettingsManifest? = AgentSettingsManifestStore.load()?.voice
+        settings: AgentVoiceSettingsManifest?,
+        languageCode: String
+    ) {
+        self.init(
+            settings: settings,
+            languageCode: languageCode,
+            voiceInstallation: .standard()
+        )
+    }
+
+    init(
+        settings: AgentVoiceSettingsManifest?,
+        languageCode: String,
+        voiceInstallation: SherpaOnnxVoiceInstallation
     ) {
         self.settings = settings
+        self.languageCode = languageCode
+        self.voiceInstallation = voiceInstallation
     }
 
     public func transcribe(
@@ -65,7 +96,7 @@ public actor AgentVoiceTranscriptionService {
         await progress?("Preparing speech recognizer")
         try await Self.requestAuthorization()
 
-        let locale = Self.locale(for: settings.language)
+        let locale = Self.locale(for: languageCode)
         guard let recognizer = SFSpeechRecognizer(locale: locale) else {
             throw AgentVoiceTranscriptionError.unsupportedLanguage(locale.identifier)
         }
@@ -83,6 +114,13 @@ public actor AgentVoiceTranscriptionService {
             throw AgentVoiceTranscriptionError.emptyTranscript
         }
         return output
+        #elseif os(Linux)
+        await progress?("Transcribing audio")
+        let transcriber = try SherpaOnnxFileTranscriber.make(
+            installation: voiceInstallation,
+            audio: audio
+        )
+        return try await transcriber.transcribe(audio)
         #else
         throw AgentVoiceTranscriptionError.unsupportedPlatform
         #endif
@@ -367,16 +405,21 @@ public enum AgentVoiceTranscriptionError: LocalizedError, Sendable, Equatable {
     case authorizationDenied
     case recognitionFailed(String)
 
+    /// Telegram is paired but its voice-message transcription is off, e.g.
+    /// on Linux settings saved before transcription existed there. Saving the
+    /// Telegram section again turns it on without a new pairing.
+    public static let notEnabledMessage = "Voice-message transcription is off. Run /setup in zen and open the Telegram section again (you can keep the current pairing) to turn it on."
+
     public var errorDescription: String? {
         switch self {
         case .missingConfiguration:
-            return "Voice-message transcription is not configured. Run the /setup command in zen and enable voice-message transcription."
+            return Self.notEnabledMessage
         case let .missingAudioFile(path):
             return "Voice audio file does not exist: \(path)"
         case .emptyTranscript:
             return "Voice transcription returned no text."
         case .unsupportedPlatform:
-            return "Voice input is available only on Apple platforms."
+            return "Voice input is available only on macOS and Linux."
         case let .unsupportedLanguage(identifier):
             return "Voice transcription does not support the language \(identifier)."
         case .recognizerUnavailable:

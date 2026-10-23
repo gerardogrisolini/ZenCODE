@@ -25,6 +25,17 @@ struct SherpaOnnxRuntimePaths: Sendable, Equatable {
     let voiceDataDirectory: URL
 }
 
+/// The files that transcribe an audio file (Telegram voice messages). They
+/// are part of every voice mode installation; no Piper voice is needed.
+struct SherpaOnnxTranscriptionPaths: Sendable, Equatable {
+    let program: URL
+    let voiceActivityModel: URL
+    let encoder: URL
+    let decoder: URL
+    let joiner: URL
+    let tokens: URL
+}
+
 struct SherpaOnnxVoiceInstallation: Sendable {
     static let directoryName = "voice"
     /// Download and extraction scratch space, removed after every install.
@@ -132,6 +143,40 @@ struct SherpaOnnxVoiceInstallation: Sendable {
         for file in [paths.voiceTokens, paths.voiceDataDirectory]
         where !fileManager.fileExists(atPath: file.path) {
             return .failure(.unexpectedLayout(voice.asset.fileName))
+        }
+        return .success(paths)
+    }
+
+    /// Paths for transcribing audio files, or the reason it cannot run yet.
+    /// Only the programs, the recognizer and the voice activity detector are
+    /// required.
+    func transcriptionPaths() -> Result<SherpaOnnxTranscriptionPaths, SherpaOnnxVoiceInstallError> {
+        guard let runtime = SherpaOnnxVoiceCatalog.runtime else {
+            return .failure(.unsupportedArchitecture)
+        }
+        guard isInstalled(runtime),
+              isInstalled(SherpaOnnxVoiceCatalog.recognizer),
+              isInstalled(SherpaOnnxVoiceCatalog.voiceActivityDetector) else {
+            return .failure(.notInstalled)
+        }
+        let recognizerDirectory = installedURL(for: SherpaOnnxVoiceCatalog.recognizer)
+        let paths = SherpaOnnxTranscriptionPaths(
+            program: installedURL(for: runtime)
+                .appendingPathComponent("bin", isDirectory: true)
+                .appendingPathComponent(SherpaOnnxVoiceCatalog.fileRecognizerProgramName),
+            voiceActivityModel: installedURL(for: SherpaOnnxVoiceCatalog.voiceActivityDetector),
+            encoder: recognizerDirectory.appendingPathComponent(SherpaOnnxVoiceCatalog.recognizerEncoderFileName),
+            decoder: recognizerDirectory.appendingPathComponent(SherpaOnnxVoiceCatalog.recognizerDecoderFileName),
+            joiner: recognizerDirectory.appendingPathComponent(SherpaOnnxVoiceCatalog.recognizerJoinerFileName),
+            tokens: recognizerDirectory.appendingPathComponent(SherpaOnnxVoiceCatalog.tokensFileName)
+        )
+        let fileManager = FileManager.default
+        guard fileManager.isExecutableFile(atPath: paths.program.path) else {
+            return .failure(.unexpectedLayout(runtime.fileName))
+        }
+        for file in [paths.encoder, paths.decoder, paths.joiner, paths.tokens]
+        where !fileManager.fileExists(atPath: file.path) {
+            return .failure(.unexpectedLayout(SherpaOnnxVoiceCatalog.recognizer.fileName))
         }
         return .success(paths)
     }

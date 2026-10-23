@@ -80,6 +80,7 @@ Creates files under `~/.zencode/`:
 - `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans.
 - `features/` — generated Builder packages and installed optional feature packages.
 - `source/` — persistent ZenCODE checkout retained by the platform installer for later optional-feature builds.
+- `voice/` — Linux only: the speech programs and models downloaded from `/setup` > **Voice mode** for voice mode and Telegram voice messages. They can be downloaded again at any time and are not part of backups. See [voice.md](voice.md).
 
 ## Data Management (Backup Export/Import)
 
@@ -92,6 +93,8 @@ directory between machines in one step:
   nested directories such as `memory/`, `sessions/`, and `features/`.
   Temporary coordination artifacts of the export itself are excluded, and
   the archive is never added to itself when saved inside `~/.zencode/`.
+  The Linux `voice/` directory is excluded as well: its programs and models
+  are large and can be downloaded again from `/setup` > **Voice mode**.
   The export runs under the support directory's coordination lock, so the
   archive is a coherent snapshot of one moment in time rather than a mix
   of states captured while settings were being written. If the support
@@ -108,7 +111,8 @@ directory between machines in one step:
   so a failed or rejected import never leaves a half-replaced directory.
   The replacement also preserves the coordination lock file's inode, so
   concurrent processes keep a single shared exclusion boundary before,
-  during, and after the swap.
+  during, and after the swap. Because the whole directory is replaced, the
+  Linux voice mode files are removed: download them again afterwards.
 - **Reset remote configuration** is the same reset previously found in the
   main setup menu, now grouped here with the other data operations.
 - **Back** returns to the main setup menu. Cancelling any prompt leaves
@@ -310,6 +314,10 @@ Commands start with `/`:
 - `/changes diff` — include patches.
 - `/undo` — revert the most recent agent-tracked changes.
 
+**Voice:**
+- `/voice on` / `/voice off` — start or stop voice mode in the interactive terminal, with any agent: each utterance becomes a prompt after a pause of about 2.5 seconds and every final answer is read aloud; `Esc` stops the reading. On Linux, download the speech files from `/setup` > **Voice mode** first.
+- `/voice pause` / `/voice resume` — stop or restart both listening and reading aloud; a bare `/voice` toggles between them. Available while a prompt runs. See [voice.md](voice.md).
+
 **Task graph:**
 - `/tasks [status|list]` — show the session task graph.
 - `/tasks show <id>` — show one task with dependencies and attempts.
@@ -414,6 +422,11 @@ wire-fence checks, including authorization prompts, voice notes and attachments.
 Groups, shared members and per-route ACLs are not supported. Persisted routing uses
 `routingVersion: 2`. Schema-1, ownerless or incoherent configurations remain
 inactive and require a new pairing.
+
+Voice notes sent to the paired chat are transcribed on the machine — on macOS
+with Apple speech recognition, on Linux with the `/setup` > **Voice mode** files
+plus `opusdec` or `ffmpeg` — and run as ordinary prompts. See
+[voice.md](voice.md#telegram-voice-messages).
 
 **Tool execution logs:** every direct tool call emits a secret-redacted structured
 record through the platform system logger. Records include agent ID/name, model,
@@ -629,3 +642,4 @@ token environment variables still apply.
 - **`/plan` or `/review` needs sub-agents**: enable `sub-agents` with `/tools` or switch profile. `/goal` does not require sub-agents; delegation is optional.
 - **Xcode tools missing**: make sure Xcode is running. See [xcode.md](xcode.md).
 - **Figma tools missing**: make sure the Figma desktop MCP server is enabled.
+- **Voice mode or Telegram voice messages do not work**: see the troubleshooting table in [voice.md](voice.md#troubleshooting).

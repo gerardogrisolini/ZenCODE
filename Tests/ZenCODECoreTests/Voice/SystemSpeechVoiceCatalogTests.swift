@@ -145,12 +145,12 @@ struct AgentVoiceSettingsManifestTests {
     static let identifier = "com.apple.voice.premium.it-IT.Federica"
 
     @Test
-    func legacyVoiceSettingsDecodeWithoutAReadingVoice() throws {
+    func legacyVoiceSettingsDecodeAndDropTheLanguage() throws {
         let voice = try JSONDecoder().decode(
             AgentVoiceSettingsManifest.self,
             from: Data(#"{"enabled":true,"language":"it"}"#.utf8)
         )
-        #expect(voice == AgentVoiceSettingsManifest(enabled: true, language: "it"))
+        #expect(voice == AgentVoiceSettingsManifest(enabled: true))
         #expect(voice.macOSVoiceIdentifier == nil)
         #expect(voice.isConfigured)
 
@@ -159,9 +159,10 @@ struct AgentVoiceSettingsManifestTests {
             from: Data(#"{"version":14,"models":[],"voice":{"enabled":true,"language":"it"}}"#.utf8)
         )
         #expect(manifest.voice == voice)
-        // Re-encoding keeps the existing shape: no new key appears.
+        // The language follows the response language: the saved key is not
+        // written again.
         let object = try Self.encodedVoice(of: manifest)
-        #expect(object.keys.sorted() == ["enabled", "language"])
+        #expect(object.keys.sorted() == ["enabled"])
 
         // A disabled legacy value is still dropped.
         let disabled = try JSONDecoder().decode(
@@ -180,7 +181,6 @@ struct AgentVoiceSettingsManifestTests {
         let voice = try #require(manifest.voice)
         #expect(!voice.isConfigured)
         #expect(!voice.isEmpty)
-        #expect(voice.language == nil)
         #expect(!TerminalOptionalCommandAvailability.from(manifest: manifest).voiceEnabled)
 
         let object = try Self.encodedVoice(of: manifest)
@@ -194,7 +194,7 @@ struct AgentVoiceSettingsManifestTests {
 
     @Test
     func readingVoiceRoundTripsBesideTelegramTranscription() throws {
-        let voice = AgentVoiceSettingsManifest(enabled: true, language: "it", macOSVoiceIdentifier: Self.identifier)
+        let voice = AgentVoiceSettingsManifest(enabled: true, macOSVoiceIdentifier: Self.identifier)
         let manifest = AgentSettingsManifest(models: [], voice: voice)
         let reloaded = try JSONDecoder().decode(AgentSettingsManifest.self, from: JSONEncoder().encode(manifest))
         #expect(reloaded.voice == voice)

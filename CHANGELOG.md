@@ -20,9 +20,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   Each utterance becomes an ordinary prompt after a pause, and every final
   answer, including results of delegated agents, is read aloud without
   Markdown and with code blocks replaced by a short notice; Esc stops the
-  reading. The language follows the voice language, then the response
-  language, then the system language. Dictated prompts are saved with the
-  session like typed ones; audio is never written to disk.
+  reading. The language follows the response language, then the system
+  language. Dictated prompts are saved with the session like typed ones;
+  audio is never written to disk.
   - macOS uses Apple speech recognition (on-device when the language supports
     it) and the best installed system voice, after the system permission
     prompts. Capture and playback share one audio engine with system echo
@@ -44,7 +44,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
     longer installed, or that reads another language, falls back to the
     automatic voice.
   - Linux runs the sherpa-onnx programs: Parakeet TDT 0.6B v3 speech
-    recognition (25 European languages) and a Piper voice. The microphone is
+    recognition (25 European languages, recognized automatically) and a Piper
+    voice, which reads answers in its own language. The microphone is
     off while an answer is read and turns back on when the reading ends or
     Esc stops it. The files (about 580 MB) are downloaded from the new
     `/setup` > Voice mode section, where you choose the voice from those
@@ -52,6 +53,26 @@ Release tags follow the strict `vX.Y.Z` contract described in
     SHA-256 checksum and stored in `~/.zencode/voice`. Unpacking needs `tar`
     and `bzip2`; playback and capture use ALSA (`libasound.so.2`). The section
     also removes the files. Data management backups skip this directory.
+- Telegram: voice notes are transcribed on Linux as well. Telegram setup now
+  turns voice-message transcription on with Telegram on every platform, and the
+  setup summary shows it. Linux transcribes on the machine with the files of
+  `/setup` > Voice mode (any voice) and Parakeet, which recognizes the spoken
+  language by itself; the note is first decoded with `opusdec` (package
+  `opus-tools`) or, when it is missing, `ffmpeg` into a private temporary WAV
+  file that is deleted afterwards. A missing decoder or missing Voice mode
+  files are reported in the terminal and in the chat. On Linux settings saved
+  before this version, open the Telegram section of `/setup` again (the
+  pairing can be kept) to turn transcription on.
+- Docs: the new [voice guide](Docs/voice.md) covers voice mode and Telegram
+  voice messages on macOS and Linux; the README, the ZenCODE guide, Why
+  ZenCODE and the docs index link to it.
+
+### Changed
+
+- Voice: Telegram voice-message transcription and voice mode use the response
+  language, else the system language. Telegram setup no longer saves a fixed
+  Italian `voice.language`, which overrode the response language; an existing
+  value is ignored and removed from `settings.json` on the next save.
 
 ### Fixed
 

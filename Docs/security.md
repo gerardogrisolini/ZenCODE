@@ -94,8 +94,10 @@ additionally forward an opt-in copy to the system log.
 
 ## Backup archives
 
-The setup **Data management** export writes the entire support directory to a
-single gzip-compressed tar archive. That archive is subject to the same plaintext limitation
+The setup **Data management** export writes the support directory to a
+single gzip-compressed tar archive. Besides the export's own temporary files,
+only the Linux `voice/` directory is left out: it holds re-downloadable speech
+programs and models, not credentials. That archive is subject to the same plaintext limitation
 described above: it contains provider API keys, tokens, and permissions
 exactly as stored on disk, and gzip compression is not encryption. Export and
 import prompts state this explicitly and print every path involved. Imported

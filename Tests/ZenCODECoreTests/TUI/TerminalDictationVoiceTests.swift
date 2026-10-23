@@ -149,11 +149,16 @@ struct TerminalDictationVoiceTests {
     }
 
     @Test
-    func dictationLanguagePrefersVoiceThenResponseThenSystem() {
-        #expect(TerminalVoiceLanguage.resolvedCode(voiceLanguage: "IT", responseLanguage: "en", systemLanguage: "de") == "it")
-        #expect(TerminalVoiceLanguage.resolvedCode(voiceLanguage: nil, responseLanguage: "fr", systemLanguage: "de") == "fr")
-        #expect(TerminalVoiceLanguage.resolvedCode(voiceLanguage: " ", responseLanguage: nil, systemLanguage: "de") == "de")
-        #expect(TerminalVoiceLanguage.resolvedCode(voiceLanguage: nil, responseLanguage: nil, systemLanguage: nil) == "en")
+    func voiceLanguageFollowsTheResponseLanguageThenTheSystem() {
+        #expect(VoiceLanguage.resolvedCode(responseLanguage: "FR", systemLanguage: "de") == "fr")
+        #expect(VoiceLanguage.resolvedCode(responseLanguage: " ", systemLanguage: "de") == "de")
+        #expect(VoiceLanguage.resolvedCode(responseLanguage: nil, systemLanguage: nil) == "en")
+        // A `language` key saved by earlier versions no longer wins.
+        let legacy = try? JSONDecoder().decode(
+            AgentSettingsManifest.self,
+            from: Data(#"{"version":14,"models":[],"responseLanguage":"en","voice":{"enabled":true,"language":"it"}}"#.utf8)
+        )
+        #expect(VoiceLanguage.resolvedCode(manifest: legacy) == "en")
         let italian = AgentVoiceTranscriptionService.locale(for: "it")
         #expect(italian.language.languageCode?.identifier == "it")
         #expect(italian.region?.identifier == "IT")

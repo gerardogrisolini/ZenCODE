@@ -25,6 +25,7 @@ Raspberry Pi.
 - **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, as a native coding agent.
 - **Agentic workflows** — dependency-aware task graph with `/plan`, `/goal`, and `/review`; `/plan save` and `/plan load` hand plans between sessions of the same project, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
 - **Live agent chat** — while sub-agents run, the operator, coordinator, and agent instances share a transient chat room: message the coordinator or broadcast to all agents from the terminal with `@coordinator` / `@all`, or reach a specific agent by its handle. See [agents.md](Docs/agents.md).
+- **Voice** — `/voice on` lets you speak prompts to any agent and hear the answers, and Telegram voice notes become prompts. Speech is recognized and synthesized on your machine (Apple speech frameworks on macOS, sherpa-onnx on Linux); the provider only receives text. See [voice.md](Docs/voice.md).
 - **Task recovery at startup** — incomplete task graphs are detected per project and presented in a scrollable picker, so you can resume the exact graph you selected or remove obsolete work before starting a new session.
 - **Durable project memory** — workspace-scoped facts are recalled automatically without bloating conversation history; default retrieval stays local with BM25, and optional embeddings add semantic ranking.
 - **Full control over tools** — granular `/tools` selection (filesystem, shell, Git, search, memory, sub-agents, Xcode, Figma, features), with change tracking and `/undo` as a safety net. Successful file edits return compact path-and-count confirmations instead of post-edit context or diffs.
@@ -178,6 +179,7 @@ swift build -c release --product zen
 /review      Review tracked changes and verify task/plan claims
 /feature     Manage Swift features with the Builder agent
 /telegram    Turn Telegram remote control on/off when paired in setup
+/voice       Voice mode: speak prompts, hear answers (on/off/pause/resume)
 /exit        Close the session
 ```
 
@@ -192,6 +194,14 @@ session with no active plan, `/plan load` presents the latest saved plan as an
 unapproved draft for review; use `/plan approve` only when it is ready to
 implement. The [Planner guide](Docs/planner.md#saving-and-loading-plans)
 describes the complete handoff flow.
+
+`/voice on` starts voice mode with any agent: each utterance becomes a prompt
+after a short pause and every final answer is read aloud; `Esc` stops the
+reading, `/voice` pauses or resumes, `/voice off` stops. macOS needs nothing
+more than the microphone and speech recognition permissions; on Linux, first
+download the speech files (about 580 MB) from `/setup` > **Voice mode**. The
+[voice guide](Docs/voice.md) covers languages, Telegram voice messages,
+privacy, and troubleshooting.
 
 ## Layout
 
