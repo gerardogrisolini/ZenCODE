@@ -96,6 +96,9 @@ extension TerminalChat {
             await writeFailureMessage(Self.voiceOffMessage)
             return
         }
+        if paused {
+            cancelVoiceChatDialogue()
+        }
         let changed = await controller.setPaused(paused)
         switch (paused, changed) {
         case (true, true):
@@ -110,6 +113,7 @@ extension TerminalChat {
     }
 
     func stopVoiceMode() async {
+        cancelVoiceChatDialogue()
         guard let controller = voiceController else {
             return
         }
@@ -119,14 +123,40 @@ extension TerminalChat {
     }
 
     /// Reads a completed answer aloud while voice mode runs and is not paused.
-    func speakVoiceResponse(_ response: String) async {
-        await voiceController?.speak(response)
+    /// An answer that starts takes precedence over the live-chat dialogue (see
+    /// `TerminalVoiceChatDialogue.answerReadingStarted`); one that does not
+    /// start, because voice mode is paused or the answer has nothing to say,
+    /// leaves the dialogue as it is. Returns whether the reading started.
+    func speakVoiceResponse(_ response: String) async -> Bool {
+        guard let voiceController else {
+            return false
+        }
+        let started = await voiceController.speak(response, rendering: .answer)
+        if started {
+            cancelVoiceDialogueDeadline()
+            voiceChatDialogue.answerReadingStarted()
+        }
+        return started
     }
 
     /// Stops the answer being read aloud, e.g. after Esc. On Linux this also
-    /// turns the microphone back on.
+    /// turns the microphone back on. The live-chat dialogue and its queue are
+    /// dropped: nothing is announced retroactively.
     func interruptVoicePlayback() async {
+        cancelVoiceChatDialogue()
         await voiceController?.interruptPlayback()
+    }
+
+    /// Forgets the spoken live-chat question and every queued announcement.
+    func cancelVoiceChatDialogue() {
+        cancelVoiceDialogueDeadline()
+        voiceChatDialogue.cancelAll()
+    }
+
+    /// Stops waiting for the answer to a spoken question.
+    func cancelVoiceDialogueDeadline() {
+        voiceDialogueDeadlineTask?.cancel()
+        voiceDialogueDeadlineTask = nil
     }
 
     private func voiceCallbacks(
@@ -141,19 +171,27 @@ extension TerminalChat {
                 await self?.writeFailureMessage(text)
             },
             utteranceRecognized: { utterance in
-                _ = await eventQueue.sendWithBackpressure(
-                    Self.dictatedPromptEvent(for: utterance)
-                )
+                _ = await eventQueue.sendWithBackpressure(.voiceUtterance(utterance))
             },
             speakingChanged: { isSpeaking in
                 await reader.setPanelSpeaking(isSpeaking)
+                // Reported from inside `speak`, `interruptPlayback`, `setPaused`
+                // and `stop`, which the runtime loop itself awaits: waiting here
+                // for a full queue would block its only consumer. Only a full
+                // queue is retried, from a task of its own.
+                if eventQueue.offer(.voiceSpeakingChanged(isSpeaking)) == .rejectedFull {
+                    Task(name: "ZenCODE.TUI.voice-speaking-changed") {
+                        _ = await eventQueue.sendWithBackpressure(.voiceSpeakingChanged(isSpeaking))
+                    }
+                }
             }
         )
     }
 
-    /// A dictated utterance is handled like a typed line, so it also answers
-    /// a pending plan or workflow question and queues while a turn runs. Text
-    /// that would read as a slash command is always sent as a plain prompt.
+    /// A dictated utterance that is not part of the live-chat dialogue is
+    /// handled like a typed line, so it also answers a pending plan or
+    /// workflow question and queues while a turn runs. Text that would read
+    /// as a slash command is always sent as a plain prompt.
     nonisolated static func dictatedPromptEvent(for utterance: String) -> TerminalChatRuntimeEvent {
         if utterance.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/") {
             return .voicePromptCompleted(

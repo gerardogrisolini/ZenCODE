@@ -354,7 +354,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
     }
 
     private let callbacks: Callbacks
-    private let languageCode: String
+    nonisolated let languageCode: String
     private let locale: Locale
     /// The reading voice chosen in `/setup` > Voice mode, if any.
     private let readingVoiceIdentifier: String?
@@ -480,19 +480,33 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         }
     }
 
-    /// Reads an assistant answer aloud, replacing anything still being spoken.
-    /// Answers completed while paused are never read later.
-    func speak(_ response: String) async {
+    /// Reads an assistant answer or a plain text aloud, replacing anything
+    /// still being spoken. Answers completed while paused are never read
+    /// later.
+    @discardableResult
+    func speak(_ text: String, rendering: TerminalVoiceSpeechRendering) async -> Bool {
         guard phase == .listening, !isPaused, let speaker else {
-            return
+            return false
         }
-        let text = TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: response, languageCode: languageCode)
-        guard !text.isEmpty else {
-            return
+        let spoken: String
+        switch rendering {
+        case .answer:
+            spoken = TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: text, languageCode: languageCode)
+        case .plainText:
+            spoken = text
+        }
+        guard !spoken.isEmpty else {
+            return false
         }
         device.interruptPlayback()
-        await speaker.speak(text)
+        await speaker.speak(spoken)
         await reportSpeakingState()
+        return true
+    }
+
+    /// `true` while an answer or a live-chat text is being read aloud.
+    var isSpeaking: Bool {
+        speaker?.state.isSpeaking() ?? false
     }
 
     /// Stops the answer being spoken, e.g. after Esc or barge-in.
@@ -564,8 +578,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
                 return
             }
             let now = ContinuousClock.now
-            if let reference = speaker?.state.echoReference(at: now),
-               TerminalVoiceEchoGuard.isLikelyEcho(text, of: reference) {
+            if isResidualEcho(text, at: now) {
                 // The assistant's own voice leaked through: drop it.
                 restartRecognition()
                 return
@@ -621,11 +634,23 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
     }
 
     private func emit(_ utterance: String, at now: ContinuousClock.Instant) async {
-        if let reference = speaker?.state.echoReference(at: now),
-           TerminalVoiceEchoGuard.isLikelyEcho(utterance, of: reference) {
+        if isResidualEcho(utterance, at: now) {
             return
         }
         await callbacks.utteranceRecognized(utterance)
+    }
+
+    /// Whether `text` is the assistant's own voice leaking through the
+    /// microphone, during the reading or within its echo tail.
+    private func isResidualEcho(_ text: String, at now: ContinuousClock.Instant) -> Bool {
+        guard let state = speaker?.state, let reference = state.echoReference(at: now) else {
+            return false
+        }
+        return TerminalVoiceEchoGuard.shouldDrop(
+            text,
+            spokenReference: reference,
+            isSpeaking: state.isSpeaking(at: now)
+        )
     }
 
     private func restartRecognition() {

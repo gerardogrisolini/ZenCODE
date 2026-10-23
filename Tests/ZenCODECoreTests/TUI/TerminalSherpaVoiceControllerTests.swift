@@ -143,7 +143,8 @@ struct TerminalSherpaVoiceControllerTests {
 
         #expect(await controller.setPaused(true))
         #expect(await controller.setPaused(true) == false)
-        await controller.speak("Non letto")
+        #expect(await controller.speak("Non letto") == false)
+        #expect(await controller.speak("Non letto", rendering: .plainText) == false)
         try await Task.sleep(for: .milliseconds(200))
         #expect(fixture.synthesizerCalls.isEmpty)
 
@@ -151,6 +152,33 @@ struct TerminalSherpaVoiceControllerTests {
         #expect(await waitUntil { fixture.recognizerLaunches == 2 })
         await controller.stop()
         #expect(await controller.isActive == false)
+    }
+
+    /// Live-chat texts are read whole and unchanged, while answers keep the
+    /// final-sentences rule of long answers.
+    @Test
+    func plainTextIsReadWholeWhileAnswersKeepTheirTailRule() async throws {
+        let fixture = try Fixture(readingSeconds: "0.2")
+        let controller = fixture.makeController()
+        await controller.start()
+        #expect(await waitUntil { await controller.phase == .listening })
+        #expect(controller.languageCode == "it")
+
+        let sentence = "Questa frase riempie il messaggio. "
+        let long = String(repeating: sentence, count: 1_000 / sentence.count + 1)
+        #expect(long.count > 1_000)
+        #expect(await controller.speak(long, rendering: .plainText))
+        #expect(await controller.isSpeaking)
+        #expect(await waitUntil { await fixture.events.speaking == [true, false] })
+        #expect(fixture.synthesizerCalls.last?.hasSuffix("--|\(long)|") == true)
+
+        #expect(await controller.speak("# Titolo\n\n" + long, rendering: .answer))
+        #expect(await waitUntil { await fixture.events.speaking == [true, false, true, false] })
+        let spokenAnswer = try #require(fixture.synthesizerCalls.last)
+        #expect(spokenAnswer.contains(TerminalVoiceSpeechText.longAnswerNotice(languageCode: "it")))
+        #expect(spokenAnswer.count < long.count)
+        await controller.stop()
+        #expect(await fixture.events.failures.isEmpty)
     }
 
     @Test
@@ -163,6 +191,37 @@ struct TerminalSherpaVoiceControllerTests {
         let failure = try #require(await fixture.events.failures.first)
         #expect(failure.contains("speech recognition could not start: Cannot open device default."))
         #expect(await controller.isActive == false)
+    }
+
+    /// The end of a reading is reported before the microphone turns back on,
+    /// and the terminal may start another reading in between (the next
+    /// live-chat announcement): the microphone must stay off until that one
+    /// ends too.
+    @Test
+    func aReadingStartedAsThePreviousOneEndsKeepsTheMicrophoneOff() async throws {
+        let fixture = try Fixture(readingSeconds: "0.3")
+        let controller = fixture.makeController()
+        await controller.start()
+        #expect(await waitUntil { await controller.phase == .listening })
+        #expect(fixture.recognizerLaunches == 1)
+
+        let events = fixture.events
+        await events.setSpeakingHook { isSpeaking in
+            // Only at the end of the first reading.
+            guard !isSpeaking, await events.speaking == [true, false] else { return }
+            await controller.speak("Seconda", rendering: .plainText)
+        }
+        #expect(await controller.speak("Prima", rendering: .plainText))
+        #expect(await waitUntil { await fixture.events.speaking == [true, false, true] })
+        #expect(await controller.isSpeaking)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(fixture.recognizerLaunches == 1)
+
+        #expect(await waitUntil { await fixture.events.speaking == [true, false, true, false] })
+        #expect(await waitUntil { fixture.recognizerLaunches == 2 })
+        #expect(fixture.synthesizerCalls.count == 2)
+        await controller.stop()
+        #expect(await fixture.events.failures.isEmpty)
     }
 
     @Test
@@ -202,11 +261,22 @@ private actor VoiceEventRecorder {
     var failures: [String] = []
     var utterances: [String] = []
     var speaking: [Bool] = []
+    private var speakingHook: (@Sendable (Bool) async -> Void)?
 
     func system(_ text: String) { systemMessages.append(text) }
     func failure(_ text: String) { failures.append(text) }
     func utterance(_ text: String) { utterances.append(text) }
-    func speakingChanged(_ value: Bool) { speaking.append(value) }
+
+    func speakingChanged(_ value: Bool) async {
+        speaking.append(value)
+        await speakingHook?(value)
+    }
+
+    /// Runs inside the controller's `speakingChanged` callback, i.e. while
+    /// the controller is suspended reporting the change.
+    func setSpeakingHook(_ hook: @escaping @Sendable (Bool) async -> Void) {
+        speakingHook = hook
+    }
 }
 
 /// Two fake programs in a private directory. Each logs its launches; the

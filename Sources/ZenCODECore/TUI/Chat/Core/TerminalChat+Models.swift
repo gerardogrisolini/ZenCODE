@@ -205,6 +205,16 @@ enum TerminalChatRuntimeEvent: Sendable {
     /// Telegram polling entered or left a persistent failure.
     case telegramPollHealthChanged(TerminalTelegramPollHealthNotice)
     case voicePromptCompleted(TerminalVoicePromptResult)
+    /// A dictated utterance. The runtime loop decides whether it answers a
+    /// spoken live-chat question, sends a "message to …" phrase, or becomes
+    /// an ordinary prompt.
+    case voiceUtterance(String)
+    /// The voice controller started (`true`) or stopped (`false`) reading
+    /// aloud; the end of a spoken question starts waiting for its answer.
+    case voiceSpeakingChanged(Bool)
+    /// A spoken live-chat question waited too long for its answer. The token
+    /// identifies the question so a late timer cannot close a newer one.
+    case voiceDialogueTimedOut(UUID)
     /// The originating room remains attached while the event waits in the
     /// terminal queue. A session command can rebind the live observation before
     /// an already-enqueued event is consumed.
@@ -238,6 +248,9 @@ enum TerminalChatRuntimeEvent: Sendable {
              .telegramRouteInvalidated,
              .telegramPollHealthChanged,
              .voicePromptCompleted,
+             .voiceUtterance,
+             .voiceSpeakingChanged,
+             .voiceDialogueTimedOut,
              .sharedChatReaderCollapsed:
             nil
         }

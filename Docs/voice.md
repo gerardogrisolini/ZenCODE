@@ -59,7 +59,9 @@ command, and `zen -p`, `--jsonl` and ACP do not have it.
    while a prompt is running it is queued, and it can answer a pending `/plan`
    clarification or `/goal` question. Text that would read as a slash command is
    always sent as a plain prompt: voice never runs `/exit` or any other command.
-   You can keep typing at any time.
+   Two kinds of utterance are not prompts: a yes or no while voice mode is
+   asking you about a live-chat message, and a "message to …" phrase (see
+   [Live chat by voice](#live-chat-by-voice)). You can keep typing at any time.
 4. The final answer of every completed turn is read aloud, including turns
    started from Telegram and the coordinator turns that report the results of
    delegated agents. Answers are read as plain text: Markdown markers are
@@ -77,6 +79,89 @@ command, and `zen -p`, `--jsonl` and ACP do not have it.
 
 `/voice pause` stops listening and reading aloud at once; answers that complete
 while voice mode is paused are not read later.
+
+### Live chat by voice
+
+While delegated agents run, the coordinator and the agents write to the
+[live agent chat](zen.md#live-agent-chat) shown in the dock at the bottom of the
+terminal. With voice mode listening, the messages meant for you are also
+handled by voice, one at a time.
+
+**What is announced.** Only a new message from the coordinator or an agent that
+names you among its recipients (`→ Operator` or `→ All`), sent while voice mode
+listens. Traffic between the coordinator and the agents, and between agents,
+stays silent in the dock; so does whatever arrived before voice mode started
+or while it was paused, and the transcript replayed after `/resume` or a
+reconnection. A message you already read in the dock is skipped.
+
+**The dialogue.** Voice mode says, in its own language, something like
+"New message from Reviewer, 2 more waiting. Do you want me to read it?" and
+waits for your answer:
+
+- **Yes** reads the whole message as plain text, however long it is (the
+  600-character limit of spoken answers does not apply), then asks "Do you want
+  to reply?". A second **yes** is followed by "Tell me your reply.": the next
+  utterance goes to the sender (to the coordinator, or directly to the agent)
+  and voice mode confirms "Sent.". **No** moves on to the next message waiting.
+  A yes or no spoken while the message is still being read is taken as the
+  answer to "Do you want to reply?" (on macOS it also stops the reading).
+- **No** leaves the message unread in the dock and announces the next one.
+- Anything else closes the question: the message stays unread, and the
+  utterance is handled as usual, as a prompt or as a "message to …" phrase.
+  After "Tell me your reply." or "Tell me the message.", though, the whole
+  next utterance is the text, even one that starts with "message to …".
+- Silence closes the question too: after 60 seconds without an answer the
+  question lapses, the message stays unread, and the next one is announced.
+
+The yes and no words are recognised in English, Italian, Spanish, French,
+German and Portuguese whatever the voice language, without case, accents or
+punctuation, and only when they are the whole utterance ("yes, but first…" is a
+prompt):
+
+| | Yes | No |
+| --- | --- | --- |
+| English | yes, yeah, yep, sure, ok, okay, please, yes please, go ahead, read it | no, nope, not now, later |
+| Italian | sì, certo, va bene, d'accordo, ok, okay, leggi, leggilo, leggila | no, non ora, dopo |
+| Spanish | sí, claro, vale, ok, léelo | no, ahora no, luego |
+| French | oui, ouais, d'accord, ok, lis-le | non, pas maintenant, plus tard |
+| German | ja, jawohl, klar, ok, okay, lies vor | nein, nicht jetzt, später |
+| Portuguese | sim, claro, ok, pode ler | não, agora não, depois |
+
+**Sending a message.** At any time, one phrase sends a live message without a
+question: the recipient, an optional `:` `,` `.` or `-`, and the text. The
+coordinator and the broadcast are reserved words and win over an agent with the
+same name; any other name must be the name of an active agent, matched without
+case or accents and with any punctuation between its words ("parser reviewer"
+reaches `parser-reviewer`); otherwise voice mode says "No active agent is
+named …". Without a text, voice mode asks "Tell me the message." and the next
+utterance is the text.
+
+| Language | Examples |
+| --- | --- |
+| English | "message to the coordinator: stop", "send a message to all, take a break", "message to Reviewer: check the diff" |
+| Italian | "messaggio al coordinatore: fermati", "manda un messaggio a tutti, pausa", "messaggio a Reviewer: controlla il diff" |
+| Spanish | "mensaje al coordinador: para", "envía un mensaje a todos, pausa", "mensaje a Reviewer: revisa el diff" |
+| French | "message au coordinateur : arrête", "envoie un message à tous, pause", "message à Reviewer : vérifie le diff" |
+| German | "Nachricht an den Koordinator: stopp", "sende eine Nachricht an alle, Pause", "Nachricht an Reviewer: prüfe den Diff" |
+| Portuguese | "mensagem ao coordenador: para", "envia uma mensagem para todos, pausa", "mensagem para Reviewer: verifica o diff" |
+
+Voice mode confirms "Sent." or says "Sending failed." (the terminal shows the
+reason). A sent message is not a prompt: no turn starts for it.
+
+**Queue and precedence.** Announcements never interrupt an answer being read:
+they follow it. The other way round, an answer that completes while the
+dialogue is in progress is read first. A "Do you want me to read it?" question
+is then asked again; a message already being read, or whose "Do you want to
+reply?" was not answered, is dropped (you can still write to its sender with a
+"message to …" phrase); after "Tell me your reply." or "Tell me the message."
+the text is still awaited once the answer is over. At most 32 messages wait to
+be announced; older ones are dropped.
+
+**Dock and keyboard.** Reading a message aloud marks it as read in the dock,
+exactly like opening it there; a declined or lapsed question leaves it unread.
+Typed input is never intercepted: a typed `yes` is a prompt. `Esc`,
+`/voice pause`, `/voice off`, `/new` and `/resume` drop the pending question and
+every queued announcement, with no catch-up later.
 
 ### How long voice mode lasts
 

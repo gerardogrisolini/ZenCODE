@@ -3,6 +3,7 @@
 //  ZenCODE
 //
 
+import Foundation
 import Testing
 @testable import ZenCODECore
 
@@ -198,6 +199,50 @@ struct TerminalChatEventQueueTests {
         if case .sharedChatParticipantsChanged = delivered[2] {} else {
             Issue.record("Expected the newest roster event to survive")
         }
+    }
+
+    /// The spoken live-chat dialogue depends on every one of its events: an
+    /// utterance is the operator's answer, the end of speech arms the answer
+    /// deadline, and the deadline closes the question. None may be evicted
+    /// under overflow; only roster events are.
+    @Test
+    func overflowNeverEvictsVoiceDialogueEvents() async {
+        let queue = TerminalChatEventQueue(capacity: 4)
+        let token = UUID()
+        queue.send(.voiceUtterance("sì"))
+        queue.send(.voiceSpeakingChanged(false))
+        queue.send(.sharedChatParticipantsChanged(roomID: "room"))
+        queue.send(.voiceDialogueTimedOut(token))
+        queue.send(.input(.submitted("typed")))
+
+        #expect(queue.bufferedEventCount == 4)
+        #expect(queue.evictedEventCount == 1)
+
+        var iterator = queue.events.makeAsyncIterator()
+        var delivered: [TerminalChatRuntimeEvent] = []
+        for _ in 0 ..< 4 {
+            if let event = await iterator.next() {
+                delivered.append(event)
+            }
+        }
+        #expect(delivered.count == 4)
+        if case .voiceUtterance("sì") = delivered[0] {} else {
+            Issue.record("Expected the utterance to survive overflow")
+        }
+        if case .voiceSpeakingChanged(false) = delivered[1] {} else {
+            Issue.record("Expected the end of speech to survive overflow")
+        }
+        if case .voiceDialogueTimedOut(token) = delivered[2] {} else {
+            Issue.record("Expected the deadline to survive overflow")
+        }
+        if case .input(.submitted("typed")) = delivered[3] {} else {
+            Issue.record("Expected operator work to survive overflow")
+        }
+        // Voice events are never tied to a room, so a session swap cannot
+        // make them stale.
+        #expect(TerminalChatRuntimeEvent.voiceUtterance("x").sharedChatRoomID == nil)
+        #expect(TerminalChatRuntimeEvent.voiceSpeakingChanged(true).sharedChatRoomID == nil)
+        #expect(TerminalChatRuntimeEvent.voiceDialogueTimedOut(token).sharedChatRoomID == nil)
     }
 
     /// An auto-trigger is a coordination decision. It is never evicted into a

@@ -268,7 +268,7 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
 
     private let invocation: Invocation
     private let voiceName: String
-    private let languageCode: String
+    nonisolated let languageCode: String
     private let callbacks: TerminalVoiceCallbacks
 
     private(set) var phase: Phase = .idle
@@ -336,15 +336,23 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         await setSpeaking(false)
     }
 
-    func speak(_ response: String) async {
+    /// Reads an answer or a plain text aloud with the microphone off. Returns
+    /// `false` when nothing was started.
+    @discardableResult
+    func speak(_ text: String, rendering: TerminalVoiceSpeechRendering) async -> Bool {
         guard phase == .listening, !isPaused else {
-            return
+            return false
         }
-        let text = Self.cappedForArgument(
-            TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: response, languageCode: languageCode)
-        )
-        guard !text.isEmpty else {
-            return
+        let spoken: String
+        switch rendering {
+        case .answer:
+            spoken = TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: text, languageCode: languageCode)
+        case .plainText:
+            spoken = text
+        }
+        let capped = Self.cappedForArgument(spoken)
+        guard !capped.isEmpty else {
+            return false
         }
         // The microphone is off while the answer is read.
         stopRecognizer()
@@ -356,18 +364,20 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         do {
             let process = try TerminalVoiceProcess(
                 executable: invocation.synthesizerProgram,
-                arguments: invocation.synthesizerArguments + ["--", text]
+                arguments: invocation.synthesizerArguments + ["--", capped]
             )
             synthesizer = process
             observe(process) { controller, event in
                 await controller.handleSynthesizer(event, generation: generation)
             }
             await setSpeaking(true)
+            return true
         } catch {
             await callbacks.failureMessage(
                 "ZenCODE: the answer could not be read aloud: \(error.localizedDescription)\n"
             )
             await startRecognizer()
+            return false
         }
     }
 
@@ -500,10 +510,17 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
                 let reason = Self.reason(status: status, diagnostics: synthesizerDiagnostics)
                 await callbacks.failureMessage("ZenCODE: the answer could not be read aloud: \(reason)\n")
             }
-            await setSpeaking(false)
-            if phase == .listening, !isPaused {
-                await startRecognizer()
+            // Reporting the failure or the end of the reading suspends this
+            // actor, and the terminal may start another reading meanwhile:
+            // that reading then owns the speaking state and the microphone.
+            guard generation == synthesizerGeneration else {
+                return
             }
+            await setSpeaking(false)
+            guard generation == synthesizerGeneration, phase == .listening, !isPaused else {
+                return
+            }
+            await startRecognizer()
         }
     }
 

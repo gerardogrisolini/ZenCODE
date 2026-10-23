@@ -214,15 +214,20 @@ extension TerminalChat {
         }
     }
 
+    /// Publishes a live mention. Returns `true` when the message was accepted
+    /// by the room (or short-circuited by the test effect hook), `false` for
+    /// a destination that is no longer active or a failed publication; the
+    /// failure is already written to the terminal.
+    @discardableResult
     func sendSharedChatMention(
         _ route: SharedChatMentionRoute,
         telegramOrigin: TerminalPromptOrigin? = nil
-    ) async {
-        if onTelegramWorkEffectForTesting?(.sharedChatPublication) == true { return }
+    ) async -> Bool {
+        if onTelegramWorkEffectForTesting?(.sharedChatPublication) == true { return true }
         guard await isCurrentSharedChatDirectDestination(route.destination) else {
             await writeFailureMessage("ZenCODE message: selected agent is no longer active.\n")
             await refreshSharedChatPanelSuggestions()
-            return
+            return false
         }
 
         let messageID = UUID()
@@ -241,6 +246,7 @@ extension TerminalChat {
             )
             assert(delivery.message.id == messageID)
             await refreshSharedChatPanelSuggestions()
+            return true
         } catch {
             discardTelegramSharedChatMessageOrigin(messageID)
             let safeError = Self.sharedChatInlineTerminalSafeText(error.localizedDescription)
@@ -255,6 +261,7 @@ extension TerminalChat {
                     origin: telegramOrigin
                 )
             }
+            return false
         }
     }
 

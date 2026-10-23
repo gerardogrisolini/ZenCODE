@@ -55,6 +55,30 @@ Release tags follow the strict `vX.Y.Z` contract described in
     SHA-256 checksum and stored in `~/.zencode/voice`. Unpacking needs `tar`
     and `bzip2`; playback and capture use ALSA (`libasound.so.2`). The section
     also removes the files. Data management backups skip this directory.
+  - Live chat by voice: while voice mode listens, a new live-chat message
+    from the coordinator or an agent addressed to you (`→ Operator` or
+    `→ All`) is announced aloud, one at a time ("New message from Reviewer,
+    2 more waiting. Do you want me to read it?"). Yes reads the whole message
+    as plain text, however long, then asks "Do you want to reply?"; a second
+    yes is followed by "Tell me your reply." and the next utterance goes to
+    the sender with a spoken "Sent.". No moves on to the next message, any
+    other utterance closes the question and is handled as usual, and an
+    unanswered question lapses after 60 seconds. One phrase sends a live
+    message at any time: "message to the coordinator: stop", "message to
+    all, take a break", "message to Reviewer: check the diff"; without a text
+    voice mode asks "Tell me the message.". The yes/no words and the
+    "message to …" phrases are recognised in English, Italian, Spanish,
+    French, German and Portuguese whatever the voice language; announcements
+    and questions follow the voice language. Announcements wait for an answer
+    being read, while an answer that completes during the dialogue is read
+    first: a "Do you want me to read it?" question is then asked again, a
+    reading or an unanswered "Do you want to reply?" is dropped, and a reply
+    or message already asked for is still awaited. Messages replayed after
+    `/resume` or a reconnection are never announced. Reading a message aloud
+    marks it as read in the dock; a declined or lapsed question leaves it
+    unread. Typed input is never intercepted. `Esc`, `/voice pause`,
+    `/voice off`, `/new` and `/resume` drop the pending question and the
+    queue.
 - Telegram: voice notes are transcribed on Linux as well. Telegram setup now
   turns voice-message transcription on with Telegram on every platform, and the
   setup summary shows it. Linux transcribes on the machine with the files of

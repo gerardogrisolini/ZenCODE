@@ -110,6 +110,18 @@ enum TerminalVoiceEchoGuard {
         return matched * 5 >= heard.count * 4
     }
 
+    /// `true` when `recognized` must be dropped as the assistant's own voice.
+    /// Once the assistant stopped speaking, a bare yes or no is the operator
+    /// answering a spoken question ("Do you want to reply?") even when the
+    /// message just read contained that word: the echo of a sentence is
+    /// recognized as that sentence, not as one of its words alone.
+    static func shouldDrop(_ recognized: String, spokenReference: String, isSpeaking: Bool) -> Bool {
+        guard isLikelyEcho(recognized, of: spokenReference) else {
+            return false
+        }
+        return isSpeaking || TerminalVoiceChatPhrases.affirmation(in: recognized) == nil
+    }
+
     static func words(in text: String) -> [String] {
         text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
             .split { !$0.isLetter && !$0.isNumber }
@@ -123,11 +135,16 @@ final class TerminalVoiceSpeechState: Sendable {
     /// Synthesis that produced no buffer for this long is treated as finished,
     /// even when the synthesizer never delivered its terminal buffer.
     static let synthesisIdleTimeout = Duration.seconds(2)
+    /// A synthesizer may take longer than that to deliver its first buffer
+    /// (a premium voice loading): until then the utterance counts as speaking
+    /// for this long, so a slow start is not mistaken for the end of speech.
+    static let synthesisStartTimeout = Duration.seconds(10)
 
     private struct State {
         var generation: UInt64 = 0
         var pendingBuffers = 0
         var isSynthesizing = false
+        var didScheduleBuffer = false
         var text = ""
         var lastActivity: ContinuousClock.Instant?
         var finishedAt: ContinuousClock.Instant?
@@ -141,6 +158,7 @@ final class TerminalVoiceSpeechState: Sendable {
             state.generation &+= 1
             state.pendingBuffers = 0
             state.isSynthesizing = true
+            state.didScheduleBuffer = false
             state.text = text
             state.lastActivity = now
             state.finishedAt = nil
@@ -155,6 +173,7 @@ final class TerminalVoiceSpeechState: Sendable {
                 return false
             }
             state.pendingBuffers += 1
+            state.didScheduleBuffer = true
             state.lastActivity = now
             return true
         }
@@ -225,7 +244,8 @@ final class TerminalVoiceSpeechState: Sendable {
         guard let lastActivity = state.lastActivity else {
             return true
         }
-        return lastActivity.duration(to: now) < synthesisIdleTimeout
+        let timeout = state.didScheduleBuffer ? synthesisIdleTimeout : synthesisStartTimeout
+        return lastActivity.duration(to: now) < timeout
     }
 
     private static func finishIfDone(_ state: inout State, at now: ContinuousClock.Instant) {
@@ -346,7 +366,8 @@ enum TerminalVoiceSpeechText {
         localized(longAnswerNotices, languageCode: languageCode)
     }
 
-    private static func localized(_ notices: [String: String], languageCode: String?) -> String {
+    /// The notice for the language code's primary subtag, else English.
+    static func localized(_ notices: [String: String], languageCode: String?) -> String {
         let code = languageCode?.lowercased().split(separator: "-").first.map(String.init) ?? "en"
         return notices[code] ?? notices["en"]!
     }

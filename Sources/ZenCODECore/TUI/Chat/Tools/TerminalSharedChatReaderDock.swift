@@ -108,6 +108,18 @@ struct TerminalSharedChatReadingBuffer: Sendable {
         unreadCount = 0
     }
 
+    /// Consumes one unread message, e.g. after voice mode read it aloud. An
+    /// unknown or already-read identifier changes nothing, and a message is
+    /// never made unread again.
+    mutating func markRead(id: UUID) {
+        guard unreadMessageIDs.remove(id) != nil else { return }
+        unreadCount = unreadMessageIDs.count
+    }
+
+    func isUnread(_ id: UUID) -> Bool {
+        unreadMessageIDs.contains(id)
+    }
+
     /// Applies message-selection navigation to the reader state. Scrolling
     /// within a message intentionally does not change the read marker: only
     /// selecting an unread message advances the read boundary through that

@@ -20,6 +20,17 @@ struct TerminalVoiceCallbacks: Sendable {
     let speakingChanged: @Sendable (Bool) async -> Void
 }
 
+/// How a text handed to ``TerminalVoiceController/speak(_:rendering:)`` is
+/// turned into speech.
+enum TerminalVoiceSpeechRendering: Sendable, Equatable {
+    /// An assistant answer: Markdown becomes plain text and a long answer is
+    /// read from its final sentences only.
+    case answer
+    /// Already-spoken text, read whole and unchanged: the announcements and
+    /// questions of the live chat.
+    case plainText
+}
+
 /// One platform's voice mode: dictation into ordinary prompts and spoken
 /// answers.
 protocol TerminalVoiceController: Actor {
@@ -28,16 +39,32 @@ protocol TerminalVoiceController: Actor {
     var isActive: Bool { get }
     /// A paused voice mode neither listens nor reads answers aloud.
     var isPaused: Bool { get }
+    /// `true` while something is being read aloud.
+    var isSpeaking: Bool { get }
+    /// The language answers are read in, e.g. `it`. Fixed for the
+    /// controller's lifetime, so it is readable without an actor hop.
+    nonisolated var languageCode: String { get }
 
     func start() async
     func stop() async
-    /// Reads a final answer aloud, replacing anything still being read.
-    func speak(_ response: String) async
+    /// Reads `text` aloud, replacing anything still being read. Returns
+    /// `false` when nothing was started: voice mode not listening or paused,
+    /// no synthesizer, or nothing left to say.
+    @discardableResult
+    func speak(_ text: String, rendering: TerminalVoiceSpeechRendering) async -> Bool
     /// Stops the answer being read, e.g. after `Esc`.
     func interruptPlayback() async
     /// Returns `false` when already in the requested state.
     @discardableResult
     func setPaused(_ paused: Bool) async -> Bool
+}
+
+extension TerminalVoiceController {
+    /// Reads a final answer aloud.
+    @discardableResult
+    func speak(_ response: String) async -> Bool {
+        await speak(response, rendering: .answer)
+    }
 }
 
 enum TerminalVoiceControllerCreation {

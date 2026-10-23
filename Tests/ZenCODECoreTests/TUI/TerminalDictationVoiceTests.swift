@@ -114,6 +114,37 @@ struct TerminalDictationVoiceTests {
         #expect(!state.isSpeaking(at: start + .milliseconds(2_600)))
     }
 
+    /// A slow synthesizer start is not the end of speech: before the first
+    /// buffer the utterance stays "speaking" much longer than between buffers.
+    @Test
+    func aSlowSynthesizerStartIsNotMistakenForTheEndOfSpeech() {
+        let start = ContinuousClock.now
+        let state = TerminalVoiceSpeechState()
+        let generation = state.begin(text: "Testo", at: start)
+        #expect(state.isSpeaking(at: start + .seconds(5)))
+        #expect(!state.isSpeaking(at: start + .seconds(11)))
+        #expect(state.bufferScheduled(generation: generation, at: start + .seconds(5)))
+        state.bufferPlayed(generation: generation, at: start + .seconds(6))
+        #expect(state.isSpeaking(at: start + .seconds(7)))
+        #expect(!state.isSpeaking(at: start + .seconds(8) + .milliseconds(100)))
+    }
+
+    /// After the assistant stopped speaking, a bare yes or no is the
+    /// operator's answer even when the message just read contained it.
+    @Test
+    func shortAnswersAfterSpeechAreNotTreatedAsEcho() {
+        let reading = "Sì, ho finito, ok. Non ci sono errori. Vuoi rispondere?"
+        #expect(TerminalVoiceEchoGuard.isLikelyEcho("sì", of: reading))
+        #expect(TerminalVoiceEchoGuard.shouldDrop("sì", spokenReference: reading, isSpeaking: true))
+        #expect(!TerminalVoiceEchoGuard.shouldDrop("sì", spokenReference: reading, isSpeaking: false))
+        #expect(!TerminalVoiceEchoGuard.shouldDrop("No.", spokenReference: reading, isSpeaking: false))
+        #expect(!TerminalVoiceEchoGuard.shouldDrop("ok", spokenReference: reading, isSpeaking: false))
+        // The echo of the sentence itself is still dropped after speech.
+        #expect(TerminalVoiceEchoGuard.shouldDrop("non ci sono errori vuoi rispondere", spokenReference: reading, isSpeaking: false))
+        // Something new is never dropped.
+        #expect(!TerminalVoiceEchoGuard.shouldDrop("aspetta un momento", spokenReference: reading, isSpeaking: true))
+    }
+
     @Test
     func markdownAnswersBecomePlainSpokenText() {
         let markdown = """
@@ -236,5 +267,31 @@ struct TerminalDictationVoiceTests {
         }
         #expect(prompt == "/exit")
         #expect(result.origin == .local)
+    }
+
+    /// The dictation controller cannot listen without the system permissions,
+    /// so reading before it listens must report that nothing was started and
+    /// the loop must still be able to read its language and speaking state.
+    @Test
+    func aControllerThatIsNotListeningReadsNothingAndSaysSo() async {
+        let controller = TerminalDictationVoiceController(
+            languageCode: "it",
+            locale: Locale(identifier: "it_IT"),
+            callbacks: TerminalVoiceCallbacks(
+                systemMessage: { _ in },
+                failureMessage: { _ in },
+                utteranceRecognized: { _ in },
+                speakingChanged: { _ in }
+            )
+        )
+        #expect(controller.languageCode == "it")
+        #expect(await controller.isSpeaking == false)
+        #expect(await controller.speak("Nuovo messaggio.", rendering: .plainText) == false)
+        #expect(await controller.speak("**Ciao**") == false)
+        #expect(await controller.isActive)
+        await controller.setPaused(true)
+        #expect(await controller.speak("Nuovo messaggio.", rendering: .plainText) == false)
+        await controller.stop()
+        #expect(await controller.isActive == false)
     }
 }

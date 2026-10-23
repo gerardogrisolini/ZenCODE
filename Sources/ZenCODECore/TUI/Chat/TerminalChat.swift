@@ -87,6 +87,16 @@ public final class TerminalChat {
     /// Event queue of the running interactive panel loop; `nil` outside it,
     /// where voice mode cannot run.
     var voiceEventQueue: TerminalChatEventQueue?
+    /// The spoken dialogue over live shared-chat messages while voice mode
+    /// runs: announcements queued, the question being asked, the reply
+    /// awaited. Transient like voice mode itself: never copied into snapshots
+    /// or checkpoints.
+    var voiceChatDialogue = TerminalVoiceChatDialogue()
+    /// Sleeps until the answer to a spoken question is overdue.
+    var voiceDialogueDeadlineTask: Task<Void, Never>?
+    /// How long a spoken question waits for its answer. Mutable so tests can
+    /// shorten it.
+    var voiceDialogueAnswerTimeout: Duration = .seconds(60)
     public var taskGraphObserverTask: Task<Void, Never>?
     /// In-flight debounced task-graph render scheduled by the observer task.
     /// Tracked on the chat so a turn boundary can quiesce the debounce before
