@@ -20,7 +20,7 @@ extension ZenCODESetupRunner {
             selectedModelID: manifest.selectedModelID,
             selectedThinkingSelection: manifest.selectedThinkingSelection,
             telegram: telegram,
-            voice: voiceSettings(for: telegram),
+            voice: voiceSettings(for: telegram, existing: manifest.voice),
             remoteAPIKeysByProviderID: manifest.remoteAPIKeysByProviderID,
             localExecAllowedCommands: manifest.localExecAllowedCommands,
             chatGPTSubscriptionCredentials: manifest.chatGPTSubscriptionCredentials,
@@ -32,21 +32,26 @@ extension ZenCODESetupRunner {
 
     /// Voice transcription is a Telegram capability, supported only by the
     /// built-in macOS speech frameworks. Keep it absent whenever Telegram is
-    /// not active so disabling Telegram cannot leave voice enabled.
+    /// not active so disabling Telegram cannot leave voice enabled. The
+    /// reading voice chosen in `/setup` > Voice mode belongs to terminal voice
+    /// mode, so it survives either way (and on Linux, where it is inert).
     static func voiceSettings(
-        for telegram: AgentTelegramSettingsManifest?
+        for telegram: AgentTelegramSettingsManifest?,
+        existing: AgentVoiceSettingsManifest? = nil
     ) -> AgentVoiceSettingsManifest? {
+        let readingVoice = existing?.macOSVoiceIdentifier
         #if os(macOS)
-        guard telegram?.isEnabled == true else {
-            return nil
+        if telegram?.isEnabled == true {
+            return AgentVoiceSettingsManifest(
+                enabled: true,
+                language: AgentVoiceSettingsManifest.defaultLanguage,
+                macOSVoiceIdentifier: readingVoice
+            )
         }
-        return AgentVoiceSettingsManifest(
-            enabled: true,
-            language: AgentVoiceSettingsManifest.defaultLanguage
-        )
-        #else
-        return nil
         #endif
+        return readingVoice.map {
+            AgentVoiceSettingsManifest(enabled: false, macOSVoiceIdentifier: $0)
+        }
     }
 
     static func promptTelegramSettings(

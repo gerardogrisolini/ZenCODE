@@ -55,7 +55,8 @@ extension TerminalChat {
             await writeFailureMessage(Self.voiceRequiresInteractiveTerminalMessage)
             return
         }
-        // A failed controller is replaced, so the language is read again.
+        // A failed controller is replaced, so the language and the reading
+        // voice are read again.
         await stopVoiceMode()
         let manifest = AgentSettingsManifestStore.load()
         let languageCode = TerminalVoiceLanguage.resolvedCode(
@@ -66,6 +67,7 @@ extension TerminalChat {
         let controller: any TerminalVoiceController
         switch TerminalVoicePlatform.makeController(
             languageCode: languageCode,
+            readingVoiceIdentifier: manifest?.voice?.macOSVoiceIdentifier,
             callbacks: voiceCallbacks(eventQueue: eventQueue)
         ) {
         case let .ready(ready):

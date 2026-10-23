@@ -70,7 +70,7 @@ and restores the conversation without closing the app.
 
 Creates files under `~/.zencode/`:
 
-- `settings.json` — provider/model configuration, selected model, optional Telegram, voice, and memory-embedding settings (endpoint, optional model).
+- `settings.json` — provider/model configuration, selected model, optional Telegram, voice (Telegram voice-message transcription and the macOS voice mode reading voice), and memory-embedding settings (endpoint, optional model).
 - `permissions.json` — persistent runtime approvals.
 - `agents.json` — agent profiles, authorized model bindings, tools, and instructions.
 - `AGENTS.md` — global operating guidance shared across workspaces. This is

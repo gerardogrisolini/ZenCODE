@@ -50,9 +50,12 @@ enum TerminalVoicePlatform {
     static let unsupportedMessage = "ZenCODE: voice mode requires macOS or Linux.\n"
 
     /// Builds the controller for this platform. On Linux it requires the
-    /// files downloaded from `/setup` > Voice mode.
+    /// files downloaded from `/setup` > Voice mode. `readingVoiceIdentifier`
+    /// is the macOS reading voice chosen there; Linux reads with its installed
+    /// Piper voice and ignores it.
     static func makeController(
         languageCode: String,
+        readingVoiceIdentifier: String? = nil,
         callbacks: TerminalVoiceCallbacks
     ) -> TerminalVoiceControllerCreation {
         #if os(macOS)
@@ -62,6 +65,7 @@ enum TerminalVoicePlatform {
         return .ready(TerminalDictationVoiceController(
             languageCode: languageCode,
             locale: AgentVoiceTranscriptionService.locale(for: languageCode),
+            readingVoiceIdentifier: readingVoiceIdentifier,
             callbacks: callbacks
         ))
         #elseif os(Linux)

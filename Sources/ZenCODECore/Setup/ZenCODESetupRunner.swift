@@ -255,8 +255,14 @@ public enum ZenCODESetupRunner {
                 manifest: try await configureDS4Runtime(existingManifest: manifest)
             )
         case .voiceMode:
+            #if os(macOS)
+            return SetupSectionConfigurationResult(
+                manifest: configureSpeechVoiceWithPreview(manifest: manifest)
+            )
+            #else
             try await configureVoiceMode(manifest: manifest)
             return SetupSectionConfigurationResult(manifest: manifest)
+            #endif
         }
     }
 }

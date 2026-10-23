@@ -20,12 +20,17 @@ struct VoiceModeSetupTests {
     }
 
     @Test
-    func voiceModeIsOfferedOnlyOnLinux() {
-        let sections = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil).map(\.section)
-        #if os(Linux)
-        #expect(sections.contains(.voiceMode))
+    func voiceModeIsOfferedOnLinuxAndMacOS() {
+        let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
+        #if os(Linux) || os(macOS)
+        #expect(options.map(\.section).contains(.voiceMode))
         #else
-        #expect(!sections.contains(.voiceMode))
+        #expect(!options.map(\.section).contains(.voiceMode))
+        #endif
+        #if os(macOS)
+        // macOS downloads nothing: the section only picks the reading voice.
+        #expect(options.first { $0.section == .voiceMode }?.detail == "automatic voice")
+        #expect(ZenCODESetupRunner.setupSectionReadinessMarker(for: .voiceMode, currentManifest: nil) == "[-]")
         #endif
     }
 

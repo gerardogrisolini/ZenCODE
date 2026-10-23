@@ -198,9 +198,12 @@ final class TerminalVoiceSpeaker {
     private let synthesizer = AVSpeechSynthesizer()
     private let voice: AVSpeechSynthesisVoice?
 
-    init(localeIdentifier: String, device: TerminalVoiceAudioDevice) {
+    init(localeIdentifier: String, readingVoiceIdentifier: String?, device: TerminalVoiceAudioDevice) {
         self.device = device
-        voice = Self.preferredVoice(localeIdentifier: localeIdentifier)
+        voice = Self.preferredVoice(
+            localeIdentifier: localeIdentifier,
+            readingVoiceIdentifier: readingVoiceIdentifier
+        )
     }
 
     func speak(_ text: String) {
@@ -246,19 +249,21 @@ final class TerminalVoiceSpeaker {
         }
     }
 
-    /// The best installed non-novelty voice for the locale, preferring
-    /// premium and enhanced voices.
-    private static func preferredVoice(localeIdentifier: String) -> AVSpeechSynthesisVoice? {
-        let identifier = localeIdentifier.replacingOccurrences(of: "_", with: "-")
-        let language = identifier.split(separator: "-").first.map { String($0).lowercased() } ?? identifier
-        let voices = AVSpeechSynthesisVoice.speechVoices().filter {
-            !$0.voiceTraits.contains(.isNoveltyVoice) && !$0.voiceTraits.contains(.isPersonalVoice)
-        }
-        let exact = voices.filter { $0.language.caseInsensitiveCompare(identifier) == .orderedSame }
-        let candidates = exact.isEmpty
-            ? voices.filter { $0.language.lowercased().hasPrefix(language + "-") }
-            : exact
-        return candidates.max { $0.quality.rawValue < $1.quality.rawValue }
+    /// The voice saved in `/setup` > Voice mode when it is installed and reads
+    /// the locale's language; otherwise the best installed non-novelty voice
+    /// for the locale, preferring premium and enhanced voices.
+    static func preferredVoice(
+        localeIdentifier: String,
+        readingVoiceIdentifier: String?
+    ) -> AVSpeechSynthesisVoice? {
+        let identifier = SystemSpeechVoiceCatalog.normalizedLocaleIdentifier(localeIdentifier)
+        let choice = SystemSpeechVoiceCatalog.preferredVoice(
+            savedIdentifier: readingVoiceIdentifier,
+            localeIdentifier: identifier,
+            installedVoices: SystemSpeechVoiceCatalog.installedVoices(),
+            lookup: SystemSpeechVoiceCatalog.installedVoice(identifier:)
+        )
+        return choice.flatMap { AVSpeechSynthesisVoice(identifier: $0.identifier) }
             ?? AVSpeechSynthesisVoice(language: identifier)
     }
 }
@@ -296,7 +301,7 @@ final class TerminalDictationRecognizer: Sendable {
 final class TerminalVoiceSpeaker {
     nonisolated let state = TerminalVoiceSpeechState()
 
-    init(localeIdentifier: String, device: TerminalVoiceAudioDevice) {}
+    init(localeIdentifier: String, readingVoiceIdentifier: String?, device: TerminalVoiceAudioDevice) {}
 
     func speak(_ text: String) {}
 
@@ -351,6 +356,8 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
     private let callbacks: Callbacks
     private let languageCode: String
     private let locale: Locale
+    /// The reading voice chosen in `/setup` > Voice mode, if any.
+    private let readingVoiceIdentifier: String?
     private let device = TerminalVoiceAudioDevice()
     private var recognizer: TerminalDictationRecognizer?
     private var speaker: TerminalVoiceSpeaker?
@@ -366,9 +373,15 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
     /// A paused voice mode neither listens nor reads answers aloud.
     private(set) var isPaused = false
 
-    init(languageCode: String, locale: Locale, callbacks: Callbacks) {
+    init(
+        languageCode: String,
+        locale: Locale,
+        readingVoiceIdentifier: String? = nil,
+        callbacks: Callbacks
+    ) {
         self.languageCode = languageCode
         self.locale = locale
+        self.readingVoiceIdentifier = readingVoiceIdentifier
         self.callbacks = callbacks
     }
 
@@ -409,8 +422,13 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         }
         let device = device
         let localeIdentifier = recognizer.localeIdentifier
+        let readingVoiceIdentifier = readingVoiceIdentifier
         let speaker = await MainActor.run {
-            TerminalVoiceSpeaker(localeIdentifier: localeIdentifier, device: device)
+            TerminalVoiceSpeaker(
+                localeIdentifier: localeIdentifier,
+                readingVoiceIdentifier: readingVoiceIdentifier,
+                device: device
+            )
         }
         let hasEchoCancellation: Bool
         do {

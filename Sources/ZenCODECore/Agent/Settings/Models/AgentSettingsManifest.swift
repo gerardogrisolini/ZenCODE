@@ -83,7 +83,8 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
             models: normalizedModels
         )
         self.telegram = telegram?.isConfigured == true ? telegram : nil
-        self.voice = voice?.isConfigured == true ? voice : nil
+        // Kept while it holds Telegram transcription or a macOS reading voice.
+        self.voice = voice?.isEmpty == false ? voice : nil
         self.remoteAPIKeysByProviderID = Self.normalizedRemoteAPIKeys(
             remoteAPIKeysByProviderID,
             models: normalizedModels
@@ -174,7 +175,7 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         if let telegram, telegram.isConfigured {
             try container.encode(telegram, forKey: .telegram)
         }
-        if let voice, voice.isConfigured {
+        if let voice, !voice.isEmpty {
             try container.encode(voice, forKey: .voice)
         }
         if !remoteAPIKeysByProviderID.isEmpty {

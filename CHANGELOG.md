@@ -29,7 +29,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
     cancellation, so the microphone stays open and speaking while the
     assistant talks interrupts it. When the current audio output cannot run
     echo cancellation, voice mode starts without it and names the output,
-    suggesting a local output or headphones.
+    suggesting a local output or headphones. The `/setup` > Voice mode
+    section, which downloads nothing on macOS, chooses the voice that reads
+    answers among the system voices installed for the voice mode language
+    (name and quality shown; Siri voices are not available to other apps), or
+    keeps "Automatic". Choosing a voice, or "Automatic" while an installed
+    voice reads the language, opens a submenu: "▶ Listen" reads a short
+    sample that says the voice's name (Italian or English) through the system
+    output while the menu stays usable, a new sample or leaving the submenu
+    stops the one playing, "Use this voice" applies the choice and "Back"
+    returns to the list unchanged; the sample uses no microphone and is never
+    saved. The choice is saved as `voice.macOSVoiceIdentifier` in
+    `settings.json` and survives re-running Telegram setup; a voice that is no
+    longer installed, or that reads another language, falls back to the
+    automatic voice.
   - Linux runs the sherpa-onnx programs: Parakeet TDT 0.6B v3 speech
     recognition (25 European languages) and a Piper voice. The microphone is
     off while an answer is read and turns back on when the reading ends or

@@ -86,27 +86,39 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled
         case language
+        case macOSVoiceIdentifier
     }
 
     public static let defaultLanguage = "it"
 
+    /// Telegram voice-message transcription.
     public let enabled: Bool
     public let language: String?
+    /// The `AVSpeechSynthesisVoice` identifier chosen in `/setup` > Voice mode
+    /// on macOS to read answers aloud; nil selects the best installed voice.
+    /// Independent of `enabled`, and inert on Linux.
+    public let macOSVoiceIdentifier: String?
 
     public init(
         enabled: Bool = false,
-        language: String? = Self.defaultLanguage
+        language: String? = Self.defaultLanguage,
+        macOSVoiceIdentifier: String? = nil
     ) {
         let normalizedLanguage = language?.nilIfBlank
         self.enabled = enabled
         self.language = enabled ? normalizedLanguage : nil
+        self.macOSVoiceIdentifier = macOSVoiceIdentifier?.nilIfBlank
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
-            language: try container.decodeIfPresent(String.self, forKey: .language)
+            language: try container.decodeIfPresent(String.self, forKey: .language),
+            macOSVoiceIdentifier: try container.decodeIfPresent(
+                String.self,
+                forKey: .macOSVoiceIdentifier
+            )
         )
     }
 
@@ -116,9 +128,19 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
         if let language {
             try container.encode(language, forKey: .language)
         }
+        if let macOSVoiceIdentifier {
+            try container.encode(macOSVoiceIdentifier, forKey: .macOSVoiceIdentifier)
+        }
     }
 
+    /// Whether Telegram voice-message transcription is on.
     public var isConfigured: Bool {
         enabled
+    }
+
+    /// Nothing worth storing: transcription is off and no reading voice is
+    /// chosen.
+    public var isEmpty: Bool {
+        !enabled && macOSVoiceIdentifier == nil
     }
 }
