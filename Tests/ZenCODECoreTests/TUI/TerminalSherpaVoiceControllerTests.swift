@@ -73,7 +73,15 @@ struct TerminalSherpaVoiceControllerTests {
             voiceDataDirectory: root.appendingPathComponent("v/espeak-ng-data")
         )
         let invocation = TerminalSherpaVoiceController.invocation(for: paths)
-        #expect(invocation.recognizerArguments.contains("--silero-vad-min-silence-duration=2.5"))
+        #expect(invocation.recognizerArguments.contains("--silero-vad-min-silence-duration=5"))
+        // The pause chosen in /setup > Voice mode replaces the default.
+        let options = TerminalVoiceOptions(voice: AgentVoiceSettingsManifest(utteranceSilenceSeconds: 8))
+        #expect(
+            TerminalSherpaVoiceController.invocation(
+                for: paths,
+                utteranceSilenceSeconds: String(options.utteranceSilenceSeconds)
+            ).recognizerArguments.contains("--silero-vad-min-silence-duration=8")
+        )
         #expect(invocation.recognizerArguments.contains("--silero-vad-max-speech-duration=60"))
         #expect(invocation.recognizerArguments.contains("--model-type=nemo_transducer"))
         #expect(invocation.recognizerArguments.contains("--encoder=/opt/voice/p/encoder.int8.onnx"))

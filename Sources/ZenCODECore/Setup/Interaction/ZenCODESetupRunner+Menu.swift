@@ -165,9 +165,9 @@ extension ZenCODESetupRunner {
         // speech frameworks and needs no download; it offers the choice of the
         // system voice that reads answers aloud.
         #if os(Linux)
-        let voiceModeDetail = voiceModeSetupDetail()
+        let voiceModeDetail = voiceModeSetupDetail() + voiceOptionsSetupSuffix(manifest: manifest)
         #else
-        let voiceModeDetail = speechVoiceSetupDetail(manifest: manifest)
+        let voiceModeDetail = speechVoiceSetupDetail(manifest: manifest) + voiceOptionsSetupSuffix(manifest: manifest)
         #endif
         if let telegramIndex = options.firstIndex(where: { $0.section == .telegram }) {
             options.insert(

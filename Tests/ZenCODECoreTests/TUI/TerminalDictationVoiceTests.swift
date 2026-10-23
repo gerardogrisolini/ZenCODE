@@ -27,19 +27,82 @@ struct TerminalDictationVoiceTests {
     func anUtteranceEndsAfterTheSilenceGap() {
         let start = ContinuousClock.now
         var segmenter = TerminalDictationSegmenter()
-        #expect(segmenter.silence == .milliseconds(2_500))
+        #expect(segmenter.silence == .milliseconds(5_000))
         #expect(!segmenter.isUtteranceComplete(at: start))
 
         segmenter.observe("Che cosa", at: start)
         segmenter.observe("Che cosa ho oggi", at: start + .milliseconds(600))
-        #expect(!segmenter.isUtteranceComplete(at: start + .milliseconds(3_000)))
+        #expect(!segmenter.isUtteranceComplete(at: start + .milliseconds(5_500)))
         // Repeating the same text does not restart the silence gap.
         segmenter.observe(" Che cosa ho oggi ", at: start + .milliseconds(1_000))
-        #expect(segmenter.isUtteranceComplete(at: start + .milliseconds(3_100)))
+        #expect(segmenter.isUtteranceComplete(at: start + .milliseconds(5_600)))
 
         #expect(segmenter.takeUtterance() == "Che cosa ho oggi")
         #expect(segmenter.takeUtterance() == nil)
         #expect(!segmenter.hasPendingText)
+    }
+
+    @Test
+    func theSendKeywordIsRecognisedOnlyAtTheEndAsWholeWords() throws {
+        let keyword = try #require(TerminalVoiceSendKeyword(" Vai! "))
+        #expect(keyword.text == "Vai!")
+        #expect(keyword.words == ["vai"])
+        #expect(keyword.textBeforeKeyword(in: "Cerca il file, vai") == "Cerca il file")
+        #expect(keyword.textBeforeKeyword(in: "Cerca il file. VAI.") == "Cerca il file.")
+        #expect(keyword.textBeforeKeyword(in: "vai") == "")
+        #expect(keyword.textBeforeKeyword(in: "Vai a casa") == nil)
+        #expect(keyword.textBeforeKeyword(in: "parla del vaiolo") == nil)
+        #expect(keyword.textBeforeKeyword(in: "parla del vaiolo vai") == "parla del vaiolo")
+        #expect(keyword.textBeforeKeyword(in: "") == nil)
+        // Accents and case do not matter; a phrase is matched word by word.
+        let accented = try #require(TerminalVoiceSendKeyword("così"))
+        #expect(accented.textBeforeKeyword(in: "fatto COSI") == "fatto")
+        let phrase = try #require(TerminalVoiceSendKeyword("va bene"))
+        #expect(phrase.textBeforeKeyword(in: "procedi, va bene") == "procedi")
+        #expect(phrase.textBeforeKeyword(in: "procedi bene") == nil)
+        #expect(TerminalVoiceSendKeyword("...") == nil)
+        #expect(TerminalVoiceSendKeyword("") == nil)
+        #expect(keyword.utteranceToSend(pending: "prima parte", speech: "seconda parte vai") == "prima parte seconda parte")
+        #expect(keyword.utteranceToSend(pending: "prima parte", speech: "seconda parte") == nil)
+        #expect(TerminalVoiceSendKeyword.joined("  ", "solo") == "solo")
+    }
+
+    @Test
+    func theKeywordCollectorSendsOnlyOnTheKeywordOrABareAnswerWhenAwaited() throws {
+        var collector = TerminalVoiceKeywordCollector(keyword: try #require(TerminalVoiceSendKeyword("vai")))
+        #expect(collector.receive("   ", awaitingShortAnswer: false) == .nothing)
+        // The keyword alone with nothing collected sends nothing.
+        #expect(collector.receive("vai", awaitingShortAnswer: false) == .nothing)
+        #expect(collector.receive("Apri il progetto", awaitingShortAnswer: false) == .collected)
+        #expect(collector.hasPendingText)
+        #expect(collector.peek("e compila, vai", awaitingShortAnswer: false) == .send("Apri il progetto e compila"))
+        // Peeking changed nothing.
+        #expect(collector.hasPendingText)
+        #expect(collector.receive("e compila, vai", awaitingShortAnswer: false) == .send("Apri il progetto e compila"))
+        #expect(!collector.hasPendingText)
+
+        // A bare yes or no is sent at once only while one is awaited and
+        // nothing is collected; otherwise it is ordinary text.
+        #expect(collector.receive("sì", awaitingShortAnswer: true) == .send("sì"))
+        #expect(collector.receive("No", awaitingShortAnswer: true) == .send("No"))
+        #expect(collector.receive("sì", awaitingShortAnswer: false) == .collected)
+        #expect(collector.receive("no", awaitingShortAnswer: true) == .collected)
+        #expect(collector.receive("vai", awaitingShortAnswer: true) == .send("sì no"))
+        collector.reset()
+        #expect(!collector.hasPendingText)
+        #expect(collector.receive("sì, ma prima vai", awaitingShortAnswer: true) == .send("sì, ma prima"))
+    }
+
+    @Test
+    func stableTextIsIndependentOfTheSilenceGap() {
+        let start = ContinuousClock.now
+        var segmenter = TerminalDictationSegmenter(silence: .seconds(5))
+        #expect(!segmenter.hasStableText(for: .zero, at: start))
+        segmenter.observe("Cerca il file vai", at: start)
+        #expect(!segmenter.hasStableText(for: .milliseconds(600), at: start + .milliseconds(500)))
+        #expect(segmenter.hasStableText(for: .milliseconds(600), at: start + .milliseconds(600)))
+        #expect(!segmenter.isUtteranceComplete(at: start + .milliseconds(600)))
+        #expect(segmenter.text == "Cerca il file vai")
     }
 
     @Test
@@ -223,6 +286,13 @@ struct TerminalDictationVoiceTests {
         #expect(spoken.hasPrefix(notice + " "))
         #expect(spoken.hasSuffix("Questa riga riempie la risposta. Come vuoi procedere?"))
         #expect(spoken.count - notice.count - 1 <= TerminalVoiceSpeechText.maximumSpokenCharacters)
+
+        // A chosen limit, or none, replaces the default.
+        let whole = TerminalVoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it")
+        #expect(TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: markdown, languageCode: "it", maximumCharacters: nil) == whole)
+        let shorter = TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: markdown, languageCode: "it", maximumCharacters: 100)
+        #expect(shorter.hasPrefix(notice + " "))
+        #expect(shorter.count - notice.count - 1 <= 100)
     }
 
     @Test

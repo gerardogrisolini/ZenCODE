@@ -260,8 +260,9 @@ public enum ZenCODESetupRunner {
                 manifest: configureSpeechVoiceWithPreview(manifest: manifest)
             )
             #else
-            try await configureVoiceMode(manifest: manifest)
-            return SetupSectionConfigurationResult(manifest: manifest)
+            return SetupSectionConfigurationResult(
+                manifest: try await configureVoiceMode(manifest: manifest)
+            )
             #endif
         }
     }

@@ -55,7 +55,11 @@ struct VoiceModeSetupTests {
         let voices = SherpaOnnxVoiceCatalog.voices(forLanguage: "it")
 
         let fresh = ZenCODESetupRunner.voiceModeMenuItems(voices: voices, installation: installation)
-        #expect(fresh.map(\.value) == voices.map { .voice($0.id) } + [.back])
+        #expect(fresh.map(\.value) == [.sendMode, .spokenLimit] + voices.map { .voice($0.id) } + [.back])
+        #expect(fresh[0].title == "Send mode")
+        #expect(fresh[0].detail == "after 5 s of silence")
+        #expect(fresh[1].title == "Spoken answer limit")
+        #expect(fresh[1].detail == "600 characters · a longer answer is read from its final sentences")
         let paola = try #require(fresh.first { $0.title == "paola" })
         #expect(paola.detail == "it_IT · medium · 67 MB")
         #expect(fresh.first { $0.title == "riccardo" }?.detail == "it_IT · x low · 26 MB")

@@ -505,7 +505,7 @@ extension TerminalChat {
         /// taken for the answer to a question nobody heard.
         func speakVoiceDialogueOrCancel(_ text: String) async {
             if await !speakVoiceDialogue(text) {
-                cancelVoiceChatDialogue()
+                await cancelVoiceChatDialogue()
             }
         }
 
@@ -537,6 +537,7 @@ extension TerminalChat {
             ) else {
                 return
             }
+            await syncVoiceDialogueAnswerState()
             let message = announcement.message
             let text = TerminalVoiceChatPhrases.announcement(
                 sender: AgentSharedChat.displayName(for: message.sender),
@@ -546,6 +547,7 @@ extension TerminalChat {
             )
             if await !controller.speak(text, rendering: .plainText) {
                 voiceChatDialogue.announcementNotSpoken()
+                await syncVoiceDialogueAnswerState()
             }
         }
 
@@ -572,7 +574,9 @@ extension TerminalChat {
             }
             cancelVoiceDialogueDeadline()
             let participants = await sessionRunner.sharedChatParticipants(rootSessionID: sharedChatRoomID)
-            switch voiceChatDialogue.interpret(utterance, participants: participants) {
+            let action = voiceChatDialogue.interpret(utterance, participants: participants)
+            await syncVoiceDialogueAnswerState()
+            switch action {
             case .prompt:
                 switch Self.dictatedPromptEvent(for: utterance) {
                 case let .input(.submitted(line)):
@@ -592,7 +596,7 @@ extension TerminalChat {
                     languageCode: languageCode
                 )
                 guard await speakVoiceDialogue(text) else {
-                    cancelVoiceChatDialogue()
+                    await cancelVoiceChatDialogue()
                     return true
                 }
                 // Reading aloud consumes the message like opening it in the dock.
@@ -938,6 +942,7 @@ extension TerminalChat {
                 }
                 switch voiceChatDialogue.speechEnded() {
                 case let .armDeadline(token):
+                    await syncVoiceDialogueAnswerState()
                     armVoiceDialogueDeadline(token)
                 case .announceNext:
                     await startNextVoiceAnnouncement()
@@ -948,6 +953,7 @@ extension TerminalChat {
                 // The question lapses in silence; its message stays unread.
                 if voiceChatDialogue.deadlineElapsed(token) {
                     cancelVoiceDialogueDeadline()
+                    await syncVoiceDialogueAnswerState()
                     await startNextVoiceAnnouncement()
                 }
             }

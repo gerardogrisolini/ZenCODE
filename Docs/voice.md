@@ -53,8 +53,12 @@ command, and `zen -p`, `--jsonl` and ACP do not have it.
    Voice: listening (dictation, it_IT, on-device). Speak or type; answers are read aloud. /voice pauses or resumes, /voice off stops.
    ```
 
-2. Speak. A pause of about 2.5 seconds ends the utterance, which is sent as a
-   prompt. On Linux an utterance lasts at most 60 seconds.
+2. Speak. A pause of about 5 seconds (the pause chosen with the **Send mode**
+   "After a pause" in `/setup` > Voice mode, see [Options](#options)) ends the
+   utterance, which is sent as a prompt. With the Send mode "On a word", the
+   pause does not send: you say your word (for example "vai" or "done") at the
+   end instead, and can pause as long as you like before it. On Linux an
+   utterance lasts at most 60 seconds.
 3. The utterance is handled exactly like a line you type and press `Enter` on:
    while a prompt is running it is queued, and it can answer a pending `/plan`
    clarification or `/goal` question. Text that would read as a slash command is
@@ -70,10 +74,11 @@ command, and `zen -p`, `--jsonl` and ACP do not have it.
    "Code block omitted." (in English, Italian, Spanish, French, German or
    Portuguese, following the voice mode language). A new answer replaces the
    one being read. An answer longer than about 600 characters (some 40
-   seconds of reading) is not read whole: after a short notice such as "Long
-   answer, reading only the end." only its final sentences are read, since the
-   end of an answer usually holds the outcome and the questions on how to
-   continue. The terminal always shows the whole answer.
+   seconds of reading; the **Spoken answer limit** chosen in `/setup` > Voice
+   mode, see [Options](#options)) is not read whole: after a short notice such
+   as "Long answer, reading only the end." only its final sentences are read,
+   since the end of an answer usually holds the outcome and the questions on
+   how to continue. The terminal always shows the whole answer.
 5. `Esc` stops the reading without clearing the draft. While a prompt is
    running, `Esc` stops both the generation and the reading.
 
@@ -99,7 +104,7 @@ reconnection. A message you already read in the dock is skipped.
 waits for your answer:
 
 - **Yes** reads the whole message as plain text, however long it is (the
-  600-character limit of spoken answers does not apply), then asks "Do you want
+  spoken answer limit does not apply), then asks "Do you want
   to reply?". A second **yes** is followed by "Tell me your reply.": the next
   utterance goes to the sender (to the coordinator, or directly to the agent)
   and voice mode confirms "Sent.". **No** moves on to the next message waiting.
@@ -171,6 +176,47 @@ with `/voice off` or `/exit`, and also when `/setup` opens: run `/voice on`
 again after setup. It is never saved, so every new `zen` starts with voice mode
 off.
 
+### Options
+
+The first two items of `/setup` > **Voice mode**, on macOS and Linux alike,
+tune how voice mode listens and reads. The pause and the limit open a list of
+presets with the current value preselected and the default marked; **Back** or
+`Esc` keeps the current value, and after a choice the Voice mode menu comes
+back so the voice can still be chosen.
+
+- **Send mode** — how voice mode decides that you finished speaking:
+  - **After a pause** (default): the silence after you stop speaking ends the
+    utterance and sends it as a prompt. Choosing it goes on to the pause: 2,
+    3, **5** (default), 8 or 10 seconds. A longer pause lets you think
+    mid-sentence without sending half a prompt; a shorter one answers faster.
+    **Back** or `Esc` in the list keeps the current send mode.
+  - **On a word**: you type one word (no default; for example `vai`, `done`,
+    `fatto`), and from then on the utterance is sent only when what you say
+    ends with that word, which is removed from the prompt: "cerca il file,
+    vai" sends "cerca il file". Silence never sends, so you can think
+    mid-sentence for as long as you like; everything recognized meanwhile is
+    kept and sent together once you say the word. The word alone sends what
+    was dictated so far; the same word in the middle of a sentence is ordinary
+    text. It is compared without case, accents or punctuation. A spoken yes or
+    no (see [Live chat by voice](#live-chat-by-voice)) cannot be the word, and
+    while voice mode is asking you about a live-chat message a bare yes or no
+    is sent at once, without the word. `Esc` at the word prompt keeps the
+    current send mode; going back to "After a pause" keeps the word for later.
+    On macOS the word takes effect about half a second after it is recognized;
+    on Linux at the end of the current speech segment, about a second after
+    you stop. This mode asks for no pause.
+- **Spoken answer limit** — the length past which an answer is read from its
+  final sentences only, after the "Long answer" notice: 300, **600** (default),
+  1000 or 2000 characters, or **whole answer** to always read everything.
+
+All are saved with the other settings when setup finishes
+(`voice.sendMode` as `pause` or `keyword`, `voice.sendKeyword`,
+`voice.utteranceSilenceSeconds` and `voice.maximumSpokenCharacters` in
+`settings.json`, where `0` means whole answer) and apply the next time
+`/voice on` starts. The main setup menu shows a value that differs from the
+default next to the Voice mode status, for example `automatic voice · send on
+“vai” · whole answer`.
+
 ### macOS
 
 - **Permissions.** The first `/voice on` asks macOS to let your terminal app use
@@ -187,8 +233,9 @@ off.
   interrupts nor answers itself. When the current output cannot run echo
   cancellation, for example an AirPlay device, voice mode starts without it and
   names the output: switch to a local output or use headphones.
-- **Reading voice.** `/setup` > **Voice mode** downloads nothing on macOS. It
-  lists the system voices installed for the voice mode language, with name and
+- **Reading voice.** `/setup` > **Voice mode** downloads nothing on macOS.
+  After the three [options](#options) it lists the system voices installed for
+  the voice mode language, with name and
   quality (standard, enhanced or premium), plus **Automatic**: the best
   installed voice of the exact locale, else of another region of the language.
   Choosing a voice, or Automatic while a voice of the language is installed,
@@ -222,7 +269,8 @@ Raspberry Pi can transcribe them.
 Download the files from `/setup` > **Voice mode**:
 
 1. The section shows where the files go and their status (`not installed`,
-   `incomplete download`, or the installed voice), then lists the Piper voices
+   `incomplete download`, or the installed voice), then, after the three
+   [options](#options), lists the Piper voices
    of the voice mode language with locale, quality and size. When no voice
    reads that language, every voice is listed. The catalogue has 127 voices in
    25 locales.
@@ -240,7 +288,8 @@ Download the files from `/setup` > **Voice mode**:
 Exactly one voice is kept: choosing another one replaces it without downloading
 the shared files again. **Remove voice mode files** deletes everything. The
 section acts immediately: downloads are not part of the settings that **Finish
-setup** saves, and cancelling setup does not undo them.
+setup** saves, and cancelling setup does not undo them. The three options, on the
+other hand, are settings: they are saved by **Finish setup** like on macOS.
 
 While voice mode runs, `sherpa-onnx-vad-alsa-offline-asr` listens and
 `sherpa-onnx-offline-tts-play-alsa` reads each answer, as separate processes.
@@ -338,5 +387,6 @@ open the Telegram section of `/setup` again; you can keep the current pairing.
 | Telegram: `Voice-message transcription is off` | Open the Telegram section of `/setup` again; you can keep the current pairing. |
 | Telegram: `Transcribing voice messages needs opusdec (package opus-tools) or ffmpeg` | Linux: install one, for example `sudo apt install opus-tools`. |
 | `/voice is available only in the interactive terminal` | Run `/voice` from the `zen` terminal UI. |
-| An utterance is never sent | Pause for about 2.5 seconds after speaking, and reduce background noise. |
+| An utterance is never sent | Pause for about 5 seconds after speaking (or the pause chosen with the Send mode "After a pause" in `/setup` > Voice mode), and reduce background noise. With the Send mode "On a word", say your word at the end. |
+| An utterance is sent before you finish | Choose the Send mode "After a pause" with a longer pause in `/setup` > Voice mode, or "On a word" so that only your word sends. |
 | Answers are read in the wrong language | Set the Response language in `/setup`; on Linux, also choose a voice of that language in `/setup` > Voice mode. |

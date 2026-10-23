@@ -57,6 +57,9 @@ protocol TerminalVoiceController: Actor {
     /// Returns `false` when already in the requested state.
     @discardableResult
     func setPaused(_ paused: Bool) async -> Bool
+    /// Whether the live-chat dialogue awaits a yes or no. In keyword send
+    /// mode a bare yes or no is then sent at once, without the keyword.
+    func setAwaitingShortAnswer(_ awaiting: Bool) async
 }
 
 extension TerminalVoiceController {
@@ -64,6 +67,154 @@ extension TerminalVoiceController {
     @discardableResult
     func speak(_ response: String) async -> Bool {
         await speak(response, rendering: .answer)
+    }
+}
+
+/// The voice mode options chosen in `/setup` > Voice mode, resolved against
+/// the built-in defaults; shared by both platforms.
+struct TerminalVoiceOptions: Sendable, Equatable {
+    static let defaultUtteranceSilence = TerminalDictationSegmenter.defaultSilence
+    static let defaultMaximumSpokenCharacters = TerminalVoiceSpeechText.maximumSpokenCharacters
+    /// In keyword mode the Linux recognizer still splits speech on silence; a
+    /// short gap makes the keyword at the end of a segment take effect soon.
+    static let keywordRecognizerSilenceSeconds = 1
+
+    /// How an utterance is sent.
+    enum SendMode: Sendable, Equatable {
+        /// After `utteranceSilence`.
+        case pause
+        /// Once the speech ends with the keyword; silence never sends.
+        case keyword(TerminalVoiceSendKeyword)
+    }
+
+    /// Silence that ends an utterance in `.pause` mode.
+    let utteranceSilence: Duration
+    /// Characters of an answer read whole; nil reads every answer whole.
+    let maximumSpokenCharacters: Int?
+    let sendMode: SendMode
+
+    init(
+        utteranceSilence: Duration = Self.defaultUtteranceSilence,
+        maximumSpokenCharacters: Int? = Self.defaultMaximumSpokenCharacters,
+        sendMode: SendMode = .pause
+    ) {
+        self.utteranceSilence = utteranceSilence
+        self.maximumSpokenCharacters = maximumSpokenCharacters
+        self.sendMode = sendMode
+    }
+
+    /// The saved options: a missing value keeps its default, a saved limit
+    /// of 0 removes the limit, and keyword mode without a usable keyword is
+    /// pause mode.
+    init(voice: AgentVoiceSettingsManifest?) {
+        let keyword = voice?.sendKeyword.flatMap(TerminalVoiceSendKeyword.init)
+        self.init(
+            utteranceSilence: voice?.utteranceSilenceSeconds.map { .seconds($0) }
+                ?? Self.defaultUtteranceSilence,
+            maximumSpokenCharacters: voice?.maximumSpokenCharacters.map { $0 > 0 ? $0 : nil }
+                ?? Self.defaultMaximumSpokenCharacters,
+            sendMode: voice?.sendMode == .keyword ? keyword.map(SendMode.keyword) ?? .pause : .pause
+        )
+    }
+
+    /// Whole seconds of silence, as the sherpa-onnx recognizer takes them.
+    var utteranceSilenceSeconds: Int {
+        Int(utteranceSilence.components.seconds)
+    }
+
+    /// The silence the Linux recognizer splits speech on.
+    var recognizerSilenceSeconds: Int {
+        switch sendMode {
+        case .pause:
+            utteranceSilenceSeconds
+        case .keyword:
+            Self.keywordRecognizerSilenceSeconds
+        }
+    }
+
+    var sendKeyword: TerminalVoiceSendKeyword? {
+        if case let .keyword(keyword) = sendMode {
+            return keyword
+        }
+        return nil
+    }
+}
+
+/// The spoken word that ends and sends an utterance in keyword send mode.
+/// Compared without case, accents or punctuation, as whole words at the end
+/// of the speech: "cerca il file, vai" sends "cerca il file", "vai" alone
+/// sends what was dictated before, and "vai a casa" is ordinary text.
+struct TerminalVoiceSendKeyword: Sendable, Equatable {
+    /// As typed in setup, trimmed.
+    let text: String
+    /// The folded words compared with the end of the speech.
+    let words: [String]
+
+    init?(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = TerminalVoiceEchoGuard.words(in: trimmed)
+        guard !words.isEmpty else {
+            return nil
+        }
+        self.text = trimmed
+        self.words = words
+    }
+
+    /// The speech before the trailing keyword, without the keyword and a
+    /// separating comma: empty when the keyword was said alone, nil when the
+    /// speech does not end with the keyword.
+    func textBeforeKeyword(in speech: String) -> String? {
+        let wordRanges = Self.wordRanges(in: speech)
+        guard wordRanges.count >= words.count else {
+            return nil
+        }
+        let tail = wordRanges.suffix(words.count)
+        let spoken = tail.map { TerminalVoiceEchoGuard.words(in: String(speech[$0])).joined() }
+        guard spoken == words else {
+            return nil
+        }
+        let prefix = speech[..<tail.first!.lowerBound]
+        return String(prefix).trimmingCharacters(in: Self.separators)
+    }
+
+    /// What to send once `speech` ends with the keyword: the text dictated
+    /// before it joined to `pending` from earlier segments. Nil when `speech`
+    /// does not end with the keyword.
+    func utteranceToSend(pending: String, speech: String) -> String? {
+        textBeforeKeyword(in: speech).map { Self.joined(pending, $0) }
+    }
+
+    /// `pending` and `text` as one utterance.
+    static func joined(_ pending: String, _ text: String) -> String {
+        [pending, text]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private static let separators = CharacterSet.whitespacesAndNewlines
+        .union(CharacterSet(charactersIn: ",;:-\u{2013}\u{2014}"))
+
+    private static func wordRanges(in text: String) -> [Range<String.Index>] {
+        var ranges: [Range<String.Index>] = []
+        var start: String.Index?
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            if character.isLetter || character.isNumber {
+                if start == nil {
+                    start = index
+                }
+            } else if let wordStart = start {
+                ranges.append(wordStart..<index)
+                start = nil
+            }
+            index = text.index(after: index)
+        }
+        if let wordStart = start {
+            ranges.append(wordStart..<text.endIndex)
+        }
+        return ranges
     }
 }
 
@@ -79,10 +230,12 @@ enum TerminalVoicePlatform {
     /// Builds the controller for this platform. On Linux it requires the
     /// files downloaded from `/setup` > Voice mode. `readingVoiceIdentifier`
     /// is the macOS reading voice chosen there; Linux reads with its installed
-    /// Piper voice and ignores it.
+    /// Piper voice and ignores it. `options` are the voice mode options chosen
+    /// there on either platform.
     static func makeController(
         languageCode: String,
         readingVoiceIdentifier: String? = nil,
+        options: TerminalVoiceOptions = TerminalVoiceOptions(),
         callbacks: TerminalVoiceCallbacks
     ) -> TerminalVoiceControllerCreation {
         #if os(macOS)
@@ -93,12 +246,13 @@ enum TerminalVoicePlatform {
             languageCode: languageCode,
             locale: AgentVoiceTranscriptionService.locale(for: languageCode),
             readingVoiceIdentifier: readingVoiceIdentifier,
+            options: options,
             callbacks: callbacks
         ))
         #elseif os(Linux)
         switch SherpaOnnxVoiceInstallation.standard().runtimePaths() {
         case let .success(paths):
-            return .ready(TerminalSherpaVoiceController(paths: paths, callbacks: callbacks))
+            return .ready(TerminalSherpaVoiceController(paths: paths, options: options, callbacks: callbacks))
         case let .failure(error):
             return .unavailable("ZenCODE: \(error.localizedDescription)\n")
         }

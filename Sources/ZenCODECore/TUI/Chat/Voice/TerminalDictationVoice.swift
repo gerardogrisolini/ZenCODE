@@ -347,6 +347,10 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
     /// per-request duration limit.
     static let idleRequestLifetime = Duration.seconds(50)
     private static let silencePollInterval = Duration.milliseconds(200)
+    /// In keyword mode the recognized text must stay unchanged this long
+    /// before its trailing keyword counts, so a word still being recognized
+    /// ("vai" on the way to "vaiolo") does not send.
+    static let keywordConfirmationDelay = Duration.milliseconds(600)
 
     static func listeningMessage(localeIdentifier: String, onDevice: Bool) -> String {
         let place = onDevice ? "on-device" : "Apple servers"
@@ -358,10 +362,16 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
     private let locale: Locale
     /// The reading voice chosen in `/setup` > Voice mode, if any.
     private let readingVoiceIdentifier: String?
+    /// The options chosen in `/setup` > Voice mode.
+    private let options: TerminalVoiceOptions
     private let device = TerminalVoiceAudioDevice()
     private var recognizer: TerminalDictationRecognizer?
     private var speaker: TerminalVoiceSpeaker?
-    private var segmenter = TerminalDictationSegmenter()
+    private var segmenter: TerminalDictationSegmenter
+    /// Set in keyword send mode: speech waiting for the keyword.
+    private var keywordCollector: TerminalVoiceKeywordCollector?
+    /// The live-chat dialogue awaits a yes or no.
+    private var isAwaitingShortAnswer = false
     private var generation: UInt64 = 0
     private var generationStartedAt = ContinuousClock.now
     private var rapidEndings = 0
@@ -377,11 +387,15 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         languageCode: String,
         locale: Locale,
         readingVoiceIdentifier: String? = nil,
+        options: TerminalVoiceOptions = TerminalVoiceOptions(),
         callbacks: Callbacks
     ) {
         self.languageCode = languageCode
         self.locale = locale
         self.readingVoiceIdentifier = readingVoiceIdentifier
+        self.options = options
+        self.segmenter = TerminalDictationSegmenter(silence: options.utteranceSilence)
+        self.keywordCollector = options.sendKeyword.map(TerminalVoiceKeywordCollector.init)
         self.callbacks = callbacks
     }
 
@@ -491,7 +505,11 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         let spoken: String
         switch rendering {
         case .answer:
-            spoken = TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: text, languageCode: languageCode)
+            spoken = TerminalVoiceSpeechText.spokenAnswer(
+                fromMarkdown: text,
+                languageCode: languageCode,
+                maximumCharacters: options.maximumSpokenCharacters
+            )
         case .plainText:
             spoken = text
         }
@@ -540,6 +558,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         }
         if paused {
             segmenter.reset()
+            keywordCollector?.reset()
             await interruptPlayback()
         } else if phase == .listening {
             rapidEndings = 0
@@ -563,7 +582,12 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             isAudioRunning = false
         }
         segmenter.reset()
+        keywordCollector?.reset()
         await reportSpeakingState()
+    }
+
+    func setAwaitingShortAnswer(_ awaiting: Bool) {
+        isAwaitingShortAnswer = awaiting
     }
 
     // MARK: - Recognition
@@ -595,7 +619,18 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             }
             let now = ContinuousClock.now
             if let utterance = segmenter.takeUtterance() {
-                await emit(utterance, at: now)
+                if keywordCollector != nil {
+                    // The request ended on its own (duration limit): the text
+                    // waits for the keyword unless it already ends with it.
+                    switch keywordCollector!.receive(utterance, awaitingShortAnswer: isAwaitingShortAnswer) {
+                    case let .send(text):
+                        await emit(text, at: now)
+                    case .collected, .nothing:
+                        break
+                    }
+                } else {
+                    await emit(utterance, at: now)
+                }
             }
             if generationStartedAt.duration(to: now) < .seconds(1) {
                 rapidEndings += 1
@@ -622,6 +657,22 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             return
         }
         let now = ContinuousClock.now
+        if let collector = keywordCollector {
+            // Keyword mode: silence never sends; a stable text ending with the
+            // keyword (or a bare yes/no while one is awaited) does.
+            if segmenter.hasStableText(for: Self.keywordConfirmationDelay, at: now),
+               case .send = collector.peek(segmenter.text, awaitingShortAnswer: isAwaitingShortAnswer),
+               let speech = segmenter.takeUtterance() {
+                restartRecognition()
+                if case let .send(text) = keywordCollector!.receive(speech, awaitingShortAnswer: isAwaitingShortAnswer) {
+                    await emit(text, at: now)
+                }
+            } else if !segmenter.hasPendingText,
+                      generationStartedAt.duration(to: now) >= Self.idleRequestLifetime {
+                restartRecognition()
+            }
+            return
+        }
         if segmenter.isUtteranceComplete(at: now), let utterance = segmenter.takeUtterance() {
             // A request's transcript is cumulative: start a fresh one before
             // the next utterance.

@@ -79,6 +79,29 @@ Release tags follow the strict `vX.Y.Z` contract described in
     unread. Typed input is never intercepted. `Esc`, `/voice pause`,
     `/voice off`, `/new` and `/resume` drop the pending question and the
     queue.
+  - Voice mode options: the first items of `/setup` > Voice mode, on
+    macOS and Linux alike, choose the send mode and the spoken answer limit.
+    The send mode is "After a pause" (default), which goes on to the pause
+    that ends an utterance and sends it (2, 3, 5, 8 or 10 seconds; default 5,
+    raised from 2.5), or "On a word": you type one word of your own (no
+    default, e.g. "vai" or "done"), and an utterance is then sent only when it
+    ends with that word, which is removed from the prompt; silence never
+    sends, so no pause is asked, a long pause mid-sentence no longer sends
+    half a prompt, and everything said before the word is sent together. The
+    word alone sends what was dictated so far, the same word mid-sentence is
+    ordinary text, a spoken yes/no word is refused as the keyword, and a bare
+    yes or no still answers a live-chat question at once without the word.
+    The pause and the spoken answer limit (the length past which an answer is
+    read from its final sentences only: 300, 600, 1000 or 2000 characters, or
+    the whole answer; default 600) are preset lists with the current value
+    preselected and the default marked; Back keeps the current value and the
+    Voice mode menu comes back. The
+    choices are saved with the other settings as `voice.sendMode`,
+    `voice.sendKeyword`, `voice.utteranceSilenceSeconds` and
+    `voice.maximumSpokenCharacters` (`0` for the whole answer) in
+    `settings.json`, survive re-running Telegram setup and apply the next
+    time `/voice on` starts; a value that differs from the default is shown
+    next to the Voice mode status in the setup menu.
 - Telegram: voice notes are transcribed on Linux as well. Telegram setup now
   turns voice-message transcription on with Telegram on every platform, and the
   setup summary shows it. Linux transcribes on the machine with the files of

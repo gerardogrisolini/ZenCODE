@@ -35,22 +35,22 @@ extension ZenCODESetupRunner {
     /// frameworks, Linux with the sherpa-onnx files of `/setup` > Voice mode.
     /// Keep it absent whenever Telegram is not active so disabling Telegram
     /// cannot leave voice enabled. The language follows the response language.
-    /// The reading voice chosen in `/setup` > Voice mode belongs to terminal
-    /// voice mode, so it survives either way (and on Linux, where it is inert).
+    /// The reading voice and the options chosen in `/setup` > Voice mode
+    /// belong to terminal voice mode, so they survive either way (and on
+    /// Linux, where the reading voice is inert).
     static func voiceSettings(
         for telegram: AgentTelegramSettingsManifest?,
         existing: AgentVoiceSettingsManifest? = nil
     ) -> AgentVoiceSettingsManifest? {
-        let readingVoice = existing?.macOSVoiceIdentifier
-        if telegram?.isEnabled == true {
-            return AgentVoiceSettingsManifest(
-                enabled: true,
-                macOSVoiceIdentifier: readingVoice
-            )
-        }
-        return readingVoice.map {
-            AgentVoiceSettingsManifest(enabled: false, macOSVoiceIdentifier: $0)
-        }
+        let settings = AgentVoiceSettingsManifest(
+            enabled: telegram?.isEnabled == true,
+            macOSVoiceIdentifier: existing?.macOSVoiceIdentifier,
+            utteranceSilenceSeconds: existing?.utteranceSilenceSeconds,
+            maximumSpokenCharacters: existing?.maximumSpokenCharacters,
+            sendMode: existing?.sendMode,
+            sendKeyword: existing?.sendKeyword
+        )
+        return settings.isEmpty ? nil : settings
     }
 
     static func promptTelegramSettings(

@@ -69,6 +69,18 @@ struct TerminalVoiceChatDialogue: Sendable {
         }
     }
 
+    /// A yes or no answers the current question (also during the reading,
+    /// which ends with the reply question). In keyword send mode the voice
+    /// controller then sends a bare yes or no without the keyword.
+    var isAwaitingAffirmation: Bool {
+        switch phase {
+        case .askingToRead, .reading, .askingToReply:
+            true
+        case .idle, .awaitingReplyText, .awaitingMessageText:
+            false
+        }
+    }
+
     /// Only coordinator or agent messages addressed to the operator, directly
     /// or in a broadcast, are announced. Operator messages and traffic between
     /// the coordinator and agents stay silent in the dock.

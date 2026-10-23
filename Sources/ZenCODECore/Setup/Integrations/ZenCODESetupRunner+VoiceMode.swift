@@ -15,6 +15,8 @@ import Synchronization
 
 extension ZenCODESetupRunner {
     enum VoiceModeAction: Hashable {
+        case sendMode
+        case spokenLimit
         case voice(String)
         case remove
         case back
@@ -56,12 +58,27 @@ extension ZenCODESetupRunner {
         return (matching, true)
     }
 
+    /// The voice mode options, the voices, "Remove" once something is
+    /// installed, then "Back".
     static func voiceModeMenuItems(
         voices: [SherpaOnnxVoice],
-        installation: SherpaOnnxVoiceInstallation
+        installation: SherpaOnnxVoiceInstallation,
+        manifest: AgentSettingsManifest? = nil
     ) -> [TerminalCheckboxMenuItem<VoiceModeAction>] {
         let installed = Set(installation.installedVoices().map(\.id))
-        var items = voices.map { voice in
+        var items = [
+            TerminalCheckboxMenuItem(
+                value: VoiceModeAction.sendMode,
+                title: sendModeMenuTitle,
+                detail: sendModeItemDetail(manifest: manifest)
+            ),
+            TerminalCheckboxMenuItem(
+                value: VoiceModeAction.spokenLimit,
+                title: spokenLimitMenuTitle,
+                detail: spokenLimitItemDetail(manifest: manifest)
+            )
+        ]
+        items += voices.map { voice in
             var detail = "\(voice.locale) · \(voice.quality.map { $0.replacingOccurrences(of: "_", with: " ") } ?? "standard") · \(megabytes(voice.asset.byteCount))"
             if installed.contains(voice.id) {
                 detail += " · installed"
@@ -91,10 +108,13 @@ extension ZenCODESetupRunner {
         "\(max(1, Int((Double(bytes) / 1_000_000).rounded()))) MB"
     }
 
+    /// Downloads a voice or removes the files, and stages the voice mode
+    /// options; returns the manifest with the options staged.
     static func configureVoiceMode(
-        manifest: AgentSettingsManifest?,
+        manifest initialManifest: AgentSettingsManifest?,
         installation: SherpaOnnxVoiceInstallation = .standard()
-    ) async throws {
+    ) async throws -> AgentSettingsManifest? {
+        var manifest = initialManifest
         AgentOutput.standardError.writeString(
             """
 
@@ -103,7 +123,9 @@ extension ZenCODESetupRunner {
             downloaded from the sherpa-onnx GitHub releases, checked against pinned
             SHA-256 checksums, and stored in:
             \(installation.directoryURL.path)
-            Status: \(voiceModeSetupDetail(installation: installation))
+            The options are saved when setup finishes and apply the next time /voice on
+            starts.
+            Status: \(voiceModeSetupDetail(installation: installation))\(voiceOptionsSetupSuffix(manifest: manifest))
 
             """
         )
@@ -114,44 +136,58 @@ extension ZenCODESetupRunner {
                 "No voice reads the \"\(languageCode)\" language; every voice is listed.\n"
             )
         }
-        let items = voiceModeMenuItems(voices: choices.voices, installation: installation)
-        let selected = installation.installedVoices().first.map { VoiceModeAction.voice($0.id) }
-            ?? items.first?.value
+        var selected = installation.installedVoices().first.map { VoiceModeAction.voice($0.id) }
+            ?? choices.voices.first.map { VoiceModeAction.voice($0.id) }
             ?? .back
-        guard let action = TerminalCheckboxMenu.selectOne(
-            title: choices.matchesLanguage
-                ? "Choose the voice that reads answers aloud (\(languageCode))"
-                : "Choose the voice that reads answers aloud",
-            items: items,
-            selected: selected
-        ) else {
-            return
-        }
-
-        switch action {
-        case .back:
-            return
-        case .remove:
-            guard try promptYesNo(
-                "Remove the voice mode files?",
-                defaultValue: false,
-                help: "Deletes \(installation.directoryURL.path). Voice mode needs them again before /voice on works."
+        while true {
+            let items = voiceModeMenuItems(
+                voices: choices.voices,
+                installation: installation,
+                manifest: manifest
+            )
+            guard let action = TerminalCheckboxMenu.selectOne(
+                title: choices.matchesLanguage
+                    ? "Voice mode (\(languageCode)): options and the voice that reads answers aloud"
+                    : "Voice mode: options and the voice that reads answers aloud",
+                items: items,
+                selected: selected
             ) else {
-                return
+                return manifest
             }
-            do {
-                try SherpaOnnxVoiceInstaller(installation: installation).removeAll()
-                AgentOutput.standardError.writeString("Voice mode files removed.\n\n")
-            } catch {
-                AgentOutput.standardError.writeString(
-                    "Voice mode files could not be removed: \(error.localizedDescription)\n\n"
-                )
+
+            switch action {
+            case .back:
+                return manifest
+            case .sendMode:
+                manifest = configureSendMode(manifest: manifest)
+                selected = action
+            case .spokenLimit:
+                manifest = configureSpokenLimit(manifest: manifest)
+                selected = action
+            case .remove:
+                guard try promptYesNo(
+                    "Remove the voice mode files?",
+                    defaultValue: false,
+                    help: "Deletes \(installation.directoryURL.path). Voice mode needs them again before /voice on works."
+                ) else {
+                    return manifest
+                }
+                do {
+                    try SherpaOnnxVoiceInstaller(installation: installation).removeAll()
+                    AgentOutput.standardError.writeString("Voice mode files removed.\n\n")
+                } catch {
+                    AgentOutput.standardError.writeString(
+                        "Voice mode files could not be removed: \(error.localizedDescription)\n\n"
+                    )
+                }
+                return manifest
+            case let .voice(id):
+                guard let voice = SherpaOnnxVoiceCatalog.voice(id: id) else {
+                    return manifest
+                }
+                try await installVoiceMode(voice: voice, installation: installation)
+                return manifest
             }
-        case let .voice(id):
-            guard let voice = SherpaOnnxVoiceCatalog.voice(id: id) else {
-                return
-            }
-            try await installVoiceMode(voice: voice, installation: installation)
         }
     }
 

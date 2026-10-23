@@ -55,8 +55,8 @@ extension TerminalChat {
             await writeFailureMessage(Self.voiceRequiresInteractiveTerminalMessage)
             return
         }
-        // A failed controller is replaced, so the language and the reading
-        // voice are read again.
+        // A failed controller is replaced, so the language, the reading
+        // voice and the options are read again.
         await stopVoiceMode()
         let manifest = AgentSettingsManifestStore.load()
         let languageCode = VoiceLanguage.resolvedCode(manifest: manifest)
@@ -64,6 +64,7 @@ extension TerminalChat {
         switch TerminalVoicePlatform.makeController(
             languageCode: languageCode,
             readingVoiceIdentifier: manifest?.voice?.macOSVoiceIdentifier,
+            options: TerminalVoiceOptions(voice: manifest?.voice),
             callbacks: voiceCallbacks(eventQueue: eventQueue)
         ) {
         case let .ready(ready):
@@ -97,7 +98,7 @@ extension TerminalChat {
             return
         }
         if paused {
-            cancelVoiceChatDialogue()
+            await cancelVoiceChatDialogue()
         }
         let changed = await controller.setPaused(paused)
         switch (paused, changed) {
@@ -113,7 +114,7 @@ extension TerminalChat {
     }
 
     func stopVoiceMode() async {
-        cancelVoiceChatDialogue()
+        await cancelVoiceChatDialogue()
         guard let controller = voiceController else {
             return
         }
@@ -135,6 +136,7 @@ extension TerminalChat {
         if started {
             cancelVoiceDialogueDeadline()
             voiceChatDialogue.answerReadingStarted()
+            await syncVoiceDialogueAnswerState()
         }
         return started
     }
@@ -143,14 +145,22 @@ extension TerminalChat {
     /// turns the microphone back on. The live-chat dialogue and its queue are
     /// dropped: nothing is announced retroactively.
     func interruptVoicePlayback() async {
-        cancelVoiceChatDialogue()
+        await cancelVoiceChatDialogue()
         await voiceController?.interruptPlayback()
     }
 
     /// Forgets the spoken live-chat question and every queued announcement.
-    func cancelVoiceChatDialogue() {
+    func cancelVoiceChatDialogue() async {
         cancelVoiceDialogueDeadline()
         voiceChatDialogue.cancelAll()
+        await syncVoiceDialogueAnswerState()
+    }
+
+    /// Tells the controller whether the dialogue awaits a yes or no, so
+    /// keyword send mode lets a bare answer through. Called after every
+    /// dialogue transition.
+    func syncVoiceDialogueAnswerState() async {
+        await voiceController?.setAwaitingShortAnswer(voiceChatDialogue.isAwaitingAffirmation)
     }
 
     /// Stops waiting for the answer to a spoken question.

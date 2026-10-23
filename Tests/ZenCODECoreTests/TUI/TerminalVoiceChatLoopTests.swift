@@ -225,6 +225,13 @@ struct TerminalVoiceChatLoopTests {
         #expect(await harness.spoken(count: 4).last == Self.plain("Inviato."))
         #expect(harness.publications == 1)
         #expect(harness.prompts.isEmpty)
+        // The controller learnt when a yes or no was awaited: during the
+        // announcement and the reading (which ends with the reply question),
+        // not while the reply text was awaited.
+        let awaiting = await harness.voice.awaitingShortAnswer
+        #expect(awaiting.first == true)
+        #expect(awaiting.contains(false))
+        #expect(awaiting.last == false)
         try await harness.finish(loop)
     }
 
@@ -497,6 +504,13 @@ private actor FakeVoiceController: TerminalVoiceController {
         }
         isPaused = paused
         return true
+    }
+
+    /// Every value the loop reported, in order.
+    private(set) var awaitingShortAnswer: [Bool] = []
+
+    func setAwaitingShortAnswer(_ awaiting: Bool) {
+        awaitingShortAnswer.append(awaiting)
     }
 }
 

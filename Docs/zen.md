@@ -315,7 +315,7 @@ Commands start with `/`:
 - `/undo` — revert the most recent agent-tracked changes.
 
 **Voice:**
-- `/voice on` / `/voice off` — start or stop voice mode in the interactive terminal, with any agent: each utterance becomes a prompt after a pause of about 2.5 seconds and every final answer is read aloud; `Esc` stops the reading. On Linux, download the speech files from `/setup` > **Voice mode** first.
+- `/voice on` / `/voice off` — start or stop voice mode in the interactive terminal, with any agent: each utterance becomes a prompt after a pause of about 5 seconds, or when it ends with a word you choose, and every final answer is read aloud (a long answer from its final sentences only); `Esc` stops the reading. The send mode, the pause and the spoken answer limit are chosen in `/setup` > **Voice mode**. On Linux, download the speech files from `/setup` > **Voice mode** first.
 - `/voice pause` / `/voice resume` — stop or restart both listening and reading aloud; a bare `/voice` toggles between them. Available while a prompt runs. See [voice.md](voice.md).
 
 **Task graph:**

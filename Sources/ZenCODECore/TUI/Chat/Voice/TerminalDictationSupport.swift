@@ -41,7 +41,7 @@ enum TerminalVoiceCommandAction: Sendable, Equatable {
 
 /// Splits continuous speech recognition into utterances on a silence gap.
 struct TerminalDictationSegmenter: Sendable {
-    static let defaultSilence = Duration.milliseconds(2_500)
+    static let defaultSilence = Duration.milliseconds(5_000)
 
     let silence: Duration
     private(set) var text = ""
@@ -67,10 +67,15 @@ struct TerminalDictationSegmenter: Sendable {
     }
 
     func isUtteranceComplete(at now: ContinuousClock.Instant) -> Bool {
+        hasStableText(for: silence, at: now)
+    }
+
+    /// `true` when there is text and it has not changed for `duration`.
+    func hasStableText(for duration: Duration, at now: ContinuousClock.Instant) -> Bool {
         guard !text.isEmpty, let lastChange else {
             return false
         }
-        return lastChange.duration(to: now) >= silence
+        return lastChange.duration(to: now) >= duration
     }
 
     /// Returns and clears the current utterance, if any.
@@ -255,6 +260,62 @@ final class TerminalVoiceSpeechState: Sendable {
     }
 }
 
+/// Keyword send mode, shared by both platforms: recognized speech waits until
+/// a segment ends with the keyword, then everything collected is sent as one
+/// utterance. Silence never sends. While the live-chat dialogue awaits a yes
+/// or no, a bare answer is sent at once without the keyword.
+struct TerminalVoiceKeywordCollector: Sendable {
+    enum Outcome: Sendable, Equatable {
+        /// Send this utterance.
+        case send(String)
+        /// Kept until the keyword is said.
+        case collected
+        /// Nothing to do: empty speech, or the keyword alone with nothing
+        /// collected.
+        case nothing
+    }
+
+    let keyword: TerminalVoiceSendKeyword
+    /// Speech from earlier segments, waiting for the keyword.
+    private(set) var pending = ""
+
+    init(keyword: TerminalVoiceSendKeyword) {
+        self.keyword = keyword
+    }
+
+    var hasPendingText: Bool {
+        !pending.isEmpty
+    }
+
+    /// What `receive` would do with `speech`, without changing anything.
+    func peek(_ speech: String, awaitingShortAnswer: Bool) -> Outcome {
+        var copy = self
+        return copy.receive(speech, awaitingShortAnswer: awaitingShortAnswer)
+    }
+
+    /// Handles one finished segment of speech.
+    mutating func receive(_ speech: String, awaitingShortAnswer: Bool) -> Outcome {
+        let trimmed = speech.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return .nothing
+        }
+        if awaitingShortAnswer, pending.isEmpty,
+           TerminalVoiceChatPhrases.affirmation(in: trimmed) != nil {
+            return .send(trimmed)
+        }
+        if let utterance = keyword.utteranceToSend(pending: pending, speech: trimmed) {
+            pending = ""
+            return utterance.isEmpty ? .nothing : .send(utterance)
+        }
+        pending = TerminalVoiceSendKeyword.joined(pending, trimmed)
+        return .collected
+    }
+
+    mutating func reset() {
+        pending = ""
+    }
+}
+
 /// Plain spoken text from an assistant Markdown answer.
 enum TerminalVoiceSpeechText {
     /// Spoken answers longer than this, about 40 seconds of reading, keep only
@@ -264,16 +325,16 @@ enum TerminalVoiceSpeechText {
     static let maximumSpokenCharacters = 600
 
     /// The text read aloud for an answer: its plain spoken text, or, past
-    /// `maximumSpokenCharacters`, a short notice followed by the final
-    /// sentences that fit the limit.
+    /// `maximumCharacters` (nil never shortens), a short notice followed by
+    /// the final sentences that fit the limit.
     static func spokenAnswer(
         fromMarkdown markdown: String,
         languageCode: String?,
-        maximumCharacters: Int = maximumSpokenCharacters
+        maximumCharacters: Int? = maximumSpokenCharacters
     ) -> String {
         let lines = speakableLines(fromMarkdown: markdown, languageCode: languageCode)
         let text = lines.joined(separator: " ")
-        guard text.count > maximumCharacters else {
+        guard let maximumCharacters, text.count > maximumCharacters else {
             return text
         }
         let tail = finalSentences(of: lines, maximumCharacters: maximumCharacters)

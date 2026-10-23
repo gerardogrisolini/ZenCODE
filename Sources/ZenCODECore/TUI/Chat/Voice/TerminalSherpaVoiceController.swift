@@ -192,8 +192,9 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         case stopped
     }
 
-    /// Silence that ends an utterance; matches the macOS dictation segmenter.
-    static let utteranceSilenceSeconds = "2.5"
+    /// Default silence that ends an utterance; matches the macOS dictation
+    /// segmenter. `/setup` > Voice mode can change it.
+    static let utteranceSilenceSeconds = "5"
     /// Long dictation stays one utterance instead of the 20 s default.
     static let maximumUtteranceSeconds = "60"
     /// Linux limits one argument to 128 KiB; longer answers are truncated.
@@ -207,7 +208,10 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         "Voice: listening (sherpa-onnx, voice \(voice)). Speak or type; answers are read aloud with the microphone off, Esc stops reading. /voice pauses or resumes, /voice off stops.\n"
     }
 
-    static func invocation(for paths: SherpaOnnxRuntimePaths) -> Invocation {
+    static func invocation(
+        for paths: SherpaOnnxRuntimePaths,
+        utteranceSilenceSeconds: String = utteranceSilenceSeconds
+    ) -> Invocation {
         Invocation(
             recognizerProgram: paths.recognizerProgram,
             recognizerArguments: [
@@ -269,6 +273,12 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
     private let invocation: Invocation
     private let voiceName: String
     nonisolated let languageCode: String
+    /// Characters of an answer read whole; nil reads every answer whole.
+    private let maximumSpokenCharacters: Int?
+    /// Set in keyword send mode: speech waiting for the keyword.
+    private var keywordCollector: TerminalVoiceKeywordCollector?
+    /// The live-chat dialogue awaits a yes or no.
+    private var isAwaitingShortAnswer = false
     private let callbacks: TerminalVoiceCallbacks
 
     private(set) var phase: Phase = .idle
@@ -287,11 +297,20 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
     private var synthesizerStopRequested = false
     private var synthesizerDiagnostics: [String] = []
 
-    init(paths: SherpaOnnxRuntimePaths, callbacks: TerminalVoiceCallbacks) {
+    init(
+        paths: SherpaOnnxRuntimePaths,
+        options: TerminalVoiceOptions = TerminalVoiceOptions(),
+        callbacks: TerminalVoiceCallbacks
+    ) {
         self.init(
-            invocation: Self.invocation(for: paths),
+            invocation: Self.invocation(
+                for: paths,
+                utteranceSilenceSeconds: String(options.recognizerSilenceSeconds)
+            ),
             voiceName: "\(paths.voice.speaker) (\(paths.voice.locale))",
             languageCode: paths.voice.languageCode,
+            maximumSpokenCharacters: options.maximumSpokenCharacters,
+            sendKeyword: options.sendKeyword,
             callbacks: callbacks
         )
     }
@@ -300,11 +319,15 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         invocation: Invocation,
         voiceName: String,
         languageCode: String,
+        maximumSpokenCharacters: Int? = TerminalVoiceOptions.defaultMaximumSpokenCharacters,
+        sendKeyword: TerminalVoiceSendKeyword? = nil,
         callbacks: TerminalVoiceCallbacks
     ) {
         self.invocation = invocation
         self.voiceName = voiceName
         self.languageCode = languageCode
+        self.maximumSpokenCharacters = maximumSpokenCharacters
+        self.keywordCollector = sendKeyword.map(TerminalVoiceKeywordCollector.init)
         self.callbacks = callbacks
     }
 
@@ -346,7 +369,11 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         let spoken: String
         switch rendering {
         case .answer:
-            spoken = TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: text, languageCode: languageCode)
+            spoken = TerminalVoiceSpeechText.spokenAnswer(
+                fromMarkdown: text,
+                languageCode: languageCode,
+                maximumCharacters: maximumSpokenCharacters
+            )
         case .plainText:
             spoken = text
         }
@@ -397,6 +424,7 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         }
         isPaused = paused
         if paused {
+            keywordCollector?.reset()
             stopRecognizer()
             stopSynthesizer()
             await setSpeaking(false)
@@ -405,6 +433,10 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
             await startRecognizer()
         }
         return true
+    }
+
+    func setAwaitingShortAnswer(_ awaiting: Bool) {
+        isAwaitingShortAnswer = awaiting
     }
 
     // MARK: - Recognizer
@@ -460,7 +492,17 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
                 guard phase == .listening, !isPaused, !isSpeaking else {
                     return
                 }
-                await callbacks.utteranceRecognized(text)
+                if keywordCollector != nil {
+                    // Keyword mode: segments wait until one ends with the keyword.
+                    if case let .send(utterance) = keywordCollector!.receive(
+                        text,
+                        awaitingShortAnswer: isAwaitingShortAnswer
+                    ) {
+                        await callbacks.utteranceRecognized(utterance)
+                    }
+                } else {
+                    await callbacks.utteranceRecognized(text)
+                }
             } else {
                 appendDiagnostic(line, to: &recognizerDiagnostics)
             }
