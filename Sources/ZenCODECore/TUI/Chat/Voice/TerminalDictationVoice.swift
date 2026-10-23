@@ -325,7 +325,22 @@ actor TerminalDictationVoiceController {
         case stopped
     }
 
-    static let speechRecognitionDeniedMessage = "ZenCODE: speech recognition is not allowed. Allow your terminal app under System Settings > Privacy & Security > Speech Recognition, then run /voice.\n"
+    /// Whether this platform can run dictation at all.
+    static var isSupported: Bool {
+        TerminalVoiceAudioDevice.isSupported && TerminalDictationRecognizer.isSupported
+    }
+
+    static let microphoneDeniedMessage = "ZenCODE: microphone access is not granted. Allow your terminal app under System Settings > Privacy & Security > Microphone, then run /voice on.\n"
+
+    /// Shown when the voice device runs without echo cancellation because the
+    /// current output cannot run voice processing.
+    static func echoCancellationUnavailableMessage(outputDeviceName: String?) -> String {
+        let output = outputDeviceName.map { "the current audio output (\($0))" }
+            ?? "the current audio output"
+        return "Voice: echo cancellation is unavailable with \(output); switch to a local output or use headphones so you can talk over the assistant without it hearing itself.\n"
+    }
+
+    static let speechRecognitionDeniedMessage = "ZenCODE: speech recognition is not allowed. Allow your terminal app under System Settings > Privacy & Security > Speech Recognition, then run /voice on.\n"
     static let maximumRapidEndings = 5
     /// Requests are renewed while idle to stay under the recognizer's
     /// per-request duration limit.
@@ -334,7 +349,7 @@ actor TerminalDictationVoiceController {
 
     static func listeningMessage(localeIdentifier: String, onDevice: Bool) -> String {
         let place = onDevice ? "on-device" : "Apple servers"
-        return "Voice: listening (dictation, \(localeIdentifier), \(place)). Speak or type; answers are read aloud. /voice pauses the microphone.\n"
+        return "Voice: listening (dictation, \(localeIdentifier), \(place)). Speak or type; answers are read aloud. /voice pauses or resumes, /voice off stops.\n"
     }
 
     private let callbacks: Callbacks
@@ -351,7 +366,8 @@ actor TerminalDictationVoiceController {
     private var silenceTask: Task<Void, Never>?
     private var isAudioRunning = false
     private(set) var phase: Phase = .idle
-    private(set) var isMicrophonePaused = false
+    /// A paused voice mode neither listens nor reads answers aloud.
+    private(set) var isPaused = false
 
     init(languageCode: String, locale: Locale, callbacks: Callbacks) {
         self.languageCode = languageCode
@@ -369,7 +385,7 @@ actor TerminalDictationVoiceController {
             return
         }
         guard await TerminalVoiceAudioDevice.requestMicrophoneAccess() else {
-            await fail(TerminalVoiceSessionController.microphoneDeniedMessage)
+            await fail(Self.microphoneDeniedMessage)
             return
         }
         guard await TerminalDictationRecognizer.requestAuthorization() else {
@@ -402,7 +418,7 @@ actor TerminalDictationVoiceController {
         let hasEchoCancellation: Bool
         do {
             hasEchoCancellation = try device.start(
-                capturePaused: isMicrophonePaused,
+                capturePaused: isPaused,
                 onSamples: { samples in
                     recognizer.append(samples)
                 }
@@ -423,7 +439,7 @@ actor TerminalDictationVoiceController {
         self.recognizer = recognizer
         self.speaker = speaker
         rapidEndings = 0
-        if !isMicrophonePaused {
+        if !isPaused {
             restartRecognition()
         }
         eventTask = Task(name: "ZenCODE.TUI.dictation-events") { [weak self] in
@@ -443,15 +459,16 @@ actor TerminalDictationVoiceController {
             onDevice: recognizer.usesOnDeviceRecognition
         ))
         if !hasEchoCancellation {
-            await callbacks.systemMessage(TerminalVoiceSessionController.echoCancellationUnavailableMessage(
+            await callbacks.systemMessage(Self.echoCancellationUnavailableMessage(
                 outputDeviceName: device.outputDeviceName
             ))
         }
     }
 
     /// Reads an assistant answer aloud, replacing anything still being spoken.
+    /// Answers completed while paused are never read later.
     func speak(_ response: String) async {
-        guard phase == .listening, let speaker else {
+        guard phase == .listening, !isPaused, let speaker else {
             return
         }
         let text = TerminalVoiceSpeechText.speakable(fromMarkdown: response, languageCode: languageCode)
@@ -468,22 +485,36 @@ actor TerminalDictationVoiceController {
         device.interruptPlayback()
     }
 
-    func toggleMicrophone() async -> TerminalVoiceSessionController.MicrophoneToggle {
-        if phase == .failed {
-            await start()
-            return .restarting
+    /// `false` once the controller failed or was stopped; `/voice on` then
+    /// starts a new one.
+    var isActive: Bool {
+        switch phase {
+        case .idle, .starting, .listening:
+            return true
+        case .failed, .stopped:
+            return false
         }
-        isMicrophonePaused.toggle()
+    }
+
+    /// Pausing stops listening and stops the answer being read aloud;
+    /// resuming listens again. Returns `false` when already in that state.
+    @discardableResult
+    func setPaused(_ paused: Bool) async -> Bool {
+        guard paused != isPaused else {
+            return false
+        }
+        isPaused = paused
         if isAudioRunning {
-            device.setCapturePaused(isMicrophonePaused)
+            device.setCapturePaused(paused)
         }
-        if isMicrophonePaused {
+        if paused {
             segmenter.reset()
+            await interruptPlayback()
         } else if phase == .listening {
             rapidEndings = 0
             restartRecognition()
         }
-        return isMicrophonePaused ? .paused : .resumed
+        return true
     }
 
     func stop() async {
@@ -506,7 +537,7 @@ actor TerminalDictationVoiceController {
     // MARK: - Recognition
 
     private func handle(_ event: TerminalDictationEvent) async {
-        guard phase == .listening, !isMicrophonePaused else {
+        guard phase == .listening, !isPaused else {
             return
         }
         switch event {
@@ -541,13 +572,13 @@ actor TerminalDictationVoiceController {
                 rapidEndings = 0
             }
             guard rapidEndings < Self.maximumRapidEndings else {
-                await fail("ZenCODE: speech recognition stopped repeatedly. Run /voice to retry.\n")
+                await fail("ZenCODE: speech recognition stopped repeatedly. Run /voice on to retry.\n")
                 return
             }
             if rapidEndings > 0 {
                 try? await Task.sleep(for: .milliseconds(250 * rapidEndings))
             }
-            guard phase == .listening, !isMicrophonePaused, eventGeneration == generation else {
+            guard phase == .listening, !isPaused, eventGeneration == generation else {
                 return
             }
             restartRecognition()
@@ -555,7 +586,7 @@ actor TerminalDictationVoiceController {
     }
 
     private func tick() async {
-        guard phase == .listening, !isMicrophonePaused else {
+        guard phase == .listening, !isPaused else {
             return
         }
         let now = ContinuousClock.now

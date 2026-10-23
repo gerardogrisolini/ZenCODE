@@ -85,32 +85,7 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         self.ds4Endpoint = ds4Endpoint
         self.ownsDS4Supervisor = ds4Supervisor != nil && ownsDS4Supervisor
         self.streamEndpointBaseURLOverride = streamEndpointBaseURLOverride ?? ds4Endpoint?.baseURL
-        self.toolExecutor = Self.makeToolExecutor(
-            configuration: configuration,
-            provider: provider,
-            mcpRuntime: mcpRuntime,
-            swiftFeatureRuntime: swiftFeatureRuntime,
-            sharedChat: sharedChat,
-            sharedChatSenderID: sharedChatSenderID,
-            sharedChatRootSessionID: sharedChatRootSessionID,
-            subAgentContextualBackendFactory: subAgentContextualBackendFactory
-        )
-    }
-
-    /// Builds the direct-tool executor shared by the remote API clients, so
-    /// every client applies the same authorization, workspace, shared-chat and
-    /// delegation wiring.
-    static func makeToolExecutor(
-        configuration: AgentRuntimeConfiguration,
-        provider: AgentRemoteProvider,
-        mcpRuntime: DirectMCPToolRuntime,
-        swiftFeatureRuntime: SwiftFeatureRuntime?,
-        sharedChat: AgentSharedChat?,
-        sharedChatSenderID: String?,
-        sharedChatRootSessionID: String?,
-        subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory?
-    ) -> DirectToolExecutor {
-        DirectToolExecutor(
+        self.toolExecutor = DirectToolExecutor(
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
             swiftFeatureRuntime: swiftFeatureRuntime ?? SwiftFeatureRuntime(),

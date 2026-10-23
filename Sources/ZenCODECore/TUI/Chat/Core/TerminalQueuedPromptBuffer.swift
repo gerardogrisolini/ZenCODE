@@ -45,11 +45,4 @@ struct TerminalQueuedPromptBuffer: Sendable {
         }
         return storage.removeFirst()
     }
-
-    /// A realtime voice marker turn answers every utterance committed before
-    /// it, so a marker queued directly behind another marker adds nothing.
-    func isRedundantVoiceTurnMarker(_ text: String) -> Bool {
-        text == OpenAIRealtimeVoiceTurn.promptMarker
-            && storage.last?.text == OpenAIRealtimeVoiceTurn.promptMarker
-    }
 }

@@ -426,17 +426,6 @@ public actor AgentCoreBackend {
         )
     }
 
-    /// The live voice link of a realtime backend, or `nil` when the active
-    /// runtime backend is not a realtime voice backend.
-    func realtimeVoiceLink(sessionID: String) async throws -> OpenAIRealtimeVoiceLink? {
-        let backend = try await resolveBackend(onEvent: { _ in })
-        guard let voiceBackend = backend as? any RealtimeVoiceCapableBackend else {
-            return nil
-        }
-        try await ensureSessionExists(sessionID: sessionID, backend: backend)
-        return try await voiceBackend.voiceLink(sessionID: sessionID)
-    }
-
     private func resolveBackend(
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> any AgentRuntimeBackend {
@@ -693,8 +682,6 @@ public actor AgentCoreBackend {
 enum AgentCoreBackendError: LocalizedError {
     case missingRemoteProvider
     case missingRemoteAPIKey(String)
-    case realtimeModelRequiresMacOS(String)
-    case realtimeModelUnsupportedForDelegation(String)
 
     var errorDescription: String? {
         switch self {
@@ -702,10 +689,6 @@ enum AgentCoreBackendError: LocalizedError {
             return "The selected remote provider is no longer configured in ZenCODE."
         case let .missingRemoteAPIKey(providerName):
             return "No API key is stored for \(providerName). Run /setup to configure that provider."
-        case let .realtimeModelRequiresMacOS(modelID):
-            return "The realtime voice model \(modelID) is only supported by the interactive terminal on macOS. Select a different model."
-        case let .realtimeModelUnsupportedForDelegation(modelID):
-            return "The realtime voice model \(modelID) cannot run a delegated agent. Configure a model binding for the delegated agent profile."
         }
     }
 }

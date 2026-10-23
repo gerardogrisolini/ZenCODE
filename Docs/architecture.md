@@ -177,9 +177,7 @@ it.
 
 The live messages (`AgentSharedChat`) is deliberately transient: the operator, coordinator, and active delegated agent instances share a bounded, in-memory room that is never written to a session snapshot or task checkpoint. The human operator is a trusted, unregistered sender that never occupies a room slot or mailbox, keeping it distinct from the coordinator LLM. The coordinator authorises at most one synthetic turn from the messages at a time, bound to the prompt it consumes, so a message can never open a second concurrent generation. Delivery is priority-based for every recipient with an active turn: its mailbox is reserved for that turn's direct-tool executor, which appends pending messages only to the model-facing result of the next tool call so the recipient replies immediately and then resumes its current work; visible tool output is unchanged. Idle and standby agents drain into their serial work loop normally. If an active turn ends before another tool boundary, the coordinator monitor or agent work-loop re-arm drains the mailbox and starts the ordinary synthetic/queued fallback turn. Every active observer receives each message from the bounded transcript replay (delivery is deduplicated by message id); the live room is surfaced by the terminal TUI and the linked Telegram chat; the terminal TUI routes these messages only to its transient `Chat` reader rather than the main transcript, and an observer that falls behind recovers from the transcript on the next poll rather than losing messages; shared-chat messages are never dropped from the terminal event queue. The reader is invisible when closed with no messages, compact with total and unread counts when closed with messages, compact for an empty open state, and expanded for an open state with messages. Readable `@mention` handles are derived from participant display names by an actor-isolated catalogue, routing always resolves back to the stable participant id, aliases are never recycled within a session, and the legacy `@agent-Base64` spelling remains accepted for backward compatibility. No shared-chat state is persisted or restored; `SessionTaskOrchestrator` remains the sole owner of any checkpointed graph state.
 
-Realtime voice conversations (see Provider Boundary) are transient in the same way: the provider-side conversation, microphone audio, played audio, and spoken transcripts never enter a session snapshot, task checkpoint, saved session, or memory proposal.
-
-With any other model the Organizer's terminal voice mode is dictation, implemented entirely in the TUI (`TUI/Chat/Voice`) without a provider or runtime change: Apple speech recognition segments utterances on a silence gap and submits each one as an ordinary typed line, and final answers are synthesized locally. Both voice modes share one `AVAudioEngine` whose I/O nodes run in system voice-processing mode for echo cancellation, and synthesized speech is rendered into that engine so it is cancelled from the microphone as well. Dictated prompts are ordinary session history and persist like typed prompts; microphone and synthesized audio, and the recognizer's partial results, are never persisted.
+The terminal voice mode on macOS is local dictation, implemented entirely in the TUI (`TUI/Chat/Voice`) without a provider or runtime change. It is independent of the active agent: `/voice on|off|pause|resume` (bare `/voice` toggles pause/resume) controls it, and its state belongs to the current interactive panel loop only, surviving agent and session switches but never persisted. Apple speech recognition segments utterances on a silence gap and submits each one as an ordinary typed line, and final answers are synthesized locally; a paused voice mode neither listens nor reads answers aloud. Capture and playback share one `AVAudioEngine` whose I/O nodes run in system voice-processing mode for echo cancellation, and synthesized speech is rendered into that engine so it is cancelled from the microphone as well. Dictated prompts are ordinary session history and persist like typed prompts; microphone and synthesized audio, and the recognizer's partial results, are never persisted.
 
 Telegram uses one process-wide `TerminalTelegramBotDispatcher` per bot as the
 exclusive owner of long polling and offset persistence. It broadcasts raw
@@ -246,28 +244,6 @@ client/task/pool, and Anthropic messages are expressed as `RemoteHTTP*` /
 SwiftNIO. Those paths must not select an implementation through platform
 conditions, Foundation networking, Network, or libcurl. The `CLibCURLWebSocket`
 target and its adapter are retired; no system curl linker dependency remains.
-
-OpenAI realtime voice models are recognised by model ID: an OpenAI-profile
-provider whose model ID starts with `gpt-realtime`. No protocol profile, setup
-step, or persisted setting identifies them. `AgentRemoteBackendFactory` routes
-them to `RealtimeGenerationClient` under `Remote/Providers/OpenAIRealtime`,
-which drives one `OpenAIRealtimeSession` WebSocket conversation
-(`wss://<provider host>/v1/realtime?model=<id>`) through `RemoteTransportCore`,
-executes function calls through the shared `DirectToolExecutor`, and exposes an
-internal voice link that only the macOS interactive terminal consumes, and only
-for the built-in Organizer profile (matched by its stable ID). The
-factory builds it only on macOS and never for a delegated agent: other platforms
-fail with an explicit error, and a delegated profile that would inherit the
-voice model must configure its own binding. Server VAD commits user speech
-without automatic responses; each committed utterance becomes an ordinary
-runner turn carrying the `🎤` marker prompt, which skips automatic memory recall,
-while typed and synthetic shared-chat turns become conversation items. Input
-audio is never transcribed. The conversation is intentionally transient:
-runner history is not replayed (only the session-context block becomes
-instructions), `snapshotSession` returns `nil`, the terminal refuses to save
-the session, audio and transcripts are never written to disk, and a lost or
-expired (60-minute) connection is replaced by an empty conversation with a
-diagnostic.
 
 Feature invocations may add an optional `attachments` array to the successful
 `--invoke` envelope. Each `FeatureInvocationAttachment` names an absolute local
@@ -523,7 +499,7 @@ belongs to `ZenCODECore`, and the former `ZenCODESetup` product/target has been
 removed as an explicit migration.
 
 Within `ZenCODECore/ZenCODE`, the internal `DirectToolRuntimeBackend` refinement
-in `Agent/Runtime` shares forwarding for four remote clients without changing
+in `Agent/Runtime` shares forwarding for three remote clients without changing
 `AgentRuntimeBackend`, concrete public APIs, external defaults, or ownership;
 Anthropic retains its overhead-invalidation overrides. The internal
 `TerminalSelection` helper in `Tools/Selection` shares tool/skill selection syntax

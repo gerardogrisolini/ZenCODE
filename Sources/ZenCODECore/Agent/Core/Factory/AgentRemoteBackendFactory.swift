@@ -158,42 +158,6 @@ public enum AgentRemoteBackendFactory {
             )
         }
 
-        // Realtime voice models are recognised by model ID on the OpenAI
-        // provider profile. They only drive the macOS interactive terminal and
-        // never back a delegated agent.
-        if OpenAIRealtimeModel.matches(
-            provider: effectiveProvider,
-            modelID: effectiveProvider.modelID
-        ) {
-            #if os(macOS)
-            if sharedChatSenderID != nil {
-                throw AgentCoreBackendError.realtimeModelUnsupportedForDelegation(
-                    effectiveProvider.modelID
-                )
-            }
-            return RealtimeGenerationClient(
-                configuration: effectiveConfiguration,
-                provider: effectiveProvider,
-                apiKey: apiKey,
-                mcpRuntime: mcpRuntime,
-                swiftFeatureRuntime: swiftFeatureRuntime,
-                sharedChat: sharedChat,
-                sharedChatSenderID: sharedChatSenderID,
-                sharedChatRootSessionID: sharedChatRootSessionID,
-                subAgentContextualBackendFactory: remoteSubAgentContextualBackendFactory(
-                    configuration: effectiveConfiguration,
-                    mcpRuntime: mcpRuntime,
-                    fallbackProvider: effectiveProvider,
-                    fallbackAPIKey: apiKey,
-                    fallbackThinkingOptions: thinkingOptions,
-                    swiftFeatureRuntime: swiftFeatureRuntime
-                )
-            )
-            #else
-            throw AgentCoreBackendError.realtimeModelRequiresMacOS(effectiveProvider.modelID)
-            #endif
-        }
-
         switch provider.protocolProfileID {
         case .openAIChatCompletions, .openAIResponses, .zaiCodingPlan, .anthropicMessages:
             break

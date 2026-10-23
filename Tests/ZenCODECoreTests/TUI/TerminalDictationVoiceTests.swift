@@ -10,25 +10,32 @@ import Testing
 @Suite("Terminal dictation voice")
 struct TerminalDictationVoiceTests {
     @Test
-    func voiceModeBelongsToTheOrganizerOnly() {
-        #expect(TerminalVoiceMode.resolve(isOrganizer: true, isRealtimeModel: true) == .realtime)
-        #expect(TerminalVoiceMode.resolve(isOrganizer: true, isRealtimeModel: false) == .dictation)
-        #expect(TerminalVoiceMode.resolve(isOrganizer: false, isRealtimeModel: true) == .off)
-        #expect(TerminalVoiceMode.resolve(isOrganizer: false, isRealtimeModel: false) == .off)
+    func voiceSubcommandsParseCaseInsensitively() {
+        #expect(TerminalVoiceCommandAction(argument: "") == .togglePause)
+        #expect(TerminalVoiceCommandAction(argument: "  ") == .togglePause)
+        #expect(TerminalVoiceCommandAction(argument: "on") == .turnOn)
+        #expect(TerminalVoiceCommandAction(argument: " ON ") == .turnOn)
+        #expect(TerminalVoiceCommandAction(argument: "off") == .turnOff)
+        #expect(TerminalVoiceCommandAction(argument: "Pause") == .pause)
+        #expect(TerminalVoiceCommandAction(argument: "resume") == .resume)
+        #expect(TerminalVoiceCommandAction(argument: "start") == .usage)
+        #expect(TerminalVoiceCommandAction(argument: "on now") == .usage)
+        #expect(TerminalVoiceCommandAction.usageMessage == "Usage: /voice [on|off|pause|resume]\n")
     }
 
     @Test
     func anUtteranceEndsAfterTheSilenceGap() {
         let start = ContinuousClock.now
         var segmenter = TerminalDictationSegmenter()
+        #expect(segmenter.silence == .milliseconds(2_500))
         #expect(!segmenter.isUtteranceComplete(at: start))
 
         segmenter.observe("Che cosa", at: start)
         segmenter.observe("Che cosa ho oggi", at: start + .milliseconds(600))
-        #expect(!segmenter.isUtteranceComplete(at: start + .milliseconds(1_700)))
+        #expect(!segmenter.isUtteranceComplete(at: start + .milliseconds(3_000)))
         // Repeating the same text does not restart the silence gap.
         segmenter.observe(" Che cosa ho oggi ", at: start + .milliseconds(1_000))
-        #expect(segmenter.isUtteranceComplete(at: start + .milliseconds(1_800)))
+        #expect(segmenter.isUtteranceComplete(at: start + .milliseconds(3_100)))
 
         #expect(segmenter.takeUtterance() == "Che cosa ho oggi")
         #expect(segmenter.takeUtterance() == nil)

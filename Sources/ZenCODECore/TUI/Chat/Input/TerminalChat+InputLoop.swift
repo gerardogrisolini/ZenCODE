@@ -61,6 +61,8 @@ extension TerminalChat {
 
     func runInteractivePanelLoop() async throws {
         let eventQueue = interactiveRuntimeEventQueueForTesting ?? TerminalChatEventQueue()
+        // `/voice on` feeds dictated utterances into this FIFO.
+        voiceEventQueue = eventQueue
         // This loop owns the only Telegram ingress consumer, so replies to a
         // forwarded card can actually be delivered while it runs.
         readsTelegramIngress = true
@@ -141,13 +143,10 @@ extension TerminalChat {
             }
             // Synchronous fallback for early exits; the normal exit path stops
             // voice mode explicitly below.
-            let realtimeVoice = realtimeVoiceController
             let dictationVoice = dictationVoiceController
-            realtimeVoiceController = nil
             dictationVoiceController = nil
-            voiceActivationKey = nil
+            voiceEventQueue = nil
             Task(name: "ZenCODE.TUI.voice-stop") {
-                await realtimeVoice?.stop()
                 await dictationVoice?.stop()
             }
         }
@@ -319,8 +318,6 @@ extension TerminalChat {
         // An attached observation is the active-chat signal. Show its compact
         // indicator even before the first message arrives.
         await showCompactSharedChatDock()
-        // Voice mode follows the active agent and its effective model.
-        await reevaluateVoiceMode(eventQueue: eventQueue)
         func handleSubmittedPanelLine(
             _ line: String,
             origin: TerminalPromptOrigin = .local
@@ -335,8 +332,6 @@ extension TerminalChat {
             if shouldSuspendPanel {
                 await renderCoordinator.setOverviewPublishingSuspended(false)
             }
-            // A command may have switched the agent, the model or the session.
-            await reevaluateVoiceMode(eventQueue: eventQueue)
 
             switch action {
             case .continueChat:
@@ -382,7 +377,6 @@ extension TerminalChat {
         eventLoop: for await event in eventQueue.events {
             // A slash command may have swapped the session between two events.
             await rebindSharedChatObservationIfNeeded()
-            await reevaluateVoiceMode(eventQueue: eventQueue)
             // Cancelling an AsyncStream observation cannot remove work it
             // already put in this FIFO. Treat every room-bound event from the
             // retired room as stale. A stale trigger is explicitly declined in
@@ -724,9 +718,6 @@ extension TerminalChat {
                 switch result.outcome {
                 case let .success(prompt):
                     if isGenerating || !queuedPrompts.isEmpty {
-                        guard !queuedPrompts.isRedundantVoiceTurnMarker(prompt) else {
-                            continue
-                        }
                         guard queuedPrompts.enqueue(
                             TerminalQueuedPrompt(
                                 text: prompt,

@@ -8,27 +8,40 @@
 import Foundation
 import Synchronization
 
-/// The voice experience the interactive terminal runs.
-enum TerminalVoiceMode: Sendable, Equatable {
-    case off
-    /// A live OpenAI realtime conversation.
-    case realtime
-    /// Local speech recognition into ordinary prompts, with spoken answers.
-    case dictation
+/// A `/voice` subcommand. Voice mode runs with any agent and belongs to the
+/// current TUI session only: it is never persisted.
+enum TerminalVoiceCommandAction: Sendable, Equatable {
+    /// Bare `/voice`: pauses a listening voice mode, resumes a paused one.
+    case togglePause
+    case turnOn
+    case turnOff
+    case pause
+    case resume
+    case usage
 
-    /// Voice mode belongs to the Organizer profile only: a realtime model gets
-    /// the realtime conversation, any other model gets dictation.
-    static func resolve(isOrganizer: Bool, isRealtimeModel: Bool) -> Self {
-        guard isOrganizer else {
-            return .off
+    static let usageMessage = "Usage: /voice [on|off|pause|resume]\n"
+
+    init(argument: String) {
+        switch argument.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "":
+            self = .togglePause
+        case "on":
+            self = .turnOn
+        case "off":
+            self = .turnOff
+        case "pause":
+            self = .pause
+        case "resume":
+            self = .resume
+        default:
+            self = .usage
         }
-        return isRealtimeModel ? .realtime : .dictation
     }
 }
 
 /// Splits continuous speech recognition into utterances on a silence gap.
 struct TerminalDictationSegmenter: Sendable {
-    static let defaultSilence = Duration.milliseconds(1_200)
+    static let defaultSilence = Duration.milliseconds(2_500)
 
     let silence: Duration
     private(set) var text = ""

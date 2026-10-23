@@ -79,14 +79,13 @@ public final class TerminalChat {
     /// session, or an interrupted turn whose non-empty graph was preserved.
     /// Never copy this into snapshots or persisted session models.
     var activeWorkflow: WorkflowCommandRuntimeState?
-    /// Live voice loops of the interactive panel (Organizer only): a realtime
-    /// conversation or dictation. Transient: audio is never persisted, and
-    /// realtime conversations never enter snapshots, checkpoints or saved
-    /// sessions.
-    var realtimeVoiceController: TerminalVoiceSessionController?
+    /// Live dictation voice loop of the interactive panel, started by
+    /// `/voice on` with any agent. Transient: it lasts only for this TUI
+    /// session and audio is never persisted.
     var dictationVoiceController: TerminalDictationVoiceController?
-    /// Session, agent and manual model last evaluated for voice mode.
-    var voiceActivationKey: TerminalVoiceActivationKey?
+    /// Event queue of the running interactive panel loop; `nil` outside it,
+    /// where voice mode cannot run.
+    var voiceEventQueue: TerminalChatEventQueue?
     public var taskGraphObserverTask: Task<Void, Never>?
     /// In-flight debounced task-graph render scheduled by the observer task.
     /// Tracked on the chat so a turn boundary can quiesce the debounce before

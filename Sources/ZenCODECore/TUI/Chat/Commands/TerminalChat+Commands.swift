@@ -295,8 +295,8 @@ extension TerminalChat {
         ),
         TerminalChatCommandDescriptor(
             command: "/voice",
-            summary: "pause/resume the voice microphone",
-            help: "/voice pauses or resumes the microphone of voice mode, which runs automatically with the Organizer agent in the interactive terminal on macOS: a live conversation with gpt-realtime models, or dictation with spoken answers with any other model. Realtime voice conversations are never saved."
+            summary: "voice mode on/off/pause/resume",
+            help: "/voice on starts voice mode with any agent in the interactive terminal on macOS: utterances are dictated with local speech recognition and answers are read aloud. /voice off stops it; /voice pause stops listening and reading aloud, /voice resume restarts both, and /voice alone toggles pause/resume. Voice mode lasts only for this TUI session."
         ),
         TerminalChatCommandDescriptor(
             command: "/exit",

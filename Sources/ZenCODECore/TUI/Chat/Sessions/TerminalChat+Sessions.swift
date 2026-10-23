@@ -182,9 +182,7 @@ extension TerminalChat {
             return
         }
 
-        guard !isRealtimeVoiceModelActive(),
-              let snapshot = await sessionRunner.snapshotSession(id: sessionID) else {
-            // Realtime voice conversations are intentionally never persisted.
+        guard let snapshot = await sessionRunner.snapshotSession(id: sessionID) else {
             await writeFailureMessage("ZenCODE: current session is not available to save.\n")
             return
         }
