@@ -21,6 +21,7 @@ Guides for using, extending, and maintaining ZenCODE. Start with the
 | [planner.md](planner.md) | Read-only planning with `/plan`, including `/plan save` and `/plan load` handoffs |
 | [reviewer.md](reviewer.md) | Read-only code review with `/review` |
 | [reporter.md](reporter.md) | Evidence-based code analysis and reports |
+| [organizer.md](organizer.md) | Personal assistant for the day, project state, and delegation (macOS) |
 
 ## Integrations
 

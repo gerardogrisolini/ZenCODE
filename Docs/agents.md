@@ -3,7 +3,7 @@
 How agent profiles work and how the runtime delegates to sub-agents.
 
 - Model bindings, capability routing, and the bindings table: [bindings.md](bindings.md).
-- Per-profile guides: [builder.md](builder.md), [planner.md](planner.md), [reviewer.md](reviewer.md), [reporter.md](reporter.md).
+- Per-profile guides: [builder.md](builder.md), [planner.md](planner.md), [reviewer.md](reviewer.md), [reporter.md](reporter.md), [organizer.md](organizer.md).
 
 ## Agent Profiles
 
@@ -52,6 +52,8 @@ closed instead of selecting the first matching tool grant.
 | `Reviewer` | Read-only code review | coding without shell; `readOnly` enforced |
 | `Reporter` | Code analysis and evidence-based reports | files, search, text, git |
 | `Planner` | Read-only planning | files, search, text, git, memory, web; `readOnly` enforced |
+| `Organizer` | Personal assistant: macOS apps, project state, delegation (macOS only) | macOS feature + memory + sub-agents |
+| `Promoter` | Daily project promotion step with Browser drafts | memory + browser-tools |
 
 Profiles are examples — edit, add, or remove optional profiles in setup.
 `Developer` and `Builder` must always remain present: runtime fallback paths
@@ -64,7 +66,7 @@ intrinsic feature-management tools.
 
 **Feature packages** (discovered and enabled separately): `search-tools`,
 `web-tools`, `git-tools`, `swift-tools`, `xcode-tools`, `figma-tools`,
-`jira-tools`, `desktop-tools`.
+`jira-tools`, `desktop-tools`, `browser-tools`, `macOS`.
 
 Enabling a package makes it available; `/tools` exposes it in the current
 session. The `sub-agents` group is what lets a profile create delegated

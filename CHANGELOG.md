@@ -10,6 +10,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- The recommended `Organizer` agent profile has rewritten instructions. On
+  request it gives a daily briefing (today's events, overdue reminders and
+  reminders due today, a one-line triage of unread mail, and open project
+  items) and plans the day or the week. It writes mail and messages in the
+  user's voice and sends a draft only after an explicit yes for that draft:
+  one approval covers exactly one operation. It asks for a preference only
+  once and records it in memory, points out what it notices without acting on
+  it, and reports the result of delegated work as unvalidated. The new
+  [Docs/organizer.md](Docs/organizer.md) guide describes the profile. Existing
+  `agents.json` manifests are not changed; regenerate the recommended profiles
+  in setup to apply the new instructions.
+
 ## [2.4.0] - 2026-10-24
 
 ### Added

@@ -152,6 +152,11 @@ extension AgentConfigurationTests {
         #expect(organizerProfile.modelBindings.isEmpty)
         #expect(organizerProfile.defaultModelBindingID == nil)
         #expect(organizerProfile.instructions?.contains("Organizer agent") == true)
+        #expect(organizerProfile.instructions?.contains("Daily briefing") == true)
+        #expect(organizerProfile.instructions?.contains("Planning") == true)
+        #expect(organizerProfile.instructions?.contains("Drafts") == true)
+        #expect(organizerProfile.instructions?.contains("Preferences") == true)
+        #expect(organizerProfile.instructions?.contains("unvalidated") == true)
         let organizerAllowedToolNames = organizerProfile.allowedToolNames(
             featureStatuses: unavailableOptionalFeatureStatuses
         )
