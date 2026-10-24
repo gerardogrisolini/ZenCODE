@@ -18,6 +18,22 @@ Release tags follow the strict `vX.Y.Z` contract described in
   "On a word". Dictation is appended after typed text; when voice sends, the
   whole draft goes out, typed text included, and typing turns the dictation
   into ordinary text. See [Docs/voice.md](Docs/voice.md#the-prompt-draft).
+- Scheduled prompts: `/cron` lists, adds, removes, and runs prompts in the
+  crontab of the system user (`/cron list`, `/cron add`, `/cron remove`,
+  `/cron run`, and `/cron mailto`). ZenCODE owns one delimited block at the end
+  of the crontab and leaves every other line unchanged; there is no daemon and
+  no new file under `~/.zencode`. Cron mails each run's JSONL output and errors
+  through the system `sendmail`, to the local mailbox of the crontab owner by
+  default; `/cron mailto` changes the recipient. Cron runs `zen` by name,
+  through a `PATH=/usr/local/bin:/usr/bin:/bin` line at the head of the block,
+  and `/cron add` refuses to schedule when no `zen` is on that path. `/cron run`
+  starts an entry at once with cron's environment, including that `PATH`, and
+  reports the result in the terminal. The new `Scheduled prompts` section of
+  `zen --doctor` warns about a missing `crontab` or `sendmail` and, on WSL,
+  about the cron service. Completion after `/cron` explains each parameter: the
+  subcommands, schedule aliases and examples, the five numeric cron fields (no
+  month or day names), `<n>`, and the `mailto` options. See
+  [Docs/zen.md](Docs/zen.md#scheduled-prompts-crontab).
 
 ### Changed
 
@@ -40,6 +56,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   comments on what it does as it works. The comments appear in the terminal,
   and only the final answer is read aloud. The instruction is sent with the
   request and is not saved in the session history.
+- The border and title of the Authorization card now use a dimmed peach color
+  instead of full orange, so the card looks lighter, like the prompt frame.
+  The `❯` marker before the command stays full orange.
 
 ### Fixed
 
@@ -49,6 +68,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   concordate`, or `Implementation plan` heading onward is kept, and the
   coordinator now keeps waiting for a Planner that takes longer than 90
   seconds.
+- `/plan` no longer rejects a valid final plan with "did not register a valid
+  structured task list" after the operator answers the Planner's questions. The
+  continuation turn now tells the coordinator how to register that plan: one
+  `todo.write` with `mode` "upsert", IDs `plan-<token>-N`, the complete text of
+  each point, and dependencies translated to those IDs. It also asks the
+  Planner to write each `Dependencies:` line on its own line, never at the end
+  of a bullet or a paragraph.
 - Voice: on macOS, a short pause while dictating no longer replaces the words
   said before it with the next ones; after a pause the dictation continues on a
   new line and the whole text is sent.

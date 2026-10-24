@@ -19,6 +19,11 @@ migration says otherwise:
   and the `--list-tools` / `--invoke` JSON envelopes;
 - settings, profiles, permissions, session snapshots,
   feature manifests, per-workspace memory graphs, and cache key formats;
+- the ZenCODE crontab block markers (`# >>> ZenCODE cron >>>` /
+  `# <<< ZenCODE cron <<<`), the `PATH=/usr/local/bin:/usr/bin:/bin` line that
+  starts the block (it is how cron finds `zen`), the
+  `# zencode-cron id=… created=…` entry marker, and the generated cron command
+  layout decoded by `/cron list`, which runs a bare `zen`;
 - public installer entry points under `Scripts/install*.sh`.
 
 `Package.swift` remains the authoritative declaration of the SwiftPM graph,

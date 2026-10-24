@@ -605,6 +605,71 @@ struct ZenDiagnosticsTests {
         #expect(!rendered.contains("token-value-12345"))
         #expect(rendered.contains(ZenSecretRedactor.placeholder))
     }
+
+    @Test
+    func doctorReportsSchedulingToolsWhenInjectedAndInstalled() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let report = ZenDoctor.runReport(
+            environment: [:],
+            supportDirectory: root,
+            cronToolchain: ZenCronToolchain(
+                crontabPath: "/usr/bin/crontab",
+                sendmailPath: "/usr/sbin/sendmail"
+            )
+        )
+        let section = try #require(report.sections.first { $0.title == "Scheduled prompts" })
+        let crontab = try #require(section.checks.first { $0.id == "scheduling.crontab" })
+        let sendmail = try #require(section.checks.first { $0.id == "scheduling.sendmail" })
+
+        #expect(crontab.status == .ok)
+        #expect(crontab.detail == "Found at /usr/bin/crontab.")
+        #expect(crontab.remedy == nil)
+        #expect(sendmail.status == .ok)
+        #expect(sendmail.detail == "Found at /usr/sbin/sendmail.")
+        #expect(sendmail.remedy == nil)
+    }
+
+    @Test
+    func doctorWarnsWithoutSchedulingToolsAndKeepsExitCodeZero() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let report = ZenDoctor.runReport(
+            environment: [:],
+            supportDirectory: root,
+            cronToolchain: ZenCronToolchain(crontabPath: nil, sendmailPath: nil)
+        )
+        let section = try #require(report.sections.first { $0.title == "Scheduled prompts" })
+        let crontab = try #require(section.checks.first { $0.id == "scheduling.crontab" })
+        let sendmail = try #require(section.checks.first { $0.id == "scheduling.sendmail" })
+
+        #expect(crontab.status == .warning)
+        #expect(crontab.detail == "Not found.")
+        #expect(crontab.remedy == "Install cron to schedule prompts with /cron.")
+        #expect(sendmail.status == .warning)
+        #expect(sendmail.detail == "Not found; cron cannot mail scheduled prompt results.")
+        #expect(sendmail.remedy == "Install an MTA such as postfix, exim or msmtp.")
+        #expect(!report.hasFailure)
+        #expect(report.exitCode == 0)
+    }
+
+    @Test
+    func reportRendererShowsScheduledPromptsSection() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let report = ZenDoctor.runReport(
+            environment: [:],
+            supportDirectory: root,
+            cronToolchain: ZenCronToolchain(crontabPath: nil, sendmailPath: nil)
+        )
+        let rendered = ZenDoctorReportRenderer.render(report)
+
+        #expect(rendered.contains("\nScheduled prompts:\n"))
+        #expect(rendered.contains("  [!] crontab: Not found."))
+    }
 }
 
 private func contentsOfDirectory(_ url: URL) throws -> [String] {

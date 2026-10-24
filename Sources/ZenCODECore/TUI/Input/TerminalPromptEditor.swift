@@ -728,8 +728,10 @@ struct TerminalPromptEditor: Equatable, Sendable {
 
     /// Replaces the token under the cursor with the selected completion.
     ///
-    /// Returns `nil` when no menu is on screen, so the caller can fall through
-    /// to the ordinary meaning of the key.
+    /// Returns `nil` when no menu is on screen or when the selected row is a
+    /// guide (`isHint`), so the caller can fall through to the ordinary meaning
+    /// of the key: Tab does nothing and Enter sends the line as typed. A guide
+    /// is never inserted, and nothing is mutated before that check.
     private mutating func acceptSuggestion(
         submitWhenComplete: Bool,
         context: TerminalPromptEditorContext
@@ -745,6 +747,9 @@ struct TerminalPromptEditor: Equatable, Sendable {
 
         let boundedIndex = min(max(0, suggestionIndex), matches.count - 1)
         let suggestion = matches[boundedIndex]
+        guard !suggestion.isHint else {
+            return nil
+        }
         let replacement = Array(completion.replacementText(for: suggestion))
         buffer.replaceSubrange(completion.replacementRange, with: replacement)
         cursorIndex = completion.replacementRange.lowerBound + replacement.count

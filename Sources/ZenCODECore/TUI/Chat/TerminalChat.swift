@@ -217,6 +217,20 @@ public final class TerminalChat {
     /// is discarded instead of being adopted by the next turn's reporter.
     var currentTelegramMirrorEpoch = 0
     var optionalCommandAvailability = TerminalOptionalCommandAvailability.load()
+    /// Reads and replaces the user's crontab for `/cron`. Tests install a
+    /// stand-in so no command ever touches the real crontab.
+    var crontabClient: any CrontabClient = SystemCrontabClient()
+    /// Runs a scheduled prompt immediately for `/cron run`. Tests install a
+    /// stand-in so no command ever launches a real job.
+    var cronJobRunner: any CronJobRunning = SystemCronJobRunner()
+    /// Finds the `zen` that cron will run, given the `PATH` of the ZenCODE
+    /// block, for `/cron add`. Tests install a stand-in so no command depends
+    /// on what is installed on the machine.
+    var cronZenLocator: @Sendable (String) -> String? = { ZenCronJobCommand.locateZen(onPath: $0) }
+    /// The `/cron run` in flight; at most one runs at a time. Only its own task
+    /// clears it, once the report is written. Chat teardown cancels the task
+    /// (which terminates the child) without clearing it.
+    var activeCronRun: (number: Int, task: Task<Void, Never>)?
     var requestedRuntimeSetup = false
     /// True only while the interactive panel loop, the single surface that
     /// consumes Telegram ingress, is running. The blocking fallback still
@@ -533,6 +547,11 @@ public final class TerminalChat {
     }
 
     private func stopTerminalServices() async {
+        // Every way out of the chat (exit, /setup, end of input, a thrown
+        // error) passes here. The runner sends SIGTERM synchronously from its
+        // cancellation handler, so the child is signalled even if ZenCODE
+        // exits right after; the cancelled task prints no report.
+        activeCronRun?.task.cancel()
         telegramControlState.isActive = false
         let validationTask = telegramRouteValidationTask
         telegramRouteValidationTask = nil

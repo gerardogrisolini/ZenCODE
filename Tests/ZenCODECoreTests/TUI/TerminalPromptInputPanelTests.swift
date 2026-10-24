@@ -249,6 +249,48 @@ struct TerminalPromptInputPanelTests {
         #expect(reader.withPanelLock { $0.panelCommandSuggestionIndex } == 1)
     }
 
+    @Test
+    func guideRowsAreDrawnLikeOtherRowsAndTheKeysNeverInsertThem() async {
+        let reader = TerminalInteractiveLineReader()
+        reader.withPanelLock { state in
+            state.panelCommandSuggestions = [
+                TerminalCommandSuggestion(command: "/cron", summary: "schedule prompts")
+            ]
+            state.panelBuffer = Array("/cron mailto ")
+            state.panelCursorIndex = 13
+        }
+
+        let lines = reader.withPanelLock { reader.panelCommandSuggestionLinesLocked(state: $0) }
+        #expect(
+            lines == [
+                "› <address>  e-mail address cron mails results to",
+                "  none  disable mail for scheduled prompts",
+                "  default  cron default: local mailbox of the crontab owner"
+            ]
+        )
+
+        let submitted = Mutex<[String]>([])
+        let other = Mutex<Int>(0)
+        let record: @Sendable (TerminalPromptInputEvent) async -> Void = { event in
+            if case let .submitted(line) = event {
+                submitted.withLock { $0.append(line) }
+            } else {
+                other.withLock { $0 += 1 }
+            }
+        }
+
+        // Tab on the selected guide changes nothing and sends nothing.
+        await reader.handlePanelKey(.tab, onEvent: record)
+        #expect(reader.withPanelLock { String($0.panelBuffer) } == "/cron mailto ")
+        #expect(submitted.withLock { $0 }.isEmpty)
+
+        // Enter sends the line exactly as typed.
+        await reader.handlePanelKey(.enter, onEvent: record)
+        #expect(submitted.withLock { $0 } == ["/cron mailto "])
+        #expect(other.withLock { $0 } == 0)
+        #expect(reader.withPanelLock { $0.panelBuffer.isEmpty })
+    }
+
     // MARK: - Panel key handling
 
     @Test

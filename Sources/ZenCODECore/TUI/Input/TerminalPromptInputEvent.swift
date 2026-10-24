@@ -18,15 +18,22 @@ public struct TerminalCommandSuggestion: Sendable, Equatable {
     public let command: String
     public let summary: String
     public let requiresArgument: Bool
+    /// A guide row only explains the slot under the cursor (for example
+    /// `<minute>`); it is never a value to type. It is listed and selected like
+    /// any other row, but accepting it does nothing: Tab leaves the draft
+    /// untouched and Enter sends the line exactly as typed.
+    public let isHint: Bool
 
     public init(
         command: String,
         summary: String,
-        requiresArgument: Bool = false
+        requiresArgument: Bool = false,
+        isHint: Bool = false
     ) {
         self.command = command
         self.summary = summary
         self.requiresArgument = requiresArgument
+        self.isHint = isHint
     }
 }
 

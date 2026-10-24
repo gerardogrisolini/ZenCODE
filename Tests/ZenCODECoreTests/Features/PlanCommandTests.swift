@@ -1794,6 +1794,110 @@ struct PlanCommandTests {
     }
 
     @Test
+    func planContinuationPromptRegistersFinalPlanWithTheValidatorContract() {
+        let planner = AgentProfile(
+            id: AgentProfileStore.plannerAgentID.uuidString,
+            name: AgentProfileStore.plannerAgentName,
+            tools: []
+        )
+        var state = PlanningCommandRuntimeState(goal: "harden plan registration")
+        state.recordPlannerOutput(
+            "Planner questions\n1. Which registration shape is expected?",
+            agentID: "planner-registration-test",
+            revision: 1
+        )
+        let recordedReply = state.recordReply("Use the existing upsert contract.")
+        #expect(recordedReply)
+
+        let existingPlannerPrompt = PlanningCommandKernel.planContinuationPrompt(
+            state: state,
+            planner: planner
+        )
+        var recreatedPlannerState = state
+        recreatedPlannerState.plannerAgentID = nil
+        let recreatedPlannerPrompt = PlanningCommandKernel.planContinuationPrompt(
+            state: recreatedPlannerState,
+            planner: planner
+        )
+
+        for prompt in [existingPlannerPrompt, recreatedPlannerPrompt] {
+            #expect(prompt.contains(PlanningCommandKernel.plannerFinalPlanRegistrationInstruction))
+            #expect(prompt.contains(PlanningCommandKernel.plannerDependenciesFormatInstruction))
+        }
+
+        let registration = PlanningCommandKernel.plannerFinalPlanRegistrationInstruction
+        #expect(registration.contains("mode \"upsert\""))
+        #expect(registration.contains("plan-<token>-1"))
+        #expect(registration.contains("Dependencies:"))
+        #expect(!registration.contains("call todo.write exactly once with one pending task per point"))
+        #expect(PlanningCommandKernel.plannerDependenciesFormatInstruction.contains("Dependencies:"))
+    }
+
+    @Test
+    func finalPlanDependenciesOnOwnLineAreCoherentButInlineOnesAreRejected() {
+        let finalText = """
+        Specifiche concordate
+        - Keep existing clients compatible.
+
+        Implementation plan
+        1. Route the continuation prompt through the shared kernel.
+           - Keep the wait rule for both routing branches.
+           - Tell the coordinator how to register the final plan.
+           Dependencies: none
+        2. Validate the registered plan with the shared validator.
+           - Run the Planner command tests.
+           Dependencies: 1
+        """
+        // Built as plannerFinalPlanRegistrationInstruction prescribes: pending,
+        // full point text without the number or the Dependencies line, and dependsOn
+        // translated to the registered IDs.
+        let registered = [
+            TerminalSessionPlanPoint(
+                id: "plan-abc-1",
+                text: """
+                Route the continuation prompt through the shared kernel.
+                - Keep the wait rule for both routing branches.
+                - Tell the coordinator how to register the final plan.
+                """,
+                dependsOn: [],
+                hasExplicitDependencies: true
+            ),
+            TerminalSessionPlanPoint(
+                id: "plan-abc-2",
+                text: """
+                Validate the registered plan with the shared validator.
+                - Run the Planner command tests.
+                """,
+                dependsOn: ["plan-abc-1"],
+                hasExplicitDependencies: true
+            ),
+        ]
+        #expect(PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: finalText,
+            points: registered
+        ))
+
+        // The same plan with each Dependencies line at the end of a bullet no
+        // longer parses, so the validator rejects it: this is why the Planner
+        // must put that line on its own.
+        let inlineDependenciesText = """
+        Specifiche concordate
+        - Keep existing clients compatible.
+
+        Implementation plan
+        1. Route the continuation prompt through the shared kernel.
+           - Keep the wait rule for both routing branches.
+           - Tell the coordinator how to register the final plan. Dependencies: none
+        2. Validate the registered plan with the shared validator.
+           - Run the Planner command tests. Dependencies: 1
+        """
+        #expect(!PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: inlineDependenciesText,
+            points: registered
+        ))
+    }
+
+    @Test
     func plannerAuthoredResponseIgnoresTheCurrentAgentsDraft() throws {
         let parentResponse = DirectAgentResponse(
             text: "Default rewrote the plan",

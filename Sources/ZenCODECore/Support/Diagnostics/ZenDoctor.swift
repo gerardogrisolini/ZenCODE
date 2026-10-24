@@ -124,21 +124,27 @@ public struct ZenDoctorReport: Sendable, Equatable {
 /// reporting actionable remedies. It is safe to run in any mode.
 public enum ZenDoctor {
     /// Builds a diagnostic report without mutating any state.
+    ///
+    /// `cronToolchain` overrides the probed `crontab`/`sendmail` locations; when
+    /// `nil`, the system tools are located with ``ZenCronToolchain/locate(fileManager:)``.
     public static func runReport(
         fileManager: FileManager = .default,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        supportDirectory: URL? = nil
+        supportDirectory: URL? = nil,
+        cronToolchain: ZenCronToolchain? = nil
     ) -> ZenDoctorReport {
         let paths = manifestPaths(
             fileManager: fileManager,
             supportDirectory: supportDirectory
         )
+        let toolchain = cronToolchain ?? ZenCronToolchain.locate(fileManager: fileManager)
         return ZenDoctorReport(sections: [
             environmentSection(environment: environment),
             supportFilesSection(paths: paths, fileManager: fileManager),
             configurationSection(paths: paths, fileManager: fileManager),
             permissionsSection(paths: paths, fileManager: fileManager),
-            diagnosticsSection(environment: environment)
+            diagnosticsSection(environment: environment),
+            schedulingSection(toolchain: toolchain)
         ])
     }
 
@@ -687,6 +693,58 @@ public enum ZenDoctor {
         }
 
         return ZenDoctorSection(title: "Diagnostics", checks: checks)
+    }
+
+    // MARK: - Scheduled prompts
+
+    /// Reports the system tools behind `/cron`. A missing tool is only a warning:
+    /// ZenCODE runs without it, and `/cron` names the exact requirement when used.
+    private static func schedulingSection(toolchain: ZenCronToolchain) -> ZenDoctorSection {
+        var checks: [ZenDoctorCheck] = []
+
+        let crontab = toolchain.crontabPath
+        checks.append(
+            ZenDoctorCheck(
+                id: "scheduling.crontab",
+                title: "crontab",
+                status: crontab == nil ? .warning : .ok,
+                detail: crontab.map { "Found at \($0)." } ?? "Not found.",
+                remedy: crontab == nil
+                    ? "Install cron to schedule prompts with /cron."
+                    : nil
+            )
+        )
+
+        // cron delivers job output through sendmail; without it results are lost.
+        let sendmail = toolchain.sendmailPath
+        checks.append(
+            ZenDoctorCheck(
+                id: "scheduling.sendmail",
+                title: "sendmail",
+                status: sendmail == nil ? .warning : .ok,
+                detail: sendmail.map { "Found at \($0)." }
+                    ?? "Not found; cron cannot mail scheduled prompt results.",
+                remedy: sendmail == nil
+                    ? "Install an MTA such as postfix, exim or msmtp."
+                    : nil
+            )
+        )
+
+        #if os(Linux)
+        if isWindowsSubsystemForLinux() {
+            checks.append(
+                ZenDoctorCheck(
+                    id: "scheduling.wsl",
+                    title: "WSL cron service",
+                    status: .warning,
+                    detail: "WSL does not start the cron service automatically",
+                    remedy: "Run `sudo service cron start` or enable systemd in /etc/wsl.conf."
+                )
+            )
+        }
+        #endif
+
+        return ZenDoctorSection(title: "Scheduled prompts", checks: checks)
     }
 
     // MARK: - Read-only manifest access

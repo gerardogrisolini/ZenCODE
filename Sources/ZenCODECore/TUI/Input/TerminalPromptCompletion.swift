@@ -19,6 +19,11 @@ struct TerminalPromptCompletion: Equatable, Sendable {
         case command
         /// The first argument of a known command, i.e. its subcommand slot.
         case argument(command: String)
+        /// A slot after the first argument of a command with a static later
+        /// vocabulary (see `TerminalPromptCompletionCatalog`). The arguments
+        /// already typed before the token under the cursor travel with it,
+        /// because what a slot means depends on them.
+        case laterArgument(command: String, precedingArguments: [String])
         /// The leading `@name` token of a single-line prompt.
         case mention
     }
@@ -74,14 +79,27 @@ struct TerminalPromptCompletion: Equatable, Sendable {
             end += 1
         }
 
-        // Completing anything past the first argument would need per-command
-        // domain knowledge the dispatcher does not expose, so stop here.
-        guard buffer[commandEnd..<start].allSatisfy(isSeparator) else {
-            return nil
+        // Slots after the first argument depend on the arguments before them,
+        // which only a command with its own static vocabulary can interpret.
+        // Every other command stops at its subcommand slot, exactly as the
+        // dispatcher offers nothing deeper to complete.
+        let command = String(buffer[0..<commandEnd])
+        let precedingArguments = buffer[commandEnd..<start]
+            .split(separator: " ")
+            .map { String($0) }
+        guard precedingArguments.isEmpty else {
+            guard TerminalPromptCompletionCatalog.completesLaterArguments(of: command) else {
+                return nil
+            }
+            return TerminalPromptCompletion(
+                kind: .laterArgument(command: command, precedingArguments: precedingArguments),
+                replacementRange: start..<end,
+                prefix: String(buffer[start..<cursor])
+            )
         }
 
         return TerminalPromptCompletion(
-            kind: .argument(command: String(buffer[0..<commandEnd])),
+            kind: .argument(command: command),
             replacementRange: start..<end,
             prefix: String(buffer[start..<cursor])
         )
@@ -114,6 +132,18 @@ struct TerminalPromptCompletion: Equatable, Sendable {
                 return []
             }
             candidates = TerminalPromptCompletionCatalog.argumentSuggestions(for: command)
+        case let .laterArgument(command, precedingArguments):
+            // Same guard as above. The catalogue matches the prefix itself and
+            // returns the final list: its guide rows are placeholders such as
+            // `<minute>` that the typed prefix must not filter out.
+            guard commands.contains(where: { $0.command == command }) else {
+                return []
+            }
+            return TerminalPromptCompletionCatalog.laterArgumentSuggestions(
+                for: command,
+                precedingArguments: precedingArguments,
+                prefix: completion.prefix
+            )
         }
 
         return ordered(candidates: candidates, prefix: completion.prefix)
@@ -181,6 +211,33 @@ struct TerminalPromptCompletion: Equatable, Sendable {
 enum TerminalPromptCompletionCatalog {
     static func argumentSuggestions(for command: String) -> [TerminalCommandSuggestion] {
         argumentsByCommand[command] ?? []
+    }
+
+    /// Whether `command` also completes the slots after its first argument.
+    ///
+    /// Only `/cron` does: its operands (schedule, cron fields, entry number,
+    /// mail recipient) form a small static grammar, whereas the later operands
+    /// of every other command are free-form ids, paths or text.
+    static func completesLaterArguments(of command: String) -> Bool {
+        command == "/cron"
+    }
+
+    /// Suggestions for a slot after the first argument.
+    ///
+    /// `precedingArguments` are the complete arguments before the token under
+    /// the cursor (the subcommand first) and `prefix` is that token up to the
+    /// cursor. The result is final: already matched against `prefix` and
+    /// ordered, because its guide rows (`isHint`) are placeholders the prefix
+    /// must not filter out. Every command other than `/cron` yields nothing.
+    static func laterArgumentSuggestions(
+        for command: String,
+        precedingArguments: [String],
+        prefix: String
+    ) -> [TerminalCommandSuggestion] {
+        guard completesLaterArguments(of: command) else {
+            return []
+        }
+        return cronLaterArgumentSuggestions(precedingArguments: precedingArguments, prefix: prefix)
     }
 
     static let argumentsByCommand: [String: [TerminalCommandSuggestion]] = [
@@ -315,6 +372,31 @@ enum TerminalPromptCompletionCatalog {
         "/telegram": [
             TerminalCommandSuggestion(command: "on", summary: "start Telegram control"),
             TerminalCommandSuggestion(command: "off", summary: "stop Telegram control")
+        ],
+        "/cron": [
+            TerminalCommandSuggestion(
+                command: "list",
+                summary: "show scheduled prompts with their numbers"
+            ),
+            TerminalCommandSuggestion(
+                command: "add",
+                summary: "<schedule> <prompt> · e.g. @daily Summarize open PRs",
+                requiresArgument: true
+            ),
+            TerminalCommandSuggestion(
+                command: "remove",
+                summary: "<n> · delete entry n from /cron list",
+                requiresArgument: true
+            ),
+            TerminalCommandSuggestion(
+                command: "run",
+                summary: "<n> · run entry n now, as cron would",
+                requiresArgument: true
+            ),
+            TerminalCommandSuggestion(
+                command: "mailto",
+                summary: "[address|none|default] · where cron mails results"
+            )
         ],
         "/voice": [
             TerminalCommandSuggestion(command: "on", summary: "start voice mode"),

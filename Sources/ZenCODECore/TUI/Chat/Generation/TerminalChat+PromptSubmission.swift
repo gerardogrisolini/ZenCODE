@@ -218,6 +218,9 @@ extension TerminalChat {
         case let command where command == "/telegram" || command.hasPrefix("/telegram "):
             await handleTelegramCommand(command)
             return .continueChat
+        case let command where command == "/cron" || command.hasPrefix("/cron "):
+            await handleCronCommand(command)
+            return .continueChat
         case let command where command == "/voice" || command.hasPrefix("/voice "):
             await handleVoiceCommand(command)
             return .continueChat

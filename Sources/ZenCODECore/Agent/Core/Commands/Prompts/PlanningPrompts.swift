@@ -12,6 +12,27 @@ extension PlanningCommandKernel {
         Planner is still working.
         """
 
+    /// Format rule the Planner must follow in its final plan: the validator reads
+    /// a dependency line only when it begins its own line with `Dependencies:`.
+    static let plannerDependenciesFormatInstruction = """
+        Coordinator note for the Planner: if you return the final plan, every numbered implementation \
+        point must declare its dependencies on its own line that starts with "Dependencies:", followed \
+        by the point numbers or "none" (for example "Dependencies: 1, 3" or "Dependencies: none"). \
+        Never put the Dependencies line at the end of a bullet or of a paragraph.
+        """
+
+    /// Registration rule for a final Planner plan; it must stay in step with
+    /// `PlanningPointCollector` and `structuredPlanOutputIsCoherent`.
+    static let plannerFinalPlanRegistrationInstruction = """
+        Then call todo.write exactly once, with mode "upsert" and one item with status "pending" for \
+        every numbered implementation point, in the Planner's order. Use one fresh short alphanumeric \
+        token shared by all items and the IDs "plan-<token>-1", "plan-<token>-2", and so on. Set each \
+        item's content to the complete text of its point as the Planner wrote it: every line of the \
+        point, without the leading number and without its "Dependencies:" line. Translate each \
+        "Dependencies:" line into a dependsOn array of the IDs of the listed points, using an empty \
+        array for "none".
+        """
+
     static func planStartPrompt(goal: String, planner: AgentProfile) -> String {
         """
         You are only the coordinator for this planning pass. Stay on your current agent \
@@ -59,18 +80,20 @@ extension PlanningCommandKernel {
         if let plannerAgentID = state.plannerAgentID?.nilIfBlank {
             routing = """
             Send the operator's newest reply verbatim to the existing Planner with agent.message, \
-            using agent id "\(plannerAgentID)", then wait for that same agent. \(plannerWaitInstruction) \
+            using agent id "\(plannerAgentID)". In that same message, after the reply and on separate \
+            lines, include this coordinator note unchanged: \(plannerDependenciesFormatInstruction) \
+            Then wait for that same agent. \(plannerWaitInstruction) \
             Do not reinterpret, summarize, or answer the reply yourself. If and only if that agent no \
             longer exists, recreate exactly one agent named "\(planAuthorAgentName)" with role "Planner" and \
-            profile "\(planner.id)", give it the original goal and the complete transcript below, \
-            and wait for it the same way.
+            profile "\(planner.id)", give it the original goal, the complete transcript below, and the \
+            coordinator note above, and wait for it the same way.
             """
         } else {
             routing = """
             Recreate exactly one agent named "\(planAuthorAgentName)" with role "Planner" and \
-            profile "\(planner.id)", give it the original goal and complete transcript below, \
-            and wait for it. \(plannerWaitInstruction) Do not reinterpret, summarize, or answer the \
-            operator replies yourself.
+            profile "\(planner.id)", give it the original goal, the complete transcript below, and this \
+            coordinator note unchanged: \(plannerDependenciesFormatInstruction) Then wait for it. \
+            \(plannerWaitInstruction) Do not reinterpret, summarize, or answer the operator replies yourself.
             """
         }
 
@@ -85,8 +108,8 @@ extension PlanningCommandKernel {
 
         The Planner again decides whether information is sufficient. If material decisions remain, \
         return exactly one fresh numbered block headed "Planner questions" and do not call todo.write. \
-        Otherwise return "Specifiche concordate" followed by the numbered "Implementation plan", \
-        then call todo.write exactly once with one pending task per point and explicit dependency arrays. \
+        Otherwise return "Specifiche concordate" followed by the numbered "Implementation plan". \
+        \(plannerFinalPlanRegistrationInstruction) \
         A final answer without those structured tasks is an error. Return only the Planner's fresh latest \
         output verbatim and do not edit files.
         """

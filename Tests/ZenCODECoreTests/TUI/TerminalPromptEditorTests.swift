@@ -635,6 +635,214 @@ struct TerminalPromptEditorTests {
         #expect(editor.apply(.enter, context: context) == .submitted("/skills uninstall"))
     }
 
+    // MARK: - Completion after the subcommand and guide rows
+
+    private var cronContext: TerminalPromptEditorContext {
+        TerminalPromptEditorContext(suggestions: [
+            TerminalCommandSuggestion(command: "/cron", summary: "schedule prompts"),
+            TerminalCommandSuggestion(command: "/sessions", summary: "manage sessions"),
+            TerminalCommandSuggestion(command: "/tasks", summary: "inspect tasks")
+        ])
+    }
+
+    @Test
+    func suggestionsAreValuesUnlessMarkedAsGuides() {
+        #expect(!TerminalCommandSuggestion(command: "x", summary: "y").isHint)
+        #expect(TerminalCommandSuggestion(command: "<x>", summary: "y", isHint: true).isHint)
+        #expect(
+            TerminalCommandSuggestion(command: "x", summary: "y")
+                != TerminalCommandSuggestion(command: "x", summary: "y", isHint: true)
+        )
+        // Only `/cron` has guide rows, and none of them is a first-slot value.
+        for suggestion in TerminalPromptCompletionCatalog.argumentsByCommand.values.joined() {
+            #expect(!suggestion.isHint, "\(suggestion.command)")
+        }
+    }
+
+    @Test
+    func tabOnAScheduleAliasInsertsItAndLeavesASpaceForThePrompt() {
+        var editor = makeEditor("/cron add ")
+
+        #expect(editor.visibleSuggestions(context: cronContext).first?.command == "@hourly")
+        #expect(editor.apply(.tab, context: cronContext) == .changed)
+        #expect(String(editor.buffer) == "/cron add @hourly ")
+        #expect(editor.cursorIndex == editor.buffer.count)
+        // The prompt slot now explains itself.
+        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<prompt>"])
+    }
+
+    @Test
+    func tabOnAnExampleInsertsAllFiveFieldsAndLeavesASpaceForThePrompt() {
+        var editor = makeEditor("/cron add ")
+
+        for _ in 0..<6 {
+            _ = editor.apply(.down, context: cronContext)
+        }
+        #expect(editor.visibleSuggestions(context: cronContext)[editor.suggestionIndex].command == "0 9 * * 1-5")
+
+        #expect(editor.apply(.tab, context: cronContext) == .changed)
+        #expect(String(editor.buffer) == "/cron add 0 9 * * 1-5 ")
+        #expect(editor.cursorIndex == editor.buffer.count)
+        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<prompt>"])
+    }
+
+    @Test
+    func enterOnAScheduleAliasCompletesItButNeverSendsAnIncompleteLine() {
+        var editor = makeEditor("/cron add @d")
+
+        #expect(editor.apply(.enter, context: cronContext) == .changed)
+        #expect(String(editor.buffer) == "/cron add @daily ")
+        #expect(editor.cursorIndex == editor.buffer.count)
+    }
+
+    @Test(arguments: [
+        "/cron add 0",
+        "/cron add 0 9 ",
+        "/cron add @daily ",
+        "/cron add @daily Summarize",
+        "/cron add 0 9 * * 1-5 Summ",
+        "/cron remove ",
+        "/cron run 3",
+        "/cron mailto "
+    ])
+    func tabOnAGuideChangesNothing(text: String) {
+        var editor = makeEditor(text)
+        let selected = editor.visibleSuggestions(context: cronContext)[editor.suggestionIndex]
+        #expect(selected.isHint)
+
+        #expect(editor.apply(.tab, context: cronContext) == .ignored)
+        #expect(String(editor.buffer) == text)
+        #expect(editor.cursorIndex == editor.buffer.count)
+        #expect(editor.suggestionIndex == 0)
+    }
+
+    @Test(arguments: [
+        "/cron mailto ",
+        "/cron add 0",
+        "/cron add @daily Summarize open PRs",
+        "/cron add 0 9 * * 1-5 Summarize open PRs",
+        "/cron remove ",
+        "/cron remove 2"
+    ])
+    func enterOnAGuideSendsTheLineExactlyAsTyped(text: String) {
+        var editor = makeEditor(text)
+
+        #expect(editor.apply(.enter, context: cronContext) == .submitted(text))
+        #expect(editor.buffer.isEmpty)
+        #expect(editor.cursorIndex == 0)
+    }
+
+    @Test
+    func enterOnAGuideSendsTheWholeLineWhateverTheCursorPosition() {
+        let text = "/cron add @daily Summarize open PRs"
+        var editor = makeEditor(text, cursorIndex: 24)
+
+        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<prompt>"])
+        #expect(editor.apply(.enter, context: cronContext) == .submitted(text))
+    }
+
+    @Test
+    func arrowsCycleThroughTheMailToGuideAndItsValues() {
+        let text = "/cron mailto "
+
+        // The guide is selected first, so Enter cannot pick `none` by accident.
+        var editor = makeEditor(text)
+        #expect(editor.suggestionIndex == 0)
+
+        _ = editor.apply(.down, context: cronContext)
+        #expect(editor.apply(.enter, context: cronContext) == .submitted("/cron mailto none"))
+
+        editor = makeEditor(text)
+        _ = editor.apply(.up, context: cronContext)
+        #expect(editor.visibleSuggestions(context: cronContext)[editor.suggestionIndex].command == "default")
+        #expect(editor.apply(.enter, context: cronContext) == .submitted("/cron mailto default"))
+
+        // Wrapping past the last value comes back to the guide.
+        editor = makeEditor(text)
+        for _ in 0..<3 {
+            _ = editor.apply(.down, context: cronContext)
+        }
+        #expect(editor.suggestionIndex == 0)
+        #expect(editor.apply(.enter, context: cronContext) == .submitted(text))
+    }
+
+    @Test
+    func typingAMailToKeywordPrefixSelectsTheValueNotTheGuide() {
+        var editor = makeEditor("/cron mailto n")
+
+        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["none"])
+        #expect(editor.apply(.enter, context: cronContext) == .submitted("/cron mailto none"))
+
+        editor = makeEditor("/cron mailto ops@example.com")
+        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<address>"])
+        #expect(editor.apply(.enter, context: cronContext) == .submitted("/cron mailto ops@example.com"))
+    }
+
+    @Test
+    func escapeHidesAGuideAndFreesTheArrowsForHistory() {
+        let context = TerminalPromptEditorContext(
+            history: ["/tasks"],
+            suggestions: cronContext.suggestions
+        )
+        var editor = makeEditor("/cron remove 2")
+
+        // While the guide is on screen the arrows belong to the menu.
+        #expect(editor.apply(.up, context: context) == .changed)
+        #expect(String(editor.buffer) == "/cron remove 2")
+        #expect(editor.historyIndex == nil)
+
+        #expect(editor.apply(.cancel, context: context) == .changed)
+        #expect(String(editor.buffer) == "/cron remove 2")
+        #expect(editor.visibleSuggestions(context: context).isEmpty)
+
+        #expect(editor.apply(.up, context: context) == .changed)
+        #expect(String(editor.buffer) == "/tasks")
+
+        // An edit brings the guide back for the new revision.
+        editor = makeEditor("/cron remove 2")
+        _ = editor.apply(.cancel, context: context)
+        _ = editor.apply(.character("3"), context: context)
+        #expect(editor.visibleSuggestions(context: context).map(\.command) == ["<n>"])
+    }
+
+    @Test
+    func otherCommandsKeepTheirFirstSlotAndOfferNothingBeyondIt() {
+        var editor = makeEditor("/sessions ")
+        #expect(
+            editor.visibleSuggestions(context: cronContext)
+                == TerminalPromptCompletionCatalog.argumentSuggestions(for: "/sessions")
+        )
+        editor = makeEditor("/tasks sh")
+        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["show"])
+
+        for text in ["/sessions save x ", "/sessions save x", "/tasks list x", "/tasks show ", "/tasks show abc"] {
+            editor = makeEditor(text)
+            #expect(editor.visibleSuggestions(context: cronContext).isEmpty, "\(text)")
+            #expect(editor.apply(.tab, context: cronContext) == .ignored, "\(text)")
+            #expect(String(editor.buffer) == text)
+            #expect(editor.apply(.enter, context: cronContext) == .submitted(text), "\(text)")
+        }
+    }
+
+    @Test
+    func cronOperandsAreNotOfferedWhenCronIsNotAvailable() {
+        let context = TerminalPromptEditorContext(suggestions: commandCatalog)
+
+        for text in ["/cron add ", "/cron mailto ", "/cron remove "] {
+            var editor = makeEditor(text)
+            #expect(editor.visibleSuggestions(context: context).isEmpty, "\(text)")
+            #expect(editor.apply(.enter, context: context) == .submitted(text), "\(text)")
+        }
+    }
+
+    @Test
+    func cronOperandCompletionStillRejectsMultiLineAndTabbedDrafts() {
+        for text in ["/cron add \nx", "/cron add\t@d", "/cron add @d\n"] {
+            let editor = makeEditor(text)
+            #expect(editor.visibleSuggestions(context: cronContext).isEmpty, "\(text)")
+        }
+    }
+
     @Test
     func suggestionSelectionWrapsAroundTheMatchList() {
         var editor = makeEditor("/fea")
