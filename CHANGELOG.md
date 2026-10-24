@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-24
+
 ### Added
 
 - Voice: the interactive terminal has a voice mode that works with any agent
