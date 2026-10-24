@@ -266,13 +266,26 @@ final class TerminalVoiceSpeechState: Sendable {
 /// or no, a bare answer is sent at once without the keyword.
 struct TerminalVoiceKeywordCollector: Sendable {
     enum Outcome: Sendable, Equatable {
-        /// Send this utterance.
+        /// The keyword was said: send everything collected before it. Empty
+        /// for the keyword alone with nothing collected, which sends the
+        /// typed draft.
         case send(String)
+        /// A bare yes or no the live-chat dialogue awaits: send it alone.
+        case answer(String)
         /// Kept until the keyword is said.
         case collected
-        /// Nothing to do: empty speech, or the keyword alone with nothing
-        /// collected.
+        /// Nothing to do: empty speech.
         case nothing
+
+        /// Whether the outcome sends something.
+        var sends: Bool {
+            switch self {
+            case .send, .answer:
+                return true
+            case .collected, .nothing:
+                return false
+            }
+        }
     }
 
     let keyword: TerminalVoiceSendKeyword
@@ -299,13 +312,13 @@ struct TerminalVoiceKeywordCollector: Sendable {
         guard !trimmed.isEmpty else {
             return .nothing
         }
-        if awaitingShortAnswer, pending.isEmpty,
-           TerminalVoiceChatPhrases.affirmation(in: trimmed) != nil {
-            return .send(trimmed)
+        if pending.isEmpty,
+           TerminalVoiceUtterance.isAwaitedAnswer(trimmed, awaitingShortAnswer: awaitingShortAnswer) {
+            return .answer(trimmed)
         }
         if let utterance = keyword.utteranceToSend(pending: pending, speech: trimmed) {
             pending = ""
-            return utterance.isEmpty ? .nothing : .send(utterance)
+            return .send(utterance)
         }
         pending = TerminalVoiceSendKeyword.joined(pending, trimmed)
         return .collected

@@ -74,6 +74,13 @@ extension TerminalChat {
             return
         }
         voiceController = controller
+        // An edit that turns the dictation shown in the draft into ordinary
+        // text makes voice forget what it accumulated for it.
+        interactiveReader.setVoiceDictationEndedHandler { id in
+            Task(name: "ZenCODE.TUI.voice-discard-dictation") {
+                await controller.discardDictation(through: id)
+            }
+        }
         // Starting may wait on the system permission prompts or on loading
         // the speech models; never hold the terminal event loop on it. The
         // controller reports when it listens.
@@ -120,6 +127,7 @@ extension TerminalChat {
         }
         voiceController = nil
         await controller.stop()
+        interactiveReader.setVoiceDictationEndedHandler(nil)
         await interactiveReader.setPanelSpeaking(false)
     }
 
@@ -181,7 +189,26 @@ extension TerminalChat {
                 await self?.writeFailureMessage(text)
             },
             utteranceRecognized: { utterance in
-                _ = await eventQueue.sendWithBackpressure(.voiceUtterance(utterance))
+                let text: String?
+                switch utterance {
+                case let .dictation(id, dictated):
+                    // The whole visible draft: typed text, then the dictation.
+                    text = reader.takeVoiceDictation(id: id, text: dictated)
+                case let .answer(answer):
+                    text = answer
+                }
+                guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return
+                }
+                _ = await eventQueue.sendWithBackpressure(.voiceUtterance(text))
+            },
+            dictationChanged: { id, text in
+                // Straight to the reader, not through the event queue: a
+                // preview must reach the draft before the send that takes it,
+                // and it is reported from inside `setPaused` and `stop`, which
+                // the runtime loop itself awaits, so waiting for a full queue
+                // could block its only consumer.
+                reader.setVoiceDictation(id: id, text: text)
             },
             speakingChanged: { isSpeaking in
                 await reader.setPanelSpeaking(isSpeaking)

@@ -53,19 +53,23 @@ command, and `zen -p`, `--jsonl` and ACP do not have it.
    Voice: listening (dictation, it_IT, on-device). Speak or type; answers are read aloud. /voice pauses or resumes, /voice off stops.
    ```
 
-2. Speak. A pause of about 5 seconds (the pause chosen with the **Send mode**
-   "After a pause" in `/setup` > Voice mode, see [Options](#options)) ends the
-   utterance, which is sent as a prompt. With the Send mode "On a word", the
-   pause does not send: you say your word (for example "vai" or "done") at the
-   end instead, and can pause as long as you like before it. On Linux an
-   utterance lasts at most 60 seconds.
-3. The utterance is handled exactly like a line you type and press `Enter` on:
-   while a prompt is running it is queued, and it can answer a pending `/plan`
-   clarification or `/goal` question. Text that would read as a slash command is
-   always sent as a plain prompt: voice never runs `/exit` or any other command.
-   Two kinds of utterance are not prompts: a yes or no while voice mode is
-   asking you about a live-chat message, and a "message to …" phrase (see
-   [Live chat by voice](#live-chat-by-voice)). You can keep typing at any time.
+2. Speak. Recognized speech can appear in the prompt draft, the line you type
+   in, while you talk (see [The prompt draft](#the-prompt-draft)). A pause of
+   about 5 seconds (the pause chosen with the **Send mode** "After a pause" in
+   `/setup` > Voice mode, see [Options](#options)) ends the utterance, which is
+   sent as a prompt. With the Send mode "On a word", the pause does not send:
+   you say your word (for example "vai" or "done") at the end instead, and can
+   pause as long as you like before it. On Linux an utterance lasts at most 60
+   seconds.
+3. The draft is sent as a prompt: the typed text and the dictation together.
+   Sent by voice, it is queued while a prompt is running, and it can answer a
+   pending `/plan` clarification or `/goal` question. Text that would read as a
+   slash command is always sent as a plain prompt: voice never runs `/exit` or
+   any other command. Two kinds of utterance are not prompts: a yes or no while
+   voice mode is asking you about a live-chat message, and a "message to …"
+   phrase (see [Live chat by voice](#live-chat-by-voice)). Pressing `Enter`
+   sends the draft by the keyboard rules instead. You can keep typing at any
+   time.
 4. The final answer of every completed turn is read aloud, including turns
    started from Telegram and the coordinator turns that report the results of
    delegated agents. Answers are read as plain text: Markdown markers are
@@ -84,6 +88,48 @@ command, and `zen -p`, `--jsonl` and ACP do not have it.
 
 `/voice pause` stops listening and reading aloud at once; answers that complete
 while voice mode is paused are not read later.
+
+### The prompt draft
+
+While voice mode listens, the text recognized but not yet sent appears live at
+the end of the prompt draft, the line you type in:
+
+- **macOS** updates it word by word as you speak, in both Send modes.
+  Dictation may correct earlier words while you keep speaking, so the draft can
+  change slightly.
+- **Linux** updates it one speech segment at a time, about a second after you
+  stop, and only with the Send mode "On a word". With "After a pause" each
+  segment is sent at once, so nothing is shown.
+
+If the draft already holds typed text, the dictation is appended after it, with
+a space. When voice sends, the whole draft you see goes out, typed text and
+dictation together, without the word, and the draft is cleared. Saying the word
+alone sends the draft as it stands; with an empty draft it does nothing. For
+example, type `@reviewer ` and say "controlla il diff, vai": the message goes
+to Reviewer as a live message.
+
+- Sent by voice, the draft follows the voice rules: a "message to …" phrase
+  or a leading `@` mention sends a live message, a yes or no answers a
+  live-chat question, and text that starts with `/` is sent as a plain prompt.
+  Sent with `Enter`, it follows the keyboard rules exactly as typed input:
+  slash commands run, `@` mentions apply, and a "message to …" phrase is an
+  ordinary prompt.
+- `Enter` sends the draft, dictation included, and clears it. Voice mode forgets
+  everything it had collected, so a later word does not send it again.
+- Typing or editing while dictation is shown turns all of it into ordinary text.
+  Voice mode forgets what it collected, and later speech is appended at the end
+  of the draft. On macOS an edit made while you are speaking restarts
+  recognition, so the words being spoken at that moment may be lost. Moving the
+  cursor alone is not an edit.
+- `Esc` clears the draft, dictation included, when no answer is being read and
+  no prompt is running. While an answer is read or a prompt runs, `Esc` stops
+  them as before and leaves the draft alone.
+- A bare yes or no that answers a live-chat question is still sent at once on
+  its own and does not touch the draft.
+- `/voice pause` and `/voice off` drop the collected speech and remove its
+  preview from the draft; typed text stays. Typing a command turns a
+  dictation shown in the draft into ordinary text, so clear the draft with
+  `Esc` first, or the command becomes part of the prompt.
 
 ### Live chat by voice
 
@@ -164,9 +210,10 @@ be announced; older ones are dropped.
 
 **Dock and keyboard.** Reading a message aloud marks it as read in the dock,
 exactly like opening it there; a declined or lapsed question leaves it unread.
-Typed input is never intercepted: a typed `yes` is a prompt. `Esc`,
-`/voice pause`, `/voice off`, `/new` and `/resume` drop the pending question and
-every queued announcement, with no catch-up later.
+Typed input is never intercepted: a typed `yes` is a prompt. A bare yes or no
+that answers the question is sent at once on its own and does not touch the
+draft. `Esc`, `/voice pause`, `/voice off`, `/new` and `/resume` drop the
+pending question and every queued announcement, with no catch-up later.
 
 ### How long voice mode lasts
 
@@ -195,16 +242,18 @@ back so the voice can still be chosen.
     ends with that word, which is removed from the prompt: "cerca il file,
     vai" sends "cerca il file". Silence never sends, so you can think
     mid-sentence for as long as you like; everything recognized meanwhile is
-    kept and sent together once you say the word. The word alone sends what
-    was dictated so far; the same word in the middle of a sentence is ordinary
-    text. It is compared without case, accents or punctuation. A spoken yes or
-    no (see [Live chat by voice](#live-chat-by-voice)) cannot be the word, and
-    while voice mode is asking you about a live-chat message a bare yes or no
-    is sent at once, without the word. `Esc` at the word prompt keeps the
-    current send mode; going back to "After a pause" keeps the word for later.
-    On macOS the word takes effect about half a second after it is recognized;
-    on Linux at the end of the current speech segment, about a second after
-    you stop. This mode asks for no pause.
+    shown in the draft (see [The prompt draft](#the-prompt-draft)) and sent
+    together once you say the word. The word alone sends the whole draft, typed
+    text included; with an empty draft it does nothing. The same word in the
+    middle of a sentence is ordinary text. It is compared without case, accents
+    or punctuation. A spoken yes or no (see
+    [Live chat by voice](#live-chat-by-voice)) cannot be the word, and while
+    voice mode is asking you about a live-chat message a bare yes or no is sent
+    at once, without the word. `Esc` at the word prompt keeps the current send
+    mode; going back to "After a pause" keeps the word for later. On macOS the
+    word takes effect about half a second after it is recognized; on Linux at
+    the end of the current speech segment, about a second after you stop. This
+    mode asks for no pause.
 - **Spoken answer limit** — the length past which an answer is read from its
   final sentences only, after the "Long answer" notice: 300, **600** (default),
   1000 or 2000 characters, or **whole answer** to always read everything.
@@ -337,7 +386,11 @@ live cards must be typed. Voice mode does not need to be on.
   It also needs one of these decoders in `/usr/bin`, `/bin` or `/usr/local/bin`:
   - `opusdec` (package `opus-tools`), preferred for Telegram voice notes, which
     are Ogg Opus;
-  - `ffmpeg`, used when `opusdec` is missing or the audio is in another format.
+  - `ffmpeg`, used when `opusdec` is missing or the audio is in another format,
+    and also when `opusdec` fails on the file, for example an `.ogg` that holds
+    Vorbis rather than Opus. The file is then decoded again from scratch. If
+    `ffmpeg` fails too, the message gives both reasons; if it is not installed,
+    the `opusdec` reason is reported.
 
   The note is decoded into a temporary 16 kHz mono WAV file.
   `sherpa-onnx-vad-with-offline-asr` splits it on silences and recognizes each

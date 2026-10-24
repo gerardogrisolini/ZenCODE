@@ -205,6 +205,11 @@ public final class TerminalInteractiveLineReader: Sendable {
         /// single-flight task. Production leaves it `nil`; tests use it to hold
         /// a repaint without blocking the cooperative executor or status actor.
         var panelRenderBeforeUpdateForTesting: (@Sendable () async -> Void)?
+        /// The voice dictation previewed at the end of the draft.
+        var voiceDictation = TerminalPromptDictation()
+        /// Told the id of a dictation an edit ended, so voice forgets what
+        /// it accumulated. Called outside the panel lock.
+        var voiceDictationEndedHandler: (@Sendable (UInt64) -> Void)?
 
         // Projections kept so existing call sites and lifecycle tests keep
         // addressing the draft by name instead of reaching into the reducer.

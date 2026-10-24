@@ -109,13 +109,13 @@ extension TerminalInteractiveLineReader {
         commandSuggestions: [TerminalCommandSuggestion],
         preservingState: Bool
     ) -> PanelStartAdmission {
-        withPanelLock { state -> PanelStartAdmission in
+        let (admission, dictationEnded) = withPanelLock { state -> (PanelStartAdmission, (@Sendable () -> Void)?) in
             switch state.panelLifecycle {
             case .running, .starting:
                 // Another reader already owns (or is acquiring) the terminal.
-                return .alreadyActive
+                return (.alreadyActive, nil)
             case .stopping:
-                return .transitionInFlight
+                return (.transitionInFlight, nil)
             case .idle:
                 break
             }
@@ -128,12 +128,14 @@ extension TerminalInteractiveLineReader {
                 state.panelCommandSuggestionIndex = commandSuggestions.isEmpty
                     ? 0
                     : min(state.panelCommandSuggestionIndex, commandSuggestions.count - 1)
-            } else {
-                state.editor = TerminalPromptEditor()
-                state.panelOverlayOverride = nil
+                return (.admitted, nil)
             }
-            return .admitted
+            state.editor = TerminalPromptEditor()
+            state.panelOverlayOverride = nil
+            return (.admitted, endVoiceDictationLocked(state: &state))
         }
+        dictationEnded?()
+        return admission
     }
 
     /// Publishes the running panel and releases anyone waiting on the start.
@@ -234,8 +236,9 @@ extension TerminalInteractiveLineReader {
     }
 
     func finishPanelStop(clearPanel: Bool) {
-        resumePanelTransitionWaiters { state in
+        let dictationEnded = resumePanelTransitionWaiters { state -> (@Sendable () -> Void)? in
             state.panelStatusBar = nil
+            var dictationEnded: (@Sendable () -> Void)?
             if clearPanel {
                 state.panelBuffer.removeAll()
                 state.panelCursorIndex = 0
@@ -244,10 +247,13 @@ extension TerminalInteractiveLineReader {
                 state.panelCommandSuggestionIndex = 0
                 state.historyIndex = nil
                 state.draftBeforeHistory.removeAll()
+                dictationEnded = endVoiceDictationLocked(state: &state)
             }
             state.panelTask = nil
             state.panelLifecycle = .idle
+            return dictationEnded
         }
+        dictationEnded?()
     }
 
     /// Suspends until the in-flight transition publishes a settled state.
@@ -276,16 +282,18 @@ extension TerminalInteractiveLineReader {
     ///
     /// The waiters are resumed outside the panel lock: resuming re-enters the
     /// caller, which immediately reaches for the same lock.
-    private func resumePanelTransitionWaiters(
-        _ settle: @Sendable (inout State) -> Void
-    ) {
-        let waiters = withPanelLock { state -> [CheckedContinuation<Void, Never>] in
-            settle(&state)
+    @discardableResult
+    private func resumePanelTransitionWaiters<T: Sendable>(
+        _ settle: @Sendable (inout State) -> T
+    ) -> T {
+        let (result, waiters) = withPanelLock { state -> (T, [CheckedContinuation<Void, Never>]) in
+            let result = settle(&state)
             let waiters = state.panelTransitionWaiters
             state.panelTransitionWaiters.removeAll()
-            return waiters
+            return (result, waiters)
         }
         waiters.forEach { $0.resume() }
+        return result
     }
 
     public func setPanelProcessing(_ isProcessing: Bool) async {
@@ -409,13 +417,16 @@ extension TerminalInteractiveLineReader {
     }
 
     public func setPanelText(_ text: String, cursorIndex: Int? = nil) async {
-        withPanelLock { state in
+        let dictationEnded = withPanelLock { state -> (@Sendable () -> Void)? in
             // Programmatic text replaces the draft outright, so every piece of
-            // navigation state derived from the old draft has to go with it.
+            // navigation state derived from the old draft has to go with it,
+            // a dictation shown in it included.
             state.editor = TerminalPromptEditor()
             state.panelBuffer = Array(text)
             state.panelCursorIndex = min(max(0, cursorIndex ?? state.panelBuffer.count), state.panelBuffer.count)
+            return endVoiceDictationLocked(state: &state)
         }
+        dictationEnded?()
         await renderPanel()
     }
 
@@ -594,18 +605,27 @@ extension TerminalInteractiveLineReader {
             await onEvent(.sharedChatReaderNavigation(readerAction))
             return
         }
-        let effect = withPanelLock { state -> TerminalPromptEditorEffect in
+        let (effect, dictationEnded) = withPanelLock { state -> (TerminalPromptEditorEffect, (@Sendable () -> Void)?) in
+            let bufferBefore = state.editor.buffer
             let effect = state.editor.apply(
                 key,
                 context: editorContextLocked(state: state),
                 timestampMilliseconds: timestampMilliseconds,
                 consumedPickerRepeat: consumedPickerRepeat
             )
+            var isSubmitted = false
             if case let .submitted(line) = effect {
+                isSubmitted = true
                 recordHistoryLocked(line, state: &state)
             }
-            return effect
+            // A key that changes the draft turns a dictation shown in it into
+            // ordinary text; pure cursor moves leave it running.
+            guard isSubmitted || state.editor.buffer != bufferBefore else {
+                return (effect, nil)
+            }
+            return (effect, endVoiceDictationLocked(state: &state))
         }
+        dictationEnded?()
 
         switch effect {
         case .ignored:

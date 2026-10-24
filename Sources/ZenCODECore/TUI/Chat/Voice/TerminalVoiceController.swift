@@ -10,11 +10,32 @@
 
 import Foundation
 
+/// What a voice controller recognized and sends.
+enum TerminalVoiceUtterance: Sendable, Equatable {
+    /// The final words of dictation `id`. The terminal sends them after the
+    /// typed draft, as one prompt, unless an edit already turned the
+    /// dictation into ordinary draft text. The text may be empty: the send
+    /// keyword said alone sends the typed draft.
+    case dictation(id: UInt64, text: String)
+    /// A bare yes or no the live-chat dialogue awaits, sent alone: the typed
+    /// draft stays as it is.
+    case answer(String)
+
+    /// Whether `speech` is a bare yes or no while the live-chat dialogue
+    /// awaits one.
+    static func isAwaitedAnswer(_ speech: String, awaitingShortAnswer: Bool) -> Bool {
+        awaitingShortAnswer && TerminalVoiceChatPhrases.affirmation(in: speech) != nil
+    }
+}
+
 /// Where a voice controller reports what happens.
 struct TerminalVoiceCallbacks: Sendable {
     let systemMessage: @Sendable (String) async -> Void
     let failureMessage: @Sendable (String) async -> Void
-    let utteranceRecognized: @Sendable (String) async -> Void
+    let utteranceRecognized: @Sendable (TerminalVoiceUtterance) async -> Void
+    /// The speech recognized but not sent yet for dictation `id`, shown live
+    /// at the end of the prompt draft; an empty text removes the preview.
+    let dictationChanged: @Sendable (UInt64, String) async -> Void
     /// The controller started (`true`) or stopped (`false`) reading an
     /// answer aloud, so `Esc` can stop the reading.
     let speakingChanged: @Sendable (Bool) async -> Void
@@ -57,9 +78,17 @@ protocol TerminalVoiceController: Actor {
     /// Returns `false` when already in the requested state.
     @discardableResult
     func setPaused(_ paused: Bool) async -> Bool
-    /// Whether the live-chat dialogue awaits a yes or no. In keyword send
-    /// mode a bare yes or no is then sent at once, without the keyword.
+    /// Whether the live-chat dialogue awaits a yes or no. A bare answer is
+    /// then sent alone, in either send mode and without the keyword.
     func setAwaitingShortAnswer(_ awaiting: Bool) async
+    /// An edit turned dictation `id` into ordinary draft text: forget the
+    /// speech collected for it and start a new dictation, without reporting
+    /// a preview (the terminal already ended it). Nothing happens when the
+    /// controller has moved past `id`.
+    ///
+    /// Dictation ids start at 1 and advance after every dictation sent and
+    /// every discard, so the terminal can ignore stale previews and sends.
+    func discardDictation(through id: UInt64) async
 }
 
 extension TerminalVoiceController {

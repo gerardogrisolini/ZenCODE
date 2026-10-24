@@ -372,6 +372,15 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
     private var keywordCollector: TerminalVoiceKeywordCollector?
     /// The live-chat dialogue awaits a yes or no.
     private var isAwaitingShortAnswer = false
+    /// The dictation previewed in the prompt draft. Advances after every
+    /// dictation sent and every discard, so the terminal ignores previews
+    /// and sends of a dictation it already ended.
+    private var dictationID: UInt64 = 1
+    /// The preview last reported for `dictationID`.
+    private var publishedDictation = ""
+    /// A preview is being reported. Reports run one at a time, so they reach
+    /// the terminal in order; the one in flight reports the latest text.
+    private var isPublishingDictation = false
     private var generation: UInt64 = 0
     private var generationStartedAt = ContinuousClock.now
     private var rapidEndings = 0
@@ -560,6 +569,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             segmenter.reset()
             keywordCollector?.reset()
             await interruptPlayback()
+            await publishDictation()
         } else if phase == .listening {
             rapidEndings = 0
             restartRecognition()
@@ -584,10 +594,26 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         segmenter.reset()
         keywordCollector?.reset()
         await reportSpeakingState()
+        await publishDictation()
     }
 
     func setAwaitingShortAnswer(_ awaiting: Bool) {
         isAwaitingShortAnswer = awaiting
+    }
+
+    func discardDictation(through id: UInt64) async {
+        guard id >= dictationID else {
+            return
+        }
+        segmenter.reset()
+        keywordCollector?.reset()
+        dictationID = id &+ 1
+        publishedDictation = ""
+        // A request's transcript is cumulative: without a fresh one the
+        // discarded words would come back with the next partial result.
+        if phase == .listening, !isPaused {
+            restartRecognition()
+        }
     }
 
     // MARK: - Recognition
@@ -605,6 +631,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             if isResidualEcho(text, at: now) {
                 // The assistant's own voice leaked through: drop it.
                 restartRecognition()
+                await publishDictation()
                 return
             }
             let hasSpeech = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -612,6 +639,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
                 await interruptPlayback()
             }
             segmenter.observe(text, at: now)
+            await publishDictation()
 
         case let .ended(eventGeneration):
             guard eventGeneration == generation else {
@@ -622,14 +650,9 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
                 if keywordCollector != nil {
                     // The request ended on its own (duration limit): the text
                     // waits for the keyword unless it already ends with it.
-                    switch keywordCollector!.receive(utterance, awaitingShortAnswer: isAwaitingShortAnswer) {
-                    case let .send(text):
-                        await emit(text, at: now)
-                    case .collected, .nothing:
-                        break
-                    }
+                    await receiveKeywordSpeech(utterance, at: now)
                 } else {
-                    await emit(utterance, at: now)
+                    await sendPauseUtterance(utterance, at: now)
                 }
             }
             if generationStartedAt.duration(to: now) < .seconds(1) {
@@ -659,14 +682,13 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         let now = ContinuousClock.now
         if let collector = keywordCollector {
             // Keyword mode: silence never sends; a stable text ending with the
-            // keyword (or a bare yes/no while one is awaited) does.
+            // keyword (or a bare yes/no while one is awaited) does. The
+            // keyword alone sends the typed draft.
             if segmenter.hasStableText(for: Self.keywordConfirmationDelay, at: now),
-               case .send = collector.peek(segmenter.text, awaitingShortAnswer: isAwaitingShortAnswer),
+               collector.peek(segmenter.text, awaitingShortAnswer: isAwaitingShortAnswer).sends,
                let speech = segmenter.takeUtterance() {
                 restartRecognition()
-                if case let .send(text) = keywordCollector!.receive(speech, awaitingShortAnswer: isAwaitingShortAnswer) {
-                    await emit(text, at: now)
-                }
+                await receiveKeywordSpeech(speech, at: now)
             } else if !segmenter.hasPendingText,
                       generationStartedAt.duration(to: now) >= Self.idleRequestLifetime {
                 restartRecognition()
@@ -677,18 +699,82 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             // A request's transcript is cumulative: start a fresh one before
             // the next utterance.
             restartRecognition()
-            await emit(utterance, at: now)
+            await sendPauseUtterance(utterance, at: now)
         } else if !segmenter.hasPendingText,
                   generationStartedAt.duration(to: now) >= Self.idleRequestLifetime {
             restartRecognition()
         }
     }
 
-    private func emit(_ utterance: String, at now: ContinuousClock.Instant) async {
-        if isResidualEcho(utterance, at: now) {
+    /// A finished segment in keyword send mode: sent on the keyword or as an
+    /// awaited yes or no, otherwise collected and previewed.
+    private func receiveKeywordSpeech(_ speech: String, at now: ContinuousClock.Instant) async {
+        switch keywordCollector?.receive(speech, awaitingShortAnswer: isAwaitingShortAnswer) {
+        case let .send(text):
+            await sendDictation(text, at: now)
+        case let .answer(text):
+            await sendAnswer(text, at: now)
+        case .collected, .nothing, nil:
+            await publishDictation()
+        }
+    }
+
+    /// A finished utterance in pause send mode.
+    private func sendPauseUtterance(_ utterance: String, at now: ContinuousClock.Instant) async {
+        if TerminalVoiceUtterance.isAwaitedAnswer(utterance, awaitingShortAnswer: isAwaitingShortAnswer) {
+            await sendAnswer(utterance, at: now)
+        } else {
+            await sendDictation(utterance, at: now)
+        }
+    }
+
+    /// Sends an awaited yes or no alone: only its preview leaves the draft,
+    /// the typed text stays.
+    private func sendAnswer(_ answer: String, at now: ContinuousClock.Instant) async {
+        await publishDictation()
+        guard !isResidualEcho(answer, at: now) else {
             return
         }
-        await callbacks.utteranceRecognized(utterance)
+        await callbacks.utteranceRecognized(.answer(answer))
+    }
+
+    /// Sends the final words of the current dictation; the terminal sends
+    /// them after the typed draft. A residual echo is not sent and its
+    /// preview is removed.
+    private func sendDictation(_ text: String, at now: ContinuousClock.Instant) async {
+        guard !isResidualEcho(text, at: now) else {
+            await publishDictation()
+            return
+        }
+        let id = dictationID
+        await callbacks.utteranceRecognized(.dictation(id: id, text: text))
+        // A discard may have advanced the id while the send was delivered.
+        dictationID = max(dictationID, id &+ 1)
+        publishedDictation = ""
+        // Speech recognized meanwhile starts the next dictation.
+        await publishDictation()
+    }
+
+    /// Reports the speech recognized but not sent yet, previewed at the end
+    /// of the prompt draft: the current utterance, after the speech
+    /// collected for the keyword in keyword mode. Only changes are reported.
+    private func publishDictation() async {
+        guard !isPublishingDictation else {
+            return
+        }
+        isPublishingDictation = true
+        defer {
+            isPublishingDictation = false
+        }
+        while true {
+            let text = keywordCollector.map { TerminalVoiceSendKeyword.joined($0.pending, segmenter.text) }
+                ?? segmenter.text
+            guard text != publishedDictation else {
+                return
+            }
+            publishedDictation = text
+            await callbacks.dictationChanged(dictationID, text)
+        }
     }
 
     /// Whether `text` is the assistant's own voice leaking through the
@@ -740,7 +826,9 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             isAudioRunning = false
         }
         segmenter.reset()
+        keywordCollector?.reset()
         await reportSpeakingState()
+        await publishDictation()
         await callbacks.failureMessage(message)
     }
 }

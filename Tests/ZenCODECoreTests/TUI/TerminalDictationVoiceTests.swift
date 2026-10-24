@@ -71,26 +71,38 @@ struct TerminalDictationVoiceTests {
     func theKeywordCollectorSendsOnlyOnTheKeywordOrABareAnswerWhenAwaited() throws {
         var collector = TerminalVoiceKeywordCollector(keyword: try #require(TerminalVoiceSendKeyword("vai")))
         #expect(collector.receive("   ", awaitingShortAnswer: false) == .nothing)
-        // The keyword alone with nothing collected sends nothing.
-        #expect(collector.receive("vai", awaitingShortAnswer: false) == .nothing)
+        // The keyword alone with nothing collected sends the typed draft.
+        #expect(collector.peek("vai", awaitingShortAnswer: false).sends)
+        #expect(collector.receive("vai", awaitingShortAnswer: false) == .send(""))
         #expect(collector.receive("Apri il progetto", awaitingShortAnswer: false) == .collected)
         #expect(collector.hasPendingText)
+        #expect(collector.pending == "Apri il progetto")
+        #expect(!collector.peek("e poi", awaitingShortAnswer: false).sends)
         #expect(collector.peek("e compila, vai", awaitingShortAnswer: false) == .send("Apri il progetto e compila"))
         // Peeking changed nothing.
         #expect(collector.hasPendingText)
         #expect(collector.receive("e compila, vai", awaitingShortAnswer: false) == .send("Apri il progetto e compila"))
         #expect(!collector.hasPendingText)
 
-        // A bare yes or no is sent at once only while one is awaited and
-        // nothing is collected; otherwise it is ordinary text.
-        #expect(collector.receive("sì", awaitingShortAnswer: true) == .send("sì"))
-        #expect(collector.receive("No", awaitingShortAnswer: true) == .send("No"))
+        // A bare yes or no is sent alone at once only while one is awaited
+        // and nothing is collected; otherwise it is ordinary text.
+        #expect(collector.peek("sì", awaitingShortAnswer: true).sends)
+        #expect(collector.receive("sì", awaitingShortAnswer: true) == .answer("sì"))
+        #expect(collector.receive("No", awaitingShortAnswer: true) == .answer("No"))
         #expect(collector.receive("sì", awaitingShortAnswer: false) == .collected)
         #expect(collector.receive("no", awaitingShortAnswer: true) == .collected)
         #expect(collector.receive("vai", awaitingShortAnswer: true) == .send("sì no"))
         collector.reset()
         #expect(!collector.hasPendingText)
         #expect(collector.receive("sì, ma prima vai", awaitingShortAnswer: true) == .send("sì, ma prima"))
+    }
+
+    @Test
+    func aBareYesOrNoIsAnAnswerOnlyWhileTheDialogueAwaitsOne() {
+        #expect(TerminalVoiceUtterance.isAwaitedAnswer("Sì.", awaitingShortAnswer: true))
+        #expect(TerminalVoiceUtterance.isAwaitedAnswer("no", awaitingShortAnswer: true))
+        #expect(!TerminalVoiceUtterance.isAwaitedAnswer("sì", awaitingShortAnswer: false))
+        #expect(!TerminalVoiceUtterance.isAwaitedAnswer("sì, ma prima", awaitingShortAnswer: true))
     }
 
     @Test
@@ -351,6 +363,7 @@ struct TerminalDictationVoiceTests {
                 systemMessage: { _ in },
                 failureMessage: { _ in },
                 utteranceRecognized: { _ in },
+                dictationChanged: { _, _ in },
                 speakingChanged: { _ in }
             )
         )

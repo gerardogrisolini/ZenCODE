@@ -512,6 +512,10 @@ private actor FakeVoiceController: TerminalVoiceController {
     func setAwaitingShortAnswer(_ awaiting: Bool) {
         awaitingShortAnswer.append(awaiting)
     }
+
+    /// The loop's utterances arrive as events: there is no dictation to
+    /// forget.
+    func discardDictation(through id: UInt64) async {}
 }
 
 /// Publications and prompts observed while the loop runs.

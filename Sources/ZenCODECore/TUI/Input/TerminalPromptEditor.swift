@@ -516,6 +516,19 @@ struct TerminalPromptEditor: Equatable, Sendable {
         return .changed
     }
 
+    /// Replaces the draft from `start` to its end with `text` without a key:
+    /// voice dictation shows the speech recognized so far at the end of the
+    /// draft. Like a typed edit it ends history navigation and resets the
+    /// derived navigation and press-and-hold state; a cursor past the new end
+    /// is clamped to it.
+    mutating func replaceTrailingText(from start: Int, with text: [Character]) {
+        let boundedStart = min(max(0, start), buffer.count)
+        buffer.replaceSubrange(boundedStart..<buffer.count, with: text)
+        cursorIndex = min(max(0, cursorIndex), buffer.count)
+        resetPressAndHold()
+        didEditBuffer()
+    }
+
     /// Any edit ends history navigation, invalidates the preferred column and
     /// brings a dismissed completion menu back for the new revision.
     private mutating func didEditBuffer() {

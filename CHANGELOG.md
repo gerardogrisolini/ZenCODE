@@ -10,6 +10,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Voice: while voice mode listens, the speech recognized but not yet sent
+  appears live at the end of the prompt draft: word by word on macOS, in both
+  Send modes, and one speech segment at a time on Linux with the Send mode
+  "On a word". Dictation is appended after typed text; when voice sends, the
+  whole draft goes out, typed text included, and typing turns the dictation
+  into ordinary text. See [Docs/voice.md](Docs/voice.md#the-prompt-draft).
+
 ### Changed
 
 - The recommended `Organizer` agent profile has rewritten instructions. On
@@ -23,6 +32,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   [Docs/organizer.md](Docs/organizer.md) guide describes the profile. Existing
   `agents.json` manifests are not changed; regenerate the recommended profiles
   in setup to apply the new instructions.
+
+### Fixed
+
+- Telegram voice messages on Linux: when `opusdec` fails on an audio file, for
+  example an `.ogg` file that holds Vorbis rather than Opus, `ffmpeg` now
+  decodes the same file if it is installed. The error is reported only when
+  both decoders fail, and then it names the reason of each one. Without
+  `ffmpeg` the `opusdec` error is reported as before.
 
 ## [2.4.0] - 2026-10-24
 

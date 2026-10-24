@@ -64,20 +64,68 @@ struct SherpaOnnxFileTranscriberTests {
 
         #expect(SherpaOnnxAudioDecoder.available(for: voiceNote, searchDirectories: search)
             == SherpaOnnxAudioDecoder(kind: .opusdec, executable: opusdec))
+        // Every installed decoder is a candidate, in order of preference.
+        #expect(SherpaOnnxAudioDecoder.candidates(for: voiceNote, searchDirectories: search)
+            == [
+                SherpaOnnxAudioDecoder(kind: .opusdec, executable: opusdec),
+                SherpaOnnxAudioDecoder(kind: .ffmpeg, executable: ffmpeg)
+            ])
         // A content type is enough to recognize Ogg Opus.
         let typed = Self.audio(named: "file_7", contentType: "audio/ogg")
         #expect(SherpaOnnxAudioDecoder.available(for: typed, searchDirectories: search)?.kind == .opusdec)
         // opusdec decodes only Ogg Opus.
         let mp3 = Self.audio(named: "voice.mp3", contentType: "audio/mpeg")
         #expect(SherpaOnnxAudioDecoder.available(for: mp3, searchDirectories: search)?.kind == .ffmpeg)
+        #expect(SherpaOnnxAudioDecoder.candidates(for: mp3, searchDirectories: search).map(\.kind) == [.ffmpeg])
 
         try FileManager.default.removeItem(at: opusdec)
         #expect(SherpaOnnxAudioDecoder.available(for: voiceNote, searchDirectories: search)
             == SherpaOnnxAudioDecoder(kind: .ffmpeg, executable: ffmpeg))
+        #expect(SherpaOnnxAudioDecoder.candidates(for: voiceNote, searchDirectories: search).map(\.kind) == [.ffmpeg])
 
         try FileManager.default.removeItem(at: ffmpeg)
         #expect(SherpaOnnxAudioDecoder.available(for: voiceNote, searchDirectories: search) == nil)
+        #expect(SherpaOnnxAudioDecoder.candidates(for: voiceNote, searchDirectories: search).isEmpty)
         #expect(SherpaOnnxAudioDecoder.searchDirectories == ["/usr/bin", "/bin", "/usr/local/bin"])
+    }
+
+    @Test
+    func ffmpegIsTheFallbackOnlyForOggOpusWhenBothDecodersAreInstalled() throws {
+        let directory = Self.uniqueDirectory()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let opusdec = directory.appendingPathComponent("opusdec")
+        let ffmpeg = directory.appendingPathComponent("ffmpeg")
+        try Self.writeScript("#!/bin/sh\n", to: opusdec)
+        try Self.writeScript("#!/bin/sh\n", to: ffmpeg)
+        let installation = try Self.installedVoice()
+        let search = [directory.path]
+        let voiceNote = Self.audio(named: "voice.oga", contentType: "audio/ogg")
+        let mp3 = Self.audio(named: "voice.mp3", contentType: "audio/mpeg")
+
+        func transcriber(for audio: AgentVoiceAudioInput) throws -> SherpaOnnxFileTranscriber {
+            try SherpaOnnxFileTranscriber.make(installation: installation, audio: audio, searchDirectories: search)
+        }
+
+        let oggOpus = try transcriber(for: voiceNote)
+        #expect(oggOpus.decoder.kind == .opusdec)
+        #expect(oggOpus.fallbackDecoder == SherpaOnnxAudioDecoder(kind: .ffmpeg, executable: ffmpeg))
+        // Any other format already uses ffmpeg: there is nothing to fall back to.
+        let other = try transcriber(for: mp3)
+        #expect(other.decoder.kind == .ffmpeg)
+        #expect(other.fallbackDecoder == nil)
+
+        try FileManager.default.removeItem(at: ffmpeg)
+        let opusdecOnly = try transcriber(for: voiceNote)
+        #expect(opusdecOnly.decoder.kind == .opusdec)
+        #expect(opusdecOnly.fallbackDecoder == nil)
+
+        try FileManager.default.removeItem(at: opusdec)
+        #expect(throws: SherpaOnnxTranscriptionError.missingDecoder(oggOpus: true)) {
+            try transcriber(for: voiceNote)
+        }
+        #expect(throws: SherpaOnnxTranscriptionError.missingDecoder(oggOpus: false)) {
+            try transcriber(for: mp3)
+        }
     }
 
     @Test
@@ -169,14 +217,120 @@ struct SherpaOnnxFileTranscriberTests {
         await #expect(throws: SherpaOnnxTranscriptionError.decodingFailed(program: "opusdec", reason: "Failed to open voice.oga")) {
             try await fixture.transcriber.transcribe(fixture.audio)
         }
+        #expect(SherpaOnnxTranscriptionError.decodingFailed(program: "opusdec", reason: "Failed to open voice.oga").localizedDescription
+            == "opusdec could not decode the voice message: Failed to open voice.oga")
         #expect(!FileManager.default.fileExists(atPath: fixture.recognizer.path + ".args"))
         #expect(try fixture.workDirectories().isEmpty)
 
         let silent = try TranscriberFixture()
         try silent.mark(silent.decoder, "silent")
-        await #expect(throws: SherpaOnnxTranscriptionError.decodingFailed(program: "opusdec", reason: "no audio was produced.")) {
+        await #expect(throws: SherpaOnnxTranscriptionError.decodingFailed(program: "opusdec", reason: "no audio was produced")) {
             try await silent.transcriber.transcribe(silent.audio)
         }
+    }
+
+    // MARK: - ffmpeg fallback
+
+    @Test
+    func ffmpegDecodesTheSameInputWhenOpusdecFails() async throws {
+        let fixture = try TranscriberFixture(withFfmpeg: true)
+        try fixture.mark(fixture.decoder, "fail")
+        // opusdec leaves a partial file behind: ffmpeg must not find it.
+        try fixture.mark(fixture.decoder, "partial")
+        try fixture.setRecognizerOutput("0.000 -- 1.500: Apri il file README.\n")
+        let text = try await fixture.transcriber.transcribe(fixture.audio)
+        #expect(text == "Apri il file README.")
+
+        let opusdecArguments = try fixture.arguments(of: fixture.decoder)
+        #expect(opusdecArguments.prefix(4) == ["--quiet", "--rate", "16000", fixture.audio.fileURL.path])
+        let wave = try #require(opusdecArguments.last)
+        let ffmpegArguments = try fixture.arguments(of: fixture.ffmpeg)
+        #expect(ffmpegArguments == SherpaOnnxAudioDecoder(kind: .ffmpeg, executable: fixture.ffmpeg)
+            .arguments(input: fixture.audio.fileURL, output: URL(fileURLWithPath: wave)))
+        #expect(!FileManager.default.fileExists(atPath: fixture.ffmpeg.path + ".stale"))
+        // The recognizer read what ffmpeg wrote, and nothing is left behind.
+        #expect(try fixture.arguments(of: fixture.recognizer).last == wave)
+        #expect(try fixture.workDirectories().isEmpty)
+
+        // An opusdec that exits cleanly without audio counts as a failure too.
+        let silent = try TranscriberFixture(withFfmpeg: true)
+        try silent.mark(silent.decoder, "silent")
+        try silent.setRecognizerOutput("0.000 -- 1.500: Grazie.\n")
+        #expect(try await silent.transcriber.transcribe(silent.audio) == "Grazie.")
+        #expect(FileManager.default.fileExists(atPath: silent.ffmpeg.path + ".args"))
+        #expect(try silent.workDirectories().isEmpty)
+    }
+
+    @Test
+    func ffmpegIsNotRunWhenOpusdecSucceeds() async throws {
+        let fixture = try TranscriberFixture(withFfmpeg: true)
+        try fixture.setRecognizerOutput("0.000 -- 1.500: Ciao.\n")
+        let text = try await fixture.transcriber.transcribe(fixture.audio)
+        #expect(text == "Ciao.")
+        #expect(FileManager.default.fileExists(atPath: fixture.decoder.path + ".args"))
+        #expect(!FileManager.default.fileExists(atPath: fixture.ffmpeg.path + ".args"))
+        #expect(try fixture.workDirectories().isEmpty)
+    }
+
+    @Test
+    func whenBothDecodersFailTheErrorGivesBothReasons() async throws {
+        let fixture = try TranscriberFixture(withFfmpeg: true)
+        try fixture.mark(fixture.decoder, "fail")
+        try fixture.mark(fixture.ffmpeg, "fail")
+        let expected = SherpaOnnxTranscriptionError.decodingFailed(
+            program: "opusdec",
+            reason: "Failed to open voice.oga; ffmpeg also failed: Invalid data found when processing input"
+        )
+        await #expect(throws: expected) {
+            try await fixture.transcriber.transcribe(fixture.audio)
+        }
+        #expect(expected.localizedDescription
+            == "opusdec could not decode the voice message: Failed to open voice.oga; ffmpeg also failed: Invalid data found when processing input")
+        #expect(FileManager.default.fileExists(atPath: fixture.ffmpeg.path + ".args"))
+        #expect(!FileManager.default.fileExists(atPath: fixture.recognizer.path + ".args"))
+        #expect(try fixture.workDirectories().isEmpty)
+    }
+
+    @Test
+    func silentOpusdecAndFailingFfmpegReadAsOneMessage() async throws {
+        // The silent opusdec reason has no final period, so the joined message
+        // reads "no audio was produced; ffmpeg also failed: ..." without ".;".
+        let fixture = try TranscriberFixture(withFfmpeg: true)
+        try fixture.mark(fixture.decoder, "silent")
+        try fixture.mark(fixture.ffmpeg, "fail")
+        let expected = SherpaOnnxTranscriptionError.decodingFailed(
+            program: "opusdec",
+            reason: "no audio was produced; ffmpeg also failed: Invalid data found when processing input"
+        )
+        await #expect(throws: expected) {
+            try await fixture.transcriber.transcribe(fixture.audio)
+        }
+        let message = expected.localizedDescription
+        #expect(message == "opusdec could not decode the voice message: no audio was produced; ffmpeg also failed: Invalid data found when processing input")
+        #expect(!message.contains(".;"))
+        #expect(FileManager.default.fileExists(atPath: fixture.ffmpeg.path + ".args"))
+        #expect(!FileManager.default.fileExists(atPath: fixture.recognizer.path + ".args"))
+        #expect(try fixture.workDirectories().isEmpty)
+    }
+
+    @Test
+    func theFallbackStartsFromACleanWave() async throws {
+        // opusdec fails after writing a partial file; ffmpeg exits cleanly
+        // without writing anything. Finding opusdec's leftovers would pass for
+        // a decoded file, so this must still be a failure.
+        let fixture = try TranscriberFixture(withFfmpeg: true)
+        try fixture.mark(fixture.decoder, "fail")
+        try fixture.mark(fixture.decoder, "partial")
+        try fixture.mark(fixture.ffmpeg, "silent")
+        await #expect(throws: SherpaOnnxTranscriptionError.decodingFailed(
+            program: "opusdec",
+            reason: "Failed to open voice.oga; ffmpeg also failed: no audio was produced"
+        )) {
+            try await fixture.transcriber.transcribe(fixture.audio)
+        }
+        #expect(!FileManager.default.fileExists(atPath: fixture.ffmpeg.path + ".stale"))
+        #expect(!FileManager.default.fileExists(atPath: fixture.recognizer.path + ".args"))
+        #expect(try fixture.workDirectories().isEmpty)
     }
 
     @Test
@@ -297,18 +451,42 @@ struct SherpaOnnxFileTranscriberTests {
         try Data(script.utf8).write(to: url)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
     }
+
+    /// A voice installation whose files are placeholders, enough for
+    /// `SherpaOnnxFileTranscriber.make` to find the recognizer.
+    static func installedVoice() throws -> SherpaOnnxVoiceInstallation {
+        let runtime = try #require(SherpaOnnxVoiceCatalog.runtime)
+        let installation = SherpaOnnxVoiceInstallation(
+            directoryURL: uniqueDirectory().appendingPathComponent("voice", isDirectory: true)
+        )
+        let fileManager = FileManager.default
+        let bin = installation.installedURL(for: runtime).appendingPathComponent("bin", isDirectory: true)
+        try fileManager.createDirectory(at: bin, withIntermediateDirectories: true)
+        try writeScript("#!/bin/sh\n", to: bin.appendingPathComponent("sherpa-onnx-vad-with-offline-asr"))
+        let recognizer = installation.installedURL(for: SherpaOnnxVoiceCatalog.recognizer)
+        try fileManager.createDirectory(at: recognizer, withIntermediateDirectories: true)
+        for name in ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"] {
+            try Data().write(to: recognizer.appendingPathComponent(name))
+        }
+        try Data().write(to: installation.installedURL(for: SherpaOnnxVoiceCatalog.voiceActivityDetector))
+        return installation
+    }
 }
 
 /// A fake `opusdec` and recognizer in a private directory, plus a private
-/// temporary directory for the transcriber's work files. Marker files beside
-/// each script (`<script>.<name>`) select a behaviour; each script records
-/// its arguments in `<script>.args`.
+/// temporary directory for the transcriber's work files, and optionally a
+/// fake `ffmpeg` as the fallback decoder. Marker files beside each script
+/// (`<script>.<name>`) select a behaviour; each script records its arguments
+/// in `<script>.args`, and a decoder that finds its output file already there
+/// records it in `<script>.stale`.
 private struct TranscriberFixture {
     let directory: URL
     let temporaryDirectory: URL
     let audio: AgentVoiceAudioInput
+    let hasFfmpeg: Bool
 
     var decoder: URL { directory.appendingPathComponent("opusdec") }
+    var ffmpeg: URL { directory.appendingPathComponent("ffmpeg") }
     var recognizer: URL { directory.appendingPathComponent("sherpa-onnx-vad-with-offline-asr") }
 
     var transcriber: SherpaOnnxFileTranscriber {
@@ -323,11 +501,13 @@ private struct TranscriberFixture {
                 tokens: model.appendingPathComponent("tokens.txt")
             ),
             decoder: SherpaOnnxAudioDecoder(kind: .opusdec, executable: decoder),
+            fallbackDecoder: hasFfmpeg ? SherpaOnnxAudioDecoder(kind: .ffmpeg, executable: ffmpeg) : nil,
             temporaryDirectory: temporaryDirectory
         )
     }
 
-    init() throws {
+    init(withFfmpeg: Bool = false) throws {
+        hasFfmpeg = withFfmpeg
         let root = SherpaOnnxFileTranscriberTests.uniqueDirectory()
         directory = root.appendingPathComponent("bin", isDirectory: true)
         temporaryDirectory = root.appendingPathComponent("tmp", isDirectory: true)
@@ -339,16 +519,15 @@ private struct TranscriberFixture {
         audio = AgentVoiceAudioInput(fileURL: voiceNote, filename: "voice.oga", contentType: "audio/ogg")
 
         try SherpaOnnxFileTranscriberTests.writeScript(
-            """
-            #!/bin/sh
-            printf '%s\\n' "$@" > "$0.args"
-            if [ -f "$0.fail" ]; then echo "Decoding..." >&2; echo "Failed to open voice.oga" >&2; exit 1; fi
-            if [ -f "$0.silent" ]; then exit 0; fi
-            for last; do :; done
-            printf 'RIFF' > "$last"
-            """,
+            Self.decoderScript(failure: "Failed to open voice.oga"),
             to: decoder
         )
+        if withFfmpeg {
+            try SherpaOnnxFileTranscriberTests.writeScript(
+                Self.decoderScript(failure: "Invalid data found when processing input"),
+                to: ffmpeg
+            )
+        }
         try SherpaOnnxFileTranscriberTests.writeScript(
             """
             #!/bin/sh
@@ -368,6 +547,24 @@ private struct TranscriberFixture {
 
     func mark(_ script: URL, _ name: String) throws {
         try Data().write(to: URL(fileURLWithPath: script.path + "." + name))
+    }
+
+    /// A decoder whose output file is its last argument. `fail` exits with
+    /// `failure` on standard error, after writing a partial file with
+    /// `partial`; `silent` exits cleanly without writing.
+    private static func decoderScript(failure: String) -> String {
+        """
+        #!/bin/sh
+        printf '%s\\n' "$@" > "$0.args"
+        for last; do :; done
+        if [ -e "$last" ]; then : > "$0.stale"; fi
+        if [ -f "$0.fail" ]; then
+            if [ -f "$0.partial" ]; then printf 'RIFF' > "$last"; fi
+            echo "Decoding..." >&2; echo "\(failure)" >&2; exit 1
+        fi
+        if [ -f "$0.silent" ]; then exit 0; fi
+        printf 'RIFF' > "$last"
+        """
     }
 
     func setRecognizerOutput(_ output: String) throws {

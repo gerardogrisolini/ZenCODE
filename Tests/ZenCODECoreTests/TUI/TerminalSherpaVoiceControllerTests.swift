@@ -100,9 +100,82 @@ struct TerminalSherpaVoiceControllerTests {
         await controller.start()
 
         #expect(await waitUntil { await fixture.events.systemMessages.contains { $0.hasPrefix("Voice: listening (sherpa-onnx") } })
-        #expect(await waitUntil { await fixture.events.utterances == ["Ciao zen"] })
+        #expect(await waitUntil { await fixture.events.utterances == [.dictation(id: 1, text: "Ciao zen")] })
         #expect(await controller.phase == .listening)
         await controller.stop()
+        #expect(await fixture.events.failures.isEmpty)
+        // Pause mode sends every segment at once and previews nothing.
+        #expect(await fixture.events.previews.isEmpty)
+    }
+
+    /// In pause mode an awaited yes or no is sent alone, and the dictation
+    /// id advances only with the dictations sent.
+    @Test
+    func pauseModeSendsAnAwaitedAnswerAloneAndEverySegmentAsADictation() async throws {
+        let fixture = try Fixture()
+        try fixture.queueUtterances(["sì", "Ciao zen", "Come va"])
+        let controller = fixture.makeController()
+        await controller.setAwaitingShortAnswer(true)
+        await controller.start()
+
+        #expect(await waitUntil {
+            await fixture.events.utterances == [
+                .answer("sì"),
+                .dictation(id: 1, text: "Ciao zen"),
+                .dictation(id: 2, text: "Come va")
+            ]
+        })
+        await controller.stop()
+        #expect(await fixture.events.previews.isEmpty)
+        #expect(await fixture.events.failures.isEmpty)
+    }
+
+    /// Keyword mode previews the speech collected for the keyword. A discard
+    /// of an older dictation changes nothing; a discard of the current one
+    /// forgets its speech without a preview, and the keyword alone then sends
+    /// an empty dictation (the typed draft) under the next id.
+    @Test
+    func keywordModePreviewsCollectedSpeechAndNumbersItsDictations() async throws {
+        let fixture = try Fixture()
+        try fixture.queueUtterances(["Apri il progetto", "e compila, vai", "Prova"])
+        let controller = fixture.makeController(sendKeyword: "vai")
+        await controller.start()
+
+        #expect(await waitUntil {
+            await fixture.events.previews == [
+                Preview(id: 1, text: "Apri il progetto"),
+                Preview(id: 2, text: "Prova")
+            ]
+        })
+        #expect(await fixture.events.utterances == [.dictation(id: 1, text: "Apri il progetto e compila")])
+
+        // Stale: dictation 1 was sent already, "Prova" stays collected.
+        await controller.discardDictation(through: 1)
+        try await fixture.relaunchRecognizer(of: controller, hearing: ["vai"])
+        #expect(await waitUntil { await fixture.events.utterances.last == .dictation(id: 2, text: "Prova") })
+
+        try await fixture.relaunchRecognizer(of: controller, hearing: ["Scartato"])
+        #expect(await waitUntil { await fixture.events.previews.last == Preview(id: 3, text: "Scartato") })
+        await controller.discardDictation(through: 3)
+        try await fixture.relaunchRecognizer(of: controller, hearing: ["vai"])
+        #expect(await waitUntil { await fixture.events.utterances.last == .dictation(id: 4, text: "") })
+
+        try await fixture.relaunchRecognizer(of: controller, hearing: ["Resto"])
+        #expect(await waitUntil { await fixture.events.previews.last == Preview(id: 5, text: "Resto") })
+        // Stopping removes the preview.
+        await controller.stop()
+        #expect(await fixture.events.previews == [
+            Preview(id: 1, text: "Apri il progetto"),
+            Preview(id: 2, text: "Prova"),
+            Preview(id: 3, text: "Scartato"),
+            Preview(id: 5, text: "Resto"),
+            Preview(id: 5, text: "")
+        ])
+        #expect(await fixture.events.utterances == [
+            .dictation(id: 1, text: "Apri il progetto e compila"),
+            .dictation(id: 2, text: "Prova"),
+            .dictation(id: 4, text: "")
+        ])
         #expect(await fixture.events.failures.isEmpty)
     }
 
@@ -266,16 +339,23 @@ struct TerminalSherpaVoiceControllerTests {
     }
 }
 
+private struct Preview: Sendable, Equatable {
+    let id: UInt64
+    let text: String
+}
+
 private actor VoiceEventRecorder {
     var systemMessages: [String] = []
     var failures: [String] = []
-    var utterances: [String] = []
+    var utterances: [TerminalVoiceUtterance] = []
+    var previews: [Preview] = []
     var speaking: [Bool] = []
     private var speakingHook: (@Sendable (Bool) async -> Void)?
 
     func system(_ text: String) { systemMessages.append(text) }
     func failure(_ text: String) { failures.append(text) }
-    func utterance(_ text: String) { utterances.append(text) }
+    func utterance(_ utterance: TerminalVoiceUtterance) { utterances.append(utterance) }
+    func preview(_ id: UInt64, _ text: String) { previews.append(Preview(id: id, text: text)) }
 
     func speakingChanged(_ value: Bool) async {
         speaking.append(value)
@@ -318,7 +398,7 @@ private struct Fixture {
             echo " 1: a configuration line before startup is not a result" >&2
             if [ -f "$0.fail" ]; then echo "Cannot open device default" >&2; exit 1; fi
             echo "Started. Please speak" >&2
-            if [ -f "$0.utterance" ]; then echo " 0: $(cat "$0.utterance")" >&2; rm -f "$0.utterance"; fi
+            if [ -f "$0.utterance" ]; then while IFS= read -r line; do echo " 0: $line" >&2; done < "$0.utterance"; rm -f "$0.utterance"; fi
             exec sleep 30
             """,
             to: recognizer
@@ -344,7 +424,7 @@ private struct Fixture {
         }
     }
 
-    func makeController() -> TerminalSherpaVoiceController {
+    func makeController(sendKeyword: String? = nil) -> TerminalSherpaVoiceController {
         let events = events
         return TerminalSherpaVoiceController(
             invocation: .init(
@@ -355,17 +435,39 @@ private struct Fixture {
             ),
             voiceName: "paola (it_IT)",
             languageCode: "it",
+            sendKeyword: sendKeyword.flatMap(TerminalVoiceSendKeyword.init),
             callbacks: TerminalVoiceCallbacks(
                 systemMessage: { await events.system($0) },
                 failureMessage: { await events.failure($0) },
                 utteranceRecognized: { await events.utterance($0) },
+                dictationChanged: { await events.preview($0, $1) },
                 speakingChanged: { await events.speakingChanged($0) }
             )
         )
     }
 
     func queueUtterance(_ text: String) throws {
-        try Data(text.utf8).write(to: URL(fileURLWithPath: recognizer.path + ".utterance"))
+        try queueUtterances([text])
+    }
+
+    /// Segments the next recognizer launch prints, one per line.
+    func queueUtterances(_ texts: [String]) throws {
+        let lines = texts.map { $0 + "\n" }.joined()
+        try Data(lines.utf8).write(to: URL(fileURLWithPath: recognizer.path + ".utterance"))
+    }
+
+    /// Makes the recognizer print `texts`: a short reading turns the
+    /// microphone off and launches a new recognizer when it ends, without
+    /// touching the speech collected for the keyword (pausing would).
+    func relaunchRecognizer(of controller: TerminalSherpaVoiceController, hearing texts: [String]) async throws {
+        let launches = recognizerLaunches
+        try queueUtterances(texts)
+        #expect(await controller.speak("Ok", rendering: .plainText))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while recognizerLaunches == launches, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(recognizerLaunches == launches + 1)
     }
 
     var recognizerLaunches: Int {

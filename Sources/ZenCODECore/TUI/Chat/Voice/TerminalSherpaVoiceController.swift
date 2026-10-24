@@ -279,6 +279,15 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
     private var keywordCollector: TerminalVoiceKeywordCollector?
     /// The live-chat dialogue awaits a yes or no.
     private var isAwaitingShortAnswer = false
+    /// The dictation previewed in the prompt draft (keyword mode only).
+    /// Advances after every dictation sent and every discard, so the
+    /// terminal ignores previews and sends of a dictation it already ended.
+    private var dictationID: UInt64 = 1
+    /// The preview last reported for `dictationID`.
+    private var publishedDictation = ""
+    /// A preview is being reported. Reports run one at a time, so they reach
+    /// the terminal in order; the one in flight reports the latest text.
+    private var isPublishingDictation = false
     private let callbacks: TerminalVoiceCallbacks
 
     private(set) var phase: Phase = .idle
@@ -356,7 +365,9 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         phase = .stopped
         stopRecognizer()
         stopSynthesizer()
+        keywordCollector?.reset()
         await setSpeaking(false)
+        await publishDictation()
     }
 
     /// Reads an answer or a plain text aloud with the microphone off. Returns
@@ -428,6 +439,7 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
             stopRecognizer()
             stopSynthesizer()
             await setSpeaking(false)
+            await publishDictation()
         } else if phase == .starting || phase == .listening {
             rapidRecognizerExits = 0
             await startRecognizer()
@@ -437,6 +449,17 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
 
     func setAwaitingShortAnswer(_ awaiting: Bool) {
         isAwaitingShortAnswer = awaiting
+    }
+
+    /// A segment already being recognized still arrives, as the start of
+    /// the next dictation.
+    func discardDictation(through id: UInt64) async {
+        guard id >= dictationID else {
+            return
+        }
+        keywordCollector?.reset()
+        dictationID = id &+ 1
+        publishedDictation = ""
     }
 
     // MARK: - Recognizer
@@ -493,15 +516,22 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
                     return
                 }
                 if keywordCollector != nil {
-                    // Keyword mode: segments wait until one ends with the keyword.
-                    if case let .send(utterance) = keywordCollector!.receive(
-                        text,
-                        awaitingShortAnswer: isAwaitingShortAnswer
-                    ) {
-                        await callbacks.utteranceRecognized(utterance)
+                    // Keyword mode: segments wait, previewed in the draft,
+                    // until one ends with the keyword.
+                    switch keywordCollector!.receive(text, awaitingShortAnswer: isAwaitingShortAnswer) {
+                    case let .send(utterance):
+                        await sendDictation(utterance)
+                    case let .answer(answer):
+                        await callbacks.utteranceRecognized(.answer(answer))
+                    case .collected, .nothing:
+                        await publishDictation()
                     }
+                } else if TerminalVoiceUtterance.isAwaitedAnswer(text, awaitingShortAnswer: isAwaitingShortAnswer) {
+                    await callbacks.utteranceRecognized(.answer(text))
                 } else {
-                    await callbacks.utteranceRecognized(text)
+                    // Pause mode: every segment is sent at once, with the
+                    // typed draft.
+                    await sendDictation(text)
                 }
             } else {
                 appendDiagnostic(line, to: &recognizerDiagnostics)
@@ -568,6 +598,38 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
 
     // MARK: - Support
 
+    /// Sends the final words of the current dictation; the terminal sends
+    /// them after the typed draft.
+    private func sendDictation(_ text: String) async {
+        let id = dictationID
+        await callbacks.utteranceRecognized(.dictation(id: id, text: text))
+        // A discard may have advanced the id while the send was delivered.
+        dictationID = max(dictationID, id &+ 1)
+        publishedDictation = ""
+        await publishDictation()
+    }
+
+    /// Reports the speech collected for the keyword, previewed at the end of
+    /// the prompt draft. Pause mode sends every segment at once and shows
+    /// nothing. Only changes are reported.
+    private func publishDictation() async {
+        guard !isPublishingDictation else {
+            return
+        }
+        isPublishingDictation = true
+        defer {
+            isPublishingDictation = false
+        }
+        while true {
+            let text = keywordCollector?.pending ?? ""
+            guard text != publishedDictation else {
+                return
+            }
+            publishedDictation = text
+            await callbacks.dictationChanged(dictationID, text)
+        }
+    }
+
     private func setSpeaking(_ speaking: Bool) async {
         guard speaking != isSpeaking else {
             return
@@ -622,7 +684,9 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         phase = .failed
         stopRecognizer()
         stopSynthesizer()
+        keywordCollector?.reset()
         await setSpeaking(false)
+        await publishDictation()
         await callbacks.failureMessage(message)
     }
 }

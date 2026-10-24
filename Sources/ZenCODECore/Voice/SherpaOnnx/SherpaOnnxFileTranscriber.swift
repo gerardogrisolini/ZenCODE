@@ -3,7 +3,8 @@
 //  ZenCODE
 //
 //  Linux transcription of Telegram voice messages. The downloaded message is
-//  decoded with `opusdec` (opus-tools), else `ffmpeg`, into a temporary
+//  decoded with `opusdec` (opus-tools), else `ffmpeg` — also when `opusdec`
+//  fails on a file that is not really Ogg Opus — into a temporary
 //  16 kHz mono WAV file; `sherpa-onnx-vad-with-offline-asr` then splits it on
 //  silences with the Silero voice activity detector and recognizes each
 //  segment with Parakeet TDT 0.6B v3 — the files installed by `/setup` >
@@ -45,15 +46,15 @@ struct SherpaOnnxAudioDecoder: Sendable, Equatable {
         return ["oga", "ogg", "opus"].contains(fileExtension)
     }
 
-    /// `opusdec` when it is installed and `audio` is Ogg Opus, else `ffmpeg`;
-    /// `nil` when neither is installed.
-    static func available(
+    /// The installed decoders that can read `audio`, in order of preference:
+    /// `opusdec` then `ffmpeg` for Ogg Opus, `ffmpeg` alone for anything else.
+    static func candidates(
         for audio: AgentVoiceAudioInput,
         searchDirectories: [String] = Self.searchDirectories,
         fileManager: FileManager = .default
-    ) -> SherpaOnnxAudioDecoder? {
+    ) -> [SherpaOnnxAudioDecoder] {
         let kinds: [Kind] = isOggOpus(audio) ? [.opusdec, .ffmpeg] : [.ffmpeg]
-        for kind in kinds {
+        return kinds.compactMap { kind in
             for directory in searchDirectories {
                 let candidate = URL(fileURLWithPath: directory, isDirectory: true)
                     .appendingPathComponent(kind.rawValue)
@@ -61,8 +62,18 @@ struct SherpaOnnxAudioDecoder: Sendable, Equatable {
                     return SherpaOnnxAudioDecoder(kind: kind, executable: candidate)
                 }
             }
+            return nil
         }
-        return nil
+    }
+
+    /// `opusdec` when it is installed and `audio` is Ogg Opus, else `ffmpeg`;
+    /// `nil` when neither is installed.
+    static func available(
+        for audio: AgentVoiceAudioInput,
+        searchDirectories: [String] = Self.searchDirectories,
+        fileManager: FileManager = .default
+    ) -> SherpaOnnxAudioDecoder? {
+        candidates(for: audio, searchDirectories: searchDirectories, fileManager: fileManager).first
     }
 
     func arguments(input: URL, output: URL) -> [String] {
@@ -106,7 +117,22 @@ enum SherpaOnnxTranscriptionError: LocalizedError, Equatable {
 struct SherpaOnnxFileTranscriber: Sendable {
     let paths: SherpaOnnxTranscriptionPaths
     let decoder: SherpaOnnxAudioDecoder
+    /// Tried on the same input when `decoder` fails: `opusdec` fails on a
+    /// `.ogg` that is Vorbis, or on an `audio/ogg` file that is not Opus.
+    let fallbackDecoder: SherpaOnnxAudioDecoder?
     let temporaryDirectory: URL
+
+    init(
+        paths: SherpaOnnxTranscriptionPaths,
+        decoder: SherpaOnnxAudioDecoder,
+        fallbackDecoder: SherpaOnnxAudioDecoder? = nil,
+        temporaryDirectory: URL
+    ) {
+        self.paths = paths
+        self.decoder = decoder
+        self.fallbackDecoder = fallbackDecoder
+        self.temporaryDirectory = temporaryDirectory
+    }
 
     /// The transcriber for `audio`, or why it cannot run: voice mode files
     /// missing (`SherpaOnnxVoiceInstallError`) or no decoder installed.
@@ -117,10 +143,11 @@ struct SherpaOnnxFileTranscriber: Sendable {
         temporaryDirectory: URL = FileManager.default.temporaryDirectory
     ) throws -> SherpaOnnxFileTranscriber {
         let paths = try installation.transcriptionPaths().get()
-        guard let decoder = SherpaOnnxAudioDecoder.available(
+        let decoders = SherpaOnnxAudioDecoder.candidates(
             for: audio,
             searchDirectories: searchDirectories
-        ) else {
+        )
+        guard let decoder = decoders.first else {
             throw SherpaOnnxTranscriptionError.missingDecoder(
                 oggOpus: SherpaOnnxAudioDecoder.isOggOpus(audio)
             )
@@ -128,6 +155,7 @@ struct SherpaOnnxFileTranscriber: Sendable {
         return SherpaOnnxFileTranscriber(
             paths: paths,
             decoder: decoder,
+            fallbackDecoder: decoders.dropFirst().first,
             temporaryDirectory: temporaryDirectory
         )
     }
@@ -186,32 +214,7 @@ struct SherpaOnnxFileTranscriber: Sendable {
         }
         let wave = workDirectory.appendingPathComponent("voice.wav")
 
-        let decoded: SherpaOnnxProgramOutput
-        do {
-            decoded = try await SherpaOnnxProgramRunner.run(
-                decoder.executable,
-                arguments: decoder.arguments(input: audio.fileURL, output: wave)
-            )
-        } catch let error as CancellationError {
-            throw error
-        } catch {
-            throw SherpaOnnxTranscriptionError.decodingFailed(
-                program: decoder.kind.rawValue,
-                reason: error.localizedDescription
-            )
-        }
-        guard decoded.status == 0 else {
-            throw SherpaOnnxTranscriptionError.decodingFailed(
-                program: decoder.kind.rawValue,
-                reason: decoded.failureReason
-            )
-        }
-        guard fileManager.fileExists(atPath: wave.path) else {
-            throw SherpaOnnxTranscriptionError.decodingFailed(
-                program: decoder.kind.rawValue,
-                reason: "no audio was produced."
-            )
-        }
+        try await decode(audio, to: wave)
         try Task.checkCancellation()
 
         let recognized: SherpaOnnxProgramOutput
@@ -235,6 +238,66 @@ struct SherpaOnnxFileTranscriber: Sendable {
             throw AgentVoiceTranscriptionError.emptyTranscript
         }
         return text
+    }
+
+    /// Decodes `audio` into `wave` with `decoder`. When that fails and a
+    /// fallback decoder is installed, the fallback decodes the same input into
+    /// a clean `wave`. If both fail the error names the first decoder and
+    /// adds the reason of the second one.
+    func decode(_ audio: AgentVoiceAudioInput, to wave: URL) async throws {
+        do {
+            try await decode(audio, with: decoder, to: wave)
+        } catch let first as SherpaOnnxTranscriptionError {
+            guard let fallbackDecoder, case let .decodingFailed(program, firstReason) = first else {
+                throw first
+            }
+            // A failed decoder can leave a partial file behind.
+            try? FileManager.default.removeItem(at: wave)
+            do {
+                try await decode(audio, with: fallbackDecoder, to: wave)
+            } catch let second as SherpaOnnxTranscriptionError {
+                guard case let .decodingFailed(fallbackProgram, secondReason) = second else {
+                    throw second
+                }
+                throw SherpaOnnxTranscriptionError.decodingFailed(
+                    program: program,
+                    reason: "\(firstReason); \(fallbackProgram) also failed: \(secondReason)"
+                )
+            }
+        }
+    }
+
+    private func decode(
+        _ audio: AgentVoiceAudioInput,
+        with decoder: SherpaOnnxAudioDecoder,
+        to wave: URL
+    ) async throws {
+        let decoded: SherpaOnnxProgramOutput
+        do {
+            decoded = try await SherpaOnnxProgramRunner.run(
+                decoder.executable,
+                arguments: decoder.arguments(input: audio.fileURL, output: wave)
+            )
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            throw SherpaOnnxTranscriptionError.decodingFailed(
+                program: decoder.kind.rawValue,
+                reason: error.localizedDescription
+            )
+        }
+        guard decoded.status == 0 else {
+            throw SherpaOnnxTranscriptionError.decodingFailed(
+                program: decoder.kind.rawValue,
+                reason: decoded.failureReason
+            )
+        }
+        guard FileManager.default.fileExists(atPath: wave.path) else {
+            throw SherpaOnnxTranscriptionError.decodingFailed(
+                program: decoder.kind.rawValue,
+                reason: "no audio was produced"
+            )
+        }
     }
 }
 
