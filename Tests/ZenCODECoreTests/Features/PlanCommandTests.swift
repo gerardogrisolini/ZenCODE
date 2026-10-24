@@ -952,7 +952,6 @@ struct PlanCommandTests {
             "Planner questions",
             "Planner questions\nWhich compatibility behavior is required?",
             "Planner questions: choose a behavior\n1. Which one?",
-            "Intro\nPlanner questions\n1. Which one?",
             "Planner questions\n1. Which one?\n\nPlanner questions:\n2. Another?",
             "Planner questions\n1. Which one?\n\nPlanner questions: duplicate\n2. Another?",
             "Planner questions\n1. Which one?\n\nSpecifiche concordate\nImplementation plan\n1. Implement",
@@ -970,6 +969,16 @@ struct PlanCommandTests {
         #expect(PlanningCommandKernel.isPlannerQuestionResponse(
             "\n# Planner questions:\n1) Which compatibility behavior is required?"
         ))
+        // The raw validation stays strict about a preamble; only the
+        // Planner-authored block extracted by `plannerResponse` is accepted.
+        let narratedQuestions = "Intro\nPlanner questions\n1. Which one?"
+        #expect(!PlanningCommandKernel.isPlannerQuestionResponse(narratedQuestions))
+        #expect(PlanningCommandKernel.plannerResponse(
+            parentResponse: parentResponse,
+            snapshots: [snapshot(revision: 30, output: narratedQuestions)],
+            baseline: initialBaseline,
+            rootSessionID: "planning-session"
+        )?.response.text == "Planner questions\n1. Which one?")
 
         var followUpState = PlanningCommandRuntimeState(goal: "harden plan routing")
         followUpState.recordPlannerOutput(
@@ -993,6 +1002,127 @@ struct PlanCommandTests {
             baseline: followUpBaseline,
             rootSessionID: "planning-session"
         )?.response.text.hasPrefix("Specifiche concordate") == true)
+    }
+
+    @Test
+    func plannerResponseDiscardsProgressCommentaryBeforeTheProtocolBlock() {
+        func snapshot(revision: UInt64, output: String) -> DirectSubAgentRuntime.AgentSnapshot {
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "planner-initial",
+                rootSessionID: "planning-session",
+                name: PlanningCommandKernel.planAuthorAgentName,
+                role: AgentProfileStore.plannerAgentName,
+                profileID: AgentProfileStore.plannerAgentID.uuidString,
+                status: .idle,
+                pending: false,
+                latestOutput: output,
+                latestOutputRevision: revision,
+                latestError: nil,
+                createdAt: Date(timeIntervalSince1970: 1),
+                updatedAt: Date(timeIntervalSince1970: 2)
+            )
+        }
+        let parentResponse = DirectAgentResponse(
+            text: "Coordinator response must not be used.",
+            stopReason: "stop",
+            modelID: "coordinator"
+        )
+        let initialBaseline = PlannerTurnBaseline(
+            state: PlanningCommandRuntimeState(goal: "harden plan routing"),
+            snapshots: [],
+            rootSessionID: "planning-session"
+        )
+        func initialResponseText(_ output: String, revision: UInt64) -> String? {
+            PlanningCommandKernel.plannerResponse(
+                parentResponse: parentResponse,
+                snapshots: [snapshot(revision: revision, output: output)],
+                baseline: initialBaseline,
+                rootSessionID: "planning-session"
+            )?.response.text
+        }
+
+        // Multi-paragraph narration before a valid question block is dropped.
+        #expect(initialResponseText(
+            "Analizzo il codice.\n\nHo letto i file principali.\nOra preparo le domande.\n\n"
+                + "Planner questions\n1. Which one?\n2. Another?",
+            revision: 1
+        ) == "Planner questions\n1. Which one?\n2. Another?")
+        #expect(initialResponseText(
+            "Reading the code.\n\n## Planner questions:\n1) Which one?",
+            revision: 2
+        ) == "## Planner questions:\n1) Which one?")
+
+        // A preamble never makes an invalid block acceptable.
+        let invalidNarratedOutputs = [
+            "Analizzo il codice.\nPlanner questions\nWhich one?",
+            "Intro\nPlanner questions: choose\n1. Which?",
+            "Intro\nPlanner questions\n1. Which?\n\nImplementation plan\n1. Implement",
+            "Intro\nPlanner questions\n1. Which?\n\nPlanner questions\n2. Another?",
+        ]
+        for (offset, output) in invalidNarratedOutputs.enumerated() {
+            #expect(initialResponseText(output, revision: UInt64(offset + 10)) == nil)
+        }
+        // A final plan is still refused on the initial turn, narrated or not.
+        #expect(initialResponseText(
+            "Intro\nSpecifiche concordate\n\nImplementation plan\n1. Implement",
+            revision: 20
+        ) == nil)
+
+        var followUpState = PlanningCommandRuntimeState(goal: "harden plan routing")
+        let question = snapshot(
+            revision: 1,
+            output: "Planner questions\n1. Which compatibility behavior is required?"
+        )
+        followUpState.recordPlannerOutput(
+            question.latestOutput!,
+            agentID: question.id,
+            revision: question.latestOutputRevision
+        )
+        let recordedReply = followUpState.recordReply("Keep existing clients compatible.")
+        #expect(recordedReply)
+        let followUpBaseline = PlannerTurnBaseline(
+            state: followUpState,
+            snapshots: [question],
+            rootSessionID: "planning-session"
+        )
+        func followUpResponseText(_ output: String, revision: UInt64) -> String? {
+            PlanningCommandKernel.plannerResponse(
+                parentResponse: parentResponse,
+                snapshots: [snapshot(revision: revision, output: output)],
+                baseline: followUpBaseline,
+                rootSessionID: "planning-session"
+            )?.response.text
+        }
+
+        let finalPlan = "Specifiche concordate\n\nImplementation plan\n1. Implement"
+        let narratedPlan = followUpResponseText(
+            "Analizzo il codice.\nHo tutto quello che serve.\n\n" + finalPlan,
+            revision: 2
+        )
+        #expect(narratedPlan == finalPlan)
+        #expect(narratedPlan?.hasPrefix("Specifiche concordate") == true)
+        #expect(narratedPlan?.contains("Analizzo") == false)
+
+        // Without a protocol heading, or when it already leads, nothing changes.
+        let headinglessOutput = "Revised notes without any heading\n1. Implement"
+        #expect(followUpResponseText(headinglessOutput, revision: 3) == headinglessOutput)
+        #expect(followUpResponseText(finalPlan, revision: 4) == finalPlan)
+        let questionsWithTrailingText = "Planner questions\n1. Which one?\n\nThanks for the context."
+        #expect(followUpResponseText(questionsWithTrailingText, revision: 5)
+            == questionsWithTrailingText)
+
+        // The extraction itself is byte-identical when there is nothing to drop
+        // and trims only when it removes a preamble.
+        #expect(PlanningCommandKernel.plannerAuthoredBlock("\n\nPlanner questions\n1. Q\n")
+            == "\n\nPlanner questions\n1. Q\n")
+        #expect(PlanningCommandKernel.plannerAuthoredBlock("  No heading here  ")
+            == "  No heading here  ")
+        #expect(PlanningCommandKernel.plannerAuthoredBlock("\n Intro\nPlanner questions\n1. Q\n\n")
+            == "Planner questions\n1. Q")
+        // The raw validation used on history stays strict.
+        #expect(!PlanningCommandKernel.isPlannerQuestionResponse(
+            "Analizzo il codice.\nPlanner questions\n1. Which one?"
+        ))
     }
 
     @Test
@@ -1614,10 +1744,53 @@ struct PlanCommandTests {
         #expect(prompt.contains("If output is failed, empty, or malformed"))
         #expect(prompt.contains("call todo.write once with mode \"upsert\""))
         #expect(prompt.contains("valid todo.write task for every point"))
+        #expect(prompt.contains("timeoutSeconds 900"))
+        #expect(prompt.contains("call agent.wait again"))
+        #expect(prompt.contains("never end the turn while the Planner is still working"))
         #expect(!prompt.contains("The first Planner turn is always a brainstorming turn"))
         #expect(!prompt.contains("concise, self-contained functional analysis"))
         #expect(!prompt.contains("verified components/files/symbols"))
         #expect(!prompt.contains("Prohibit generic formulations, placeholders"))
+    }
+
+    @Test
+    func planContinuationPromptTellsTheCoordinatorToKeepWaitingForThePlanner() {
+        let planner = AgentProfile(
+            id: AgentProfileStore.plannerAgentID.uuidString,
+            name: AgentProfileStore.plannerAgentName,
+            tools: []
+        )
+        var state = PlanningCommandRuntimeState(goal: "harden plan routing")
+        state.recordPlannerOutput(
+            "Planner questions\n1. Which compatibility behavior is required?",
+            agentID: "planner-wait-test",
+            revision: 1
+        )
+        let recordedReply = state.recordReply("Keep existing clients compatible.")
+        #expect(recordedReply)
+
+        let existingPlannerPrompt = PlanningCommandKernel.planContinuationPrompt(
+            state: state,
+            planner: planner
+        )
+        #expect(existingPlannerPrompt.contains("agent id \"planner-wait-test\""))
+        #expect(existingPlannerPrompt.contains("wait for that same agent"))
+
+        var recreatedPlannerState = state
+        recreatedPlannerState.plannerAgentID = nil
+        let recreatedPlannerPrompt = PlanningCommandKernel.planContinuationPrompt(
+            state: recreatedPlannerState,
+            planner: planner
+        )
+        #expect(!recreatedPlannerPrompt.contains("agent id \"planner-wait-test\""))
+        #expect(recreatedPlannerPrompt.contains("Recreate exactly one agent"))
+
+        for prompt in [existingPlannerPrompt, recreatedPlannerPrompt] {
+            #expect(prompt.contains(PlanningCommandKernel.plannerWaitInstruction))
+            #expect(prompt.contains("timeoutSeconds 900"))
+            #expect(prompt.contains("call agent.wait again"))
+            #expect(prompt.contains("never end the turn while the Planner is still working"))
+        }
     }
 
     @Test

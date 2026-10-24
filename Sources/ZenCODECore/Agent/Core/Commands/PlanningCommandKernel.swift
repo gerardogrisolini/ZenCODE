@@ -70,7 +70,8 @@ enum PlanningCommandKernel {
             from: snapshots,
             baseline: baseline,
             rootSessionID: rootSessionID
-        ), let text = snapshot.latestOutput?.nilIfBlank else {
+        ), let output = snapshot.latestOutput?.nilIfBlank,
+           let text = plannerAuthoredBlock(output).nilIfBlank else {
             return nil
         }
         guard !baseline.requiresInitialQuestion || isPlannerQuestionResponse(text) else {
@@ -84,6 +85,24 @@ enum PlanningCommandKernel {
             ),
             snapshot
         )
+    }
+
+    /// Drops the progress commentary the Planner streamed before its protocol
+    /// block. The provider concatenates the text of every tool round, so a
+    /// narrating Planner leaves a preamble ahead of its `Planner questions`,
+    /// `Specifiche concordate`, or `Implementation plan` heading. The text is
+    /// returned unchanged when it has no such heading or already starts with it.
+    static func plannerAuthoredBlock(_ text: String) -> String {
+        let lines = text.components(separatedBy: .newlines)
+        guard let headingIndex = lines.firstIndex(where: { line in
+            isPlannerQuestionsHeadingLike(line) || isPlannerPlanHeading(line)
+        }), let firstContentIndex = lines.firstIndex(where: { $0.nilIfBlank != nil }),
+              headingIndex != firstContentIndex else {
+            return text
+        }
+        return lines[headingIndex...]
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func isPlannerSnapshotProfile(

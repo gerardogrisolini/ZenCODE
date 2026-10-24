@@ -3,6 +3,15 @@
 import ToolCore
 
 extension PlanningCommandKernel {
+    /// Shared wait rule for every hidden planning prompt: the Planner can take
+    /// longer than the default `agent.wait` timeout, and the coordinator must
+    /// not end its turn while the Planner is still working.
+    static let plannerWaitInstruction = """
+        Call agent.wait with timeoutSeconds 900. If agent.wait times out or reports the Planner \
+        still running, queued, or pending, call agent.wait again; never end the turn while the \
+        Planner is still working.
+        """
+
     static func planStartPrompt(goal: String, planner: AgentProfile) -> String {
         """
         You are only the coordinator for this planning pass. Stay on your current agent \
@@ -17,10 +26,11 @@ extension PlanningCommandKernel {
         "\(planAuthorAgentName)", role "Planner", and profile "\(planner.id)".
         - Give that Planner the complete requested goal and every relevant constraint from the \
         conversation. Its runtime profile policy owns the brainstorming and plan-authoring protocol.
-        - Wait for the Planner with agent.wait. It returns early when the Planner asks you a question in chat: \
-        answer with agent.message, using only facts and constraints already present in the conversation, \
-        then call agent.wait again. Material decisions that belong to the operator must not be answered \
-        by you; tell the Planner in chat to put them in its "Planner questions" block.
+        - Wait for the Planner with agent.wait. It returns early when the Planner \
+        asks you a question in chat: answer with agent.message, using only facts and constraints already \
+        present in the conversation, then call agent.wait again. Material decisions that belong to the \
+        operator must not be answered by you; tell the Planner in chat to put them in its \
+        "Planner questions" block. \(plannerWaitInstruction)
         - The initial turn is valid only when the Planner returns the required "Planner questions" \
         block. If it returns a final plan instead, use agent.message to require the same Planner to \
         replace it with its required focused question block, then wait again.
@@ -49,17 +59,18 @@ extension PlanningCommandKernel {
         if let plannerAgentID = state.plannerAgentID?.nilIfBlank {
             routing = """
             Send the operator's newest reply verbatim to the existing Planner with agent.message, \
-            using agent id "\(plannerAgentID)", then wait for that same agent. Do not reinterpret, \
-            summarize, or answer the reply yourself. If and only if that agent no longer exists, \
-            recreate exactly one agent named "\(planAuthorAgentName)" with role "Planner" and \
+            using agent id "\(plannerAgentID)", then wait for that same agent. \(plannerWaitInstruction) \
+            Do not reinterpret, summarize, or answer the reply yourself. If and only if that agent no \
+            longer exists, recreate exactly one agent named "\(planAuthorAgentName)" with role "Planner" and \
             profile "\(planner.id)", give it the original goal and the complete transcript below, \
-            and wait for it.
+            and wait for it the same way.
             """
         } else {
             routing = """
             Recreate exactly one agent named "\(planAuthorAgentName)" with role "Planner" and \
             profile "\(planner.id)", give it the original goal and complete transcript below, \
-            and wait for it. Do not reinterpret, summarize, or answer the operator replies yourself.
+            and wait for it. \(plannerWaitInstruction) Do not reinterpret, summarize, or answer the \
+            operator replies yourself.
             """
         }
 

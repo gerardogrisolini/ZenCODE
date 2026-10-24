@@ -43,6 +43,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- `/plan` no longer fails with "The Planner agent did not produce fresh
+  output" when the Planner writes progress comments before its questions or
+  its plan. Only the block from its `Planner questions`, `Specifiche
+  concordate`, or `Implementation plan` heading onward is kept, and the
+  coordinator now keeps waiting for a Planner that takes longer than 90
+  seconds.
 - Voice: on macOS, a short pause while dictating no longer replaces the words
   said before it with the next ones; after a pause the dictation continues on a
   new line and the whole text is sent.

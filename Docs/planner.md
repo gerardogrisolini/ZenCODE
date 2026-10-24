@@ -99,10 +99,12 @@ feature, MCP, and other external grants remain outside that classification.
 
 1. The current agent stays as coordinator only — it cannot draft, consolidate, or rewrite the plan.
 2. One sub-agent named `plan-author` is created with profile `Planner`.
-3. The Planner receives the complete goal and either asks its single question block or writes the final plan itself.
+3. The Planner receives the complete goal and either asks its single question block or writes the final plan itself. Text it streams before its `Planner questions`, `Specifiche concordate`, or `Implementation plan` heading is progress commentary and is discarded; only the block from that heading onward is kept, and the heading and block rules are unchanged.
 4. Only a final answer copies the Planner's numbered points into a `todo.write` bootstrap. The shared kernel validates those in-memory todo items as a DAG and records them in the active, unapproved plan.
 5. If the output is incomplete, the coordinator asks the same Planner to revise — it never fills gaps itself. Follow-up turns accept only a fresh output revision from that Planner; recreation is allowed only when the previous instance is gone.
 6. The Planner-authored plan becomes the active, unapproved session plan.
+
+The coordinator waits for the Planner with `agent.wait` calls of 900 seconds, repeating them while the Planner is still running, queued, or pending, so a Planner that takes longer than the default 90 seconds does not end the turn early.
 
 If no completed Planner output or valid graph is available, the turn fails rather than falling back to a plan from another profile.
 
