@@ -111,7 +111,11 @@ enum TerminalStyle {
     }
 
     enum Permission {
-        static let border = Accent.primary
+        // Dimmed peach frame and title, clearing inherited bold before SGR 2,
+        // so the consent card reads translucent next to the prompt frame.
+        static let border = TerminalStyle.sequence(22, 2, 38, 5, 215)
+        // The command marker keeps the full identity orange to stay prominent.
+        static let marker = Accent.primary
         static let choice = TerminalStyle.sequence(38, 5, 81)
         static let emphasizedChoice = TerminalStyle.sequence(1, 38, 5, 81)
         static let metadata = TerminalStyle.sequence(38, 5, 244)

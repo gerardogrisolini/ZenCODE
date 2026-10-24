@@ -164,7 +164,8 @@ extension LocalExecPermissionAuthorizer {
 
     /// ANSI accents reused across the consent card. They are aliases of the
     /// shared TUI style so this dialog stays consistent with other surfaces.
-    private static let ansiOrange = TerminalStyle.Permission.border
+    private static let ansiBorder = TerminalStyle.Permission.border
+    private static let ansiMarker = TerminalStyle.Permission.marker
     private static let ansiCyan = TerminalStyle.Permission.choice
     private static let ansiCyanBold = TerminalStyle.Permission.emphasizedChoice
     private static let ansiDim = TerminalStyle.Permission.metadata
@@ -213,12 +214,12 @@ extension LocalExecPermissionAuthorizer {
         }
         let executable = String(command[..<boundary])
         let rest = String(command[boundary...])
-        return Self.wrap(marker, code: Self.ansiOrange, colored: colored)
+        return Self.wrap(marker, code: Self.ansiMarker, colored: colored)
             + Self.wrap(executable, code: Self.ansiCyanBold, colored: colored)
             + rest
     }
 
-    /// Builds the orange-bordered card at the same full row width as the prompt
+    /// Builds the dimmed-peach-bordered card at the same full row width as the prompt
     /// panel, regardless of content length, then explicitly reflows its content.
     /// The primary-screen compositor disables autowrap while painting dialog
     /// rows, just as it does for the prompt and docked Chat surfaces.
@@ -233,7 +234,7 @@ extension LocalExecPermissionAuthorizer {
         let rowWidth = max(4, terminalColumns)
         let innerWidth = max(1, rowWidth - 4)
         let rule = String(repeating: "─", count: innerWidth + 2)
-        let border = { Self.wrap($0, code: Self.ansiOrange, colored: colored) }
+        let border = { Self.wrap($0, code: Self.ansiBorder, colored: colored) }
 
         // Top border embeds the title (`╭─ Title ────╮`), padded to the content
         // width so the title is the card heading, not a body row. On unusually
