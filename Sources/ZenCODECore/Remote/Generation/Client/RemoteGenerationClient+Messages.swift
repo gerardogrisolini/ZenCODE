@@ -49,40 +49,51 @@ extension RemoteGenerationClient {
             + (contextMessage.map { [$0] } ?? []) + seededHistory
     }
 
-    /// Returns a copy of `messages` with the current turn's memory block
-    /// appended to the last user message.
+    /// Returns a copy of `messages` with the current turn's memory block and
+    /// instruction appended to the last user message.
     ///
-    /// This is the single place where automatically recalled memory enters a
-    /// provider request, and it is shared by every concrete generation client
-    /// so the three wire formats cannot drift apart.
+    /// This is the single place where automatically recalled memory and the
+    /// per-turn instruction (``AgentTurnInstructionContext``) enter a provider
+    /// request, and it is shared by every concrete generation client so the
+    /// three wire formats cannot drift apart.
     ///
     /// Contract:
     ///
-    /// - The input is returned **unchanged** when the block is nil or blank, so
-    ///   a turn without memory produces a byte-identical payload.
+    /// - The appended text is the memory block followed by the instruction,
+    ///   each only when it is not blank, joined by a blank line. The memory
+    ///   block always comes first and the instruction is the last thing the
+    ///   model reads.
+    /// - The input is returned **unchanged** when both the block and the
+    ///   instruction are nil or blank, so a turn without either produces a
+    ///   byte-identical payload. With only a block the result is the same as
+    ///   before the instruction existed.
     /// - Only the outgoing copy is touched. Callers pass `session.messages` by
     ///   value and must never write the result back, which is what keeps the
-    ///   block out of conversation history, saved snapshots and the session
-    ///   cache key.
+    ///   block and the instruction out of conversation history, saved snapshots
+    ///   and the session cache key.
     /// - Multimodal content is preserved: when the last user message already
-    ///   carries an array of content items (text plus images), the block is
-    ///   appended as one more `text` item instead of clobbering the array with
-    ///   a string, which would silently drop the attached images.
+    ///   carries an array of content items (text plus images), the combined
+    ///   text is appended as one more `text` item instead of clobbering the
+    ///   array with a string, which would silently drop the attached images.
     /// - Callers apply this on **every** tool round, always against the current
-    ///   value of `session.messages`. Because the block is never written back,
-    ///   each round's outgoing copy is rebuilt from the fresh original and
-    ///   carries the block exactly once; applying the helper to an array that
-    ///   already contains the block (a previous outgoing copy) is what would
-    ///   duplicate it, and call sites never do that.
+    ///   value of `session.messages`. Because the added text is never written
+    ///   back, each round's outgoing copy is rebuilt from the fresh original and
+    ///   carries it exactly once; applying the helper to an array that already
+    ///   contains it (a previous outgoing copy) is what would duplicate it, and
+    ///   call sites never do that.
     ///
-    /// The default argument reads the task-local at the *call site*, which is
-    /// what makes the turn-scoped binding visible here without threading the
-    /// block through every provider signature.
+    /// The default arguments read the task-locals at the *call site*, which is
+    /// what makes the turn-scoped bindings visible here without threading the
+    /// block or the instruction through every provider signature.
     public static func applyingCurrentTurnMemory(
         to messages: [[String: Any]],
-        block: String? = MemoryTurnContext.currentTurnMemoryBlock
+        block: String? = MemoryTurnContext.currentTurnMemoryBlock,
+        instruction: String? = AgentTurnInstructionContext.currentTurnInstruction
     ) -> [[String: Any]] {
-        guard let block = block?.nilIfBlank else {
+        let addition = [block, instruction]
+            .compactMap { $0?.nilIfBlank }
+            .joined(separator: "\n\n")
+        guard !addition.isEmpty else {
             return messages
         }
         guard let lastUserIndex = messages.lastIndex(where: { message in
@@ -99,9 +110,9 @@ extension RemoteGenerationClient {
         var updated = messages
         var message = updated[lastUserIndex]
         if let text = message["content"] as? String {
-            message["content"] = text.isEmpty ? block : "\(text)\n\n\(block)"
+            message["content"] = text.isEmpty ? addition : "\(text)\n\n\(addition)"
         } else if var items = message["content"] as? [[String: Any]] {
-            items.append(["type": "text", "text": block])
+            items.append(["type": "text", "text": addition])
             message["content"] = items
         } else {
             // Unrecognized content shape: leave the request untouched rather

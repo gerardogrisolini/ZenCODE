@@ -325,7 +325,9 @@ outgoing copy of the last user message — the single shared injection point for
 all three concrete generation clients, so the wire formats cannot drift.
 Callers apply it on every tool round against the fresh value of
 `session.messages`, so each round's outgoing copy carries the block exactly
-once. `session.messages` is never mutated, so the block never enters
+once. The same helper also merges a turn instruction, when a turn binds one,
+after the block and under the same rules (see [voice.md](voice.md)).
+`session.messages` is never mutated, so the block never enters
 conversation history, saved-session snapshots, or the session cache key;
 saved-session and prompt-cache compatibility are preserved. The alternatives
 were rejected on purpose: `systemPrompt` participates in the session cache

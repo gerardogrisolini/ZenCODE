@@ -32,9 +32,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
   [Docs/organizer.md](Docs/organizer.md) guide describes the profile. Existing
   `agents.json` manifests are not changed; regenerate the recommended profiles
   in setup to apply the new instructions.
+- Voice: voice mode now reads every final answer aloud in full, however long it
+  is. The answer length limit in `/setup` > Voice mode is removed, and so is the
+  `voice.maximumSpokenCharacters` setting that 2.4.0 saved: a saved value is
+  ignored and disappears from `settings.json` on the next save. While voice
+  mode listens, each prompt also asks the model for short sentences and brief
+  comments on what it does as it works. The comments appear in the terminal,
+  and only the final answer is read aloud. The instruction is sent with the
+  request and is not saved in the session history.
 
 ### Fixed
 
+- Voice: on macOS, a short pause while dictating no longer replaces the words
+  said before it with the next ones; after a pause the dictation continues on a
+  new line and the whole text is sent.
 - Telegram voice messages on Linux: when `opusdec` fails on an audio file, for
   example an `.ogg` file that holds Vorbis rather than Opus, `ffmpeg` now
   decodes the same file if it is installed. The error is reported only when

@@ -18,6 +18,7 @@ extension AgentCoreSessionRunner {
         onToolWillExecute: (@Sendable (DirectAgentToolCall) async -> Void)? = nil,
         borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
         toolProviders: [AgentToolProvider] = [],
+        turnInstruction: String? = nil,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
         try await sessionTurnLease.withLease(sessionID: configuration.sessionID) { [self] in
@@ -29,6 +30,7 @@ extension AgentCoreSessionRunner {
                 onToolWillExecute: onToolWillExecute,
                 borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
                 toolProviders: toolProviders,
+                turnInstruction: turnInstruction,
                 onEvent: onEvent
             )
         }
@@ -42,6 +44,7 @@ extension AgentCoreSessionRunner {
         onToolWillExecute: (@Sendable (DirectAgentToolCall) async -> Void)? = nil,
         borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
         toolProviders: [AgentToolProvider] = [],
+        turnInstruction: String? = nil,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
         let promptID = UUID()
@@ -125,19 +128,25 @@ extension AgentCoreSessionRunner {
                 // executors. It is scoped to this one `sendPrompt`, so nothing
                 // that outlives the turn can observe it.
                 try await MemoryTurnContext.$currentTurnMemoryBlock.withValue(memoryBlock) {
-                    try await backend.sendPrompt(
-                        sessionID: configuration.sessionID,
-                        prompt: prompt,
-                        attachments: attachments,
-                        onEvent: { event in
-                            await turnRecorder.record(event)
-                            await learningLedger.record(event)
-                            if case let .toolCallStarted(toolCall) = event {
-                                await onToolWillExecute?(toolCall)
-                            }
-                            await onEvent(event)
+                    // The caller's per-turn instruction travels the same way,
+                    // around this one call: `consolidateMemory` and the rest of
+                    // the turn below never see it.
+                    try await AgentTurnInstructionContext.$currentTurnInstruction
+                        .withValue(turnInstruction) {
+                            try await backend.sendPrompt(
+                                sessionID: configuration.sessionID,
+                                prompt: prompt,
+                                attachments: attachments,
+                                onEvent: { event in
+                                    await turnRecorder.record(event)
+                                    await learningLedger.record(event)
+                                    if case let .toolCallStarted(toolCall) = event {
+                                        await onToolWillExecute?(toolCall)
+                                    }
+                                    await onEvent(event)
+                                }
+                            )
                         }
-                    )
                 }
             }
             try verifyBackendGeneration(generation)

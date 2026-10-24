@@ -84,14 +84,15 @@ public struct AgentTelegramSettingsManifest: Codable, Equatable, Sendable {
 
 /// Voice settings. The language of voice transcription and voice mode is not
 /// stored here: it follows the response language (`responseLanguage`), else
-/// the system language. A `language` key written by earlier versions is
-/// ignored when decoding and dropped on the next save.
+/// the system language. A `language` key written by earlier versions and a
+/// `maximumSpokenCharacters` key written by v2.4.0 (voice mode now always
+/// reads an answer whole) are ignored when decoding and dropped on the next
+/// save.
 public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled
         case macOSVoiceIdentifier
         case utteranceSilenceSeconds
-        case maximumSpokenCharacters
         case sendMode
         case sendKeyword
     }
@@ -113,10 +114,6 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
     /// Whole seconds of silence that end a spoken utterance in voice mode,
     /// chosen in `/setup` > Voice mode; nil applies the built-in default.
     public let utteranceSilenceSeconds: Int?
-    /// Characters of an answer read aloud before only its final sentences
-    /// are read, chosen in `/setup` > Voice mode; nil applies the built-in
-    /// default and 0 reads every answer whole.
-    public let maximumSpokenCharacters: Int?
     /// How an utterance is sent, chosen in `/setup` > Voice mode; nil means
     /// `.pause`. `.keyword` applies only while `sendKeyword` is set.
     public let sendMode: SendMode?
@@ -128,14 +125,12 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
         enabled: Bool = false,
         macOSVoiceIdentifier: String? = nil,
         utteranceSilenceSeconds: Int? = nil,
-        maximumSpokenCharacters: Int? = nil,
         sendMode: SendMode? = nil,
         sendKeyword: String? = nil
     ) {
         self.enabled = enabled
         self.macOSVoiceIdentifier = macOSVoiceIdentifier?.nilIfBlank
         self.utteranceSilenceSeconds = utteranceSilenceSeconds.flatMap { $0 > 0 ? $0 : nil }
-        self.maximumSpokenCharacters = maximumSpokenCharacters.flatMap { $0 >= 0 ? $0 : nil }
         self.sendMode = sendMode
         self.sendKeyword = sendKeyword?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
     }
@@ -152,10 +147,6 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
                 Int.self,
                 forKey: .utteranceSilenceSeconds
             ),
-            maximumSpokenCharacters: try container.decodeIfPresent(
-                Int.self,
-                forKey: .maximumSpokenCharacters
-            ),
             // An unknown mode written by a newer version falls back to pause.
             sendMode: try container.decodeIfPresent(String.self, forKey: .sendMode)
                 .flatMap(SendMode.init(rawValue:)),
@@ -171,9 +162,6 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
         }
         if let utteranceSilenceSeconds {
             try container.encode(utteranceSilenceSeconds, forKey: .utteranceSilenceSeconds)
-        }
-        if let maximumSpokenCharacters {
-            try container.encode(maximumSpokenCharacters, forKey: .maximumSpokenCharacters)
         }
         if let sendMode {
             try container.encode(sendMode, forKey: .sendMode)
@@ -194,7 +182,6 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
         !enabled
             && macOSVoiceIdentifier == nil
             && utteranceSilenceSeconds == nil
-            && maximumSpokenCharacters == nil
             && sendMode == nil
             && sendKeyword == nil
     }

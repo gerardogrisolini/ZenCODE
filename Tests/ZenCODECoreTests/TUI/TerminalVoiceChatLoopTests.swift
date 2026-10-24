@@ -18,7 +18,7 @@ import Testing
 struct TerminalVoiceChatLoopTests {
     private typealias Spoken = FakeVoiceController.Spoken
 
-    /// A long message: well past the 600-character limit of spoken answers.
+    /// A long message (about 800 characters), read whole.
     private static let longText = String(
         repeating: "Ho rivisto il modulo e ogni test passa. ",
         count: 20
@@ -214,7 +214,6 @@ struct TerminalVoiceChatLoopTests {
         harness.say("Sì.")
         let reading = await harness.spoken(count: 2).last
         #expect(reading == Self.plain(Self.longText + " Vuoi rispondere?"))
-        #expect((reading?.text.count ?? 0) > TerminalVoiceSpeechText.maximumSpokenCharacters)
 
         harness.speechEnded()
         harness.say("yes")

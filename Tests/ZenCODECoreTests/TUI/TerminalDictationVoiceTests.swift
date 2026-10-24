@@ -68,6 +68,22 @@ struct TerminalDictationVoiceTests {
     }
 
     @Test
+    func theSendKeywordEndsMultiLineSpeechAndKeepsItsInnerNewlines() throws {
+        let keyword = try #require(TerminalVoiceSendKeyword("vai"))
+        #expect(keyword.textBeforeKeyword(in: "Cerca il file\nnella cartella Docs, vai") == "Cerca il file\nnella cartella Docs")
+        // The keyword said as a segment of its own.
+        #expect(keyword.textBeforeKeyword(in: "Cerca il file\nnella cartella Docs\nvai") == "Cerca il file\nnella cartella Docs")
+        #expect(keyword.textBeforeKeyword(in: "Cerca il file\nvai a casa") == nil)
+        #expect(keyword.utteranceToSend(pending: "prima parte", speech: "seconda\nparte, vai") == "prima parte seconda\nparte")
+
+        var segmenter = TerminalDictationSegmenter()
+        let start = ContinuousClock.now
+        segmenter.observe("Cerca il file", at: start, endsSegment: true)
+        segmenter.observe("nella cartella Docs, vai", at: start + .seconds(3))
+        #expect(keyword.textBeforeKeyword(in: segmenter.text) == "Cerca il file\nnella cartella Docs")
+    }
+
+    @Test
     func theKeywordCollectorSendsOnlyOnTheKeywordOrABareAnswerWhenAwaited() throws {
         var collector = TerminalVoiceKeywordCollector(keyword: try #require(TerminalVoiceSendKeyword("vai")))
         #expect(collector.receive("   ", awaitingShortAnswer: false) == .nothing)
@@ -124,6 +140,167 @@ struct TerminalDictationVoiceTests {
         segmenter.observe("   ", at: start)
         #expect(!segmenter.isUtteranceComplete(at: start + .seconds(5)))
         #expect(segmenter.takeUtterance() == nil)
+        // Neither does an empty result that closes a segment.
+        segmenter.observe("", at: start, endsSegment: true)
+        #expect(!segmenter.hasPendingText)
+        #expect(!segmenter.isUtteranceComplete(at: start + .seconds(5)))
+    }
+
+    @Test
+    func speechSegmentsAreJoinedWithANewline() {
+        let start = ContinuousClock.now
+        var segmenter = TerminalDictationSegmenter()
+        segmenter.observe("Prima frase", at: start)
+        segmenter.observe("Prima frase di prova", at: start + .milliseconds(600))
+        #expect(segmenter.text == "Prima frase di prova")
+        segmenter.observe("Prima frase di prova", at: start + .milliseconds(2_000), endsSegment: true)
+        #expect(segmenter.text == "Prima frase di prova")
+
+        segmenter.observe("Seconda", at: start + .milliseconds(4_000))
+        #expect(segmenter.text == "Prima frase di prova\nSeconda")
+        segmenter.observe(" Seconda frase dopo la pausa ", at: start + .milliseconds(4_600), endsSegment: true)
+        segmenter.observe("Terza", at: start + .milliseconds(7_000))
+        #expect(segmenter.text == "Prima frase di prova\nSeconda frase dopo la pausa\nTerza")
+        #expect(TerminalDictationSegmenter.segmentSeparator == "\n")
+    }
+
+    @Test
+    func textAfterAResetPartialKeepsTheEarlierSegments() {
+        let start = ContinuousClock.now
+        var segmenter = TerminalDictationSegmenter()
+        segmenter.observe("Cerca il file nella cartella", at: start)
+        segmenter.observe("Cerca il file nella cartella", at: start + .milliseconds(1_500), endsSegment: true)
+        // The recognizer restarts: the next results hold only the new phrase,
+        // which is shorter than what was said before.
+        segmenter.observe("Docs", at: start + .milliseconds(3_000))
+        #expect(segmenter.hasPendingText)
+        #expect(segmenter.text == "Cerca il file nella cartella\nDocs")
+        // Blank segments are skipped and every segment is trimmed.
+        segmenter.observe("   ", at: start + .milliseconds(3_500), endsSegment: true)
+        #expect(segmenter.text == "Cerca il file nella cartella\nDocs")
+        segmenter.observe("\n Poi apri il file \n", at: start + .milliseconds(4_000))
+        #expect(segmenter.text == "Cerca il file nella cartella\nDocs\nPoi apri il file")
+    }
+
+    @Test
+    func anEmptyPartialAfterACommitKeepsTheTextAndTheSilenceGap() {
+        let start = ContinuousClock.now
+        var segmenter = TerminalDictationSegmenter(silence: .seconds(5))
+        segmenter.observe("Prima frase", at: start)
+        segmenter.observe("Prima frase", at: start + .seconds(2), endsSegment: true)
+        segmenter.observe("", at: start + .seconds(3))
+        segmenter.observe("  ", at: start + .seconds(4))
+        #expect(segmenter.text == "Prima frase")
+        #expect(segmenter.hasPendingText)
+        // Neither the commit nor the empty partials moved the gap.
+        #expect(!segmenter.isUtteranceComplete(at: start + .milliseconds(4_999)))
+        #expect(segmenter.isUtteranceComplete(at: start + .seconds(5)))
+    }
+
+    @Test
+    func theSilenceGapIsMeasuredFromTheLastChangeOfTheCombinedText() {
+        let start = ContinuousClock.now
+        var segmenter = TerminalDictationSegmenter(silence: .seconds(5))
+        segmenter.observe("Uno", at: start)
+        segmenter.observe("Uno", at: start + .seconds(2), endsSegment: true)
+        #expect(segmenter.hasStableText(for: .seconds(2), at: start + .seconds(2)))
+
+        // A new segment changes the combined text: the gap restarts.
+        segmenter.observe("Due", at: start + .seconds(3))
+        #expect(!segmenter.hasStableText(for: .seconds(2), at: start + .milliseconds(4_999)))
+        #expect(segmenter.hasStableText(for: .seconds(2), at: start + .seconds(5)))
+        #expect(!segmenter.isUtteranceComplete(at: start + .milliseconds(7_999)))
+        // Closing that segment with the same words does not move it.
+        segmenter.observe("Due", at: start + .seconds(4), endsSegment: true)
+        #expect(segmenter.isUtteranceComplete(at: start + .seconds(8)))
+        #expect(segmenter.text == "Uno\nDue")
+
+        // Words added to the next segment do.
+        segmenter.observe("Tre", at: start + .seconds(7))
+        #expect(!segmenter.isUtteranceComplete(at: start + .seconds(8)))
+        #expect(segmenter.isUtteranceComplete(at: start + .seconds(12)))
+    }
+
+    @Test
+    func takingTheUtteranceReturnsEverySegmentAndClears() {
+        let start = ContinuousClock.now
+        var segmenter = TerminalDictationSegmenter()
+        segmenter.observe("Prima", at: start, endsSegment: true)
+        segmenter.observe("Seconda", at: start + .seconds(1), endsSegment: true)
+        segmenter.observe("Terza in corso", at: start + .seconds(2))
+        #expect(segmenter.takeUtterance() == "Prima\nSeconda\nTerza in corso")
+        #expect(segmenter.text.isEmpty)
+        #expect(!segmenter.hasPendingText)
+        #expect(!segmenter.isUtteranceComplete(at: start + .seconds(20)))
+        #expect(segmenter.takeUtterance() == nil)
+        // The next utterance starts from nothing.
+        segmenter.observe("Nuova", at: start + .seconds(21))
+        #expect(segmenter.text == "Nuova")
+    }
+
+    @Test
+    func resettingForgetsEverySegment() {
+        let start = ContinuousClock.now
+        var segmenter = TerminalDictationSegmenter()
+        segmenter.observe("Prima", at: start, endsSegment: true)
+        segmenter.observe("Seconda", at: start + .seconds(1))
+        segmenter.reset()
+        #expect(segmenter.text.isEmpty)
+        #expect(!segmenter.hasPendingText)
+        #expect(!segmenter.isUtteranceComplete(at: start + .seconds(20)))
+        #expect(segmenter.takeUtterance() == nil)
+        segmenter.observe("Dopo", at: start + .seconds(21))
+        #expect(segmenter.text == "Dopo")
+    }
+
+    /// The request's final result repeats the last segment, even when an
+    /// earlier result already closed it.
+    @Test
+    func aFinalResultRepeatingTheLastClosedSegmentIsNotAppended() {
+        let start = ContinuousClock.now
+        var segmenter = TerminalDictationSegmenter(silence: .seconds(5))
+        segmenter.observe("Seconda frase dopo la pausa", at: start)
+        segmenter.observe("Seconda frase dopo la pausa", at: start + .seconds(2), endsSegment: true)
+        // The final result may differ in case and punctuation only.
+        segmenter.observe("seconda frase dopo la pausa.", at: start + .seconds(4), endsSegment: true)
+        #expect(segmenter.text == "Seconda frase dopo la pausa")
+        #expect(segmenter.isUtteranceComplete(at: start + .seconds(7)))
+        #expect(segmenter.takeUtterance() == "Seconda frase dopo la pausa")
+    }
+
+    @Test
+    func theSamePhraseSaidTwiceIsKeptTwice() {
+        let start = ContinuousClock.now
+        var segmenter = TerminalDictationSegmenter()
+        segmenter.observe("Sì", at: start)
+        segmenter.observe("Sì", at: start + .seconds(2), endsSegment: true)
+        segmenter.observe("Sì", at: start + .seconds(4))
+        segmenter.observe("Sì", at: start + .seconds(6), endsSegment: true)
+        #expect(segmenter.text == "Sì\nSì")
+    }
+
+    @Test
+    func aClosingResultCommitsTheSegmentInProgressOnce() {
+        let start = ContinuousClock.now
+        var segmenter = TerminalDictationSegmenter()
+        segmenter.observe("Apri il", at: start)
+        // The closing result may complete the words of the partial.
+        segmenter.observe("Apri il progetto", at: start + .seconds(1), endsSegment: true)
+        #expect(segmenter.text == "Apri il progetto")
+        segmenter.observe("e compila", at: start + .seconds(3))
+        // A closing result without words closes the segment as it is.
+        segmenter.observe("", at: start + .seconds(4), endsSegment: true)
+        #expect(segmenter.text == "Apri il progetto\ne compila")
+        segmenter.observe("ora", at: start + .seconds(5))
+        #expect(segmenter.text == "Apri il progetto\ne compila\nora")
+    }
+
+    @Test
+    func dictationResultsCarryWhetherTheyCloseASegment() {
+        let open = TerminalDictationEvent.partial(generation: 1, text: "Prima", endsSegment: false)
+        let closing = TerminalDictationEvent.partial(generation: 1, text: "Prima", endsSegment: true)
+        #expect(open != closing)
+        #expect(closing == .partial(generation: 1, text: "Prima", endsSegment: true))
     }
 
     @Test
@@ -257,62 +434,20 @@ struct TerminalDictationVoiceTests {
     @Test
     func shortAnswersAreReadWhole() {
         let markdown = "## Fatto\n\nHo aggiornato il file. Vuoi che faccia il commit?"
-        let spoken = TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: markdown, languageCode: "it")
-        #expect(spoken == TerminalVoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it"))
+        let spoken = TerminalVoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it")
         #expect(spoken == "Fatto. Ho aggiornato il file. Vuoi che faccia il commit?")
     }
 
     @Test
-    func longAnswersReadOnlyTheirFinalSentences() {
-        let markdown = """
-        ## Riepilogo
-
-        Ho modificato tre file. Ho aggiunto i test.
-        - Primo punto completato
-        Vuoi che faccia il commit? Oppure preferisci rivedere?
-        """
-        let spoken = TerminalVoiceSpeechText.spokenAnswer(
-            fromMarkdown: markdown,
-            languageCode: "it",
-            maximumCharacters: 60
-        )
-        #expect(spoken == "Risposta lunga, leggo solo la parte finale. Vuoi che faccia il commit? Oppure preferisci rivedere?")
-    }
-
-    @Test
-    func anOverlongFinalSentenceKeepsItsEndFromAWordBoundary() {
-        let spoken = TerminalVoiceSpeechText.spokenAnswer(
-            fromMarkdown: "Uno due tre quattro cinque sei sette otto nove dieci",
-            languageCode: "en",
-            maximumCharacters: 20
-        )
-        #expect(spoken == "Long answer, reading only the end. otto nove dieci.")
-    }
-
-    @Test
-    func theDefaultLimitBoundsTheSpokenTail() {
-        let filler = Array(repeating: "Questa riga riempie la risposta.", count: 100).joined(separator: "\n")
-        let markdown = filler + "\nCome vuoi procedere?"
-        let spoken = TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: markdown, languageCode: "it")
-        let notice = TerminalVoiceSpeechText.longAnswerNotice(languageCode: "it")
-        #expect(spoken.hasPrefix(notice + " "))
-        #expect(spoken.hasSuffix("Questa riga riempie la risposta. Come vuoi procedere?"))
-        #expect(spoken.count - notice.count - 1 <= TerminalVoiceSpeechText.maximumSpokenCharacters)
-
-        // A chosen limit, or none, replaces the default.
-        let whole = TerminalVoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it")
-        #expect(TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: markdown, languageCode: "it", maximumCharacters: nil) == whole)
-        let shorter = TerminalVoiceSpeechText.spokenAnswer(fromMarkdown: markdown, languageCode: "it", maximumCharacters: 100)
-        #expect(shorter.hasPrefix(notice + " "))
-        #expect(shorter.count - notice.count - 1 <= 100)
-    }
-
-    @Test
-    func longAnswerNoticeFollowsTheLanguage() {
-        #expect(TerminalVoiceSpeechText.longAnswerNotice(languageCode: "it-IT") == "Risposta lunga, leggo solo la parte finale.")
-        #expect(TerminalVoiceSpeechText.longAnswerNotice(languageCode: "de") == "Lange Antwort, ich lese nur den Schluss.")
-        #expect(TerminalVoiceSpeechText.longAnswerNotice(languageCode: "ja") == "Long answer, reading only the end.")
-        #expect(TerminalVoiceSpeechText.longAnswerNotice(languageCode: nil) == "Long answer, reading only the end.")
+    func aLongAnswerIsReadWholeWithoutANotice() {
+        let lines = (1...100).map { "Questa è la riga numero \($0) della risposta." }
+        let markdown = lines.joined(separator: "\n") + "\nCome vuoi procedere?"
+        let spoken = TerminalVoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it")
+        #expect(spoken == lines.joined(separator: " ") + " Come vuoi procedere?")
+        #expect(spoken.count > 3_000)
+        #expect(spoken.hasPrefix("Questa è la riga numero 1 della risposta."))
+        #expect(!spoken.contains("Risposta lunga"))
+        #expect(!spoken.contains("Long answer"))
     }
 
     @Test

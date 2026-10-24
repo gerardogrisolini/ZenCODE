@@ -85,6 +85,23 @@ import Testing
         await core.shutdown()
     }
 
+    @Test func isolatedRequestDoesNotInheritTheTurnInstruction() async throws {
+        let mock = MemoryProposalMockBackend()
+        let core = try await backend(mock)
+        // The proposal runs while the operator's turn instruction is bound
+        // (a Task inherits task-locals), yet the isolated request must not see it.
+        let text = try await AgentTurnInstructionContext.$currentTurnInstruction.withValue("Answer in short sentences.") {
+            try await core.proposeMemory(parentSessionID: "root", prompt: "bounded evidence", systemPrompt: "extract only",
+                permit: MemoryLearningPermit(), timeout: .seconds(1))
+        }
+        #expect(text == "null")
+        let requests = await mock.requests
+        #expect(requests.count == 1)
+        #expect(requests[0].isolated)
+        #expect(requests[0].turnInstruction == nil)
+        await core.shutdown()
+    }
+
     @Test func attemptedToolCallIsRejectedAndNotReturnedAsCandidate() async throws {
         let mock = MemoryProposalMockBackend(attemptTool: true)
         let core = try await backend(mock)
@@ -133,6 +150,7 @@ private actor MemoryProposalMockBackend: AgentRuntimeBackend {
         let isolated: Bool
         let recall: String?
         let prompt: String
+        let turnInstruction: String?
     }
     var requests: [Request] = []
     private var sessions: [String: AgentRuntimeSessionSnapshot] = [:]
@@ -174,7 +192,8 @@ private actor MemoryProposalMockBackend: AgentRuntimeBackend {
             return .init(text: "normal response", stopReason: "stop", modelID: "same-model")
         }
         requests.append(Request(snapshot: session, isolated: MemoryConsolidationContext.isIsolated,
-                                recall: MemoryTurnContext.currentTurnMemoryBlock, prompt: prompt))
+                                recall: MemoryTurnContext.currentTurnMemoryBlock, prompt: prompt,
+                                turnInstruction: AgentTurnInstructionContext.currentTurnInstruction))
         if attemptTool {
             await onEvent(.toolCallStarted(.init(id: "forged", name: "local.writeFile", argumentsObject: [:], argumentsJSON: "{}")))
         }

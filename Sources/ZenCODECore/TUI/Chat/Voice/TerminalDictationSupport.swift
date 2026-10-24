@@ -40,30 +40,76 @@ enum TerminalVoiceCommandAction: Sendable, Equatable {
 }
 
 /// Splits continuous speech recognition into utterances on a silence gap.
+///
+/// A request's transcript is not always cumulative. Since macOS 15, after a
+/// pause of about two seconds on-device recognition closes a speech segment
+/// (the result carries `speechRecognitionMetadata`) and the following results
+/// of the same request hold only the words said after it. The segmenter
+/// therefore keeps the segments already closed in the current request plus the
+/// one in progress, and its `text` is all of them, one per line.
 struct TerminalDictationSegmenter: Sendable {
     static let defaultSilence = Duration.milliseconds(5_000)
+    /// Separates the speech segments of one utterance: what is said after a
+    /// short pause continues on a new line.
+    static let segmentSeparator = "\n"
 
     let silence: Duration
-    private(set) var text = ""
+    /// Segments the recognizer closed in the current request, trimmed and not
+    /// empty.
+    private var finishedSegments: [String] = []
+    /// The segment being recognized, trimmed.
+    private var currentSegment = ""
     private var lastChange: ContinuousClock.Instant?
 
     init(silence: Duration = Self.defaultSilence) {
         self.silence = silence
     }
 
-    var hasPendingText: Bool {
-        !text.isEmpty
+    /// The finished segments and the one in progress, each trimmed, empty ones
+    /// skipped, joined by `segmentSeparator`.
+    var text: String {
+        (finishedSegments + [currentSegment])
+            .filter { !$0.isEmpty }
+            .joined(separator: Self.segmentSeparator)
     }
 
-    /// Records the latest recognized text of the current utterance. The
-    /// silence gap restarts only when the text actually changes.
-    mutating func observe(_ recognized: String, at now: ContinuousClock.Instant) {
+    var hasPendingText: Bool {
+        !finishedSegments.isEmpty || !currentSegment.isEmpty
+    }
+
+    /// Records the latest recognized text of the segment in progress; earlier
+    /// segments stay. `endsSegment` marks a result that closes the segment:
+    /// the recognition of the next one restarts from nothing.
+    ///
+    /// The silence gap restarts only when the combined `text` actually
+    /// changes, so closing a segment, or an empty result right after it, neither
+    /// clears the text nor moves the gap. A closing result that arrives while
+    /// no segment is in progress and repeats the words of the last finished
+    /// one (the request's final result, which repeats its last segment) is
+    /// ignored. A closing result without words closes the segment in progress
+    /// as it is.
+    mutating func observe(_ recognized: String, at now: ContinuousClock.Instant, endsSegment: Bool = false) {
+        let previous = text
         let normalized = recognized.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard normalized != text else {
+        if endsSegment {
+            if currentSegment.isEmpty, let last = finishedSegments.last, Self.hasSameWords(normalized, last) {
+                return
+            }
+            if !normalized.isEmpty {
+                currentSegment = normalized
+            }
+            if !currentSegment.isEmpty {
+                finishedSegments.append(currentSegment)
+                currentSegment = ""
+            }
+        } else {
+            currentSegment = normalized
+        }
+        let combined = text
+        guard combined != previous else {
             return
         }
-        text = normalized
-        lastChange = normalized.isEmpty ? nil : now
+        lastChange = combined.isEmpty ? nil : now
     }
 
     func isUtteranceComplete(at now: ContinuousClock.Instant) -> Bool {
@@ -72,23 +118,31 @@ struct TerminalDictationSegmenter: Sendable {
 
     /// `true` when there is text and it has not changed for `duration`.
     func hasStableText(for duration: Duration, at now: ContinuousClock.Instant) -> Bool {
-        guard !text.isEmpty, let lastChange else {
+        guard hasPendingText, let lastChange else {
             return false
         }
         return lastChange.duration(to: now) >= duration
     }
 
-    /// Returns and clears the current utterance, if any.
+    /// Returns and clears the current utterance, all its segments, if any.
     mutating func takeUtterance() -> String? {
-        defer {
-            reset()
-        }
-        return text.isEmpty ? nil : text
+        let utterance = text
+        reset()
+        return utterance.isEmpty ? nil : utterance
     }
 
+    /// Forgets every segment, finished and in progress.
     mutating func reset() {
-        text = ""
+        finishedSegments = []
+        currentSegment = ""
         lastChange = nil
+    }
+
+    /// Whether both texts hold the same words, ignoring case, accents and
+    /// punctuation.
+    private static func hasSameWords(_ lhs: String, _ rhs: String) -> Bool {
+        let words = TerminalVoiceEchoGuard.words(in: lhs)
+        return !words.isEmpty && words == TerminalVoiceEchoGuard.words(in: rhs)
     }
 }
 
@@ -331,34 +385,9 @@ struct TerminalVoiceKeywordCollector: Sendable {
 
 /// Plain spoken text from an assistant Markdown answer.
 enum TerminalVoiceSpeechText {
-    /// Spoken answers longer than this, about 40 seconds of reading, keep only
-    /// their final sentences: the end of an answer usually holds the outcome
-    /// and the questions on how to continue. The terminal still shows the
-    /// whole answer.
-    static let maximumSpokenCharacters = 600
-
-    /// The text read aloud for an answer: its plain spoken text, or, past
-    /// `maximumCharacters` (nil never shortens), a short notice followed by
-    /// the final sentences that fit the limit.
-    static func spokenAnswer(
-        fromMarkdown markdown: String,
-        languageCode: String?,
-        maximumCharacters: Int? = maximumSpokenCharacters
-    ) -> String {
-        let lines = speakableLines(fromMarkdown: markdown, languageCode: languageCode)
-        let text = lines.joined(separator: " ")
-        guard let maximumCharacters, text.count > maximumCharacters else {
-            return text
-        }
-        let tail = finalSentences(of: lines, maximumCharacters: maximumCharacters)
-        return longAnswerNotice(languageCode: languageCode) + " " + tail
-    }
-
+    /// The text read aloud for an answer: its plain spoken text, however long.
+    /// An answer is never shortened; code blocks become a short notice.
     static func speakable(fromMarkdown markdown: String, languageCode: String?) -> String {
-        speakableLines(fromMarkdown: markdown, languageCode: languageCode).joined(separator: " ")
-    }
-
-    private static func speakableLines(fromMarkdown markdown: String, languageCode: String?) -> [String] {
         var sentences: [String] = []
         var isInsideFence = false
         for rawLine in markdown.components(separatedBy: .newlines) {
@@ -377,67 +406,11 @@ enum TerminalVoiceSpeechText {
                 sentences.append(sentence)
             }
         }
-        return sentences
-    }
-
-    /// The last whole sentences of `lines` within `maximumCharacters`. When
-    /// even the last sentence is longer, its end is kept from a word boundary.
-    private static func finalSentences(of lines: [String], maximumCharacters: Int) -> String {
-        let sentences = lines.flatMap(splitSentences(in:))
-        var kept: [String] = []
-        var length = 0
-        for sentence in sentences.reversed() {
-            let added = kept.isEmpty ? sentence.count : sentence.count + 1
-            guard length + added <= maximumCharacters else {
-                break
-            }
-            kept.insert(sentence, at: 0)
-            length += added
-        }
-        if !kept.isEmpty {
-            return kept.joined(separator: " ")
-        }
-        guard let last = sentences.last else {
-            return ""
-        }
-        let suffix = last.suffix(maximumCharacters)
-        guard let space = suffix.firstIndex(where: \.isWhitespace) else {
-            return String(suffix)
-        }
-        let fromWord = suffix[space...].trimmingCharacters(in: .whitespaces)
-        return fromWord.isEmpty ? String(suffix) : fromWord
-    }
-
-    /// Splits a spoken line after `.`, `!`, `?` or `…` followed by whitespace.
-    private static func splitSentences(in line: String) -> [String] {
-        var sentences: [String] = []
-        var current = ""
-        var previous: Character?
-        for character in line {
-            if character.isWhitespace, let previous, ".!?…".contains(previous) {
-                let sentence = current.trimmingCharacters(in: .whitespaces)
-                if !sentence.isEmpty {
-                    sentences.append(sentence)
-                }
-                current = ""
-            } else {
-                current.append(character)
-            }
-            previous = character
-        }
-        let sentence = current.trimmingCharacters(in: .whitespaces)
-        if !sentence.isEmpty {
-            sentences.append(sentence)
-        }
-        return sentences
+        return sentences.joined(separator: " ")
     }
 
     static func codeBlockNotice(languageCode: String?) -> String {
         localized(codeBlockNotices, languageCode: languageCode)
-    }
-
-    static func longAnswerNotice(languageCode: String?) -> String {
-        localized(longAnswerNotices, languageCode: languageCode)
     }
 
     /// The notice for the language code's primary subtag, else English.
@@ -445,15 +418,6 @@ enum TerminalVoiceSpeechText {
         let code = languageCode?.lowercased().split(separator: "-").first.map(String.init) ?? "en"
         return notices[code] ?? notices["en"]!
     }
-
-    private static let longAnswerNotices: [String: String] = [
-        "en": "Long answer, reading only the end.",
-        "it": "Risposta lunga, leggo solo la parte finale.",
-        "es": "Respuesta larga, leo solo la parte final.",
-        "fr": "Réponse longue, je ne lis que la fin.",
-        "de": "Lange Antwort, ich lese nur den Schluss.",
-        "pt": "Resposta longa, leio só a parte final."
-    ]
 
     private static let codeBlockNotices: [String: String] = [
         "en": "Code block omitted.",

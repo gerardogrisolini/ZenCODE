@@ -70,24 +70,29 @@ command, and `zen -p`, `--jsonl` and ACP do not have it.
    phrase (see [Live chat by voice](#live-chat-by-voice)). Pressing `Enter`
    sends the draft by the keyboard rules instead. You can keep typing at any
    time.
-4. The final answer of every completed turn is read aloud, including turns
-   started from Telegram and the coordinator turns that report the results of
-   delegated agents. Answers are read as plain text: Markdown markers are
-   dropped, links are read by their text, URLs by their host name, table rows
-   cell by cell, and every code block is replaced by a short notice such as
-   "Code block omitted." (in English, Italian, Spanish, French, German or
-   Portuguese, following the voice mode language). A new answer replaces the
-   one being read. An answer longer than about 600 characters (some 40
-   seconds of reading; the **Spoken answer limit** chosen in `/setup` > Voice
-   mode, see [Options](#options)) is not read whole: after a short notice such
-   as "Long answer, reading only the end." only its final sentences are read,
-   since the end of an answer usually holds the outcome and the questions on
-   how to continue. The terminal always shows the whole answer.
+4. The final answer of every completed turn is read aloud in full, however
+   long it is, including turns started from Telegram and the coordinator turns
+   that report the results of delegated agents. Answers are read as plain
+   text: Markdown markers are dropped, links are read by their text, URLs by
+   their host name, table rows cell by cell, and every code block is replaced
+   by a short notice such as "Code block omitted." (in English, Italian,
+   Spanish, French, German or Portuguese, following the voice mode language).
+   A new answer replaces the one being read. The terminal always shows the
+   whole answer.
 5. `Esc` stops the reading without clearing the draft. While a prompt is
    running, `Esc` stops both the generation and the reading.
 
 `/voice pause` stops listening and reading aloud at once; answers that complete
 while voice mode is paused are not read later.
+
+While voice mode listens, every prompt that runs in the terminal also carries a
+short instruction for the model: answer in short sentences, and briefly comment
+on what it is doing as it works. The comments appear in the terminal while the
+model works; they are not read aloud, only the final answer is. The instruction
+follows the state of voice mode when each request is made, so `/voice pause`,
+`/voice resume` and `/voice off` apply from the next prompt. It goes with the
+request only: it is not saved in the session history or in saved sessions, and
+it is not part of the system prompt. Delegated agents do not receive it.
 
 ### The prompt draft
 
@@ -96,7 +101,9 @@ the end of the prompt draft, the line you type in:
 
 - **macOS** updates it word by word as you speak, in both Send modes.
   Dictation may correct earlier words while you keep speaking, so the draft can
-  change slightly.
+  change slightly. When you pause briefly while speaking, the dictation
+  continues on a new line and what you said before stays; it is all sent
+  together.
 - **Linux** updates it one speech segment at a time, about a second after you
   stop, and only with the Send mode "On a word". With "After a pause" each
   segment is sent at once, so nothing is shown.
@@ -149,10 +156,10 @@ reconnection. A message you already read in the dock is skipped.
 "New message from Reviewer, 2 more waiting. Do you want me to read it?" and
 waits for your answer:
 
-- **Yes** reads the whole message as plain text, however long it is (the
-  spoken answer limit does not apply), then asks "Do you want
-  to reply?". A second **yes** is followed by "Tell me your reply.": the next
-  utterance goes to the sender (to the coordinator, or directly to the agent)
+- **Yes** reads the whole message as plain text, however long it is, then asks
+  "Do you want to reply?". A second **yes** is followed by "Tell me your
+  reply.": the next utterance goes to the sender (to the coordinator, or
+  directly to the agent)
   and voice mode confirms "Sent.". **No** moves on to the next message waiting.
   A yes or no spoken while the message is still being read is taken as the
   answer to "Do you want to reply?" (on macOS it also stops the reading).
@@ -225,11 +232,11 @@ off.
 
 ### Options
 
-The first two items of `/setup` > **Voice mode**, on macOS and Linux alike,
-tune how voice mode listens and reads. The pause and the limit open a list of
-presets with the current value preselected and the default marked; **Back** or
-`Esc` keeps the current value, and after a choice the Voice mode menu comes
-back so the voice can still be chosen.
+The **Send mode** item of `/setup` > **Voice mode**, on macOS and Linux alike,
+tunes how voice mode listens. The pause opens a list of presets with the
+current value preselected and the default marked; **Back** or `Esc` keeps the
+current value, and after a choice the Voice mode menu comes back so the voice
+can still be chosen.
 
 - **Send mode** — how voice mode decides that you finished speaking:
   - **After a pause** (default): the silence after you stop speaking ends the
@@ -254,17 +261,16 @@ back so the voice can still be chosen.
     word takes effect about half a second after it is recognized; on Linux at
     the end of the current speech segment, about a second after you stop. This
     mode asks for no pause.
-- **Spoken answer limit** — the length past which an answer is read from its
-  final sentences only, after the "Long answer" notice: 300, **600** (default),
-  1000 or 2000 characters, or **whole answer** to always read everything.
-
-All are saved with the other settings when setup finishes
-(`voice.sendMode` as `pause` or `keyword`, `voice.sendKeyword`,
-`voice.utteranceSilenceSeconds` and `voice.maximumSpokenCharacters` in
-`settings.json`, where `0` means whole answer) and apply the next time
+The send mode is saved with the other settings when setup finishes
+(`voice.sendMode` as `pause` or `keyword`, `voice.sendKeyword` and
+`voice.utteranceSilenceSeconds` in `settings.json`) and applies the next time
 `/voice on` starts. The main setup menu shows a value that differs from the
 default next to the Voice mode status, for example `automatic voice · send on
-“vai” · whole answer`.
+“vai”`.
+
+Earlier versions (2.4.0) also saved `voice.maximumSpokenCharacters`, a length
+limit for reading answers that voice mode no longer has. That key is ignored
+when the settings are read and is removed the next time they are saved.
 
 ### macOS
 
@@ -283,7 +289,7 @@ default next to the Voice mode status, for example `automatic voice · send on
   cancellation, for example an AirPlay device, voice mode starts without it and
   names the output: switch to a local output or use headphones.
 - **Reading voice.** `/setup` > **Voice mode** downloads nothing on macOS.
-  After the three [options](#options) it lists the system voices installed for
+  After the [Send mode](#options) item it lists the system voices installed for
   the voice mode language, with name and
   quality (standard, enhanced or premium), plus **Automatic**: the best
   installed voice of the exact locale, else of another region of the language.
@@ -318,8 +324,8 @@ Raspberry Pi can transcribe them.
 Download the files from `/setup` > **Voice mode**:
 
 1. The section shows where the files go and their status (`not installed`,
-   `incomplete download`, or the installed voice), then, after the three
-   [options](#options), lists the Piper voices
+   `incomplete download`, or the installed voice), then, after the
+   [Send mode](#options) item, lists the Piper voices
    of the voice mode language with locale, quality and size. When no voice
    reads that language, every voice is listed. The catalogue has 127 voices in
    25 locales.
@@ -337,8 +343,8 @@ Download the files from `/setup` > **Voice mode**:
 Exactly one voice is kept: choosing another one replaces it without downloading
 the shared files again. **Remove voice mode files** deletes everything. The
 section acts immediately: downloads are not part of the settings that **Finish
-setup** saves, and cancelling setup does not undo them. The three options, on the
-other hand, are settings: they are saved by **Finish setup** like on macOS.
+setup** saves, and cancelling setup does not undo them. The Send mode option,
+on the other hand, is a setting: it is saved by **Finish setup** like on macOS.
 
 While voice mode runs, `sherpa-onnx-vad-alsa-offline-asr` listens and
 `sherpa-onnx-offline-tts-play-alsa` reads each answer, as separate processes.

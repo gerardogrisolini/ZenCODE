@@ -4,14 +4,13 @@
 //
 //  The voice mode options of `/setup` > Voice mode, shared by the macOS and
 //  Linux sections: how an utterance is sent (after a pause, or on a spoken
-//  keyword) and the length past which an answer is read from its final
-//  sentences only. The send mode is a two-way menu: "After a pause" goes on
-//  to the preset pause that ends an utterance, "On a word" to the typed
-//  keyword, so the pause is chosen only where it applies. The limit is a
-//  preset menu. All are staged in the settings manifest (`voice.sendMode`,
-//  `voice.sendKeyword`, `voice.utteranceSilenceSeconds`,
-//  `voice.maximumSpokenCharacters`) and saved when setup finishes; voice mode
-//  reads them the next time `/voice on` starts.
+//  keyword). The send mode is a two-way menu: "After a pause" goes on to the
+//  preset pause that ends an utterance, "On a word" to the typed keyword, so
+//  the pause is chosen only where it applies. Both are staged in the settings
+//  manifest (`voice.sendMode`, `voice.sendKeyword`,
+//  `voice.utteranceSilenceSeconds`) and saved when setup finishes; voice mode
+//  reads them the next time `/voice on` starts. Answers are always read
+//  whole, so there is no length option.
 //
 
 import Foundation
@@ -45,14 +44,9 @@ extension ZenCODESetupRunner {
 
     /// Seconds of silence offered for the pause that ends an utterance.
     static let utteranceSilencePresetSeconds = [2, 3, 5, 8, 10]
-    /// Characters offered for the spoken answer limit; 0 reads every answer
-    /// whole.
-    static let spokenCharacterPresets = [300, 600, 1_000, 2_000, 0]
 
     static let defaultUtteranceSilenceSeconds = TerminalVoiceOptions().utteranceSilenceSeconds
-    static let defaultSpokenCharacters = TerminalVoiceOptions.defaultMaximumSpokenCharacters
 
-    static let spokenLimitMenuTitle = "Spoken answer limit"
     static let sendModeMenuTitle = "Send mode"
 
     /// The effective send mode: keyword only with a usable keyword.
@@ -68,17 +62,8 @@ extension ZenCODESetupRunner {
         manifest?.voice?.utteranceSilenceSeconds ?? defaultUtteranceSilenceSeconds
     }
 
-    /// 0 reads every answer whole.
-    static func spokenCharacters(manifest: AgentSettingsManifest?) -> Int {
-        manifest?.voice?.maximumSpokenCharacters ?? defaultSpokenCharacters
-    }
-
     static func utteranceSilenceLabel(_ seconds: Int) -> String {
         "\(seconds) s"
-    }
-
-    static func spokenLimitLabel(_ characters: Int) -> String {
-        characters > 0 ? "\(characters) characters" : "whole answer"
     }
 
     /// Menu details of the option items, e.g. "after 5 s of silence".
@@ -89,12 +74,8 @@ extension ZenCODESetupRunner {
         return "after \(utteranceSilenceLabel(utteranceSilenceSeconds(manifest: manifest))) of silence"
     }
 
-    static func spokenLimitItemDetail(manifest: AgentSettingsManifest?) -> String {
-        "\(spokenLimitLabel(spokenCharacters(manifest: manifest))) · a longer answer is read from its final sentences"
-    }
-
     /// Main menu suffix for options that differ from the defaults, e.g.
-    /// " · pause 8 s · whole answer"; empty when all are default.
+    /// " · pause 8 s"; empty when all are default.
     static func voiceOptionsSetupSuffix(manifest: AgentSettingsManifest?) -> String {
         var suffix = ""
         if sendsOnKeyword(manifest: manifest), let keyword = sendKeyword(manifest: manifest) {
@@ -103,10 +84,6 @@ extension ZenCODESetupRunner {
         let silence = utteranceSilenceSeconds(manifest: manifest)
         if silence != defaultUtteranceSilenceSeconds, !sendsOnKeyword(manifest: manifest) {
             suffix += " · pause \(utteranceSilenceLabel(silence))"
-        }
-        let characters = spokenCharacters(manifest: manifest)
-        if characters != defaultSpokenCharacters {
-            suffix += " · \(spokenLimitLabel(characters))"
         }
         return suffix
     }
@@ -182,7 +159,6 @@ extension ZenCODESetupRunner {
                     enabled: voice?.enabled ?? false,
                     macOSVoiceIdentifier: voice?.macOSVoiceIdentifier,
                     utteranceSilenceSeconds: seconds,
-                    maximumSpokenCharacters: voice?.maximumSpokenCharacters,
                     sendMode: voice?.sendKeyword == nil ? nil : .pause,
                     sendKeyword: voice?.sendKeyword
                 )
@@ -206,7 +182,6 @@ extension ZenCODESetupRunner {
                         enabled: voice?.enabled ?? false,
                         macOSVoiceIdentifier: voice?.macOSVoiceIdentifier,
                         utteranceSilenceSeconds: voice?.utteranceSilenceSeconds,
-                        maximumSpokenCharacters: voice?.maximumSpokenCharacters,
                         sendMode: .keyword,
                         sendKeyword: keyword.text
                     )
@@ -231,60 +206,6 @@ extension ZenCODESetupRunner {
             detail: "keep the current send mode"
         ))
         return items
-    }
-
-    static func spokenLimitMenuItems(current: Int) -> [TerminalCheckboxMenuItem<VoiceOptionAction>] {
-        // 0 (whole answer) sorts last.
-        let characters = Set(spokenCharacterPresets + [current]).sorted { lhs, rhs in
-            switch (lhs, rhs) {
-            case (0, _): return false
-            case (_, 0): return true
-            default: return lhs < rhs
-            }
-        }
-        var items = characters.map { value in
-            TerminalCheckboxMenuItem(
-                value: VoiceOptionAction.value(value),
-                title: spokenLimitLabel(value),
-                detail: value == defaultSpokenCharacters ? "default" : ""
-            )
-        }
-        items.append(TerminalCheckboxMenuItem(
-            value: .back,
-            title: "Back",
-            detail: "keep \(spokenLimitLabel(current))"
-        ))
-        return items
-    }
-
-    /// Chooses the spoken answer limit; Back or Esc keeps the manifest
-    /// unchanged.
-    static func configureSpokenLimit(
-        manifest: AgentSettingsManifest?,
-        write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
-        selectOne: VoiceOptionSelector = {
-            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
-        }
-    ) -> AgentSettingsManifest? {
-        let current = spokenCharacters(manifest: manifest)
-        guard let action = selectOne(
-            "\(spokenLimitMenuTitle): a longer answer is read from its final sentences after a short notice",
-            spokenLimitMenuItems(current: current),
-            .value(current)
-        ), case let .value(characters) = action else {
-            return manifest
-        }
-        write("Spoken answer limit: \(spokenLimitLabel(characters)).\n\n")
-        return manifestByUpdatingVoice(manifest) { voice in
-            AgentVoiceSettingsManifest(
-                enabled: voice?.enabled ?? false,
-                macOSVoiceIdentifier: voice?.macOSVoiceIdentifier,
-                utteranceSilenceSeconds: voice?.utteranceSilenceSeconds,
-                maximumSpokenCharacters: characters,
-                sendMode: voice?.sendMode,
-                sendKeyword: voice?.sendKeyword
-            )
-        }
     }
 
     /// Replaces the voice settings, keeping every other setting. An unchanged

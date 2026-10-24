@@ -119,16 +119,22 @@ extension DirectSubAgentRuntime {
                     // turn simply runs without a block.
                     memoryBlock = nil
                 }
-                let response = try await MemoryTurnContext.$currentTurnMemoryBlock
-                    .withValue(memoryBlock) {
-                        try await work.backend.sendPrompt(
-                            sessionID: work.sessionID,
-                            prompt: work.prompt,
-                            attachments: [],
-                            onEvent: { event in
-                                await self.recordEvent(event, agentID: agentID)
+                // A delegated turn is not the operator's turn: the Task that
+                // runs it inherits task-locals from whoever created the agent,
+                // so the per-turn instruction is reset explicitly.
+                let response = try await AgentTurnInstructionContext.$currentTurnInstruction
+                    .withValue(nil) {
+                        try await MemoryTurnContext.$currentTurnMemoryBlock
+                            .withValue(memoryBlock) {
+                                try await work.backend.sendPrompt(
+                                    sessionID: work.sessionID,
+                                    prompt: work.prompt,
+                                    attachments: [],
+                                    onEvent: { event in
+                                        await self.recordEvent(event, agentID: agentID)
+                                    }
+                                )
                             }
-                        )
                     }
                 await recordCompletion(response, agentID: agentID, authorization: authorization)
             } catch is CancellationError {

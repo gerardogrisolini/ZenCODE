@@ -18,7 +18,6 @@ import Foundation
 extension ZenCODESetupRunner {
     enum SpeechVoiceAction: Hashable {
         case sendMode
-        case spokenLimit
         case automatic
         case voice(String)
         case back
@@ -87,11 +86,6 @@ extension ZenCODESetupRunner {
                 value: SpeechVoiceAction.sendMode,
                 title: sendModeMenuTitle,
                 detail: sendModeItemDetail(manifest: manifest)
-            ),
-            TerminalCheckboxMenuItem(
-                value: SpeechVoiceAction.spokenLimit,
-                title: spokenLimitMenuTitle,
-                detail: spokenLimitItemDetail(manifest: manifest)
             ),
             TerminalCheckboxMenuItem(
                 value: SpeechVoiceAction.automatic,
@@ -201,9 +195,6 @@ extension ZenCODESetupRunner {
                     )
                 }
                 selected = action
-            case .spokenLimit:
-                manifest = configureSpokenLimit(manifest: manifest, write: write, selectOne: selectOption)
-                selected = action
             }
         }
     }
@@ -220,7 +211,6 @@ extension ZenCODESetupRunner {
                 enabled: current?.enabled ?? false,
                 macOSVoiceIdentifier: identifier,
                 utteranceSilenceSeconds: current?.utteranceSilenceSeconds,
-                maximumSpokenCharacters: current?.maximumSpokenCharacters,
                 sendMode: current?.sendMode,
                 sendKeyword: current?.sendKeyword
             )
@@ -304,7 +294,7 @@ extension ZenCODESetupRunner {
                     }
                     let voice: SystemSpeechVoice?
                     switch action {
-                    case .back, .sendMode, .spokenLimit:
+                    case .back, .sendMode:
                         return action
                     case .automatic:
                         voice = automatic

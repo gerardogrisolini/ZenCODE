@@ -90,6 +90,10 @@ extension TerminalChat {
             var generationAttachments = attempt.attachments
             var response: DirectAgentResponse
             while true {
+                // Evaluated for every iteration, so `/voice pause` or
+                // `/voice off` while a workflow continues turn by turn takes
+                // effect on the next prompt.
+                let turnInstruction = await voiceTurnInstruction()
                 response = try await sessionRunner.sendPrompt(
                     configuration: sessionConfiguration,
                     prompt: generationPrompt,
@@ -101,6 +105,7 @@ extension TerminalChat {
                     )
                 },
                 toolProviders: [],
+                turnInstruction: turnInstruction,
                 onEvent: { @TerminalChatActor event in
                     switch event {
                     case .status, .diagnostic:

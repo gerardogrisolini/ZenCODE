@@ -14,7 +14,10 @@ import Speech
 #endif
 
 enum TerminalDictationEvent: Sendable, Equatable {
-    case partial(generation: UInt64, text: String)
+    /// A recognition result. `endsSegment` marks one that closes a speech
+    /// segment after a pause: the next results of the request hold only what
+    /// is said after it, so the earlier words must be kept by the receiver.
+    case partial(generation: UInt64, text: String, endsSegment: Bool)
     case ended(generation: UInt64)
 }
 
@@ -115,7 +118,8 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
             if let result {
                 handler?(.partial(
                     generation: generation,
-                    text: result.bestTranscription.formattedString
+                    text: result.bestTranscription.formattedString,
+                    endsSegment: result.speechRecognitionMetadata != nil
                 ))
             }
             if error != nil || result?.isFinal == true {
@@ -514,10 +518,9 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         let spoken: String
         switch rendering {
         case .answer:
-            spoken = TerminalVoiceSpeechText.spokenAnswer(
+            spoken = TerminalVoiceSpeechText.speakable(
                 fromMarkdown: text,
-                languageCode: languageCode,
-                maximumCharacters: options.maximumSpokenCharacters
+                languageCode: languageCode
             )
         case .plainText:
             spoken = text
@@ -609,8 +612,8 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         keywordCollector?.reset()
         dictationID = id &+ 1
         publishedDictation = ""
-        // A request's transcript is cumulative: without a fresh one the
-        // discarded words would come back with the next partial result.
+        // A request keeps reporting the segment in progress: without a fresh
+        // one the discarded words would come back with the next partial result.
         if phase == .listening, !isPaused {
             restartRecognition()
         }
@@ -623,7 +626,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             return
         }
         switch event {
-        case let .partial(eventGeneration, text):
+        case let .partial(eventGeneration, text, endsSegment):
             guard eventGeneration == generation else {
                 return
             }
@@ -638,7 +641,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             if hasSpeech, speaker?.state.isSpeaking(at: now) == true {
                 await interruptPlayback()
             }
-            segmenter.observe(text, at: now)
+            segmenter.observe(text, at: now, endsSegment: endsSegment)
             await publishDictation()
 
         case let .ended(eventGeneration):
@@ -696,8 +699,8 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             return
         }
         if segmenter.isUtteranceComplete(at: now), let utterance = segmenter.takeUtterance() {
-            // A request's transcript is cumulative: start a fresh one before
-            // the next utterance.
+            // The request still reports the segment in progress: start a fresh
+            // one before the next utterance.
             restartRecognition()
             await sendPauseUtterance(utterance, at: now)
         } else if !segmenter.hasPendingText,

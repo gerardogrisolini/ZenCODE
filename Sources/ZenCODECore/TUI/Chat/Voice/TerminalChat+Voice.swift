@@ -10,6 +10,10 @@ import Foundation
 extension TerminalChat {
     static let voiceOffMessage = "ZenCODE: voice mode is off. Run /voice on to start it.\n"
     static let voiceRequiresInteractiveTerminalMessage = "ZenCODE: /voice is available only in the interactive terminal.\n"
+    /// Sent to the model with every prompt while voice mode listens (see
+    /// ``voiceTurnInstruction()``). English on purpose: the language of the
+    /// answer is already handled by the system prompt.
+    static let voiceTurnInstruction = "Voice mode is on: the user is listening and your final answer is read aloud. Answer in short sentences. While you work, briefly comment on what you are doing as you do it. Keep any format the request requires."
 
     /// `/voice [on|off|pause|resume]`. Voice mode is independent of the active
     /// agent, survives agent and session switches, and lasts only for this TUI
@@ -43,6 +47,20 @@ extension TerminalChat {
             return nil
         }
         return controller
+    }
+
+    /// The instruction that goes out with a prompt: ``voiceTurnInstruction``
+    /// while voice mode listens (running and not paused), otherwise `nil`. It
+    /// is evaluated for every prompt, so `/voice pause`, `/voice resume` and
+    /// `/voice off` take effect from the next one. The runtime merges it into
+    /// the outgoing copy of the user message only (see
+    /// ``AgentTurnInstructionContext``): it never enters history or snapshots.
+    func voiceTurnInstruction() async -> String? {
+        guard let controller = await activeVoiceController(),
+              await !controller.isPaused else {
+            return nil
+        }
+        return Self.voiceTurnInstruction
     }
 
     private func startVoiceMode() async {

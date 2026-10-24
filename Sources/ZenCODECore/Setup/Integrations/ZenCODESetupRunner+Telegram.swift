@@ -46,7 +46,6 @@ extension ZenCODESetupRunner {
             enabled: telegram?.isEnabled == true,
             macOSVoiceIdentifier: existing?.macOSVoiceIdentifier,
             utteranceSilenceSeconds: existing?.utteranceSilenceSeconds,
-            maximumSpokenCharacters: existing?.maximumSpokenCharacters,
             sendMode: existing?.sendMode,
             sendKeyword: existing?.sendKeyword
         )

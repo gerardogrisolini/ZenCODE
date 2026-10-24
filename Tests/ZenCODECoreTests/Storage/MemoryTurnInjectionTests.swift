@@ -11,6 +11,11 @@
 //  cache-key computation in `AgentCoreAppSessionFactory`. No graph, no env, no
 //  network.
 //
+//  The same helper also carries the per-turn instruction
+//  (`AgentTurnInstructionContext`), appended after the memory block; the
+//  instruction cases below pin its ordering, its nil/blank zero-regression
+//  contract and its task-local wiring.
+//
 
 import Foundation
 import ToolCore
@@ -278,6 +283,246 @@ struct MemoryTurnInjectionTests {
 
             #expect(keyWithoutBlock?.nilIfBlank != nil)
             #expect(keyWithoutBlock == keyWithBlock)
+        }
+    }
+
+    // MARK: - Per-turn instruction (`AgentTurnInstructionContext`): same channel
+    // and same invariants as the memory block, with the instruction last.
+
+    private static let instruction = "Voice mode is on: answer in short sentences."
+    private static let memoryBlock = "<project-memory>\nflange deploy\n</project-memory>"
+
+    @Test
+    func instructionAloneIsAppendedToTheLastUserMessage() throws {
+        let messages: [[String: Any]] = [
+            ["role": "system", "content": "system prompt"],
+            ["role": "user", "content": "first question"],
+            ["role": "assistant", "content": "first answer"],
+            ["role": "user", "content": "follow-up"]
+        ]
+        let originalSnapshot = try jsonSnapshot(messages)
+
+        let outgoing = RemoteGenerationClient.applyingCurrentTurnMemory(
+            to: messages,
+            block: nil,
+            instruction: Self.instruction
+        )
+
+        #expect(outgoing.count == messages.count)
+        #expect(outgoing[3]["content"] as? String == "follow-up\n\n\(Self.instruction)")
+        // Earlier turns and the system prompt are not touched.
+        #expect(outgoing[1]["content"] as? String == "first question")
+        #expect(outgoing[0]["content"] as? String == "system prompt")
+        // The caller's own array is not mutated.
+        #expect(try jsonSnapshot(messages) == originalSnapshot)
+    }
+
+    @Test
+    func memoryBlockComesBeforeTheInstruction() throws {
+        let messages: [[String: Any]] = [
+            ["role": "user", "content": "what is the deploy command"]
+        ]
+
+        let outgoing = RemoteGenerationClient.applyingCurrentTurnMemory(
+            to: messages,
+            block: Self.memoryBlock,
+            instruction: Self.instruction
+        )
+
+        let content = try #require(outgoing.first?["content"] as? String)
+        #expect(content == "what is the deploy command\n\n\(Self.memoryBlock)\n\n\(Self.instruction)")
+        #expect(content.hasSuffix(Self.instruction))
+    }
+
+    @Test
+    func memoryBlockAloneKeepsTheSameOutputAsBeforeTheInstruction() throws {
+        let messages: [[String: Any]] = [
+            ["role": "user", "content": "what is the deploy command"]
+        ]
+
+        let withNilInstruction = RemoteGenerationClient.applyingCurrentTurnMemory(
+            to: messages,
+            block: Self.memoryBlock,
+            instruction: nil
+        )
+        let withBlankInstruction = RemoteGenerationClient.applyingCurrentTurnMemory(
+            to: messages,
+            block: Self.memoryBlock,
+            instruction: " \n\t "
+        )
+
+        let expected = "what is the deploy command\n\n\(Self.memoryBlock)"
+        #expect(withNilInstruction.first?["content"] as? String == expected)
+        #expect(withBlankInstruction.first?["content"] as? String == expected)
+    }
+
+    @Test
+    func blankBlockWithInstructionAddsNoSeparatorForTheBlock() throws {
+        let messages: [[String: Any]] = [
+            ["role": "user", "content": "question"],
+            ["role": "user", "content": ""]
+        ]
+
+        let outgoing = RemoteGenerationClient.applyingCurrentTurnMemory(
+            to: messages,
+            block: "  \n",
+            instruction: Self.instruction
+        )
+
+        // An empty last user message receives the text alone, without a
+        // leading blank line, and the earlier message stays as it was.
+        #expect(outgoing[1]["content"] as? String == Self.instruction)
+        #expect(outgoing[0]["content"] as? String == "question")
+    }
+
+    @Test
+    func nilOrBlankBlockAndInstructionProduceByteIdenticalRequest() throws {
+        let messages: [[String: Any]] = [
+            ["role": "system", "content": "system prompt"],
+            ["role": "user", "content": "question"],
+            ["role": "assistant", "content": "answer"],
+            ["role": "user", "content": "follow-up"]
+        ]
+        let baseline = try jsonSnapshot(messages)
+
+        for blankBlock in [String?.none, "", "   "] {
+            for blankInstruction in [String?.none, "", " \n\t ", "\n"] {
+                let outgoing = RemoteGenerationClient.applyingCurrentTurnMemory(
+                    to: messages,
+                    block: blankBlock,
+                    instruction: blankInstruction
+                )
+                #expect(try jsonSnapshot(outgoing) == baseline)
+            }
+        }
+    }
+
+    @Test
+    func multimodalContentReceivesOneCombinedTextItem() throws {
+        let imageItem: [String: Any] = [
+            "type": "image_url",
+            "image_url": ["url": "data:image/png;base64,iVBOR=="]
+        ]
+        let textItem: [String: Any] = [
+            "type": "text",
+            "text": "describe this screenshot"
+        ]
+        let messages: [[String: Any]] = [
+            ["role": "user", "content": [textItem, imageItem]]
+        ]
+        let originalSnapshot = try jsonSnapshot(messages)
+
+        // Instruction alone: one more text item.
+        let instructionOnly = RemoteGenerationClient.applyingCurrentTurnMemory(
+            to: messages,
+            block: nil,
+            instruction: Self.instruction
+        )
+        let instructionItems = try #require(instructionOnly.first?["content"] as? [[String: Any]])
+        #expect(instructionItems.count == 3)
+        #expect(instructionItems[0]["text"] as? String == "describe this screenshot")
+        #expect(instructionItems[1]["type"] as? String == "image_url")
+        #expect(instructionItems[2]["type"] as? String == "text")
+        #expect(instructionItems[2]["text"] as? String == Self.instruction)
+
+        // Memory and instruction: still exactly one added item, with both texts.
+        let combined = RemoteGenerationClient.applyingCurrentTurnMemory(
+            to: messages,
+            block: Self.memoryBlock,
+            instruction: Self.instruction
+        )
+        let combinedItems = try #require(combined.first?["content"] as? [[String: Any]])
+        #expect(combinedItems.count == 3)
+        #expect(combinedItems[1]["type"] as? String == "image_url")
+        #expect(combinedItems[2]["type"] as? String == "text")
+        #expect(combinedItems[2]["text"] as? String == "\(Self.memoryBlock)\n\n\(Self.instruction)")
+
+        #expect(try jsonSnapshot(messages) == originalSnapshot)
+    }
+
+    @Test
+    func instructionWithoutAUserMessageLeavesRequestUntouched() throws {
+        let messages: [[String: Any]] = [
+            ["role": "system", "content": "system prompt"],
+            ["role": "assistant", "content": "prior answer"],
+            ["role": "tool", "name": "search", "content": "result"]
+        ]
+        let baseline = try jsonSnapshot(messages)
+
+        let outgoing = RemoteGenerationClient.applyingCurrentTurnMemory(
+            to: messages,
+            block: nil,
+            instruction: Self.instruction
+        )
+        #expect(try jsonSnapshot(outgoing) == baseline)
+    }
+
+    @Test
+    func currentTurnInstructionTaskLocalFeedsDefaultArgument() throws {
+        let messages: [[String: Any]] = [
+            ["role": "user", "content": "prompt"]
+        ]
+
+        // Outside any binding the task-local is nil and so is the default.
+        #expect(AgentTurnInstructionContext.currentTurnInstruction == nil)
+        let unbound = RemoteGenerationClient.applyingCurrentTurnMemory(to: messages)
+        #expect(try jsonSnapshot(unbound) == jsonSnapshot(messages))
+
+        // Inside the scope the default argument picks the instruction up at
+        // the call site, alone or after a memory block bound the same way.
+        let bound = AgentTurnInstructionContext.$currentTurnInstruction.withValue(Self.instruction) {
+            RemoteGenerationClient.applyingCurrentTurnMemory(to: messages)
+        }
+        #expect(bound.first?["content"] as? String == "prompt\n\n\(Self.instruction)")
+
+        let boundWithMemory = MemoryTurnContext.$currentTurnMemoryBlock.withValue(Self.memoryBlock) {
+            AgentTurnInstructionContext.$currentTurnInstruction.withValue(Self.instruction) {
+                RemoteGenerationClient.applyingCurrentTurnMemory(to: messages)
+            }
+        }
+        #expect(
+            boundWithMemory.first?["content"] as? String
+                == "prompt\n\n\(Self.memoryBlock)\n\n\(Self.instruction)"
+        )
+
+        // The binding ends with the scope; an explicit nil reset hides it.
+        #expect(AgentTurnInstructionContext.currentTurnInstruction == nil)
+        let reset = AgentTurnInstructionContext.$currentTurnInstruction.withValue(Self.instruction) {
+            AgentTurnInstructionContext.$currentTurnInstruction.withValue(nil) {
+                RemoteGenerationClient.applyingCurrentTurnMemory(to: messages)
+            }
+        }
+        #expect(try jsonSnapshot(reset) == jsonSnapshot(messages))
+    }
+
+    @Test
+    func sessionCacheKeyIsIdenticalWithAndWithoutTurnInstruction() throws {
+        let supportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-instruction-cache-key-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+
+        try AppStorageDirectory.withSupportDirectoryURL(supportDirectory) {
+            try AgentSettingsManifestStore.save(AgentSettingsManifest(models: []))
+            try AgentProfileStore.save(AgentProfileStore.defaultProfiles())
+
+            let request = AgentCoreAppSessionRequest(
+                sessionID: "instruction-cache-session",
+                workingDirectory: URL(fileURLWithPath: "/tmp/zencode-instruction-cache-key"),
+                cacheKey: "shared-cache-seed",
+                history: [AgentRuntimeMessage(role: .user, content: "question")],
+                allowedToolNames: ["local.readFile"]
+            )
+
+            let keyWithoutInstruction = try AgentCoreAppSessionFactory.makeConfiguration(request: request).cacheKey
+            let keyWithInstruction = try AgentTurnInstructionContext.$currentTurnInstruction.withValue(
+                "this must not rotate the cache key"
+            ) {
+                try AgentCoreAppSessionFactory.makeConfiguration(request: request).cacheKey
+            }
+
+            #expect(keyWithoutInstruction?.nilIfBlank != nil)
+            #expect(keyWithoutInstruction == keyWithInstruction)
         }
     }
 

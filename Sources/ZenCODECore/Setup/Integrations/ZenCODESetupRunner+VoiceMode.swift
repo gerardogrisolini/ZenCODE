@@ -16,7 +16,6 @@ import Synchronization
 extension ZenCODESetupRunner {
     enum VoiceModeAction: Hashable {
         case sendMode
-        case spokenLimit
         case voice(String)
         case remove
         case back
@@ -71,11 +70,6 @@ extension ZenCODESetupRunner {
                 value: VoiceModeAction.sendMode,
                 title: sendModeMenuTitle,
                 detail: sendModeItemDetail(manifest: manifest)
-            ),
-            TerminalCheckboxMenuItem(
-                value: VoiceModeAction.spokenLimit,
-                title: spokenLimitMenuTitle,
-                detail: spokenLimitItemDetail(manifest: manifest)
             )
         ]
         items += voices.map { voice in
@@ -160,9 +154,6 @@ extension ZenCODESetupRunner {
                 return manifest
             case .sendMode:
                 manifest = configureSendMode(manifest: manifest)
-                selected = action
-            case .spokenLimit:
-                manifest = configureSpokenLimit(manifest: manifest)
                 selected = action
             case .remove:
                 guard try promptYesNo(

@@ -172,6 +172,44 @@ struct AgentVoiceSettingsManifestTests {
         #expect(disabled.voice == nil)
     }
 
+    /// v2.4.0 saved `voice.maximumSpokenCharacters`; voice mode now always reads
+    /// an answer whole, so the key is ignored and not written again.
+    @Test
+    func theRemovedSpokenCharactersLimitIsIgnoredAndDropped() throws {
+        let voice = try JSONDecoder().decode(
+            AgentVoiceSettingsManifest.self,
+            from: Data(#"{"enabled":true,"maximumSpokenCharacters":0,"utteranceSilenceSeconds":8}"#.utf8)
+        )
+        #expect(voice == AgentVoiceSettingsManifest(enabled: true, utteranceSilenceSeconds: 8))
+        let encoded = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(voice)) as? [String: Any]
+        )
+        #expect(encoded.keys.sorted() == ["enabled", "utteranceSilenceSeconds"])
+
+        // Through a whole settings file, the key disappears on the next save.
+        let manifest = try JSONDecoder().decode(
+            AgentSettingsManifest.self,
+            from: Data(
+                #"{"version":14,"models":[],"voice":{"enabled":true,"maximumSpokenCharacters":600}}"#.utf8
+            )
+        )
+        #expect(manifest.voice == AgentVoiceSettingsManifest(enabled: true))
+        let object = try Self.encodedVoice(of: manifest)
+        #expect(object.keys.sorted() == ["enabled"])
+
+        // With nothing else set, the saved limit leaves no voice settings.
+        let onlyTheLimit = try JSONDecoder().decode(
+            AgentVoiceSettingsManifest.self,
+            from: Data(#"{"maximumSpokenCharacters":600}"#.utf8)
+        )
+        #expect(onlyTheLimit.isEmpty)
+        let alone = try JSONDecoder().decode(
+            AgentSettingsManifest.self,
+            from: Data(#"{"version":14,"models":[],"voice":{"maximumSpokenCharacters":600}}"#.utf8)
+        )
+        #expect(alone.voice == nil)
+    }
+
     @Test
     func readingVoiceIsStoredWithoutTelegramTranscription() throws {
         let manifest = AgentSettingsManifest(

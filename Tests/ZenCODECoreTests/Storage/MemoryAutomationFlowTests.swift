@@ -624,6 +624,58 @@ struct MemoryAutomationFlowTests {
         }
     }
 
+    // MARK: - The per-turn instruction reaches the backend for the operator's
+    // turn only, and never enters the persisted history.
+
+    @Test
+    func operatorTurnInstructionReachesBackendWithoutEnteringHistory() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let backend = MemoryObservingBackend()
+            let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
+            let sessionID = "instruction-\(UUID().uuidString)"
+            let configuration = AgentCoreSessionConfiguration(
+                sessionID: sessionID,
+                modelID: "test-model",
+                workingDirectory: workspace.workspaceURL,
+                systemPrompt: nil,
+                cacheKey: nil,
+                history: [],
+                allowedToolNames: []
+            )
+            let instruction = "Answer in short sentences."
+
+            try await runner.createSession(configuration: configuration)
+            // Trailing closure: `turnInstruction` sits before `onEvent`.
+            _ = try await runner.sendPrompt(
+                configuration: configuration,
+                prompt: "first question",
+                attachments: [],
+                turnInstruction: instruction
+            ) { _ in }
+            _ = try await runner.sendPrompt(
+                configuration: configuration,
+                prompt: "second question",
+                attachments: [],
+                onEvent: { _ in }
+            )
+
+            // The first turn carried the instruction; the next one, sent
+            // without it, did not inherit anything from the previous turn.
+            let observed = await backend.observedTurnInstructions()
+            #expect(observed.count == 2)
+            #expect(observed.first == .some(instruction))
+            #expect(observed.last == .some(nil))
+            #expect(AgentTurnInstructionContext.currentTurnInstruction == nil)
+
+            let snapshot = try #require(await runner.snapshotSession(id: sessionID))
+            #expect(snapshot.history.contains { $0.content == "first question" })
+            #expect(!snapshot.history.contains { $0.content.contains(instruction) })
+            #expect(snapshot.systemPrompt?.contains(instruction) != true)
+        }
+    }
+
     @Test
     func completedTurnLeavesMemoryUnchangedWithoutAnExplicitMemoryTool() async throws {
         let workspace = try MemoryTestWorkspace()
@@ -723,6 +775,65 @@ struct MemoryAutomationFlowTests {
             let observed = try #require(await backend.observedMemoryBlock())
             #expect(observed.contains("<project-memory>"))
             #expect(observed.contains("frobnicator"))
+
+            await executor.subAgentRuntime.shutdown()
+        }
+    }
+
+    // MARK: - A sub-agent turn does not inherit the operator's per-turn
+    // instruction, even though its Task is created inside that turn.
+
+    @Test
+    func subAgentTurnDoesNotInheritTheTurnInstruction() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let backend = MemoryObservingBackend()
+            let developer = AgentProfile(
+                id: "developer-profile",
+                name: "Developer",
+                tools: ["local.readFile"]
+            )
+            let executor = DirectToolExecutor(
+                swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+                subAgentContextualBackendFactory: { _ in backend },
+                subAgentProfileResolver: { _ in developer }
+            )
+
+            // The agent is created while the instruction is bound, exactly as
+            // an `agent.create` tool call runs inside the operator's turn.
+            let createResult = await AgentTurnInstructionContext.$currentTurnInstruction
+                .withValue("Answer in short sentences.") {
+                    await executor.execute(
+                        sessionID: "root",
+                        toolCall: presentedToolCall(
+                            id: "create-instruction-worker",
+                            name: "agent.create",
+                            argumentsObject: [
+                                "name": "instruction-worker",
+                                "profile": "Developer",
+                                "prompt": "inspect the workspace"
+                            ],
+                            argumentsJSON: #"{"name":"instruction-worker","profile":"Developer","prompt":"inspect the workspace"}"#
+                        ),
+                        workingDirectory: workspace.workspaceURL
+                    )
+                }
+            #expect(createResult.status == .completed)
+            _ = await executor.execute(
+                sessionID: "root",
+                toolCall: presentedToolCall(
+                    id: "wait-instruction-worker",
+                    name: "agent.wait",
+                    argumentsObject: ["name": "instruction-worker"],
+                    argumentsJSON: #"{"name":"instruction-worker"}"#
+                ),
+                workingDirectory: workspace.workspaceURL
+            )
+
+            let observed = await backend.observedTurnInstructions()
+            #expect(observed.count == 1)
+            #expect(observed.first == .some(nil))
 
             await executor.subAgentRuntime.shutdown()
         }
@@ -1376,6 +1487,7 @@ private struct DelayedMemoryEmbeddingProvider: EmbeddingProvider {
 private actor MemoryObservingBackend: AgentRuntimeBackend {
     private var snapshot: AgentRuntimeSessionSnapshot?
     private var observed: String?
+    private var observedInstructions: [String?] = []
     private var prompts = 0
 
     func createSession(
@@ -1450,6 +1562,7 @@ private actor MemoryObservingBackend: AgentRuntimeBackend {
     ) async throws -> DirectAgentResponse {
         prompts += 1
         observed = MemoryTurnContext.currentTurnMemoryBlock
+        observedInstructions.append(AgentTurnInstructionContext.currentTurnInstruction)
         await onEvent(.content("acknowledged"))
         return DirectAgentResponse(text: "acknowledged", stopReason: "end_turn", modelID: "test-model")
     }
@@ -1459,6 +1572,8 @@ private actor MemoryObservingBackend: AgentRuntimeBackend {
     }
 
     func observedMemoryBlock() -> String? { observed }
+    /// The per-turn instruction seen by each `sendPrompt`, in call order.
+    func observedTurnInstructions() -> [String?] { observedInstructions }
     func promptCount() -> Int { prompts }
 }
 /// Resolves the built-in profiles, as the live runtime does. Sub-agent creation

@@ -235,10 +235,10 @@ struct TerminalSherpaVoiceControllerTests {
         #expect(await controller.isActive == false)
     }
 
-    /// Live-chat texts are read whole and unchanged, while answers keep the
-    /// final-sentences rule of long answers.
+    /// Live-chat texts and answers are both read whole, however long; an
+    /// answer only loses its Markdown.
     @Test
-    func plainTextIsReadWholeWhileAnswersKeepTheirTailRule() async throws {
+    func plainTextAndAnswersAreReadWhole() async throws {
         let fixture = try Fixture(readingSeconds: "0.2")
         let controller = fixture.makeController()
         await controller.start()
@@ -255,9 +255,11 @@ struct TerminalSherpaVoiceControllerTests {
 
         #expect(await controller.speak("# Titolo\n\n" + long, rendering: .answer))
         #expect(await waitUntil { await fixture.events.speaking == [true, false, true, false] })
-        let spokenAnswer = try #require(fixture.synthesizerCalls.last)
-        #expect(spokenAnswer.contains(TerminalVoiceSpeechText.longAnswerNotice(languageCode: "it")))
-        #expect(spokenAnswer.count < long.count)
+        #expect(
+            fixture.synthesizerCalls.last?.hasSuffix(
+                "--|Titolo. \(long.trimmingCharacters(in: .whitespaces))|"
+            ) == true
+        )
         await controller.stop()
         #expect(await fixture.events.failures.isEmpty)
     }

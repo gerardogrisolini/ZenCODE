@@ -28,7 +28,7 @@ struct MacOSVoiceModeSetupTests {
     }
 
     /// Runs the section with a scripted menu answer; `option` answers the
-    /// pause and limit submenus, `sendMode` and `keyword` the send mode ones.
+    /// pause submenu, `sendMode` and `keyword` the send mode ones.
     static func configure(
         _ manifest: AgentSettingsManifest?,
         option: ([TerminalCheckboxMenuItem<ZenCODESetupRunner.VoiceOptionAction>], ZenCODESetupRunner.VoiceOptionAction) -> ZenCODESetupRunner.VoiceOptionAction? = { _, _ in .back },
@@ -72,7 +72,6 @@ struct MacOSVoiceModeSetupTests {
         )
         #expect(items.map(\.value) == [
             .sendMode,
-            .spokenLimit,
             .automatic,
             .voice(Voices.federica.identifier),
             .voice(Voices.luca.identifier),
@@ -81,10 +80,8 @@ struct MacOSVoiceModeSetupTests {
         ])
         #expect(items[0].title == "Send mode")
         #expect(items[0].detail == "after 5 s of silence")
-        #expect(items[1].title == "Spoken answer limit")
-        #expect(items[1].detail == "600 characters · a longer answer is read from its final sentences")
-        #expect(items[2].title == "Automatic")
-        #expect(items[2].detail == "best installed voice, now Federica (it-IT · premium)")
+        #expect(items[1].title == "Automatic")
+        #expect(items[1].detail == "best installed voice, now Federica (it-IT · premium)")
         let luca = try #require(items.first { $0.value == .voice(Voices.luca.identifier) })
         #expect(luca.title == "Luca")
         #expect(luca.detail == "it-IT · enhanced")
@@ -94,20 +91,16 @@ struct MacOSVoiceModeSetupTests {
             installedVoices: Voices.installed,
             localeIdentifier: "ja-JP"
         )
-        #expect(none.map(\.value) == [.sendMode, .spokenLimit, .automatic, .back])
-        #expect(none[2].detail == "system default voice for ja-JP")
+        #expect(none.map(\.value) == [.sendMode, .automatic, .back])
+        #expect(none[1].detail == "system default voice for ja-JP")
 
-        // Saved options show in the item details.
+        // The saved pause shows in the send mode item.
         let saved = ZenCODESetupRunner.speechVoiceMenuItems(
             installedVoices: Voices.installed,
             localeIdentifier: "it-IT",
-            manifest: Self.manifest(voice: AgentVoiceSettingsManifest(
-                utteranceSilenceSeconds: 8,
-                maximumSpokenCharacters: 0
-            ))
+            manifest: Self.manifest(voice: AgentVoiceSettingsManifest(utteranceSilenceSeconds: 8))
         )
         #expect(saved[0].detail == "after 8 s of silence")
-        #expect(saved[1].detail?.hasPrefix("whole answer · ") == true)
 
         // In keyword mode the send mode shows the word; the pause is part of
         // "After a pause" only.
@@ -117,7 +110,6 @@ struct MacOSVoiceModeSetupTests {
             manifest: Self.manifest(voice: AgentVoiceSettingsManifest(sendMode: .keyword, sendKeyword: "vai"))
         )
         #expect(keyword[0].detail == "on the word “vai” · silence never sends")
-        #expect(keyword[1].title == "Spoken answer limit")
     }
 
     @Test
@@ -132,7 +124,7 @@ struct MacOSVoiceModeSetupTests {
             return .voice(Voices.luca.identifier)
         }
         #expect(preselected == .automatic)
-        #expect(offered.count == 7)
+        #expect(offered.count == 6)
         let manifest = try #require(result.manifest)
         #expect(manifest.voice == AgentVoiceSettingsManifest(
             enabled: true,
@@ -227,8 +219,7 @@ struct MacOSVoiceModeSetupTests {
     }
 
     @Test
-    func optionMenusListPresetsAndTheSavedValueWithTheDefaultMarked() {
-        typealias Option = ZenCODESetupRunner.VoiceOptionAction
+    func optionMenuListsPresetsAndTheSavedValueWithTheDefaultMarked() {
         let silence = ZenCODESetupRunner.utteranceSilenceMenuItems(current: 5)
         #expect(silence.map(\.value) == [.value(2), .value(3), .value(5), .value(8), .value(10), .back])
         #expect(silence.map(\.title) == ["2 s", "3 s", "5 s", "8 s", "10 s", "Back"])
@@ -238,14 +229,6 @@ struct MacOSVoiceModeSetupTests {
         // A hand-edited value joins the list in order.
         #expect(ZenCODESetupRunner.utteranceSilenceMenuItems(current: 4).map(\.value)
             == [.value(2), .value(3), .value(4), .value(5), .value(8), .value(10), .back])
-
-        let limit = ZenCODESetupRunner.spokenLimitMenuItems(current: 0)
-        #expect(limit.map(\.value) == [.value(300), .value(600), .value(1_000), .value(2_000), .value(0), .back])
-        #expect(limit.map(\.title) == ["300 characters", "600 characters", "1000 characters", "2000 characters", "whole answer", "Back"])
-        #expect(limit[1].detail == "default")
-        #expect(limit.last?.detail == "keep whole answer")
-        #expect(ZenCODESetupRunner.spokenLimitMenuItems(current: 800).map(\.value)
-            == [.value(300), .value(600), .value(800), .value(1_000), .value(2_000), .value(0), .back])
     }
 
     @Test
@@ -262,7 +245,7 @@ struct MacOSVoiceModeSetupTests {
             original,
             option: { _, selected in
                 optionPreselected.append(selected)
-                return selected == .value(5) ? .value(8) : .value(0)
+                return .value(8)
             },
             sendMode: { _, selected in
                 sendModePreselected.append(selected)
@@ -271,28 +254,22 @@ struct MacOSVoiceModeSetupTests {
             answer: { _, selected in
                 preselected.append(selected)
                 round += 1
-                switch round {
-                case 1: return .sendMode
-                case 2: return .spokenLimit
-                default: return .back
-                }
+                return round == 1 ? .sendMode : .back
             }
         )
-        #expect(preselected == [.voice(Voices.luca.identifier), .sendMode, .spokenLimit])
-        // "After a pause" goes on to the pause, then the limit has its own menu.
+        #expect(preselected == [.voice(Voices.luca.identifier), .sendMode])
+        // "After a pause" goes on to the pause list.
         #expect(sendModePreselected == [.pause])
-        #expect(optionPreselected == [.value(5), .value(600)])
+        #expect(optionPreselected == [.value(5)])
         let manifest = try #require(result.manifest)
         #expect(manifest.voice == AgentVoiceSettingsManifest(
             enabled: true,
             macOSVoiceIdentifier: Voices.luca.identifier,
-            utteranceSilenceSeconds: 8,
-            maximumSpokenCharacters: 0
+            utteranceSilenceSeconds: 8
         ))
         #expect(manifest.responseLanguage == "it")
         #expect(manifest.localExecAllowedCommands == ["git status"])
         #expect(result.output.contains("Send mode: after 8 s of silence."))
-        #expect(result.output.contains("Spoken answer limit: whole answer."))
 
         // Saved with the other settings and read back by voice mode.
         let reloaded = try JSONDecoder().decode(AgentSettingsManifest.self, from: JSONEncoder().encode(manifest))
@@ -300,14 +277,12 @@ struct MacOSVoiceModeSetupTests {
         let options = TerminalVoiceOptions(voice: reloaded.voice)
         #expect(options.utteranceSilence == .seconds(8))
         #expect(options.utteranceSilenceSeconds == 8)
-        #expect(options.maximumSpokenCharacters == nil)
 
         // Choosing a voice afterwards keeps the options.
         let withVoice = Self.configure(manifest) { _, _ in .automatic }
         #expect(try #require(withVoice.manifest).voice == AgentVoiceSettingsManifest(
             enabled: true,
-            utteranceSilenceSeconds: 8,
-            maximumSpokenCharacters: 0
+            utteranceSilenceSeconds: 8
         ))
     }
 
@@ -323,22 +298,23 @@ struct MacOSVoiceModeSetupTests {
         #expect(try #require(result.manifest).voice == AgentVoiceSettingsManifest(utteranceSilenceSeconds: 3))
         #expect(ZenCODESetupRunner.voiceOptionsSetupSuffix(manifest: result.manifest) == " · pause 3 s")
 
-        // Back or Esc in the option menu changes nothing.
+        // Back or Esc in the send mode menu changes nothing.
         let saved = Self.manifest(voice: AgentVoiceSettingsManifest(enabled: true))
-        var round = 0
-        let unchanged = Self.configure(
-            saved,
-            option: { _, _ in round == 1 ? .back : nil },
-            answer: { _, _ in
-                round += 1
-                return round <= 2 ? .spokenLimit : .back
-            }
-        )
-        #expect(unchanged.manifest == saved)
+        for modeAnswer in [ZenCODESetupRunner.VoiceSendModeAction.back, nil] {
+            var round = 0
+            let unchanged = Self.configure(
+                saved,
+                sendMode: { _, _ in modeAnswer },
+                answer: { _, _ in
+                    round += 1
+                    return round == 1 ? .sendMode : .back
+                }
+            )
+            #expect(unchanged.manifest == saved)
+        }
         #expect(ZenCODESetupRunner.voiceOptionsSetupSuffix(manifest: saved).isEmpty)
 
-        // Defaults: 5 s and 600 characters; settings without the keys decode
-        // unchanged.
+        // Defaults: 5 s; settings without the keys decode unchanged.
         let legacy = try JSONDecoder().decode(
             AgentVoiceSettingsManifest.self,
             from: Data(#"{"enabled":true}"#.utf8)
@@ -347,11 +323,9 @@ struct MacOSVoiceModeSetupTests {
         let defaults = TerminalVoiceOptions(voice: legacy)
         #expect(defaults == TerminalVoiceOptions())
         #expect(defaults.utteranceSilence == .seconds(5))
-        #expect(defaults.maximumSpokenCharacters == 600)
-        #expect(ZenCODESetupRunner.spokenCharacters(manifest: nil) == 600)
         #expect(ZenCODESetupRunner.utteranceSilenceSeconds(manifest: nil) == 5)
         // Invalid saved values fall back to the defaults.
-        #expect(AgentVoiceSettingsManifest(utteranceSilenceSeconds: 0, maximumSpokenCharacters: -1).isEmpty)
+        #expect(AgentVoiceSettingsManifest(utteranceSilenceSeconds: 0).isEmpty)
     }
 
     @Test

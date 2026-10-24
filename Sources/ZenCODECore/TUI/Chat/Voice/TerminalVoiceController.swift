@@ -44,8 +44,8 @@ struct TerminalVoiceCallbacks: Sendable {
 /// How a text handed to ``TerminalVoiceController/speak(_:rendering:)`` is
 /// turned into speech.
 enum TerminalVoiceSpeechRendering: Sendable, Equatable {
-    /// An assistant answer: Markdown becomes plain text and a long answer is
-    /// read from its final sentences only.
+    /// An assistant answer: Markdown becomes plain text and the whole answer
+    /// is read, however long.
     case answer
     /// Already-spoken text, read whole and unchanged: the announcements and
     /// questions of the live chat.
@@ -103,7 +103,6 @@ extension TerminalVoiceController {
 /// the built-in defaults; shared by both platforms.
 struct TerminalVoiceOptions: Sendable, Equatable {
     static let defaultUtteranceSilence = TerminalDictationSegmenter.defaultSilence
-    static let defaultMaximumSpokenCharacters = TerminalVoiceSpeechText.maximumSpokenCharacters
     /// In keyword mode the Linux recognizer still splits speech on silence; a
     /// short gap makes the keyword at the end of a segment take effect soon.
     static let keywordRecognizerSilenceSeconds = 1
@@ -118,30 +117,23 @@ struct TerminalVoiceOptions: Sendable, Equatable {
 
     /// Silence that ends an utterance in `.pause` mode.
     let utteranceSilence: Duration
-    /// Characters of an answer read whole; nil reads every answer whole.
-    let maximumSpokenCharacters: Int?
     let sendMode: SendMode
 
     init(
         utteranceSilence: Duration = Self.defaultUtteranceSilence,
-        maximumSpokenCharacters: Int? = Self.defaultMaximumSpokenCharacters,
         sendMode: SendMode = .pause
     ) {
         self.utteranceSilence = utteranceSilence
-        self.maximumSpokenCharacters = maximumSpokenCharacters
         self.sendMode = sendMode
     }
 
-    /// The saved options: a missing value keeps its default, a saved limit
-    /// of 0 removes the limit, and keyword mode without a usable keyword is
-    /// pause mode.
+    /// The saved options: a missing value keeps its default, and keyword mode
+    /// without a usable keyword is pause mode.
     init(voice: AgentVoiceSettingsManifest?) {
         let keyword = voice?.sendKeyword.flatMap(TerminalVoiceSendKeyword.init)
         self.init(
             utteranceSilence: voice?.utteranceSilenceSeconds.map { .seconds($0) }
                 ?? Self.defaultUtteranceSilence,
-            maximumSpokenCharacters: voice?.maximumSpokenCharacters.map { $0 > 0 ? $0 : nil }
-                ?? Self.defaultMaximumSpokenCharacters,
             sendMode: voice?.sendMode == .keyword ? keyword.map(SendMode.keyword) ?? .pause : .pause
         )
     }

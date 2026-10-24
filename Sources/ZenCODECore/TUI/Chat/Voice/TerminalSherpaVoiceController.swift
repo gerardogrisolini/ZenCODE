@@ -273,8 +273,6 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
     private let invocation: Invocation
     private let voiceName: String
     nonisolated let languageCode: String
-    /// Characters of an answer read whole; nil reads every answer whole.
-    private let maximumSpokenCharacters: Int?
     /// Set in keyword send mode: speech waiting for the keyword.
     private var keywordCollector: TerminalVoiceKeywordCollector?
     /// The live-chat dialogue awaits a yes or no.
@@ -318,7 +316,6 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
             ),
             voiceName: "\(paths.voice.speaker) (\(paths.voice.locale))",
             languageCode: paths.voice.languageCode,
-            maximumSpokenCharacters: options.maximumSpokenCharacters,
             sendKeyword: options.sendKeyword,
             callbacks: callbacks
         )
@@ -328,14 +325,12 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         invocation: Invocation,
         voiceName: String,
         languageCode: String,
-        maximumSpokenCharacters: Int? = TerminalVoiceOptions.defaultMaximumSpokenCharacters,
         sendKeyword: TerminalVoiceSendKeyword? = nil,
         callbacks: TerminalVoiceCallbacks
     ) {
         self.invocation = invocation
         self.voiceName = voiceName
         self.languageCode = languageCode
-        self.maximumSpokenCharacters = maximumSpokenCharacters
         self.keywordCollector = sendKeyword.map(TerminalVoiceKeywordCollector.init)
         self.callbacks = callbacks
     }
@@ -380,10 +375,9 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         let spoken: String
         switch rendering {
         case .answer:
-            spoken = TerminalVoiceSpeechText.spokenAnswer(
+            spoken = TerminalVoiceSpeechText.speakable(
                 fromMarkdown: text,
-                languageCode: languageCode,
-                maximumCharacters: maximumSpokenCharacters
+                languageCode: languageCode
             )
         case .plainText:
             spoken = text
