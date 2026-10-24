@@ -973,5 +973,6 @@ struct ZenCrontabDocumentTests {
         )
         #expect(ZenCrontabError.invalidPrompt(reason: "contains a line break").errorDescription?.contains("contains a line break") == true)
         #expect(ZenCrontabError.invalidMailTo("a b").errorDescription?.contains("a b") == true)
+        #expect(ZenCrontabError.invalidMailTo("a b").errorDescription?.contains("/cron mailto none") == true)
     }
 }

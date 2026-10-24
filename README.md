@@ -179,6 +179,7 @@ swift build -c release --product zen
 /goal        Work until complete or genuinely blocked; delegate when useful
 /review      Review tracked changes and verify task/plan claims
 /feature     Manage Swift features with the Builder agent
+/cron        Schedule headless prompts in your crontab (list/add/remove/run/mailto)
 /telegram    Turn Telegram remote control on/off when paired in setup
 /voice       Voice mode: speak prompts, hear answers (on/off/pause/resume)
 /exit        Close the session
@@ -203,6 +204,15 @@ more than the microphone and speech recognition permissions; on Linux, first
 download the speech files (about 580 MB) from `/setup` > **Voice mode**. The
 [voice guide](Docs/voice.md) covers languages, Telegram voice messages,
 privacy, and troubleshooting.
+
+`/cron add 0 9 * * 1-5 Summarize the open pull requests` schedules a prompt in
+the crontab of your system user: cron runs it as a headless `zen --jsonl -p`
+turn with the selected agent profile and the session's working directory, and
+mails the output. `/cron list` shows the numbered entries, `/cron run <n>` runs
+one now and reports in the terminal, and `/cron mailto` sets the recipient.
+Cron looks for `zen` in `/usr/local/bin`, where the installers put it. The
+[scheduled prompts guide](Docs/zen.md#scheduled-prompts-crontab) covers
+schedules, mail, and troubleshooting.
 
 ## Layout
 

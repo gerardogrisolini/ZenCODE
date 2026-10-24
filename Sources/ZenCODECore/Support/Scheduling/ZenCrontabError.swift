@@ -48,7 +48,7 @@ enum ZenCrontabError: LocalizedError, Equatable {
         case let .invalidPrompt(reason):
             return "The prompt cannot be scheduled: \(reason). Rewrite it as a single non-empty line and retry."
         case let .invalidMailTo(value):
-            return "Invalid MAILTO value '\(value)'. Use a plain e-mail address, or an empty value to disable cron mail."
+            return "Invalid MAILTO value '\(value)'. Use a plain e-mail address, or /cron mailto none to disable cron mail."
         }
     }
 }

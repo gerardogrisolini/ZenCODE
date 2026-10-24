@@ -325,11 +325,11 @@ Commands start with `/`:
 - `/voice pause` / `/voice resume` — stop or restart both listening and reading aloud; a bare `/voice` toggles between them. Available while a prompt runs. See [voice.md](voice.md).
 
 **Scheduling:**
-- `/cron` / `/cron list` — list scheduled prompts with their number, schedule, agent, working directory, and prompt, then the current `MAILTO` address. See [Scheduled Prompts (crontab)](#scheduled-prompts-crontab).
-- `/cron add <schedule> <prompt>` — schedule a prompt. The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday) — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
-- `/cron remove <n>` — remove scheduled prompt `<n>`.
-- `/cron run <n>` — run scheduled prompt `<n>` now, the way cron runs it, in the background.
-- `/cron mailto [address|none|default]` — show or set the address that receives scheduled-prompt results. `none` sends no mail; `default` removes the override and uses the local mailbox of the crontab owner.
+- `/cron` / `/cron list` — show the `MAILTO` recipient and the scheduled prompts, each with its number, schedule, agent, working directory, and prompt. See [Scheduled Prompts (crontab)](#scheduled-prompts-crontab).
+- `/cron add <schedule> <prompt>` — schedule a prompt for the selected agent profile and the working directory of the session. The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
+- `/cron remove <n>` — remove scheduled prompt `<n>`; the entries after it are renumbered.
+- `/cron run <n>` — run scheduled prompt `<n>` now, the way cron runs it, in the background, and show the result in the terminal instead of mailing it.
+- `/cron mailto [address|none|default]` — without an argument, show the address that receives scheduled-prompt results; with one, set it. `none` sends no mail; `default` removes the override and uses the local mailbox of the crontab owner.
 
 **Task graph:**
 - `/tasks [status|list]` — show the session task graph.
@@ -498,20 +498,148 @@ Delegated sub-agents ask for the same approvals as the coordinator. Their reques
 
 ## Scheduled Prompts (crontab)
 
-`/cron` schedules prompts by writing entries into the crontab of the system user
-who runs ZenCODE. There is no daemon, no launchd or systemd unit, and no lock
-against overlapping runs: cron starts each entry when it is due, so if one run is
-still going when the next one is due, the next run starts anyway, as with any
-cron job.
+`/cron` runs prompts at set times, even when no ZenCODE session is open. Each
+scheduled prompt is an entry in the crontab of the system user who runs
+ZenCODE: when the entry is due, cron starts a headless `zen --jsonl -p` turn
+and mails its output. There is no daemon, no launchd or systemd unit, and no
+lock against overlapping runs: cron starts each entry when it is due, so if one
+run is still going when the next one is due, the next run starts anyway, as
+with any cron job.
 
-The crontab is the only source of truth. ZenCODE owns one block delimited by
-`# >>> ZenCODE cron >>>` and `# <<< ZenCODE cron <<<`, always placed at the end of
-the crontab. Lines outside the block stay byte-identical and in their original
-order. The block starts with a `PATH=` line and, when set, a `MAILTO=` line. Each
+`/cron` is a command of the interactive terminal; its subcommands are listed
+under [Terminal TUI Commands](#terminal-tui-commands). It is the only surface:
+Telegram and ACP do not offer it, there is no `zen` subcommand for scheduling,
+and the model has no tool to create or change scheduled prompts.
+
+### Quick start
+
+```text
+/cron add 0 9 * * 1-5 Summarize the open pull requests
+/cron list
+/cron run 1
+/cron mailto me@example.com
+/cron remove 1
+```
+
+`/cron add` needs `crontab` and a `zen` that cron can find, normally the one
+that `Scripts/install.sh` and `Scripts/install-linux.sh` install in
+`/usr/local/bin` (see [The `zen` that cron runs](#the-zen-that-cron-runs)).
+Results arrive by mail, which needs `sendmail` (see
+[Results and mail](#results-and-mail)). `zen --doctor` reports a missing
+`crontab` or `sendmail`.
+
+`/cron add` replies with the line it wrote and the `zen` that cron will run:
+
+```text
+Scheduled prompt #1 added:
+  0 9 * * 1-5 zen --agent 'Developer' --working-directory '/Users/me/Projects/app' --jsonl -p 'Summarize the open pull requests'
+  zen: /usr/local/bin/zen (PATH=/usr/local/bin:/usr/bin:/bin)
+```
+
+`/cron list`, or `/cron` alone, shows the mail recipient and one numbered row
+per scheduled prompt:
+
+```text
+Scheduled prompts — MAILTO: not set (cron default: local mailbox of the crontab owner)
+  1. 0 9 * * 1-5 · agent: Developer · dir: /Users/me/Projects/app · prompt: Summarize the open pull requests
+Results are mailed by cron; set the recipient with /cron mailto <address>.
+```
+
+`/cron run <n>` and `/cron remove <n>` take the number shown by `/cron list`.
+The number is the position of the entry in the crontab, so after a removal the
+following entries move up by one: list again before using a number. Entries are
+never edited in place; to change one, run `/cron remove` and then `/cron add`.
+
+Subcommands and the `none` and `default` keywords are case-insensitive.
+Completion continues after the subcommand: `/cron add ` offers the schedule
+aliases and example schedules, and the other slots (cron fields, prompt, `<n>`,
+`mailto`) show a one-line guide that is never inserted.
+
+### Schedules
+
+In `/cron add <schedule> <prompt>`, a first word that starts with `@` is the
+whole schedule; otherwise the first five words are the schedule. The rest of
+the line is the prompt.
+
+| Alias | Runs |
+| --- | --- |
+| `@hourly` | every hour, at minute 0 |
+| `@daily`, `@midnight` | every day at midnight |
+| `@weekly` | every Sunday at midnight |
+| `@monthly` | on the 1st of each month at midnight |
+| `@yearly`, `@annually` | every 1 January at midnight |
+| `@reboot` | when cron starts, normally at system startup |
+
+Aliases are case-insensitive. The five fields are, in order:
+
+| Field | Values |
+| --- | --- |
+| minute | 0-59 |
+| hour | 0-23 |
+| day of month | 1-31 |
+| month | 1-12 |
+| day of week | 0-7 (0 and 7 = Sunday) |
+
+Each field is `*`, `*/<step>`, or a comma-separated list of `<n>`, `<a>-<b>`,
+and `<a>-<b>/<step>`. Only numbers are accepted: month and day names such as
+`jan` or `mon` are rejected, and so are extensions such as `L`, `W`, `?`, and
+`#`. A step needs `*` or a range: write `*/10` or `5-59/10`, not `5/10`.
+
+| Schedule | Runs |
+| --- | --- |
+| `0 9 * * 1-5` | weekdays at 09:00 |
+| `*/15 * * * *` | every 15 minutes |
+| `30 18 * * *` | every day at 18:30 |
+| `0 8-18/2 * * 1-5` | every two hours from 08:00 to 18:00 on weekdays |
+| `0 7 1,15 * *` | at 07:00 on the 1st and the 15th of each month |
+
+Cron reads these times in the time zone of the system.
+
+The prompt is trimmed; it must not be empty and must fit on one line. Quotes
+and `%` are allowed, because ZenCODE quotes and escapes the prompt for cron.
+The schedule and the prompt are checked before the crontab is read, so a
+rejected `/cron add` changes nothing.
+
+### What a scheduled run does
+
+Each entry runs ZenCODE in headless mode:
+
+```text
+[ZENCODE_SUPPORT_DIRECTORY='<value>' ]zen [--agent '<selected profile>'] --working-directory '<TUI session working directory>' --jsonl -p '<prompt>'
+```
+
+`/cron add` takes three things from the session where you type it:
+
+- the selected agent profile, by name. An entry without `--agent` is listed as
+  `agent: default` and runs with the `Developer` profile, as `zen -p` does;
+- the working directory of the session;
+- `ZENCODE_SUPPORT_DIRECTORY`, only when it is set in the environment of that
+  session.
+
+Nothing else carries over. Each run is a new headless turn without the
+conversation, and the choices made with `/models`, `/tools`, or `/skills` do
+not apply: the model and skills come from the agent profile when the entry
+runs, so later changes to the profile also change later runs. If the profile
+is renamed or deleted, every run fails with an error; remove the entry and add
+it again with an existing profile.
+
+Arguments use single-quote shell quoting, and each `%` is escaped as `\%`,
+because cron turns an unescaped `%` in a command into a newline.
+
+The non-interactive policy of `zen -p` applies unchanged. A tool that would ask
+for approval is denied, except for approvals already saved with "always allow".
+A denied tool appears in the output as a `tool.completed` record with status
+`permissionDenied`, and the agent continues without it.
+
+### The crontab block
+
+The crontab is the only source of truth: no file is added under `~/.zencode`.
+ZenCODE reads and replaces the whole crontab with the standard `crontab -l` and
+`crontab -` commands, and runs `crontab -r` when nothing is left. It owns one
+block delimited by `# >>> ZenCODE cron >>>` and `# <<< ZenCODE cron <<<`. The
+block starts with a `PATH=` line and, when set, a `MAILTO=` line. Each
 scheduled prompt is two lines after them: a marker line,
-`# zencode-cron id=<UUID> created=<ISO8601 UTC>`, followed by the cron line. No
-file is added under `~/.zencode`. ZenCODE works through the standard
-`crontab -l`, `crontab -`, and `crontab -r` commands.
+`# zencode-cron id=<UUID> created=<ISO8601 UTC>`, followed by the cron line.
 
 ```text
 # >>> ZenCODE cron >>>
@@ -522,9 +650,28 @@ MAILTO=me@example.com
 # <<< ZenCODE cron <<<
 ```
 
-The crontab can also be edited by hand. A line inside the block that ZenCODE
-does not recognize is listed as `unrecognized` by `/cron list`, and it can still
-be removed by its number.
+Lines outside the block stay byte-identical and in their original order. The
+block is always written at the end of the crontab, after a blank line; lines
+found after it, for example after a manual edit, are moved above it. Variable
+assignments that come before the block, such as `SHELL=` or your own
+`MAILTO=`, also apply to ZenCODE entries, except `PATH`, which the block sets,
+and `MAILTO` once the block has its own.
+
+The crontab can also be edited by hand:
+
+- An entry is a marker line followed by a cron line. When that cron line runs
+  a command that ZenCODE did not write, `/cron list` shows it as
+  `command: …`, and it can still be run and removed. A line edited to run
+  `zen` by a quoted absolute path, such as `'/opt/zen/bin/zen'`, is still read
+  as a ZenCODE entry.
+- Any other line inside the block is listed as `(unrecognized)`. It has a
+  number and can be removed, but not run.
+- A begin marker without its end marker, or a second block, makes every `/cron`
+  command stop with `The ZenCODE block in your crontab is malformed` before it
+  writes anything. Fix the crontab with `crontab -e`, keeping one pair of
+  markers.
+- A crontab that is not valid UTF-8 is never rewritten; convert it to UTF-8
+  with `crontab -e` first.
 
 ### The `zen` that cron runs
 
@@ -552,42 +699,27 @@ ZenCODE writes the crontab; entries that run `zen` by an absolute path keep
 working. A block with no entry and no `MAILTO=` line, for example after the last
 entry is removed, is deleted whole, customized `PATH=` included.
 
-The commands are listed under [Terminal TUI Commands](#terminal-tui-commands).
-They are the only surface: there is no `zen` subcommand for scheduling, and the
-model has no tool to create or change scheduled prompts. Entries are never
-edited in place; to change one, run `/cron remove` and then `/cron add`.
-
-Completion continues after the subcommand: `/cron add ` offers the schedule aliases
-and example schedules, and the other slots (cron fields, prompt, `<n>`, `mailto`)
-show a one-line guide that is never inserted.
-
-Each entry runs ZenCODE in headless mode:
-
-```text
-[ZENCODE_SUPPORT_DIRECTORY='<value>' ]zen [--agent '<selected profile>'] --working-directory '<TUI session working directory>' --jsonl -p '<prompt>'
-```
-
-`ZENCODE_SUPPORT_DIRECTORY` is prefixed only when it is set in the environment
-where the entry is added. The model and skills come from the agent profile in the
-headless run. Arguments use single-quote shell quoting, and each `%` is escaped
-as `\%`, because cron turns an unescaped `%` in a command into a newline. A line
-that was edited by hand to run `zen` by a quoted absolute path, such as
-`'/opt/zen/bin/zen'`, is still recognized.
-
-The non-interactive policy of `zen -p` applies unchanged. A tool that would ask
-for approval is denied, except for approvals already saved with "always allow".
-
 ### Results and mail
 
-Cron mails each run's stdout, which contains the JSONL lines, and its stderr
-through the system `sendmail`. By default the mail goes to the local Unix mailbox
-of the crontab owner, which you read with the `mail` command. On macOS this works
-without configuration, because Postfix starts on demand.
+Cron mails what each run prints, through the system `sendmail`. Standard output
+holds the [JSONL records](jsonl.md) of the run: `run.started`, the tool
+records, the final answer in `message.completed`, and `run.completed`, or an
+`error` record when the run fails. In JSONL mode `zen` writes nothing to
+standard error, so standard error only carries messages from the shell, for
+example when it cannot find `zen`. Every run prints records, so cron sends a
+mail after every run unless mail is disabled.
 
-`/cron mailto` shows or changes the recipient. `/cron mailto <address>` writes
-`MAILTO=<address>` in the ZenCODE block, right after its `PATH=` line, so it
-applies only to ZenCODE entries. `/cron mailto none` writes `MAILTO=""`, and cron sends no mail.
-`/cron mailto default` removes the `MAILTO` line and restores the local mailbox.
+By default the mail goes to the local Unix mailbox of the crontab owner, which
+you read with the `mail` command. On macOS this works without configuration,
+because Postfix starts on demand.
+
+`/cron mailto` without an argument shows the recipient. `/cron mailto <address>`
+writes `MAILTO=<address>` in the ZenCODE block, right after its `PATH=` line, so
+it applies only to ZenCODE entries. The address must be one word without spaces
+or double quotes; ZenCODE does not check it further. `/cron mailto none` writes
+`MAILTO=""`, and cron sends no mail. `/cron mailto default` removes the
+`MAILTO` line and restores the local mailbox, or the `MAILTO=` set earlier in
+your crontab.
 
 To send mail to an external address such as a Gmail account, the system MTA must
 relay through an SMTP server. Configure Postfix with `relayhost` and SASL
@@ -606,10 +738,31 @@ are not applied. The run happens in the background, so the TUI stays responsive.
 At most one `/cron run` can be in progress per session; a second request is
 refused until the first one finishes.
 
-When the run ends, the terminal shows its exit status, its duration, and either
-the text of the `message.completed` JSONL event or the error, followed by the last
-lines of stderr. Use it to check that `zen` is found, the approvals, and the
-working directory in the cron environment. The report is not forwarded to Telegram.
+Unlike cron, `/cron run` sends no mail: ZenCODE reads the output itself and
+keeps up to 1 MiB of standard output and 64 KiB of standard error. It refuses
+an `(unrecognized)` line; an entry with a command that ZenCODE did not write
+runs as written.
+
+When the run ends, the terminal shows a report:
+
+```text
+Scheduled prompt #1 finished in 12.3s with exit status 0.
+Result:
+Two pull requests are open; both pass CI.
+```
+
+The first line gives the duration and the exit status: `0` for success, `1`
+when the run failed, `127` when the shell found no `zen`, and 128 plus the
+signal number when a signal stopped it. Then comes the text of the last
+`message.completed` record; without one, `Error (<category>): <message>` from
+the last `error` record, or `No JSONL result on stdout.`. The last 20 lines of
+standard error follow, when there are any. Use it to check that `zen` is found
+and that the working directory and the approvals work in the cron environment.
+The report is shown only in the terminal; it is not forwarded to Telegram.
+
+Leaving the chat with `/exit`, `/setup`, or the end of input stops a run in
+progress: ZenCODE sends it SIGTERM, then SIGKILL after 3 seconds, and prints no
+report.
 
 ### Platform notes
 
@@ -620,9 +773,40 @@ working directory in the cron environment. The report is not forwarded to Telegr
 - WSL does not start the cron service by itself. Start it with
   `sudo service cron start`, or enable systemd in `/etc/wsl.conf`.
 
-Run `zen --doctor` to check these requirements. Its `Scheduled prompts` section
-reports a missing `crontab` or `sendmail` and, on WSL, the cron service. These
-are warnings only; the exit code stays 0. See [Diagnostics](#diagnostics).
+Run `zen --doctor` to check the system tools. Its `Scheduled prompts` section
+reports a missing `crontab`, looked for in `/usr/bin` and `/bin`, or a missing
+`sendmail`, looked for in `/usr/sbin` and `/usr/lib`; `/cron` uses the same
+locations and does not search `PATH`. On WSL it always reminds you to start
+the cron service. These are warnings only; the exit code stays 0. See
+[Diagnostics](#diagnostics). The doctor does not check that `zen` is on the
+block's `PATH`, which `/cron add` does, or Full Disk Access on macOS.
+
+### Errors and fixes
+
+| Message | Cause and fix |
+| --- | --- |
+| `crontab is not installed; see zen --doctor` | No executable `crontab` in `/usr/bin` or `/bin`. Install cron. |
+| `crontab failed with exit status …` | `crontab` refused the operation; the rest of the message is its error. A common cause is a user who is not allowed to use cron (`cron.allow`, `cron.deny`). |
+| `The ZenCODE block in your crontab is malformed: …` | The block has no end marker, or there are two blocks. Fix it with `crontab -e`. |
+| ``cron runs `zen` with PATH=…, but no executable zen was found there. …`` | Install `zen` in `/usr/local/bin`, or add its directory to the block's `PATH=` line. Nothing was written. |
+| `Invalid cron schedule (<field>): …` | See [Schedules](#schedules). Nothing was written. |
+| `The prompt cannot be scheduled: …` | The prompt is empty or has a line break. Nothing was written. |
+| `Invalid MAILTO value '…'. …` | The address has a space or a double quote. To disable mail, use `/cron mailto none`, as the message says. |
+| `No scheduled prompt #<n>. Use /cron list.` | No entry has that number. |
+| `Scheduled prompt #<n> is not a recognized ZenCODE entry.` | `/cron run` on an `(unrecognized)` line. |
+| `A /cron run is already in progress (#<n>). Wait for its report.` | Only one `/cron run` at a time per session. |
+| `Usage: /cron …` | Unknown subcommand, or a missing or extra argument. |
+
+When a scheduled prompt seems never to run, or its mail never arrives:
+
+- run it with `/cron run <n>` and read the report;
+- read the local mailbox with `mail`, and check with `/cron mailto` that mail
+  is not disabled;
+- on Linux, check that an MTA provides `sendmail`; without one, cron discards
+  the output;
+- on WSL, check that the cron service is running;
+- on macOS, a working directory in Documents, Desktop, or Downloads needs Full
+  Disk Access for `/usr/sbin/cron`.
 
 ## Tool Selection
 
@@ -784,3 +968,4 @@ token environment variables still apply.
 - **Xcode tools missing**: make sure Xcode is running. See [xcode.md](xcode.md).
 - **Figma tools missing**: make sure the Figma desktop MCP server is enabled.
 - **Voice mode or Telegram voice messages do not work**: see the troubleshooting table in [voice.md](voice.md#troubleshooting).
+- **A scheduled prompt fails, never runs, or sends no mail**: see [Errors and fixes](#errors-and-fixes) for `/cron`.
