@@ -207,7 +207,9 @@ struct TerminalSherpaVoiceControllerTests {
     /// ends too.
     @Test
     func aReadingStartedAsThePreviousOneEndsKeepsTheMicrophoneOff() async throws {
-        let fixture = try Fixture(readingSeconds: "0.3")
+        // The second reading outlasts the check made while it runs, even on a
+        // slow runner where a short one could end and turn the microphone on.
+        let fixture = try Fixture(readingSeconds: "0.3", laterReadingSeconds: "3")
         let controller = fixture.makeController()
         await controller.start()
         #expect(await waitUntil { await controller.phase == .listening })
@@ -297,8 +299,11 @@ private struct Fixture {
     var recognizer: URL { directory.appendingPathComponent("asr.sh") }
     var synthesizer: URL { directory.appendingPathComponent("tts.sh") }
 
+    /// `readingSeconds` is the length of the first reading and, unless
+    /// `laterReadingSeconds` is given, of every later one.
     init(
         readingSeconds: String = "0.2",
+        laterReadingSeconds: String? = nil,
         recognizerFails: Bool = false,
         synthesizerFails: Bool = false
     ) throws {
@@ -326,6 +331,7 @@ private struct Fixture {
             if [ -f "$0.fail" ]; then echo "bad model" >&2; exit 3; fi
             # Like a child of the TUI, ignore SIGTERM: stopping must escalate.
             trap '' TERM
+            if [ "$(grep -c '' "$0.log")" -gt 1 ]; then exec sleep \(laterReadingSeconds ?? readingSeconds); fi
             exec sleep \(readingSeconds)
             """,
             to: synthesizer
