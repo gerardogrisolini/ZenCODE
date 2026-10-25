@@ -52,20 +52,35 @@ extension AgentCoreSessionRunner: ZenCODEHeadlessSessionRunning {
 public enum ZenCODEHeadlessRunner {
     typealias TextSink = @Sendable (String) -> Void
 
-    /// Resolves an inline prompt and appends piped stdin as additional context.
+    /// Resolves the headless instruction from `-p`, `-f`, or both, and appends
+    /// piped stdin as additional context.
+    ///
+    /// - A prompt file alone is the instruction. Together with an inline prompt
+    ///   it follows the inline text as "Additional context from file".
+    /// - The file is read before stdin, so an unreadable file fails fast
+    ///   without consuming piped input.
+    /// - Without an inline prompt and without a prompt file, `noPrompt` is
+    ///   thrown before stdin is read.
     public static func prompt(
         inlinePrompt: String?,
+        promptFile: String? = nil,
         stdin: FileHandle = .standardInput,
         stdinIsTerminal: Bool
     ) throws -> String {
-        guard let inlinePrompt else {
+        guard inlinePrompt != nil || promptFile != nil else {
             throw ZenCODEHeadlessRunnerError.noPrompt
         }
+        let fileText = try promptFile.map { try ZenCODEPromptFile.read(path: $0) }
         let stdinText = stdinIsTerminal
             ? ""
             : String(decoding: stdin.readDataToEndOfFile(), as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-        let instruction = inlinePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        var instruction = inlinePrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if let fileText {
+            instruction = inlinePrompt == nil
+                ? fileText
+                : "\(instruction)\n\nAdditional context from file:\n\(fileText)"
+        }
         let prompt = stdinText.isEmpty
             ? instruction
             : "\(instruction)\n\nAdditional context from stdin:\n\(stdinText)"

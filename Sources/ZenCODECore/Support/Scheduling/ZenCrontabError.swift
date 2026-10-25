@@ -24,6 +24,10 @@ enum ZenCrontabError: LocalizedError, Equatable {
     case zenNotOnPath(path: String)
     /// The prompt cannot be stored on a single crontab line.
     case invalidPrompt(reason: String)
+    /// The prompt file (`/cron add -f`) cannot be stored on a single crontab
+    /// line. A file that is missing, unreadable or empty is reported by
+    /// `ZenCODEPromptFileError` instead.
+    case invalidPromptFile(reason: String)
     /// The `MAILTO` value is not acceptable.
     case invalidMailTo(String)
 
@@ -47,6 +51,9 @@ enum ZenCrontabError: LocalizedError, Equatable {
                 + "Install ZenCODE in /usr/local/bin (Scripts/install.sh) before scheduling prompts."
         case let .invalidPrompt(reason):
             return "The prompt cannot be scheduled: \(reason). Rewrite it as a single non-empty line and retry."
+        case let .invalidPromptFile(reason):
+            return "The prompt file cannot be scheduled: \(reason). "
+                + "Use an absolute path to a readable, non-empty UTF-8 text file and retry."
         case let .invalidMailTo(value):
             return "Invalid MAILTO value '\(value)'. Use a plain e-mail address, or /cron mailto none to disable cron mail."
         }

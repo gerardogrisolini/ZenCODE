@@ -38,32 +38,37 @@ public struct LaunchFolderProjects: Sendable, Equatable {
 
     /// Reads the first-level, non-hidden subfolders of `workingDirectory`.
     ///
-    /// Hidden entries, regular files, and symbolic links (even to folders; they
-    /// are never followed) are skipped. The order is deterministic and the
-    /// same on every platform: case-insensitive by name, with the raw name as
-    /// tie-break. An unreadable or missing directory yields an empty list.
+    /// Hidden entries are skipped: dot-names and folders marked hidden by the
+    /// file system (the hidden flag on macOS). Regular files and symbolic links
+    /// (even to folders; they are never followed) are skipped too. The order is
+    /// deterministic and the same on every platform: case-insensitive by name,
+    /// with the raw name as tie-break. An unreadable or missing directory yields
+    /// an empty list.
+    ///
+    /// The names come from `contentsOfDirectory(atPath:)`, the listing call that
+    /// a `FileManager` subclass can override on every platform (the URL variant
+    /// with `.skipsHiddenFiles` cannot be overridden on Linux), so each entry is
+    /// filtered here.
     public static func scan(
         workingDirectory: URL,
         fileManager: FileManager = .default,
         limit: Int = defaultLimit
     ) -> LaunchFolderProjects {
         let directory = workingDirectory.standardizedFileURL
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey]
-        let entries = (try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: keys,
-            options: [.skipsHiddenFiles]
-        )) ?? []
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .isHiddenKey]
+        let entries = (try? fileManager.contentsOfDirectory(atPath: directory.path)) ?? []
         let names = entries
-            .filter { entry in
-                // `skipsHiddenFiles` does not cover dot-names on every platform.
-                guard !entry.lastPathComponent.hasPrefix(".") else {
+            .filter { !$0.hasPrefix(".") }
+            .filter { name in
+                // No trailing slash: a symbolic link is inspected, not followed.
+                let entry = directory.appendingPathComponent(name, isDirectory: false)
+                guard let values = try? entry.resourceValues(forKeys: keys) else {
                     return false
                 }
-                let values = try? entry.resourceValues(forKeys: Set(keys))
-                return values?.isDirectory == true && values?.isSymbolicLink != true
+                return values.isDirectory == true
+                    && values.isSymbolicLink != true
+                    && values.isHidden != true
             }
-            .map(\.lastPathComponent)
             .sorted { lhs, rhs in
                 let lhsKey = lhs.lowercased()
                 let rhsKey = rhs.lowercased()

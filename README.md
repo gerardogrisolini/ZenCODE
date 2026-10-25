@@ -51,6 +51,8 @@ ZenCODE supports several ways to run the model, all selected during automatic fi
 - `zen` opens the standalone terminal coding agent.
 - `zen -p "Summarize the current changes"` runs one headless turn and prints only
   the final assistant text.
+- `zen -f /absolute/path/prompt.md` runs one headless turn with the prompt read
+  from that file.
 - `zen --jsonl -p "Summarize the current changes"` emits a versioned JSON Lines
   lifecycle stream for scripts and CI. See the [JSONL protocol guide](Docs/jsonl.md).
 - `zen --acp` runs the ACP stdio agent for compatible clients.
@@ -206,10 +208,13 @@ download the speech files (about 580 MB) from `/setup` > **Voice mode**. The
 privacy, and troubleshooting.
 
 `/cron add 0 9 * * 1-5 Summarize the open pull requests` schedules a prompt in
-the crontab of your system user: cron runs it as a headless `zen --jsonl -p`
-turn with the selected agent profile and the session's working directory, and
-mails the output. `/cron list` shows the numbered entries, `/cron run <n>` runs
-one now and reports in the terminal, and `/cron mailto` sets the recipient.
+the crontab of your system user: cron runs it as a headless `zen -p` turn with
+the selected agent profile and the session's working directory, and mails the
+answer text (`/cron add json …` runs with `--jsonl` and mails the JSONL records
+instead). `/cron add <schedule> -f <path>` reads the prompt from a file, checked
+when you add it and read again at every run. `/cron list` shows the numbered
+entries, `/cron run <n>` runs one now and reports in the terminal, and
+`/cron mailto` sets the recipient.
 Cron looks for `zen` in `/usr/local/bin`, where the installers put it. The
 [scheduled prompts guide](Docs/zen.md#scheduled-prompts-crontab) covers
 schedules, mail, and troubleshooting.

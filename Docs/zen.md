@@ -8,6 +8,7 @@
 zen                              # standalone chat TUI
 zen -p "Summarize the changes"   # one headless turn; final text on stdout
 zen --jsonl -p "Summarize"       # one headless turn; JSON Lines events on stdout
+zen -f /path/to/prompt.md        # one headless turn; prompt read from a file
 zen --acp                        # ACP over stdio for compatible clients
 ```
 
@@ -75,12 +76,35 @@ Creates files under `~/.zencode/`:
 - `agents.json` — agent profiles, authorized model bindings, tools, and instructions.
 - `AGENTS.md` — global operating guidance shared across workspaces. This is
   separate from an optional project `AGENTS.md` in the working directory.
-- `memory/` — project memory graphs: one `memory.graph.json` per workspace, under a SHA-256 digest of the workspace path, plus `global/` for the global graph used by `organizer` sessions.
-- `sessions/` — saved session snapshots grouped by project.
-- `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans.
+- `memory/` — project memory graphs: one `memory.graph.json` per project, under the project key (see below), plus `global/` for the global graph used by `organizer` sessions.
+- `projects/` — per-project agent associations (`agents.json`, see `/agents`), under the project key.
+- `sessions/` — saved session snapshots grouped by project key.
+- `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans, grouped by project key.
 - `features/` — generated Builder packages and installed optional feature packages.
 - `source/` — persistent ZenCODE checkout retained by the platform installer for later optional-feature builds.
 - `voice/` — Linux only: the speech programs and models downloaded from `/setup` > **Voice mode** for voice mode and Telegram voice messages. They can be downloaded again at any time and are not part of backups. See [voice.md](voice.md).
+
+## Project Key
+
+Project memory (`memory/`), the project agents chosen with `/agents`
+(`projects/`), saved sessions (`sessions/`), and task graphs and saved plans
+(`task-graphs/`) are stored per project under a **project key** derived from the
+project name — the name of the working directory folder, trimmed and compared
+case-sensitively — not from its full path:
+
+```text
+~/.zencode/memory/App-Ist-3.0-IOS-<first 24 hex of SHA-256 of the name>/memory.graph.json
+```
+
+- **Moving a project folder** keeps all of it: open `zen` in the new location
+  and the memory, the associated profiles, the sessions, and the plans are
+  there.
+- **Two folders with the same name are the same project**: they share one
+  memory graph, one set of associated profiles, one session list, and one plan
+  library. Rename one of them to keep them apart.
+
+The macOS workspace tool consent ("Trust this folder?") is not keyed by project:
+it stays tied to the resolved folder path, so it is asked again after a move.
 
 ## Data Management (Backup Export/Import)
 
@@ -131,14 +155,21 @@ exact paths involved.
 ## Command Line Options
 
 ```text
-zen [-p PROMPT] [--jsonl] [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
+zen [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
 ```
 
 - `-p, --prompt PROMPT`: run one non-interactive turn. Redirected stdin, when
   present, is appended as additional context. Without `--jsonl`, stdout contains
   only the final assistant text.
-- `--jsonl`: with `-p`/`--prompt`, emit the versioned headless lifecycle and
-  final response as JSON Lines. See the [JSONL protocol guide](jsonl.md).
+- `-f PATH`: run one non-interactive turn whose prompt is read from the file at
+  `PATH`, which must be an absolute path; relative paths, `~`, and `-` are
+  rejected. The file is read when the run starts, as UTF-8 text, and trimmed.
+  A missing, unreadable, empty, or non-UTF-8 file makes the run fail with exit
+  status `1`. With `-p`, the file is appended as context, labelled
+  `Additional context from file:`, whichever option comes first. Redirected
+  stdin is still appended. `-f` cannot be repeated or combined with `--acp`.
+- `--jsonl`: with `-p`/`--prompt` or `-f`, emit the versioned headless lifecycle
+  and final response as JSON Lines. See the [JSONL protocol guide](jsonl.md).
 - `--version`: print the ZenCODE version and exit.
 - `--doctor`: print a redacted, read-only diagnostic report and exit. It never
   starts setup, accesses a provider, creates configuration, or writes a log.
@@ -278,8 +309,9 @@ The ticked profiles are the ones associated with the project, and they are the
 only profiles the `sub-agents` tool can delegate to: the roster in the system
 prompt lists just those and `agent.create` rejects any other profile. The
 association is stored outside the repository in
-`~/.zencode/projects/<sha256 of the project path>/agents.json`, keyed like the
-workspace memory by the path of the working directory. A project with no saved
+`~/.zencode/projects/<project key>/agents.json`, keyed like the workspace
+memory by the project name, so it follows a moved project folder (see
+[Project key](#project-key)). A project with no saved
 file sees only the system profiles (the recommended profiles, whose ID is their
 role): only those are delegatable and the menu shows just those ticked; the
 ticks apply from the first save. A saved selection is literal: an empty one
@@ -368,8 +400,8 @@ Commands start with `/`:
 - `/voice pause` / `/voice resume` — stop or restart both listening and reading aloud; a bare `/voice` toggles between them. Available while a prompt runs. See [voice.md](voice.md).
 
 **Scheduling:**
-- `/cron` / `/cron list` — show the `MAILTO` recipient and the scheduled prompts, each with its number, schedule, agent, working directory, and prompt. See [Scheduled Prompts (crontab)](#scheduled-prompts-crontab).
-- `/cron add <schedule> <prompt>` — schedule a prompt for the selected agent profile and the working directory of the session. The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
+- `/cron` / `/cron list` — show the `MAILTO` recipient and the scheduled prompts, each with its number, schedule, agent, working directory, output kind (`text` or `JSONL`), and prompt. See [Scheduled Prompts (crontab)](#scheduled-prompts-crontab).
+- `/cron add [json] <schedule> [-f <path>] <prompt>` — schedule a prompt for the selected agent profile and the working directory of the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default cron mails the final answer text; with the `json` keyword right after `add`, the job runs with `--jsonl` and cron mails the JSONL records of the run. The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
 - `/cron remove <n>` — remove scheduled prompt `<n>`; the entries after it are renumbered.
 - `/cron run <n>` — run scheduled prompt `<n>` now, the way cron runs it, in the background, and show the result in the terminal instead of mailing it.
 - `/cron mailto [address|none|default]` — without an argument, show the address that receives scheduled-prompt results; with one, set it. `none` sends no mail; `default` removes the override and uses the local mailbox of the crontab owner.
@@ -543,11 +575,12 @@ Delegated sub-agents ask for the same approvals as the coordinator. Their reques
 
 `/cron` runs prompts at set times, even when no ZenCODE session is open. Each
 scheduled prompt is an entry in the crontab of the system user who runs
-ZenCODE: when the entry is due, cron starts a headless `zen --jsonl -p` turn
-and mails its output. There is no daemon, no launchd or systemd unit, and no
-lock against overlapping runs: cron starts each entry when it is due, so if one
-run is still going when the next one is due, the next run starts anyway, as
-with any cron job.
+ZenCODE: when the entry is due, cron starts a headless `zen -p` or `zen -f`
+turn and mails its output; with the `json` keyword the turn also gets
+`--jsonl`, and the mail holds the JSONL records of the run. There is no daemon,
+no launchd or systemd unit, and no lock against overlapping runs: cron starts
+each entry when it is due, so if one run is still going when the next one is
+due, the next run starts anyway, as with any cron job.
 
 `/cron` is a command of the interactive terminal; its subcommands are listed
 under [Terminal TUI Commands](#terminal-tui-commands). It is the only surface:
@@ -558,6 +591,8 @@ and the model has no tool to create or change scheduled prompts.
 
 ```text
 /cron add 0 9 * * 1-5 Summarize the open pull requests
+/cron add json @daily Summarize the open pull requests
+/cron add @daily -f /Users/me/prompts/report.md
 /cron list
 /cron run 1
 /cron mailto me@example.com
@@ -575,16 +610,19 @@ Results arrive by mail, which needs `sendmail` (see
 
 ```text
 Scheduled prompt #1 added:
-  0 9 * * 1-5 zen --agent 'Developer' --working-directory '/Users/me/Projects/app' --jsonl -p 'Summarize the open pull requests'
+  0 9 * * 1-5 zen --agent 'Developer' --working-directory '/Users/me/Projects/app' -p 'Summarize the open pull requests'
   zen: /usr/local/bin/zen (PATH=/usr/local/bin:/usr/bin:/bin)
 ```
 
 `/cron list`, or `/cron` alone, shows the mail recipient and one numbered row
-per scheduled prompt:
+per scheduled prompt, including whether it mails the answer text (`output: text`)
+or the JSONL records (`output: JSONL`). An entry that reads its prompt from a
+file shows `file: <path>` after the output kind; `prompt: …` appears only when
+the entry has a prompt:
 
 ```text
 Scheduled prompts — MAILTO: not set (cron default: local mailbox of the crontab owner)
-  1. 0 9 * * 1-5 · agent: Developer · dir: /Users/me/Projects/app · prompt: Summarize the open pull requests
+  1. 0 9 * * 1-5 · agent: Developer · dir: /Users/me/Projects/app · output: text · prompt: Summarize the open pull requests
 Results are mailed by cron; set the recipient with /cron mailto <address>.
 ```
 
@@ -593,16 +631,30 @@ The number is the position of the entry in the crontab, so after a removal the
 following entries move up by one: list again before using a number. Entries are
 never edited in place; to change one, run `/cron remove` and then `/cron add`.
 
-Subcommands and the `none` and `default` keywords are case-insensitive.
-Completion continues after the subcommand: `/cron add ` offers the schedule
-aliases and example schedules, and the other slots (cron fields, prompt, `<n>`,
-`mailto`) show a one-line guide that is never inserted.
+Subcommands, the `json` keyword, and the `none` and `default` keywords are
+case-insensitive. Completion continues after the subcommand: `/cron add `
+offers the schedule aliases, example schedules, and `json`, and the other slots
+(cron fields, prompt, `<n>`, `mailto`) show a one-line guide that is never
+inserted.
 
 ### Schedules
 
-In `/cron add <schedule> <prompt>`, a first word that starts with `@` is the
-whole schedule; otherwise the first five words are the schedule. The rest of
-the line is the prompt.
+In `/cron add [json] <schedule> [-f <path>] <prompt>`, an optional leading
+`json` word selects JSONL output (see [Results and mail](#results-and-mail));
+only the word right after `add` is the keyword, so
+`/cron add @daily json report` schedules a text job whose prompt is
+`json report`. Then a first word that starts with `@` is the whole schedule;
+otherwise the first five words are the schedule. The rest of the line is the
+prompt. If it starts with `-f`, the next word, or the quoted text, is the path
+of a prompt file, and what follows is the optional prompt.
+
+`-f` is recognized only as the first word right after the schedule, and only in
+lower case. The path must be absolute, starting with `/`. Wrap it in single
+(`'…'`) or double (`"…"`) quotes to include spaces; there are no escapes
+inside the quotes. With a prompt, the prompt is the instruction and the file is
+the context, as with `zen -p … -f …`; without one, the file is the whole
+prompt. After the schedule, completion offers `-f` next to the `<prompt>` guide;
+after `-f`, it shows a `<path>` guide and then an optional `<prompt>` guide.
 
 | Alias | Runs |
 | --- | --- |
@@ -638,18 +690,28 @@ and `<a>-<b>/<step>`. Only numbers are accepted: month and day names such as
 
 Cron reads these times in the time zone of the system.
 
-The prompt is trimmed; it must not be empty and must fit on one line. Quotes
-and `%` are allowed, because ZenCODE quotes and escapes the prompt for cron.
-The schedule and the prompt are checked before the crontab is read, so a
-rejected `/cron add` changes nothing.
+The prompt is trimmed and must fit on one line; without `-f`, it must also not
+be empty. Quotes and `%` are allowed, because ZenCODE quotes and escapes the
+prompt for cron. With `-f`, the file must exist and be readable, be UTF-8 text,
+and not be empty; its path must not contain a line break. The schedule, the
+prompt, and the file are checked before the crontab is read, so a rejected
+`/cron add` changes nothing.
 
 ### What a scheduled run does
 
 Each entry runs ZenCODE in headless mode:
 
 ```text
-[ZENCODE_SUPPORT_DIRECTORY='<value>' ]zen [--agent '<selected profile>'] --working-directory '<TUI session working directory>' --jsonl -p '<prompt>'
+[ZENCODE_SUPPORT_DIRECTORY='<value>' ]zen [--agent '<selected profile>'] --working-directory '<TUI session working directory>' [--jsonl] [-f '<path>'] [-p '<prompt>']
 ```
+
+At least one of `-f` and `-p` is present, and `-f` comes first when both are.
+`--jsonl` is present for entries added with `json` and for entries written by
+earlier versions of ZenCODE, which always used it. The file of an `-f` entry is
+read again each time the entry runs, so later edits apply to the next runs; its
+content is never copied into the crontab. If the file is missing or invalid when
+a run starts, that run fails, and its error is mailed as described in
+[Results and mail](#results-and-mail).
 
 `/cron add` takes three things from the session where you type it:
 
@@ -669,10 +731,11 @@ it again with an existing profile.
 Arguments use single-quote shell quoting, and each `%` is escaped as `\%`,
 because cron turns an unescaped `%` in a command into a newline.
 
-The non-interactive policy of `zen -p` applies unchanged. A tool that would ask
-for approval is denied, except for approvals already saved with "always allow".
-A denied tool appears in the output as a `tool.completed` record with status
-`permissionDenied`, and the agent continues without it.
+The non-interactive policy of `zen -p` and `zen -f` applies unchanged. A tool
+that would ask for approval is denied, except for approvals already saved with
+"always allow". With `json`, a denied tool appears in the output as a
+`tool.completed` record with status `permissionDenied`. In both modes the agent
+continues without it.
 
 ### The crontab block
 
@@ -689,7 +752,8 @@ scheduled prompt is two lines after them: a marker line,
 PATH=/usr/local/bin:/usr/bin:/bin
 MAILTO=me@example.com
 # zencode-cron id=3F2C9A7E-5B1D-4C8E-9A61-0D2E7B4F8C15 created=2026-10-25T07:30:00Z
-30 7 * * 1-5 zen --agent 'Organizer' --working-directory '/Users/me/Projects/app' --jsonl -p 'Summarize the open issues and unread mail'
+30 7 * * 1-5 zen --agent 'Organizer' --working-directory '/Users/me/Projects/app' -p 'Summarize the open issues and unread mail'
+@daily zen --working-directory '/Users/me/Projects/app' --jsonl -p 'Summarize the open pull requests'
 # <<< ZenCODE cron <<<
 ```
 
@@ -744,13 +808,22 @@ entry is removed, is deleted whole, customized `PATH=` included.
 
 ### Results and mail
 
-Cron mails what each run prints, through the system `sendmail`. Standard output
+Cron mails what each run prints, through the system `sendmail`, in the body of
+the mail; it never attaches files. By default (`/cron add <schedule> <prompt>`)
+standard output holds only the final answer text, which is the mail body. When
+the run fails, `zen` writes `ZenCODE: <message>` and a troubleshooting hint to
+standard error and exits with status 1, and cron mails that too.
+
+With the `json` keyword (`/cron add json <schedule> <prompt>`), standard output
 holds the [JSONL records](jsonl.md) of the run: `run.started`, the tool
 records, the final answer in `message.completed`, and `run.completed`, or an
-`error` record when the run fails. In JSONL mode `zen` writes nothing to
-standard error, so standard error only carries messages from the shell, for
-example when it cannot find `zen`. Every run prints records, so cron sends a
-mail after every run unless mail is disabled.
+`error` record when the run fails. They land in the mail body as they are. In
+JSONL mode `zen` writes nothing to standard error, so standard error only
+carries messages from the shell, for example when it cannot find `zen`. Entries
+written earlier, with `--jsonl` in their line, keep their JSONL output.
+
+Cron sends a mail whenever a run prints anything, which is every run in
+practice, unless mail is disabled.
 
 By default the mail goes to the local Unix mailbox of the crontab owner, which
 you read with the `mail` command. On macOS this works without configuration,
@@ -796,7 +869,10 @@ Two pull requests are open; both pass CI.
 
 The first line gives the duration and the exit status: `0` for success, `1`
 when the run failed, `127` when the shell found no `zen`, and 128 plus the
-signal number when a signal stopped it. Then comes the text of the last
+signal number when a signal stopped it. Then comes the result. For a text entry
+it is the text that the run printed on standard output, trimmed, or
+`No output on stdout.` when there is none. For a JSONL entry, and for an entry
+with a command that ZenCODE did not write, it is the text of the last
 `message.completed` record; without one, `Error (<category>): <message>` from
 the last `error` record, or `No JSONL result on stdout.`. The last 20 lines of
 standard error follow, when there are any. Use it to check that `zen` is found
@@ -810,9 +886,9 @@ report.
 ### Platform notes
 
 - macOS and Linux are fully supported.
-- macOS protects Documents, Desktop, and Downloads. When the working directory is
-  in one of them, grant Full Disk Access to `/usr/sbin/cron` in System Settings >
-  Privacy & Security > Full Disk Access.
+- macOS protects Documents, Desktop, and Downloads. When the working directory,
+  or a prompt file added with `-f`, is in one of them, grant Full Disk Access to
+  `/usr/sbin/cron` in System Settings > Privacy & Security > Full Disk Access.
 - WSL does not start the cron service by itself. Start it with
   `sudo service cron start`, or enable systemd in `/etc/wsl.conf`.
 
@@ -867,7 +943,7 @@ When work has multiple units, dependencies, or concurrent delegation, the coordi
 
 `/goal` uses a distinct graph source to preserve automatic continuation and prevent replacement of an unfinished workflow. Direct tasks declare `execution.executor: coordinator` and use `tasks.update` from `pending` to `in_progress` (creating an attempt), then `completed` after validation. Delegated tasks declare `execution.executor: sub_agent` and are claimed through a canonical `agent.create` `agents` item containing `taskID`. Successful delegated attempts still enter `awaiting_validation`, even if their task was originally declared for direct execution; negative validation remains `failed` and requires `tasks.retry` plus a new attempt. Direct work follows ordinary coordinator transitions, including `blocked` and retry. The workflow remains open even when every current task is completed, so the coordinator can add newly discovered work or pause for clarification on the same graph. Only an explicit root-coordinator `tasks.update` with `workflow: {state: "completed"}` finalizes it, using the current graph revision from `tasks.list`; the graph must be nonempty and all tasks completed and validated. Manual and plan graphs still complete automatically. These lifecycle checks do not automatically verify semantic goal completion and do not expand any tool grant.
 
-Checkpoints are written atomically under `~/.zencode/task-graphs/<project>/`.
+Checkpoints are written atomically under `~/.zencode/task-graphs/<project key>/` (see [Project key](#project-key)).
 `/plan save` reuses this checkpoint directory rather than creating a separate
 plan store. It writes a draft copy of the active plan, or the latest non-empty
 assistant response, to a stable project plan-library logical session, so
@@ -945,7 +1021,7 @@ Durable context is separated by responsibility:
   automatically.
 - Global `~/.zencode/AGENTS.md` — cross-workspace operating rules. This file is
   separate from the project file and applies across working directories.
-- Project memory — a per-workspace graph of durable project facts stored outside the working tree at `~/.zencode/memory/<workspace-digest>/memory.graph.json` (honouring `ZENCODE_SUPPORT_DIRECTORY`). Opening loads that JSON graph or starts empty when it is absent; a cold search/read never writes. Existing `MEMORY.md` files are completely ignored, even when malformed, and are never imported, embedded, rewritten or deleted. Facts already persisted in JSON remain available. A separate global graph at `~/.zencode/memory/global/memory.graph.json` (same format) is used only by sessions whose profile has the `organizer` role, for their `memory.*` tools and recall; project graphs are never aggregated into it, and automatic learning never writes to it.
+- Project memory — a per-workspace graph of durable project facts stored outside the working tree at `~/.zencode/memory/<project key>/memory.graph.json` (honouring `ZENCODE_SUPPORT_DIRECTORY`; see [Project key](#project-key)). Opening loads that JSON graph or starts empty when it is absent; a cold search/read never writes. Existing `MEMORY.md` files are completely ignored, even when malformed, and are never imported, embedded, rewritten or deleted. Facts already persisted in JSON remain available. A separate global graph at `~/.zencode/memory/global/memory.graph.json` (same format) is used only by sessions whose profile has the `organizer` role, for their `memory.*` tools and recall; project graphs are never aggregated into it, and automatic learning never writes to it.
 
 The Memory tool group maintains project memory without accumulating avoidable duplicates:
 

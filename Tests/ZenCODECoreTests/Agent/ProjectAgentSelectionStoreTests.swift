@@ -102,17 +102,18 @@ struct ProjectAgentSelectionStoreTests {
     }
 
     @Test
-    func manifestLivesUnderProjectsDigestDirectoryAndRecordsTheWorkspacePath() throws {
+    func manifestLivesUnderTheProjectKeyDirectoryAndRecordsTheWorkspacePath() throws {
         try Support.withTemporaryProject { support, workspace in
             try ProjectAgentSelectionStore.save(
                 agentIDs: [Support.reviewer.id, Support.developer.id, Support.reviewer.id.lowercased(), "  "],
                 workspaceRootURL: workspace
             )
 
-            let digest = Data(workspace.standardizedFileURL.path.utf8).sha256Hex()
+            let key = ProjectStorageKey.key(forProjectName: "workspace")
+            #expect(key.hasPrefix("workspace-"))
             let expectedURL = support
                 .appendingPathComponent("projects", isDirectory: true)
-                .appendingPathComponent(digest, isDirectory: true)
+                .appendingPathComponent(key, isDirectory: true)
                 .appendingPathComponent("agents.json", isDirectory: false)
                 .standardizedFileURL
             let manifestURL = ProjectAgentSelectionStore.manifestURL(workspaceRootURL: workspace)
@@ -135,6 +136,64 @@ struct ProjectAgentSelectionStoreTests {
                 try #require(text.range(of: "\"\(key)\"")?.lowerBound)
             }
             #expect(positions == positions.sorted())
+        }
+    }
+
+    @Test
+    func movedProjectKeepsItsSelection() throws {
+        try Support.withTemporaryProject { support, _ in
+            let root = support.deletingLastPathComponent()
+            let original = root.appendingPathComponent("clients/App-Ist-3.0-IOS", isDirectory: true)
+            let moved = root.appendingPathComponent("App-Ist-3.0-IOS", isDirectory: true)
+            let esselunga = AgentProfile(id: "AAAAAAAA-0000-0000-0000-0000000000E5", name: "Esselunga", role: .developer)
+            let profiles = Support.profiles + [esselunga]
+            try FileManager.default.createDirectory(at: original, withIntermediateDirectories: true)
+            try ProjectAgentSelectionStore.save(agentIDs: [esselunga.id], workspaceRootURL: original)
+
+            try FileManager.default.moveItem(at: original, to: moved)
+
+            #expect(
+                ProjectAgentSelectionStore.manifestURL(workspaceRootURL: moved)
+                    == ProjectAgentSelectionStore.manifestURL(workspaceRootURL: original)
+            )
+            #expect(ProjectAgentSelectionStore.isAssociated(esselunga, workspaceRootURL: moved))
+            #expect(ProjectAgentSelectionStore.filter(profiles, workspaceRootURL: moved) == [esselunga])
+            // A developer-role delegation resolves to the associated custom
+            // profile, not to the generic system Developer.
+            #expect(
+                AgentProfileStore.roleDelegationCandidates(
+                    .developer,
+                    in: profiles,
+                    workspaceRootURL: moved
+                ) == [esselunga]
+            )
+        }
+    }
+
+    @Test
+    func foldersWithTheSameNameShareOneSelection() throws {
+        try Support.withTemporaryProject { support, _ in
+            let root = support.deletingLastPathComponent()
+            let first = root.appendingPathComponent("a/App", isDirectory: true)
+            let second = root.appendingPathComponent("b/App", isDirectory: true)
+            let differentCase = root.appendingPathComponent("c/app", isDirectory: true)
+            for url in [first, second, differentCase] {
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            }
+
+            try ProjectAgentSelectionStore.save(agentIDs: [Support.reporter.id], workspaceRootURL: first)
+
+            #expect(
+                ProjectAgentSelectionStore.manifestURL(workspaceRootURL: first)
+                    == ProjectAgentSelectionStore.manifestURL(workspaceRootURL: second)
+            )
+            #expect(ProjectAgentSelectionStore.filter(Support.profiles, workspaceRootURL: second) == [Support.reporter])
+            // The name is compared case-sensitively.
+            #expect(ProjectAgentSelectionStore.load(workspaceRootURL: differentCase) == nil)
+
+            // Either folder updates the shared selection.
+            try ProjectAgentSelectionStore.save(agentIDs: [Support.developer.id], workspaceRootURL: second)
+            #expect(ProjectAgentSelectionStore.filter(Support.profiles, workspaceRootURL: first) == [Support.developer])
         }
     }
 

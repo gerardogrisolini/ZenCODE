@@ -27,6 +27,8 @@ public nonisolated struct SavedSessionIndexEntry: Codable, Hashable, Sendable {
 }
 
 /// Maintains the per-project saved-session index in `~/.zencode/sessions.json`.
+/// A project is identified by its name (see ``ProjectStorageKey``): the index
+/// keeps one entry per project name.
 public final class SavedSessionsStore {
     public static let filename = "sessions.json"
 
@@ -66,7 +68,7 @@ public final class SavedSessionsStore {
     }
 
     /// Records the latest saved session for a project, replacing any previous
-    /// entry for the same project path.
+    /// entry for the same project name.
     @discardableResult
     public func recordSavedSession(
         projectPath: String,
@@ -106,7 +108,10 @@ public final class SavedSessionsStore {
         ) {
             savedEntry = try Self.fileTransactionCoordinator.withLock(for: fileURL) {
                 var index = try readIndexFile(at: fileURL)
-                index.sessions.removeAll { $0.projectPath == normalizedProjectPath }
+                let projectName = ProjectStorageKey.projectName(forPath: normalizedProjectPath)
+                index.sessions.removeAll {
+                    ProjectStorageKey.projectName(forPath: $0.projectPath) == projectName
+                }
                 index.sessions.insert(entry, at: 0)
                 index.sessions.sort { $0.savedAt > $1.savedAt }
                 try writeIndexFile(index, to: fileURL)

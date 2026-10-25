@@ -380,7 +380,7 @@ enum TerminalPromptCompletionCatalog {
             ),
             TerminalCommandSuggestion(
                 command: "add",
-                summary: "<schedule> <prompt> · e.g. @daily Summarize open PRs",
+                summary: "[json] <schedule> [-f <path>] <prompt> · e.g. @daily Summarize PRs",
                 requiresArgument: true
             ),
             TerminalCommandSuggestion(

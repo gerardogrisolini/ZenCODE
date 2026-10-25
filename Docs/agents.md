@@ -135,10 +135,11 @@ Choosing the active agent always lists every profile, whatever the project
 association.
 
 The association is stored outside the repository, one file per project, keyed
-like the workspace memory by the standardized path of the working directory:
+like the workspace memory by the project name — the name of the working
+directory folder (see [zen.md](zen.md#project-key)):
 
 ```text
-~/.zencode/projects/<sha256 of the project path>/agents.json
+~/.zencode/projects/<project key>/agents.json
 ```
 
 ```json
@@ -151,6 +152,10 @@ like the workspace memory by the standardized path of the working directory:
   "workspacePath" : "/Users/me/Projects/App"
 }
 ```
+
+The association follows a moved project folder, and two folders with the same
+name share one association. `workspacePath` only records the last folder it was
+saved from.
 
 Profiles are saved by ID, so renaming a profile keeps its association. The file
 is written only when the ticks change, so choosing another agent in a project

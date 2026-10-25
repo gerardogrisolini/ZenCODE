@@ -466,9 +466,10 @@ extension DirectSubAgentRuntime {
     /// standardized with symlinks resolved only to verify that the result is an
     /// existing directory equal to or inside the coordinator's directory. The
     /// returned URL is expressed under the coordinator's own (unresolved) path,
-    /// the one `ProjectAgentSelectionStore` and the memory digest key on, so a
-    /// child sees the same project selection and memory as a `zen` launched in
-    /// that directory; a directory equal to the root returns it unchanged.
+    /// whose folder name `ProjectStorageKey` keys the project selection and
+    /// memory on, so a child sees the same project selection and memory as a
+    /// `zen` launched in that directory; a directory equal to the root returns
+    /// it unchanged.
     static func resolvedAgentWorkingDirectory(
         _ value: String,
         coordinatorDirectory: URL,

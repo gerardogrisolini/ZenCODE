@@ -91,7 +91,7 @@ struct ZenCODEMain {
     }
 
     private static func runsHeadless(_ arguments: [String]) -> Bool {
-        arguments.dropFirst().contains(where: { $0 == "-p" || $0 == "--prompt" || $0 == "--jsonl" })
+        arguments.dropFirst().contains(where: { $0 == "-p" || $0 == "-f" || $0 == "--prompt" || $0 == "--jsonl" })
             || ProcessInfo.processInfo.environment["ZENCODE_AGENT_MODE"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased() == AgentRunMode.headless.rawValue
@@ -132,10 +132,11 @@ struct ZenCODEMain {
 
 private enum ZenCODEStandaloneHelp {
     static var text: String {
-        let usage = "zen [--doctor] [--install-features [id,id,...]] [--jsonl] [-p PROMPT] [--acp]"
+        let usage = "zen [--doctor] [--install-features [id,id,...]] [--jsonl] [-p PROMPT] [-f PATH] [--acp]"
         let options = """
           -p, --prompt PROMPT    Run one headless text prompt.
-          --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt).
+          -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context.
+          --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt or -f).
           --acp                  ACP JSON-RPC over stdio for compatible clients.
           --doctor               Print a redacted diagnostic report (environment, configuration, permissions) and exit. Non-interactive; never starts setup or reveals secrets.
           --install-features [id,id,...]
@@ -146,11 +147,11 @@ private enum ZenCODEStandaloneHelp {
 
         return AgentConfiguration.helpText
             .replacingOccurrences(
-                of: "zen [-p PROMPT] [--jsonl] [--acp]",
+                of: "zen [-p PROMPT] [-f PATH] [--jsonl] [--acp]",
                 with: usage
             )
             .replacingOccurrences(
-                of: "  -p, --prompt PROMPT    Run one headless text prompt.\n  --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt).\n  --acp                  ACP JSON-RPC over stdio for compatible clients.",
+                of: "  -p, --prompt PROMPT    Run one headless text prompt.\n  -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context.\n  --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt or -f).\n  --acp                  ACP JSON-RPC over stdio for compatible clients.",
                 with: options
             )
     }

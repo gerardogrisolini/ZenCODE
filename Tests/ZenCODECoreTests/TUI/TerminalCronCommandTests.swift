@@ -196,12 +196,15 @@ struct TerminalCronCommandTests {
         #expect(entry.schedule == "0 9 * * 1-5")
         // cron finds `zen` through the PATH line at the head of the block.
         #expect(entry.cronLine.hasPrefix("0 9 * * 1-5 zen --working-directory "))
+        // Plain text by default: no `--jsonl`, so cron mails only the answer.
         #expect(
-            entry.cronLine.contains(
-                "--working-directory \(ZenCronJobCommand.shellQuote(directory)) --jsonl -p 'Summarize open PRs'"
+            entry.cronLine.hasSuffix(
+                "--working-directory \(ZenCronJobCommand.shellQuote(directory)) -p 'Summarize open PRs'"
             )
         )
+        #expect(!entry.cronLine.contains("--jsonl"))
         #expect(entry.job?.executable == "zen")
+        #expect(entry.job?.outputFormat == .text)
         #expect(entry.job?.prompt == "Summarize open PRs")
         #expect(entry.job?.workingDirectory == directory)
         #expect(document.block?.path == nil)
@@ -358,14 +361,224 @@ struct TerminalCronCommandTests {
     }
 
     @Test(arguments: [
+        "/cron add json @daily Summarize open PRs",
+        "/cron add JSON @daily Summarize open PRs",
+        "/cron add Json   @daily   Summarize open PRs"
+    ])
+    func addWithTheJSONKeywordSchedulesAJSONLJob(command: String) async throws {
+        let (terminal, client) = try makeTerminal(crontab: "")
+
+        let output = await run(command, in: terminal)
+
+        let written = try #require(client.writes.first)
+        let items = try #require(ZenCrontabDocument.parse(written).block?.items)
+        guard case let .entry(entry) = try #require(items.first) else {
+            Issue.record("expected a scheduled entry")
+            return
+        }
+        let directory = terminal.configuration.workingDirectory.path
+        #expect(entry.schedule == "@daily")
+        #expect(
+            entry.cronLine
+                == "@daily zen --working-directory \(ZenCronJobCommand.shellQuote(directory))"
+                + " --jsonl -p 'Summarize open PRs'"
+        )
+        #expect(entry.job?.outputFormat == .jsonl)
+        #expect(entry.job?.prompt == "Summarize open PRs")
+        #expect(output.hasPrefix("Scheduled prompt #1 added:\n  \(entry.cronLine)\n"))
+    }
+
+    @Test
+    func addWithTheJSONKeywordAcceptsAFiveFieldSchedule() async throws {
+        let (terminal, client) = try makeTerminal(crontab: "")
+
+        _ = await run("/cron add json 0 9 * * 1-5 Summarize open PRs", in: terminal)
+
+        let written = try #require(client.writes.first)
+        let items = try #require(ZenCrontabDocument.parse(written).block?.items)
+        guard case let .entry(entry) = try #require(items.first) else {
+            Issue.record("expected a scheduled entry")
+            return
+        }
+        #expect(entry.schedule == "0 9 * * 1-5")
+        #expect(entry.cronLine.contains(" --jsonl -p 'Summarize open PRs'"))
+        #expect(entry.job?.outputFormat == .jsonl)
+    }
+
+    @Test
+    func onlyTheTokenRightAfterAddIsTheJSONKeyword() async throws {
+        let (terminal, client) = try makeTerminal(crontab: "")
+
+        _ = await run("/cron add @daily json report", in: terminal)
+
+        let written = try #require(client.writes.first)
+        let items = try #require(ZenCrontabDocument.parse(written).block?.items)
+        guard case let .entry(entry) = try #require(items.first) else {
+            Issue.record("expected a scheduled entry")
+            return
+        }
+        #expect(entry.job?.outputFormat == .text)
+        #expect(entry.job?.prompt == "json report")
+        #expect(!entry.cronLine.contains("--jsonl"))
+        #expect(entry.cronLine.hasSuffix(" -p 'json report'"))
+    }
+
+    @Test(arguments: [
+        ("0 9 * * 1-5 Summarize open PRs", "0 9 * * 1-5", "Summarize open PRs", false),
+        ("@daily Hello", "@daily", "Hello", false),
+        ("@daily json report", "@daily", "json report", false),
+        ("json @daily Hello", "@daily", "Hello", true),
+        ("JSON @daily Hello", "@daily", "Hello", true),
+        ("json 0 9 * * 1-5 Hello world", "0 9 * * 1-5", "Hello world", true),
+        ("json @DAILY  Hello  ", "@DAILY", "Hello  ", true)
+    ])
+    func parseCronAddArgumentsSplitsFormatScheduleAndPrompt(
+        arguments: String,
+        schedule: String,
+        prompt: String,
+        isJSONL: Bool
+    ) {
+        let expected: ZenCronJobCommand.OutputFormat = isJSONL ? .jsonl : .text
+        let parsed = TerminalChat.parseCronAddArguments(arguments)
+
+        #expect(parsed?.schedule == schedule)
+        #expect(parsed?.prompt == prompt)
+        #expect(parsed?.outputFormat == expected)
+        #expect(parsed?.promptFile == nil)
+    }
+
+    @Test(arguments: ["", "json", "JSON", "json   ", "json 0 9 * *", "0 9 * *", "json json report"])
+    func parseCronAddArgumentsRejectsTooFewTokensForASchedule(arguments: String) {
+        #expect(TerminalChat.parseCronAddArguments(arguments) == nil)
+    }
+
+    // MARK: - parsing the prompt file option
+
+    @Test(arguments: [
+        // Unquoted: one whitespace-delimited token.
+        ("@daily -f /tmp/p.md Summarize it", "@daily", "/tmp/p.md", "Summarize it", false),
+        ("@daily -f /tmp/p.md", "@daily", "/tmp/p.md", "", false),
+        ("@daily -f   /tmp/p.md   ", "@daily", "/tmp/p.md", "", false),
+        ("@daily   -f\t/tmp/p.md\tGo  ", "@daily", "/tmp/p.md", "Go  ", false),
+        ("@daily -f /tmp/it's.md go", "@daily", "/tmp/it's.md", "go", false),
+        ("@daily -f relative/p.md go", "@daily", "relative/p.md", "go", false),
+        ("@daily -f /tmp/p.md json report", "@daily", "/tmp/p.md", "json report", false),
+        ("@daily -f /tmp/p.md -f /tmp/q.md", "@daily", "/tmp/p.md", "-f /tmp/q.md", false),
+        ("@daily -f /tmp/p.md first\nsecond", "@daily", "/tmp/p.md", "first\nsecond", false),
+        // Single-quoted: spaces allowed, no escape sequences.
+        ("@daily -f '/tmp/my prompts/p.md' Summarize it", "@daily", "/tmp/my prompts/p.md", "Summarize it", false),
+        ("@daily -f '/tmp/my prompts/p.md'", "@daily", "/tmp/my prompts/p.md", "", false),
+        ("@daily -f '/tmp/my prompts/p.md'   Summarize", "@daily", "/tmp/my prompts/p.md", "Summarize", false),
+        ("@daily -f '/tmp/my prompts/p.md'\nSummarize", "@daily", "/tmp/my prompts/p.md", "Summarize", false),
+        ("@daily -f '  /tmp/p.md  ' go", "@daily", "  /tmp/p.md  ", "go", false),
+        ("@daily -f 'say \"hi\"/p.md' go", "@daily", "say \"hi\"/p.md", "go", false),
+        ("@daily -f '/tmp/back\\slash.md' go", "@daily", "/tmp/back\\slash.md", "go", false),
+        ("@daily -f '/tmp/a\nb.md' go", "@daily", "/tmp/a\nb.md", "go", false),
+        // Double-quoted.
+        ("@daily -f \"/tmp/my prompts/p.md\" Summarize it", "@daily", "/tmp/my prompts/p.md", "Summarize it", false),
+        ("@daily -f \"/tmp/my prompts/p.md\"", "@daily", "/tmp/my prompts/p.md", "", false),
+        ("@daily -f \"/tmp/it's here/p.md\" go", "@daily", "/tmp/it's here/p.md", "go", false),
+        // With the `json` keyword and with five-field schedules.
+        ("json @daily -f /tmp/p.md Summarize", "@daily", "/tmp/p.md", "Summarize", true),
+        ("JSON @DAILY -f '/tmp/a b.md'", "@DAILY", "/tmp/a b.md", "", true),
+        ("0 9 * * 1-5 -f /tmp/p.md Summarize it", "0 9 * * 1-5", "/tmp/p.md", "Summarize it", false),
+        ("0 9 * * 1-5 -f '/tmp/a b.md'", "0 9 * * 1-5", "/tmp/a b.md", "", false),
+        ("0 9 * * 1-5 -f \"/tmp/a b.md\" go", "0 9 * * 1-5", "/tmp/a b.md", "go", false),
+        ("json 0 9 * * 1-5 -f /tmp/p.md", "0 9 * * 1-5", "/tmp/p.md", "", true),
+        ("JSON */15 * * * * -f '/tmp/a b.md' go", "*/15 * * * *", "/tmp/a b.md", "go", true)
+    ])
+    func parseCronAddArgumentsReadsThePromptFileRightAfterTheSchedule(
+        arguments: String,
+        schedule: String,
+        promptFile: String,
+        prompt: String,
+        isJSONL: Bool
+    ) {
+        let parsed = TerminalChat.parseCronAddArguments(arguments)
+
+        #expect(parsed?.schedule == schedule)
+        #expect(parsed?.promptFile == promptFile)
+        #expect(parsed?.prompt == prompt)
+        #expect(parsed?.outputFormat == (isJSONL ? .jsonl : .text))
+    }
+
+    @Test(arguments: [
+        // `-f` is the option only as the first token right after the schedule.
+        ("@daily Summarize -f /tmp/p.md", "@daily", "Summarize -f /tmp/p.md"),
+        ("0 9 * * 1-5 report -f x", "0 9 * * 1-5", "report -f x"),
+        ("json @daily json -f /tmp/p.md", "@daily", "json -f /tmp/p.md"),
+        // Exact and case-sensitive.
+        ("@daily -F /tmp/p.md go", "@daily", "-F /tmp/p.md go"),
+        ("@daily -file /tmp/p.md", "@daily", "-file /tmp/p.md"),
+        ("@daily -f/tmp/p.md", "@daily", "-f/tmp/p.md"),
+        ("@daily --f /tmp/p.md", "@daily", "--f /tmp/p.md"),
+        ("@daily -fx /tmp/p.md", "@daily", "-fx /tmp/p.md"),
+        ("@daily f /tmp/p.md", "@daily", "f /tmp/p.md"),
+        ("@daily Summarize", "@daily", "Summarize")
+    ])
+    func parseCronAddArgumentsTreatsAnyOtherDashFAsPromptText(
+        arguments: String,
+        schedule: String,
+        prompt: String
+    ) {
+        let parsed = TerminalChat.parseCronAddArguments(arguments)
+
+        #expect(parsed?.schedule == schedule)
+        #expect(parsed?.promptFile == nil)
+        #expect(parsed?.prompt == prompt)
+    }
+
+    @Test(arguments: [
+        // Missing path.
+        "@daily -f",
+        "@daily -f ",
+        "@daily -f   ",
+        "@daily -f\n",
+        "json @daily -f",
+        "0 9 * * * -f",
+        "JSON 0 9 * * * -f   ",
+        // Unterminated quote.
+        "@daily -f '",
+        "@daily -f \"",
+        "@daily -f '/tmp/p.md",
+        "@daily -f \"/tmp/p.md",
+        "@daily -f '/tmp/p.md go",
+        "@daily -f '/tmp/p.md\" go",
+        "@daily -f \"/tmp/p.md' go",
+        "0 9 * * * -f '/tmp/my prompts/p.md",
+        // The closing quote must be followed by whitespace or the end.
+        "@daily -f '/tmp/p.md'go",
+        "@daily -f \"/tmp/p.md\"go",
+        "@daily -f '/tmp/p.md'.bak go",
+        "@daily -f '/tmp/p.md''/tmp/q.md'",
+        "@daily -f '/tmp/p.md'\"x\"",
+        // There are no escape sequences: a backslash does not protect the quote.
+        "@daily -f \"/tmp/back\\\"slash.md\" go",
+        "@daily -f '/tmp/it\\'s.md' go",
+        "@daily -f '/tmp/p.md'\u{0301} go",
+        "json @daily -f '/tmp/p.md'x"
+    ])
+    func parseCronAddArgumentsRejectsAMalformedPromptFileOption(arguments: String) {
+        #expect(TerminalChat.parseCronAddArguments(arguments) == nil)
+    }
+
+    @Test(arguments: [
         ("/cron add 61 9 * * * Hello", "Invalid cron schedule"),
         ("/cron add @bogus Hello", "Invalid cron schedule"),
+        ("/cron add json 61 9 * * * Hello", "Invalid cron schedule"),
+        ("/cron add json @bogus Hello", "Invalid cron schedule"),
         ("/cron add 0 9 * * *", "cannot be scheduled"),
         ("/cron add @daily", "cannot be scheduled"),
+        ("/cron add json 0 9 * * *", "cannot be scheduled"),
+        ("/cron add json @daily", "cannot be scheduled"),
         ("/cron add 0 9 * * * first\nsecond", "cannot be scheduled"),
         ("/cron add 0 9 * * * first\r\nsecond", "cannot be scheduled"),
+        ("/cron add json @daily first\nsecond", "cannot be scheduled"),
         ("/cron add 0 9 * *", "Usage: /cron"),
-        ("/cron add", "Usage: /cron")
+        ("/cron add", "Usage: /cron"),
+        ("/cron add json", "Usage: /cron"),
+        ("/cron add JSON", "Usage: /cron"),
+        ("/cron add json 0 9 * *", "Usage: /cron")
     ])
     func rejectedAddNeverTouchesTheCrontab(command: String, expected: String) async throws {
         let locator = FakeZenLocator()
@@ -377,6 +590,233 @@ struct TerminalCronCommandTests {
         #expect(client.writes.isEmpty)
         #expect(client.readCount == 0)
         #expect(locator.requestedPaths.isEmpty)
+    }
+
+    // MARK: - add with a prompt file
+
+    @Test
+    func addWithAPromptFileAloneSchedulesTheFileAndNoPrompt() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let file = try writePromptFile("Daily checklist\n", named: "daily.md", in: root)
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab)
+
+        let output = await run("/cron add @daily -f \(file)", in: terminal)
+
+        let written = try #require(client.writes.first)
+        #expect(client.writes.count == 1)
+        #expect(Array(written.utf8).starts(with: Array(Self.userCrontab.utf8)))
+        let items = try #require(ZenCrontabDocument.parse(written).block?.items)
+        guard case let .entry(entry) = try #require(items.first) else {
+            Issue.record("expected a scheduled entry")
+            return
+        }
+        let directory = terminal.configuration.workingDirectory.path
+        #expect(
+            entry.cronLine
+                == "@daily zen --working-directory \(ZenCronJobCommand.shellQuote(directory))"
+                + " -f \(ZenCronJobCommand.shellQuote(file))"
+        )
+        #expect(!entry.cronLine.contains(" -p "))
+        #expect(entry.job?.promptFile == file)
+        #expect(entry.job?.prompt == nil)
+        #expect(entry.job?.outputFormat == .text)
+        #expect(output.hasPrefix("Scheduled prompt #1 added:\n  \(entry.cronLine)\n"))
+        // The content is never stored: cron reads the file at every run.
+        #expect(!written.contains("Daily checklist"))
+    }
+
+    @Test(arguments: ["'", "\""])
+    func addWithAQuotedPromptFileAndAPromptSchedulesBoth(quote: String) async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let file = try writePromptFile("Checklist", named: "my prompts/100% done/daily.md", in: root)
+        let (terminal, client) = try makeTerminal(crontab: "")
+
+        let output = await run(
+            "/cron add json 0 9 * * 1-5 -f \(quote)\(file)\(quote)   Summarize  it ",
+            in: terminal
+        )
+
+        let written = try #require(client.writes.first)
+        let items = try #require(ZenCrontabDocument.parse(written).block?.items)
+        guard case let .entry(entry) = try #require(items.first) else {
+            Issue.record("expected a scheduled entry")
+            return
+        }
+        let directory = terminal.configuration.workingDirectory.path
+        let command = "zen --working-directory \(ZenCronJobCommand.shellQuote(directory)) --jsonl"
+            + " -f \(ZenCronJobCommand.shellQuote(file)) -p 'Summarize  it'"
+        #expect(entry.schedule == "0 9 * * 1-5")
+        #expect(entry.cronLine == "0 9 * * 1-5 \(ZenCronJobCommand.cronEscape(command))")
+        // A bare `%` would end the command when cron runs it.
+        #expect(entry.cronLine.contains("/100\\% done/"))
+        #expect(entry.job?.promptFile == file)
+        #expect(entry.job?.prompt == "Summarize  it")
+        #expect(entry.job?.outputFormat == .jsonl)
+        #expect(output.hasPrefix("Scheduled prompt #1 added:\n  \(entry.cronLine)\n"))
+    }
+
+    @Test(arguments: [
+        ("/cron add @daily Summarize -f /tmp/p.md", "Summarize -f /tmp/p.md"),
+        ("/cron add @daily -F /tmp/p.md go", "-F /tmp/p.md go"),
+        ("/cron add @daily -file /tmp/p.md", "-file /tmp/p.md"),
+        ("/cron add 0 9 * * 1-5 report -f x", "report -f x")
+    ])
+    func aFileOptionNotRightAfterTheScheduleStaysPromptText(command: String, prompt: String) async throws {
+        let (terminal, client) = try makeTerminal(crontab: "")
+
+        _ = await run(command, in: terminal)
+
+        let written = try #require(client.writes.first)
+        let items = try #require(ZenCrontabDocument.parse(written).block?.items)
+        guard case let .entry(entry) = try #require(items.first) else {
+            Issue.record("expected a scheduled entry")
+            return
+        }
+        #expect(entry.job?.promptFile == nil)
+        #expect(entry.job?.prompt == prompt)
+        #expect(entry.cronLine.hasSuffix(" -p \(ZenCronJobCommand.shellQuote(prompt))"))
+    }
+
+    @Test
+    func addRefusesAnUnusablePromptFileBeforeReadingOrWritingTheCrontab() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let empty = try writePromptFile("", named: "empty.md", in: root)
+        let blank = try writePromptFile(" \n\t\r\n ", named: "blank.md", in: root)
+        let binary = try writePromptFile(Data([0xFF, 0xFE, 0xFD]), named: "binary.md", in: root)
+        let missing = root + "/missing.md"
+        let locator = FakeZenLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator)
+
+        let cases: [(command: String, expected: String)] = [
+            (
+                "/cron add @daily -f relative/prompt.md",
+                "ZenCODE: The prompt file path must be absolute: relative/prompt.md.\n"
+            ),
+            (
+                "/cron add @daily -f ~/prompt.md go",
+                "ZenCODE: The prompt file path must be absolute: ~/prompt.md.\n"
+            ),
+            (
+                "/cron add @daily -f \(missing)",
+                "ZenCODE: Cannot read the prompt file \(missing).\n"
+            ),
+            (
+                "/cron add json 0 9 * * 1-5 -f '\(missing)' Summarize",
+                "ZenCODE: Cannot read the prompt file \(missing).\n"
+            ),
+            (
+                "/cron add @daily -f '\(root)'",
+                "ZenCODE: Cannot read the prompt file \(root).\n"
+            ),
+            (
+                "/cron add @daily -f \(empty)",
+                "ZenCODE: The prompt file \(empty) is empty.\n"
+            ),
+            (
+                "/cron add @daily -f \(blank) Summarize",
+                "ZenCODE: The prompt file \(blank) is empty.\n"
+            ),
+            (
+                "/cron add @daily -f \(binary)",
+                "ZenCODE: The prompt file \(binary) is not UTF-8 text.\n"
+            )
+        ]
+        for (command, expected) in cases {
+            #expect(await run(command, in: terminal) == expected, "command: \(command)")
+        }
+
+        #expect(client.writes.isEmpty)
+        #expect(client.readCount == 0)
+        #expect(locator.requestedPaths.isEmpty)
+    }
+
+    @Test(arguments: ["\n", "\r", "\r\n"])
+    func addRefusesAPromptFilePathWithALineBreak(lineBreak: String) async throws {
+        let locator = FakeZenLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator)
+
+        let output = await run("/cron add @daily -f '/tmp/a\(lineBreak)b.md' Summarize", in: terminal)
+
+        #expect(
+            output == "ZenCODE: The prompt file cannot be scheduled: its path contains a line break. "
+                + "Use an absolute path to a readable, non-empty UTF-8 text file and retry.\n"
+        )
+        let error = ZenCrontabError.invalidPromptFile(reason: "its path contains a line break")
+        #expect(output == "ZenCODE: \(error.localizedDescription)\n")
+        #expect(client.writes.isEmpty)
+        #expect(client.readCount == 0)
+        #expect(locator.requestedPaths.isEmpty)
+    }
+
+    @Test
+    func validatedCronPromptFileKeepsASingleLinePathAsGiven() throws {
+        #expect(try TerminalChat.validatedCronPromptFile("/tmp/my prompts/it's 100%.md") == "/tmp/my prompts/it's 100%.md")
+        for path in ["/tmp/a\nb", "/tmp/a\rb", "/tmp/a\r\nb", "\n", "/tmp/a\n"] {
+            #expect(
+                throws: ZenCrontabError.invalidPromptFile(reason: "its path contains a line break"),
+                "path: \(path.debugDescription)"
+            ) {
+                try TerminalChat.validatedCronPromptFile(path)
+            }
+        }
+    }
+
+    @Test(arguments: [
+        // The schedule is validated first, then the prompt, then the file.
+        ("/cron add 61 9 * * * -f /nonexistent/p.md go", "Invalid cron schedule"),
+        ("/cron add @bogus -f '/tmp/a\nb.md' go", "Invalid cron schedule"),
+        ("/cron add @daily -f /nonexistent/p.md first\nsecond", "The prompt cannot be scheduled"),
+        ("/cron add @daily -f '/tmp/a\nb.md' first\r\nsecond", "The prompt cannot be scheduled"),
+        ("/cron add @daily -f '/tmp/a\nb.md' go", "The prompt file cannot be scheduled")
+    ])
+    func addValidatesTheScheduleThenThePromptThenTheFile(command: String, expected: String) async throws {
+        let locator = FakeZenLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator)
+
+        let output = await run(command, in: terminal)
+
+        #expect(output.contains(expected), "output: \(output)")
+        #expect(client.writes.isEmpty)
+        #expect(client.readCount == 0)
+        #expect(locator.requestedPaths.isEmpty)
+    }
+
+    @Test(arguments: [
+        "/cron add @daily -f",
+        "/cron add @daily -f   ",
+        "/cron add json @daily -f",
+        "/cron add 0 9 * * * -f",
+        "/cron add @daily -f '/tmp/p.md",
+        "/cron add @daily -f \"/tmp/p.md go",
+        "/cron add @daily -f '/tmp/p.md'go",
+        "/cron add @daily -f \"/tmp/p.md\"go"
+    ])
+    func aMalformedFileOptionShowsTheUsageWithoutTouchingTheCrontab(command: String) async throws {
+        let locator = FakeZenLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator)
+
+        let output = await run(command, in: terminal)
+
+        #expect(output == TerminalChat.cronUsageMessage)
+        #expect(client.writes.isEmpty)
+        #expect(client.readCount == 0)
+        #expect(locator.requestedPaths.isEmpty)
+    }
+
+    @Test
+    func addWithAPromptFileStillRefusesWhenNoZenIsOnThePath() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let file = try writePromptFile("Checklist", named: "daily.md", in: root)
+        let (terminal, client) = try makeTerminal(crontab: "", zen: FakeZenLocator(result: nil))
+
+        let output = await run("/cron add @daily -f \(file)", in: terminal)
+
+        #expect(output.contains("no executable zen was found there"))
+        #expect(client.writes.isEmpty)
     }
 
     // MARK: - remove
@@ -582,6 +1022,8 @@ struct TerminalCronCommandTests {
             "MAILTO=ops@example.com",
             "# zencode-cron id=11111111-1111-1111-1111-111111111111 created=2026-01-02T03:04:05Z",
             "0 9 * * 1-5 '/usr/local/bin/zen' --agent 'Builder' --working-directory '/work/a b' --jsonl -p 'Check CI'",
+            "# zencode-cron id=33333333-3333-3333-3333-333333333333 created=2026-01-02T03:04:05Z",
+            "@weekly zen --working-directory '/work/c' -p 'Weekly digest'",
             "# zencode-cron id=22222222-2222-2222-2222-222222222222 created=2026-01-02T03:04:05Z",
             "@daily /usr/bin/true",
             "not a cron line",
@@ -595,13 +1037,58 @@ struct TerminalCronCommandTests {
         #expect(
             rendered == """
             Scheduled prompts — MAILTO: ops@example.com
-              1. 0 9 * * 1-5 · agent: Builder · dir: /work/a b · prompt: Check CI
-              2. @daily · command: /usr/bin/true
-              3. (unrecognized) not a cron line
+              1. 0 9 * * 1-5 · agent: Builder · dir: /work/a b · output: JSONL · prompt: Check CI
+              2. @weekly · agent: default · dir: /work/c · output: text · prompt: Weekly digest
+              3. @daily · command: /usr/bin/true
+              4. (unrecognized) not a cron line
             Results are mailed by cron; set the recipient with /cron mailto <address>.
 
             """
         )
+    }
+
+    @Test
+    func renderCronListShowsTheFileAndOmitsAnAbsentPrompt() throws {
+        let text = [
+            ZenCrontabDocument.beginMarker,
+            "# zencode-cron id=11111111-1111-1111-1111-111111111111 created=2026-01-02T03:04:05Z",
+            "@daily zen --working-directory '/work/a' -f '/prompts/daily.md'",
+            "# zencode-cron id=22222222-2222-2222-2222-222222222222 created=2026-01-02T03:04:05Z",
+            "0 9 * * 1-5 zen --agent 'Builder' --working-directory '/work/b' --jsonl"
+                + " -f '/prompts/my daily.md' -p 'Be brief'",
+            "# zencode-cron id=33333333-3333-3333-3333-333333333333 created=2026-01-02T03:04:05Z",
+            "@weekly zen --working-directory '/work/c' -p 'Weekly digest'",
+            ZenCrontabDocument.endMarker,
+            ""
+        ].joined(separator: "\n")
+
+        let rendered = TerminalChat.renderCronList(try ZenCrontabDocument.parse(text))
+
+        #expect(
+            rendered == """
+            Scheduled prompts — MAILTO: not set (cron default: local mailbox of the crontab owner)
+              1. @daily · agent: default · dir: /work/a · output: text · file: /prompts/daily.md
+              2. 0 9 * * 1-5 · agent: Builder · dir: /work/b · output: JSONL · file: /prompts/my daily.md · prompt: Be brief
+              3. @weekly · agent: default · dir: /work/c · output: text · prompt: Weekly digest
+            Results are mailed by cron; set the recipient with /cron mailto <address>.
+
+            """
+        )
+        #expect(!rendered.contains("prompt: nil"))
+    }
+
+    @Test
+    func aListedFileEntryIsTheOneAddWrote() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let file = try writePromptFile("Checklist", named: "my prompts/daily.md", in: root)
+        let (terminal, _) = try makeTerminal(crontab: "")
+        _ = await run("/cron add @daily -f '\(file)'", in: terminal)
+
+        let listed = await run("/cron list", in: terminal)
+
+        #expect(listed.contains(" · output: text · file: \(file)\n"))
+        #expect(!listed.contains("prompt:"))
     }
 
     @Test
@@ -620,7 +1107,11 @@ struct TerminalCronCommandTests {
             try ZenCrontabDocument.parse(try makeCrontab(mailTo: "", prompts: ["Check CI"]))
         )
         #expect(disabled.hasPrefix("Scheduled prompts — MAILTO: \"\" (mail disabled)\n"))
-        #expect(disabled.contains("  1. 0 9 * * * · agent: default · dir: /work/project · prompt: Check CI\n"))
+        #expect(
+            disabled.contains(
+                "  1. 0 9 * * * · agent: default · dir: /work/project · output: text · prompt: Check CI\n"
+            )
+        )
     }
 
     @Test
@@ -861,7 +1352,8 @@ struct TerminalCronCommandTests {
                 stderr: "",
                 duration: .milliseconds(12_340),
                 wasTerminated: false
-            )
+            ),
+            outputFormat: .jsonl
         )
 
         #expect(
@@ -886,7 +1378,8 @@ struct TerminalCronCommandTests {
                 stderr: stderr,
                 duration: .milliseconds(450),
                 wasTerminated: false
-            )
+            ),
+            outputFormat: .jsonl
         )
 
         let expectedTail = (6...25).map { "line \($0)" }.joined(separator: "\n")
@@ -911,7 +1404,8 @@ struct TerminalCronCommandTests {
                 stderr: "sh: /opt/zen/bin/zen: not found\n",
                 duration: .zero,
                 wasTerminated: false
-            )
+            ),
+            outputFormat: .jsonl
         )
 
         #expect(
@@ -926,6 +1420,200 @@ struct TerminalCronCommandTests {
     }
 
     @Test
+    func renderCronRunReportOfATextRunShowsTheTrimmedAnswer() {
+        let report = TerminalChat.renderCronRunReport(
+            number: 3,
+            outcome: ZenCronRunOutcome(
+                exitStatus: 0,
+                stdout: "\n  Two PRs are open.\nBoth pass CI.\n\n",
+                stderr: "",
+                duration: .milliseconds(12_340),
+                wasTerminated: false
+            ),
+            outputFormat: .text
+        )
+
+        #expect(
+            report == """
+            Scheduled prompt #3 finished in 12.3s with exit status 0.
+            Result:
+            Two PRs are open.
+            Both pass CI.
+
+            """
+        )
+    }
+
+    @Test
+    func renderCronRunReportOfATextRunDoesNotParseJSONL() {
+        // A text job prints the answer itself: JSONL-looking text is not extracted.
+        let stdout = #"{"type":"message.completed","text":"All good"}"# + "\n"
+        let report = TerminalChat.renderCronRunReport(
+            number: 1,
+            outcome: ZenCronRunOutcome(
+                exitStatus: 0,
+                stdout: stdout,
+                stderr: "",
+                duration: .zero,
+                wasTerminated: false
+            ),
+            outputFormat: .text
+        )
+
+        #expect(report.contains("Result:\n\(stdout.trimmingCharacters(in: .whitespacesAndNewlines))\n"))
+    }
+
+    @Test(arguments: ["", " \n\t\n ", "\r\n"])
+    func renderCronRunReportOfATextRunWithoutOutputSaysSo(stdout: String) {
+        let report = TerminalChat.renderCronRunReport(
+            number: 2,
+            outcome: ZenCronRunOutcome(
+                exitStatus: 0,
+                stdout: stdout,
+                stderr: "",
+                duration: .milliseconds(450),
+                wasTerminated: false
+            ),
+            outputFormat: .text
+        )
+
+        #expect(
+            report == """
+            Scheduled prompt #2 finished in 0.5s with exit status 0.
+            No output on stdout.
+
+            """
+        )
+    }
+
+    @Test
+    func renderCronRunReportOfATextRunStillQuotesTheStderrTail() {
+        let stderr = (1...25).map { "line \($0)" }.joined(separator: "\n") + "\n\n"
+        let report = TerminalChat.renderCronRunReport(
+            number: 1,
+            outcome: ZenCronRunOutcome(
+                exitStatus: 1,
+                stdout: "",
+                stderr: stderr,
+                duration: .milliseconds(450),
+                wasTerminated: false
+            ),
+            outputFormat: .text
+        )
+
+        let expectedTail = (6...25).map { "line \($0)" }.joined(separator: "\n")
+        #expect(
+            report == """
+            Scheduled prompt #1 finished in 0.5s with exit status 1.
+            No output on stdout.
+            stderr (last 20 lines):
+            \(expectedTail)
+
+            """
+        )
+    }
+
+    @Test
+    func renderCronRunReportOfATerminatedTextRunKeepsTheHeaderAndTheAnswerSoFar() {
+        let report = TerminalChat.renderCronRunReport(
+            number: 4,
+            outcome: ZenCronRunOutcome(
+                exitStatus: 143,
+                stdout: "partial answer\n",
+                stderr: " \n\t\n",
+                duration: .seconds(3),
+                wasTerminated: true
+            ),
+            outputFormat: .text
+        )
+
+        #expect(
+            report == """
+            Scheduled prompt #4 was terminated.
+            Result:
+            partial answer
+
+            """
+        )
+    }
+
+    @Test(arguments: [
+        // A text entry prints the answer itself.
+        ("@daily zen --working-directory '/work' -p 'Check CI'", "Two PRs are open.\n"),
+        // A JSONL entry, and one ZenCODE did not write, keep the JSONL extraction.
+        (
+            "@daily zen --working-directory '/work' --jsonl -p 'Check CI'",
+            #"{"type":"message.completed","text":"Two PRs are open."}"# + "\n"
+        ),
+        (
+            "@daily /usr/bin/true",
+            #"{"type":"message.completed","text":"Two PRs are open."}"# + "\n"
+        )
+    ])
+    func runReportsTheStdoutTextOfATextEntryAndTheJSONLResultOtherwise(
+        cronLine: String,
+        stdout: String
+    ) async throws {
+        let text = [
+            ZenCrontabDocument.beginMarker,
+            "# zencode-cron id=11111111-1111-1111-1111-111111111111 created=2026-01-02T03:04:05Z",
+            cronLine,
+            ZenCrontabDocument.endMarker,
+            ""
+        ].joined(separator: "\n")
+        let renderer = Self.makeCapturingRenderer()
+        let (terminal, _) = try makeTerminal(
+            client: FakeCrontabClient(text: text),
+            renderCoordinator: renderer
+        )
+        terminal.cronJobRunner = FakeCronJobRunner(
+            outcome: ZenCronRunOutcome(
+                exitStatus: 0,
+                stdout: stdout,
+                stderr: "",
+                duration: .milliseconds(1_250),
+                wasTerminated: false
+            ),
+            isReleased: true
+        )
+
+        _ = await run("/cron run 1", in: terminal)
+        await terminal.activeCronRun?.task.value
+
+        let written = await renderer.capturedWriteEvents().map(\.text).joined()
+        #expect(written.contains("Scheduled prompt #1 finished in 1.3s with exit status 0.\n"))
+        #expect(written.contains("Result:\nTwo PRs are open.\n"))
+        #expect(!written.contains("No output on stdout."))
+        #expect(!written.contains("No JSONL result on stdout."))
+    }
+
+    @Test
+    func runOfATextEntryWithoutStdoutSaysSoInsteadOfLookingForJSONL() async throws {
+        let renderer = Self.makeCapturingRenderer()
+        let (terminal, _) = try makeTerminal(
+            client: FakeCrontabClient(text: try makeCrontab(outputFormat: .text, prompts: ["Check CI"])),
+            renderCoordinator: renderer
+        )
+        terminal.cronJobRunner = FakeCronJobRunner(
+            outcome: ZenCronRunOutcome(
+                exitStatus: 0,
+                stdout: "\n",
+                stderr: "",
+                duration: .zero,
+                wasTerminated: false
+            ),
+            isReleased: true
+        )
+
+        _ = await run("/cron run 1", in: terminal)
+        await terminal.activeCronRun?.task.value
+
+        let written = await renderer.capturedWriteEvents().map(\.text).joined()
+        #expect(written.contains("No output on stdout."))
+        #expect(!written.contains("No JSONL result on stdout."))
+    }
+
+    @Test
     func renderCronRunReportOfATerminatedRunOmitsAWhitespaceOnlyStderr() {
         let report = TerminalChat.renderCronRunReport(
             number: 4,
@@ -935,7 +1623,8 @@ struct TerminalCronCommandTests {
                 stderr: " \n\t\n",
                 duration: .seconds(3),
                 wasTerminated: true
-            )
+            ),
+            outputFormat: .jsonl
         )
 
         #expect(
@@ -978,13 +1667,36 @@ struct TerminalCronCommandTests {
         #expect(!cron.requiresArgument)
         for usage in [
             "/cron [list]",
-            "/cron add <schedule> <prompt>",
+            "/cron add [json] <schedule> [-f <path>] <prompt>",
             "/cron remove <n>",
             "/cron run <n>",
             "/cron mailto [address|none|default]"
         ] {
             #expect(cron.help.contains(usage))
         }
+        #expect(
+            cron.help.contains(
+                "Schedule a headless prompt (five cron fields or an @alias); json mails JSONL instead of text"
+            )
+        )
+        #expect(
+            cron.help.contains(
+                "; -f reads the prompt from a file (absolute path)"
+            )
+        )
+        #expect(
+            TerminalChat.cronUsageMessage
+                == "Usage: /cron [list] | add [json] <schedule> [-f <path>] <prompt> | remove <n> | run <n>"
+                + " | mailto [address|none|default]\n"
+        )
+
+        // The descriptions of the five lines start in the same column.
+        let columns = cron.help.split(separator: "\n").compactMap { line in
+            line.range(of: "  (?=[A-Z])", options: .regularExpression)
+                .map { line.distance(from: line.startIndex, to: $0.upperBound) }
+        }
+        #expect(columns.count == 5)
+        #expect(Set(columns).count == 1)
 
         let (terminal, _) = try makeTerminal(crontab: "")
         #expect(terminal.renderHelpTextForCurrentAgent().contains(cron.help))
@@ -1022,7 +1734,7 @@ struct TerminalCronCommandTests {
         #expect(
             arguments.map(\.summary) == [
                 "show scheduled prompts with their numbers",
-                "<schedule> <prompt> · e.g. @daily Summarize open PRs",
+                "[json] <schedule> [-f <path>] <prompt> · e.g. @daily Summarize PRs",
                 "<n> · delete entry n from /cron list",
                 "<n> · run entry n now, as cron would",
                 "[address|none|default] · where cron mails results"
@@ -1034,12 +1746,50 @@ struct TerminalCronCommandTests {
     @Test(arguments: [
         ("/cron add ", [
             "@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot",
-            "0 9 * * 1-5", "*/15 * * * *", "30 18 * * *"
+            "0 9 * * 1-5", "*/15 * * * *", "30 18 * * *", "json"
         ]),
         ("/cron ADD ", [
             "@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot",
+            "0 9 * * 1-5", "*/15 * * * *", "30 18 * * *", "json"
+        ]),
+        // `json` completes from any case-insensitive prefix, in the first slot only.
+        ("/cron add j", ["json"]),
+        ("/cron add J", ["json"]),
+        ("/cron add js", ["json"]),
+        ("/cron add JS", ["json"]),
+        ("/cron add jso", ["json"]),
+        ("/cron add json", ["json"]),
+        ("/cron add JSON", ["json"]),
+        ("/cron ADD j", ["json"]),
+        ("/cron add jsonx", ["<minute>"]),
+        ("/cron add s", ["<minute>"]),
+        // After `json` the schedule is completed as for a text job, `json` is not offered again.
+        ("/cron add json ", [
+            "@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot",
             "0 9 * * 1-5", "*/15 * * * *", "30 18 * * *"
         ]),
+        ("/cron add JSON ", [
+            "@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot",
+            "0 9 * * 1-5", "*/15 * * * *", "30 18 * * *"
+        ]),
+        ("/cron add json @", ["@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot"]),
+        ("/cron add json @d", ["@daily"]),
+        ("/cron add json @mid", ["@midnight"]),
+        ("/cron add json j", ["<minute>"]),
+        ("/cron add json 0", ["<minute>"]),
+        ("/cron add json 0 ", ["<hour>"]),
+        ("/cron add json 0 9", ["<hour>"]),
+        ("/cron add json 0 9 ", ["<day-of-month>"]),
+        ("/cron add json 0 9 * ", ["<month>"]),
+        ("/cron add json 0 9 * * ", ["<day-of-week>"]),
+        ("/cron add json 0 9 * * 1-5 ", ["<prompt>", "-f"]),
+        ("/cron add json 0 9 * * 1-5 Summ", ["<prompt>"]),
+        ("/cron add json @daily ", ["<prompt>", "-f"]),
+        ("/cron add JSON @daily Summarize open PRs", ["<prompt>"]),
+        // Later slots never offer the keyword.
+        ("/cron add @daily j", ["<prompt>"]),
+        ("/cron add 0 j", ["<hour>"]),
+        ("/cron add 0 json", ["<hour>"]),
         ("/cron add @", ["@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot"]),
         ("/cron add @d", ["@daily"]),
         ("/cron add @D", ["@daily"]),
@@ -1057,12 +1807,47 @@ struct TerminalCronCommandTests {
         ("/cron add 0 9 * ", ["<month>"]),
         ("/cron add 0 9 * * ", ["<day-of-week>"]),
         ("/cron add 0 9 * * 1", ["<day-of-week>"]),
-        ("/cron add 0 9 * * 1-5 ", ["<prompt>"]),
+        ("/cron add 0 9 * * 1-5 ", ["<prompt>", "-f"]),
         ("/cron add 0 9 * * 1-5 Summ", ["<prompt>"]),
         ("/cron add 0 9 * * 1-5 Summarize open PRs", ["<prompt>"]),
-        ("/cron add @daily ", ["<prompt>"]),
+        ("/cron add @daily ", ["<prompt>", "-f"]),
         ("/cron add @daily Summarize open PRs", ["<prompt>"]),
         ("/cron ADD @daily Summarize open PRs", ["<prompt>"]),
+        // `-f` is offered only in the first slot after the schedule, and only as a
+        // prefix of `-f` itself (case-sensitive).
+        ("/cron add @daily -", ["-f"]),
+        ("/cron add @daily -f", ["-f"]),
+        ("/cron add @daily -F", ["<prompt>"]),
+        ("/cron add @daily -x", ["<prompt>"]),
+        ("/cron add @daily --", ["<prompt>"]),
+        ("/cron add @daily -fo", ["<prompt>"]),
+        ("/cron add @daily f", ["<prompt>"]),
+        ("/cron add 0 9 * * 1-5 -", ["-f"]),
+        ("/cron add 0 9 * * 1-5 -f", ["-f"]),
+        ("/cron add json @daily -", ["-f"]),
+        ("/cron add json 0 9 * * 1-5 -f", ["-f"]),
+        ("/cron ADD @daily -f", ["-f"]),
+        ("/cron add @daily Summarize -", ["<prompt>"]),
+        ("/cron add @daily Summarize -f", ["<prompt>"]),
+        ("/cron add @daily Summarize -f ", ["<prompt>"]),
+        ("/cron add @daily -F /tmp/p.md ", ["<prompt>"]),
+        // Once `-f` is the first operand: the path, then the optional instruction.
+        ("/cron add @daily -f ", ["<path>"]),
+        ("/cron add @daily -f /tm", ["<path>"]),
+        ("/cron add @daily -f -", ["<path>"]),
+        ("/cron add @daily -f /tmp/p.md ", ["<prompt>"]),
+        ("/cron add @daily -f /tmp/p.md Summ", ["<prompt>"]),
+        ("/cron add @daily -f /tmp/p.md -f", ["<prompt>"]),
+        ("/cron add @daily -f /tmp/p.md Summarize open PRs", ["<prompt>"]),
+        ("/cron ADD @daily -f ", ["<path>"]),
+        ("/cron add 0 9 * * 1-5 -f ", ["<path>"]),
+        ("/cron add 0 9 * * 1-5 -f /tmp/p.md ", ["<prompt>"]),
+        ("/cron add json @daily -f ", ["<path>"]),
+        ("/cron add JSON 0 9 * * 1-5 -f /tmp/p.md ", ["<prompt>"]),
+        // A quoted path with spaces splits into several words here, which only
+        // changes which guide is shown for the slots inside it.
+        ("/cron add @daily -f '/tmp/my ", ["<prompt>"]),
+        ("/cron add @daily -f '/tmp/my prompts/p.md' ", ["<prompt>"]),
         ("/cron remove ", ["<n>"]),
         ("/cron remove 2", ["<n>"]),
         ("/cron REMOVE ", ["<n>"]),
@@ -1086,7 +1871,7 @@ struct TerminalCronCommandTests {
     }
 
     @Test
-    func cronScheduleSlotListsAliasesThenFiveFieldExamplesThatKeepASeparator() {
+    func cronScheduleSlotListsAliasesThenFiveFieldExamplesThenJSONThatKeepASeparator() {
         let rows = cronCompletions("/cron add ")
 
         #expect(
@@ -1099,11 +1884,69 @@ struct TerminalCronCommandTests {
                 "when the system starts",
                 "weekdays at 09:00",
                 "every 15 minutes",
-                "every day at 18:30"
+                "every day at 18:30",
+                "mail the run as JSONL records instead of the answer text"
             ]
         )
         // Accepting one leaves a space for the prompt instead of sending.
         #expect(rows.allSatisfy { $0.requiresArgument && !$0.isHint })
+    }
+
+    @Test
+    func jsonComesLastSoTheInitialSelectionStaysOnTheFirstAlias() {
+        let rows = cronCompletions("/cron add ")
+
+        #expect(rows.first?.command == "@hourly")
+        #expect(rows.last?.command == "json")
+        #expect(rows.filter { $0.command == "json" }.count == 1)
+    }
+
+    @Test
+    func theJSONRowIsAValueThatLeavesASeparatorForTheSchedule() throws {
+        let row = try #require(cronCompletions("/cron add j").first)
+
+        #expect(row.command == "json")
+        #expect(row.summary == "mail the run as JSONL records instead of the answer text")
+        #expect(row.requiresArgument)
+        #expect(!row.isHint)
+    }
+
+    @Test
+    func theFirstSlotAfterTheScheduleOffersTheGuideThenTheFileOption() {
+        for text in ["/cron add @daily ", "/cron add 0 9 * * 1-5 ", "/cron add json @daily "] {
+            let rows = cronCompletions(text)
+
+            // The guide comes first, so the initial selection is a row that does
+            // nothing (like `mailto`) and Enter cannot pick `-f` by accident.
+            #expect(rows.map(\.command) == ["<prompt>", "-f"], "typed: \(text)")
+            #expect(rows.map(\.isHint) == [true, false], "typed: \(text)")
+            #expect(rows.map(\.requiresArgument) == [false, true], "typed: \(text)")
+            #expect(rows.first?.summary == "text the agent runs headless, on one line")
+            #expect(rows.last?.summary == "read the prompt from a file (absolute path)")
+        }
+    }
+
+    @Test
+    func theFileOptionIsAValueThatLeavesASeparatorForThePath() throws {
+        for text in ["/cron add @daily -", "/cron add @daily -f"] {
+            let rows = cronCompletions(text)
+            #expect(rows.count == 1, "typed: \(text)")
+            let row = try #require(rows.first)
+            #expect(row.command == "-f")
+            #expect(row.summary == "read the prompt from a file (absolute path)")
+            #expect(row.requiresArgument)
+            #expect(!row.isHint)
+        }
+    }
+
+    @Test
+    func theFileOptionIsNeverOfferedBeyondTheFirstSlotAfterTheSchedule() {
+        for text in [
+            "/cron add @daily x -", "/cron add @daily -f /tmp/p.md -", "/cron add @daily -f -",
+            "/cron add 0 9 * * 1-5 x -", "/cron add 0 -", "/cron add -"
+        ] {
+            #expect(!cronCompletions(text).map(\.command).contains("-f"), "typed: \(text)")
+        }
     }
 
     @Test
@@ -1124,6 +1967,10 @@ struct TerminalCronCommandTests {
         ("/cron add 0 9 * * ", "<day-of-week>", "0-7 (0 and 7 = Sunday)"),
         ("/cron add 0 9 * * 1-5 ", "<prompt>", "text the agent runs headless, on one line"),
         ("/cron add @daily ", "<prompt>", "text the agent runs headless, on one line"),
+        ("/cron add @daily -f ", "<path>", "absolute path of the prompt file; quote it if it contains spaces"),
+        ("/cron add 0 9 * * 1-5 -f ", "<path>", "absolute path of the prompt file; quote it if it contains spaces"),
+        ("/cron add @daily -f /tmp/p.md ", "<prompt>", "optional instruction; the file becomes context"),
+        ("/cron add json 0 9 * * 1-5 -f /tmp/p.md ", "<prompt>", "optional instruction; the file becomes context"),
         ("/cron remove ", "<n>", "entry number shown by /cron list"),
         ("/cron run ", "<n>", "entry number shown by /cron list"),
         ("/cron mailto ", "<address>", "e-mail address cron mails results to")
@@ -1173,7 +2020,8 @@ struct TerminalCronCommandTests {
     @Test
     func everyAliasAndExampleOfTheScheduleSlotIsAcceptedByTheScheduleParser() throws {
         var schedules = TerminalPromptCompletionCatalog.cronScheduleExamples.map(\.command)
-        schedules += cronCompletions("/cron add ").map(\.command)
+        // `json` is the output keyword, not a schedule.
+        schedules += cronCompletions("/cron add ").map(\.command).filter { $0 != "json" }
         // The synonyms only show once a letter is typed.
         schedules += cronCompletions("/cron add @a").map(\.command)
         schedules += cronCompletions("/cron add @mid").map(\.command)
@@ -1188,9 +2036,11 @@ struct TerminalCronCommandTests {
     func cronCompletionTextsStayShort() {
         var rows = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/cron")
         for text in [
-            "/cron add ", "/cron add @", "/cron add @m", "/cron add @a", "/cron add 0",
+            "/cron add ", "/cron add j", "/cron add json ", "/cron add @", "/cron add @m",
+            "/cron add @a", "/cron add 0",
             "/cron add 0 ", "/cron add 0 9 ", "/cron add 0 9 * ", "/cron add 0 9 * * ",
-            "/cron add @daily ", "/cron remove ", "/cron run ", "/cron mailto "
+            "/cron add @daily ", "/cron add @daily -", "/cron add @daily -f ",
+            "/cron add @daily -f /tmp/p.md ", "/cron remove ", "/cron run ", "/cron mailto "
         ] {
             rows += cronCompletions(text)
         }
@@ -1318,9 +2168,26 @@ struct TerminalCronCommandTests {
         try makeTerminal(client: FakeCrontabClient(text: crontab), zen: zen)
     }
 
+    /// A coordinator that records what it writes instead of touching the real
+    /// terminal, so the deferred report of `/cron run` can be read back.
+    private static func makeCapturingRenderer() -> TerminalChatRenderCoordinator {
+        TerminalChatRenderCoordinator(
+            stdinIsTerminal: false,
+            standardOutput: nil,
+            standardError: nil,
+            standardOutputIsTerminal: false,
+            standardErrorIsTerminal: false,
+            cursorTopology: .separate,
+            capturesWrites: true,
+            streamingFlushDelay: nil,
+            columnWidthProvider: { 100 }
+        )
+    }
+
     private func makeTerminal(
         client: FakeCrontabClient,
-        zen: FakeZenLocator = FakeZenLocator()
+        zen: FakeZenLocator = FakeZenLocator(),
+        renderCoordinator: TerminalChatRenderCoordinator? = nil
     ) throws -> (TerminalChat, FakeCrontabClient) {
         let configuration = try AgentConfiguration(
             hostedModelID: "remote-community/test",
@@ -1333,7 +2200,9 @@ struct TerminalCronCommandTests {
         let terminal = TerminalChat(
             configuration: configuration,
             stdinIsTerminal: false,
-            sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
+            sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil),
+            telegramTransportFactory: nil,
+            renderCoordinator: renderCoordinator
         )
         terminal.crontabClient = client
         // Never the system runner, even in tests that do not expect a run.
@@ -1358,6 +2227,7 @@ struct TerminalCronCommandTests {
         foreign: [String] = [],
         mailTo: String? = nil,
         path: String? = nil,
+        outputFormat: ZenCronJobCommand.OutputFormat = .text,
         prompts: [String] = []
     ) throws -> String {
         var document = ZenCrontabDocument(foreignLines: foreign)
@@ -1370,6 +2240,7 @@ struct TerminalCronCommandTests {
                     supportDirectory: nil,
                     agentName: nil,
                     workingDirectory: "/work/project",
+                    outputFormat: outputFormat,
                     prompt: prompt
                 )
             )
@@ -1383,5 +2254,36 @@ struct TerminalCronCommandTests {
             document.block = block
         }
         return document.render()
+    }
+
+    // MARK: - Temporary prompt files
+
+    /// A UUID-named directory under the system temporary directory; the caller
+    /// removes it with `removeTemporaryDirectory`.
+    private func makeTemporaryDirectory() throws -> String {
+        let path = FileManager.default.temporaryDirectory.path
+            + "/ZenCODE-cron-prompt-file-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        return path
+    }
+
+    private func removeTemporaryDirectory(_ path: String) {
+        try? FileManager.default.removeItem(atPath: path)
+    }
+
+    /// Writes `contents` at `directory/name` (creating intermediate
+    /// directories) and returns the absolute path.
+    private func writePromptFile(_ contents: String, named name: String, in directory: String) throws -> String {
+        try writePromptFile(Data(contents.utf8), named: name, in: directory)
+    }
+
+    private func writePromptFile(_ contents: Data, named name: String, in directory: String) throws -> String {
+        let url = URL(fileURLWithPath: directory + "/" + name)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try contents.write(to: url)
+        return url.path
     }
 }

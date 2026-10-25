@@ -688,14 +688,19 @@ extension DirectSubAgentRuntimeTests {
             let expectedPath = linkedChild.standardizedFileURL.path
             #expect(Self.resolvedPath(linkedChild) != expectedPath)
 
-            // Only the selection saved for the path the coordinator knows
-            // (`linked/sub`) associates the custom profile and drops the system one.
+            // The selection saved for the path the coordinator knows
+            // (`linked/sub`) associates the custom profile and drops the system
+            // one. It is keyed by the folder name, so the resolved path
+            // (`real/sub`) shares it.
             let senior = Self.seniorDeveloper
             try ProjectAgentSelectionStore.save(
                 agentIDs: [senior.id],
                 workspaceRootURL: linkedChild
             )
-            #expect(ProjectAgentSelectionStore.load(workspaceRootURL: realChild) == nil)
+            #expect(
+                ProjectAgentSelectionStore.load(workspaceRootURL: realChild)
+                    == ProjectAgentSelectionStore.load(workspaceRootURL: linkedChild)
+            )
             let backend = CapturingSubAgentRuntimeBackend()
             let runtime = Self.makeRoleRuntime(
                 backend: backend,
@@ -712,8 +717,8 @@ extension DirectSubAgentRuntimeTests {
                 parentAllowedToolNames: nil
             )
 
-            // Complexity 2 would pick the system "fast" binding if the child saw
-            // the (empty) selection of the resolved path.
+            // Complexity 2 would pick the system "fast" binding if the child did
+            // not see the saved selection.
             #expect(output.contains("to profile \"Senior Developer\""))
             let session = try #require(await backend.createdSessions().first)
             #expect(session.cwd == expectedPath)
@@ -791,6 +796,42 @@ extension DirectSubAgentRuntimeTests {
             }
 
             #expect(await backend.createdSessions().count == 2)
+            await runtime.shutdown()
+        }
+    }
+
+    /// A project moved to another folder keeps the selection it saved under
+    /// its name-based key: `profileRole` resolves to its associated custom
+    /// profile instead of falling back to the generic system Developer.
+    @Test
+    func profileRoleInAMovedProjectUsesItsSavedSelection() async throws {
+        try await ProjectAgentSelectionTestSupport.withTemporaryProjectAsync { support, workspace in
+            let profiles = [Self.systemDeveloper, Self.seniorDeveloper]
+            let original = support.deletingLastPathComponent()
+                .appendingPathComponent("esselunga/App-Ist-3.0-IOS", isDirectory: true)
+            try FileManager.default.createDirectory(at: original, withIntermediateDirectories: true)
+            try ProjectAgentSelectionStore.save(
+                agentIDs: [Self.seniorDeveloper.id],
+                workspaceRootURL: original
+            )
+            let moved = workspace.appendingPathComponent("App-Ist-3.0-IOS", isDirectory: true)
+            try FileManager.default.createDirectory(at: moved, withIntermediateDirectories: true)
+
+            let backend = CapturingSubAgentRuntimeBackend()
+            let recorder = SubAgentFactoryRecorder()
+            let runtime = Self.makeRoleRuntime(backend: backend, profiles: profiles, recorder: recorder)
+            _ = try await runtime.createAgents(
+                arguments: Self.agentItem([
+                    "profileRole": .string("developer"),
+                    "complexity": .number(5),
+                    "workingDirectory": .string("App-Ist-3.0-IOS"),
+                ]),
+                workingDirectory: workspace,
+                parentAllowedToolNames: nil
+            )
+            let context = try #require(recorder.contexts.first)
+            #expect(context.profile == Self.seniorDeveloper)
+            #expect(context.modelBinding?.id == "deep")
             await runtime.shutdown()
         }
     }

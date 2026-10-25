@@ -507,7 +507,7 @@ struct MemoryToolSurfaceTests {
     func toolsWithoutAGraphTargetReportScopeUnavailable() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
-        try await workspace.withIsolatedSupport {
+        await workspace.withIsolatedSupport {
             let service = MemoryService()
             await #expect(throws: MemoryServiceError.self) {
                 _ = try await Self.execute(

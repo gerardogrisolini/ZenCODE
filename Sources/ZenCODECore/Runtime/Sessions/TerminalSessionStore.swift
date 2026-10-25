@@ -210,7 +210,9 @@ public enum TerminalSessionStore {
             at: directoryURL,
             includingPropertiesForKeys: nil
         )
-        let workingDirectoryPath = normalizedWorkingDirectoryPath(workingDirectory)
+        // The directory is keyed by project name: every session saved from a
+        // folder with this name belongs to the project, whatever its path.
+        let projectName = ProjectStorageKey.projectName(for: workingDirectory)
         return fileURLs
             .filter { $0.pathExtension == fileExtension }
             .compactMap { url in
@@ -224,7 +226,9 @@ public enum TerminalSessionStore {
                     return nil
                 }
             }
-            .filter { $0.workingDirectoryPath == workingDirectoryPath }
+            .filter {
+                ProjectStorageKey.projectName(forPath: $0.workingDirectoryPath) == projectName
+            }
             .sorted {
                 if $0.savedAt == $1.savedAt {
                     return $0.name.localizedStandardCompare($1.name) == .orderedAscending
@@ -312,9 +316,11 @@ public enum TerminalSessionStore {
         return String(Data(normalizedName.utf8).sha256Hex().prefix(24))
     }
 
+    /// Name-based key of the project (see ``ProjectStorageKey``): the saved
+    /// sessions, the task graphs and the saved-plan library of a project
+    /// follow its folder when it is moved.
     public static func projectKey(for workingDirectory: URL) -> String {
-        let path = normalizedWorkingDirectoryPath(workingDirectory)
-        return Data(path.utf8).sha256Hex()
+        ProjectStorageKey.key(for: workingDirectory)
     }
 
     public static func normalizedWorkingDirectoryPath(_ workingDirectory: URL) -> String {

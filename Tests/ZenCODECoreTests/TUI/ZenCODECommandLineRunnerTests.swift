@@ -14,7 +14,7 @@ struct ZenCODECommandLineRunnerTests {
     @Test
     func recognizedCommandLineOptionsStillRouteToTheCommandLine() {
         let bundleExecutable = "/Applications/ZenCODE.app/Contents/MacOS/ZenCODE"
-        for option in ["--version", "--doctor", "--acp", "-p", "--prompt", "--jsonl", "--model", "--max-tool-rounds"] {
+        for option in ["--version", "--doctor", "--acp", "-p", "-f", "--prompt", "--jsonl", "--model", "--max-tool-rounds"] {
             #expect(
                 ZenCODECommandLineRunner.shouldRunAsCommandLine(
                     arguments: [bundleExecutable, option]
@@ -166,6 +166,73 @@ struct ZenCODECommandLineRunnerTests {
         #expect(records[1].objectValue?["message"]?.stringValue == "The backend produced no assistant text.")
     }
     @Test
+    func promptFileArgumentIsAcceptedAloneAndWithInlinePromptInAnyOrder() throws {
+        try AgentConfiguration.validateArguments(["zen", "-f", "/tmp/prompt.md"])
+        try AgentConfiguration.validateArguments(["zen", "-p", "summarize", "-f", "/tmp/prompt.md"])
+        try AgentConfiguration.validateArguments(["zen", "-f", "/tmp/prompt.md", "-p", "summarize"])
+        try AgentConfiguration.validateArguments(["zen", "--jsonl", "-f", "/tmp/prompt.md"])
+        try AgentConfiguration.validateArguments(["zen", "-f", "/tmp/prompt.md", "--jsonl"])
+        try AgentConfiguration.validateArguments(
+            ["zen", "--prompt", "summarize", "-f", "/tmp/prompt.md", "--jsonl"]
+        )
+    }
+
+    @Test
+    func promptFileArgumentSelectsHeadlessAndKeepsThePathAsGiven() throws {
+        let fileOnly = try AgentConfiguration(arguments: ["zen", "-f", "/tmp/prompt.md", "--help"])
+        #expect(fileOnly.headlessPromptFile == "/tmp/prompt.md")
+        #expect(fileOnly.headlessPrompt == nil)
+        #expect(fileOnly.runMode == .headless)
+        #expect(!fileOnly.jsonl)
+
+        let both = try AgentConfiguration(
+            arguments: ["zen", "-f", "/tmp/prompt.md", "-p", "summarize", "--help"]
+        )
+        #expect(both.headlessPromptFile == "/tmp/prompt.md")
+        #expect(both.headlessPrompt == "summarize")
+        #expect(both.runMode == .headless)
+
+        let jsonl = try AgentConfiguration(arguments: ["zen", "--jsonl", "-f", "/tmp/prompt.md", "--help"])
+        #expect(jsonl.headlessPromptFile == "/tmp/prompt.md")
+        #expect(jsonl.jsonl)
+        #expect(jsonl.runMode == .headless)
+
+        let inlineOnly = try AgentConfiguration(arguments: ["zen", "-p", "summarize", "--help"])
+        #expect(inlineOnly.headlessPromptFile == nil)
+        #expect(try makeHeadlessConfiguration(jsonl: false).headlessPromptFile == nil)
+    }
+
+    @Test
+    func promptFileArgumentRejectsInvalidValuesAndConflicts() {
+        #expect(promptArgumentError(["-f"]) == "Missing value for -f.")
+        #expect(promptArgumentError(["-f", "--model"]) == "Missing value for -f.")
+        #expect(promptArgumentError(["-f", "-x"]) == "Missing value for -f.")
+        #expect(promptArgumentError(["-f", "-"]) == "Invalid value for -f: -")
+        #expect(promptArgumentError(["-f", "relative.md"]) == "Invalid value for -f: relative.md")
+        #expect(promptArgumentError(["-f", "./prompt.md"]) == "Invalid value for -f: ./prompt.md")
+        #expect(promptArgumentError(["-f", "~/prompt.md"]) == "Invalid value for -f: ~/prompt.md")
+        #expect(promptArgumentError(["-f", "/a", "-f", "/b"]) == "Options -f and -f cannot be combined.")
+        #expect(promptArgumentError(["--acp", "-f", "/a"]) == "Options --acp and -f cannot be combined.")
+        #expect(promptArgumentError(["-f", "/a", "--acp"]) == "Options --acp and -f cannot be combined.")
+    }
+
+    @Test
+    func inlinePromptConflictsKeepTheirMessagesNextToPromptFile() {
+        #expect(promptArgumentError(["-p", "a", "-p", "b"]) == "Options -p and -p/--prompt cannot be combined.")
+        #expect(
+            promptArgumentError(["-f", "/a", "-p", "x", "-p", "y"])
+                == "Options -p and -p/--prompt cannot be combined."
+        )
+        #expect(
+            promptArgumentError(["-p", "x", "-f", "/a", "--prompt", "y"])
+                == "Options --prompt and -p/--prompt cannot be combined."
+        )
+        #expect(promptArgumentError(["--acp", "-p", "x"]) == "Options --acp and -p/--prompt cannot be combined.")
+        #expect(promptArgumentError(["-p", "x", "--acp"]) == "Options --acp and -p/--prompt cannot be combined.")
+        #expect(promptArgumentError(["--jsonl"]) == "Missing value for --prompt.")
+    }
+
+    @Test
     func headlessPromptUsesPipedContext() throws {
         #expect(
             try ZenCODEHeadlessRunner.prompt(
@@ -181,6 +248,235 @@ struct ZenCODECommandLineRunnerTests {
                 stdinIsTerminal: true
             ) == "explain"
         )
+    }
+
+    @Test
+    func headlessPromptWithoutInlineOrFileFailsBeforeReadingStdin() throws {
+        let stdin = try pipe(containing: "build log")
+        #expect(throws: ZenCODEHeadlessRunnerError.self) {
+            try ZenCODEHeadlessRunner.prompt(
+                inlinePrompt: nil,
+                promptFile: nil,
+                stdin: stdin,
+                stdinIsTerminal: false
+            )
+        }
+        #expect(String(decoding: stdin.readDataToEndOfFile(), as: UTF8.self) == "build log")
+    }
+
+    @Test
+    func headlessPromptReadsTheFileAsTheInstruction() throws {
+        try withPromptDirectory { directory in
+            let path = try writePromptFile("\n  summarize the changes \n\n", in: directory)
+            #expect(
+                try ZenCODEHeadlessRunner.prompt(
+                    inlinePrompt: nil,
+                    promptFile: path,
+                    stdin: pipe(containing: "ignored"),
+                    stdinIsTerminal: true
+                ) == "summarize the changes"
+            )
+        }
+    }
+
+    @Test
+    func headlessPromptAddsTheFileToTheInlinePromptAsContext() throws {
+        try withPromptDirectory { directory in
+            let path = try writePromptFile("build log\n", in: directory)
+            #expect(
+                try ZenCODEHeadlessRunner.prompt(
+                    inlinePrompt: "  explain \n",
+                    promptFile: path,
+                    stdin: pipe(containing: "ignored"),
+                    stdinIsTerminal: true
+                ) == "explain\n\nAdditional context from file:\nbuild log"
+            )
+        }
+    }
+
+    @Test
+    func headlessPromptAddsPipedContextAfterTheFile() throws {
+        try withPromptDirectory { directory in
+            let path = try writePromptFile("summarize\n", in: directory)
+            #expect(
+                try ZenCODEHeadlessRunner.prompt(
+                    inlinePrompt: nil,
+                    promptFile: path,
+                    stdin: pipe(containing: "build log\n"),
+                    stdinIsTerminal: false
+                ) == "summarize\n\nAdditional context from stdin:\nbuild log"
+            )
+            #expect(
+                try ZenCODEHeadlessRunner.prompt(
+                    inlinePrompt: "explain",
+                    promptFile: path,
+                    stdin: pipe(containing: "build log\n"),
+                    stdinIsTerminal: false
+                ) == "explain\n\nAdditional context from file:\nsummarize\n\nAdditional context from stdin:\nbuild log"
+            )
+        }
+    }
+
+    @Test
+    func headlessPromptReportsPromptFileFailuresBeforeReadingStdin() throws {
+        try withPromptDirectory { directory in
+            let missing = directory.appendingPathComponent("missing.md").path
+            let stdin = try pipe(containing: "build log")
+            #expect(throws: ZenCODEPromptFileError.unreadable(path: missing)) {
+                try ZenCODEHeadlessRunner.prompt(
+                    inlinePrompt: "explain",
+                    promptFile: missing,
+                    stdin: stdin,
+                    stdinIsTerminal: false
+                )
+            }
+            #expect(String(decoding: stdin.readDataToEndOfFile(), as: UTF8.self) == "build log")
+
+            #expect(throws: ZenCODEPromptFileError.unreadable(path: directory.path)) {
+                try ZenCODEHeadlessRunner.prompt(
+                    inlinePrompt: nil,
+                    promptFile: directory.path,
+                    stdinIsTerminal: true
+                )
+            }
+            #expect(throws: ZenCODEPromptFileError.notAbsolute(path: "prompt.md")) {
+                try ZenCODEHeadlessRunner.prompt(
+                    inlinePrompt: "explain",
+                    promptFile: "prompt.md",
+                    stdinIsTerminal: true
+                )
+            }
+        }
+    }
+
+    @Test
+    func promptFileReaderClassifiesEveryFailure() throws {
+        #expect(ZenCODEPromptFile.isAbsolutePath("/tmp/prompt.md"))
+        #expect(!ZenCODEPromptFile.isAbsolutePath("prompt.md"))
+        #expect(!ZenCODEPromptFile.isAbsolutePath("~/prompt.md"))
+        #expect(!ZenCODEPromptFile.isAbsolutePath(""))
+
+        try withPromptDirectory { directory in
+            let missing = directory.appendingPathComponent("missing.md").path
+            #expect(throws: ZenCODEPromptFileError.unreadable(path: missing)) {
+                try ZenCODEPromptFile.read(path: missing)
+            }
+            #expect(throws: ZenCODEPromptFileError.unreadable(path: directory.path)) {
+                try ZenCODEPromptFile.read(path: directory.path)
+            }
+            #expect(throws: ZenCODEPromptFileError.notAbsolute(path: "relative.md")) {
+                try ZenCODEPromptFile.read(path: "relative.md")
+            }
+
+            let empty = try writePromptFile("", named: "empty.md", in: directory)
+            #expect(throws: ZenCODEPromptFileError.empty(path: empty)) {
+                try ZenCODEPromptFile.read(path: empty)
+            }
+            let blank = try writePromptFile(" \n\t\r\n ", named: "blank.md", in: directory)
+            #expect(throws: ZenCODEPromptFileError.empty(path: blank)) {
+                try ZenCODEPromptFile.read(path: blank)
+            }
+
+            let binary = directory.appendingPathComponent("binary.bin")
+            try Data([0xFF, 0xFE, 0x41, 0x80]).write(to: binary)
+            #expect(throws: ZenCODEPromptFileError.notUTF8(path: binary.path)) {
+                try ZenCODEPromptFile.read(path: binary.path)
+            }
+
+            let accented = try writePromptFile("\n  Riassumi le modifiche: è già così ✓\n", named: "utf8.md", in: directory)
+            #expect(try ZenCODEPromptFile.read(path: accented) == "Riassumi le modifiche: è già così ✓")
+        }
+    }
+
+    @Test
+    func promptFileErrorsDescribeTheFileInTextMode() {
+        #expect(
+            ZenCODEPromptFileError.notAbsolute(path: "p.md").localizedDescription
+                == "The prompt file path must be absolute: p.md."
+        )
+        #expect(
+            ZenCODEPromptFileError.unreadable(path: "/p.md").localizedDescription
+                == "Cannot read the prompt file /p.md."
+        )
+        #expect(
+            ZenCODEPromptFileError.notUTF8(path: "/p.md").localizedDescription
+                == "The prompt file /p.md is not UTF-8 text."
+        )
+        #expect(
+            ZenCODEPromptFileError.empty(path: "/p.md").localizedDescription
+                == "The prompt file /p.md is empty."
+        )
+    }
+
+    @Test
+    func jsonlPromptFileErrorsAreGenericAndNeverCarryThePath() throws {
+        let path = "/Users/alice/.secrets/prompt.md"
+        let errors: [ZenCODEPromptFileError] = [
+            .notAbsolute(path: path),
+            .unreadable(path: path),
+            .notUTF8(path: path),
+            .empty(path: path)
+        ]
+        for error in errors {
+            let publicError = ZenCODEHeadlessJSONLProtocol.publicError(for: error)
+            #expect(publicError.category == .configuration)
+            #expect(
+                publicError.publicMessage
+                    == ZenCODEHeadlessJSONLProtocol.PublicErrorMessages.invalidPromptFile
+            )
+            #expect(!publicError.publicMessage.contains(path))
+
+            let record = ZenCODEHeadlessJSONLProtocol.error(runID: "prompt-file", error)
+            let encoded = String(
+                decoding: try ZenCODEHeadlessJSONLProtocol.encoded(record),
+                as: UTF8.self
+            )
+            #expect(!encoded.contains(path))
+            #expect(!encoded.contains("secrets"))
+            #expect(record.objectValue?["category"]?.stringValue == "configuration")
+            #expect(
+                record.objectValue?["message"]?.stringValue
+                    == "The prompt file is missing, unreadable, empty, or not UTF-8 text."
+            )
+        }
+
+        let noPrompt = ZenCODEHeadlessJSONLProtocol.publicError(for: ZenCODEHeadlessRunnerError.noPrompt)
+        #expect(noPrompt.publicMessage == "No prompt provided. Pass text after -p/--prompt.")
+        let missingFileValue = ZenCODEHeadlessJSONLProtocol.publicError(
+            for: AgentConfigurationError.missingValue("-f")
+        )
+        #expect(missingFileValue.category == .configuration)
+        #expect(missingFileValue.publicMessage == "Invalid command-line arguments.")
+    }
+
+    @Test
+    func zenExecutableRejectsARelativePromptFileBeforeSetupWithAFramedJSONLError() throws {
+        let result = try runZen(zenExecutableURL(), arguments: ["--jsonl", "-f", "relative.md"])
+        #expect(result.exitCode == 1)
+        #expect(result.stderr.isEmpty)
+        #expect(result.stdout.last == 0x0A)
+        #expect(result.stdout.filter { $0 == 0x0A }.count == 1)
+
+        let record = try JSONDecoder().decode(JSONValue.self, from: result.stdout)
+        #expect(record.objectValue?["type"]?.stringValue == "error")
+        #expect(record.objectValue?["category"]?.stringValue == "configuration")
+        #expect(record.objectValue?["message"]?.stringValue == "Invalid command-line arguments.")
+    }
+
+    @Test
+    func zenExecutableStandaloneHelpDocumentsThePromptFileOptionExactlyOnce() throws {
+        let result = try runZen(zenExecutableURL(), arguments: ["--help"])
+        #expect(result.exitCode == 0)
+        let help = String(decoding: result.stdout, as: UTF8.self)
+
+        let standaloneUsage = "zen [--doctor] [--install-features [id,id,...]] [--jsonl] [-p PROMPT] [-f PATH] [--acp]"
+        let promptFileLine = "  -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context."
+        #expect(help.components(separatedBy: standaloneUsage).count == 2)
+        #expect(help.components(separatedBy: promptFileLine).count == 2)
+        #expect(help.contains("  --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt or -f)."))
+        #expect(help.contains("  --doctor               Print a redacted diagnostic report"))
+        #expect(help.contains("  --zen-package-path DIR Source ZenCODE checkout used to install optional features."))
+        #expect(help.contains("With -p or -f, piped stdin is supplied as additional context."))
     }
 
     @Test
@@ -557,6 +853,34 @@ struct ZenCODECommandLineRunnerTests {
             stdout.fileHandleForReading.readDataToEndOfFile(),
             stderr.fileHandleForReading.readDataToEndOfFile()
         )
+    }
+
+    private func promptArgumentError(_ arguments: [String]) -> String? {
+        do {
+            try AgentConfiguration.validateArguments(["zen"] + arguments)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Runs `body` with a fresh UUID-named directory, removed afterwards.
+    private func withPromptDirectory(_ body: (URL) throws -> Void) throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-prompt-file-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try body(directory)
+    }
+
+    private func writePromptFile(
+        _ text: String,
+        named name: String = "prompt.md",
+        in directory: URL
+    ) throws -> String {
+        let url = directory.appendingPathComponent(name)
+        try Data(text.utf8).write(to: url)
+        return url.path
     }
 
     private func pipe(containing text: String) throws -> FileHandle {

@@ -18,22 +18,35 @@ Release tags follow the strict `vX.Y.Z` contract described in
   "On a word". Dictation is appended after typed text; when voice sends, the
   whole draft goes out, typed text included, and typing turns the dictation
   into ordinary text. See [Docs/voice.md](Docs/voice.md#the-prompt-draft).
+- Headless prompt file: `zen -f PATH` runs one non-interactive turn whose prompt
+  is read from a file. `PATH` must be an absolute path. The file is read as
+  UTF-8 text when the run starts; a missing, unreadable, empty, or non-UTF-8 file
+  makes the run fail with exit status `1`. With `-p`, the file is added as
+  context after the `-p` text, whichever option comes first, and redirected
+  stdin is still appended. `--jsonl` works with `-p` or `-f`. See
+  [Docs/zen.md](Docs/zen.md#command-line-options).
 - Scheduled prompts: `/cron` lists, adds, removes, and runs prompts in the
   crontab of the system user (`/cron list`, `/cron add`, `/cron remove`,
   `/cron run`, and `/cron mailto`). ZenCODE owns one delimited block at the end
   of the crontab and leaves every other line unchanged; there is no daemon and
-  no new file under `~/.zencode`. Cron mails each run's JSONL output and errors
+  no new file under `~/.zencode`. Cron mails each run's answer text, and errors,
   through the system `sendmail`, to the local mailbox of the crontab owner by
-  default; `/cron mailto` changes the recipient. Cron runs `zen` by name,
+  default; `/cron mailto` changes the recipient. `/cron add json <schedule>
+  <prompt>` schedules a `zen --jsonl -p` job instead: cron then mails the JSONL
+  records of the run in the mail body (cron attaches no files), and
+  `/cron list` shows the output kind of each entry. Cron runs `zen` by name,
   through a `PATH=/usr/local/bin:/usr/bin:/bin` line at the head of the block,
   and `/cron add` refuses to schedule when no `zen` is on that path. `/cron run`
   starts an entry at once with cron's environment, including that `PATH`, and
   reports the result in the terminal. The new `Scheduled prompts` section of
   `zen --doctor` warns about a missing `crontab` or `sendmail` and, on WSL,
   about the cron service. Completion after `/cron` explains each parameter: the
-  subcommands, schedule aliases and examples, the five numeric cron fields (no
-  month or day names), `<n>`, and the `mailto` options. See
-  [Docs/zen.md](Docs/zen.md#scheduled-prompts-crontab).
+  subcommands, the `json` keyword, schedule aliases and examples, the five
+  numeric cron fields (no month or day names), `<n>`, and the `mailto` options.
+  `/cron add <schedule> -f <path> [<prompt>]` schedules a prompt read from an
+  absolute file path: the file is checked before scheduling and read again at
+  every run, the path may be quoted, and completion after the schedule offers
+  `-f`. See [Docs/zen.md](Docs/zen.md#scheduled-prompts-crontab).
 - Project agents: `/agents` now opens a single multiple-selection menu. `Space`
   or `X` associates the highlighted profile with the current project, `A`
   selects every profile, `N` none, and `Enter` saves the ticks and makes the
@@ -42,11 +55,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   anything. The sub-agents tool sees only the profiles visible to the project:
   the "Delegatable agent profiles" roster in the system prompt lists just
   those, and `agent.create` rejects any other profile. The association is
-  stored per project path in
-  `~/.zencode/projects/<sha256 of the project path>/agents.json`, outside the
-  repository, and the file is written only when the ticks change. A project
-  without that file sees only the system profiles (the recommended profiles,
-  whose ID is their role), and the menu shows just those ticked; once saved,
+  stored per project in `~/.zencode/projects/<project key>/agents.json`,
+  outside the repository, keyed by the project name like the project memory
+  (see the project key entry under Changed), and the file is written only when
+  the ticks change. A project without that file sees only the system profiles
+  (the recommended profiles, whose ID is their role), and the menu shows just
+  those ticked; once saved,
   the selection is literal, so an empty one leaves no profile delegatable and
   profiles created later are not added automatically. Choosing the active
   agent still lists every profile, and `/agents list`, `/agents <name>`, and
@@ -126,6 +140,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Project data now follows a moved project folder. Project memory, the project
+  agents chosen with `/agents`, saved sessions, task graphs, and saved plans are
+  stored under a project key derived from the project name (the name of the
+  working directory folder, compared case-sensitively) instead of the SHA-256
+  digest of the full path:
+  `~/.zencode/{memory,projects,sessions,task-graphs}/<name>-<24 hex of SHA-256(name)>/`.
+  Two folders with the same name are now the same project and share all of
+  this data, and `sessions.json` keeps one entry per project name. The macOS
+  workspace tool consent ("Trust this folder?") stays tied to the folder path
+  and is asked again after a move. See
+  [Docs/zen.md](Docs/zen.md#project-key).
 - The recommended `Organizer` agent profile has rewritten instructions. On
   request it gives a daily briefing (today's events, overdue reminders and
   reminders due today, a one-line triage of unread mail, and open project

@@ -9,10 +9,13 @@ Project memory is owned by the internal `ZenMemory` engine at
 domain is a thin async facade over it (`MemoryService` →
 `MemoryGraphStore` → `ZenMemory` actor). The authoritative store is the
 per-workspace graph file at
-`<supportDirectory>/memory/<sha256(workspacePath)>/memory.graph.json`, where
-`<sha256(workspacePath)>` is the full SHA256 hex digest of the standardized
-workspace path and `<supportDirectory>` honours `ZENCODE_SUPPORT_DIRECTORY`
-(default `~/.zencode`). The graph is written atomically as sorted-key
+`<supportDirectory>/memory/<project key>/memory.graph.json`, where
+`<project key>` is `<stem>-<first 24 hex of SHA256(name)>` for the project
+name — the trimmed, NFC-normalized name of the workspace folder, compared
+case-sensitively (`ProjectStorageKey`) — and `<supportDirectory>` honours
+`ZENCODE_SUPPORT_DIRECTORY` (default `~/.zencode`). The graph therefore follows
+a moved workspace folder, and two folders with the same name share one graph.
+The graph is written atomically as sorted-key
 pretty-printed JSON and is deliberately kept out of the workspace working tree
 because it may embed float vectors. A process-wide `MemoryGraphStoreRegistry`
 caches one open store per graph URL so parallel tool executions share a single

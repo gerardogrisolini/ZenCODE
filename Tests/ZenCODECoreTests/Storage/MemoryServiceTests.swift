@@ -696,7 +696,7 @@ struct MemoryServiceTests {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
 
-        try await workspace.withIsolatedSupport {
+        await workspace.withIsolatedSupport {
             let service = MemoryService()
             let id = UUID().uuidString
 

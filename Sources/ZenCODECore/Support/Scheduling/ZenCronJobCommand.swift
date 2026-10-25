@@ -12,7 +12,17 @@ import Foundation
 /// `zen` executable (cron finds it through the `PATH=` line of the ZenCODE
 /// block, see `ZenCrontabDocument.defaultPath`):
 ///
-///     [ZENCODE_SUPPORT_DIRECTORY='<dir>' ]zen [--agent '<name>'] --working-directory '<dir>' --jsonl -p '<prompt>'
+///     [ZENCODE_SUPPORT_DIRECTORY='<dir>' ]zen [--agent '<name>'] --working-directory '<dir>' [--jsonl] [-f '<path>'] [-p '<prompt>']
+///
+/// Without `--jsonl` the run prints only the final answer text on standard
+/// output, which cron mails as is; with it, standard output holds the JSONL
+/// records of the run.
+///
+/// `-f` names a prompt file that `zen` reads at every run (its content is never
+/// stored on the crontab line); when `-p` is also present, it is the
+/// instruction and the file is its context. At least one of the two is
+/// required, `-f` first: a line with neither is not a ZenCODE job. Lines
+/// without `-f` are encoded exactly as before it existed.
 ///
 /// An executable other than `zen` (a line written by an older ZenCODE, or
 /// hand-edited to a full path) is a single-quoted word: `'<exe>'`.
@@ -31,14 +41,33 @@ struct ZenCronJobCommand: Sendable, Equatable {
     var supportDirectory: String?
     var agentName: String?
     var workingDirectory: String
-    var prompt: String
+    var outputFormat: OutputFormat
+    /// Absolute path of the prompt file (`-f`), read by `zen` at every run.
+    ///
+    /// Invariant: at least one of `promptFile` and `prompt` is non-nil.
+    var promptFile: String? = nil
+    /// The instruction (`-p`); with a `promptFile` it is optional and the file
+    /// is its context.
+    ///
+    /// Invariant: at least one of `promptFile` and `prompt` is non-nil.
+    var prompt: String?
+
+    /// What the scheduled run writes on standard output, and so what cron
+    /// mails.
+    enum OutputFormat: Sendable, Equatable {
+        /// Plain `zen`: only the final answer text.
+        case text
+        /// `zen --jsonl`: the JSONL records of the run.
+        case jsonl
+    }
 
     // MARK: - Encoding
 
     /// Returns the shell command (not yet escaped for cron; see `cronEscape`).
     ///
-    /// The prompt must be a single line: line breaks would split the crontab
-    /// line, so callers must reject them before scheduling.
+    /// The prompt and the prompt file path must be single lines: line breaks
+    /// would split the crontab line, so callers must reject them before
+    /// scheduling.
     func encode() -> String {
         var command = ""
         if let supportDirectory {
@@ -49,7 +78,15 @@ struct ZenCronJobCommand: Sendable, Equatable {
             command += " --agent \(Self.shellQuote(agentName))"
         }
         command += " --working-directory \(Self.shellQuote(workingDirectory))"
-        command += " --jsonl -p \(Self.shellQuote(prompt))"
+        if outputFormat == .jsonl {
+            command += " --jsonl"
+        }
+        if let promptFile {
+            command += " -f \(Self.shellQuote(promptFile))"
+        }
+        if let prompt {
+            command += " -p \(Self.shellQuote(prompt))"
+        }
         return command
     }
 
@@ -71,7 +108,7 @@ struct ZenCronJobCommand: Sendable, Equatable {
 
     /// Parses a command produced by `encode()`; returns `nil` for any other
     /// shape (different order, unquoted values other than the bare `zen`
-    /// executable, extra arguments, line breaks).
+    /// executable, extra arguments, line breaks, neither `-f` nor `-p`).
     static func decode(_ shellCommand: String) -> ZenCronJobCommand? {
         var cursor = Cursor(shellCommand)
 
@@ -100,17 +137,34 @@ struct ZenCronJobCommand: Sendable, Equatable {
         }
 
         guard cursor.consume(" --working-directory "),
-              let workingDirectory = cursor.readQuoted(),
-              cursor.consume(" --jsonl -p "),
-              let prompt = cursor.readQuoted(),
-              cursor.isAtEnd
+              let workingDirectory = cursor.readQuoted()
         else { return nil }
+
+        // Lines written before the text format existed always carry `--jsonl`.
+        let outputFormat: OutputFormat = cursor.consume(" --jsonl") ? .jsonl : .text
+
+        var promptFile: String?
+        if cursor.consume(" -f ") {
+            guard let value = cursor.readQuoted() else { return nil }
+            promptFile = value
+        }
+
+        var prompt: String?
+        if cursor.consume(" -p ") {
+            guard let value = cursor.readQuoted() else { return nil }
+            prompt = value
+        }
+
+        // A job runs a prompt, a prompt file, or both; nothing else may follow.
+        guard promptFile != nil || prompt != nil, cursor.isAtEnd else { return nil }
 
         return ZenCronJobCommand(
             executable: executable,
             supportDirectory: supportDirectory,
             agentName: agentName,
             workingDirectory: workingDirectory,
+            outputFormat: outputFormat,
+            promptFile: promptFile,
             prompt: prompt
         )
     }

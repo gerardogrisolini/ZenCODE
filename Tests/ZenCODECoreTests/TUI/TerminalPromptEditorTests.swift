@@ -667,8 +667,34 @@ struct TerminalPromptEditorTests {
         #expect(editor.apply(.tab, context: cronContext) == .changed)
         #expect(String(editor.buffer) == "/cron add @hourly ")
         #expect(editor.cursorIndex == editor.buffer.count)
-        // The prompt slot now explains itself.
-        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<prompt>"])
+        // The prompt slot now explains itself; `-f` is its only alternative.
+        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<prompt>", "-f"])
+    }
+
+    @Test
+    func tabOnTheFileOptionInsertsItAndLeavesASpaceForThePath() {
+        var editor = makeEditor("/cron add @daily -")
+
+        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["-f"])
+        #expect(editor.apply(.tab, context: cronContext) == .changed)
+        #expect(String(editor.buffer) == "/cron add @daily -f ")
+        #expect(editor.cursorIndex == editor.buffer.count)
+        // The path slot explains itself, and a guide inserts nothing.
+        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<path>"])
+        #expect(editor.apply(.tab, context: cronContext) == .ignored)
+        #expect(String(editor.buffer) == "/cron add @daily -f ")
+    }
+
+    @Test
+    func theInitialSelectionOfTheFirstPromptSlotIsTheGuideNotTheFileOption() {
+        var editor = makeEditor("/cron add @daily ")
+
+        let rows = editor.visibleSuggestions(context: cronContext)
+        #expect(rows.map(\.command) == ["<prompt>", "-f"])
+        #expect(rows[editor.suggestionIndex].isHint)
+        #expect(editor.apply(.tab, context: cronContext) == .ignored)
+        #expect(String(editor.buffer) == "/cron add @daily ")
+        #expect(editor.apply(.enter, context: cronContext) == .submitted("/cron add @daily "))
     }
 
     @Test
@@ -683,7 +709,7 @@ struct TerminalPromptEditorTests {
         #expect(editor.apply(.tab, context: cronContext) == .changed)
         #expect(String(editor.buffer) == "/cron add 0 9 * * 1-5 ")
         #expect(editor.cursorIndex == editor.buffer.count)
-        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<prompt>"])
+        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<prompt>", "-f"])
     }
 
     @Test

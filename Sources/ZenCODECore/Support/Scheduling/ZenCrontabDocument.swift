@@ -397,8 +397,8 @@ struct ZenCrontabDocument: Sendable, Equatable {
 
     /// Appends a new scheduled prompt, creating the block when absent.
     ///
-    /// The caller must have validated that `job.prompt` is a single line;
-    /// this method does not reject line breaks.
+    /// The caller must have validated that `job.prompt` and `job.promptFile`
+    /// are single lines; this method does not reject line breaks.
     mutating func appendEntry(
         schedule: ZenCronSchedule,
         job: ZenCronJobCommand,

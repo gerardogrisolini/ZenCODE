@@ -35,12 +35,13 @@ public struct AgentConfiguration: Sendable {
     Autonomous ZenCODE CLI and ACP agent.
 
     Usage:
-      zen [-p PROMPT] [--jsonl] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
+      zen [-p PROMPT] [-f PATH] [--jsonl] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
 
     Modes:
       default                Human terminal chat.
       -p, --prompt PROMPT    Run one headless text prompt.
-      --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt).
+      -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context.
+      --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt or -f).
       --acp                  ACP JSON-RPC over stdio for compatible clients.
 
     Agent runtime:
@@ -71,7 +72,7 @@ public struct AgentConfiguration: Sendable {
       ZENCODE_AGENT_CWD            Working directory for local tools.
       ZENCODE_AGENT_SKILLS         Initial chat skill selection by name/number, all, or none.
 
-    With an inline headless prompt, piped stdin is supplied as additional context.
+    With -p or -f, piped stdin is supplied as additional context.
     In ACP mode stdout contains only ACP JSON-RPC messages. In headless mode stdout contains only the final assistant text, unless `--jsonl` is supplied.
     `--jsonl` is ignored with `--help`, `--version`, `--doctor`, and `--install-features`; those meta-commands keep their normal textual output and exit code.
 
@@ -86,8 +87,12 @@ public struct AgentConfiguration: Sendable {
     public let runMode: AgentRunMode
     /// Enables the machine-readable JSON Lines headless output protocol.
     public let jsonl: Bool
-    /// Inline prompt supplied by `-p`; nil is invalid for a headless turn.
+    /// Inline prompt supplied by `-p`; nil is invalid for a headless turn unless
+    /// `headlessPromptFile` is set.
     public let headlessPrompt: String?
+    /// Absolute path of the prompt file supplied by `-f`, exactly as given. The
+    /// file is read when the headless run starts, not when arguments are parsed.
+    public let headlessPromptFile: String?
     public let workingDirectory: URL
     public let initialSkillSelection: String?
     public let maxToolRounds: Int
@@ -138,6 +143,7 @@ public struct AgentConfiguration: Sendable {
         var rawModelID = agentEnvironmentValue("MODEL")
         var rawRunMode = agentEnvironmentValue("MODE") ?? "automatic"
         var rawHeadlessPrompt: String?
+        var rawHeadlessPromptFile: String?
         var rawJSONL = false
         let environmentWorkingDirectory = agentEnvironmentValue("CWD")?.nilIfBlank
         var hasExplicitWorkingDirectory = environmentWorkingDirectory != nil
@@ -151,7 +157,7 @@ public struct AgentConfiguration: Sendable {
         var shouldPrintVersion = false
         var shouldPrintDoctor = false
         var explicitlyRequestedACP = false
-        var explicitlyRequestedHeadless = false
+        var explicitlyRequestedInlinePrompt = false
 
         var index = 1
         while index < arguments.count {
@@ -176,8 +182,11 @@ public struct AgentConfiguration: Sendable {
                 }
                 rawAgentName = arguments[index]
             case "--acp":
-                guard !explicitlyRequestedHeadless else {
+                guard !explicitlyRequestedInlinePrompt else {
                     throw AgentConfigurationError.conflictingOptions("--acp", "-p/--prompt")
+                }
+                guard rawHeadlessPromptFile == nil else {
+                    throw AgentConfigurationError.conflictingOptions("--acp", "-f")
                 }
                 guard !rawJSONL else {
                     throw AgentConfigurationError.conflictingOptions("--acp", "--jsonl")
@@ -194,10 +203,10 @@ public struct AgentConfiguration: Sendable {
                 guard !explicitlyRequestedACP else {
                     throw AgentConfigurationError.conflictingOptions("--acp", "-p/--prompt")
                 }
-                guard !explicitlyRequestedHeadless else {
+                guard !explicitlyRequestedInlinePrompt else {
                     throw AgentConfigurationError.conflictingOptions(argument, "-p/--prompt")
                 }
-                explicitlyRequestedHeadless = true
+                explicitlyRequestedInlinePrompt = true
                 rawRunMode = AgentRunMode.headless.rawValue
                 index += 1
                 guard index < arguments.count else {
@@ -211,6 +220,29 @@ public struct AgentConfiguration: Sendable {
                     throw AgentConfigurationError.missingValue(argument)
                 }
                 rawHeadlessPrompt = prompt
+            case "-f":
+                guard !explicitlyRequestedACP else {
+                    throw AgentConfigurationError.conflictingOptions("--acp", argument)
+                }
+                guard rawHeadlessPromptFile == nil else {
+                    throw AgentConfigurationError.conflictingOptions(argument, argument)
+                }
+                rawRunMode = AgentRunMode.headless.rawValue
+                index += 1
+                guard index < arguments.count else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                let path = arguments[index]
+                guard path != "-" else {
+                    throw AgentConfigurationError.invalidValue(argument, path)
+                }
+                guard !path.hasPrefix("-") else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                guard ZenCODEPromptFile.isAbsolutePath(path) else {
+                    throw AgentConfigurationError.invalidValue(argument, path)
+                }
+                rawHeadlessPromptFile = path
             case "--working-directory":
                 index += 1
                 guard index < arguments.count else {
@@ -244,6 +276,7 @@ public struct AgentConfiguration: Sendable {
 
         if rawJSONL,
            rawHeadlessPrompt == nil,
+           rawHeadlessPromptFile == nil,
            !shouldPrintHelp,
            !shouldPrintVersion,
            !shouldPrintDoctor {
@@ -299,6 +332,7 @@ public struct AgentConfiguration: Sendable {
         self.runMode = runMode
         self.jsonl = rawJSONL
         self.headlessPrompt = rawHeadlessPrompt
+        self.headlessPromptFile = rawHeadlessPromptFile
         self.workingDirectory = workingDirectory
         self.initialSkillSelection = rawInitialSkillSelection?.nilIfBlank
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
@@ -350,6 +384,7 @@ public struct AgentConfiguration: Sendable {
         self.runMode = runMode
         self.jsonl = jsonl
         self.headlessPrompt = nil
+        self.headlessPromptFile = nil
         self.workingDirectory = workingDirectory
         self.initialSkillSelection = initialSkillSelection?.nilIfBlank
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)

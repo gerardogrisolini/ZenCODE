@@ -9,7 +9,8 @@ assistant response.
 zen --jsonl -p "Summarize the current changes"
 ```
 
-JSONL mode requires `-p` or `--prompt`. It cannot be combined with `--acp`.
+JSONL mode requires `-p` or `--prompt`, or `-f` with a prompt file. It cannot be
+combined with `--acp`.
 The ordinary `zen -p PROMPT` mode remains available when only the final text is
 needed.
 
@@ -119,6 +120,11 @@ they reach the wire.
 {"schema_version":1,"type":"error","run_id":"A3B0...","category":"configuration","message":"No prompt provided. Pass text after -p/--prompt."}
 ```
 
+A prompt file passed with `-f` that is missing, unreadable, empty, or not UTF-8
+text fails with category `configuration` and the message
+`The prompt file is missing, unreadable, empty, or not UTF-8 text.`; the path is
+never included.
+
 Do not parse `message` to determine the error class; match on `category` and the
 process exit status. Raw provider errors, URLs, paths, credentials, and internal
 diagnostics are deliberately not serialized.
@@ -148,10 +154,12 @@ that case `error` is the only record. The final record is always exactly one of
 
 ## Input and shell examples
 
-The prompt is passed with `-p` or `--prompt`:
+The prompt is passed with `-p` or `--prompt`, or read from an absolute file path
+with `-f`:
 
 ```bash
 zen --jsonl --prompt "List the risky changes"
+zen --jsonl -f /path/to/prompt.md
 ```
 
 Redirected stdin is plain additional prompt context; it is not a JSONL request
@@ -237,8 +245,8 @@ zen --jsonl --help
 ## JSONL versus ACP
 
 JSONL is a one-shot, output-only event stream for shell automation. It accepts
-one ordinary text prompt from the command line, optionally augmented by piped
-stdin, then exits.
+one ordinary text prompt from the command line or from a file (`-f`), optionally
+augmented by piped stdin, then exits.
 
 ACP is a bidirectional JSON-RPC protocol over stdio for compatible interactive
 clients. Use `zen --acp` for ACP integrations; `--jsonl` and `--acp` are mutually

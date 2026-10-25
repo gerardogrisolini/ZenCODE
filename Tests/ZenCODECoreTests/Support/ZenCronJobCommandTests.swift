@@ -9,18 +9,24 @@ import Testing
 
 @Suite("Cron job command")
 struct ZenCronJobCommandTests {
+    /// `outputFormat` defaults to `.jsonl`: most cases below pin the grammar of
+    /// lines written before the text format existed, which must keep working.
     private func makeJob(
         executable: String = "zen",
         supportDirectory: String? = nil,
         agentName: String? = nil,
         workingDirectory: String = "/Users/me/project",
-        prompt: String = "summarize the repo"
+        outputFormat: ZenCronJobCommand.OutputFormat = .jsonl,
+        promptFile: String? = nil,
+        prompt: String? = "summarize the repo"
     ) -> ZenCronJobCommand {
         ZenCronJobCommand(
             executable: executable,
             supportDirectory: supportDirectory,
             agentName: agentName,
             workingDirectory: workingDirectory,
+            outputFormat: outputFormat,
+            promptFile: promptFile,
             prompt: prompt
         )
     }
@@ -32,6 +38,25 @@ struct ZenCronJobCommandTests {
         #expect(
             makeJob().encode()
                 == "zen --working-directory '/Users/me/project' --jsonl -p 'summarize the repo'"
+        )
+    }
+
+    @Test
+    func encodesATextJobWithoutTheJSONLFlag() {
+        #expect(
+            makeJob(outputFormat: .text).encode()
+                == "zen --working-directory '/Users/me/project' -p 'summarize the repo'"
+        )
+        let full = makeJob(
+            supportDirectory: "/Users/me/.zencode",
+            agentName: "reviewer",
+            outputFormat: .text,
+            prompt: "hello"
+        )
+        #expect(
+            full.encode()
+                == "ZENCODE_SUPPORT_DIRECTORY='/Users/me/.zencode' zen --agent 'reviewer' "
+                + "--working-directory '/Users/me/project' -p 'hello'"
         )
     }
 
@@ -67,6 +92,79 @@ struct ZenCronJobCommandTests {
         #expect(job.encode().hasSuffix("-p 'it'\\''s a '\\''test'\\'''"))
     }
 
+    // MARK: - encode with a prompt file
+
+    @Test
+    func encodesAPromptFileAloneWithoutAnyPromptFlag() {
+        let job = makeJob(outputFormat: .text, promptFile: "/Users/me/prompts/daily.md", prompt: nil)
+        #expect(
+            job.encode()
+                == "zen --working-directory '/Users/me/project' -f '/Users/me/prompts/daily.md'"
+        )
+        #expect(!job.encode().contains(" -p "))
+    }
+
+    @Test
+    func encodesAPromptFileBeforeThePromptThatInstructsIt() {
+        let job = makeJob(
+            outputFormat: .text,
+            promptFile: "/Users/me/prompts/daily.md",
+            prompt: "summarize it"
+        )
+        #expect(
+            job.encode()
+                == "zen --working-directory '/Users/me/project' -f '/Users/me/prompts/daily.md' -p 'summarize it'"
+        )
+    }
+
+    @Test
+    func encodesTheJSONLFlagBeforeThePromptFile() {
+        let fileOnly = makeJob(outputFormat: .jsonl, promptFile: "/p/daily.md", prompt: nil)
+        #expect(fileOnly.encode() == "zen --working-directory '/Users/me/project' --jsonl -f '/p/daily.md'")
+
+        let both = makeJob(outputFormat: .jsonl, promptFile: "/p/daily.md", prompt: "summarize it")
+        #expect(
+            both.encode()
+                == "zen --working-directory '/Users/me/project' --jsonl -f '/p/daily.md' -p 'summarize it'"
+        )
+    }
+
+    @Test
+    func encodesAPromptFileAfterEveryOptionalPart() {
+        let job = makeJob(
+            supportDirectory: "/Users/me/.zencode",
+            agentName: "reviewer",
+            outputFormat: .jsonl,
+            promptFile: "/p/daily.md",
+            prompt: "hello"
+        )
+        #expect(
+            job.encode()
+                == "ZENCODE_SUPPORT_DIRECTORY='/Users/me/.zencode' zen --agent 'reviewer' "
+                + "--working-directory '/Users/me/project' --jsonl -f '/p/daily.md' -p 'hello'"
+        )
+    }
+
+    @Test
+    func encodesAJobWithoutAPromptFileExactlyAsBeforeThatOptionExisted() {
+        // Same bytes as the lines already on users' crontabs.
+        #expect(
+            makeJob(promptFile: nil).encode()
+                == "zen --working-directory '/Users/me/project' --jsonl -p 'summarize the repo'"
+        )
+        #expect(
+            makeJob(outputFormat: .text, promptFile: nil).encode()
+                == "zen --working-directory '/Users/me/project' -p 'summarize the repo'"
+        )
+        #expect(!makeJob(outputFormat: .text).encode().contains(" -f "))
+    }
+
+    @Test
+    func encodesQuotesInAPromptFilePath() {
+        let job = makeJob(outputFormat: .text, promptFile: "/Users/me/it's here/a b.md", prompt: nil)
+        #expect(job.encode().hasSuffix(" -f '/Users/me/it'\\''s here/a b.md'"))
+    }
+
     @Test
     func keepsShellMetacharactersInertInsideSingleQuotes() {
         let job = makeJob(prompt: "echo $HOME `id` \"x\" \\n ; rm -rf * | cat &")
@@ -91,12 +189,23 @@ struct ZenCronJobCommandTests {
         "--agent 'x' --jsonl -p 'y'"
     ])
     func roundTripsPromptsThroughEncodeAndDecode(_ prompt: String) {
-        let job = makeJob(
-            supportDirectory: "/tmp/with space/and'quote",
-            agentName: "agent with 'quotes'",
-            prompt: prompt
-        )
-        #expect(ZenCronJobCommand.decode(job.encode()) == job)
+        for outputFormat in [ZenCronJobCommand.OutputFormat.text, .jsonl] {
+            let job = makeJob(
+                supportDirectory: "/tmp/with space/and'quote",
+                agentName: "agent with 'quotes'",
+                outputFormat: outputFormat,
+                prompt: prompt
+            )
+            #expect(ZenCronJobCommand.decode(job.encode()) == job)
+        }
+    }
+
+    @Test
+    func roundTripsEachOutputFormatToItself() {
+        for outputFormat in [ZenCronJobCommand.OutputFormat.text, .jsonl] {
+            let job = makeJob(outputFormat: outputFormat)
+            #expect(ZenCronJobCommand.decode(job.encode())?.outputFormat == outputFormat)
+        }
     }
 
     @Test
@@ -120,10 +229,12 @@ struct ZenCronJobCommandTests {
         "no percent at all"
     ])
     func roundTripsThroughCronPercentEscaping(_ prompt: String) throws {
-        let job = makeJob(prompt: prompt)
-        let onCronLine = ZenCronJobCommand.cronEscape(job.encode())
-        let unescaped = try #require(ZenCronJobCommand.cronUnescape(onCronLine))
-        #expect(ZenCronJobCommand.decode(unescaped) == job)
+        for outputFormat in [ZenCronJobCommand.OutputFormat.text, .jsonl] {
+            let job = makeJob(outputFormat: outputFormat, prompt: prompt)
+            let onCronLine = ZenCronJobCommand.cronEscape(job.encode())
+            let unescaped = try #require(ZenCronJobCommand.cronUnescape(onCronLine))
+            #expect(ZenCronJobCommand.decode(unescaped) == job)
+        }
     }
 
     @Test
@@ -140,6 +251,75 @@ struct ZenCronJobCommandTests {
             let onCronLine = ZenCronJobCommand.cronEscape(job.encode())
             #expect(ZenCronJobCommand.cronUnescape(onCronLine).flatMap(ZenCronJobCommand.decode) == job)
         }
+    }
+
+    // MARK: - round trip with a prompt file
+
+    @Test(arguments: [
+        "/Users/me/prompts/daily.md",
+        "/Users/me/My Prompts/daily report.md",
+        "/Users/me/it's here/a'b.md",
+        "/Users/me/'quoted'/x",
+        "/Users/me/\"double\"/x",
+        "/tmp/100% done/50%% off.md",
+        "/tmp/back\\slash/\\%/x.md",
+        "/tmp/--jsonl -p 'y'/x.md",
+        "/tmp/quote then combining mark '\u{0301}x.md",
+        "/tmp/unicode \u{1F600} \u{00E8}.md",
+        "/tmp/$(touch x) `id` ${HOME}.md"
+    ])
+    func roundTripsEveryShapeOfAPromptFile(_ path: String) throws {
+        let shapes: [(file: String?, prompt: String?)] = [
+            (path, nil),
+            (path, "summarize it"),
+            (path, "100% it's 'quoted'"),
+            (path, ""),
+            (nil, "summarize it")
+        ]
+        for outputFormat in [ZenCronJobCommand.OutputFormat.text, .jsonl] {
+            for shape in shapes {
+                let job = makeJob(
+                    supportDirectory: "/tmp/with space/and'quote",
+                    agentName: "agent with 'quotes'",
+                    outputFormat: outputFormat,
+                    promptFile: shape.file,
+                    prompt: shape.prompt
+                )
+                #expect(ZenCronJobCommand.decode(job.encode()) == job)
+
+                // Through the crontab line: `%` must survive cron's escaping.
+                let onCronLine = ZenCronJobCommand.cronEscape(job.encode())
+                let unescaped = try #require(ZenCronJobCommand.cronUnescape(onCronLine))
+                #expect(ZenCronJobCommand.decode(unescaped) == job)
+            }
+        }
+    }
+
+    @Test
+    func cronEscapesAPercentInAPromptFilePath() {
+        let job = makeJob(outputFormat: .text, promptFile: "/tmp/100% done.md", prompt: nil)
+        #expect(ZenCronJobCommand.cronEscape(job.encode()).hasSuffix(" -f '/tmp/100\\% done.md'"))
+    }
+
+    @Test
+    func roundTripsEachShapeToItself() {
+        let fileOnly = ZenCronJobCommand.decode(
+            makeJob(outputFormat: .text, promptFile: "/p/a.md", prompt: nil).encode()
+        )
+        #expect(fileOnly?.promptFile == "/p/a.md")
+        #expect(fileOnly?.prompt == nil)
+        #expect(fileOnly?.outputFormat == .text)
+
+        let both = ZenCronJobCommand.decode(
+            makeJob(outputFormat: .jsonl, promptFile: "/p/a.md", prompt: "go").encode()
+        )
+        #expect(both?.promptFile == "/p/a.md")
+        #expect(both?.prompt == "go")
+        #expect(both?.outputFormat == .jsonl)
+
+        let promptOnly = ZenCronJobCommand.decode(makeJob(outputFormat: .text).encode())
+        #expect(promptOnly?.promptFile == nil)
+        #expect(promptOnly?.prompt == "summarize the repo")
     }
 
     // MARK: - decode rejections
@@ -163,13 +343,20 @@ struct ZenCronJobCommandTests {
         "ZENCODE_SUPPORT_DIRECTORY='/s' ls --working-directory '/w' --jsonl -p 'x'",
         // missing pieces
         "'/z' --jsonl -p 'x'",
-        "'/z' --working-directory '/w' -p 'x'",
+        "'/z' --working-directory '/w'",
         "'/z' --working-directory '/w' --jsonl",
         "'/z' --working-directory '/w' --jsonl -p",
+        "'/z' --working-directory '/w' -p",
+        "'/z' --working-directory '/w' -p ",
         // wrong order
         "'/z' --jsonl --working-directory '/w' -p 'x'",
+        "'/z' --jsonl --working-directory '/w' --jsonl -p 'x'",
         "'/z' --working-directory '/w' --agent 'a' --jsonl -p 'x'",
+        "'/z' --working-directory '/w' --agent 'a' -p 'x'",
         "'/z' --working-directory '/w' -p 'x' --jsonl",
+        "'/z' --working-directory '/w' -p --jsonl 'x'",
+        "'/z' --working-directory '/w' -p 'x' -p 'y'",
+        "'/z' --working-directory '/w' --jsonl -p 'x' --jsonl",
         "'/z' --agent 'a' --agent 'b' --working-directory '/w' --jsonl -p 'x'",
         "'/z' --model 'm' --working-directory '/w' --jsonl -p 'x'",
         "'/z' --working-directory '/w' --jsonl -p 'x' --extra",
@@ -177,6 +364,7 @@ struct ZenCronJobCommandTests {
         "'/z' --agent a --working-directory '/w' --jsonl -p 'x'",
         "'/z' --working-directory /w --jsonl -p 'x'",
         "'/z' --working-directory '/w' --jsonl -p x",
+        "'/z' --working-directory '/w' -p x",
         // environment prefix variations
         "ZENCODE_SUPPORT_DIRECTORY=/s '/z' --working-directory '/w' --jsonl -p 'x'",
         "ZENCODE_SUPPORT_DIRECTORY='/s''/z' --working-directory '/w' --jsonl -p 'x'",
@@ -188,6 +376,16 @@ struct ZenCronJobCommandTests {
         "'/z' --working-directory '/w' --jsonl -p 'x' ",
         " '/z' --working-directory '/w' --jsonl -p 'x'",
         "'/z' --working-directory '/w'\t--jsonl -p 'x'",
+        "'/z' --working-directory '/w'  --jsonl -p 'x'",
+        "'/z' --working-directory '/w' --jsonl  -p 'x'",
+        "'/z' --working-directory '/w' --jsonl -p  'x'",
+        "'/z' --working-directory '/w'  -p 'x'",
+        "'/z' --working-directory '/w' -p  'x'",
+        "'/z' --working-directory '/w' -p 'x' ",
+        "'/z' --working-directory '/w'\t-p 'x'",
+        "'/z' --working-directory '/w' --jsonl\t-p 'x'",
+        "'/z' --working-directory '/w' --JSONL -p 'x'",
+        "'/z' --working-directory '/w' --jsonl=true -p 'x'",
         // quoting defects
         "'/z' --working-directory '/w' --jsonl -p 'unterminated",
         "'/z' --working-directory '/w' --jsonl -p 'a''b'",
@@ -195,10 +393,15 @@ struct ZenCronJobCommandTests {
         "'/z' --working-directory '/w' --jsonl -p 'a'\\' b",
         "\"/z\" --working-directory '/w' --jsonl -p 'x'",
         "'/z' --working-directory '/w' --jsonl -p \"x\"",
+        "'/z' --working-directory '/w' -p \"x\"",
+        "'/z' --working-directory '/w' -p 'a''b'",
+        "'/z' --working-directory '/w' -p 'unterminated",
         // line breaks never fit on one crontab line
         "'/z' --working-directory '/w' --jsonl -p 'two\nlines'",
         "'/z' --working-directory '/w' --jsonl -p 'carriage\rreturn'",
-        "'/z' --working-directory '/w' --jsonl -p 'x'\n"
+        "'/z' --working-directory '/w' --jsonl -p 'x'\n",
+        "'/z' --working-directory '/w' -p 'two\nlines'",
+        "'/z' --working-directory '/w' -p 'x'\n"
     ])
     func decodeReturnsNilOutsideTheFixedGrammar(_ command: String) {
         #expect(ZenCronJobCommand.decode(command) == nil)
@@ -220,6 +423,140 @@ struct ZenCronJobCommandTests {
                 prompt: "x"
             )
         )
+    }
+
+    @Test
+    func decodeReadsALineWithTheJSONLFlagAsJSONL() {
+        // Lines written before the text format existed always carry `--jsonl`.
+        let decoded = ZenCronJobCommand.decode(
+            "ZENCODE_SUPPORT_DIRECTORY='/s' zen --agent 'a' --working-directory '/w' --jsonl -p 'x'"
+        )
+        #expect(decoded?.outputFormat == .jsonl)
+        #expect(decoded?.prompt == "x")
+    }
+
+    @Test
+    func decodeReadsALineWithoutTheJSONLFlagAsText() {
+        #expect(
+            ZenCronJobCommand.decode("zen --working-directory '/w' -p 'x'")
+                == makeJob(workingDirectory: "/w", outputFormat: .text, prompt: "x")
+        )
+        #expect(
+            ZenCronJobCommand.decode(
+                "ZENCODE_SUPPORT_DIRECTORY='/s' '/z' --agent 'a b' --working-directory '/w' -p 'it'\\''s'"
+            ) == makeJob(
+                executable: "/z",
+                supportDirectory: "/s",
+                agentName: "a b",
+                workingDirectory: "/w",
+                outputFormat: .text,
+                prompt: "it's"
+            )
+        )
+        // A prompt that merely looks like the flag stays prompt text.
+        #expect(
+            ZenCronJobCommand.decode("zen --working-directory '/w' -p '--jsonl -p x'")
+                == makeJob(workingDirectory: "/w", outputFormat: .text, prompt: "--jsonl -p x")
+        )
+    }
+
+    @Test
+    func decodeAcceptsAPromptFileWithAndWithoutAPromptInEitherOutputFormat() {
+        #expect(
+            ZenCronJobCommand.decode("zen --working-directory '/w' -f '/p/a b.md'")
+                == makeJob(workingDirectory: "/w", outputFormat: .text, promptFile: "/p/a b.md", prompt: nil)
+        )
+        #expect(
+            ZenCronJobCommand.decode("zen --working-directory '/w' -f '/p/a.md' -p 'go'")
+                == makeJob(workingDirectory: "/w", outputFormat: .text, promptFile: "/p/a.md", prompt: "go")
+        )
+        #expect(
+            ZenCronJobCommand.decode("zen --working-directory '/w' --jsonl -f '/p/a.md'")
+                == makeJob(workingDirectory: "/w", outputFormat: .jsonl, promptFile: "/p/a.md", prompt: nil)
+        )
+        #expect(
+            ZenCronJobCommand.decode(
+                "ZENCODE_SUPPORT_DIRECTORY='/s' '/z' --agent 'a' --working-directory '/w' --jsonl -f '/p/a.md' -p 'go'"
+            ) == makeJob(
+                executable: "/z",
+                supportDirectory: "/s",
+                agentName: "a",
+                workingDirectory: "/w",
+                outputFormat: .jsonl,
+                promptFile: "/p/a.md",
+                prompt: "go"
+            )
+        )
+    }
+
+    @Test
+    func decodeKeepsEveryLineWrittenWithoutAPromptFileAsBefore() {
+        let jsonl = ZenCronJobCommand.decode("zen --working-directory '/w' --jsonl -p 'x'")
+        #expect(jsonl == makeJob(workingDirectory: "/w", prompt: "x"))
+        #expect(jsonl?.promptFile == nil)
+
+        let text = ZenCronJobCommand.decode("zen --working-directory '/w' -p 'x'")
+        #expect(text == makeJob(workingDirectory: "/w", outputFormat: .text, prompt: "x"))
+        #expect(text?.promptFile == nil)
+
+        // An empty prompt was a valid quoted word before and still is.
+        #expect(
+            ZenCronJobCommand.decode("zen --working-directory '/w' -p ''")
+                == makeJob(workingDirectory: "/w", outputFormat: .text, prompt: "")
+        )
+        // A prompt that merely looks like the option stays prompt text.
+        #expect(
+            ZenCronJobCommand.decode("zen --working-directory '/w' -p '-f /etc/passwd'")
+                == makeJob(workingDirectory: "/w", outputFormat: .text, prompt: "-f /etc/passwd")
+        )
+    }
+
+    @Test(arguments: [
+        // `-f` without a usable value
+        "zen --working-directory '/w' -f",
+        "zen --working-directory '/w' -f ",
+        "zen --working-directory '/w' --jsonl -f",
+        "zen --working-directory '/w' --jsonl -f ",
+        "zen --working-directory '/w' -f /p/a.md",
+        "zen --working-directory '/w' -f \"/p/a.md\"",
+        "zen --working-directory '/w' -f '/p/a.md",
+        "zen --working-directory '/w' -f 'a''b'",
+        "zen --working-directory '/w' -f '/p/a\nb.md'",
+        "zen --working-directory '/w' -f '/p/a\rb.md'",
+        "zen --working-directory '/w' -f  '/p/a.md'",
+        "zen --working-directory '/w' -f -p 'x'",
+        "zen --working-directory '/w' -f '/p/a.md' -p",
+        "zen --working-directory '/w' -f '/p/a.md' -p x",
+        // neither `-f` nor `-p`
+        "zen --working-directory '/w'",
+        "zen --working-directory '/w' --jsonl",
+        "zen --agent 'a' --working-directory '/w'",
+        // `-p` before `-f`, or either repeated
+        "zen --working-directory '/w' -p 'x' -f '/p/a.md'",
+        "zen --working-directory '/w' --jsonl -p 'x' -f '/p/a.md'",
+        "zen --working-directory '/w' -f '/p/a.md' -f '/p/b.md'",
+        "zen --working-directory '/w' -f '/p/a.md' -p 'x' -f '/p/b.md'",
+        "zen --working-directory '/w' -f '/p/a.md' -p 'x' -p 'y'",
+        // `--jsonl` after the file
+        "zen --working-directory '/w' -f '/p/a.md' --jsonl",
+        "zen --working-directory '/w' -f '/p/a.md' --jsonl -p 'x'",
+        "zen --working-directory '/w' -f '/p/a.md' -p 'x' --jsonl",
+        // trailing text
+        "zen --working-directory '/w' -f '/p/a.md' extra",
+        "zen --working-directory '/w' -f '/p/a.md' ",
+        "zen --working-directory '/w' -f '/p/a.md' -p 'x' extra",
+        "zen --working-directory '/w' -f '/p/a.md' -p 'x' ",
+        "zen --working-directory '/w' -f '/p/a.md'\n",
+        "zen --working-directory '/w' -f '/p/a.md' -x 'y'",
+        // flags are exact and case-sensitive
+        "zen --working-directory '/w' -F '/p/a.md'",
+        "zen --working-directory '/w' --file '/p/a.md'",
+        "zen --working-directory '/w' -f='/p/a.md'",
+        "zen --working-directory '/w'\t-f '/p/a.md'",
+        "zen --working-directory '/w' -f\t'/p/a.md'"
+    ])
+    func decodeReturnsNilForAMalformedPromptFileOrPrompt(_ command: String) {
+        #expect(ZenCronJobCommand.decode(command) == nil)
     }
 
     @Test
@@ -409,7 +746,7 @@ struct ZenCronJobCommandTests {
 
 /// A `FileManager` that records every path asked about and reports a fixed set
 /// as executable, so `locateZen` is tested without touching the machine's PATH.
-private final class ProbingFileManager: FileManager {
+private final class ProbingFileManager: FileManager, @unchecked Sendable {
     private let lock = NSLock()
     private let executables: Set<String>
     private var probed: [String] = []

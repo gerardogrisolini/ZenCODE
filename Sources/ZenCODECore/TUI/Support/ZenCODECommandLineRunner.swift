@@ -101,6 +101,7 @@ public enum ZenCODECommandLineRunner {
                 }
                 let prompt = try ZenCODEHeadlessRunner.prompt(
                     inlinePrompt: configuration.headlessPrompt,
+                    promptFile: configuration.headlessPromptFile,
                     stdinIsTerminal: stdinIsTerminal
                 )
                 let permissionAuthorizer = LocalExecPermissionAuthorizer()
@@ -215,6 +216,7 @@ public enum ZenCODECommandLineRunner {
             || argument == "--agent"
             || argument == "--acp"
             || argument == "-p"
+            || argument == "-f"
             || argument == "--prompt"
             || argument == "--jsonl"
             || argument == "--working-directory"

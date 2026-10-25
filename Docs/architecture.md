@@ -23,7 +23,9 @@ migration says otherwise:
   `# <<< ZenCODE cron <<<`), the `PATH=/usr/local/bin:/usr/bin:/bin` line that
   starts the block (it is how cron finds `zen`), the
   `# zencode-cron id=… created=…` entry marker, and the generated cron command
-  layout decoded by `/cron list`, which runs a bare `zen`;
+  layout decoded by `/cron list`, which runs a bare `zen` and carries `--jsonl`
+  only for JSONL entries (lines written earlier always have it), then
+  `-f '<path>'` and/or `-p '<prompt>'`, at least one, in that order;
 - public installer entry points under `Scripts/install*.sh`.
 
 **Announced migration: agent profile format.** Every profile in `agents.json`

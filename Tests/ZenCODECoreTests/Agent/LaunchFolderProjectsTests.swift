@@ -138,6 +138,30 @@ struct LaunchFolderProjectsTests {
         }
     }
 
+    #if os(macOS)
+    /// Characterizes `skipsHiddenFiles` on macOS, which hides folders carrying
+    /// the file-system hidden flag (not only dot-names).
+    @Test
+    func scanSkipsFoldersFlaggedAsHiddenByTheFileSystem() throws {
+        try withTemporaryDirectory { directory in
+            try makeDirectory(named: "visible", in: directory)
+            try makeDirectory(named: "flagged", in: directory)
+
+            var url = directory.appendingPathComponent("flagged", isDirectory: true)
+            var values = URLResourceValues()
+            values.isHidden = true
+            try url.setResourceValues(values)
+            let readBack = try url.resourceValues(forKeys: [.isHiddenKey])
+            try #require(readBack.isHidden == true)
+
+            let projects = LaunchFolderProjects.scan(workingDirectory: directory)
+
+            #expect(projects.folderNames == ["visible"])
+            #expect(projects.omittedCount == 0)
+        }
+    }
+    #endif
+
     // MARK: - Section text
 
     @Test
@@ -466,6 +490,8 @@ private func makeDirectory(named name: String, in directory: URL) throws {
 }
 
 /// Records the directories that are listed, to prove when a folder is read.
+/// It overrides the `atPath` listing, the call `LaunchFolderProjects.scan` makes,
+/// because the URL-based variant cannot be overridden on Linux.
 private final class RecordingFileManager: FileManager, @unchecked Sendable {
     private let lock = NSLock()
     private var listed: [String] = []
@@ -474,16 +500,8 @@ private final class RecordingFileManager: FileManager, @unchecked Sendable {
         lock.withLock { listed }
     }
 
-    override func contentsOfDirectory(
-        at url: URL,
-        includingPropertiesForKeys keys: [URLResourceKey]?,
-        options mask: FileManager.DirectoryEnumerationOptions = []
-    ) throws -> [URL] {
-        lock.withLock { listed.append(url.standardizedFileURL.path) }
-        return try super.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: keys,
-            options: mask
-        )
+    override func contentsOfDirectory(atPath path: String) throws -> [String] {
+        lock.withLock { listed.append(URL(fileURLWithPath: path).standardizedFileURL.path) }
+        return try super.contentsOfDirectory(atPath: path)
     }
 }

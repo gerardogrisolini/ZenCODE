@@ -20,12 +20,18 @@ struct ZenCrontabDocumentTests {
     /// 2026-09-10T12:00:00Z
     private let createdAt = Date(timeIntervalSince1970: 1_789_041_600)
 
-    private func makeJob(prompt: String = "summarize the repo") -> ZenCronJobCommand {
+    private func makeJob(
+        outputFormat: ZenCronJobCommand.OutputFormat = .text,
+        promptFile: String? = nil,
+        prompt: String? = "summarize the repo"
+    ) -> ZenCronJobCommand {
         ZenCronJobCommand(
             executable: "zen",
             supportDirectory: nil,
             agentName: nil,
             workingDirectory: "/Users/me/project",
+            outputFormat: outputFormat,
+            promptFile: promptFile,
             prompt: prompt
         )
     }
@@ -154,12 +160,15 @@ struct ZenCrontabDocumentTests {
         #expect(found[0].job?.executable == "zen")
         #expect(found[0].job?.prompt == "daily report")
         #expect(found[0].job?.agentName == nil)
+        // Lines written before the text format existed carry `--jsonl`.
+        #expect(found[0].job?.outputFormat == .jsonl)
 
         #expect(found[1].id == secondID)
         #expect(found[1].schedule == "@hourly")
         // A line written with a full path (older ZenCODE, or by hand) still decodes.
         #expect(found[1].job?.executable == "/usr/local/bin/zen")
         #expect(found[1].job?.agentName == "ops")
+        #expect(found[1].job?.outputFormat == .jsonl)
         #expect(found[1].markerLine == sampleBlockLines[5])
         #expect(found[1].cronLine == sampleBlockLines[6])
     }
@@ -836,7 +845,7 @@ struct ZenCrontabDocumentTests {
         try document.appendEntry(schedule: schedule("0 9 * * 1"), job: job, id: firstID, createdAt: createdAt)
 
         let expectedCron = "0 9 * * 1 "
-            + "zen --working-directory '/Users/me/project' --jsonl -p 'it'\\''s 50\\% done'"
+            + "zen --working-directory '/Users/me/project' -p 'it'\\''s 50\\% done'"
         #expect(
             document.render() == [
                 Self.begin,
@@ -853,6 +862,70 @@ struct ZenCrontabDocumentTests {
         #expect(entry.schedule == "0 9 * * 1")
         #expect(entry.cronLine == expectedCron)
         #expect(entry.job == job)
+    }
+
+    @Test
+    func appendEntryWritesTheJSONLFlagOnlyForAJSONLJob() throws {
+        var document = ZenCrontabDocument()
+        try document.appendEntry(
+            schedule: schedule("@daily"),
+            job: makeJob(outputFormat: .jsonl, prompt: "report"),
+            id: firstID,
+            createdAt: createdAt
+        )
+        try document.appendEntry(
+            schedule: schedule("@hourly"),
+            job: makeJob(outputFormat: .text, prompt: "report"),
+            id: secondID,
+            createdAt: createdAt
+        )
+
+        let found = entries(of: try ZenCrontabDocument.parse(document.render()))
+        #expect(found.count == 2)
+        #expect(found[0].cronLine == "@daily zen --working-directory '/Users/me/project' --jsonl -p 'report'")
+        #expect(found[0].job?.outputFormat == .jsonl)
+        #expect(found[1].cronLine == "@hourly zen --working-directory '/Users/me/project' -p 'report'")
+        #expect(found[1].job?.outputFormat == .text)
+    }
+
+    @Test
+    func appendEntryWritesThePromptFileBeforeTheOptionalPromptAndReadsItBack() throws {
+        var document = ZenCrontabDocument()
+        let fileOnly = makeJob(promptFile: "/Users/me/My Prompts/daily 100%.md", prompt: nil)
+        let fileAndPrompt = makeJob(
+            outputFormat: .jsonl,
+            promptFile: "/Users/me/prompts/it's.md",
+            prompt: "summarize it"
+        )
+        document.appendEntry(schedule: try schedule("@daily"), job: fileOnly, id: firstID, createdAt: createdAt)
+        document.appendEntry(schedule: try schedule("@hourly"), job: fileAndPrompt, id: secondID, createdAt: createdAt)
+
+        let found = entries(of: try ZenCrontabDocument.parse(document.render()))
+        #expect(found.count == 2)
+        #expect(
+            found[0].cronLine
+                == "@daily zen --working-directory '/Users/me/project' -f '/Users/me/My Prompts/daily 100\\%.md'"
+        )
+        #expect(found[0].job == fileOnly)
+        #expect(found[0].job?.prompt == nil)
+        #expect(
+            found[1].cronLine
+                == "@hourly zen --working-directory '/Users/me/project' --jsonl "
+                + "-f '/Users/me/prompts/it'\\''s.md' -p 'summarize it'"
+        )
+        #expect(found[1].job == fileAndPrompt)
+    }
+
+    @Test
+    func appendedPromptFileDocumentsSurviveARoundTrip() throws {
+        var document = ZenCrontabDocument(foreignLines: ["0 1 * * * /bin/true"])
+        document.appendEntry(
+            schedule: try schedule("*/10 * * * *"),
+            job: makeJob(promptFile: "/tmp/a b/100% 'x'.md", prompt: nil),
+            id: firstID,
+            createdAt: createdAt
+        )
+        #expect(try ZenCrontabDocument.parse(document.render()) == document)
     }
 
     @Test
@@ -972,6 +1045,11 @@ struct ZenCrontabDocumentTests {
                 + "Install ZenCODE in /usr/local/bin (Scripts/install.sh) before scheduling prompts."
         )
         #expect(ZenCrontabError.invalidPrompt(reason: "contains a line break").errorDescription?.contains("contains a line break") == true)
+        #expect(
+            ZenCrontabError.invalidPromptFile(reason: "its path contains a line break").errorDescription
+                == "The prompt file cannot be scheduled: its path contains a line break. "
+                + "Use an absolute path to a readable, non-empty UTF-8 text file and retry."
+        )
         #expect(ZenCrontabError.invalidMailTo("a b").errorDescription?.contains("a b") == true)
         #expect(ZenCrontabError.invalidMailTo("a b").errorDescription?.contains("/cron mailto none") == true)
     }

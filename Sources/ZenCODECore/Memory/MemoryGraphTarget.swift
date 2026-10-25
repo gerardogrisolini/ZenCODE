@@ -14,7 +14,8 @@ import Foundation
 /// Both cases share the same store, registry, and on-disk format: they differ
 /// only in the file they resolve to (see `MemoryGraphLocation`).
 public enum MemoryGraphTarget: Hashable, Sendable {
-    /// The graph owned by one workspace, keyed by the digest of its root path.
+    /// The graph owned by one workspace, keyed by the project name of its root
+    /// folder (see ``ProjectStorageKey``).
     case workspace(URL)
     /// The single graph shared by every workspace on the machine, independent
     /// of the current working directory.

@@ -47,6 +47,8 @@ public enum ZenCODEHeadlessJSONLProtocol {
         public static let invalidArguments = "Invalid command-line arguments."
         public static let noPrompt = "No prompt provided. Pass text after -p/--prompt."
         public static let noResponse = "The backend produced no assistant text."
+        /// Deliberately generic: it never carries the prompt file path.
+        public static let invalidPromptFile = "The prompt file is missing, unreadable, empty, or not UTF-8 text."
         public static let cancelled = "The headless run was cancelled."
         public static let turnFailed = "The headless run failed."
         public static let teardownFailed = "The session could not be finalized cleanly."
@@ -157,6 +159,12 @@ public enum ZenCODEHeadlessJSONLProtocol {
                     publicMessage: PublicErrorMessages.noResponse
                 )
             }
+        }
+        if error is ZenCODEPromptFileError {
+            return PublicError(
+                category: .configuration,
+                publicMessage: PublicErrorMessages.invalidPromptFile
+            )
         }
         if let error = error as? AgentConfigurationError {
             return PublicError(

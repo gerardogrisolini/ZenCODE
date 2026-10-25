@@ -20,24 +20,18 @@ enum MemoryGraphLocation {
     static let directoryName = "memory"
     static let graphFilename = "memory.graph.json"
     /// Directory of the global graph. It cannot collide with a workspace
-    /// directory, which is always named after a 64-character SHA256 hex digest.
+    /// directory, whose name (``ProjectStorageKey``) always contains a `-`.
     static let globalDirectoryName = "global"
 
-    /// Full SHA256 hex of the standardized workspace path.
-    ///
-    /// The full digest names a directory shared by every workspace on the machine.
-    static func workspaceDigest(for workspaceRootURL: URL) -> String {
-        let path = workspaceRootURL.standardizedFileURL.path
-        return Data(path.utf8).sha256Hex()
-    }
-
+    /// A workspace graph lives under the project's name-based key, so it
+    /// follows a project whose folder is moved.
     static func graphDirectoryURL(
         for workspaceRootURL: URL,
         fileManager: FileManager = .default
     ) -> URL {
         AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
             .appendingPathComponent(directoryName, isDirectory: true)
-            .appendingPathComponent(workspaceDigest(for: workspaceRootURL), isDirectory: true)
+            .appendingPathComponent(ProjectStorageKey.key(for: workspaceRootURL), isDirectory: true)
     }
 
     static func graphURL(

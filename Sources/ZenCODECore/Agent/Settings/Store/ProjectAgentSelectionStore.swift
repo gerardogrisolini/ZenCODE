@@ -13,9 +13,10 @@ import ToolCore
 /// project and therefore visible to the `sub-agents` tool.
 ///
 /// The selection lives in the support directory, never in the working tree:
-/// `<support>/projects/<sha256 of the standardized workspace path>/agents.json`.
-/// The digest is the same one the workspace memory graph uses, so a project is
-/// identified by its folder path alone.
+/// `<support>/projects/<project key>/agents.json`, where the key is the
+/// name-based ``ProjectStorageKey`` the workspace memory graph uses too. A
+/// project is identified by its folder name, so the selection follows a moved
+/// folder, and two folders with the same name share one selection.
 ///
 /// Semantics:
 /// - No saved file (or an unreadable one) means the project has not been
@@ -40,8 +41,8 @@ public enum ProjectAgentSelectionStore {
 
     // MARK: - Location
 
-    /// Standardized path that identifies the project; also persisted in the
-    /// manifest as a human-readable hint for the digest directory.
+    /// Standardized path of the project folder, persisted in the manifest as a
+    /// human-readable hint and shown in delegation errors.
     public static func workspacePath(workspaceRootURL: URL) -> String {
         workspaceRootURL.standardizedFileURL.path
     }
@@ -53,7 +54,7 @@ public enum ProjectAgentSelectionStore {
         AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
             .appendingPathComponent(directoryName, isDirectory: true)
             .appendingPathComponent(
-                Data(workspacePath(workspaceRootURL: workspaceRootURL).utf8).sha256Hex(),
+                ProjectStorageKey.key(for: workspaceRootURL),
                 isDirectory: true
             )
             .appendingPathComponent(manifestFilename, isDirectory: false)
