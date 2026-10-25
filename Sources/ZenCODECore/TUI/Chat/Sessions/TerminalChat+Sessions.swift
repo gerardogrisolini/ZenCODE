@@ -347,6 +347,9 @@ extension TerminalChat {
         } else {
             selectedAgent = nil
         }
+        // The restored agent counts as selected again: read the launch folder
+        // anew when the restored session's prompt is composed.
+        launchFolderProjectsCache = nil
         let items = await toolSelectionItems()
         selectedToolKeys = Self.toolSelectionKeys(
             from: savedSession.selectedTools,

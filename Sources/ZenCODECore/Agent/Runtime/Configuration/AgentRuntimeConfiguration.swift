@@ -603,6 +603,8 @@ public struct AgentRuntimeConfiguration: Sendable {
 }
 
 public enum AgentStandaloneSystemPrompt {
+    /// Combined form of `promptSections`; `launchFolderProjects` behaves as
+    /// documented there.
     public static func prompt(
         cwd: String,
         memoryToolEnabled: Bool = false,
@@ -612,6 +614,7 @@ public enum AgentStandaloneSystemPrompt {
         globalAgentsDirectoryURL: URL? = nil,
         selectedAgentSection: String? = nil,
         selectedAgentRole: AgentProfileRole? = nil,
+        launchFolderProjects: LaunchFolderProjects? = nil,
         selectedSkillSection: String? = nil,
         responseLanguageSection: String? = nil
     ) -> String {
@@ -624,12 +627,23 @@ public enum AgentStandaloneSystemPrompt {
             globalAgentsDirectoryURL: globalAgentsDirectoryURL,
             selectedAgentSection: selectedAgentSection,
             selectedAgentRole: selectedAgentRole,
+            launchFolderProjects: launchFolderProjects,
             selectedSkillSection: selectedSkillSection,
             responseLanguageSection: responseLanguageSection
         )
         .combinedPrompt
     }
 
+    /// Composes the stable system prefix and the session's dynamic context.
+    ///
+    /// - Parameter launchFolderProjects: Only read when `selectedAgentRole`
+    ///   delegates by role (``AgentProfileRole/delegatesByRole``); other roles
+    ///   never get the listing and never touch the filesystem for it. The
+    ///   listing is a snapshot of the folders directly inside `cwd`. A `nil`
+    ///   value scans `cwd` now, so callers that compose once per session (ACP
+    ///   `newSession`/load/agent mention, `AgentCoreAppSessionFactory`) read it
+    ///   at selection time, while callers that recompose the prompt per turn
+    ///   must pass the snapshot they took at selection time.
     public static func promptSections(
         cwd: String,
         memoryToolEnabled: Bool = false,
@@ -639,6 +653,7 @@ public enum AgentStandaloneSystemPrompt {
         globalAgentsDirectoryURL: URL? = nil,
         selectedAgentSection: String? = nil,
         selectedAgentRole: AgentProfileRole? = nil,
+        launchFolderProjects: LaunchFolderProjects? = nil,
         selectedSkillSection: String? = nil,
         responseLanguageSection: String? = nil
     ) -> SystemPromptSections {
@@ -685,7 +700,22 @@ public enum AgentStandaloneSystemPrompt {
                       snapshot: liveConfiguration.catalog
                   )
               }()
-        let agentsSection = [selectedAgentSection, agentsNotice, delegatableSection]
+        // The launch-folder listing is independent of the model lock and of
+        // the tool grant: it only tells the organizer where its projects are.
+        let launchFolderSection: String? = delegatesByRole
+            ? SystemPromptBuilder.launchFolderProjectsSection(
+                launchFolderProjects ?? LaunchFolderProjects.scan(
+                    workingDirectory: workingDirectory,
+                    fileManager: fileManager
+                )
+            )
+            : nil
+        let agentsSection = [
+            selectedAgentSection,
+            agentsNotice,
+            delegatableSection,
+            launchFolderSection
+        ]
             .compactMap { $0?.nilIfBlank }
             .joined(separator: "\n\n")
             .nilIfBlank

@@ -141,6 +141,9 @@ extension TerminalChat {
         let previousManualModelIDOverride = manualModelIDOverride
         let previousManualThinkingSelectionOverride = manualThinkingSelectionOverride
         selectedAgent = agent
+        // Selecting an agent (the Organizer again included) reads the launch
+        // folder anew when the next prompt is composed.
+        launchFolderProjectsCache = nil
         await interactiveReader.setPanelCommandSuggestions(
             await panelSuggestionsForCurrentAgent()
         )

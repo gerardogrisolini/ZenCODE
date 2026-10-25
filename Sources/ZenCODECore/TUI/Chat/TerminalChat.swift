@@ -56,6 +56,22 @@ public final class TerminalChat {
     /// accesses are serialized by ``TerminalChatActor`` isolation.
     var didRefreshGitStatusDuringCurrentPrompt = false
     public var selectedAgent: AgentProfile?
+    /// The launch-folder listing read for the selected agent when its role
+    /// delegates by role, together with the selection it was read for. The
+    /// prompt is recomposed on every send, so the listing must be a snapshot
+    /// taken at selection time instead of a fresh scan: ``applyAgentSelection``
+    /// and `loadSavedSession` clear it, and the next composition (the session
+    /// creation) reads the folder again. Transient: never copied into
+    /// snapshots, checkpoints, or persisted session models.
+    var launchFolderProjectsCache: LaunchFolderProjectsCache?
+
+    /// A launch-folder listing and the key (see
+    /// ``ProjectAgentSelectionStore/selectionKey(for:)``) of the agent
+    /// selection it was read for.
+    struct LaunchFolderProjectsCache: Sendable {
+        let agentKey: String
+        let projects: LaunchFolderProjects
+    }
     public var manualModelIDOverride: String?
     public var manualThinkingSelectionOverride: AgentThinkingSelection?
     public var selectedToolKeys = Set<String>()

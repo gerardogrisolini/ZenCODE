@@ -61,7 +61,7 @@ and a profile can have any name in any role.
 | `planner` | `/plan` delegates to it; its catalog-owned core tools are forced read-only, whatever `readOnly` says |
 | `reviewer` | `/review` delegates to it |
 | `reporter` | No runtime effect beyond the profile's own configuration |
-| `organizer` | Its sessions use the global memory graph and delegate by role (see [memory.md](memory.md)); otherwise no runtime effect beyond the profile's own configuration |
+| `organizer` | Its sessions use the global memory graph and delegate by role (see [memory.md](memory.md)), and their context lists the first-level folders of the working directory as `Projects in the launch folder`, read once when the agent is selected (see [organizer.md](organizer.md#selecting-organizer)); otherwise no runtime effect beyond the profile's own configuration |
 | `promoter` | No runtime effect beyond the profile's own configuration |
 
 ```json

@@ -29,6 +29,10 @@ Select it directly, launching from the folder that contains your projects. The r
 zen --agent Organizer --working-directory ~/Projects      # launch directly
 ```
 
+When the `Organizer` is selected (with `--agent`, with `/agents`, or by creating an ACP or app session with it), ZenCODE reads the folders directly inside its working directory, once, and lists them in the session context under `Projects in the launch folder`. Only first-level, non-hidden folders are listed, in alphabetical order, ignoring case; files and symbolic links (even to folders) are not listed. At most 100 names are listed, and the section says how many more were left out. The `Organizer` uses the list to find the `workingDirectory` of a project, and asks you only when the project is neither in the list nor in its memory.
+
+The list is a snapshot: it does not change while the session lasts, so a folder created later is not in it. Select the `Organizer` again (for example with `/agents Organizer`) to read the folder anew; the conversation is reset, as for any change of agent.
+
 ## Tools
 
 The `Organizer` toolset is limited to:
@@ -56,7 +60,7 @@ Its memory is global and does not depend on the directory: preferences and proje
 
 ## Delegated Work
 
-Project work is delegated by role. The `Organizer` creates each sub-agent with `profileRole`, `complexity` (1-10), and `workingDirectory` set to the project's folder, and never names a profile or a model. The runtime resolves the role to a profile associated with that project (see [Project Agents](agents.md#project-agents)) and selects its model binding from the complexity (see [bindings.md](bindings.md#resolution-rules)). The sub-agent lifecycle is described in [agents.md](agents.md#sub-agents). The `Organizer` sees in its prompt only the roles of the profiles associated with the folder it was launched from (see [Selecting Organizer](#selecting-organizer)); each sub-agent's role is resolved against the profiles associated with that sub-agent's own folder.
+Project work is delegated by role. The `Organizer` creates each sub-agent with `profileRole`, `complexity` (1-10), and `workingDirectory` set to the project's folder, and never names a profile or a model. The runtime resolves the role to a profile associated with that project (see [Project Agents](agents.md#project-agents)) and selects its model binding from the complexity (see [bindings.md](bindings.md#resolution-rules)). The sub-agent lifecycle is described in [agents.md](agents.md#sub-agents). The `Organizer` sees in its prompt only the roles of the profiles associated with the folder it was launched from (see [Selecting Organizer](#selecting-organizer)); each sub-agent's role is resolved against the profiles associated with that sub-agent's own folder. The project folder to pass as `workingDirectory` comes from the `Projects in the launch folder` list read when the `Organizer` was selected, or from memory; it may be given as an absolute path inside the launch folder or relative to it, such as the folder name.
 
 To read a project's state, the `Organizer` delegates to the `reporter` or `reviewer` role and reports the result. Both are `readOnly` in the recommended profiles.
 

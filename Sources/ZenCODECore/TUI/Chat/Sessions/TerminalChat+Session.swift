@@ -109,8 +109,34 @@ extension TerminalChat {
             allowedToolNames: allowedToolNames,
             selectedAgent: selectedAgent,
             locksModelToSession: configuration.hostedAgentProfiles != nil,
-            responseLanguageSection: responseLanguageSystemPromptSection()
+            responseLanguageSection: responseLanguageSystemPromptSection(),
+            launchFolderProjects: launchFolderProjectsForSelectedAgent()
         )
+    }
+
+    /// The launch-folder listing for the selected agent, or `nil` when there is
+    /// no selected agent or its role does not delegate by role.
+    ///
+    /// The folder is read once per selection: the cache is cleared whenever
+    /// the agent is selected (again) or a session is loaded, so a prompt
+    /// recomposed on a later send, a `/tools` change, or an unchanged `/agents`
+    /// menu choice reuses the same listing and never rescans the disk.
+    func launchFolderProjectsForSelectedAgent() -> LaunchFolderProjects? {
+        guard let agent = selectedAgent, agent.role.delegatesByRole else {
+            return nil
+        }
+        let agentKey = ProjectAgentSelectionStore.selectionKey(for: agent)
+        if let cache = launchFolderProjectsCache, cache.agentKey == agentKey {
+            return cache.projects
+        }
+        let projects = LaunchFolderProjects.scan(
+            workingDirectory: configuration.workingDirectory
+        )
+        launchFolderProjectsCache = LaunchFolderProjectsCache(
+            agentKey: agentKey,
+            projects: projects
+        )
+        return projects
     }
 
     func systemPromptWithActivePlanProgress(_ baseSystemPrompt: String?) -> String? {

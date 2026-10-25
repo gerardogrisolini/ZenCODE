@@ -80,19 +80,26 @@ public enum AgentSessionComposition {
     ///     therefore omit the delegatable-agents section.
     ///   - responseLanguageSection: Supplied by the caller that owns the
     ///     session language; `nil` keeps the prompt builder default.
+    ///   - launchFolderProjects: Snapshot of the launch folder for an agent
+    ///     whose role delegates by role; `nil` scans it now (see
+    ///     `AgentStandaloneSystemPrompt.promptSections`). Callers that
+    ///     recompose the prompt per turn must pass the snapshot taken when the
+    ///     agent was selected.
     public static func standardSystemPrompt(
         cwd: String,
         allowedToolNames: Set<String>?,
         selectedAgent: AgentProfile?,
         locksModelToSession: Bool = false,
-        responseLanguageSection: String? = nil
+        responseLanguageSection: String? = nil,
+        launchFolderProjects: LaunchFolderProjects? = nil
     ) -> String {
         standardPromptSections(
             cwd: cwd,
             allowedToolNames: allowedToolNames,
             selectedAgent: selectedAgent,
             locksModelToSession: locksModelToSession,
-            responseLanguageSection: responseLanguageSection
+            responseLanguageSection: responseLanguageSection,
+            launchFolderProjects: launchFolderProjects
         )
         .combinedPrompt
     }
@@ -104,7 +111,8 @@ public enum AgentSessionComposition {
         allowedToolNames: Set<String>?,
         selectedAgent: AgentProfile?,
         locksModelToSession: Bool = false,
-        responseLanguageSection: String? = nil
+        responseLanguageSection: String? = nil,
+        launchFolderProjects: LaunchFolderProjects? = nil
     ) -> SystemPromptSections {
         let memoryToolEnabled = memoryToolEnabled(allowedToolNames)
         return AgentStandaloneSystemPrompt.promptSections(
@@ -116,6 +124,7 @@ public enum AgentSessionComposition {
                 memoryToolEnabled: memoryToolEnabled
             ),
             selectedAgentRole: selectedAgent?.role,
+            launchFolderProjects: launchFolderProjects,
             selectedSkillSection: SystemPromptBuilder.staticSkillSection,
             responseLanguageSection: responseLanguageSection
         )
@@ -126,19 +135,23 @@ public enum AgentSessionComposition {
     /// The caller-provided text stays authoritative: agent/workflow sections
     /// are appended as mutable user context, while working-directory, skill,
     /// and language instructions remain in the stable system prefix.
+    /// `launchFolderProjects` behaves as in `standardPromptSections`; without
+    /// a `cwd` there is no launch folder to list.
     public static func appProvidedSystemPrompt(
         _ providedSystemPrompt: String,
         cwd: String? = nil,
         allowedToolNames: Set<String>?,
         selectedAgent: AgentProfile?,
-        responseLanguageSection: String? = SystemPromptBuilder.responseLanguageSection()
+        responseLanguageSection: String? = SystemPromptBuilder.responseLanguageSection(),
+        launchFolderProjects: LaunchFolderProjects? = nil
     ) -> String {
         appProvidedPromptSections(
             providedSystemPrompt,
             cwd: cwd,
             allowedToolNames: allowedToolNames,
             selectedAgent: selectedAgent,
-            responseLanguageSection: responseLanguageSection
+            responseLanguageSection: responseLanguageSection,
+            launchFolderProjects: launchFolderProjects
         )
         .combinedPrompt
     }
@@ -152,7 +165,8 @@ public enum AgentSessionComposition {
         cwd: String? = nil,
         allowedToolNames: Set<String>?,
         selectedAgent: AgentProfile?,
-        responseLanguageSection: String? = SystemPromptBuilder.responseLanguageSection()
+        responseLanguageSection: String? = SystemPromptBuilder.responseLanguageSection(),
+        launchFolderProjects: LaunchFolderProjects? = nil
     ) -> SystemPromptSections {
         let memoryToolEnabled = memoryToolEnabled(allowedToolNames)
         let alreadyHasSkillSection = providedSystemPrompt.contains(
@@ -174,6 +188,7 @@ public enum AgentSessionComposition {
                     memoryToolEnabled: memoryToolEnabled
                 ),
                 selectedAgentRole: selectedAgent?.role,
+                launchFolderProjects: launchFolderProjects,
                 selectedSkillSection: SystemPromptBuilder.staticSkillSection
             )
             .dynamicContext

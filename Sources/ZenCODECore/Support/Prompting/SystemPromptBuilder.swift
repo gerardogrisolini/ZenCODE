@@ -431,6 +431,34 @@ public enum SystemPromptBuilder {
         """
     }
 
+    /// Lists the folders directly inside the launch folder for a coordinator
+    /// that delegates by role (see ``AgentProfileRole/delegatesByRole``), so it
+    /// can name the project folder of each delegated item. The snapshot is the
+    /// one read when the agent was selected: the text says so, because the list
+    /// does not follow later changes to the folder.
+    public static func launchFolderProjectsSection(
+        _ projects: LaunchFolderProjects
+    ) -> String {
+        let path = projects.workingDirectoryPath
+        guard !projects.folderNames.isEmpty else {
+            return """
+            Projects in the launch folder:
+            No folders were found directly inside \(path) when this agent was selected.
+            """
+        }
+        let folderLines = projects.folderNames
+            .map { "- \($0)" }
+            .joined(separator: "\n")
+        let omittedLine = projects.omittedCount > 0
+            ? "\n(\(projects.omittedCount) more folders not listed.)"
+            : ""
+        return """
+        Projects in the launch folder:
+        Folders directly inside \(path), read when this agent was selected (a folder created later appears after the agent is selected again). To work on one, pass `\(path)/<name>` (or just `<name>`) as `workingDirectory`:
+        \(folderLines)\(omittedLine)
+        """
+    }
+
     private static func delegationRoleSummary(for agent: AgentProfile) -> String {
         guard let instructions = agent.instructions?.nilIfBlank else {
             return "No role constraints declared."

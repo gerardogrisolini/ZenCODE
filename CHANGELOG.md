@@ -113,6 +113,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
   associated with the folder the Organizer is launched from are listed. Its task
   workflow policy also delegates by role, never naming a profile or model. Other
   coordinators are unchanged.
+- Organizer launch-folder projects: when an `organizer` agent is selected
+  (`--agent`, `/agents`, or an ACP or app session created with it), its session
+  context lists, as `Projects in the launch folder`, the first-level,
+  non-hidden folders of its working directory (at most 100, the rest counted;
+  symbolic links are not listed). The list is read once, when the agent is
+  selected, and does not change during the session; selecting the Organizer
+  again reads it anew. The recommended `Organizer` instructions take the
+  project folder from that list or from memory. Regenerate the recommended
+  profiles in setup to apply them. See
+  [Docs/organizer.md](Docs/organizer.md#selecting-organizer).
 
 ### Changed
 
