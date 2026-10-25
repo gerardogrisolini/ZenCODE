@@ -18,7 +18,7 @@ enum AgentProfileBindingReconciler {
     /// Removes only bindings that no longer resolve uniquely in `models`.
     ///
     /// The profile reconstruction preserves its identity, instructions, tools,
-    /// skills, and read-only policy. Passing the surviving bindings through
+    /// skills, read-only policy, and role. Passing the surviving bindings through
     /// `AgentProfile` also applies its stable default-binding invariant: a
     /// retained default stays selected; otherwise the first normalized binding
     /// becomes the default deterministically.
@@ -38,6 +38,7 @@ enum AgentProfileBindingReconciler {
                 instructions: agent.instructions,
                 symbolName: agent.symbolName,
                 readOnly: agent.readOnly,
+                role: agent.role,
                 tools: agent.tools,
                 skills: agent.skills,
                 modelBindings: resolvedBindings.bindings.map(\.routingBinding),

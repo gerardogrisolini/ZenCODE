@@ -34,6 +34,54 @@ Release tags follow the strict `vX.Y.Z` contract described in
   subcommands, schedule aliases and examples, the five numeric cron fields (no
   month or day names), `<n>`, and the `mailto` options. See
   [Docs/zen.md](Docs/zen.md#scheduled-prompts-crontab).
+- Project agents: `/agents` now opens a single multiple-selection menu. `Space`
+  or `X` associates the highlighted profile with the current project, `A`
+  selects every profile, `N` none, and `Enter` saves the ticks and makes the
+  highlighted profile the active agent (the cursor starts on the active agent,
+  so confirming without moving keeps it); `Esc` or `Q` cancels without saving
+  anything. The sub-agents tool sees only the profiles visible to the project:
+  the "Delegatable agent profiles" roster in the system prompt lists just
+  those, and `agent.create` rejects any other profile. The association is
+  stored per project path in
+  `~/.zencode/projects/<sha256 of the project path>/agents.json`, outside the
+  repository, and the file is written only when the ticks change. A project
+  without that file sees only the system profiles (the recommended profiles,
+  whose ID is their role), and the menu shows just those ticked; once saved,
+  the selection is literal, so an empty one leaves no profile delegatable and
+  profiles created later are not added automatically. Choosing the active
+  agent still lists every profile, and `/agents list`, `/agents <name>`, and
+  `/agents <number>` are unchanged. `/plan`, `/review`, and `/goal` delegate
+  only to visible profiles too: `/plan` and `/review` (TUI, ACP, and Telegram)
+  use the visible profiles with the `planner` or `reviewer` role and, when
+  there is none, always stop with
+  `ZenCODE: no agent profile with the reviewer role is available for this project. Tick one with /agents.`
+  (or the planner equivalent), with or without a saved selection and without
+  falling back to the recommended profiles. See
+  [Docs/agents.md](Docs/agents.md#project-agents).
+- Agent profile roles. **Breaking change:** every profile in `agents.json`
+  must now have a `role`, one of `developer`, `builder`, `minimal`, `planner`,
+  `reviewer`, `reporter`, `organizer`, or `promoter`, and the role alone
+  determines the kind of agent; the ID and the name carry no meaning and the
+  role is never deduced from them. Existing `agents.json` files without `role`
+  (or with any other value) are no longer valid: ZenCODE requires setup, names
+  the profile with the missing or wrong `role`, and `/setup` offers to rewrite
+  the file with the recommended profiles. There is no automatic migration. The
+  recommended profiles are now system profiles whose ID is their role
+  (`developer`, `planner`, …) instead of the former fixed UUIDs; custom
+  profiles keep a different ID. `developer` is the default agent (the system
+  Developer when present, otherwise the first developer profile), `/plan`
+  delegates to the planner profiles and forces their core tools read-only,
+  `/review` delegates to the reviewer profiles, and the builder role enables
+  `/feature` and the feature-management tools; the other roles have no
+  runtime effect beyond the profile's configuration. With several profiles in
+  the same role, the delegation prompt lists them all and the model may use
+  any of them. `/setup` asks for the role with a required **Role** choice among
+  the eight roles and adds the system Developer only when no profile has the
+  developer role. The delegatable roster shows `role: <role>` for every
+  profile, and the `/agents` menu describes every profile by its role.
+  Per-project selections and saved sessions that refer to the former UUIDs are
+  not migrated and behave like references to a deleted profile. See
+  [Docs/agents.md](Docs/agents.md#profile-roles).
 
 ### Changed
 
@@ -56,9 +104,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   comments on what it does as it works. The comments appear in the terminal,
   and only the final answer is read aloud. The instruction is sent with the
   request and is not saved in the session history.
-- The border and title of the Authorization card now use a dimmed peach color
-  instead of full orange, so the card looks lighter, like the prompt frame.
-  The `❯` marker before the command stays full orange.
+- The border and title of the Authorization card now use a dimmed light blue,
+  the color of the `[R]`, `[A]`, and `[C]` keys, instead of full orange, so the
+  card looks lighter, like the prompt frame. The `❯` marker before the command
+  stays full orange.
 
 ### Fixed
 

@@ -291,6 +291,7 @@ struct PersistedContractCompatibilityTests {
                 "name": "Reviewer",
                 "instructions": "Review changes only.",
                 "symbolName": "eye",
+                "role": "reviewer",
                 "tools": ["files", "git"],
                 "skills": [{
                   "id": "review-skill",
@@ -328,6 +329,7 @@ struct PersistedContractCompatibilityTests {
         #expect(settings.remoteAPIKeysByProviderID.count == 1)
         #expect(settings.localExecAllowedCommands == ["swift", "git"])
         #expect(profiles.agents.first?.skills.first?.canonicalName == "review")
+        #expect(profiles.agents.first?.role == .reviewer)
         #expect(profiles.agents.first?.thinkingSelection == .high)
         #expect(permissions.localExecAllowedCommands == ["swift test --filter Focused", "git status"])
 

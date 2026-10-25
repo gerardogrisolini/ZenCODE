@@ -55,10 +55,13 @@ struct AgentDelegationRoutingTests {
         )
     }
 
+    /// The system developer profile, so a project without a saved agent
+    /// selection may delegate to it.
     static func profile(bindings: [AgentModelBinding], defaultBindingID: String? = nil) -> AgentProfile {
         AgentProfile(
-            id: "developer-profile",
+            id: AgentProfileRole.developer.rawValue,
             name: "Developer",
+            role: .developer,
             tools: [],
             modelBindings: bindings,
             defaultModelBindingID: defaultBindingID
@@ -516,6 +519,7 @@ struct AgentDelegationRoutingTests {
             AgentProfile(
                 id: "first",
                 name: "Shared",
+                role: .developer,
                 tools: ["files"],
                 modelBindings: [
                     AgentModelBinding(id: "alpha", modelID: Self.alphaModelID, capability: 4)
@@ -524,6 +528,7 @@ struct AgentDelegationRoutingTests {
             AgentProfile(
                 id: "second",
                 name: "Shared",
+                role: .developer,
                 tools: ["shell"],
                 modelBindings: [
                     AgentModelBinding(id: "beta", modelID: Self.betaModelID, capability: 7)
@@ -531,8 +536,8 @@ struct AgentDelegationRoutingTests {
             ),
         ]
         let crossCollisionProfiles = [
-            AgentProfile(id: "Reviewer", name: "Developer"),
-            AgentProfile(id: "second", name: "Reviewer"),
+            AgentProfile(id: "Reviewer", name: "Developer", role: .developer),
+            AgentProfile(id: "second", name: "Reviewer", role: .reviewer),
         ]
 
         #expect(AgentProfileStore.ambiguousProfileReferences(in: duplicateNameProfiles) == ["shared"])

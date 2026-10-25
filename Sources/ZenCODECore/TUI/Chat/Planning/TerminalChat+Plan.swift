@@ -134,7 +134,13 @@ extension TerminalChat {
                 return .continueChat
             }
 
-            let plannerProfile = plannerProfileForDelegation()
+            let plannerProfiles = plannerProfilesForDelegation()
+            guard !plannerProfiles.isEmpty else {
+                await writeFailureMessage(
+                    AgentProfileStore.roleUnavailableForProjectMessage(.planner) + "\n"
+                )
+                return .continueChat
+            }
             await writeSubmittedPrompt(command)
             // A new goal abandons the previous collection and closes its author,
             // but the completed active plan remains until a fresh final plan is valid.
@@ -145,7 +151,7 @@ extension TerminalChat {
             return .runHiddenPrompt(
                 PlanningCommandKernel.planStartPrompt(
                     goal: goal,
-                    planner: plannerProfile
+                    planners: plannerProfiles
                 ),
                 purpose: .plan(originalGoal: goal)
             )
@@ -288,18 +294,26 @@ extension TerminalChat {
 
     /// Routes plain text received while the Planner is collecting decisions.
     /// Slash commands and mentions are handled by `submittedLineAction` before
-    /// this method is reached.
-    func handlePlanBrainstormingReply(_ reply: String) -> TerminalSubmittedLineAction? {
+    /// this method is reached. When no Planner is visible to the project any
+    /// longer, the reply is not recorded so it can be sent again after
+    /// `/agents`.
+    func handlePlanBrainstormingReply(_ reply: String) async -> TerminalSubmittedLineAction? {
         guard var brainstorming = planBrainstorming,
               brainstorming.recordReply(reply) else {
             return nil
         }
+        let planners = plannerProfilesForDelegation()
+        guard !planners.isEmpty else {
+            await writeFailureMessage(
+                AgentProfileStore.roleUnavailableForProjectMessage(.planner) + "\n"
+            )
+            return .continueChat
+        }
         planBrainstorming = brainstorming
-        let planner = plannerProfileForDelegation()
         return .runHiddenPrompt(
             PlanningCommandKernel.planContinuationPrompt(
                 state: brainstorming,
-                planner: planner
+                planners: planners
             ),
             purpose: .plan(originalGoal: brainstorming.goal)
         )
@@ -783,15 +797,15 @@ extension TerminalChat {
         }
     }
 
-    /// Resolves the Planner profile used to configure delegated sub-agents.
-    /// Prefers a user-configured "Planner" profile from agents.json and falls
-    /// back to the built-in default so the command works before any setup.
-    func plannerProfileForDelegation() -> AgentProfile {
-        AgentProfileStore.roleProfile(
-            id: AgentProfileStore.plannerAgentID,
-            name: AgentProfileStore.plannerAgentName,
-            in: (try? availableAgents()) ?? []
-        ) ?? AgentProfileStore.defaultProfiles()[0]
+    /// Resolves the Planner profiles `/plan` may delegate to: every profile
+    /// with the planner role visible to the project. An empty result means
+    /// the command must stop.
+    func plannerProfilesForDelegation() -> [AgentProfile] {
+        AgentProfileStore.roleDelegationCandidates(
+            .planner,
+            in: (try? availableAgents()) ?? [],
+            workspaceRootURL: configuration.workingDirectory
+        )
     }
 
     nonisolated static func plannerAuthoredPlanResponse(

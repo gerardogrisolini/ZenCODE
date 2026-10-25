@@ -208,8 +208,8 @@ extension TerminalChat {
         ),
         TerminalChatCommandDescriptor(
             command: "/agents",
-            summary: "switch agent",
-            help: "/agents selects an agent profile and resets the session."
+            summary: "switch agent, set project agents",
+            help: "/agents opens a menu of agent profiles. Enter selects the highlighted agent (the session resets when it differs from the current one); Space/X associates the ticked profiles with the current project, and those are the only profiles the sub-agents tool can delegate to. Esc/Q cancels without changes. /agents list shows the profiles, and /agents <name|number> switches agent directly."
         ),
         TerminalChatCommandDescriptor(
             command: "/tools",

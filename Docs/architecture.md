@@ -17,7 +17,7 @@ migration says otherwise:
 - optional feature IDs, executable product names, tool names, selection
   prefixes, source-relative paths,
   and the `--list-tools` / `--invoke` JSON envelopes;
-- settings, profiles, permissions, session snapshots,
+- settings, profiles, per-project agent selections, permissions, session snapshots,
   feature manifests, per-workspace memory graphs, and cache key formats;
 - the ZenCODE crontab block markers (`# >>> ZenCODE cron >>>` /
   `# <<< ZenCODE cron <<<`), the `PATH=/usr/local/bin:/usr/bin:/bin` line that
@@ -25,6 +25,20 @@ migration says otherwise:
   `# zencode-cron id=… created=…` entry marker, and the generated cron command
   layout decoded by `/cron list`, which runs a bare `zen`;
 - public installer entry points under `Scripts/install*.sh`.
+
+**Announced migration: agent profile format.** Every profile in `agents.json`
+now requires a `role` (`developer`, `builder`, `minimal`, `planner`,
+`reviewer`, `reporter`, `organizer`, or `promoter`), and `AgentProfile`
+decodes it strictly: a missing, non-string, or unknown value makes the whole
+manifest invalid (`AgentProfileStoreError.invalidFile`, with a message naming
+the profile and the valid roles), so setup is required and `/setup` offers to
+rewrite the file. The role is never deduced from the ID or the name and there
+is no automatic migration. The recommended (system) profiles now have their
+role as ID instead of the former fixed UUIDs; a profile is a system profile
+exactly when its ID equals its role (`AgentProfile.isSystemProfile`), and a
+project without a saved agent selection sees only those. References persisted
+with the former UUIDs (saved sessions, per-project agent selections) are not
+migrated: they resolve like references to a deleted profile.
 
 `Package.swift` remains the authoritative declaration of the SwiftPM graph,
 platform conditions, products, and build flags. Every local Swift target enables

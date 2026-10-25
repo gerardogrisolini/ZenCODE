@@ -171,7 +171,7 @@ struct SharedChatNamespaceAndBoundsTests {
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
             profileResolver: { _ in
-                AgentProfile(id: "dev", name: "Developer", tools: [])
+                AgentProfile(id: AgentProfileRole.developer.rawValue, name: "Developer", role: .developer, tools: [])
             }
         )
         _ = try await runtime.createAgents(
@@ -226,7 +226,7 @@ struct SharedChatNamespaceAndBoundsTests {
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
             profileResolver: { _ in
-                AgentProfile(id: "dev", name: "Developer", tools: [])
+                AgentProfile(id: AgentProfileRole.developer.rawValue, name: "Developer", role: .developer, tools: [])
             }
         )
         _ = try await runtime.createAgents(
@@ -276,7 +276,7 @@ struct SharedChatNamespaceAndBoundsTests {
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
             profileResolver: { _ in
-                AgentProfile(id: "dev", name: "Developer", tools: [])
+                AgentProfile(id: AgentProfileRole.developer.rawValue, name: "Developer", role: .developer, tools: [])
             }
         )
         _ = try await runtime.createAgents(

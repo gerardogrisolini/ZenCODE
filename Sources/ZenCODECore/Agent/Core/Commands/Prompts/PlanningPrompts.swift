@@ -34,6 +34,11 @@ extension PlanningCommandKernel {
         """
 
     static func planStartPrompt(goal: String, planner: AgentProfile) -> String {
+        planStartPrompt(goal: goal, planners: [planner])
+    }
+
+    /// With several Planner candidates the model may delegate to any of them.
+    static func planStartPrompt(goal: String, planners: [AgentProfile]) -> String {
         """
         You are only the coordinator for this planning pass. Stay on your current agent \
         profile, but do not author, draft, consolidate, rewrite, or improve the plan \
@@ -44,7 +49,7 @@ extension PlanningCommandKernel {
 
         Delegate and coordinate:
         - Create exactly one sub-agent with agent.create. Use name \
-        "\(planAuthorAgentName)", role "Planner", and profile "\(planner.id)".
+        "\(planAuthorAgentName)", role "Planner", and \(AgentProfileStore.delegationProfileClause(planners)).
         - Give that Planner the complete requested goal and every relevant constraint from the \
         conversation. Its runtime profile policy owns the brainstorming and plan-authoring protocol.
         - Wait for the Planner with agent.wait. It returns early when the Planner \
@@ -73,6 +78,14 @@ extension PlanningCommandKernel {
         state: PlanningCommandRuntimeState,
         planner: AgentProfile
     ) -> String {
+        planContinuationPrompt(state: state, planners: [planner])
+    }
+
+    static func planContinuationPrompt(
+        state: PlanningCommandRuntimeState,
+        planners: [AgentProfile]
+    ) -> String {
+        let profileClause = AgentProfileStore.delegationProfileClause(planners)
         let transcript = state.exchanges.enumerated().map { index, exchange in
             "Question block \(index + 1):\n\(exchange.plannerMessage)\n\nOperator reply \(index + 1):\n\(exchange.userReply)"
         }.joined(separator: "\n\n")
@@ -85,13 +98,13 @@ extension PlanningCommandKernel {
             Then wait for that same agent. \(plannerWaitInstruction) \
             Do not reinterpret, summarize, or answer the reply yourself. If and only if that agent no \
             longer exists, recreate exactly one agent named "\(planAuthorAgentName)" with role "Planner" and \
-            profile "\(planner.id)", give it the original goal, the complete transcript below, and the \
+            \(profileClause), give it the original goal, the complete transcript below, and the \
             coordinator note above, and wait for it the same way.
             """
         } else {
             routing = """
             Recreate exactly one agent named "\(planAuthorAgentName)" with role "Planner" and \
-            profile "\(planner.id)", give it the original goal, the complete transcript below, and this \
+            \(profileClause), give it the original goal, the complete transcript below, and this \
             coordinator note unchanged: \(plannerDependenciesFormatInstruction) Then wait for it. \
             \(plannerWaitInstruction) Do not reinterpret, summarize, or answer the operator replies yourself.
             """

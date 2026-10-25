@@ -236,7 +236,8 @@ extension AgentConfigurationTests {
             selectedAgent: AgentProfile(
                 id: "developer",
                 name: "Developer",
-                instructions: "Selected agent instructions written in English."
+                instructions: "Selected agent instructions written in English.",
+                role: .developer
             ),
             allowedToolNames: []
         )
@@ -316,6 +317,7 @@ extension AgentConfigurationTests {
         let agent = AgentProfile(
             id: UUID().uuidString,
             name: "Remote default",
+            role: .developer,
             tools: [],
             modelID: "remoteapi:provider:remote-community/server-model"
         )

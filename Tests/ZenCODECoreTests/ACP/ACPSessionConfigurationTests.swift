@@ -19,12 +19,14 @@ extension ACPCompatibilityTests {
             id: "agent-a",
             name: "Agent A",
             instructions: "Instructions for Agent A.",
+            role: .developer,
             tools: []
         )
         let agentB = AgentProfile(
             id: "agent-b",
             name: "Agent B",
             instructions: "Instructions for Agent B.",
+            role: .developer,
             tools: []
         )
         let backend = CapturingACPBackend()
@@ -116,7 +118,7 @@ extension ACPCompatibilityTests {
 
     @Test
     func acpPreloadPreservesSelectedProfileInDefaultRuntimeConfiguration() async throws {
-        let agent = AgentProfile(id: "preload-profile", name: "Preload Profile", tools: [])
+        let agent = AgentProfile(id: "preload-profile", name: "Preload Profile", role: .developer, tools: [])
         let runtimeConfigurations = Mutex<[AgentRuntimeConfiguration]>([])
         let backend = CapturingACPBackend()
         let bridge = try makeBridge(
@@ -213,7 +215,8 @@ extension ACPCompatibilityTests {
         let profile = AgentProfile(
             id: "read-only",
             name: "Read Only",
-            readOnly: true
+            readOnly: true,
+            role: .developer
         )
         let rawCompatibilityAlias = "agent.spawn"
         let bridge = try makeBridge(
@@ -255,12 +258,14 @@ extension ACPCompatibilityTests {
         let developer = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             tools: ["shell", "files"]
         )
         let reviewer = AgentProfile(
             id: "reviewer",
             name: "Reviewer",
             readOnly: true,
+            role: .reviewer,
             tools: ["shell", "files"]
         )
         let bridge = try makeBridge(
@@ -344,6 +349,7 @@ extension ACPCompatibilityTests {
         let agent = AgentProfile(
             id: "thinking-agent",
             name: "Thinking Agent",
+            role: .developer,
             tools: [],
             modelID: model.id,
             thinkingSelection: .high

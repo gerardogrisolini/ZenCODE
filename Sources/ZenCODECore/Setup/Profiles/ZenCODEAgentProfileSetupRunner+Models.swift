@@ -335,6 +335,7 @@ extension ZenCODEAgentProfileSetupRunner {
             instructions: agent.instructions,
             symbolName: agent.symbolName,
             readOnly: agent.readOnly,
+            role: agent.role,
             tools: agent.tools,
             skills: agent.skills,
             modelBindings: modelBindings,

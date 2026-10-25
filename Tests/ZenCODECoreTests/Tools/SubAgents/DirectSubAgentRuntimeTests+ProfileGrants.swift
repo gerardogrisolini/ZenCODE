@@ -36,8 +36,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func agentWithResolvedProfileWithoutCoordinatorIdentityUsesProfileGrant() async throws {
         let developer = AgentProfile(
-            id: "developer-profile",
+            id: AgentProfileRole.developer.rawValue,
             name: "Developer",
+            role: .developer,
             tools: ["local.readFile", "local.writeFile"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
@@ -66,8 +67,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func sameProfileInheritsEffectiveParentGrantAndKeepsOnlyChildIntrinsics() async throws {
         let developer = AgentProfile(
-            id: "developer-profile",
+            id: AgentProfileRole.developer.rawValue,
             name: "Developer",
+            role: .developer,
             tools: ["local.readFile", "local.writeFile"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
@@ -101,8 +103,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func sameProfilePreservesNilParentGrantAsUnrestricted() async throws {
         let developer = AgentProfile(
-            id: "developer-profile",
+            id: AgentProfileRole.developer.rawValue,
             name: "Developer",
+            role: .developer,
             tools: ["local.readFile", "local.writeFile"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
@@ -132,6 +135,7 @@ extension DirectSubAgentRuntimeTests {
         let profile = AgentProfile(
             id: "child-profile",
             name: "coordinator-profile",
+            role: .developer,
             tools: ["local.writeFile"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
@@ -142,14 +146,18 @@ extension DirectSubAgentRuntimeTests {
             parentProfileName: "Developer"
         )
 
-        _ = try await runtime.createAgents(
-            arguments: [
-                "name": .string("isolated-worker"),
-                "profile": .string(profile.name)
-            ],
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
-            parentAllowedToolNames: ["local.readFile"]
-        )
+        // A custom profile: the project must have it in its saved selection.
+        let workingDirectory = URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests")
+        _ = try await Self.withProjectSelection([profile], workingDirectory: workingDirectory) {
+            try await runtime.createAgents(
+                arguments: [
+                    "name": .string("isolated-worker"),
+                    "profile": .string(profile.name)
+                ],
+                workingDirectory: workingDirectory,
+                parentAllowedToolNames: ["local.readFile"]
+            )
+        }
 
         let session = try #require(await backend.createdSessions().first)
         #expect(session.allowedToolNames?.contains("local.writeFile") == true)
@@ -162,6 +170,7 @@ extension DirectSubAgentRuntimeTests {
         let profile = AgentProfile(
             id: "coordinator-profile",
             name: "child-profile",
+            role: .developer,
             tools: ["local.writeFile"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
@@ -172,14 +181,18 @@ extension DirectSubAgentRuntimeTests {
             parentProfileName: "coordinator-profile"
         )
 
-        _ = try await runtime.createAgents(
-            arguments: [
-                "name": .string("isolated-worker"),
-                "profile": .string(profile.id)
-            ],
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
-            parentAllowedToolNames: ["local.readFile"]
-        )
+        // A custom profile: the project must have it in its saved selection.
+        let workingDirectory = URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests")
+        _ = try await Self.withProjectSelection([profile], workingDirectory: workingDirectory) {
+            try await runtime.createAgents(
+                arguments: [
+                    "name": .string("isolated-worker"),
+                    "profile": .string(profile.id)
+                ],
+                workingDirectory: workingDirectory,
+                parentAllowedToolNames: ["local.readFile"]
+            )
+        }
 
         let session = try #require(await backend.createdSessions().first)
         #expect(session.allowedToolNames?.contains("local.writeFile") == true)
@@ -190,8 +203,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func profileNameIsFallbackWhenCoordinatorIDIsUnavailable() async throws {
         let developer = AgentProfile(
-            id: "developer-profile",
+            id: AgentProfileRole.developer.rawValue,
             name: "Developer",
+            role: .developer,
             tools: ["local.writeFile"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
@@ -218,10 +232,11 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func resolvedPlannerProfileIsComposedIntoCreatedBackendSystemPrompt() async throws {
         let planner = AgentProfile(
-            id: AgentProfileStore.plannerAgentID.uuidString,
+            id: AgentProfileRole.planner.rawValue,
             name: "Customized Planning Agent",
             instructions: "Preserve this authentic Planner customization.",
             readOnly: false,
+            role: .planner,
             tools: ["local.readFile", "local.writeFile", "external.inspect"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
@@ -257,8 +272,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func agentCreateRejectsToolOverrides() async throws {
         let developer = AgentProfile(
-            id: "developer-profile",
+            id: AgentProfileRole.developer.rawValue,
             name: "Developer",
+            role: .developer,
             tools: ["local.readFile", "local.writeFile"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
@@ -288,8 +304,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func emptyResolvedProfileGrantDoesNotFallBackToParentTools() async throws {
         let minimal = AgentProfile(
-            id: "minimal-profile",
+            id: AgentProfileRole.minimal.rawValue,
             name: "Minimal",
+            role: .minimal,
             tools: []
         )
         let backend = CapturingSubAgentRuntimeBackend()
@@ -319,8 +336,9 @@ extension DirectSubAgentRuntimeTests {
     @Test(arguments: [false, true])
     func taskBoundAgentKeepsIntrinsicReportingToolsAlongsideProfileGrant(isWorkflow: Bool) async throws {
         let reporter = AgentProfile(
-            id: "reporter-profile",
+            id: AgentProfileRole.reporter.rawValue,
             name: "Reporter",
+            role: .reporter,
             tools: ["local.readFile"]
         )
         let orchestrator = SessionTaskOrchestrator()
@@ -369,9 +387,10 @@ extension DirectSubAgentRuntimeTests {
     func readOnlyTaskBoundAgentGrantRetainsTaskUpdateAndExcludesOtherMutableCoreTools() async throws {
         let rawCompatibilityAlias = "agent.spawn"
         let reviewer = AgentProfile(
-            id: "reviewer-profile",
+            id: AgentProfileRole.reviewer.rawValue,
             name: "Reviewer",
             readOnly: true,
+            role: .reviewer,
             tools: ["files", "memory", "sub-agents", rawCompatibilityAlias]
         )
         let orchestrator = SessionTaskOrchestrator()
@@ -444,7 +463,7 @@ extension DirectSubAgentRuntimeTests {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
-            profileResolver: { _ in AgentProfile(id: "worker", name: "Worker", tools: []) }
+            profileResolver: { _ in AgentProfile(id: AgentProfileRole.developer.rawValue, name: "Worker", role: .developer, tools: []) }
         )
         await runtime.installPromptSkillToolProvider(skillProvider)
 
@@ -481,7 +500,7 @@ extension DirectSubAgentRuntimeTests {
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in backend },
-            profileResolver: { _ in AgentProfile(id: "worker", name: "Worker", tools: []) }
+            profileResolver: { _ in AgentProfile(id: AgentProfileRole.developer.rawValue, name: "Worker", role: .developer, tools: []) }
         )
         // No promptSkillToolProvider installed.
 

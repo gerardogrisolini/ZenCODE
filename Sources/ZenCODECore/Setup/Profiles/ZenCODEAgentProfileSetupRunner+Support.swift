@@ -37,22 +37,27 @@ extension ZenCODEAgentProfileSetupRunner {
         return result
     }
 
+    /// Adds the system developer profile only when no profile has the
+    /// developer role.
     static func ensureDeveloperAgent(in agents: [AgentProfile]) -> [AgentProfile] {
-        guard !containsAgent(named: AgentProfileStore.developerAgentName, in: agents),
-              let developer = AgentProfileStore.defaultProfiles().first(where: isRequiredDeveloperAgent)
+        guard !containsDeveloperAgent(in: agents),
+              let developer = AgentProfileStore.defaultProfiles().first(where: {
+                  $0.role == .developer && $0.isSystemProfile
+              })
         else {
             return agents
         }
         return [developer] + agents
     }
 
-    static func isRequiredDeveloperAgent(_ agent: AgentProfile) -> Bool {
-        agentSetupNameKey(agent.name) == agentSetupNameKey(AgentProfileStore.developerAgentName)
+    /// Whether `agent` is the default developer of `agents` (see
+    /// ``AgentProfileStore/developerProfile(in:)``), which cannot be deleted.
+    static func isRequiredDeveloperAgent(_ agent: AgentProfile, in agents: [AgentProfile]) -> Bool {
+        (try? AgentProfileStore.developerProfile(in: agents)) == agent
     }
 
-    static func containsAgent(named name: String, in agents: [AgentProfile]) -> Bool {
-        let expectedKey = agentSetupNameKey(name)
-        return agents.contains { agentSetupNameKey($0.name) == expectedKey }
+    static func containsDeveloperAgent(in agents: [AgentProfile]) -> Bool {
+        agents.contains { $0.role == .developer }
     }
 
     static func agentSetupNameKey(_ name: String) -> String {
@@ -96,6 +101,29 @@ extension ZenCODEAgentProfileSetupRunner {
         return value
     }
 
+    /// Required single choice of the profile's role among every role. The
+    /// highlighted default is only a preselection the operator confirms; as
+    /// in ``promptYesNo``, a closed or cancelled input is an error.
+    static func promptRole(defaultValue: AgentProfileRole) throws -> AgentProfileRole {
+        guard let value = TerminalCheckboxMenu.selectOne(
+            title: "Role",
+            items: roleSelectionItems(),
+            selected: defaultValue
+        ) else {
+            throw ZenCODEAgentProfileSetupError.inputClosed
+        }
+        return value
+    }
+
+    static func roleSelectionItems() -> [TerminalCheckboxMenuItem<AgentProfileRole>] {
+        AgentProfileRole.allCases.map { role in
+            TerminalCheckboxMenuItem(
+                value: role,
+                title: role.title,
+                detail: role.summary
+            )
+        }
+    }
 
     static func skillList(_ skills: [AgentProfileSkill]) -> String {
         skills.map(\.id).filter { !$0.isEmpty }.joined(separator: ", ")

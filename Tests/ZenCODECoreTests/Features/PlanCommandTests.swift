@@ -620,7 +620,8 @@ struct PlanCommandTests {
         )
         terminal.selectedAgent = AgentProfile(
             id: "architect-agent",
-            name: "Architect"
+            name: "Architect",
+            role: .developer
         )
         terminal.activeSessionTranscript = [
             AgentRuntimeMessage(role: .user, content: "Design the migration"),
@@ -828,7 +829,8 @@ struct PlanCommandTests {
                 rootSessionID: "planning-session",
                 name: PlanningCommandKernel.planAuthorAgentName,
                 role: AgentProfileStore.plannerAgentName,
-                profileID: AgentProfileStore.plannerAgentID.uuidString,
+                profileID: AgentProfileRole.planner.rawValue,
+                profileRole: .planner,
                 status: status,
                 pending: false,
                 latestOutput: output,
@@ -905,7 +907,8 @@ struct PlanCommandTests {
                 rootSessionID: "planning-session",
                 name: PlanningCommandKernel.planAuthorAgentName,
                 role: AgentProfileStore.plannerAgentName,
-                profileID: AgentProfileStore.plannerAgentID.uuidString,
+                profileID: AgentProfileRole.planner.rawValue,
+                profileRole: .planner,
                 status: .idle,
                 pending: false,
                 latestOutput: output,
@@ -1012,7 +1015,8 @@ struct PlanCommandTests {
                 rootSessionID: "planning-session",
                 name: PlanningCommandKernel.planAuthorAgentName,
                 role: AgentProfileStore.plannerAgentName,
-                profileID: AgentProfileStore.plannerAgentID.uuidString,
+                profileID: AgentProfileRole.planner.rawValue,
+                profileRole: .planner,
                 status: .idle,
                 pending: false,
                 latestOutput: output,
@@ -1128,7 +1132,7 @@ struct PlanCommandTests {
     @Test
     func plannerBuiltinFallbackResolvesPlannerProfile() throws {
         let planner = try #require(AgentProfileStore.defaultProfiles().first {
-            $0.id.caseInsensitiveCompare(AgentProfileStore.plannerAgentID.uuidString) == .orderedSame
+            $0.id.caseInsensitiveCompare(AgentProfileRole.planner.rawValue) == .orderedSame
         })
 
         #expect(planner.name == AgentProfileStore.plannerAgentName)
@@ -1138,7 +1142,7 @@ struct PlanCommandTests {
     @Test
     func plannerRuntimePolicyRequiresBrainstormingForEveryNewDiscussion() throws {
         let planner = try #require(AgentProfileStore.defaultProfiles().first {
-            $0.id.caseInsensitiveCompare(AgentProfileStore.plannerAgentID.uuidString) == .orderedSame
+            $0.id.caseInsensitiveCompare(AgentProfileRole.planner.rawValue) == .orderedSame
         })
         let policy = try #require(planner.promptSection)
 
@@ -1686,8 +1690,9 @@ struct PlanCommandTests {
     @Test
     func planDelegationPromptMakesOnePlannerTheSolePlanAuthor() {
         let planner = AgentProfile(
-            id: AgentProfileStore.plannerAgentID.uuidString,
+            id: AgentProfileRole.planner.rawValue,
             name: AgentProfileStore.plannerAgentName,
+            role: .planner,
             tools: []
         )
 
@@ -1728,8 +1733,9 @@ struct PlanCommandTests {
     @Test
     func planDelegationPromptKeepsCoordinationAndValidationInTheCommand() {
         let planner = AgentProfile(
-            id: AgentProfileStore.plannerAgentID.uuidString,
+            id: AgentProfileRole.planner.rawValue,
             name: AgentProfileStore.plannerAgentName,
+            role: .planner,
             tools: []
         )
 
@@ -1756,8 +1762,9 @@ struct PlanCommandTests {
     @Test
     func planContinuationPromptTellsTheCoordinatorToKeepWaitingForThePlanner() {
         let planner = AgentProfile(
-            id: AgentProfileStore.plannerAgentID.uuidString,
+            id: AgentProfileRole.planner.rawValue,
             name: AgentProfileStore.plannerAgentName,
+            role: .planner,
             tools: []
         )
         var state = PlanningCommandRuntimeState(goal: "harden plan routing")
@@ -1796,8 +1803,9 @@ struct PlanCommandTests {
     @Test
     func planContinuationPromptRegistersFinalPlanWithTheValidatorContract() {
         let planner = AgentProfile(
-            id: AgentProfileStore.plannerAgentID.uuidString,
+            id: AgentProfileRole.planner.rawValue,
             name: AgentProfileStore.plannerAgentName,
+            role: .planner,
             tools: []
         )
         var state = PlanningCommandRuntimeState(goal: "harden plan registration")
@@ -1971,6 +1979,7 @@ struct PlanCommandTests {
                     name: TerminalChat.planAuthorAgentName,
                     role: "Planner",
                     profileName: "Developer",
+                    profileRole: .developer,
                     latestOutput: "Impersonated plan"
                 )
             ]
@@ -2008,6 +2017,7 @@ struct PlanCommandTests {
             name: TerminalChat.planAuthorAgentName,
             role: "Planner",
             profileName: AgentProfileStore.plannerAgentName,
+            profileRole: .planner,
             status: .idle,
             pending: false,
             modelID: "planner-model",
@@ -2341,6 +2351,7 @@ struct PlanCommandTests {
         pending: Bool = false,
         modelID: String? = nil,
         profileName: String? = AgentProfileStore.plannerAgentName,
+        profileRole: AgentProfileRole? = .planner,
         latestOutput: String?,
         updatedAt: Date = Date(timeIntervalSince1970: 100)
     ) -> DirectSubAgentRuntime.AgentSnapshot {
@@ -2349,6 +2360,7 @@ struct PlanCommandTests {
             name: name,
             role: role,
             profileName: profileName,
+            profileRole: profileRole,
             status: status,
             pending: pending,
             modelID: modelID,

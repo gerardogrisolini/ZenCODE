@@ -85,12 +85,19 @@ remain available.
 
 ## Profile Tools
 
-`/plan` selects the `Planner` profile explicitly. Selecting `Planner` directly
-uses the same runtime brainstorming and plan-authoring policy. The delegated
+`/plan` delegates to a profile with the `planner` role, whatever its ID or
+name: the profiles with that role that are visible to the project (the saved
+`/agents` selection, or the system profiles without one, such as the
+recommended `Planner` with ID `planner`; see
+[agents.md](agents.md#profile-roles)). With several candidates the model may use
+any of them; with none, `/plan` stops with
+`ZenCODE: no agent profile with the planner role is available for this project. Tick one with /agents.`
+Selecting a planner profile directly uses the same runtime brainstorming and
+plan-authoring policy. The delegated
 Planner receives exactly the tools configured on that profile, plus runtime-intrinsic tools;
-`agent.create` does not construct a separate tool list. The built-in profile has
-`readOnly: true`; Planner identity also enforces that core read-only policy for
-older manifests where the flag is absent or false. The filter runs after
+`agent.create` does not construct a separate tool list. The recommended profile has
+`readOnly: true`; the planner role also enforces that core read-only policy for
+any planner profile where the flag is absent or false. The filter runs after
 `/tools`, app, ACP, or task-bound runtime grants are resolved, removes mutable
 catalog-owned core tools, and preserves external or custom non-core grants. Optional
 feature, MCP, and other external grants remain outside that classification.
@@ -98,7 +105,7 @@ feature, MCP, and other external grants remain outside that classification.
 ## How Delegation Works
 
 1. The current agent stays as coordinator only — it cannot draft, consolidate, or rewrite the plan.
-2. One sub-agent named `plan-author` is created with profile `Planner`.
+2. One sub-agent named `plan-author` is created with a profile that has the `planner` role; the Planner output is accepted only from a sub-agent whose profile has that role.
 3. The Planner receives the complete goal and either asks its single question block or writes the final plan itself. Text it streams before its `Planner questions`, `Specifiche concordate`, or `Implementation plan` heading is progress commentary and is discarded; only the block from that heading onward is kept, and the heading and block rules are unchanged.
 4. Only a final answer copies the Planner's numbered points into a `todo.write` bootstrap. The shared kernel validates those in-memory todo items as a DAG and records them in the active, unapproved plan.
 5. If the output is incomplete, the coordinator asks the same Planner to revise — it never fills gaps itself. Follow-up turns accept only a fresh output revision from that Planner; recreation is allowed only when the previous instance is gone.

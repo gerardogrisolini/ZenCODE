@@ -40,6 +40,7 @@ extension AgentProfileBindingReconcilerTests {
             let profile = AgentProfile(
                 id: "developer",
                 name: "Developer",
+                role: .developer,
                 modelBindings: [
                     AgentModelBinding(id: "bound", modelID: "missing-model", capability: 5)
                 ]
@@ -110,8 +111,8 @@ extension AgentProfileBindingReconcilerTests {
     func persistedAmbiguousProfileReferencesAreRejected() throws {
         try Self.withLiveCatalogTemporarySupportDirectory { directory in
             let profiles = [
-                AgentProfile(id: "first", name: "Shared"),
-                AgentProfile(id: "second", name: "Shared"),
+                AgentProfile(id: "first", name: "Shared", role: .developer),
+                AgentProfile(id: "second", name: "Shared", role: .developer),
             ]
             #expect(throws: AgentProfileStoreError.self) {
                 try AgentProfileStore.save(profiles)
@@ -130,7 +131,7 @@ extension AgentProfileBindingReconcilerTests {
     func legacyDefaultProfileResolverStillUsesPersistedProfiles() throws {
         try Self.withLiveCatalogTemporarySupportDirectory { _ in
             try AgentProfileStore.save([
-                AgentProfile(id: "persisted", name: "Persisted")
+                AgentProfile(id: "persisted", name: "Persisted", role: .developer)
             ])
             let payload = DirectSubAgentRuntime.RequestedAgentPayload(
                 name: "child",

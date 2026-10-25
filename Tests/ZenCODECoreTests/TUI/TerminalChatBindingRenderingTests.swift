@@ -75,6 +75,7 @@ struct TerminalChatBindingRenderingTests {
         let agent = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             modelBindings: [
                 AgentModelBinding(id: "remote", modelID: "REMOTEAPI:d3eea8e9-eccf-499e-9697-298ede7af8d5:vendor:model:", modelProvider: "Remote"),
                 AgentModelBinding(id: "scoped", modelID: "provider:vendor:last", modelProvider: "Provider"),
@@ -98,6 +99,7 @@ struct TerminalChatBindingRenderingTests {
         let developer = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             modelBindings: [
                 AgentModelBinding(
                     id: "fast",
@@ -115,7 +117,7 @@ struct TerminalChatBindingRenderingTests {
             ],
             defaultModelBindingID: "deep"
         )
-        let minimal = AgentProfile(id: "minimal", name: "Minimal")
+        let minimal = AgentProfile(id: "minimal", name: "Minimal", role: .minimal)
 
         let rendered = TerminalChat.renderAgentModelBindings(
             agents: [developer, minimal],
@@ -150,6 +152,7 @@ struct TerminalChatBindingRenderingTests {
         let developer = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             modelBindings: [
                 AgentModelBinding(
                     id: "remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5:glm-5.2",
@@ -186,10 +189,11 @@ struct TerminalChatBindingRenderingTests {
     /// horizontal separator must still be drawn between the two groups.
     @Test
     func bindingRenderingDrawsSeparatorAfterBindinglessProfile() {
-        let builder = AgentProfile(id: "builder", name: "Builder")
+        let builder = AgentProfile(id: "builder", name: "Builder", role: .builder)
         let developer = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             modelBindings: [
                 AgentModelBinding(
                     id: "fast",

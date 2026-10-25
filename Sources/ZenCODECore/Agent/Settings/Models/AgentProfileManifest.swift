@@ -87,10 +87,21 @@ public struct AgentProfile: Codable, Hashable, Sendable {
     /// Missing values in persisted manifests decode as `false` for backwards
     /// compatibility with profiles saved before this setting existed.
     public let readOnly: Bool
+    /// The profile's role: the only property that determines which kind of
+    /// agent it is. Required in `agents.json`; a missing or unknown value makes
+    /// the manifest invalid.
+    public let role: AgentProfileRole
     public let tools: [String]
     public let skills: [AgentProfileSkill]
     public let modelBindings: [AgentModelBinding]
     public let defaultModelBindingID: String?
+
+    /// Whether this is the system profile of its role: its ID is the role
+    /// itself. Custom profiles have any other ID.
+    public var isSystemProfile: Bool {
+        AgentProfileStore.profileReferenceKey(id)
+            == AgentProfileStore.profileReferenceKey(role.rawValue)
+    }
 
     /// The binding used by default for this profile.
     ///
@@ -144,6 +155,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         instructions: String? = nil,
         symbolName: String? = nil,
         readOnly: Bool = false,
+        role: AgentProfileRole,
         tools: [String] = [],
         skills: [AgentProfileSkill] = [],
         modelID: String? = nil,
@@ -159,6 +171,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         self.instructions = instructions?.nilIfBlank
         self.symbolName = symbolName?.nilIfBlank
         self.readOnly = readOnly
+        self.role = role
         self.tools = tools
         self.skills = skills
 
@@ -180,6 +193,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         self.instructions = try container.decodeIfPresent(String.self, forKey: .instructions)?.nilIfBlank
         self.symbolName = try container.decodeIfPresent(String.self, forKey: .symbolName)?.nilIfBlank
         self.readOnly = try container.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
+        self.role = try Self.decodeRole(from: container, profileName: name)
         self.tools = try container.decodeIfPresent([String].self, forKey: .tools) ?? []
         self.skills = try container.decodeIfPresent([AgentProfileSkill].self, forKey: .skills) ?? []
 
@@ -205,6 +219,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         try container.encodeIfPresent(instructions, forKey: .instructions)
         try container.encodeIfPresent(symbolName, forKey: .symbolName)
         try container.encode(readOnly, forKey: .readOnly)
+        try container.encode(role, forKey: .role)
         try container.encode(tools, forKey: .tools)
         try container.encode(skills, forKey: .skills)
         if !modelBindings.isEmpty {
@@ -219,6 +234,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         case instructions
         case symbolName
         case readOnly
+        case role
         case tools
         case skills
         case modelID
@@ -228,6 +244,27 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         case modelBindings
         case defaultModelBindingID
         case defaultModelID
+    }
+
+    /// Strict decoding of the required role: a missing, non-string, or unknown
+    /// value fails with an error that names the profile and the valid roles.
+    private static func decodeRole(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        profileName: String
+    ) throws -> AgentProfileRole {
+        guard container.contains(.role) else {
+            throw AgentProfileRoleDecodingError.missing(profile: profileName)
+        }
+        let rawValue: String
+        do {
+            rawValue = try container.decode(String.self, forKey: .role)
+        } catch {
+            throw AgentProfileRoleDecodingError.invalid(profile: profileName, value: nil)
+        }
+        guard let role = AgentProfileRole(rawValue: rawValue) else {
+            throw AgentProfileRoleDecodingError.invalid(profile: profileName, value: rawValue)
+        }
+        return role
     }
 
     private static func resolvedBindings(
@@ -402,16 +439,10 @@ public struct AgentProfile: Codable, Hashable, Sendable {
 }
 
 public enum AgentProfileStore {
+    // Display names of the system profiles. They carry no meaning: a
+    // profile's kind is its `role`.
     public static let developerAgentName = "Developer"
-    public static let developerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000012")!
     public static let reporterAgentName = "Reporter"
-    public static let reporterAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000013")!
-    public static let builderAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000007")!
-    public static let minimalAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000008")!
-    public static let reviewerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
-    public static let plannerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000011")!
-    public static let organizerAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000014")!
-    public static let promoterAgentID: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000015")!
     public static let builderAgentName = "Builder"
     public static let reviewerAgentName = "Reviewer"
     public static let plannerAgentName = "Planner"
@@ -488,19 +519,6 @@ public enum AgentProfileStore {
             profileReferenceKey($0.id) == key || profileReferenceKey($0.name) == key
         }
         return matches.count == 1 ? matches[0] : nil
-    }
-
-    static func roleProfile(
-        id: UUID,
-        name: String,
-        in profiles: [AgentProfile]
-    ) -> AgentProfile? {
-        profiles.first {
-            $0.id.caseInsensitiveCompare(id.uuidString) == .orderedSame
-                || $0.name.caseInsensitiveCompare(name) == .orderedSame
-        } ?? defaultProfiles().first {
-            $0.id.caseInsensitiveCompare(id.uuidString) == .orderedSame
-        }
     }
 
     public static func ambiguousProfileReferences(
@@ -632,17 +650,15 @@ public enum AgentProfileStore {
     }
 
     public static func isBuilderAgent(_ agent: AgentProfile?) -> Bool {
-        isRole(agent, id: builderAgentID, name: builderAgentName)
+        agent?.role == .builder
     }
 
     public static func isPlannerAgent(_ agent: AgentProfile?) -> Bool {
-        isRole(agent, id: plannerAgentID, name: plannerAgentName)
+        agent?.role == .planner
     }
 
-    private static func isRole(_ agent: AgentProfile?, id: UUID, name: String) -> Bool {
-        guard let agent else { return false }
-        return agent.id.selectionKey == id.uuidString.selectionKey
-            || agent.name.selectionKey == name.selectionKey
+    public static func isReviewerAgent(_ agent: AgentProfile?) -> Bool {
+        agent?.role == .reviewer
     }
 
     public static func normalizedAgentsForSave(_ agents: [AgentProfile]) -> [AgentProfile] {
@@ -656,6 +672,7 @@ public enum AgentProfileStore {
             instructions: agent.instructions,
             symbolName: agent.symbolName,
             readOnly: agent.readOnly,
+            role: agent.role,
             tools: normalizedToolReferencesForSave(agent.tools),
             skills: agent.skills,
             modelBindings: agent.modelBindings,
@@ -663,8 +680,11 @@ public enum AgentProfileStore {
         )
     }
 
+    /// The default agent: the system developer profile when present,
+    /// otherwise the first profile with the developer role in manifest order.
     public static func developerProfile(in agents: [AgentProfile]) throws -> AgentProfile {
-        guard let agent = agent(matching: developerAgentName, in: agents) else {
+        let developers = roleProfiles(.developer, in: agents)
+        guard let agent = developers.first(where: \.isSystemProfile) ?? developers.first else {
             throw AgentProfileStoreError.developerAgentMissing(agentsManifestURL())
         }
         return agent

@@ -203,6 +203,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
             AgentProfile(
                 id: "11111111-1111-1111-1111-111111111111",
                 name: "Custom",
+                role: .reporter,
                 tools: AgentProfileStore.developerToolNames
             )
         ]
@@ -210,11 +211,26 @@ struct ZenCODEAgentProfileSetupRunnerTests {
         let prepared = ZenCODEAgentProfileSetupRunner.preparedAgentsForSave(existingAgents)
         let names = Set(prepared.map(\.name))
         let developer = try #require(
-            prepared.first { $0.name == AgentProfileStore.developerAgentName }
+            prepared.first { $0.role == .developer }
         )
 
         #expect(names == ["Developer", "Custom"])
+        #expect(developer.id == AgentProfileRole.developer.rawValue)
         #expect(developer.tools == AgentProfileStore.developerToolNames)
+    }
+
+    @Test
+    func setupPreparationKeepsACustomDeveloperWithoutAddingTheSystemOne() {
+        let custom = AgentProfile(
+            id: "11111111-1111-1111-1111-111111111111",
+            name: "Brutta merda",
+            role: .developer,
+            tools: ["files"]
+        )
+
+        let prepared = ZenCODEAgentProfileSetupRunner.preparedAgentsForSave([custom])
+
+        #expect(prepared == [custom])
     }
 
     @Test
@@ -228,13 +244,15 @@ struct ZenCODEAgentProfileSetupRunnerTests {
     @Test
     func setupAgentDeletionItemsUseTheStandardMultiSelectionLayout() {
         let developer = AgentProfile(
-            id: AgentProfileStore.developerAgentID.uuidString,
+            id: AgentProfileRole.developer.rawValue,
             name: AgentProfileStore.developerAgentName,
+            role: .developer,
             tools: AgentProfileStore.developerToolNames
         )
         let custom = AgentProfile(
             id: "11111111-1111-1111-1111-111111111111",
             name: "Custom",
+            role: .developer,
             tools: AgentProfileStore.developerToolNames
         )
 
@@ -252,6 +270,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
             id: "developer",
             name: "Developer",
             readOnly: true,
+            role: .developer,
             tools: ["shell"],
             modelBindings: [
                 AgentModelBinding(id: "fast", modelID: "fast-model", capability: 4),

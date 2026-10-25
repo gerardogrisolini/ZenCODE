@@ -219,7 +219,7 @@ extension LocalExecPermissionAuthorizer {
             + rest
     }
 
-    /// Builds the dimmed-peach-bordered card at the same full row width as the prompt
+    /// Builds the dimmed-blue-bordered card at the same full row width as the prompt
     /// panel, regardless of content length, then explicitly reflows its content.
     /// The primary-screen compositor disables autowrap while painting dialog
     /// rows, just as it does for the prompt and docked Chat surfaces.

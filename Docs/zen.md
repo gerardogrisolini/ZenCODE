@@ -241,21 +241,64 @@ to open the native system log viewer (Console.app on macOS). See
 
 Agent profiles live in `~/.zencode/agents.json` and are managed in setup. The
 recommended profiles are `Developer`, `Builder`, `Minimal`, `Planner`,
-`Reviewer`, and `Reporter`. Each defines tools, an optional enforced `readOnly`
-core-tool policy, skills, instructions, and model bindings.
+`Reviewer`, and `Reporter`. Each defines a required `role` (`developer`,
+`builder`, `minimal`, `planner`, `reviewer`, `reporter`, `organizer`, or
+`promoter`), tools, an optional enforced `readOnly` core-tool policy, skills,
+instructions, and model bindings. The role alone determines the kind of agent:
+it decides the default agent and which profiles `/plan`, `/review`, and
+`/feature` use, while the ID and the name carry no meaning. The recommended
+profiles are the system profiles and have their role as ID (`developer`,
+`planner`, …). An `agents.json` with a profile without `role` is invalid and
+`/setup` offers to rewrite it. See [agents.md](agents.md#profile-roles).
 
 Switch profiles in the TUI without restarting:
 
 ```text
-/agents                 # picker
+/agents                 # menu: active agent and project profiles
 /agents Builder         # by name
 /agents 2               # by number
 ```
 
-Switching resets the conversation so the new system prompt and tools apply
-cleanly. If the selected profile has bindings, its default is used when no model
-has been selected explicitly; `/models` always presents every configured model
-and a manual selection overrides that default for the active session.
+The `/agents` menu is a single multiple-selection list with `[x]` marks. The
+active agent carries a ` *` and the cursor starts on it:
+
+```text
+> [x] Developer * - General software development; the default agent
+  [x] Reviewer - /review delegates to it
+  [ ] Pippo - /review delegates to it
+```
+
+- `Space` or `X` ticks or unticks the highlighted profile for the current
+  project, `A` ticks all and `N` none.
+- `Enter` saves the ticks and makes the highlighted profile the active agent.
+  Confirming without moving the cursor keeps the current agent.
+- `Esc` or `Q` cancels: nothing is saved and nothing changes.
+
+The ticked profiles are the ones associated with the project, and they are the
+only profiles the `sub-agents` tool can delegate to: the roster in the system
+prompt lists just those and `agent.create` rejects any other profile. The
+association is stored outside the repository in
+`~/.zencode/projects/<sha256 of the project path>/agents.json`, keyed like the
+workspace memory by the path of the working directory. A project with no saved
+file sees only the system profiles (the recommended profiles, whose ID is their
+role): only those are delegatable and the menu shows just those ticked; the
+ticks apply from the first save. A saved selection is literal: an empty one
+leaves no profile delegatable (the prompt then tells the model not to call
+`agent.create`), and profiles created later are not added to it automatically.
+Picking the active agent always offers every profile, regardless of the project
+association. `/plan`, `/review`, and `/goal` delegate through the same tool:
+`/plan` and `/review` use the profiles with the `planner` or `reviewer` role
+that are visible to the project, letting the model choose when there are
+several. When none is visible they always stop with an error, with or without a
+saved selection (tick one with `/agents`). See
+[agents.md](agents.md#project-agents).
+
+Choosing a different agent resets the conversation so the new system prompt and
+tools apply cleanly. If the selected profile has bindings, its default is used
+when no model has been selected explicitly; `/models` always presents every
+configured model and a manual selection overrides that default for the active
+session. Changing only the project association keeps the conversation and
+refreshes the roster in the system prompt in place.
 
 Use `/setup` to inspect and configure the model bindings of every profile — see
 [bindings.md](bindings.md) for how bindings, capability, and task complexity
@@ -294,7 +337,7 @@ Commands start with `/`:
 - `/setup` — save the current session, open setup, rebuild the runtime from the updated configuration, and restore the conversation.
 - `/models` — show every configured model and choose the model for the current session.
 - `/think` — open a menu to select the thinking level of the current model.
-- `/agents [list|<name>|<number>]` — switch agent profile.
+- `/agents [list|<name>|<number>]` — open the agent menu: `Enter` switches the active agent, `Space`/`X` associates profiles with the current project (the only ones the sub-agents tool can delegate to); `list`, `<name>`, and `<number>` select directly. See [Agent Profiles](#agent-profiles).
 - `/tools [all|none|tool-name|package-name|number]` — select exposed tool groups; `/tools logs` opens the platform system log viewer (Console.app on macOS).
 - `/skills` — select or install prompt skills; `/skills uninstall` opens a multi-selection menu for removing app-installed skills.
 - `/exit` — close the session.
@@ -339,15 +382,15 @@ Commands start with `/`:
 - `/tasks clear` — remove all task graphs for the logical session.
 
 **Agentic workflow:**
-- `/plan <goal>` — delegate planning to a sub-agent using the configured `Planner` profile. It may ask numbered clarification blocks over multiple turns; normal replies continue that runtime-only discussion with the same Planner, while a new goal closes and replaces it. The same command family is routed by the linked Telegram chat and ACP. See [planner.md](planner.md).
+- `/plan <goal>` — delegate planning to a sub-agent using a profile with the `planner` role (the built-in `Planner` by default). It may ask numbered clarification blocks over multiple turns; normal replies continue that runtime-only discussion with the same Planner, while a new goal closes and replaces it. The same command family is routed by the linked Telegram chat and ACP. See [planner.md](planner.md).
 - `/plan save` — save the active plan, or the latest non-empty assistant response, as a reusable unapproved draft in the current project's plan library.
 - `/plan load` — when no plan is active, load the latest saved project plan into the current context as unapproved and pending. Use `/plan clear` first to replace an active plan; loading never resumes old execution attempts.
 - `/plan status` — show plan progress from the graph state.
 - `/plan approve` — activate the plan and start implementation.
 - `/plan clear` — archive the graph and remove the active plan.
 - `/goal <goal>` — autonomously inspect the workspace and context to turn the request into a concrete objective with testable acceptance criteria, then work until completion or a genuine blocker, executing directly or delegating when useful. It creates an active persistent workflow graph up front and keeps the DAG even for entirely direct work; sub-agent tools are optional. A normal model `end_turn` does not stop the command while that graph remains open and its workflow is `running`: ZenCODE automatically continues coordinating, executing directly or delegating, retrying, and validating until the graph is completed, the user explicitly cancels it, or the coordinator records `awaiting_user` (a material ambiguity) or `blocked` (a genuine unresolved blocker) through structured `tasks.update` workflow control. The text only explains the pause; no `Workflow question` heading is required. Paused workflows do not auto-retry. Your next message resumes the same graph. The original goal and workflow state are retained separately from tasks in the checkpoint and reinserted on continuation/resume, including workflows paused before task creation or after the last currently defined task completes. Completing tasks does not close `/goal`: after verifying the entire objective, the coordinator explicitly finalizes with `tasks.update`, `graphID`, the current `expectedRevision`, and `workflow: {state: "completed"}`. Legacy checkpoints remain readable with an explicit unavailable-objective fallback; only metadata-free legacy graphs retain the old heading protocol until adopted. It refuses to start while an active `/plan` exists; finish that plan or use `/plan clear` first. The current agent executes or coordinates the work and validates results, retaining its normal tool grant; `/goal` does not implicitly enable delegation or mutation tools. No separate Planner sub-agent, routine objective-confirmation step, or approval step. Use `/tasks` to monitor progress.
-- `/review [focus]` — delegate review to sub-agents using the configured `Reviewer` profile. See [reviewer.md](reviewer.md).
-- `/feature` — manage Swift feature packages (Builder profile only). See [builder.md](builder.md).
+- `/review [focus]` — delegate review to sub-agents using the profiles with the `reviewer` role (the built-in `Reviewer` by default). See [reviewer.md](reviewer.md).
+- `/feature` — manage Swift feature packages (profiles with the `builder` role, such as `Builder`, only). See [builder.md](builder.md).
 
 **`/plan` vs `/goal`:**
 

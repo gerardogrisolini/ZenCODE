@@ -94,7 +94,7 @@ public enum AgentProfileStoreError: LocalizedError {
         case let .noAgents(url):
             return "The ZenCODE agents file \(url.path) does not contain any agents."
         case let .developerAgentMissing(url):
-            return "The ZenCODE agents file \(url.path) does not contain the Developer agent."
+            return "The ZenCODE agents file \(url.path) does not contain an agent with the developer role."
         case let .ambiguousProfileReferences(url, references):
             return "The ZenCODE agents file \(url.path) contains ambiguous profile references: "
                 + references.joined(separator: ", ")

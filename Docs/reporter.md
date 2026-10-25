@@ -19,7 +19,7 @@ Reports distinguish verified facts from inferences and cite important evidence w
 
 ## Selecting Reporter
 
-The `Reporter` is a standard profile — select it directly or delegate to it:
+The `Reporter` is a standard profile with the `reporter` role — the system profile with ID `reporter`; the role has no runtime effect beyond the profile's own configuration (see [agents.md](agents.md#profile-roles)). Select it directly or delegate to it:
 
 ```text
 /agents Reporter                         # switch to the Reporter profile

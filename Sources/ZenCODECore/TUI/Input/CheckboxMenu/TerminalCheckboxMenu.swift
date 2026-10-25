@@ -156,6 +156,33 @@ public enum TerminalCheckboxMenu {
         }
     }
 
+    /// Multiple-selection counterpart of ``selectOffActor(title:items:selected:reservedBottomRows:)``
+    /// that also reports the row under the cursor when the operator confirms.
+    ///
+    /// The cursor starts on `focused` (or the first row when it is `nil` or
+    /// absent from `items`). `helpLines` replaces the default key-help line.
+    /// Returns `nil` when the operator cancels or there is nothing to select.
+    public static func selectWithFocusOffActor<Value: Hashable & Sendable>(
+        title: String,
+        items: [TerminalCheckboxMenuItem<Value>],
+        selected initialSelection: Set<Value>,
+        focused initialFocus: Value?,
+        helpLines: [String]? = nil,
+        reservedBottomRows: Int = 0
+    ) async -> (selected: Set<Value>, focused: Value)? {
+        await TerminalBlockingRead.run { token in
+            selectWithFocus(
+                title: title,
+                items: items,
+                selected: initialSelection,
+                focused: initialFocus,
+                helpLines: helpLines,
+                reservedBottomRows: reservedBottomRows,
+                shouldCancel: token.isCancelled
+            )
+        }
+    }
+
     /// Line-prompt counterpart of ``selectOffActor(title:items:selected:reservedBottomRows:)``.
     public static func promptLineOffActor(
         title: String,
@@ -211,6 +238,60 @@ public enum TerminalCheckboxMenu {
         return selectedValues
     }
 
+    /// Synchronous multiple-selection menu that also returns the row under
+    /// the cursor on confirmation. See ``selectWithFocusOffActor(title:items:selected:focused:helpLines:reservedBottomRows:)``.
+    public static func selectWithFocus<Value: Hashable>(
+        title: String,
+        items: [TerminalCheckboxMenuItem<Value>],
+        selected initialSelection: Set<Value>,
+        focused initialFocus: Value?,
+        helpLines: [String]? = nil,
+        reservedBottomRows: Int = 0
+    ) -> (selected: Set<Value>, focused: Value)? {
+        selectWithFocus(
+            title: title,
+            items: items,
+            selected: initialSelection,
+            focused: initialFocus,
+            helpLines: helpLines,
+            reservedBottomRows: reservedBottomRows,
+            shouldCancel: nil
+        )
+    }
+
+    static func selectWithFocus<Value: Hashable>(
+        title: String,
+        items: [TerminalCheckboxMenuItem<Value>],
+        selected initialSelection: Set<Value>,
+        focused initialFocus: Value?,
+        helpLines: [String]?,
+        reservedBottomRows: Int,
+        shouldCancel: (@Sendable () -> Bool)?,
+        rawInput: TerminalRawInput? = nil,
+        screen: TerminalPrimaryScreen? = nil
+    ) -> (selected: Set<Value>, focused: Value)? {
+        guard !items.isEmpty else {
+            AgentOutput.standardError.writeString("\(title)\nNo selectable items.\n")
+            return nil
+        }
+        let initialFocusedIndex = initialFocus.flatMap { focus in
+            items.firstIndex { $0.value == focus }
+        } ?? 0
+        guard let result = selectMenuCore(
+            title: title,
+            items: items,
+            initialState: .multiple(initialSelection),
+            focusedIndex: initialFocusedIndex,
+            helpLines: helpLines,
+            reservedBottomRows: reservedBottomRows,
+            shouldCancel: shouldCancel,
+            rawInput: rawInput,
+            screen: screen
+        ), case let .multiple(selectedValues) = result.state,
+           items.indices.contains(result.focusedIndex) else { return nil }
+        return (selectedValues, items[result.focusedIndex].value)
+    }
+
     /// - Parameter header: Non-selectable context lines (for example a
     ///   summary table) rendered inside the menu frame above the items.
     public static func selectOne<Value: Hashable>(
@@ -256,6 +337,34 @@ public enum TerminalCheckboxMenu {
         rawInput injectedRawInput: TerminalRawInput? = nil,
         screen: TerminalPrimaryScreen? = nil
     ) -> SelectionState<Value>? {
+        selectMenuCore(
+            title: title,
+            items: items,
+            initialState: initialState,
+            focusedIndex: initialFocusedIndex,
+            header: header,
+            reservedBottomRows: reservedBottomRows,
+            shouldCancel: shouldCancel,
+            rawInput: injectedRawInput,
+            screen: screen
+        )?.state
+    }
+
+    /// Shared menu loop. Besides the final selection state it reports the row
+    /// under the cursor when the operator confirmed, and lets a caller replace
+    /// the default key-help line of the selection mode.
+    static func selectMenuCore<Value: Hashable>(
+        title: String,
+        items: [TerminalCheckboxMenuItem<Value>],
+        initialState: SelectionState<Value>,
+        focusedIndex initialFocusedIndex: Int,
+        header: [String] = [],
+        helpLines helpLinesOverride: [String]? = nil,
+        reservedBottomRows: Int,
+        shouldCancel: (@Sendable () -> Bool)?,
+        rawInput injectedRawInput: TerminalRawInput? = nil,
+        screen: TerminalPrimaryScreen? = nil
+    ) -> (state: SelectionState<Value>, focusedIndex: Int)? {
         var state = initialState
         var focusedIndex = initialFocusedIndex
         let modal = TerminalModalSession(screen: screen)
@@ -276,8 +385,8 @@ public enum TerminalCheckboxMenu {
                     }
                     return "\(focus) \(marker) \(item.title)\(detailSuffix(for: item))"
                 }
-                modal.update(.init(title: title, help: state.helpLines, lines: lines,
-                                   focusedIndex: focusedIndex, header: header))
+                modal.update(.init(title: title, help: helpLinesOverride ?? state.helpLines,
+                                   lines: lines, focusedIndex: focusedIndex, header: header))
                 guard let key = readKey(
                     rawInput: rawInput,
                     shouldCancel: cancel,
@@ -285,7 +394,7 @@ public enum TerminalCheckboxMenu {
                 ), !cancel() else { return nil }
                 switch apply(key: key, items: items, state: &state, focusedIndex: &focusedIndex) {
                 case .continue: continue
-                case .submit: return modal.accepted(state)
+                case .submit: return modal.accepted((state: state, focusedIndex: focusedIndex))
                 case .cancel: return nil
                 }
             }

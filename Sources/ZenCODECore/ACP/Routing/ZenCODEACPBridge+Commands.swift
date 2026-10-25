@@ -103,7 +103,10 @@ extension ZenCODEACPBridge {
                 ) else {
                     return .immediate("ZenCODE: /plan requires the sub-agent tools in this ACP session.")
                 }
-                let planner = try acpPlannerProfile()
+                let planners = try acpRoleProfiles(.planner, session: session)
+                guard !planners.isEmpty else {
+                    return .immediate(AgentProfileStore.roleUnavailableForProjectMessage(.planner))
+                }
                 let snapshots = await sessionRunner.subAgentSnapshots()
                 guard updateReservedPromptSession(
                     sessionID: sessionID,
@@ -117,7 +120,7 @@ extension ZenCODEACPBridge {
                 return .generate(
                     prompt: PlanningCommandKernel.planContinuationPrompt(
                         state: brainstorming,
-                        planner: planner
+                        planners: planners
                     ),
                     purpose: .planning(collectionID: brainstorming.collectionID, baseline: baseline)
                 )
@@ -157,11 +160,14 @@ extension ZenCODEACPBridge {
         guard acpSubAgentsAreAvailable(in: session) else {
             return .immediate("ZenCODE: /review requires the sub-agent tools in this ACP session.")
         }
-        let reviewer: AgentProfile
+        let reviewers: [AgentProfile]
         do {
-            reviewer = try acpReviewerProfile()
+            reviewers = try acpRoleProfiles(.reviewer, session: session)
         } catch {
             return .immediate("ZenCODE: \(error.localizedDescription)")
+        }
+        guard !reviewers.isEmpty else {
+            return .immediate(AgentProfileStore.roleUnavailableForProjectMessage(.reviewer))
         }
         let approvedPlan = session.activePlan.flatMap { plan in
             plan.isApproved && plan.consolidatedText.nilIfBlank != nil ? plan : nil
@@ -173,7 +179,7 @@ extension ZenCODEACPBridge {
         return .generate(
             prompt: acpReviewPrompt(
                 scope: scope,
-                reviewer: reviewer,
+                reviewers: reviewers,
                 approvedPlan: approvedPlan,
                 taskGraph: graph
             ),
@@ -360,7 +366,10 @@ extension ZenCODEACPBridge {
             ) else {
                 return .immediate("ZenCODE: /plan requires the sub-agent tools in this ACP session.")
             }
-            let planner = try acpPlannerProfile()
+            let planners = try acpRoleProfiles(.planner, session: session)
+            guard !planners.isEmpty else {
+                return .immediate(AgentProfileStore.roleUnavailableForProjectMessage(.planner))
+            }
             await clearACPPlanBrainstorming(sessionID: sessionID, epoch: epoch, closeAllPlanAuthors: true)
             guard reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
                 throw CancellationError()
@@ -377,7 +386,7 @@ extension ZenCODEACPBridge {
                 throw CancellationError()
             }
             return .generate(
-                prompt: PlanningCommandKernel.planStartPrompt(goal: goal, planner: planner),
+                prompt: PlanningCommandKernel.planStartPrompt(goal: goal, planners: planners),
                 purpose: .planning(collectionID: brainstorming.collectionID, baseline: baseline)
             )
         case .save:
@@ -397,24 +406,23 @@ extension ZenCODEACPBridge {
         }
     }
 
-    private func acpRoleProfile(id: UUID, name: String, label: String) throws -> AgentProfile {
-        if let profile = AgentProfileStore.roleProfile(id: id, name: name, in: try availableACPAgentProfiles()) {
-            return profile
-        }
-        throw ACPError.invalidParams("The \(label) agent profile is unavailable.")
-    }
-
-    private func acpPlannerProfile() throws -> AgentProfile {
-        try acpRoleProfile(id: AgentProfileStore.plannerAgentID, name: AgentProfileStore.plannerAgentName, label: "Planner")
-    }
-
-    private func acpReviewerProfile() throws -> AgentProfile {
-        try acpRoleProfile(id: AgentProfileStore.reviewerAgentID, name: AgentProfileStore.reviewerAgentName, label: "Reviewer")
+    /// Profiles with `role` that `/plan` or `/review` may delegate to in the
+    /// project of this ACP session (its working directory). An empty result
+    /// means the command must stop.
+    private func acpRoleProfiles(
+        _ role: AgentProfileRole,
+        session: SessionState
+    ) throws -> [AgentProfile] {
+        AgentProfileStore.roleDelegationCandidates(
+            role,
+            in: try availableACPAgentProfiles(),
+            workspaceRootURL: URL(fileURLWithPath: session.cwd, isDirectory: true)
+        )
     }
 
     private func acpReviewPrompt(
         scope: String,
-        reviewer: AgentProfile,
+        reviewers: [AgentProfile],
         approvedPlan: TerminalSessionPlan?,
         taskGraph: TaskGraphSnapshot?
     ) -> String {
@@ -464,7 +472,7 @@ extension ZenCODEACPBridge {
 
         Delegation rules:
         - \(delegation)
-        - Use role "Reviewer" and profile "\(reviewer.id)". The Reviewer must not edit files.
+        - Use role "Reviewer" and \(AgentProfileStore.delegationProfileClause(reviewers)). The Reviewer must not edit files.
         - Ask it to inspect the relevant current files and validation evidence, not merely trust \
         task status, attempt output, or plan claims.
         - Require concrete findings ordered by severity with file:line references when available, \

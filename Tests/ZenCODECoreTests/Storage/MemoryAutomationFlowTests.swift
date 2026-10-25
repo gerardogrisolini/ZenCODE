@@ -734,8 +734,9 @@ struct MemoryAutomationFlowTests {
 
             let backend = MemoryObservingBackend()
             let developer = AgentProfile(
-                id: "developer-profile",
+                id: AgentProfileRole.developer.rawValue,
                 name: "Developer",
+                role: .developer,
                 tools: ["local.readFile"]
             )
             let executor = DirectToolExecutor(
@@ -790,8 +791,9 @@ struct MemoryAutomationFlowTests {
         try await workspace.withIsolatedSupport {
             let backend = MemoryObservingBackend()
             let developer = AgentProfile(
-                id: "developer-profile",
+                id: AgentProfileRole.developer.rawValue,
                 name: "Developer",
+                role: .developer,
                 tools: ["local.readFile"]
             )
             let executor = DirectToolExecutor(
@@ -856,8 +858,9 @@ struct MemoryAutomationFlowTests {
 
             let backend = MemoryObservingBackend()
             let developer = AgentProfile(
-                id: "developer-slow-embedding-profile",
+                id: AgentProfileRole.developer.rawValue,
                 name: "Developer",
+                role: .developer,
                 tools: ["local.readFile"]
             )
             let executor = DirectToolExecutor(

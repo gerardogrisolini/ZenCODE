@@ -12,6 +12,7 @@ import Darwin
 import Glibc
 #endif
 import Foundation
+import ToolCore
 
 extension TerminalChat {
     public func handleAgentsCommand(_ command: String) async throws {
@@ -28,17 +29,7 @@ extension TerminalChat {
                 return
             }
 
-            let selectedAgent = await TerminalCheckboxMenu.selectOneOffActor(
-                title: "Agent profiles",
-                items: try agentSelectionItems(),
-                selected: selectedAgent,
-                reservedBottomRows: await statusBar.reservedRowsForOverlay()
-            )
-            if let selectedAgent {
-                try await applyAgentSelection(selectedAgent)
-            } else {
-                await printAgentSelectionStatus()
-            }
+            try await presentProjectAgentMenu()
             return
         }
 
@@ -56,6 +47,94 @@ extension TerminalChat {
             availableAgents: try availableAgents()
         )
         try await applyAgentSelection(agent)
+    }
+
+    /// Interactive `/agents`: a single multiple-selection menu that associates
+    /// profiles with the current project (the only ones the `sub-agents` tool
+    /// may delegate to) and picks the active agent.
+    ///
+    /// - `Enter` saves the ticked profiles and activates the highlighted one;
+    ///   the cursor starts on the active agent, so confirming without moving
+    ///   keeps it.
+    /// - `Esc`/`Q` cancels: nothing is saved and nothing changes.
+    /// - A project without a saved selection shows only the system profiles
+    ///   ticked, and confirming an unchanged selection does not create the
+    ///   file.
+    private func presentProjectAgentMenu() async throws {
+        let agents = try availableAgents()
+        guard !agents.isEmpty else {
+            await renderAgentList(agents: agents)
+            return
+        }
+
+        let workspaceRootURL = configuration.workingDirectory
+        let projectName = Self.projectDisplayName(workspaceRootURL)
+        let savedSelection = ProjectAgentSelectionStore.load(workspaceRootURL: workspaceRootURL)
+        let initialAssociation = Self.projectAgentMenuInitialAssociation(
+            agents,
+            savedSelection: savedSelection
+        )
+        let activeKey = selectedAgent.map(ProjectAgentSelectionStore.selectionKey(for:))
+        let activeAgent = agents.first {
+            ProjectAgentSelectionStore.selectionKey(for: $0) == activeKey
+        }
+        let items = agents.map { agent in
+            TerminalCheckboxMenuItem(
+                value: agent,
+                title: agent.displayName + (agent == activeAgent ? " *" : ""),
+                detail: Self.agentSelectionDetail(agent)
+            )
+        }
+
+        guard let choice = await TerminalCheckboxMenu.selectWithFocusOffActor(
+            title: "Agent profiles · project: \(projectName)",
+            items: items,
+            selected: initialAssociation,
+            focused: activeAgent,
+            helpLines: Self.projectAgentMenuHelpLines,
+            reservedBottomRows: await statusBar.reservedRowsForOverlay()
+        ) else {
+            await printAgentSelectionStatus()
+            return
+        }
+
+        let associationChanged = choice.selected != initialAssociation
+        if associationChanged {
+            do {
+                try ProjectAgentSelectionStore.save(
+                    agentIDs: agents
+                        .filter { choice.selected.contains($0) }
+                        .map(ProjectAgentSelectionStore.selectionIdentifier(for:)),
+                    workspaceRootURL: workspaceRootURL
+                )
+            } catch {
+                await writeFailureMessage(
+                    "ZenCODE: unable to save the project agents: \(error.localizedDescription)\n"
+                )
+                return
+            }
+            await writeSystemMessage(
+                Self.renderProjectAgentAssociation(
+                    associated: agents.filter { choice.selected.contains($0) },
+                    projectName: projectName
+                )
+            )
+        }
+
+        if ProjectAgentSelectionStore.selectionKey(for: choice.focused) != activeKey {
+            // The new session builds its prompt from the saved association.
+            try await applyAgentSelection(choice.focused)
+        } else if associationChanged {
+            // Same agent: rebuild the prompt in place, as `/tools` does, so the
+            // delegatable roster follows the new association without losing
+            // the conversation or reprinting the active tools.
+            let printedActiveTools = didPrintActiveTools
+            activeSessionSystemPromptOverride = nil
+            await updateCurrentSessionToolOptions(discoverExternalTools: false)
+            didPrintActiveTools = printedActiveTools
+        } else {
+            await printAgentSelectionStatus()
+        }
     }
 
     public func applyAgentSelection(_ agent: AgentProfile) async throws {
@@ -170,7 +249,7 @@ extension TerminalChat {
     }
 
     public nonisolated static func agentSelectionDetail(_ agent: AgentProfile) -> String {
-        var parts = [agentPurposeSummary(agent)]
+        var parts = [agent.role.summary]
         if let modelID = agent.modelID {
             let prefix = agent.modelBindings.count > 1 ? "default model" : "model"
             parts.append("\(prefix): \(modelID)")
@@ -200,63 +279,6 @@ extension TerminalChat {
         )
     }
 
-    private nonisolated static func agentPurposeSummary(_ agent: AgentProfile) -> String {
-        switch agent.id.lowercased() {
-        case AgentProfileStore.developerAgentID.uuidString.lowercased():
-            return "General software development with web, memory, and sub-agents"
-        case AgentProfileStore.builderAgentID.uuidString.lowercased():
-            return "Create, build, and manage Swift feature tools"
-        case AgentProfileStore.minimalAgentID.uuidString.lowercased():
-            return "Minimal tools and concise replies"
-        case AgentProfileStore.reviewerAgentID.uuidString.lowercased():
-            return "Read-only reviewer for delegated code review"
-        case AgentProfileStore.reporterAgentID.uuidString.lowercased():
-            return "Read-only code analysis and evidence-based reports"
-        case AgentProfileStore.plannerAgentID.uuidString.lowercased():
-            return "Read-only planner for implementation workflows"
-        case AgentProfileStore.organizerAgentID.uuidString.lowercased():
-            return "Personal assistant with macOS apps, memory, and delegation"
-        case AgentProfileStore.promoterAgentID.uuidString.lowercased():
-            return "Daily project promotion with browser drafts and memory"
-        default:
-            return customAgentToolSummary(agent.tools)
-        }
-    }
-
-    private nonisolated static func customAgentToolSummary(_ tools: [String]) -> String {
-        let visibleTools = tools.filter { tool in
-            let trimmedTool = tool.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmedTool != TerminalToolSelectionCatalog.featureBuilderKey
-                && !trimmedTool.hasPrefix("feature.")
-        }
-        guard !visibleTools.isEmpty else {
-            return "No tools enabled"
-        }
-
-        let labels: [(String, String)] = [
-            ("shell", "shell"),
-            ("files", "files"),
-            ("text", "text"),
-            (TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools"), "search"),
-            (TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools"), "git"),
-            (TerminalToolSelectionCatalog.featurePackageKey(id: "swift-tools"), "swift"),
-            ("memory", "memory"),
-            (TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools"), "web"),
-            ("sub-agents", "sub-agents"),
-            (TerminalToolSelectionCatalog.featurePackageKey(id: "figma-tools"), "Figma")
-        ]
-        let selectedLabels = labels.compactMap { pair in
-            visibleTools.contains(pair.0) ? pair.1 : nil
-        }
-        let unknownCount = visibleTools.filter { tool in
-            !labels.contains { pair in pair.0 == tool }
-        }.count
-        let summaryLabels = unknownCount > 0
-            ? selectedLabels + ["\(unknownCount) custom"]
-            : selectedLabels
-        return "Tools: \(summaryLabels.joined(separator: ", "))"
-    }
-
     public nonisolated static func renderSelectedAgent(_ agent: AgentProfile?) -> String {
         guard let agent else {
             return "Selected agent: unavailable\n"
@@ -266,6 +288,38 @@ extension TerminalChat {
 
     public nonisolated static func renderAgentSelectionUsage() -> String {
         "Usage: /agents [list|<agent name>|<number>]\n"
+    }
+
+    public nonisolated static let projectAgentMenuHelpLines = [
+        "↑/↓ move · Space/X toggle project · A all · N none · Enter use agent · Esc/Q cancel"
+    ]
+
+    /// Profiles ticked when the `/agents` menu opens: the saved selection, or
+    /// the system profiles when the project has none.
+    public nonisolated static func projectAgentMenuInitialAssociation(
+        _ agents: [AgentProfile],
+        savedSelection: Set<String>?
+    ) -> Set<AgentProfile> {
+        Set(ProjectAgentSelectionStore.filter(agents, selection: savedSelection))
+    }
+
+    /// Folder name shown in the `/agents` menu title; the path itself when the
+    /// folder has no usable last component (for example the filesystem root).
+    public nonisolated static func projectDisplayName(_ workspaceRootURL: URL) -> String {
+        let standardized = workspaceRootURL.standardizedFileURL
+        return standardized.lastPathComponent.nilIfBlank ?? standardized.path
+    }
+
+    public nonisolated static func renderProjectAgentAssociation(
+        associated: [AgentProfile],
+        projectName: String
+    ) -> String {
+        guard !associated.isEmpty else {
+            return "No agent profile is associated with project \(projectName); "
+                + "the sub-agents tool cannot delegate until some are associated with /agents.\n"
+        }
+        return "Project agents for \(projectName): "
+            + "\(associated.map(\.displayName).joined(separator: ", ")).\n"
     }
 
     public nonisolated static func agentSelectionKey(_ value: String) -> String {

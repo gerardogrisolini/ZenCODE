@@ -725,7 +725,8 @@ struct DirectToolExecutorAuthorizationTests {
         let profile = AgentProfile(
             id: "read-only",
             name: "Read Only",
-            readOnly: true
+            readOnly: true,
+            role: .developer
         )
         let executor = makeExecutor()
         let aliases = [
@@ -777,7 +778,8 @@ struct DirectToolExecutorAuthorizationTests {
         let profile = AgentProfile(
             id: "read-only",
             name: "Read Only",
-            readOnly: true
+            readOnly: true,
+            role: .developer
         )
         let executor = makeExecutor()
         let rawToolName = "search.agent.create"

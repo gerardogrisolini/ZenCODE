@@ -51,6 +51,7 @@ extension AgentConfigurationTests {
         let profile = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             tools: AgentProfileStore.developerToolNames
         )
 
@@ -136,6 +137,7 @@ extension AgentConfigurationTests {
         let developerProfile = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             tools: AgentProfileStore.developerToolNames
         )
         let developerAllowedToolNames = developerProfile.allowedToolNames()
@@ -361,7 +363,8 @@ extension AgentConfigurationTests {
         let profile = AgentProfile(
             id: "read-only",
             name: "Read Only",
-            readOnly: true
+            readOnly: true,
+            role: .developer
         )
         let configuration = try AgentConfiguration(
             hostedModelID: "remote-community/test",

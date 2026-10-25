@@ -213,7 +213,8 @@ struct DynamicPromptContextTests {
         let legacyProfile = AgentProfile(
             id: "legacy-developer",
             name: "Developer",
-            instructions: SystemPromptBuilder.defaultAgentInstructions()
+            instructions: SystemPromptBuilder.defaultAgentInstructions(),
+            role: .developer
         )
 
         let section = legacyProfile.promptSection(memoryToolEnabled: true) ?? ""

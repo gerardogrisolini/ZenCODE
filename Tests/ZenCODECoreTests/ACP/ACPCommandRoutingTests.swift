@@ -335,7 +335,8 @@ actor ScriptedACPCommandBackend: AgentRuntimeBackend {
             rootSessionID: sessionID,
             name: PlanningCommandKernel.planAuthorAgentName,
             role: AgentProfileStore.plannerAgentName,
-            profileID: AgentProfileStore.plannerAgentID.uuidString,
+            profileID: AgentProfileRole.planner.rawValue,
+            profileRole: .planner,
             status: status,
             pending: false,
             modelID: "planner-model",
@@ -561,11 +562,79 @@ struct ACPCommandRoutingTests {
         let reviewPrompt = try #require(await backend.recordedPrompts().last)
         #expect(reviewPrompt.contains("read-only review requested through ACP"))
         #expect(reviewPrompt.contains("Review focus requested by the user: focus on ACP routing"))
-        #expect(reviewPrompt.contains(AgentProfileStore.reviewerAgentID.uuidString))
+        #expect(reviewPrompt.contains("profile \"\(AgentProfileRole.reviewer.rawValue)\""))
         #expect(reviewPrompt.contains("graph=workflow_"))
         #expect(wire.updateTexts(kind: "user_message_chunk").last
             == "/review focus on ACP routing")
         #expect(wire.stopReason(for: 11) == "end_turn")
+    }
+
+    @Test
+    func acpReviewAndPlanDelegateOnlyToTheProjectRoleProfiles() async throws {
+        let customReviewer = AgentProfile(id: "acp-custom-reviewer", name: "Brutta merda", role: .reviewer)
+        let fixture = try await makeFixture(
+            sessionID: "acp-command-roles",
+            availableAgents: AgentProfileStore.defaultProfiles() + [customReviewer]
+        )
+        let workspace = AppStorageDirectory.appSupportDirectoryURL()
+            .appendingPathComponent(fixture.sessionID, isDirectory: true)
+        let developerID = AgentProfileRole.developer.rawValue
+        try ProjectAgentSelectionStore.save(agentIDs: [developerID], workspaceRootURL: workspace)
+
+        try await fixture.bridge.prompt(id: .number(1), params: [
+            "sessionId": fixture.sessionID,
+            "prompt": "/review",
+        ])
+        try await fixture.bridge.prompt(id: .number(2), params: [
+            "sessionId": fixture.sessionID,
+            "prompt": "/plan ship roles",
+        ])
+
+        let messages = fixture.wire.updateTexts(kind: "agent_message_chunk")
+        #expect(messages.contains(AgentProfileStore.roleUnavailableForProjectMessage(.reviewer)))
+        #expect(messages.contains(AgentProfileStore.roleUnavailableForProjectMessage(.planner)))
+        #expect(await fixture.backend.recordedPrompts().isEmpty)
+        #expect(await fixture.bridge.planStateForTesting(sessionID: fixture.sessionID).brainstorming == nil)
+
+        try ProjectAgentSelectionStore.save(
+            agentIDs: [developerID, customReviewer.id],
+            workspaceRootURL: workspace
+        )
+        try await fixture.bridge.prompt(id: .number(3), params: [
+            "sessionId": fixture.sessionID,
+            "prompt": "/review",
+        ])
+        let reviewPrompt = try #require(await fixture.backend.recordedPrompts().last)
+        #expect(reviewPrompt.contains("Use role \"Reviewer\" and profile \"\(customReviewer.id)\"."))
+        #expect(!reviewPrompt.contains("profile \"\(AgentProfileRole.reviewer.rawValue)\""))
+    }
+
+    @Test
+    func acpReviewAndPlanWithoutASavedSelectionFailWhenNoSystemProfileHasTheRole() async throws {
+        let customReviewer = AgentProfile(id: "acp-custom-reviewer", name: "Brutta merda", role: .reviewer)
+        let customPlanner = AgentProfile(id: "acp-custom-planner", name: "Pluto", role: .planner)
+        let fixture = try await makeFixture(
+            sessionID: "acp-command-roles-unsaved",
+            availableAgents: [
+                AgentProfileRoleTestSupport.developer,
+                customReviewer,
+                customPlanner,
+            ]
+        )
+
+        try await fixture.bridge.prompt(id: .number(1), params: [
+            "sessionId": fixture.sessionID,
+            "prompt": "/review",
+        ])
+        try await fixture.bridge.prompt(id: .number(2), params: [
+            "sessionId": fixture.sessionID,
+            "prompt": "/plan ship roles",
+        ])
+
+        let messages = fixture.wire.updateTexts(kind: "agent_message_chunk")
+        #expect(messages.contains(AgentProfileStore.roleUnavailableForProjectMessage(.reviewer)))
+        #expect(messages.contains(AgentProfileStore.roleUnavailableForProjectMessage(.planner)))
+        #expect(await fixture.backend.recordedPrompts().isEmpty)
     }
 
     @Test
@@ -931,7 +1000,8 @@ struct ACPCommandRoutingTests {
 
     private func makeFixture(
         sessionID: String,
-        allowedToolNames: Set<String>? = nil
+        allowedToolNames: Set<String>? = nil,
+        availableAgents: [AgentProfile] = AgentProfileStore.defaultProfiles()
     ) async throws -> (
         bridge: ZenCODEACPBridge,
         backend: ScriptedACPCommandBackend,
@@ -944,7 +1014,7 @@ struct ACPCommandRoutingTests {
         let wire = ACPCommandWire()
         let configuration = try AgentConfiguration(
             hostedModelID: "test-model",
-            availableAgents: AgentProfileStore.defaultProfiles(),
+            availableAgents: availableAgents,
             availableModels: [
                 AgentSettingsModelManifest(
                     id: "test-model",

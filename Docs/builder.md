@@ -2,6 +2,8 @@
 
 The `Builder` profile creates and manages reusable Dynamic Swift Features. Use it when the agent needs a durable tool or integration available in later sessions — not for one-off file edits.
 
+What makes a profile a builder is its `builder` role, never its ID or name: any profile with that role can use `/feature` and receives the intrinsic feature-management tools. The recommended `Builder` is the system profile with ID `builder`. See [agents.md](agents.md#profile-roles).
+
 ## Starting Builder
 
 ```bash

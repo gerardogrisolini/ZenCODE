@@ -227,7 +227,7 @@ public enum ZenCODEAgentProfileSetupRunner {
 
     static func agentDeletionItems(_ agents: [AgentProfile]) -> [TerminalCheckboxMenuItem<Int>] {
         agents.enumerated().compactMap { index, agent in
-            guard !isRequiredDeveloperAgent(agent) else {
+            guard !isRequiredDeveloperAgent(agent, in: agents) else {
                 return nil
             }
             return TerminalCheckboxMenuItem(
@@ -253,6 +253,7 @@ public enum ZenCODEAgentProfileSetupRunner {
             "Read-only agent?",
             defaultValue: defaultAgent?.readOnly ?? false
         )
+        let role = try promptRole(defaultValue: defaultAgent?.role ?? .developer)
         let tools = promptToolSelection(
             title: "Tools for \(name)",
             defaultTools: defaultAgent?.tools ?? AgentProfileStore.developerToolNames
@@ -269,6 +270,7 @@ public enum ZenCODEAgentProfileSetupRunner {
             instructions: instructions,
             symbolName: symbolName,
             readOnly: readOnly,
+            role: role,
             tools: tools,
             skills: skills,
             modelBindings: defaultAgent?.modelBindings ?? [],

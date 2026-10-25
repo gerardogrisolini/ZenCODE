@@ -421,8 +421,9 @@ struct SharedChatEndToEndTests {
     // MARK: - Helpers
 
     private static let developerProfile = AgentProfile(
-        id: "dev",
+        id: AgentProfileRole.developer.rawValue,
         name: "Developer",
+        role: .developer,
         tools: []
     )
 

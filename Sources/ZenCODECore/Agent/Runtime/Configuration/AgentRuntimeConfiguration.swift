@@ -639,8 +639,21 @@ public enum AgentStandaloneSystemPrompt {
                   let liveConfiguration = AgentDelegationCatalog.liveConfiguration(
                       fileManager: fileManager
                   )
+                  // Only the profiles visible to this project are delegatable:
+                  // the saved selection, or the system profiles when the
+                  // project has none.
+                  let projectProfiles = ProjectAgentSelectionStore.filter(
+                      liveConfiguration.profiles,
+                      workspaceRootURL: workingDirectory,
+                      fileManager: fileManager
+                  )
+                  guard !projectProfiles.isEmpty else {
+                      return SystemPromptBuilder.noProjectAgentsSection(
+                          allowedToolNames: allowedToolNames
+                      )
+                  }
                   return SystemPromptBuilder.delegatableAgentsSection(
-                      agents: liveConfiguration.profiles,
+                      agents: projectProfiles,
                       allowedToolNames: allowedToolNames,
                       snapshot: liveConfiguration.catalog
                   )

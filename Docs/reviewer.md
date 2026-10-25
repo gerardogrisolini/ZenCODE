@@ -32,9 +32,15 @@ Requires the `sub-agents` tool group. Enable it with `/tools sub-agents` or swit
 
 ## Profile Tools
 
-`/review` selects the `Reviewer` profile explicitly. Each delegated Reviewer
+`/review` delegates to the profiles with the `reviewer` role, whatever their
+ID or name: those visible to the project (the saved `/agents` selection, or the
+system profiles without one, such as the recommended `Reviewer` with ID
+`reviewer`; see [agents.md](agents.md#profile-roles)). With several candidates
+the model may use any of them; with none, `/review` stops with
+`ZenCODE: no agent profile with the reviewer role is available for this project. Tick one with /agents.`
+Each delegated Reviewer
 receives exactly the tools configured on that profile, plus runtime-intrinsic
-tools; `agent.create` does not construct a separate tool list. The built-in
+tools; `agent.create` does not construct a separate tool list. The recommended
 profile has `readOnly: true`, which centrally removes mutable catalog-owned core
 tools even after `/tools`, app, ACP, or task-bound runtime grants are resolved.
 Optional feature, MCP, and other external grants remain outside that

@@ -95,7 +95,7 @@ extension TerminalChat {
         // explicitly has an unfinished question block.  This sits after live
         // mention routing and before slash processing so neither is absorbed.
         if Self.commandToken(from: prompt) == nil,
-           let action = handlePlanBrainstormingReply(prompt) {
+           let action = await handlePlanBrainstormingReply(prompt) {
             return action
         }
 

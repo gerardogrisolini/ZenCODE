@@ -92,6 +92,8 @@ public actor DirectSubAgentRuntime {
         public let role: String
         public let profileID: String?
         public let profileName: String?
+        /// Role of the profile the agent was created from.
+        public let profileRole: AgentProfileRole
         /// Identity of the transient overview "wave" this agent belongs to.
         /// Mutable because an agent that receives new work through
         /// `agent.message` re-joins the wave that is currently on screen.

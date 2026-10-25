@@ -17,6 +17,7 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
     case taskGraphRequiredForCoordinatedDelegation
     case taskIDRequiredForActiveTaskGraph(String)
     case agentProfileNotFound(String)
+    case agentProfileNotAssociatedWithProject(String, String)
     case modelNotAllowedForProfile(modelID: String, profile: String)
     case modelBindingUnavailable(modelID: String, profile: String, reason: String)
     case ambiguousModelReference(modelID: String, profile: String, candidates: [String])
@@ -41,6 +42,10 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
             return "Active task graph '\(graphID)' requires every delegated sub-agent to include taskID. Call tasks.list with runnableOnly=true and delegate a runnable task."
         case let .agentProfileNotFound(profile):
             return "No configured agent profile matched '\(profile)'."
+        case let .agentProfileNotAssociatedWithProject(profile, workspace):
+            return "Agent profile '\(profile)' is not associated with this project (\(workspace)), "
+                + "so it cannot be delegated to. Use a profile listed in the delegatable roster; "
+                + "the operator can associate profiles with this project using /agents."
         case let .modelNotAllowedForProfile(modelID, profile):
             return "Model '\(modelID)' is not an authorized binding for agent profile '\(profile)'."
         case let .modelBindingUnavailable(modelID, profile, reason):

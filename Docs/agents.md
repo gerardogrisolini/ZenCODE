@@ -13,7 +13,9 @@ start by `AgentProfileStore`.
 
 | Field | Purpose |
 | --- | --- |
-| `name` | Human- and model-visible label |
+| `id` | Stable identity. A system profile has its role as ID (`developer`, `planner`, …); custom profiles have any other ID (setup generates a UUID). It has no other meaning |
+| `name` | Human- and model-visible label; any text, with no meaning |
+| `role` | **Required.** One of `developer`, `builder`, `minimal`, `planner`, `reviewer`, `reporter`, `organizer`, `promoter`: the only field that determines the kind of agent (see [Profile Roles](#profile-roles)) |
 | `instructions` | System-prompt fragment defining the role and constraints |
 | `tools` | Allowed tool groups and feature packages |
 | `readOnly` | Enforces only non-mutating catalog-owned core tools (`false` by default) |
@@ -22,8 +24,10 @@ start by `AgentProfileStore`.
 | `defaultModelBindingID` | Profile default for direct/profile-selected sessions; delegation still names a binding explicitly |
 | `symbolName` | SF Symbol shown in the TUI picker (presentational only) |
 
-Select a profile with `/agents <name>` or `--agent <name>` at launch. Switching
-resets the conversation so the new system prompt and tools apply cleanly.
+Select a profile with `/agents` (menu, `<name>`, or `<number>`) or `--agent <name>`
+at launch. Switching to a different profile resets the conversation so the new
+system prompt and tools apply cleanly. The `/agents` menu also associates
+profiles with the current project; see [Project Agents](#project-agents).
 
 Profile IDs and names share one case- and diacritic-insensitive POSIX identity
 namespace. Duplicate names, duplicate IDs, and an ID that collides with another
@@ -42,23 +46,158 @@ closed instead of selecting the first matching tool grant.
 > project file is distinct from the global `~/.zencode/AGENTS.md`, whose rules
 > apply across workspaces.
 
+## Profile Roles
+
+Every profile has a required `role`, and the role is the only thing that
+determines what kind of agent the profile is. The ID and the name carry no
+meaning: a profile named `Planner` with the `developer` role is a developer,
+and a profile can have any name in any role.
+
+| Role | Effect |
+| --- | --- |
+| `developer` | The default agent: used when no agent is chosen at launch. Setup always keeps a profile with this role |
+| `builder` | It can use `/feature` and receives the intrinsic feature-management tools |
+| `minimal` | No runtime effect beyond the profile's own configuration |
+| `planner` | `/plan` delegates to it; its catalog-owned core tools are forced read-only, whatever `readOnly` says |
+| `reviewer` | `/review` delegates to it |
+| `reporter` | No runtime effect beyond the profile's own configuration |
+| `organizer` | No runtime effect beyond the profile's own configuration |
+| `promoter` | No runtime effect beyond the profile's own configuration |
+
+```json
+{
+  "id" : "7D2C4A10-5B6E-4F21-9C3D-2E8A1B0F6C55",
+  "name" : "Pippo",
+  "readOnly" : true,
+  "role" : "reviewer",
+  "tools" : ["files", "feature:search-tools", "text"]
+}
+```
+
+**System and custom profiles.** The recommended profiles created by `/setup`
+are the system profiles: each one has its role as ID (`"id" : "developer"`,
+`"id" : "planner"`, and so on). A profile is a system profile exactly when its
+ID equals its role (case-insensitive); custom profiles have a different ID, and
+`/setup` gives them a UUID. Being a system profile matters only for
+[Project Agents](#project-agents): a project without a saved selection sees the
+system profiles alone.
+
+**Strict format.** `role` must be present and spelled exactly as one of the
+eight values above. The role is never deduced from the ID or the name, and
+there is no automatic migration: an `agents.json` with a profile without
+`role`, or with any other value, is invalid. ZenCODE then requires setup and
+reports the profile, for example
+`profile 'Developer' is missing the required "role" field (one of: developer, builder, minimal, planner, reviewer, reporter, organizer, promoter).`;
+`/setup` asks `agents.json exists but is invalid. Rewrite it?` and, when
+confirmed, starts over and offers to create the recommended profiles.
+
+Set the role in `/setup` (the **Role** choice) or edit `agents.json`.
+
+**Default developer.** With several profiles in the `developer` role, the
+default agent is the system Developer (`"id" : "developer"`) when present,
+otherwise the first developer profile in `agents.json` order. Setup adds the
+system Developer only when no profile has the `developer` role, and the default
+developer cannot be deleted in setup.
+
+Several profiles can share a role. `/plan` and `/review` then list every
+candidate visible to the project in their delegation instructions and the model
+may use any of them; with a single candidate the instruction names just that
+profile. The delegatable roster in the system prompt shows the role of every
+profile next to the access mode, for example
+`- Pippo [read-only; role: reviewer; tools: …]`, and the `/agents` menu
+describes every profile by its role.
+
+## Project Agents
+
+The `sub-agents` tool delegates only to the profiles associated with the
+current project (the working directory). `/agents` opens one multiple-selection
+menu for both choices:
+
+```text
+> [x] Developer * - General software development; the default agent
+  [x] Reviewer - /review delegates to it
+  [ ] Pippo - /review delegates to it
+```
+
+| Key | Effect |
+| --- | --- |
+| `↑`/`↓` | Move the cursor (it starts on the active agent, marked ` *`) |
+| `Space` / `X` | Tick or untick the highlighted profile for this project |
+| `A` / `N` | Tick every profile / none |
+| `Enter` | Save the ticks and make the highlighted profile the active agent |
+| `Esc` / `Q` | Cancel: nothing is saved and nothing changes |
+
+Confirming without moving the cursor keeps the active agent. Changing only the
+ticks keeps the conversation and refreshes the delegatable roster in the system
+prompt in place; choosing a different agent resets the session as before.
+Choosing the active agent always lists every profile, whatever the project
+association.
+
+The association is stored outside the repository, one file per project, keyed
+like the workspace memory by the standardized path of the working directory:
+
+```text
+~/.zencode/projects/<sha256 of the project path>/agents.json
+```
+
+```json
+{
+  "agentIDs" : [
+    "7D2C4A10-5B6E-4F21-9C3D-2E8A1B0F6C55",
+    "developer"
+  ],
+  "version" : 1,
+  "workspacePath" : "/Users/me/Projects/App"
+}
+```
+
+Profiles are saved by ID, so renaming a profile keeps its association. The file
+is written only when the ticks change, so choosing another agent in a project
+without a file does not create one.
+
+- **No file:** the project is not configured yet. Only the system profiles
+  (see [Profile Roles](#profile-roles)) are delegatable, and the menu shows just
+  those ticked. The ticks take effect from the first save. An unreadable or
+  corrupt file is treated the same way. When no system profile exists either,
+  the prompt states that no profile is associated with the project.
+- **Saved selection:** literal. Only the listed profiles appear in the
+  "Delegatable agent profiles" roster and are accepted by `agent.create`;
+  profiles created later are not added automatically.
+- **Empty selection:** no profile is delegatable. The prompt states that no
+  profile is associated with the project and tells the model not to call
+  `agent.create`; the operator can associate profiles again with `/agents`.
+- **Enforcement:** `agent.create` rejects a profile that is not associated with
+  the project even if the model names it, so the roster is a boundary and not
+  only a hint.
+- **`/plan`, `/review`, and `/goal`:** these workflows delegate through the same
+  `agent.create` call, so they can only delegate to the profiles visible to the
+  project. `/plan` and `/review` use the visible profiles with the `planner`
+  and `reviewer` role (see [Profile Roles](#profile-roles)): the saved
+  selection, or the system profiles when there is none; with several
+  candidates the model chooses among them. When no visible profile has the
+  needed role, the command always stops with an error instead of delegating,
+  with or without a saved selection and without falling back to the
+  recommended profiles, for example
+  `ZenCODE: no agent profile with the reviewer role is available for this project. Tick one with /agents.`
+
 ## Recommended Profiles
 
-| Profile | Role | Toolset |
-| --- | --- | --- |
-| `Developer` | General development and coordination | coding + web + sub-agents |
-| `Builder` | Swift feature packages | coding + web |
-| `Minimal` | Essential tools, brief replies | shell, files, text |
-| `Reviewer` | Read-only code review | coding without shell; `readOnly` enforced |
-| `Reporter` | Code analysis and evidence-based reports | files, search, text, git |
-| `Planner` | Read-only planning | files, search, text, git, memory, web; `readOnly` enforced |
-| `Organizer` | Personal assistant: macOS apps, project state, delegation (macOS only) | macOS feature + memory + sub-agents |
-| `Promoter` | Daily project promotion step with Browser drafts | memory + browser-tools |
+| Profile | ID and role | Purpose | Toolset |
+| --- | --- | --- | --- |
+| `Developer` | `developer` | General development and coordination | coding + web + sub-agents |
+| `Builder` | `builder` | Swift feature packages | coding + web |
+| `Minimal` | `minimal` | Essential tools, brief replies | shell, files, text |
+| `Reviewer` | `reviewer` | Read-only code review | coding without shell; `readOnly` enforced |
+| `Reporter` | `reporter` | Code analysis and evidence-based reports | files, search, text, git |
+| `Planner` | `planner` | Read-only planning | files, search, text, git, memory, web; `readOnly` enforced |
+| `Organizer` | `organizer` | Personal assistant: macOS apps, project state, delegation (macOS only) | macOS feature + memory + sub-agents |
+| `Promoter` | `promoter` | Daily project promotion step with Browser drafts | memory + browser-tools |
 
-Profiles are examples — edit, add, or remove optional profiles in setup.
-`Developer` and `Builder` must always remain present: runtime fallback paths
-select `Developer`, while `Builder` owns the `/feature` workflow and its
-intrinsic feature-management tools.
+These are the system profiles: each one has its role as ID. They are examples —
+edit, add, or remove optional profiles in setup. A profile with the
+`developer` role must always remain present, because it is the default agent;
+`/feature` and its intrinsic feature-management tools are available only to a
+profile with the `builder` role.
 
 ## Tool Groups
 
@@ -80,7 +219,8 @@ coordinator. The coordinator stays in its own profile and directs the work.
 Lifecycle:
 
 1. The coordinator calls `agent.create` with the canonical `agents` array. Every
-   model-visible item names an exact `profile` and the exact `binding:<id>` value
+   model-visible item names an exact `profile` (one associated with the project,
+   see [Project Agents](#project-agents)) and the exact `binding:<id>` value
    shown in the delegation roster as `model`.
 2. The runtime resolves the profile and binding against one authoritative
    snapshot of the configured model catalog. Missing, stale, ambiguous, or
@@ -272,6 +412,11 @@ See the [zen.md](zen.md#task-orchestration) task orchestration section.
 - **Read-only agent?** — persistently restricts catalog-owned core tools to
   their non-mutating descriptors, even if a later session tool selection asks
   for a mutable core group. Existing manifests default this field to `false`.
+- **Role** — a required single choice among the eight roles (there is no
+  "none"), saved as `role` (see [Profile Roles](#profile-roles)). The
+  highlighted entry is the profile's current role, or `Developer` for a new
+  profile, and must be confirmed; cancelling the choice ends the agents setup
+  with an error, as the other prompts do.
 - **Skills** — optional reusable prompt fragments from the catalog.
 - **Instructions** — the role definition, edited in a real text editor.
 - **Symbol** — SF Symbol for the TUI picker (presentational).
@@ -280,7 +425,7 @@ See the [zen.md](zen.md#task-orchestration) task orchestration section.
 
 ```text
 /setup                # create or edit profiles interactively
-/agents               # select a profile in the TUI
+/agents               # active agent and project profiles (menu)
 /models                # choose any configured model for the current session
 /tools                 # expose or hide tool groups per session
 ```

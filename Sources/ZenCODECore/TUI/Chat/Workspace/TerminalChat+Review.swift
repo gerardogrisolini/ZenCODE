@@ -38,14 +38,20 @@ extension TerminalChat {
       return .continueChat
     }
 
-    let reviewerProfile = reviewerProfileForDelegation()
+    let reviewerProfiles = reviewerProfilesForDelegation()
+    guard !reviewerProfiles.isEmpty else {
+      await writeFailureMessage(
+        AgentProfileStore.roleUnavailableForProjectMessage(.reviewer) + "\n"
+      )
+      return .continueChat
+    }
 
     await writeSubmittedPrompt(command)
 
     return .runHiddenPrompt(
       Self.reviewDelegationPrompt(
         scope: argument,
-        reviewer: reviewerProfile,
+        reviewers: reviewerProfiles,
         changeSummary: lastFileChangeSummary,
         approvedPlan: approvedPlan,
         taskGraph: taskGraph
@@ -60,25 +66,41 @@ extension TerminalChat {
     }
   }
 
-  /// Resolves the Reviewer profile used to configure the delegated sub-agents.
-  /// Prefers a user-configured "Reviewer" profile from agents.json and falls
-  /// back to the built-in default so the command works before any setup.
-  func reviewerProfileForDelegation() -> AgentProfile {
-    AgentProfileStore.roleProfile(
-      id: AgentProfileStore.reviewerAgentID,
-      name: AgentProfileStore.reviewerAgentName,
-      in: (try? availableAgents()) ?? []
-    ) ?? AgentProfileStore.defaultProfiles()[0]
+  /// Resolves the Reviewer profiles `/review` may delegate to: every profile
+  /// with the reviewer role visible to the project. An empty result means
+  /// the command must stop.
+  func reviewerProfilesForDelegation() -> [AgentProfile] {
+    AgentProfileStore.roleDelegationCandidates(
+      .reviewer,
+      in: (try? availableAgents()) ?? [],
+      workspaceRootURL: configuration.workingDirectory
+    )
   }
 
   nonisolated static func isReviewerProfile(_ agent: AgentProfile) -> Bool {
-    agent.id.caseInsensitiveCompare(AgentProfileStore.reviewerAgentID.uuidString) == .orderedSame
-      || agent.name.caseInsensitiveCompare(AgentProfileStore.reviewerAgentName) == .orderedSame
+    AgentProfileStore.isReviewerAgent(agent)
   }
 
   nonisolated static func reviewDelegationPrompt(
     scope: String,
     reviewer: AgentProfile,
+    changeSummary: TurnFileChangeSummary?,
+    approvedPlan: TerminalSessionPlan? = nil,
+    taskGraph: TaskGraphSnapshot? = nil
+  ) -> String {
+    reviewDelegationPrompt(
+      scope: scope,
+      reviewers: [reviewer],
+      changeSummary: changeSummary,
+      approvedPlan: approvedPlan,
+      taskGraph: taskGraph
+    )
+  }
+
+  /// With several Reviewer candidates the model may delegate to any of them.
+  nonisolated static func reviewDelegationPrompt(
+    scope: String,
+    reviewers: [AgentProfile],
     changeSummary: TurnFileChangeSummary?,
     approvedPlan: TerminalSessionPlan? = nil,
     taskGraph: TaskGraphSnapshot? = nil
@@ -89,7 +111,7 @@ extension TerminalChat {
     if approvedPlan == nil, taskGraph == nil, let changeSummary {
       return legacyReviewDelegationPrompt(
         scope: scope,
-        reviewer: reviewer,
+        reviewers: reviewers,
         changeSummary: changeSummary
       )
     }
@@ -190,8 +212,8 @@ extension TerminalChat {
       - A task in awaiting_validation is not completed and must never be reported as validated.
 
       Delegation rules:
-      - Create the sub-agents with agent.create using role "Reviewer" and profile \
-      "\(reviewer.id)"; Reviewers must not edit files.
+      - Create the sub-agents with agent.create using role "Reviewer" and \
+      \(AgentProfileStore.delegationProfileClause(reviewers)); Reviewers must not edit files.
       - If a task graph is active, append one independent review task per Reviewer to that \
       graph, including a single Reviewer; call tasks.list with runnableOnly=true and put each \
       runnable task ID in the corresponding canonical agent.create `agents` item's `taskID` \
@@ -295,7 +317,7 @@ extension TerminalChat {
 
   private nonisolated static func legacyReviewDelegationPrompt(
     scope: String,
-    reviewer: AgentProfile,
+    reviewers: [AgentProfile],
     changeSummary: TurnFileChangeSummary
   ) -> String {
     let scopeSection: String
@@ -325,8 +347,8 @@ extension TerminalChat {
       \(reviewChangeSummarySection(changeSummary))
 
       Delegation rules:
-      - Create the sub-agents with agent.create using role "Reviewer" and profile \
-      "\(reviewer.id)"; Reviewers must not edit files.
+      - Create the sub-agents with agent.create using role "Reviewer" and \
+      \(AgentProfileStore.delegationProfileClause(reviewers)); Reviewers must not edit files.
       - When the review surface can be partitioned into independent areas (for \
       example distinct files, modules, or concerns), first call tasks.create once \
       with one independent review task per area, then call tasks.list with \

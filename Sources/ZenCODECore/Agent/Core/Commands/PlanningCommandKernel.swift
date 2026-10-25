@@ -20,7 +20,7 @@ enum PlanningCommandKernel {
         snapshots.filter { snapshot in
             (rootSessionID == nil || snapshot.rootSessionID == rootSessionID)
                 && snapshot.name.caseInsensitiveCompare(planAuthorAgentName) == .orderedSame
-                && snapshot.role.caseInsensitiveCompare(AgentProfileStore.plannerAgentName) == .orderedSame
+                && snapshot.role.caseInsensitiveCompare(AgentProfileRole.planner.title) == .orderedSame
                 && isPlannerSnapshotProfile(snapshot)
         }
     }
@@ -105,15 +105,12 @@ enum PlanningCommandKernel {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// A snapshot belongs to a Planner exactly when the role of the profile it
+    /// was created from is `planner`.
     static func isPlannerSnapshotProfile(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot
     ) -> Bool {
-        snapshot.profileID?.caseInsensitiveCompare(
-            AgentProfileStore.plannerAgentID.uuidString
-        ) == .orderedSame
-            || snapshot.profileName?.caseInsensitiveCompare(
-                AgentProfileStore.plannerAgentName
-            ) == .orderedSame
+        snapshot.profileRole == .planner
     }
 
     static func isPlannerQuestionResponse(_ text: String) -> Bool {

@@ -16,7 +16,7 @@ While gathering information the `Organizer` may point out what it notices (overl
 
 ## Requirements
 
-- macOS only. On other platforms the `Organizer` is not included in the default profiles.
+- macOS only. On other platforms the `Organizer` is not included in the default profiles. The recommended `Organizer` is the system profile with ID and role `organizer`; the role has no runtime effect beyond the profile's own configuration (see [agents.md](agents.md#profile-roles)).
 - The optional `macOS` feature, installed with `zen --install-features macOS` (or selected in setup) and enabled with `/tools`.
 - Access to the individual apps. When an app reports missing access, the `Organizer` checks `macos.permissions` and tells you exactly which permission to grant instead of retrying.
 
@@ -71,4 +71,4 @@ Ask the Developer to fix the failing login test in ~/Projects/app and tell me wh
 
 ## Updating an Existing Profile
 
-Existing `agents.json` manifests are not changed when ZenCODE updates the recommended instructions. Regenerate the recommended profiles in setup to give an existing `Organizer` the current instructions.
+Existing `agents.json` manifests are not changed when ZenCODE updates the recommended instructions. Regenerate the recommended profiles in setup to give an existing `Organizer` the current instructions. A manifest whose profiles lack the required `role` field is invalid: `/setup` offers to rewrite it with the recommended profiles.

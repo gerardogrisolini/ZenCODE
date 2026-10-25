@@ -638,7 +638,7 @@ struct MemoryEnhancementTests {
         let names = Set(MemoryTool.toolDescriptors.map(\.name))
         let planner = try #require(
             AgentProfileStore.defaultProfiles().first {
-                $0.id == AgentProfileStore.plannerAgentID.uuidString
+                $0.id == AgentProfileRole.planner.rawValue
             }
         )
         let resolvedPlannerTools = planner.allowedToolNames()

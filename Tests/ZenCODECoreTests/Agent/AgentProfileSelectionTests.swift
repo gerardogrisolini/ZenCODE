@@ -145,7 +145,7 @@ extension AgentConfigurationTests {
         #expect(minimalProfile.instructions?.contains("Minimal agent") == true)
         #if os(macOS)
         let macOSKey = TerminalToolSelectionCatalog.featurePackageKey(id: "macOS")
-        #expect(organizerProfile.id == AgentProfileStore.organizerAgentID.uuidString)
+        #expect(organizerProfile.id == AgentProfileRole.organizer.rawValue)
         #expect(organizerProfile.tools == AgentProfileStore.organizerToolNames)
         #expect(organizerProfile.tools == [macOSKey, "memory", "sub-agents"])
         #expect(!organizerProfile.readOnly)
@@ -167,7 +167,7 @@ extension AgentConfigurationTests {
         #expect(!organizerAllowedToolNames.contains("local.exec"))
         #endif
         let browserKey = TerminalToolSelectionCatalog.featurePackageKey(id: "browser-tools")
-        #expect(promoterProfile.id == AgentProfileStore.promoterAgentID.uuidString)
+        #expect(promoterProfile.id == AgentProfileRole.promoter.rawValue)
         #expect(promoterProfile.tools == AgentProfileStore.promoterToolNames)
         #expect(promoterProfile.tools == ["memory", browserKey])
         #expect(!promoterProfile.readOnly)
@@ -211,12 +211,12 @@ extension AgentConfigurationTests {
         )
 
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Developer"])).contains("General software development"))
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Minimal"])).contains("Minimal tools"))
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Builder"])).contains("Create, build"))
+        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Minimal"])).contains("concise replies"))
+        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Builder"])).contains("feature-management tools"))
         #expect(profiles["Xcode"] == nil)
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reviewer"])).contains("Read-only reviewer"))
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reporter"])).contains("evidence-based reports"))
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Planner"])).contains("Read-only planner"))
+        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reviewer"])).contains("/review delegates to it"))
+        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reporter"])).contains("code analysis reports"))
+        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Planner"])).contains("/plan delegates to it"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Promoter"])).contains("project promotion"))
         #if os(macOS)
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Organizer"])).contains("Personal assistant"))
@@ -228,6 +228,7 @@ extension AgentConfigurationTests {
         let customAgent = AgentProfile(
             id: "custom",
             name: "Custom",
+            role: .developer,
             tools: [
                 "shell",
                 TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools"),
@@ -238,7 +239,9 @@ extension AgentConfigurationTests {
         )
         let customDetail = TerminalChat.agentSelectionDetail(customAgent)
 
-        #expect(customDetail.contains("Tools: shell, git, 1 custom"))
+        // The detail describes the role, for custom and system profiles alike.
+        #expect(customDetail.hasPrefix(AgentProfileRole.developer.summary))
+        #expect(!customDetail.contains("Tools:"))
         #expect(customDetail.contains("model: remote-community/custom"))
         #expect(customDetail.contains("thinking: High"))
         #expect(!customDetail.contains("feature:git-tools"))
@@ -247,20 +250,22 @@ extension AgentConfigurationTests {
     @Test
     func builderWorkflowPolicyComesFromConfiguredProfileInstructions() throws {
         let customizedBuilder = AgentProfile(
-            id: AgentProfileStore.builderAgentID.uuidString,
+            id: AgentProfileRole.builder.rawValue,
             name: "Customized Builder",
             instructions: "Keep my custom Builder instructions.",
+            role: .builder,
             tools: []
         )
         let instructionlessBuilder = AgentProfile(
             id: "custom-builder-id",
             name: AgentProfileStore.builderAgentName,
             instructions: nil,
+            role: .builder,
             tools: []
         )
 
         let defaultBuilder = try #require(AgentProfileStore.defaultProfiles().first {
-            $0.id.caseInsensitiveCompare(AgentProfileStore.builderAgentID.uuidString) == .orderedSame
+            $0.id.caseInsensitiveCompare(AgentProfileRole.builder.rawValue) == .orderedSame
         })
         let customizedPrompt = try #require(customizedBuilder.promptSection)
         let instructionlessPrompt = try #require(instructionlessBuilder.promptSection)
@@ -280,10 +285,11 @@ extension AgentConfigurationTests {
     @Test
     func plannerWorkflowPolicyComesFromConfiguredProfileInstructions() throws {
         let customizedPlanner = AgentProfile(
-            id: AgentProfileStore.plannerAgentID.uuidString,
+            id: AgentProfileRole.planner.rawValue,
             name: "Customized Planning Agent",
             instructions: "Keep my custom Planner instructions.",
             readOnly: true,
+            role: .planner,
             tools: ["files"]
         )
         let instructionlessPlanner = AgentProfile(
@@ -291,16 +297,18 @@ extension AgentConfigurationTests {
             name: AgentProfileStore.plannerAgentName,
             instructions: nil,
             readOnly: true,
+            role: .planner,
             tools: ["files"]
         )
         let unrelatedProfile = AgentProfile(
             id: "custom-agent-id",
             name: "Not Planner",
             instructions: "Custom instructions.",
+            role: .developer,
             tools: []
         )
         let builtinPlanner = try #require(AgentProfileStore.defaultProfiles().first {
-            $0.id.caseInsensitiveCompare(AgentProfileStore.plannerAgentID.uuidString) == .orderedSame
+            $0.id.caseInsensitiveCompare(AgentProfileRole.planner.rawValue) == .orderedSame
         })
 
         let customizedPrompt = try #require(customizedPlanner.promptSection)
@@ -332,6 +340,7 @@ extension AgentConfigurationTests {
         let profile = AgentProfile(
             id: "custom",
             name: "Custom",
+            role: .developer,
             tools: ["shell"],
             modelID: "remote-community/custom",
             thinkingSelection: .high
@@ -355,6 +364,7 @@ extension AgentConfigurationTests {
             id: "read-only",
             name: "Read Only",
             readOnly: true,
+            role: .developer,
             tools: ["files"]
         )
         let normalized = AgentProfileStore.normalizedAgentForSave(profile)
@@ -364,7 +374,7 @@ extension AgentConfigurationTests {
         )
         let legacyProfile = try JSONDecoder().decode(
             AgentProfile.self,
-            from: #"{"id":"legacy","name":"Legacy","tools":[]}"#.data(using: .utf8)!
+            from: #"{"id":"legacy","name":"Legacy","role":"developer","tools":[]}"#.data(using: .utf8)!
         )
 
         #expect(normalized.readOnly)
@@ -377,7 +387,8 @@ extension AgentConfigurationTests {
         let profile = AgentProfile(
             id: "read-only",
             name: "Read Only",
-            readOnly: true
+            readOnly: true,
+            role: .developer
         )
         let coreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
         let coreReadNames = Set(DirectToolCatalog.coreReadDescriptors.map(\.name))
@@ -391,7 +402,7 @@ extension AgentConfigurationTests {
 
         #expect(resolved == coreReadNames.union(nonCoreNames))
         #expect(
-            AgentProfile(id: "writable", name: "Writable").resolvedAllowedToolNames(coreNames)
+            AgentProfile(id: "writable", name: "Writable", role: .developer).resolvedAllowedToolNames(coreNames)
                 == coreNames
         )
         #expect(broadGrantResolved.contains("search."))
@@ -404,6 +415,7 @@ extension AgentConfigurationTests {
         let agent = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             modelBindings: [
                 AgentModelBinding(
                     id: "fast",
@@ -452,6 +464,7 @@ extension AgentConfigurationTests {
         let agent = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             modelBindings: [
                 AgentModelBinding(modelID: allowed.id, capability: 5)
             ]
@@ -530,6 +543,7 @@ extension AgentConfigurationTests {
         let agent = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             modelBindings: [
                 AgentModelBinding(modelID: allowed.id, capability: 5)
             ]
@@ -571,6 +585,7 @@ extension AgentConfigurationTests {
         let agent = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             modelBindings: [
                 AgentModelBinding(modelID: allowed.id, capability: 5)
             ]
@@ -649,13 +664,15 @@ extension AgentConfigurationTests {
         }
 
         let builderAgent = AgentProfile(
-            id: AgentProfileStore.builderAgentID.uuidString,
+            id: AgentProfileRole.builder.rawValue,
             name: AgentProfileStore.builderAgentName,
+            role: .builder,
             tools: []
         )
         let customAgent = AgentProfile(
             id: "custom",
             name: "Custom",
+            role: .developer,
             tools: ["feature.list", "feature-builder"]
         )
         let builderAllowedToolNames = builderAgent.allowedToolNames()
@@ -675,13 +692,15 @@ extension AgentConfigurationTests {
     @Test
     func appSessionToolOverridesKeepBuilderIntrinsicTools() {
         let builderAgent = AgentProfile(
-            id: AgentProfileStore.builderAgentID.uuidString,
+            id: AgentProfileRole.builder.rawValue,
             name: AgentProfileStore.builderAgentName,
+            role: .builder,
             tools: []
         )
         let customAgent = AgentProfile(
             id: "custom",
             name: "Custom",
+            role: .developer,
             tools: []
         )
 
@@ -708,7 +727,8 @@ extension AgentConfigurationTests {
         let profile = AgentProfile(
             id: "read-only",
             name: "Read Only",
-            readOnly: true
+            readOnly: true,
+            role: .developer
         )
         let rawCompatibilityAlias = "agent.spawn"
         let requestedToolNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
@@ -735,13 +755,15 @@ extension AgentConfigurationTests {
     @Test
     func agentProfileSaveRemovesFeatureBuilderToolReferences() {
         let builderAgent = AgentProfile(
-            id: AgentProfileStore.builderAgentID.uuidString,
+            id: AgentProfileRole.builder.rawValue,
             name: AgentProfileStore.builderAgentName,
+            role: .builder,
             tools: ["shell", "feature.list", "feature-builder", "shell"]
         )
         let customAgent = AgentProfile(
             id: "custom",
             name: "Custom",
+            role: .developer,
             tools: ["files", TerminalToolSelectionCatalog.featureBuilderKey, "feature.build"]
         )
 
@@ -797,20 +819,20 @@ struct AgentProfileCapabilityTests {
 
     @Test
     func capabilityClampsToRange() {
-        let clamped = AgentProfile(id: "test", name: "Test", modelID: "test", capability: 50)
+        let clamped = AgentProfile(id: "test", name: "Test", role: .developer, modelID: "test", capability: 50)
         #expect(clamped.capability == 10)
 
-        let low = AgentProfile(id: "test", name: "Test", modelID: "test", capability: -3)
+        let low = AgentProfile(id: "test", name: "Test", role: .developer, modelID: "test", capability: -3)
         #expect(low.capability == 1)
 
-        let inRange = AgentProfile(id: "test", name: "Test", modelID: "test", capability: 7)
+        let inRange = AgentProfile(id: "test", name: "Test", role: .developer, modelID: "test", capability: 7)
         #expect(inRange.capability == 7)
     }
 
     @Test
     func capabilityDecodesWithBackwardCompat() throws {
         let json = """
-        {"id":"a","name":"Test","tools":[]}
+        {"id":"a","name":"Test","role":"developer","tools":[]}
         """.data(using: .utf8)!
         let profile = try JSONDecoder().decode(AgentProfile.self, from: json)
         #expect(profile.capability == nil)
@@ -819,7 +841,7 @@ struct AgentProfileCapabilityTests {
 
     @Test
     func capabilityRoundTripsThroughCodable() throws {
-        let profile = AgentProfile(id: "x", name: "Test", modelID: "gpt-4", capability: 8)
+        let profile = AgentProfile(id: "x", name: "Test", role: .developer, modelID: "gpt-4", capability: 8)
         let data = try JSONEncoder().encode(profile)
         let decoded = try JSONDecoder().decode(AgentProfile.self, from: data)
         #expect(decoded.capability == 8)
@@ -831,6 +853,7 @@ struct AgentProfileCapabilityTests {
         let profile = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             modelBindings: [
                 AgentModelBinding(
                     id: "balanced",
@@ -870,6 +893,7 @@ struct AgentProfileCapabilityTests {
         let profile = AgentProfile(
             id: "developer",
             name: "Developer",
+            role: .developer,
             modelBindings: [
                 AgentModelBinding(id: "alpha", modelID: "shared-reference", capability: 4),
                 AgentModelBinding(id: "shared-reference", modelID: "beta", capability: 8)
@@ -888,6 +912,7 @@ struct AgentProfileCapabilityTests {
         {
           "id": "legacy",
           "name": "Legacy",
+          "role": "developer",
           "tools": [],
           "modelID": "legacy-model",
           "modelProvider": "Legacy Provider",
@@ -939,9 +964,9 @@ struct DelegatableAgentsSectionTests {
     @Test
     func includesAgentsWithoutBindingsButExcludesBindingsWithoutCapability() {
         let agents = [
-            AgentProfile(id: "1", name: "WithModel", modelID: "gpt-4", capability: 5),
-            AgentProfile(id: "2", name: "NoModel"),
-            AgentProfile(id: "3", name: "ModelNoCapability", modelID: "claude"),
+            AgentProfile(id: "1", name: "WithModel", role: .developer, modelID: "gpt-4", capability: 5),
+            AgentProfile(id: "2", name: "NoModel", role: .developer),
+            AgentProfile(id: "3", name: "ModelNoCapability", role: .developer, modelID: "claude"),
         ]
         let section = SystemPromptBuilder.delegatableAgentsSection(
             agents: agents,
@@ -958,15 +983,15 @@ struct DelegatableAgentsSectionTests {
     @Test
     func includesUnboundProfilesWhenNoBindingsAreDelegatable() throws {
         let agents = [
-            AgentProfile(id: "1", name: "Bare"),
-            AgentProfile(id: "2", name: "ModelOnly", modelID: "gpt"),
+            AgentProfile(id: "1", name: "Bare", role: .developer),
+            AgentProfile(id: "2", name: "ModelOnly", role: .developer, modelID: "gpt"),
         ]
         let section = try #require(SystemPromptBuilder.delegatableAgentsSection(
             agents: agents,
             allowedToolNames: nil,
             models: [Self.model("gpt")]
         ))
-        #expect(section.contains("Bare [read-write; tools: none configured]"))
+        #expect(section.contains("Bare [read-write; role: developer; tools: none configured]"))
         #expect(section.contains("inherits the main session model"))
         #expect(!section.contains("ModelOnly"))
         #expect(!section.contains("Do not call agent.create"))
@@ -980,9 +1005,10 @@ struct DelegatableAgentsSectionTests {
                 name: "Reviewer",
                 instructions: "Review only; do not edit files.",
                 readOnly: true,
+                role: .reviewer,
                 tools: ["local.readFile"]
             ),
-            AgentProfile(id: "bound", name: "Unavailable", modelID: "missing", capability: 5),
+            AgentProfile(id: "bound", name: "Unavailable", role: .developer, modelID: "missing", capability: 5),
         ]
         for snapshot: AgentDelegationCatalogSnapshot in [
             .available(models: []),
@@ -993,7 +1019,7 @@ struct DelegatableAgentsSectionTests {
                 allowedToolNames: ["agent.create"],
                 snapshot: snapshot
             ))
-            #expect(section.contains("Reviewer [read-only; tools: local.readFile]: Review only; do not edit files."))
+            #expect(section.contains("Reviewer [read-only; role: reviewer; tools: local.readFile]: Review only; do not edit files."))
             #expect(section.contains("inherits the main session model"))
             #expect(section.contains("omit `model`"))
             #expect(!section.contains("Unavailable"))
@@ -1004,7 +1030,7 @@ struct DelegatableAgentsSectionTests {
     @Test
     func returnsUnavailableWhenOnlyExplicitBindingsLackCapability() {
         let section = SystemPromptBuilder.delegatableAgentsSection(
-            agents: [AgentProfile(id: "model-only", name: "ModelOnly", modelID: "gpt")],
+            agents: [AgentProfile(id: "model-only", name: "ModelOnly", role: .developer, modelID: "gpt")],
             allowedToolNames: nil,
             models: [Self.model("gpt")]
         )
@@ -1014,7 +1040,7 @@ struct DelegatableAgentsSectionTests {
     @Test
     func returnsNilWhenDelegationNotAvailable() {
         let agents = [
-            AgentProfile(id: "1", name: "Capable", modelID: "gpt-4", capability: 5),
+            AgentProfile(id: "1", name: "Capable", role: .developer, modelID: "gpt-4", capability: 5),
         ]
         let section = SystemPromptBuilder.delegatableAgentsSection(
             agents: agents,
@@ -1030,6 +1056,7 @@ struct DelegatableAgentsSectionTests {
             AgentProfile(
                 id: "developer",
                 name: "Developer",
+                role: .developer,
                 modelBindings: [
                     AgentModelBinding(id: "high", modelID: "opus", capability: 9),
                     AgentModelBinding(id: "low", modelID: "mini", capability: 2),
@@ -1062,6 +1089,7 @@ struct DelegatableAgentsSectionTests {
 
                 Report findings with file and line references.
                 """,
+                role: .reviewer,
                 modelID: "review-model",
                 capability: 9
             ),
@@ -1077,7 +1105,7 @@ struct DelegatableAgentsSectionTests {
             "Delegatable agent profiles and model bindings"
         ))
         #expect(section.contains(
-            "Reviewer [read-write; tools: none configured]: Reviewer agent. Perform read-only code review. Do not edit files."
+            "Reviewer [read-write; role: reviewer; tools: none configured]: Reviewer agent. Perform read-only code review. Do not edit files."
         ))
         #expect(section.contains("model: review-model"))
         #expect(section.contains("pass model: binding:review-model"))
@@ -1104,6 +1132,7 @@ struct DelegatableAgentsSectionTests {
                 id: "developer",
                 name: "Developer",
                 instructions: "Developer agent. Implement the request.",
+                role: .developer,
                 modelID: "dev-model",
                 capability: 4
             ),

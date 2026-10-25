@@ -155,7 +155,7 @@ extension TerminalChat {
         telegramImmediateCommandOutput = []
         var action = await handlePlanApprovalGoalReply(prompt)
         if action == nil {
-            action = handlePlanBrainstormingReply(prompt)
+            action = await handlePlanBrainstormingReply(prompt)
         }
         if action == nil {
             // Same cross-surface rule as the TUI: a plain Telegram message

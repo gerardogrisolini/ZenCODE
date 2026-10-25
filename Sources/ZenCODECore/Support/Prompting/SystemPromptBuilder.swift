@@ -316,8 +316,9 @@ public enum SystemPromptBuilder {
             let roleSummary = delegationRoleSummary(for: resolved.profile)
             let tools = resolved.profile.tools.compactMap(\.nilIfBlank)
             let access = resolved.profile.readOnly ? "read-only" : "read-write"
+            let role = "; role: \(resolved.profile.role.rawValue)"
             let toolsSummary = tools.isEmpty ? "none configured" : tools.joined(separator: ", ")
-            let profileLine = "- \(resolved.profile.displayName) [\(access); tools: \(toolsSummary)]: \(roleSummary)"
+            let profileLine = "- \(resolved.profile.displayName) [\(access)\(role); tools: \(toolsSummary)]: \(roleSummary)"
             guard resolved.hasDeclaredBindings else {
                 return [
                     profileLine,
@@ -352,6 +353,25 @@ public enum SystemPromptBuilder {
         For profiles without bindings, omit `model` to inherit the main session model and provider. Do not \
         substitute provider names, display names, raw model slugs, or aliases for a binding. Give each sub-agent \
         an explicit role and scope. Different profiles retain their own tool grant; a child resolved to the coordinator's same profile inherits the coordinator's effective session allowlist, including session-local additions and removals. Child-intrinsic skills, collaboration, and applicable task-reporting tools are added automatically.
+        """
+    }
+
+    /// Roster replacement for a project that sees no agent profile: its saved
+    /// association is empty (or names only profiles that no longer exist), or
+    /// it has no saved association and no system profile exists. It is
+    /// distinct from the "no routable model binding" notice because
+    /// reconfiguring providers would not help: the operator has to associate
+    /// profiles with the project.
+    public static func noProjectAgentsSection(
+        allowedToolNames: Set<String>?
+    ) -> String? {
+        guard agentDelegationIsAvailable(allowedToolNames) else {
+            return nil
+        }
+        return """
+        Delegatable agent profiles and model bindings:
+        No agent profile is associated with this project, so none can be delegated.
+        Do not call agent.create. The operator can associate profiles with this project using /agents.
         """
     }
 

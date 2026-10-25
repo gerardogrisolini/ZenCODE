@@ -211,6 +211,7 @@ extension DirectSubAgentRuntime {
             role: agent.role,
             profileID: agent.profileID,
             profileName: agent.profileName,
+            profileRole: agent.profileRole,
             overviewBatchID: agent.overviewBatchID,
             isInCurrentOverviewWave: latestOverviewBatchID.map {
                 agent.overviewBatchID == $0

@@ -25,6 +25,7 @@ struct AgentProfileBindingReconcilerTests {
             instructions: "Keep these instructions.",
             symbolName: "hammer",
             readOnly: true,
+            role: .developer,
             tools: ["files", "text"],
             skills: [skill],
             modelBindings: [
@@ -62,6 +63,7 @@ struct AgentProfileBindingReconcilerTests {
         let original = AgentProfile(
             id: "custom-agent",
             name: "Custom",
+            role: .developer,
             modelBindings: [
                 AgentModelBinding(id: "old", modelID: oldCanonicalID, capability: 8),
                 AgentModelBinding(
@@ -89,6 +91,7 @@ struct AgentProfileBindingReconcilerTests {
         let original = AgentProfile(
             id: "custom-agent",
             name: "Custom",
+            role: .developer,
             modelBindings: [
                 AgentModelBinding(id: "removed", modelID: "not-currently-configured")
             ],
@@ -111,6 +114,7 @@ struct AgentProfileBindingReconcilerTests {
                 id: "custom-agent",
                 name: "Custom",
                 instructions: "Persist me.",
+                role: .developer,
                 tools: ["files"],
                 skills: [AgentProfileSkill(id: "skill")],
                 modelBindings: [
@@ -172,7 +176,7 @@ struct AgentProfileBindingReconcilerTests {
             let originalManifest = AgentSettingsManifest(models: [originalModel])
             try AgentSettingsManifestStore.save(originalManifest, to: settingsURL)
             try AgentProfileStore.save([
-                AgentProfile(id: "original", name: "Original")
+                AgentProfile(id: "original", name: "Original", role: .developer)
             ])
             let originalSettings = try Data(contentsOf: settingsURL)
             let originalAgents = try Data(contentsOf: agentsURL)
@@ -183,6 +187,7 @@ struct AgentProfileBindingReconcilerTests {
                 AgentProfile(
                     id: "replacement",
                     name: "Replacement",
+                    role: .developer,
                     modelBindings: [
                         AgentModelBinding(
                             id: "replacement-binding",
@@ -231,20 +236,20 @@ struct AgentProfileBindingReconcilerTests {
             let concurrentModel = Self.model(providerName: "Concurrent", modelID: "concurrent")
             let initialManifest = AgentSettingsManifest(models: [initialModel])
             try AgentSettingsManifestStore.save(initialManifest, to: settingsURL)
-            try AgentProfileStore.save([AgentProfile(id: "initial", name: "Initial")])
+            try AgentProfileStore.save([AgentProfile(id: "initial", name: "Initial", role: .developer)])
 
             var abandonedSession = SetupSession(originalManifest: initialManifest)
             abandonedSession.apply(
                 SetupSectionConfigurationResult(
                     manifest: AgentSettingsManifest(models: [stagedModel]),
-                    agentProfiles: [AgentProfile(id: "staged", name: "Staged")]
+                    agentProfiles: [AgentProfile(id: "staged", name: "Staged", role: .developer)]
                 )
             )
 
             let concurrentManifest = AgentSettingsManifest(models: [concurrentModel])
             try AgentSettingsManifestStore.save(concurrentManifest, to: settingsURL)
             try AgentProfileStore.save([
-                AgentProfile(id: "concurrent", name: "Concurrent")
+                AgentProfile(id: "concurrent", name: "Concurrent", role: .developer)
             ])
             // Cancelling/abandoning has no persistence action: there is no
             // rollback that could overwrite another process's later write.
@@ -273,7 +278,7 @@ struct AgentProfileBindingReconcilerTests {
                 to: settingsURL
             )
             try AgentProfileStore.save([
-                AgentProfile(id: "original", name: "Original")
+                AgentProfile(id: "original", name: "Original", role: .developer)
             ])
             let originalSettings = try Data(contentsOf: settingsURL)
             let originalAgents = try Data(contentsOf: agentsURL)
@@ -284,7 +289,7 @@ struct AgentProfileBindingReconcilerTests {
                     settingsManifest: AgentSettingsManifest(models: [replacement]),
                     overwriteSettings: true,
                     stagedAgentProfiles: [
-                        AgentProfile(id: "replacement", name: "Replacement")
+                        AgentProfile(id: "replacement", name: "Replacement", role: .developer)
                     ],
                     commitCheckpoint: { completedWrites in
                         if completedWrites == 1 {
@@ -313,7 +318,7 @@ struct AgentProfileBindingReconcilerTests {
                 models: [Self.model(providerName: "Original", modelID: "original")]
             )
             let originalProfiles = [
-                AgentProfile(id: "original", name: "Original")
+                AgentProfile(id: "original", name: "Original", role: .developer)
             ]
             try AgentSettingsManifestStore.save(originalManifest)
             try AgentProfileStore.save(originalProfiles)
@@ -329,7 +334,7 @@ struct AgentProfileBindingReconcilerTests {
                     ),
                     overwriteSettings: true,
                     stagedAgentProfiles: [
-                        AgentProfile(id: "intended", name: "Intended")
+                        AgentProfile(id: "intended", name: "Intended", role: .developer)
                     ],
                     transactionCleanup: { _, _ in
                         throw InjectedManifestCommitFailure.stop
@@ -401,7 +406,7 @@ struct AgentProfileBindingReconcilerTests {
             )
             try AgentSettingsManifestStore.save(initial, to: settingsURL)
             try AgentProfileStore.save([
-                AgentProfile(id: "initial", name: "Initial")
+                AgentProfile(id: "initial", name: "Initial", role: .developer)
             ])
             let baseline = try SetupManifestBaseline.capture()
 
@@ -438,12 +443,12 @@ struct AgentProfileBindingReconcilerTests {
             )
             try AgentSettingsManifestStore.save(manifest)
             try AgentProfileStore.save([
-                AgentProfile(id: "initial", name: "Initial")
+                AgentProfile(id: "initial", name: "Initial", role: .developer)
             ])
             let baseline = try SetupManifestBaseline.capture()
 
             let concurrentProfiles = [
-                AgentProfile(id: "concurrent", name: "Concurrent")
+                AgentProfile(id: "concurrent", name: "Concurrent", role: .developer)
             ]
             try AgentProfileStore.save(concurrentProfiles)
 
@@ -452,7 +457,7 @@ struct AgentProfileBindingReconcilerTests {
                     settingsManifest: manifest,
                     overwriteSettings: false,
                     stagedAgentProfiles: [
-                        AgentProfile(id: "staged", name: "Staged")
+                        AgentProfile(id: "staged", name: "Staged", role: .developer)
                     ],
                     expectedBaseline: baseline
                 )
@@ -469,7 +474,7 @@ struct AgentProfileBindingReconcilerTests {
                 models: [Self.model(providerName: "Initial", modelID: "initial")]
             )
             let originalProfiles = [
-                AgentProfile(id: "original", name: "Original")
+                AgentProfile(id: "original", name: "Original", role: .developer)
             ]
             try AgentSettingsManifestStore.save(initialManifest)
             try AgentProfileStore.save(originalProfiles)
@@ -485,7 +490,7 @@ struct AgentProfileBindingReconcilerTests {
                     settingsManifest: initialManifest,
                     overwriteSettings: false,
                     stagedAgentProfiles: [
-                        AgentProfile(id: "staged", name: "Staged")
+                        AgentProfile(id: "staged", name: "Staged", role: .developer)
                     ],
                     expectedBaseline: baseline
                 )
@@ -506,7 +511,7 @@ struct AgentProfileBindingReconcilerTests {
             )
             try AgentSettingsManifestStore.save(originalManifest)
             try AgentProfileStore.save([
-                AgentProfile(id: "original", name: "Original")
+                AgentProfile(id: "original", name: "Original", role: .developer)
             ])
             let originalSettings = try Data(contentsOf: settingsURL)
             let originalAgents = try Data(contentsOf: agentsURL)
@@ -515,7 +520,7 @@ struct AgentProfileBindingReconcilerTests {
                 models: [Self.model(providerName: "Intended", modelID: "intended")]
             )
             let intendedProfiles = [
-                AgentProfile(id: "intended", name: "Intended")
+                AgentProfile(id: "intended", name: "Intended", role: .developer)
             ]
             let intendedSettings = try AgentSettingsManifestStore.encodedData(
                 for: intendedManifest

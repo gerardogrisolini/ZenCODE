@@ -18,6 +18,9 @@ extension DirectSubAgentRuntime {
         public let role: String
         public let profileID: String?
         public let profileName: String?
+        /// Role of the profile the agent was created from; `nil` only for a
+        /// snapshot built without a profile.
+        public let profileRole: AgentProfileRole?
         /// Stable identity of the transient overview wave containing this agent.
         public let overviewBatchID: UUID?
         /// Whether this snapshot belongs to the runtime's current overview
@@ -61,6 +64,7 @@ extension DirectSubAgentRuntime {
             role: String,
             profileID: String? = nil,
             profileName: String? = nil,
+            profileRole: AgentProfileRole? = nil,
             overviewBatchID: UUID? = nil,
             isInCurrentOverviewWave: Bool = false,
             status: Status,
@@ -93,6 +97,7 @@ extension DirectSubAgentRuntime {
             self.role = role
             self.profileID = profileID?.nilIfBlank
             self.profileName = profileName?.nilIfBlank
+            self.profileRole = profileRole
             self.overviewBatchID = overviewBatchID
             self.isInCurrentOverviewWave = isInCurrentOverviewWave
             self.status = status

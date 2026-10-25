@@ -45,8 +45,9 @@ struct ReviewCommandTests {
             )
         ])
         let reviewer = AgentProfile(
-            id: AgentProfileStore.reviewerAgentID.uuidString,
+            id: AgentProfileRole.reviewer.rawValue,
             name: AgentProfileStore.reviewerAgentName,
+            role: .reviewer,
             tools: []
         )
 
@@ -75,8 +76,9 @@ struct ReviewCommandTests {
     @Test
     func reviewPromptIncludesApprovedPlanCoverageInstructions() {
         let reviewer = AgentProfile(
-            id: AgentProfileStore.reviewerAgentID.uuidString,
+            id: AgentProfileRole.reviewer.rawValue,
             name: AgentProfileStore.reviewerAgentName,
+            role: .reviewer,
             tools: []
         )
         let plan = TerminalSessionPlan(
@@ -111,8 +113,9 @@ struct ReviewCommandTests {
     @Test
     func reviewPromptIgnoresUnapprovedPlanAndPreservesLegacyPrompt() {
         let reviewer = AgentProfile(
-            id: AgentProfileStore.reviewerAgentID.uuidString,
+            id: AgentProfileRole.reviewer.rawValue,
             name: AgentProfileStore.reviewerAgentName,
+            role: .reviewer,
             tools: []
         )
         let summary = TurnFileChangeSummary(entries: [])
@@ -141,8 +144,9 @@ struct ReviewCommandTests {
     @Test
     func approvedPlanWithChangesDefinesIndependentReviewTasksBeforeParallelDelegation() {
         let reviewer = AgentProfile(
-            id: AgentProfileStore.reviewerAgentID.uuidString,
+            id: AgentProfileRole.reviewer.rawValue,
             name: AgentProfileStore.reviewerAgentName,
+            role: .reviewer,
             tools: []
         )
         let prompt = TerminalChat.reviewDelegationPrompt(

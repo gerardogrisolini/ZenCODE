@@ -31,8 +31,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func createAgentsUsesExplicitProfileModel() async throws {
         let planner = AgentProfile(
-            id: "planner-profile",
+            id: AgentProfileRole.planner.rawValue,
             name: "Planner",
+            role: .planner,
             tools: [],
             modelID: "planner-model",
             thinkingSelection: .high,
@@ -86,7 +87,7 @@ extension DirectSubAgentRuntimeTests {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("zencode-legacy-resolver-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let profile = AgentProfile(id: "custom", name: "Custom")
+        let profile = AgentProfile(id: AgentProfileRole.developer.rawValue, name: "Custom", role: .developer)
         let backend = CapturingSubAgentRuntimeBackend()
 
         try await AppStorageDirectory.withSupportDirectoryURL(directory) {
@@ -123,8 +124,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func createAgentsUsesExplicitModelBindingAuthorizedByProfile() async throws {
         let developer = AgentProfile(
-            id: "developer-profile",
+            id: AgentProfileRole.developer.rawValue,
             name: "Developer",
+            role: .developer,
             tools: [],
             modelBindings: [
                 AgentModelBinding(
@@ -179,8 +181,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func createAgentsRejectsModelOutsideProfileBindings() async throws {
         let developer = AgentProfile(
-            id: "developer-profile",
+            id: AgentProfileRole.developer.rawValue,
             name: "Developer",
+            role: .developer,
             tools: [],
             modelBindings: [
                 AgentModelBinding(modelID: "allowed-model", capability: 5)
@@ -260,8 +263,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func createAgentsWarnsWhenTaskComplexityExceedsProfileCapability() async throws {
         let minimal = AgentProfile(
-            id: "minimal-profile",
+            id: AgentProfileRole.minimal.rawValue,
             name: "Minimal",
+            role: .minimal,
             tools: [],
             modelID: "minimal-model",
             capability: 5
@@ -301,8 +305,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func capabilityAdvisoryUsesTheSelectedBinding() async throws {
         let developer = AgentProfile(
-            id: "developer-profile",
+            id: AgentProfileRole.developer.rawValue,
             name: "Developer",
+            role: .developer,
             tools: [],
             modelBindings: [
                 AgentModelBinding(id: "light", modelID: "light-model", capability: 3),
@@ -347,8 +352,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func agentCreateRequiresModelWhenTheProfileHasBindings() async throws {
         let developer = AgentProfile(
-            id: "developer-profile",
+            id: AgentProfileRole.developer.rawValue,
             name: "Developer",
+            role: .developer,
             tools: [],
             modelBindings: [AgentModelBinding(modelID: "balanced-model")]
         )
@@ -381,8 +387,9 @@ extension DirectSubAgentRuntimeTests {
     @Test(arguments: [false, true])
     func createAgentWithoutModelProfileInheritsParentConfiguration(catalogAvailable: Bool) async throws {
         let minimal = AgentProfile(
-            id: "minimal-profile",
+            id: AgentProfileRole.minimal.rawValue,
             name: "Minimal",
+            role: .minimal,
             tools: []
         )
         let backend = CapturingSubAgentRuntimeBackend()
@@ -438,6 +445,7 @@ extension DirectSubAgentRuntimeTests {
         let profile = AgentProfile(
             id: "builder",
             name: "Builder",
+            role: .builder,
             modelID: "builder-model"
         )
         let context = DirectSubAgentRuntime.BackendContext(
@@ -465,7 +473,8 @@ extension DirectSubAgentRuntimeTests {
         )
         let profile = AgentProfile(
             id: "minimal",
-            name: "Minimal"
+            name: "Minimal",
+            role: .minimal
         )
         let context = DirectSubAgentRuntime.BackendContext(
             requestedName: "Minimal",
@@ -488,6 +497,7 @@ extension DirectSubAgentRuntimeTests {
         let profile = AgentProfile(
             id: "builder",
             name: "Builder",
+            role: .builder,
             modelID: "some-other-model"
         )
         let context = DirectSubAgentRuntime.BackendContext(

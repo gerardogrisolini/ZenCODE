@@ -47,12 +47,28 @@ extension DirectSubAgentRuntime {
                     fileManager: .default
                 )
                 : self.modelCatalogProvider()
+            // Only profiles visible to this project may be delegated to: the
+            // saved selection, or the system profiles when there is none.
+            let projectSelection = ProjectAgentSelectionStore.load(
+                workspaceRootURL: workingDirectory
+            )
             return try payloads.enumerated().map { offset, payload in
                 guard let profileReference = payload.profileReference?.nilIfBlank else {
                     throw DirectSubAgentRuntimeError.missingArgument("profile or agent")
                 }
                 guard let profile = self.profileResolver(payload) else {
                     throw DirectSubAgentRuntimeError.agentProfileNotFound(profileReference)
+                }
+                guard ProjectAgentSelectionStore.isAssociated(
+                    profile,
+                    selection: projectSelection
+                ) else {
+                    throw DirectSubAgentRuntimeError.agentProfileNotAssociatedWithProject(
+                        profileReference,
+                        ProjectAgentSelectionStore.workspacePath(
+                            workspaceRootURL: workingDirectory
+                        )
+                    )
                 }
                 return (
                     offset: offset,
@@ -276,6 +292,7 @@ extension DirectSubAgentRuntime {
                     role: payload.role.nilIfBlank ?? "worker",
                     profileID: item.profile.id,
                     profileName: item.profile.name,
+                    profileRole: item.profile.role,
                     overviewBatchID: overviewBatchID,
                     backend: backend,
                     createdAt: now,
