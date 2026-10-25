@@ -12,7 +12,7 @@ struct TerminalChatProjectAgentsTests {
     @Test
     func menuHelpExplainsProjectToggleAndEnterUsesAgent() {
         #expect(TerminalChat.projectAgentMenuHelpLines == [
-            "↑/↓ move · Space/X toggle project · A all · N none · Enter use agent · Esc/Q cancel"
+            "↑/↓ move · Space/X toggle agents · A all · N none · Enter use agent · Esc/Q cancel"
         ])
     }
 

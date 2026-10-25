@@ -291,7 +291,7 @@ extension TerminalChat {
     }
 
     public nonisolated static let projectAgentMenuHelpLines = [
-        "↑/↓ move · Space/X toggle project · A all · N none · Enter use agent · Esc/Q cancel"
+        "↑/↓ move · Space/X toggle agents · A all · N none · Enter use agent · Esc/Q cancel"
     ]
 
     /// Profiles ticked when the `/agents` menu opens: the saved selection, or

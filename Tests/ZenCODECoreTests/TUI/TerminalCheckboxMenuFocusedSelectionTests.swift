@@ -134,7 +134,7 @@ struct TerminalCheckboxMenuFocusedSelectionTests {
 
     @Test
     func customHelpReplacesTheDefaultHelpLine() throws {
-        let help = "↑/↓ move · Space/X toggle project · A all · N none · Enter use agent · Esc/Q cancel"
+        let help = "↑/↓ move · Space/X toggle agents · A all · N none · Enter use agent · Esc/Q cancel"
         let capture = PrimaryScreenCapture()
         _ = try #require(run(
             keys: "\r",
