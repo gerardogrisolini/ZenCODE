@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Synchronization
 import Testing
 @testable import ZenCODECore
 
@@ -706,14 +707,14 @@ struct ZenCronJobCommandTests {
 
     @Test
     func locateZenIgnoresEmptyAndRelativeEntries() {
-        let fileManager = ProbingFileManager(executables: ["/fixture/zen"])
+        let probe = ExecutableProbe(executables: ["/fixture/zen"])
         let path = ":.::./:bin:~/bin:$HOME/bin::/fixture::/other:"
-        #expect(ZenCronJobCommand.locateZen(onPath: path, fileManager: fileManager) == "/fixture/zen")
+        #expect(ZenCronJobCommand.locateZen(onPath: path, isExecutableFile: probe.isExecutableFile) == "/fixture/zen")
         // Only the absolute entries up to the match were probed.
-        #expect(fileManager.probedPaths == ["/fixture/zen"])
+        #expect(probe.probedPaths == ["/fixture/zen"])
 
-        let miss = ProbingFileManager(executables: [])
-        #expect(ZenCronJobCommand.locateZen(onPath: path, fileManager: miss) == nil)
+        let miss = ExecutableProbe(executables: [])
+        #expect(ZenCronJobCommand.locateZen(onPath: path, isExecutableFile: miss.isExecutableFile) == nil)
         #expect(miss.probedPaths == ["/fixture/zen", "/other/zen"])
     }
 
@@ -727,41 +728,41 @@ struct ZenCronJobCommandTests {
     }
 
     @Test
-    func locateZenUsesTheGivenFileManager() {
-        let fileManager = ProbingFileManager(executables: ["/fixture/b/zen"])
+    func locateZenUsesTheGivenExecutableCheck() {
+        let probe = ExecutableProbe(executables: ["/fixture/b/zen"])
         #expect(
-            ZenCronJobCommand.locateZen(onPath: "/fixture/a:/fixture/b:/fixture/c", fileManager: fileManager)
-                == "/fixture/b/zen"
+            ZenCronJobCommand.locateZen(
+                onPath: "/fixture/a:/fixture/b:/fixture/c",
+                isExecutableFile: probe.isExecutableFile
+            ) == "/fixture/b/zen"
         )
-        #expect(fileManager.probedPaths == ["/fixture/a/zen", "/fixture/b/zen"])
+        #expect(probe.probedPaths == ["/fixture/a/zen", "/fixture/b/zen"])
     }
 
     @Test
     func locateZenProbesTheRootDirectoryAsSlashZen() {
-        let fileManager = ProbingFileManager(executables: ["/zen"])
-        #expect(ZenCronJobCommand.locateZen(onPath: "/", fileManager: fileManager) == "/zen")
-        #expect(fileManager.probedPaths == ["/zen"])
+        let probe = ExecutableProbe(executables: ["/zen"])
+        #expect(ZenCronJobCommand.locateZen(onPath: "/", isExecutableFile: probe.isExecutableFile) == "/zen")
+        #expect(probe.probedPaths == ["/zen"])
     }
 }
 
-/// A `FileManager` that records every path asked about and reports a fixed set
-/// as executable, so `locateZen` is tested without touching the machine's PATH.
-private final class ProbingFileManager: FileManager, @unchecked Sendable {
-    private let lock = NSLock()
+/// Records every path asked about and reports a fixed set as executable, so
+/// `locateZen` is tested without touching the machine's PATH.
+private final class ExecutableProbe: Sendable {
     private let executables: Set<String>
-    private var probed: [String] = []
+    private let probed = Mutex<[String]>([])
 
     init(executables: Set<String>) {
         self.executables = executables
-        super.init()
     }
 
     var probedPaths: [String] {
-        lock.withLock { probed }
+        probed.withLock { $0 }
     }
 
-    override func isExecutableFile(atPath path: String) -> Bool {
-        lock.withLock { probed.append(path) }
+    func isExecutableFile(_ path: String) -> Bool {
+        probed.withLock { $0.append(path) }
         return executables.contains(path)
     }
 }

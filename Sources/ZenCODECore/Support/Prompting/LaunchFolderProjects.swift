@@ -45,18 +45,18 @@ public struct LaunchFolderProjects: Sendable, Equatable {
     /// with the raw name as tie-break. An unreadable or missing directory yields
     /// an empty list.
     ///
-    /// The names come from `contentsOfDirectory(atPath:)`, the listing call that
-    /// a `FileManager` subclass can override on every platform (the URL variant
-    /// with `.skipsHiddenFiles` cannot be overridden on Linux), so each entry is
-    /// filtered here.
+    /// The names of the entries come from `listDirectory` (default
+    /// ``defaultListDirectory(atPath:)``), while the type, symbolic-link and
+    /// hidden flags of each entry are read from the file system. Tests inject
+    /// `listDirectory` to observe when the folder is read.
     public static func scan(
         workingDirectory: URL,
-        fileManager: FileManager = .default,
-        limit: Int = defaultLimit
+        limit: Int = defaultLimit,
+        listDirectory: (String) throws -> [String] = defaultListDirectory
     ) -> LaunchFolderProjects {
         let directory = workingDirectory.standardizedFileURL
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .isHiddenKey]
-        let entries = (try? fileManager.contentsOfDirectory(atPath: directory.path)) ?? []
+        let entries = (try? listDirectory(directory.path)) ?? []
         let names = entries
             .filter { !$0.hasPrefix(".") }
             .filter { name in
@@ -80,5 +80,11 @@ public struct LaunchFolderProjects: Sendable, Equatable {
             folderNames: Array(names.prefix(kept)),
             omittedCount: max(names.count - kept, 0)
         )
+    }
+
+    /// Names of the entries at a path, in the order the file system returns
+    /// them: the default `listDirectory` of ``scan(workingDirectory:limit:listDirectory:)``.
+    public static func defaultListDirectory(atPath path: String) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: path)
     }
 }

@@ -615,6 +615,7 @@ public enum AgentStandaloneSystemPrompt {
         selectedAgentSection: String? = nil,
         selectedAgentRole: AgentProfileRole? = nil,
         launchFolderProjects: LaunchFolderProjects? = nil,
+        listLaunchFolder: (String) throws -> [String] = LaunchFolderProjects.defaultListDirectory,
         selectedSkillSection: String? = nil,
         responseLanguageSection: String? = nil
     ) -> String {
@@ -628,6 +629,7 @@ public enum AgentStandaloneSystemPrompt {
             selectedAgentSection: selectedAgentSection,
             selectedAgentRole: selectedAgentRole,
             launchFolderProjects: launchFolderProjects,
+            listLaunchFolder: listLaunchFolder,
             selectedSkillSection: selectedSkillSection,
             responseLanguageSection: responseLanguageSection
         )
@@ -644,6 +646,9 @@ public enum AgentStandaloneSystemPrompt {
     ///   `newSession`/load/agent mention, `AgentCoreAppSessionFactory`) read it
     ///   at selection time, while callers that recompose the prompt per turn
     ///   must pass the snapshot they took at selection time.
+    /// - Parameter listLaunchFolder: Lists the entries of `cwd` when
+    ///   `launchFolderProjects` is `nil` and the role delegates by role. The
+    ///   default reads the file system; tests inject it to observe the listing.
     public static func promptSections(
         cwd: String,
         memoryToolEnabled: Bool = false,
@@ -654,6 +659,7 @@ public enum AgentStandaloneSystemPrompt {
         selectedAgentSection: String? = nil,
         selectedAgentRole: AgentProfileRole? = nil,
         launchFolderProjects: LaunchFolderProjects? = nil,
+        listLaunchFolder: (String) throws -> [String] = LaunchFolderProjects.defaultListDirectory,
         selectedSkillSection: String? = nil,
         responseLanguageSection: String? = nil
     ) -> SystemPromptSections {
@@ -706,7 +712,7 @@ public enum AgentStandaloneSystemPrompt {
             ? SystemPromptBuilder.launchFolderProjectsSection(
                 launchFolderProjects ?? LaunchFolderProjects.scan(
                     workingDirectory: workingDirectory,
-                    fileManager: fileManager
+                    listDirectory: listLaunchFolder
                 )
             )
             : nil

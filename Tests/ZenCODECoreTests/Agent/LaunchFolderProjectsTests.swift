@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Synchronization
 import Testing
 @testable import ZenCODECore
 
@@ -292,31 +293,31 @@ struct LaunchFolderProjectsTests {
                 folderNames: ["ghost-a", "ghost-b"],
                 omittedCount: 3
             )
-            let fileManager = RecordingFileManager()
+            let recorder = DirectoryListingRecorder()
 
             let context = AgentStandaloneSystemPrompt.promptSections(
                 cwd: workspace.path,
                 allowedToolNames: nil,
-                fileManager: fileManager,
                 selectedAgentRole: .organizer,
-                launchFolderProjects: snapshot
+                launchFolderProjects: snapshot,
+                listLaunchFolder: recorder.list
             ).dynamicContext
 
             #expect(context.contains(SystemPromptBuilder.launchFolderProjectsSection(snapshot)))
             #expect(context.contains("\n- ghost-a\n- ghost-b\n(3 more folders not listed.)"))
             #expect(!context.contains("on-disk"))
-            #expect(!fileManager.listedPaths.contains(workspace.standardizedFileURL.path))
+            #expect(!recorder.listedPaths.contains(workspace.standardizedFileURL.path))
 
             // Without a snapshot the folder is read now.
             let scanned = AgentStandaloneSystemPrompt.promptSections(
                 cwd: workspace.path,
                 allowedToolNames: nil,
-                fileManager: fileManager,
-                selectedAgentRole: .organizer
+                selectedAgentRole: .organizer,
+                listLaunchFolder: recorder.list
             ).dynamicContext
             #expect(scanned.contains("\n- on-disk"))
             #expect(!scanned.contains("ghost-a"))
-            #expect(fileManager.listedPaths.contains(workspace.standardizedFileURL.path))
+            #expect(recorder.listedPaths.contains(workspace.standardizedFileURL.path))
         }
     }
 
@@ -356,7 +357,7 @@ struct LaunchFolderProjectsTests {
         try Support.withTemporaryProject { _, workspace in
             try AgentProfileStore.save(Support.profiles + [Self.organizer])
             try makeDirectory(named: "alpha", in: workspace)
-            let fileManager = RecordingFileManager()
+            let recorder = DirectoryListingRecorder()
             let snapshot = LaunchFolderProjects(
                 workingDirectoryPath: "/virtual/launch",
                 folderNames: ["ghost"],
@@ -368,15 +369,15 @@ struct LaunchFolderProjectsTests {
                     let context = AgentStandaloneSystemPrompt.promptSections(
                         cwd: workspace.path,
                         allowedToolNames: nil,
-                        fileManager: fileManager,
                         selectedAgentRole: role,
-                        launchFolderProjects: launchFolderProjects
+                        launchFolderProjects: launchFolderProjects,
+                        listLaunchFolder: recorder.list
                     ).dynamicContext
                     #expect(!context.contains(Self.headline))
                     #expect(!context.contains("ghost"))
                 }
             }
-            #expect(!fileManager.listedPaths.contains(workspace.standardizedFileURL.path))
+            #expect(!recorder.listedPaths.contains(workspace.standardizedFileURL.path))
         }
     }
 
@@ -489,19 +490,16 @@ private func makeDirectory(named name: String, in directory: URL) throws {
     )
 }
 
-/// Records the directories that are listed, to prove when a folder is read.
-/// It overrides the `atPath` listing, the call `LaunchFolderProjects.scan` makes,
-/// because the URL-based variant cannot be overridden on Linux.
-private final class RecordingFileManager: FileManager, @unchecked Sendable {
-    private let lock = NSLock()
-    private var listed: [String] = []
+/// Records the directories that are listed, to prove when the launch folder is read.
+private final class DirectoryListingRecorder: Sendable {
+    private let listed = Mutex<[String]>([])
 
     var listedPaths: [String] {
-        lock.withLock { listed }
+        listed.withLock { $0 }
     }
 
-    override func contentsOfDirectory(atPath path: String) throws -> [String] {
-        lock.withLock { listed.append(URL(fileURLWithPath: path).standardizedFileURL.path) }
-        return try super.contentsOfDirectory(atPath: path)
+    func list(_ path: String) throws -> [String] {
+        listed.withLock { $0.append(URL(fileURLWithPath: path).standardizedFileURL.path) }
+        return try LaunchFolderProjects.defaultListDirectory(atPath: path)
     }
 }

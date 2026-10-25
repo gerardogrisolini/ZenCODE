@@ -258,8 +258,13 @@ struct ZenCronJobCommand: Sendable, Equatable {
 
     /// The first executable `zen` in the `:`-separated `path`. Empty and
     /// relative entries are ignored: they would depend on the working
-    /// directory of the job, not on a fixed location.
-    static func locateZen(onPath path: String, fileManager: FileManager = .default) -> String? {
+    /// directory of the job, not on a fixed location. `isExecutableFile`
+    /// answers whether a candidate path is executable; by default it asks
+    /// the file system.
+    static func locateZen(
+        onPath path: String,
+        isExecutableFile: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> String? {
         for entry in path.split(separator: ":", omittingEmptySubsequences: true) {
             guard entry.hasPrefix("/") else { continue }
             var directory = String(entry)
@@ -267,7 +272,7 @@ struct ZenCronJobCommand: Sendable, Equatable {
                 directory.removeLast()
             }
             let candidate = directory == "/" ? "/\(zenExecutable)" : "\(directory)/\(zenExecutable)"
-            if fileManager.isExecutableFile(atPath: candidate) {
+            if isExecutableFile(candidate) {
                 return candidate
             }
         }

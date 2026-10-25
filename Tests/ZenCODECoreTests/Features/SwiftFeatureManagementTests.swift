@@ -42,8 +42,7 @@ extension SwiftFeatureRuntimeTests {
                 tools: [],
                 toolNamePrefixes: ["caffè/"],
                 toolNameAliases: ["工具/eco"]
-            )],
-            fileManager: FeatureListRenderingFileManager()
+            )]
         )
         let expected = """
         {
@@ -942,12 +941,5 @@ extension SwiftFeatureRuntimeTests {
             argumentsObject: arguments,
             argumentsJSON: "{}"
         )
-    }
-}
-
-/// Keeps rendering fixtures independent of executable availability on the host.
-private final class FeatureListRenderingFileManager: FileManager, @unchecked Sendable {
-    override func isExecutableFile(atPath path: String) -> Bool {
-        false
     }
 }
