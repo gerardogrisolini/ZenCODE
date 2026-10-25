@@ -291,11 +291,11 @@ extension TerminalChat {
             command: "/cron",
             summary: "schedule prompts with crontab: list, add, remove, run, mailto",
             help: """
-            /cron [list]                                      List the prompts scheduled in your crontab
-            /cron add [json] <schedule> [-f <path>] <prompt>  Schedule a headless prompt (five cron fields or an @alias); json mails JSONL instead of text; -f reads the prompt from a file (absolute path)
-            /cron remove <n>                                  Remove scheduled prompt number n
-            /cron run <n>                                     Run scheduled prompt number n now
-            /cron mailto [address|none|default]               Show or set where cron mails results (none disables mail)
+            /cron [list]                                                       List the prompts scheduled in your crontab
+            /cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>  Schedule a headless prompt that runs in the working directory of this session (five cron fields or an @alias); -json mails JSONL instead of text; -agent runs it with that agent profile (default: Developer); -f reads the prompt from a file (absolute path)
+            /cron remove <n>                                                   Remove scheduled prompt number n
+            /cron run <n>                                                      Run scheduled prompt number n now
+            /cron mailto [address|none|default]                                Show or set where cron mails results (none disables mail)
             """
         ),
         TerminalChatCommandDescriptor(

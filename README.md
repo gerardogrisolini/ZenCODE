@@ -208,13 +208,14 @@ download the speech files (about 580 MB) from `/setup` > **Voice mode**. The
 privacy, and troubleshooting.
 
 `/cron add 0 9 * * 1-5 Summarize the open pull requests` schedules a prompt in
-the crontab of your system user: cron runs it as a headless `zen -p` turn with
-the selected agent profile and the session's working directory, and mails the
-answer text (`/cron add json …` runs with `--jsonl` and mails the JSONL records
-instead). `/cron add <schedule> -f <path>` reads the prompt from a file, checked
-when you add it and read again at every run. `/cron list` shows the numbered
-entries, `/cron run <n>` runs one now and reports in the terminal, and
-`/cron mailto` sets the recipient.
+the crontab of your system user: cron runs it as a headless `zen -p` turn in
+the session's working directory with the default `Developer` profile, or with
+the profile named by `-agent` (`/cron add -agent Organizer @daily …`), and
+mails the answer text (`/cron add -json …` runs with `--jsonl` and mails the
+JSONL records instead). `/cron add <schedule> -f <path>` reads the prompt from a
+file, checked when you add it and read again at every run. `/cron list` shows
+the numbered entries, `/cron run <n>` runs one now and reports in the terminal,
+and `/cron mailto` sets the recipient.
 Cron looks for `zen` in `/usr/local/bin`, where the installers put it. The
 [scheduled prompts guide](Docs/zen.md#scheduled-prompts-crontab) covers
 schedules, mail, and troubleshooting.

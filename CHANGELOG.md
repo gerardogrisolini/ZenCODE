@@ -31,7 +31,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
   of the crontab and leaves every other line unchanged; there is no daemon and
   no new file under `~/.zencode`. Cron mails each run's answer text, and errors,
   through the system `sendmail`, to the local mailbox of the crontab owner by
-  default; `/cron mailto` changes the recipient. `/cron add json <schedule>
+  default; `/cron mailto` changes the recipient. `/cron add -json <schedule>
   <prompt>` schedules a `zen --jsonl -p` job instead: cron then mails the JSONL
   records of the run in the mail body (cron attaches no files), and
   `/cron list` shows the output kind of each entry. Cron runs `zen` by name,
@@ -41,12 +41,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
   reports the result in the terminal. The new `Scheduled prompts` section of
   `zen --doctor` warns about a missing `crontab` or `sendmail` and, on WSL,
   about the cron service. Completion after `/cron` explains each parameter: the
-  subcommands, the `json` keyword, schedule aliases and examples, the five
+  subcommands, the `-json` option, schedule aliases and examples, the five
   numeric cron fields (no month or day names), `<n>`, and the `mailto` options.
   `/cron add <schedule> -f <path> [<prompt>]` schedules a prompt read from an
   absolute file path: the file is checked before scheduling and read again at
   every run, the path may be quoted, and completion after the schedule offers
-  `-f`. See [Docs/zen.md](Docs/zen.md#scheduled-prompts-crontab).
+  `-f`. `/cron add [-json] -agent <name> <schedule> …` schedules the prompt for
+  an agent profile, written as `zen --agent '<name>'`, for example
+  `/cron add -agent Organizer 30 7 * * 1-5 Prepare my daily briefing`; the
+  name must match an existing profile, as `zen --agent` requires, or nothing is
+  scheduled. Without `-agent` the entry runs with the default `Developer`
+  profile, whatever agent is selected in the session. Completion offers
+  `-agent` before the schedule. A job always runs in the working directory of
+  the session where `/cron add` was typed: the `/cron` help says so, and the
+  confirmation of `/cron add` shows it on a `dir:` line. See
+  [Docs/zen.md](Docs/zen.md#scheduled-prompts-crontab).
 - Project agents: `/agents` now opens a single multiple-selection menu. `Space`
   or `X` associates the highlighted profile with the current project, `A`
   selects every profile, `N` none, and `Enter` saves the ticks and makes the
@@ -186,10 +195,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   comments on what it does as it works. The comments appear in the terminal,
   and only the final answer is read aloud. The instruction is sent with the
   request and is not saved in the session history.
-- The border and title of the Authorization card now use a dimmed light blue,
-  the color of the `[R]`, `[A]`, and `[C]` keys, instead of full orange, so the
-  card looks lighter, like the prompt frame. The `❯` marker before the command
-  stays full orange.
+- The border of the Authorization card now uses a dimmed light blue, the color
+  of the `[R]`, `[A]`, and `[C]` keys, instead of full orange, so the card looks
+  lighter, like the prompt frame. The "Authorization" title in the top border
+  and the `❯` marker before the command stay full orange, without dimming.
 
 ### Fixed
 

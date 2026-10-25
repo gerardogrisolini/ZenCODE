@@ -14,7 +14,7 @@ import ToolCore
 /// block's `MAILTO`.
 extension TerminalChat {
     nonisolated static let cronUsageMessage =
-        "Usage: /cron [list] | add [json] <schedule> [-f <path>] <prompt> | remove <n> | run <n> | mailto [address|none|default]\n"
+        "Usage: /cron [list] | add [-json] [-agent <name>] <schedule> [-f <path>] <prompt> | remove <n> | run <n> | mailto [address|none|default]\n"
 
     func handleCronCommand(_ command: String) async {
         let arguments = Self.slashCommandArguments(from: command, commandPrefix: "/cron")
@@ -56,8 +56,8 @@ extension TerminalChat {
             await writeFailureMessage(Self.cronUsageMessage)
             return
         }
-        // Schedule, prompt and prompt file are validated before the crontab is
-        // read, so a rejected command never touches it.
+        // Schedule, prompt, prompt file and agent are validated before the
+        // crontab is read, so a rejected command never touches it.
         let schedule = try ZenCronSchedule(parsing: parsed.schedule)
         // With `-f` the prompt is an optional instruction; without it, required.
         let prompt: String?
@@ -76,11 +76,20 @@ extension TerminalChat {
         } else {
             promptFile = nil
         }
+        // Only `-agent` names the agent; without it the line has no
+        // `--agent` and `zen` runs its default profile. The agent selected in
+        // the session is never used.
+        let agentName: String?
+        if let requested = parsed.agentName {
+            agentName = try Self.validatedCronAgentName(requested, availableAgents: availableAgents())
+        } else {
+            agentName = nil
+        }
         let job = ZenCronJobCommand(
             executable: ZenCronJobCommand.zenExecutable,
             supportDirectory: ProcessInfo.processInfo
                 .environment[AppStorageDirectory.supportDirectoryEnvironmentKey]?.nilIfBlank,
-            agentName: selectedAgent?.name,
+            agentName: agentName,
             workingDirectory: configuration.workingDirectory.path,
             outputFormat: parsed.outputFormat,
             promptFile: promptFile,
@@ -102,6 +111,9 @@ extension TerminalChat {
         if case let .entry(entry)? = items.last {
             message += "  \(entry.cronLine)\n"
         }
+        // Spelled out: the directory is not an option of `/cron add`, so it
+        // is easy to miss that the job inherits the session's.
+        message += "  dir: \(job.workingDirectory) (working directory of this session)\n"
         message += "  zen: \(zenPath) (PATH=\(path))\n"
         await writeSystemMessage(message)
     }
@@ -269,13 +281,21 @@ extension TerminalChat {
         return (String(token), String(remainder))
     }
 
-    /// Splits the arguments of `add` into output format, schedule text,
-    /// optional prompt file and prompt text.
+    /// Splits the arguments of `add` into output format, agent, schedule
+    /// text, optional prompt file and prompt text.
     ///
-    /// A leading `json` token (any case) selects JSONL output; only the token
-    /// right after `add` is the keyword, so `@daily json report` is a text job
-    /// whose prompt is `json report`. The schedule is then the first token when
-    /// it starts with `@`, otherwise the first five tokens.
+    /// A leading `-json` token (exact and case-sensitive) selects JSONL
+    /// output; only the token right after `add` is the option, so
+    /// `@daily -json report` is a text job whose prompt is `-json report`.
+    /// `json`, `JSON` and `-JSON` are not the option: they are schedule or
+    /// prompt text like any other token.
+    ///
+    /// `-agent <name>` (exact and case-sensitive) is the option only as the
+    /// token right after `add`, or after `-json` when present; anywhere else it
+    /// is schedule or prompt text. `--agent` is the CLI flag of `zen`, not an
+    /// option of `/cron add`. The name is quoted like the path of `-f`.
+    /// The schedule is then the first token when it starts with `@`, otherwise
+    /// the first five tokens.
     ///
     /// `-f <path>` (exact and case-sensitive) is the option only as the first
     /// token right after the schedule; anywhere else it is prompt text. The
@@ -285,22 +305,31 @@ extension TerminalChat {
     /// the rest, possibly empty: whether that is acceptable is up to the caller.
     ///
     /// Returns `nil` when there are too few tokens for a schedule, when the
-    /// path after `-f` is missing, or when its quote is unterminated or is
-    /// followed by other characters.
+    /// value after `-agent` or `-f` is missing, or when its quote is
+    /// unterminated or is followed by other characters.
     nonisolated static func parseCronAddArguments(
         _ arguments: String
     ) -> (
         schedule: String,
         prompt: String,
         outputFormat: ZenCronJobCommand.OutputFormat,
-        promptFile: String?
+        promptFile: String?,
+        agentName: String?
     )? {
         var outputFormat = ZenCronJobCommand.OutputFormat.text
         var scheduleArguments = arguments
         let leading = cronSplitLeadingToken(arguments)
-        if leading.token.lowercased() == cronJSONKeyword {
+        if leading.token == cronJSONOption {
             outputFormat = .jsonl
             scheduleArguments = leading.remainder
+        }
+
+        var agentName: String?
+        let agentOption = cronSplitLeadingToken(scheduleArguments)
+        if agentOption.token == cronAgentOption {
+            guard let agent = cronSplitQuotableValue(agentOption.remainder) else { return nil }
+            agentName = agent.value
+            scheduleArguments = agent.remainder
         }
 
         let first = cronSplitLeadingToken(scheduleArguments)
@@ -324,21 +353,22 @@ extension TerminalChat {
 
         let option = cronSplitLeadingToken(remainder)
         guard option.token == cronPromptFileOption else {
-            return (schedule, remainder, outputFormat, nil)
+            return (schedule, remainder, outputFormat, nil, agentName)
         }
-        guard let file = cronSplitPromptFilePath(option.remainder) else { return nil }
-        return (schedule, file.remainder, outputFormat, file.path)
+        guard let file = cronSplitQuotableValue(option.remainder) else { return nil }
+        return (schedule, file.remainder, outputFormat, file.value, agentName)
     }
 
-    /// Splits the text after `-f` into the path and the rest (without its
-    /// leading whitespace). `nil` when the path is missing, or when a quote
-    /// is unterminated or is followed by a character other than whitespace.
+    /// Splits the text after `-agent` or `-f` into the value and the rest
+    /// (without its leading whitespace). `nil` when the value is missing, or
+    /// when a quote is unterminated or is followed by a character other than
+    /// whitespace.
     ///
     /// Scanned on Unicode scalars, like the stored command: a combining mark
     /// after a closing quote must not merge with it.
-    private nonisolated static func cronSplitPromptFilePath(
+    private nonisolated static func cronSplitQuotableValue(
         _ text: String
-    ) -> (path: String, remainder: String)? {
+    ) -> (value: String, remainder: String)? {
         let scalars = text.unicodeScalars
         guard let opening = scalars.first else { return nil }
         guard opening == "'" || opening == "\"" else {
@@ -358,11 +388,38 @@ extension TerminalChat {
         )
     }
 
-    /// The keyword right after `add` that schedules a JSONL job.
-    nonisolated static let cronJSONKeyword = "json"
+    /// The option right after `add` that schedules a JSONL job.
+    nonisolated static let cronJSONOption = "-json"
 
     /// The option right after the schedule that reads the prompt from a file.
     nonisolated static let cronPromptFileOption = "-f"
+
+    /// The option before the schedule that names the agent profile of the job.
+    nonisolated static let cronAgentOption = "-agent"
+
+    /// The `-agent` value as it will be stored: trimmed, on a single line,
+    /// and naming an existing profile by ID or name with the same case- and
+    /// diacritic-insensitive match as `zen --agent`, so a job that would fail
+    /// at every run is refused. The name is kept as typed, not replaced by the
+    /// profile's name.
+    nonisolated static func validatedCronAgentName(
+        _ name: String,
+        availableAgents: [AgentProfile]
+    ) throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = TextUtilities.normalizedLookupValue(trimmed)
+        // A line break would split the crontab line.
+        let exists = !normalized.isEmpty
+            && !trimmed.unicodeScalars.contains(where: { $0 == "\n" || $0 == "\r" })
+            && availableAgents.contains { agent in
+                TextUtilities.normalizedLookupValue(agent.id) == normalized
+                    || TextUtilities.normalizedLookupValue(agent.name) == normalized
+            }
+        guard exists else {
+            throw AgentConfigurationError.unknownAgent(trimmed, availableAgents.map(\.displayName))
+        }
+        return trimmed
+    }
 
     /// The prompt as it will be stored: trimmed, non-empty, on a single line.
     nonisolated static func validatedCronPrompt(_ prompt: String) throws -> String {

@@ -213,6 +213,7 @@ struct TerminalCronCommandTests {
         #expect(locator.requestedPaths == [ZenCrontabDocument.defaultPath])
         #expect(
             output == "Scheduled prompt #1 added:\n  \(entry.cronLine)\n"
+                + "  dir: \(directory) (working directory of this session)\n"
                 + "  zen: /fake/bin/zen (PATH=/usr/local/bin:/usr/bin:/bin)\n"
         )
     }
@@ -242,11 +243,14 @@ struct TerminalCronCommandTests {
         let output = await run("/cron add @daily Hello", in: terminal)
 
         let lines = output.components(separatedBy: "\n")
-        #expect(lines.count == 4)
+        #expect(lines.count == 5)
         #expect(lines[0] == "Scheduled prompt #1 added:")
         #expect(lines[1].hasPrefix("  @daily zen --working-directory "))
-        #expect(lines[2] == "  zen: /opt/homebrew/bin/zen (PATH=/usr/local/bin:/usr/bin:/bin)")
-        #expect(lines[3] == "")
+        #expect(
+            lines[2] == "  dir: \(terminal.configuration.workingDirectory.path) (working directory of this session)"
+        )
+        #expect(lines[3] == "  zen: /opt/homebrew/bin/zen (PATH=/usr/local/bin:/usr/bin:/bin)")
+        #expect(lines[4] == "")
     }
 
     @Test
@@ -323,24 +327,93 @@ struct TerminalCronCommandTests {
     }
 
     @Test
-    func addPassesTheAgentOnlyWhenOneIsSelected() async throws {
+    func addWritesNoAgentWithoutTheOptionEvenWhenOneIsSelected() async throws {
         let (terminal, client) = try makeTerminal(crontab: "")
         terminal.selectedAgent = nil
         _ = await run("/cron add @hourly Without agent", in: terminal)
-        let withoutAgent = try #require(client.writes.last)
-        #expect(!withoutAgent.contains("--agent"))
+        let withoutSelection = try #require(client.writes.last)
+        #expect(!withoutSelection.contains("--agent"))
 
-        let agent = try #require(AgentProfileStore.defaultProfiles().first)
-        terminal.selectedAgent = agent
-        _ = await run("/cron add @hourly With agent", in: terminal)
-        let withAgent = try #require(client.writes.last)
-        let items = try #require(ZenCrontabDocument.parse(withAgent).block?.items)
+        // The agent selected in the session is never written: without
+        // `-agent`, the line has no `--agent` and `zen` runs its default profile.
+        terminal.selectedAgent = try #require(
+            AgentProfileStore.defaultProfiles().first { $0.name == AgentProfileStore.reviewerAgentName }
+        )
+        _ = await run("/cron add @hourly With a selected agent", in: terminal)
+        let withSelection = try #require(client.writes.last)
+        #expect(!withSelection.contains("--agent"))
+        let items = try #require(ZenCrontabDocument.parse(withSelection).block?.items)
         guard case let .entry(entry) = try #require(items.last) else {
             Issue.record("expected a scheduled entry")
             return
         }
-        #expect(entry.cronLine.contains(" --agent \(ZenCronJobCommand.shellQuote(agent.name)) --working-directory "))
-        #expect(entry.job?.agentName == agent.name)
+        #expect(entry.job?.agentName == nil)
+    }
+
+    @Test(arguments: [
+        ("/cron add -agent Reviewer @daily Hello", "Reviewer", false),
+        // Kept as typed: `zen --agent` matches IDs and names case-insensitively.
+        ("/cron add -agent reviewer @daily Hello", "reviewer", false),
+        ("/cron add -json -agent Reviewer 0 9 * * 1-5 Hello", "Reviewer", true),
+        ("/cron add -json -agent 'Night Shift' @daily Hello", "Night Shift", true),
+        ("/cron add -agent \"Night Shift\" @daily Hello", "Night Shift", false),
+        ("/cron add -agent ' Night Shift ' @daily Hello", "Night Shift", false),
+        ("/cron add -agent night-shift @daily Hello", "night-shift", false)
+    ])
+    func addWritesTheAgentNamedWithTheOption(command: String, agentName: String, isJSONL: Bool) async throws {
+        let agents = AgentProfileStore.defaultProfiles() + [
+            AgentProfile(id: "night-shift", name: "Night Shift", role: .reporter)
+        ]
+        let (terminal, client) = try makeTerminal(client: FakeCrontabClient(text: ""), agents: agents)
+
+        let output = await run(command, in: terminal)
+
+        let written = try #require(client.writes.first)
+        let items = try #require(ZenCrontabDocument.parse(written).block?.items)
+        guard case let .entry(entry) = try #require(items.first) else {
+            Issue.record("expected a scheduled entry")
+            return
+        }
+        let directory = terminal.configuration.workingDirectory.path
+        #expect(
+            entry.cronCommand
+                == "zen --agent \(ZenCronJobCommand.shellQuote(agentName))"
+                + " --working-directory \(ZenCronJobCommand.shellQuote(directory))"
+                + (isJSONL ? " --jsonl" : "") + " -p 'Hello'"
+        )
+        #expect(entry.job?.agentName == agentName)
+        #expect(entry.job?.prompt == "Hello")
+        #expect(output.hasPrefix("Scheduled prompt #1 added:\n  \(entry.cronLine)\n"))
+    }
+
+    @Test
+    func addWithTheAgentOptionIgnoresTheAgentSelectedInTheSession() async throws {
+        let (terminal, client) = try makeTerminal(crontab: "")
+        terminal.selectedAgent = try #require(
+            AgentProfileStore.defaultProfiles().first { $0.name == AgentProfileStore.plannerAgentName }
+        )
+
+        _ = await run("/cron add -agent Reviewer @daily Hello", in: terminal)
+
+        let written = try #require(client.writes.first)
+        #expect(written.contains(" --agent 'Reviewer' --working-directory "))
+        #expect(!written.contains("Planner"))
+    }
+
+    @Test
+    func addRefusesAnUnknownAgentAndListsTheAvailableOnes() async throws {
+        let locator = FakeZenLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator)
+
+        let output = await run("/cron add -agent Nobody @daily Hello", in: terminal)
+
+        let names = AgentProfileStore.defaultProfiles().map(\.displayName)
+        let error = AgentConfigurationError.unknownAgent("Nobody", names)
+        #expect(output == "ZenCODE: \(error.localizedDescription)\n")
+        #expect(output.hasPrefix("ZenCODE: Unknown agent 'Nobody'. Available agents: "))
+        #expect(client.writes.isEmpty)
+        #expect(client.readCount == 0)
+        #expect(locator.requestedPaths.isEmpty)
     }
 
     @Test
@@ -361,11 +434,10 @@ struct TerminalCronCommandTests {
     }
 
     @Test(arguments: [
-        "/cron add json @daily Summarize open PRs",
-        "/cron add JSON @daily Summarize open PRs",
-        "/cron add Json   @daily   Summarize open PRs"
+        "/cron add -json @daily Summarize open PRs",
+        "/cron add -json   @daily   Summarize open PRs"
     ])
-    func addWithTheJSONKeywordSchedulesAJSONLJob(command: String) async throws {
+    func addWithTheJSONOptionSchedulesAJSONLJob(command: String) async throws {
         let (terminal, client) = try makeTerminal(crontab: "")
 
         let output = await run(command, in: terminal)
@@ -389,10 +461,10 @@ struct TerminalCronCommandTests {
     }
 
     @Test
-    func addWithTheJSONKeywordAcceptsAFiveFieldSchedule() async throws {
+    func addWithTheJSONOptionAcceptsAFiveFieldSchedule() async throws {
         let (terminal, client) = try makeTerminal(crontab: "")
 
-        _ = await run("/cron add json 0 9 * * 1-5 Summarize open PRs", in: terminal)
+        _ = await run("/cron add -json 0 9 * * 1-5 Summarize open PRs", in: terminal)
 
         let written = try #require(client.writes.first)
         let items = try #require(ZenCrontabDocument.parse(written).block?.items)
@@ -406,10 +478,10 @@ struct TerminalCronCommandTests {
     }
 
     @Test
-    func onlyTheTokenRightAfterAddIsTheJSONKeyword() async throws {
+    func onlyTheTokenRightAfterAddIsTheJSONOption() async throws {
         let (terminal, client) = try makeTerminal(crontab: "")
 
-        _ = await run("/cron add @daily json report", in: terminal)
+        _ = await run("/cron add @daily -json report", in: terminal)
 
         let written = try #require(client.writes.first)
         let items = try #require(ZenCrontabDocument.parse(written).block?.items)
@@ -418,19 +490,44 @@ struct TerminalCronCommandTests {
             return
         }
         #expect(entry.job?.outputFormat == .text)
-        #expect(entry.job?.prompt == "json report")
+        #expect(entry.job?.prompt == "-json report")
         #expect(!entry.cronLine.contains("--jsonl"))
-        #expect(entry.cronLine.hasSuffix(" -p 'json report'"))
+        #expect(entry.cronLine.hasSuffix(" -p '-json report'"))
+    }
+
+    @Test(arguments: [
+        // Too few tokens for a schedule once the old spellings are plain text.
+        ("/cron add json @daily Hello", "Usage: /cron"),
+        ("/cron add JSON @daily Hello", "Usage: /cron"),
+        ("/cron add Json   @daily   Hello", "Usage: /cron"),
+        ("/cron add -JSON @daily Hello", "Usage: /cron"),
+        ("/cron add -Json @daily Hello", "Usage: /cron"),
+        ("/cron add --agent Reviewer @daily Hello", "Usage: /cron"),
+        // Five tokens or more: they become a schedule that no cron accepts.
+        ("/cron add json 0 9 * * * Hello", "Invalid cron schedule"),
+        ("/cron add JSON 0 9 * * * Hello", "Invalid cron schedule"),
+        ("/cron add -JSON 0 9 * * * Hello", "Invalid cron schedule"),
+        ("/cron add --json 0 9 * * * Hello", "Invalid cron schedule"),
+        ("/cron add --agent Reviewer 0 9 * * * Hello", "Invalid cron schedule"),
+        ("/cron add -json --agent Reviewer 0 9 * * * Hello", "Invalid cron schedule"),
+        ("/cron add json --agent Reviewer 0 9 * * * Hello", "Invalid cron schedule")
+    ])
+    func theOldAndOtherSpellingsOfTheOptionsScheduleNothing(command: String, expected: String) async throws {
+        let (terminal, client) = try makeTerminal(crontab: "")
+
+        let output = await run(command, in: terminal)
+
+        #expect(output.contains(expected))
+        #expect(client.writes.isEmpty)
     }
 
     @Test(arguments: [
         ("0 9 * * 1-5 Summarize open PRs", "0 9 * * 1-5", "Summarize open PRs", false),
         ("@daily Hello", "@daily", "Hello", false),
-        ("@daily json report", "@daily", "json report", false),
-        ("json @daily Hello", "@daily", "Hello", true),
-        ("JSON @daily Hello", "@daily", "Hello", true),
-        ("json 0 9 * * 1-5 Hello world", "0 9 * * 1-5", "Hello world", true),
-        ("json @DAILY  Hello  ", "@DAILY", "Hello  ", true)
+        ("@daily -json report", "@daily", "-json report", false),
+        ("-json @daily Hello", "@daily", "Hello", true),
+        ("-json 0 9 * * 1-5 Hello world", "0 9 * * 1-5", "Hello world", true),
+        ("-json @DAILY  Hello  ", "@DAILY", "Hello  ", true)
     ])
     func parseCronAddArgumentsSplitsFormatScheduleAndPrompt(
         arguments: String,
@@ -447,8 +544,38 @@ struct TerminalCronCommandTests {
         #expect(parsed?.promptFile == nil)
     }
 
-    @Test(arguments: ["", "json", "JSON", "json   ", "json 0 9 * *", "0 9 * *", "json json report"])
+    @Test(arguments: ["", "-json", "-json   ", "-json 0 9 * *", "0 9 * *", "-json -json report"])
     func parseCronAddArgumentsRejectsTooFewTokensForASchedule(arguments: String) {
+        #expect(TerminalChat.parseCronAddArguments(arguments) == nil)
+    }
+
+    @Test(arguments: [
+        // The old keyword, and any case of it, is schedule text now.
+        ("json 0 9 * * Hello", "json 0 9 * *", "Hello"),
+        ("JSON 0 9 * * Hello", "JSON 0 9 * *", "Hello"),
+        ("Json @daily Hello x y", "Json @daily Hello x y", ""),
+        // The option is exact and case-sensitive.
+        ("-JSON 0 9 * * Hello", "-JSON 0 9 * *", "Hello"),
+        ("-Json 0 9 * * Hello", "-Json 0 9 * *", "Hello"),
+        ("--json 0 9 * * Hello", "--json 0 9 * *", "Hello"),
+        ("-jsonl 0 9 * * Hello", "-jsonl 0 9 * *", "Hello"),
+        ("-json: 0 9 * * Hello", "-json: 0 9 * *", "Hello")
+    ])
+    func parseCronAddArgumentsTreatsAnyOtherJSONSpellingAsScheduleText(
+        arguments: String,
+        schedule: String,
+        prompt: String
+    ) {
+        let parsed = TerminalChat.parseCronAddArguments(arguments)
+
+        #expect(parsed?.outputFormat == .text)
+        #expect(parsed?.agentName == nil)
+        #expect(parsed?.schedule == schedule)
+        #expect(parsed?.prompt == prompt)
+    }
+
+    @Test(arguments: ["json", "JSON", "json   ", "-JSON @daily Hello", "json @daily Hello", "--agent Reviewer @daily go"])
+    func parseCronAddArgumentsRejectsTheOldKeywordWithoutEnoughTokensForASchedule(arguments: String) {
         #expect(TerminalChat.parseCronAddArguments(arguments) == nil)
     }
 
@@ -462,7 +589,7 @@ struct TerminalCronCommandTests {
         ("@daily   -f\t/tmp/p.md\tGo  ", "@daily", "/tmp/p.md", "Go  ", false),
         ("@daily -f /tmp/it's.md go", "@daily", "/tmp/it's.md", "go", false),
         ("@daily -f relative/p.md go", "@daily", "relative/p.md", "go", false),
-        ("@daily -f /tmp/p.md json report", "@daily", "/tmp/p.md", "json report", false),
+        ("@daily -f /tmp/p.md -json report", "@daily", "/tmp/p.md", "-json report", false),
         ("@daily -f /tmp/p.md -f /tmp/q.md", "@daily", "/tmp/p.md", "-f /tmp/q.md", false),
         ("@daily -f /tmp/p.md first\nsecond", "@daily", "/tmp/p.md", "first\nsecond", false),
         // Single-quoted: spaces allowed, no escape sequences.
@@ -478,14 +605,14 @@ struct TerminalCronCommandTests {
         ("@daily -f \"/tmp/my prompts/p.md\" Summarize it", "@daily", "/tmp/my prompts/p.md", "Summarize it", false),
         ("@daily -f \"/tmp/my prompts/p.md\"", "@daily", "/tmp/my prompts/p.md", "", false),
         ("@daily -f \"/tmp/it's here/p.md\" go", "@daily", "/tmp/it's here/p.md", "go", false),
-        // With the `json` keyword and with five-field schedules.
-        ("json @daily -f /tmp/p.md Summarize", "@daily", "/tmp/p.md", "Summarize", true),
-        ("JSON @DAILY -f '/tmp/a b.md'", "@DAILY", "/tmp/a b.md", "", true),
+        // With the `-json` option and with five-field schedules.
+        ("-json @daily -f /tmp/p.md Summarize", "@daily", "/tmp/p.md", "Summarize", true),
+        ("-json @DAILY -f '/tmp/a b.md'", "@DAILY", "/tmp/a b.md", "", true),
         ("0 9 * * 1-5 -f /tmp/p.md Summarize it", "0 9 * * 1-5", "/tmp/p.md", "Summarize it", false),
         ("0 9 * * 1-5 -f '/tmp/a b.md'", "0 9 * * 1-5", "/tmp/a b.md", "", false),
         ("0 9 * * 1-5 -f \"/tmp/a b.md\" go", "0 9 * * 1-5", "/tmp/a b.md", "go", false),
-        ("json 0 9 * * 1-5 -f /tmp/p.md", "0 9 * * 1-5", "/tmp/p.md", "", true),
-        ("JSON */15 * * * * -f '/tmp/a b.md' go", "*/15 * * * *", "/tmp/a b.md", "go", true)
+        ("-json 0 9 * * 1-5 -f /tmp/p.md", "0 9 * * 1-5", "/tmp/p.md", "", true),
+        ("-json */15 * * * * -f '/tmp/a b.md' go", "*/15 * * * *", "/tmp/a b.md", "go", true)
     ])
     func parseCronAddArgumentsReadsThePromptFileRightAfterTheSchedule(
         arguments: String,
@@ -506,7 +633,7 @@ struct TerminalCronCommandTests {
         // `-f` is the option only as the first token right after the schedule.
         ("@daily Summarize -f /tmp/p.md", "@daily", "Summarize -f /tmp/p.md"),
         ("0 9 * * 1-5 report -f x", "0 9 * * 1-5", "report -f x"),
-        ("json @daily json -f /tmp/p.md", "@daily", "json -f /tmp/p.md"),
+        ("-json @daily -json -f /tmp/p.md", "@daily", "-json -f /tmp/p.md"),
         // Exact and case-sensitive.
         ("@daily -F /tmp/p.md go", "@daily", "-F /tmp/p.md go"),
         ("@daily -file /tmp/p.md", "@daily", "-file /tmp/p.md"),
@@ -534,9 +661,9 @@ struct TerminalCronCommandTests {
         "@daily -f ",
         "@daily -f   ",
         "@daily -f\n",
-        "json @daily -f",
+        "-json @daily -f",
         "0 9 * * * -f",
-        "JSON 0 9 * * * -f   ",
+        "-json 0 9 * * * -f   ",
         // Unterminated quote.
         "@daily -f '",
         "@daily -f \"",
@@ -556,29 +683,121 @@ struct TerminalCronCommandTests {
         "@daily -f \"/tmp/back\\\"slash.md\" go",
         "@daily -f '/tmp/it\\'s.md' go",
         "@daily -f '/tmp/p.md'\u{0301} go",
-        "json @daily -f '/tmp/p.md'x"
+        "-json @daily -f '/tmp/p.md'x"
     ])
     func parseCronAddArgumentsRejectsAMalformedPromptFileOption(arguments: String) {
         #expect(TerminalChat.parseCronAddArguments(arguments) == nil)
     }
 
     @Test(arguments: [
+        ("-agent Reviewer @daily go", "Reviewer", "@daily", "go", nil, false),
+        ("-agent Reviewer 0 9 * * 1-5 go on", "Reviewer", "0 9 * * 1-5", "go on", nil, false),
+        ("-json -agent Reviewer @daily go", "Reviewer", "@daily", "go", nil, true),
+        ("-json -agent 'Night Shift' @daily -f /tmp/p.md go", "Night Shift", "@daily", "go", "/tmp/p.md", true),
+        ("-agent \"Night Shift\" @daily go", "Night Shift", "@daily", "go", nil, false),
+        ("-agent   Reviewer   @daily   go", "Reviewer", "@daily", "go", nil, false)
+    ])
+    func parseCronAddArgumentsReadsTheAgentBeforeTheSchedule(
+        arguments: String,
+        agentName: String,
+        schedule: String,
+        prompt: String,
+        promptFile: String?,
+        isJSONL: Bool
+    ) {
+        let parsed = TerminalChat.parseCronAddArguments(arguments)
+
+        #expect(parsed?.agentName == agentName)
+        #expect(parsed?.schedule == schedule)
+        #expect(parsed?.prompt == prompt)
+        #expect(parsed?.promptFile == promptFile)
+        #expect(parsed?.outputFormat == (isJSONL ? .jsonl : .text))
+    }
+
+    @Test(arguments: [
+        // `-agent` is the option only right after `add` or `-json`.
+        ("@daily -agent Reviewer go", "@daily", "-agent Reviewer go"),
+        ("@daily -f /tmp/p.md -agent Reviewer", "@daily", "-agent Reviewer"),
+        // Exact and case-sensitive.
+        ("-Agent Reviewer 0 9 * go", "-Agent Reviewer 0 9 *", "go"),
+        ("-agent=Reviewer 0 9 * * go", "-agent=Reviewer 0 9 * *", "go"),
+        // `--agent` is the flag of the `zen` command line, not an option here.
+        ("--agent Reviewer 0 9 * go", "--agent Reviewer 0 9 *", "go"),
+        ("-json --agent Reviewer 0 9 * go", "--agent Reviewer 0 9 *", "go")
+    ])
+    func parseCronAddArgumentsTreatsAnyOtherAgentOptionAsScheduleOrPromptText(
+        arguments: String,
+        schedule: String,
+        prompt: String
+    ) {
+        let parsed = TerminalChat.parseCronAddArguments(arguments)
+
+        #expect(parsed?.agentName == nil)
+        #expect(parsed?.schedule == schedule)
+        #expect(parsed?.prompt == prompt)
+    }
+
+    @Test(arguments: [
+        "-agent",
+        "-agent ",
+        "-json -agent",
+        "-agent Reviewer",
+        "-agent Reviewer 0 9 * *",
+        "-agent 'Night Shift @daily go",
+        "-agent 'Night Shift'@daily go",
+        "-agent Reviewer -json @daily go"
+    ])
+    func parseCronAddArgumentsRejectsAMalformedAgentOption(arguments: String) {
+        #expect(TerminalChat.parseCronAddArguments(arguments) == nil)
+    }
+
+    @Test
+    func validatedCronAgentNameMatchesProfilesLikeZenAgent() throws {
+        let agents = [
+            AgentProfile(id: "night-shift", name: "Night Shift", role: .reporter),
+            AgentProfile(id: "organizer", name: "Organizer", role: .organizer)
+        ]
+
+        #expect(try TerminalChat.validatedCronAgentName("Organizer", availableAgents: agents) == "Organizer")
+        #expect(try TerminalChat.validatedCronAgentName("ORGANIZER", availableAgents: agents) == "ORGANIZER")
+        #expect(try TerminalChat.validatedCronAgentName(" Night Shift ", availableAgents: agents) == "Night Shift")
+        #expect(try TerminalChat.validatedCronAgentName("night-shift", availableAgents: agents) == "night-shift")
+        #expect(try TerminalChat.validatedCronAgentName("Nïght Shîft", availableAgents: agents) == "Nïght Shîft")
+        for name in ["Nobody", "", "   ", "Night\nShift", "Night"] {
+            #expect(throws: AgentConfigurationError.self, "name: \(name)") {
+                try TerminalChat.validatedCronAgentName(name, availableAgents: agents)
+            }
+        }
+    }
+
+    @Test(arguments: [
         ("/cron add 61 9 * * * Hello", "Invalid cron schedule"),
         ("/cron add @bogus Hello", "Invalid cron schedule"),
-        ("/cron add json 61 9 * * * Hello", "Invalid cron schedule"),
-        ("/cron add json @bogus Hello", "Invalid cron schedule"),
+        ("/cron add -json 61 9 * * * Hello", "Invalid cron schedule"),
+        ("/cron add -json @bogus Hello", "Invalid cron schedule"),
         ("/cron add 0 9 * * *", "cannot be scheduled"),
         ("/cron add @daily", "cannot be scheduled"),
-        ("/cron add json 0 9 * * *", "cannot be scheduled"),
-        ("/cron add json @daily", "cannot be scheduled"),
+        ("/cron add -json 0 9 * * *", "cannot be scheduled"),
+        ("/cron add -json @daily", "cannot be scheduled"),
         ("/cron add 0 9 * * * first\nsecond", "cannot be scheduled"),
         ("/cron add 0 9 * * * first\r\nsecond", "cannot be scheduled"),
-        ("/cron add json @daily first\nsecond", "cannot be scheduled"),
+        ("/cron add -json @daily first\nsecond", "cannot be scheduled"),
         ("/cron add 0 9 * *", "Usage: /cron"),
         ("/cron add", "Usage: /cron"),
-        ("/cron add json", "Usage: /cron"),
-        ("/cron add JSON", "Usage: /cron"),
-        ("/cron add json 0 9 * *", "Usage: /cron")
+        ("/cron add -json", "Usage: /cron"),
+        ("/cron add -json 0 9 * *", "Usage: /cron"),
+        // `-agent` needs a name and still a schedule; the name must be a profile.
+        ("/cron add -agent", "Usage: /cron"),
+        ("/cron add -agent Reviewer", "Usage: /cron"),
+        ("/cron add -json -agent Reviewer", "Usage: /cron"),
+        ("/cron add -agent 'Reviewer @daily Hello", "Usage: /cron"),
+        ("/cron add -agent Nobody @daily Hello", "Unknown agent 'Nobody'"),
+        ("/cron add -json -agent Nobody 0 9 * * * Hello", "Unknown agent 'Nobody'"),
+        ("/cron add -agent '' @daily Hello", "Unknown agent ''"),
+        ("/cron add -agent 'Revi\newer' @daily Hello", "Unknown agent"),
+        // Validated with the schedule and the prompt, before the crontab is read.
+        ("/cron add -agent Reviewer @bogus Hello", "Invalid cron schedule"),
+        ("/cron add -agent Reviewer @daily", "cannot be scheduled")
     ])
     func rejectedAddNeverTouchesTheCrontab(command: String, expected: String) async throws {
         let locator = FakeZenLocator()
@@ -634,7 +853,7 @@ struct TerminalCronCommandTests {
         let (terminal, client) = try makeTerminal(crontab: "")
 
         let output = await run(
-            "/cron add json 0 9 * * 1-5 -f \(quote)\(file)\(quote)   Summarize  it ",
+            "/cron add -json 0 9 * * 1-5 -f \(quote)\(file)\(quote)   Summarize  it ",
             in: terminal
         )
 
@@ -704,7 +923,7 @@ struct TerminalCronCommandTests {
                 "ZenCODE: Cannot read the prompt file \(missing).\n"
             ),
             (
-                "/cron add json 0 9 * * 1-5 -f '\(missing)' Summarize",
+                "/cron add -json 0 9 * * 1-5 -f '\(missing)' Summarize",
                 "ZenCODE: Cannot read the prompt file \(missing).\n"
             ),
             (
@@ -787,7 +1006,7 @@ struct TerminalCronCommandTests {
     @Test(arguments: [
         "/cron add @daily -f",
         "/cron add @daily -f   ",
-        "/cron add json @daily -f",
+        "/cron add -json @daily -f",
         "/cron add 0 9 * * * -f",
         "/cron add @daily -f '/tmp/p.md",
         "/cron add @daily -f \"/tmp/p.md go",
@@ -1667,7 +1886,7 @@ struct TerminalCronCommandTests {
         #expect(!cron.requiresArgument)
         for usage in [
             "/cron [list]",
-            "/cron add [json] <schedule> [-f <path>] <prompt>",
+            "/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>",
             "/cron remove <n>",
             "/cron run <n>",
             "/cron mailto [address|none|default]"
@@ -1676,7 +1895,13 @@ struct TerminalCronCommandTests {
         }
         #expect(
             cron.help.contains(
-                "Schedule a headless prompt (five cron fields or an @alias); json mails JSONL instead of text"
+                "Schedule a headless prompt that runs in the working directory of this session"
+                    + " (five cron fields or an @alias); -json mails JSONL instead of text"
+            )
+        )
+        #expect(
+            cron.help.contains(
+                "; -agent runs it with that agent profile (default: Developer)"
             )
         )
         #expect(
@@ -1686,7 +1911,7 @@ struct TerminalCronCommandTests {
         )
         #expect(
             TerminalChat.cronUsageMessage
-                == "Usage: /cron [list] | add [json] <schedule> [-f <path>] <prompt> | remove <n> | run <n>"
+                == "Usage: /cron [list] | add [-json] [-agent <name>] <schedule> [-f <path>] <prompt> | remove <n> | run <n>"
                 + " | mailto [address|none|default]\n"
         )
 
@@ -1734,7 +1959,7 @@ struct TerminalCronCommandTests {
         #expect(
             arguments.map(\.summary) == [
                 "show scheduled prompts with their numbers",
-                "[json] <schedule> [-f <path>] <prompt> · e.g. @daily Summarize PRs",
+                "[-json] [-agent <name>] <schedule> [-f <path>] <prompt>",
                 "<n> · delete entry n from /cron list",
                 "<n> · run entry n now, as cron would",
                 "[address|none|default] · where cron mails results"
@@ -1746,50 +1971,109 @@ struct TerminalCronCommandTests {
     @Test(arguments: [
         ("/cron add ", [
             "@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot",
-            "0 9 * * 1-5", "*/15 * * * *", "30 18 * * *", "json"
+            "0 9 * * 1-5", "*/15 * * * *", "30 18 * * *", "-json", "-agent"
         ]),
         ("/cron ADD ", [
             "@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot",
-            "0 9 * * 1-5", "*/15 * * * *", "30 18 * * *", "json"
+            "0 9 * * 1-5", "*/15 * * * *", "30 18 * * *", "-json", "-agent"
         ]),
-        // `json` completes from any case-insensitive prefix, in the first slot only.
-        ("/cron add j", ["json"]),
-        ("/cron add J", ["json"]),
-        ("/cron add js", ["json"]),
-        ("/cron add JS", ["json"]),
-        ("/cron add jso", ["json"]),
-        ("/cron add json", ["json"]),
-        ("/cron add JSON", ["json"]),
-        ("/cron ADD j", ["json"]),
+        // `-json` completes from a prefix starting with `-`, in the first slot only;
+        // the options are exact and case-sensitive, `-json` first.
+        ("/cron add -", ["-json", "-agent"]),
+        ("/cron ADD -", ["-json", "-agent"]),
+        ("/cron add -j", ["-json"]),
+        ("/cron add -js", ["-json"]),
+        ("/cron add -jso", ["-json"]),
+        ("/cron add -json", ["-json"]),
+        ("/cron ADD -j", ["-json"]),
+        ("/cron add -J", ["<minute>"]),
+        ("/cron add -JS", ["<minute>"]),
+        ("/cron add -JSON", ["<minute>"]),
+        ("/cron add -jsonx", ["<minute>"]),
+        ("/cron add -x", ["<minute>"]),
+        // The old keyword is not completed any more, in any case.
+        ("/cron add j", ["<minute>"]),
+        ("/cron add J", ["<minute>"]),
+        ("/cron add js", ["<minute>"]),
+        ("/cron add JS", ["<minute>"]),
+        ("/cron add jso", ["<minute>"]),
+        ("/cron add json", ["<minute>"]),
+        ("/cron add JSON", ["<minute>"]),
+        ("/cron ADD j", ["<minute>"]),
         ("/cron add jsonx", ["<minute>"]),
         ("/cron add s", ["<minute>"]),
-        // After `json` the schedule is completed as for a text job, `json` is not offered again.
-        ("/cron add json ", [
+        // It is plain text: the first field of a schedule.
+        ("/cron add json ", ["<hour>"]),
+        ("/cron add JSON ", ["<hour>"]),
+        ("/cron add JSON @daily Summarize open PRs", ["<day-of-week>"]),
+        // After `-json` the schedule is completed as for a text job, `-json` is not offered again.
+        ("/cron add -json ", [
+            "@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot",
+            "0 9 * * 1-5", "*/15 * * * *", "30 18 * * *", "-agent"
+        ]),
+        ("/cron add -json -", ["-agent"]),
+        ("/cron add -json -a", ["-agent"]),
+        ("/cron add -json -agent", ["-agent"]),
+        ("/cron add -json -j", ["<minute>"]),
+        ("/cron add -json -json", ["<minute>"]),
+        ("/cron add -json --ag", ["<minute>"]),
+        // `-agent` completes from a prefix starting with `-`, before the schedule only.
+        ("/cron add -a", ["-agent"]),
+        ("/cron add -ag", ["-agent"]),
+        ("/cron add -agent", ["-agent"]),
+        ("/cron add --", ["<minute>"]),
+        ("/cron add --a", ["<minute>"]),
+        ("/cron add --agent", ["<minute>"]),
+        ("/cron add -A", ["<minute>"]),
+        ("/cron add -Agent", ["<minute>"]),
+        ("/cron add -agentx", ["<minute>"]),
+        ("/cron add 0 -", ["<hour>"]),
+        // `--agent` is the flag of `zen`, not an option here: plain schedule text.
+        ("/cron add --agent ", ["<hour>"]),
+        ("/cron add --agent Rev", ["<hour>"]),
+        // Once `-agent` is typed: the name, then the schedule without `-json` or `-agent`.
+        ("/cron add -agent ", ["<agent>"]),
+        ("/cron add -agent Rev", ["<agent>"]),
+        ("/cron add -json -agent ", ["<agent>"]),
+        ("/cron add -agent 'Night ", ["<agent>"]),
+        ("/cron add -agent Reviewer ", [
             "@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot",
             "0 9 * * 1-5", "*/15 * * * *", "30 18 * * *"
         ]),
-        ("/cron add JSON ", [
+        ("/cron add -agent 'Night Shift' ", [
             "@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot",
             "0 9 * * 1-5", "*/15 * * * *", "30 18 * * *"
         ]),
-        ("/cron add json @", ["@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot"]),
-        ("/cron add json @d", ["@daily"]),
-        ("/cron add json @mid", ["@midnight"]),
-        ("/cron add json j", ["<minute>"]),
-        ("/cron add json 0", ["<minute>"]),
-        ("/cron add json 0 ", ["<hour>"]),
-        ("/cron add json 0 9", ["<hour>"]),
-        ("/cron add json 0 9 ", ["<day-of-month>"]),
-        ("/cron add json 0 9 * ", ["<month>"]),
-        ("/cron add json 0 9 * * ", ["<day-of-week>"]),
-        ("/cron add json 0 9 * * 1-5 ", ["<prompt>", "-f"]),
-        ("/cron add json 0 9 * * 1-5 Summ", ["<prompt>"]),
-        ("/cron add json @daily ", ["<prompt>", "-f"]),
-        ("/cron add JSON @daily Summarize open PRs", ["<prompt>"]),
-        // Later slots never offer the keyword.
+        ("/cron add -agent Reviewer -", ["<minute>"]),
+        ("/cron add -agent Reviewer -json", ["<minute>"]),
+        ("/cron add -agent Reviewer j", ["<minute>"]),
+        ("/cron add -agent Reviewer @d", ["@daily"]),
+        ("/cron add -agent Reviewer 0 ", ["<hour>"]),
+        ("/cron add -agent 'Night Shift' 0 9 * * ", ["<day-of-week>"]),
+        ("/cron add -json -agent Reviewer @daily ", ["<prompt>", "-f"]),
+        ("/cron add -agent Reviewer 0 9 * * 1-5 -f ", ["<path>"]),
+        ("/cron add -agent Reviewer @daily Summarize", ["<prompt>"]),
+        ("/cron add -json @", ["@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot"]),
+        ("/cron add -json @d", ["@daily"]),
+        ("/cron add -json @mid", ["@midnight"]),
+        ("/cron add -json j", ["<minute>"]),
+        ("/cron add -json 0", ["<minute>"]),
+        ("/cron add -json 0 ", ["<hour>"]),
+        ("/cron add -json 0 9", ["<hour>"]),
+        ("/cron add -json 0 9 ", ["<day-of-month>"]),
+        ("/cron add -json 0 9 * ", ["<month>"]),
+        ("/cron add -json 0 9 * * ", ["<day-of-week>"]),
+        ("/cron add -json 0 9 * * 1-5 ", ["<prompt>", "-f"]),
+        ("/cron add -json 0 9 * * 1-5 Summ", ["<prompt>"]),
+        ("/cron add -json @daily ", ["<prompt>", "-f"]),
+        ("/cron add -json @daily Summarize open PRs", ["<prompt>"]),
+        // Later slots never offer the options.
         ("/cron add @daily j", ["<prompt>"]),
+        ("/cron add @daily -json", ["<prompt>"]),
+        ("/cron add @daily -agent", ["<prompt>"]),
         ("/cron add 0 j", ["<hour>"]),
-        ("/cron add 0 json", ["<hour>"]),
+        ("/cron add 0 -json", ["<hour>"]),
+        ("/cron add 0 -agent", ["<hour>"]),
         ("/cron add @", ["@hourly", "@daily", "@weekly", "@monthly", "@yearly", "@reboot"]),
         ("/cron add @d", ["@daily"]),
         ("/cron add @D", ["@daily"]),
@@ -1824,8 +2108,8 @@ struct TerminalCronCommandTests {
         ("/cron add @daily f", ["<prompt>"]),
         ("/cron add 0 9 * * 1-5 -", ["-f"]),
         ("/cron add 0 9 * * 1-5 -f", ["-f"]),
-        ("/cron add json @daily -", ["-f"]),
-        ("/cron add json 0 9 * * 1-5 -f", ["-f"]),
+        ("/cron add -json @daily -", ["-f"]),
+        ("/cron add -json 0 9 * * 1-5 -f", ["-f"]),
         ("/cron ADD @daily -f", ["-f"]),
         ("/cron add @daily Summarize -", ["<prompt>"]),
         ("/cron add @daily Summarize -f", ["<prompt>"]),
@@ -1842,8 +2126,8 @@ struct TerminalCronCommandTests {
         ("/cron ADD @daily -f ", ["<path>"]),
         ("/cron add 0 9 * * 1-5 -f ", ["<path>"]),
         ("/cron add 0 9 * * 1-5 -f /tmp/p.md ", ["<prompt>"]),
-        ("/cron add json @daily -f ", ["<path>"]),
-        ("/cron add JSON 0 9 * * 1-5 -f /tmp/p.md ", ["<prompt>"]),
+        ("/cron add -json @daily -f ", ["<path>"]),
+        ("/cron add -json 0 9 * * 1-5 -f /tmp/p.md ", ["<prompt>"]),
         // A quoted path with spaces splits into several words here, which only
         // changes which guide is shown for the slots inside it.
         ("/cron add @daily -f '/tmp/my ", ["<prompt>"]),
@@ -1871,7 +2155,7 @@ struct TerminalCronCommandTests {
     }
 
     @Test
-    func cronScheduleSlotListsAliasesThenFiveFieldExamplesThenJSONThatKeepASeparator() {
+    func cronScheduleSlotListsAliasesThenFiveFieldExamplesThenJSONAndTheAgentThatKeepASeparator() {
         let rows = cronCompletions("/cron add ")
 
         #expect(
@@ -1885,7 +2169,8 @@ struct TerminalCronCommandTests {
                 "weekdays at 09:00",
                 "every 15 minutes",
                 "every day at 18:30",
-                "mail the run as JSONL records instead of the answer text"
+                "mail the run as JSONL records instead of the answer text",
+                "agent profile the job runs with; default: Developer"
             ]
         )
         // Accepting one leaves a space for the prompt instead of sending.
@@ -1893,19 +2178,30 @@ struct TerminalCronCommandTests {
     }
 
     @Test
-    func jsonComesLastSoTheInitialSelectionStaysOnTheFirstAlias() {
+    func jsonAndTheAgentComeLastSoTheInitialSelectionStaysOnTheFirstAlias() {
         let rows = cronCompletions("/cron add ")
 
         #expect(rows.first?.command == "@hourly")
-        #expect(rows.last?.command == "json")
-        #expect(rows.filter { $0.command == "json" }.count == 1)
+        #expect(rows.suffix(2).map(\.command) == ["-json", "-agent"])
+        #expect(rows.filter { $0.command == "-json" }.count == 1)
+        #expect(rows.filter { $0.command == "-agent" }.count == 1)
+    }
+
+    @Test
+    func theAgentRowIsAValueThatLeavesASeparatorForTheName() throws {
+        let row = try #require(cronCompletions("/cron add -a").first)
+
+        #expect(row.command == "-agent")
+        #expect(row.summary == "agent profile the job runs with; default: Developer")
+        #expect(row.requiresArgument)
+        #expect(!row.isHint)
     }
 
     @Test
     func theJSONRowIsAValueThatLeavesASeparatorForTheSchedule() throws {
-        let row = try #require(cronCompletions("/cron add j").first)
+        let row = try #require(cronCompletions("/cron add -j").first)
 
-        #expect(row.command == "json")
+        #expect(row.command == "-json")
         #expect(row.summary == "mail the run as JSONL records instead of the answer text")
         #expect(row.requiresArgument)
         #expect(!row.isHint)
@@ -1913,7 +2209,7 @@ struct TerminalCronCommandTests {
 
     @Test
     func theFirstSlotAfterTheScheduleOffersTheGuideThenTheFileOption() {
-        for text in ["/cron add @daily ", "/cron add 0 9 * * 1-5 ", "/cron add json @daily "] {
+        for text in ["/cron add @daily ", "/cron add 0 9 * * 1-5 ", "/cron add -json @daily "] {
             let rows = cronCompletions(text)
 
             // The guide comes first, so the initial selection is a row that does
@@ -1970,7 +2266,8 @@ struct TerminalCronCommandTests {
         ("/cron add @daily -f ", "<path>", "absolute path of the prompt file; quote it if it contains spaces"),
         ("/cron add 0 9 * * 1-5 -f ", "<path>", "absolute path of the prompt file; quote it if it contains spaces"),
         ("/cron add @daily -f /tmp/p.md ", "<prompt>", "optional instruction; the file becomes context"),
-        ("/cron add json 0 9 * * 1-5 -f /tmp/p.md ", "<prompt>", "optional instruction; the file becomes context"),
+        ("/cron add -json 0 9 * * 1-5 -f /tmp/p.md ", "<prompt>", "optional instruction; the file becomes context"),
+        ("/cron add -agent ", "<agent>", "profile name or ID; quote it if it contains spaces"),
         ("/cron remove ", "<n>", "entry number shown by /cron list"),
         ("/cron run ", "<n>", "entry number shown by /cron list"),
         ("/cron mailto ", "<address>", "e-mail address cron mails results to")
@@ -2020,8 +2317,8 @@ struct TerminalCronCommandTests {
     @Test
     func everyAliasAndExampleOfTheScheduleSlotIsAcceptedByTheScheduleParser() throws {
         var schedules = TerminalPromptCompletionCatalog.cronScheduleExamples.map(\.command)
-        // `json` is the output keyword, not a schedule.
-        schedules += cronCompletions("/cron add ").map(\.command).filter { $0 != "json" }
+        // `-json` and `-agent` are options, not schedules.
+        schedules += cronCompletions("/cron add ").map(\.command).filter { $0 != "-json" && $0 != "-agent" }
         // The synonyms only show once a letter is typed.
         schedules += cronCompletions("/cron add @a").map(\.command)
         schedules += cronCompletions("/cron add @mid").map(\.command)
@@ -2036,11 +2333,12 @@ struct TerminalCronCommandTests {
     func cronCompletionTextsStayShort() {
         var rows = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/cron")
         for text in [
-            "/cron add ", "/cron add j", "/cron add json ", "/cron add @", "/cron add @m",
+            "/cron add ", "/cron add -", "/cron add -j", "/cron add -json ", "/cron add @", "/cron add @m",
             "/cron add @a", "/cron add 0",
             "/cron add 0 ", "/cron add 0 9 ", "/cron add 0 9 * ", "/cron add 0 9 * * ",
             "/cron add @daily ", "/cron add @daily -", "/cron add @daily -f ",
-            "/cron add @daily -f /tmp/p.md ", "/cron remove ", "/cron run ", "/cron mailto "
+            "/cron add @daily -f /tmp/p.md ", "/cron add -a", "/cron add -agent ",
+            "/cron remove ", "/cron run ", "/cron mailto "
         ] {
             rows += cronCompletions(text)
         }
@@ -2187,11 +2485,12 @@ struct TerminalCronCommandTests {
     private func makeTerminal(
         client: FakeCrontabClient,
         zen: FakeZenLocator = FakeZenLocator(),
-        renderCoordinator: TerminalChatRenderCoordinator? = nil
+        renderCoordinator: TerminalChatRenderCoordinator? = nil,
+        agents: [AgentProfile] = AgentProfileStore.defaultProfiles()
     ) throws -> (TerminalChat, FakeCrontabClient) {
         let configuration = try AgentConfiguration(
             hostedModelID: "remote-community/test",
-            availableAgents: AgentProfileStore.defaultProfiles(),
+            availableAgents: agents,
             workingDirectory: URL(
                 fileURLWithPath: "/tmp/ZenCODE-cron-\(UUID().uuidString)",
                 isDirectory: true

@@ -10,14 +10,21 @@
 /// really accepts (`TerminalChat+Cron` and `ZenCronSchedule`); a hint that
 /// advertised a value the parser rejects would be worse than no hint.
 ///
-/// Rows are either values (aliases, examples, `json`, `none`, `default`) or guides
-/// (`isHint`): `<minute>`, `<prompt>`, … name what the slot expects and are
-/// never inserted. The subcommand is matched case-insensitively, like the
-/// dispatcher, so `/cron ADD ` behaves as `/cron add `.
+/// Rows are either values (aliases, examples, `-json`, `-agent`, `none`,
+/// `default`) or guides (`isHint`): `<minute>`, `<prompt>`, … name what the
+/// slot expects and are never inserted. The subcommand is matched
+/// case-insensitively, like the dispatcher, so `/cron ADD ` behaves as
+/// `/cron add `. The options of `add` (`-json`, `-agent`, `-f`) are exact and
+/// case-sensitive.
 ///
-/// `add` takes an optional leading `json` keyword (any case) before the
-/// schedule. It is offered only in that first operand slot; once typed it is
-/// skipped, so the slots after it complete exactly like a text job.
+/// `add` takes an optional leading `-json` option before the schedule. It is
+/// offered only in that first operand slot; once typed it is skipped, so the
+/// slots after it complete exactly like a text job.
+///
+/// Before the schedule, right after `add` or `-json`, `add` also takes
+/// `-agent <name>`. The option is offered in that slot after the schedule
+/// values; once typed, the next slot is the `<agent>` guide, and the name (all
+/// its words, when it is quoted) is skipped like `-json`.
 ///
 /// Right after the schedule `add` takes either the prompt or `-f <path>` (the
 /// prompt is then an optional instruction and the file its context). `-f` is
@@ -51,24 +58,37 @@ extension TerminalPromptCompletionCatalog {
 
     // MARK: - add
 
-    /// `/cron add [json] <schedule> [-f <path>] <prompt>`: the schedule is
-    /// either one `@alias` or five fields, so the meaning of a slot depends on
-    /// the first operand after the optional `json` keyword.
+    /// `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>`:
+    /// the schedule is either one `@alias` or five fields, so the meaning of a
+    /// slot depends on the first operand after the optional `-json` and
+    /// `-agent` options.
     private static func cronAddSuggestions(
         precedingOperands: [String],
         prefix: String
     ) -> [TerminalCommandSuggestion] {
         var operands = precedingOperands
         if operands.isEmpty {
-            return cronScheduleSuggestions(prefix: prefix, offersJSON: true)
+            return cronScheduleSuggestions(prefix: prefix, offersJSON: true, offersAgent: true)
         }
-        // The keyword is not part of the schedule: drop it and complete what
-        // follows as for a text job, without offering it a second time.
-        if operands[0].lowercased() == cronJSONKeyword {
+        // The option is not part of the schedule: drop it and complete what
+        // follows as for a text job, without offering it a second time. Exact
+        // and case-sensitive, like the parser: `JSON` is already the schedule.
+        if operands[0] == cronJSONOption {
             operands.removeFirst()
         }
+        // Neither is `-agent <name>`: drop both, without offering the option
+        // a second time. Until the name is typed (and its quote closed), the
+        // slot is the name.
+        var offersAgent = true
+        if operands.first == cronAgentOption {
+            guard let nameLength = cronValueWordCount(operands.dropFirst()) else {
+                return [cronAgentNameHint]
+            }
+            operands.removeFirst(1 + nameLength)
+            offersAgent = false
+        }
         guard let schedule = operands.first else {
-            return cronScheduleSuggestions(prefix: prefix, offersJSON: false)
+            return cronScheduleSuggestions(prefix: prefix, offersJSON: false, offersAgent: offersAgent)
         }
         // An alias is the whole schedule; five fields, one slot each, are the
         // other. The slot index inside a schedule is the field index.
@@ -90,6 +110,19 @@ extension TerminalPromptCompletionCatalog {
         return afterSchedule.count == 1 ? [cronPromptFilePathHint] : [cronPromptFileInstructionHint]
     }
 
+    /// Words taken by the value that starts `words`: one, or, when it opens
+    /// with a quote, every word up to the one that closes it. `nil` while
+    /// there is no value yet or its quote is still open.
+    private static func cronValueWordCount(_ words: ArraySlice<String>) -> Int? {
+        guard let first = words.first else { return nil }
+        guard let quote = first.first, quote == "'" || quote == "\"" else { return 1 }
+        if first.count > 1, first.last == quote { return 1 }
+        for (offset, word) in words.dropFirst().enumerated() where word.last == quote {
+            return offset + 2
+        }
+        return nil
+    }
+
     /// The first slot after the schedule. An empty prefix lists the `<prompt>`
     /// guide first, so the initial selection is a row that does nothing (like
     /// `mailto`), then `-f`. A prefix of `-f` completes the option; anything
@@ -106,23 +139,33 @@ extension TerminalPromptCompletionCatalog {
         return [cronPromptHint]
     }
 
-    /// First operand of `add` (or the one after `json`).
+    /// First operand of `add` (or the one after `-json` or `-agent <name>`).
     ///
     /// An empty prefix lists the aliases and a few complete five-field
-    /// examples, then `json` when `offersJSON`: it comes last so the initial
-    /// selection stays on the first alias. A prefix of `json` (`j`, `JS`)
-    /// completes the keyword. A hand-written schedule gets no examples: they
-    /// would hijack it, since Tab and Enter replace the whole token. It gets
-    /// the guide of its first field instead.
+    /// examples, then `-json` when `offersJSON` and `-agent` when
+    /// `offersAgent`: they come last so the initial selection stays on the
+    /// first alias. A prefix that starts with `-` completes the options it is a
+    /// prefix of, `-json` first (`-` offers both, `-j` only `-json`, `-a` only
+    /// `-agent`), case-sensitively. When it is a prefix of neither (`-J`,
+    /// `--a`), it is treated like any other text. A hand-written schedule
+    /// gets no examples: they would hijack it, since Tab and Enter replace the
+    /// whole token. It gets the guide of its first field instead.
     private static func cronScheduleSuggestions(
         prefix: String,
-        offersJSON: Bool
+        offersJSON: Bool,
+        offersAgent: Bool
     ) -> [TerminalCommandSuggestion] {
         if prefix.isEmpty {
-            return cronScheduleAliases + cronScheduleExamples + (offersJSON ? [cronJSONValue] : [])
+            return cronScheduleAliases + cronScheduleExamples
+                + (offersJSON ? [cronJSONValue] : [])
+                + (offersAgent ? [cronAgentValue] : [])
         }
-        if offersJSON, cronJSONKeyword.hasPrefix(prefix.lowercased()) {
-            return [cronJSONValue]
+        if prefix.hasPrefix("-") {
+            let options = (offersJSON && cronJSONOption.hasPrefix(prefix) ? [cronJSONValue] : [])
+                + (offersAgent && cronAgentOption.hasPrefix(prefix) ? [cronAgentValue] : [])
+            if !options.isEmpty {
+                return options
+            }
         }
         guard prefix.hasPrefix("@") else {
             return [cronFieldHints[0]]
@@ -172,12 +215,26 @@ extension TerminalPromptCompletionCatalog {
         cronValue("@midnight", "same as @daily")
     ]
 
-    /// The word `/cron add` takes before the schedule; the handler owns it.
-    private static let cronJSONKeyword = TerminalChat.cronJSONKeyword
+    /// The option `/cron add` takes before the schedule; the handler owns it.
+    private static let cronJSONOption = TerminalChat.cronJSONOption
 
     private static let cronJSONValue = cronValue(
-        cronJSONKeyword,
+        cronJSONOption,
         "mail the run as JSONL records instead of the answer text"
+    )
+
+    /// The option before the schedule that names the agent profile; the
+    /// handler owns it.
+    private static let cronAgentOption = TerminalChat.cronAgentOption
+
+    private static let cronAgentValue = cronValue(
+        cronAgentOption,
+        "agent profile the job runs with; default: Developer"
+    )
+
+    private static let cronAgentNameHint = cronHint(
+        "<agent>",
+        "profile name or ID; quote it if it contains spaces"
     )
 
     /// The option right after the schedule that reads the prompt from a file;

@@ -165,6 +165,7 @@ extension LocalExecPermissionAuthorizer {
     /// ANSI accents reused across the consent card. They are aliases of the
     /// shared TUI style so this dialog stays consistent with other surfaces.
     private static let ansiBorder = TerminalStyle.Permission.border
+    private static let ansiTitle = TerminalStyle.Permission.title
     private static let ansiMarker = TerminalStyle.Permission.marker
     private static let ansiCyan = TerminalStyle.Permission.choice
     private static let ansiCyanBold = TerminalStyle.Permission.emphasizedChoice
@@ -239,16 +240,23 @@ extension LocalExecPermissionAuthorizer {
         // Top border embeds the title (`╭─ Title ────╮`), padded to the content
         // width so the title is the card heading, not a body row. On unusually
         // narrow terminals, fit the title itself before drawing the border.
+        // The title text is styled separately from the dimmed frame so it
+        // renders in the full-intensity orange of the command marker.
         let topMiddleWidth = innerWidth + 1
-        let untruncatedTitleSegment = " \(title) "
-        let titleSegment = TerminalANSIText.visibleWidth(untruncatedTitleSegment) <= topMiddleWidth
-            ? untruncatedTitleSegment
-            : TerminalANSIText.truncate(title, to: topMiddleWidth)
+        let titleFits = TerminalANSIText.visibleWidth(" \(title) ") <= topMiddleWidth
+        let titleText = titleFits ? title : TerminalANSIText.truncate(title, to: topMiddleWidth)
+        let titlePadding = titleFits ? " " : ""
         let titleSuffix = String(
             repeating: "─",
-            count: max(0, topMiddleWidth - TerminalANSIText.visibleWidth(titleSegment))
+            count: max(
+                0,
+                topMiddleWidth - TerminalANSIText.visibleWidth(titleText) - 2 * titlePadding.count
+            )
         )
-        var rows: [String] = [border("╭─\(titleSegment)\(titleSuffix)╮")]
+        let topBorder = border("╭─\(titlePadding)")
+            + Self.wrap(titleText, code: Self.ansiTitle, colored: colored)
+            + border("\(titlePadding)\(titleSuffix)╮")
+        var rows: [String] = [topBorder]
         for line in Self.wrappedConsentRows(innerLines, width: innerWidth) {
             let padding = String(
                 repeating: " ",

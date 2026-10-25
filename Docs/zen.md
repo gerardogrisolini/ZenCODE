@@ -401,7 +401,7 @@ Commands start with `/`:
 
 **Scheduling:**
 - `/cron` / `/cron list` — show the `MAILTO` recipient and the scheduled prompts, each with its number, schedule, agent, working directory, output kind (`text` or `JSONL`), and prompt. See [Scheduled Prompts (crontab)](#scheduled-prompts-crontab).
-- `/cron add [json] <schedule> [-f <path>] <prompt>` — schedule a prompt for the selected agent profile and the working directory of the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default cron mails the final answer text; with the `json` keyword right after `add`, the job runs with `--jsonl` and cron mails the JSONL records of the run. The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
+- `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>` — schedule a prompt for the working directory of the session. With `-agent <name>`, the job runs with that agent profile; without it, with the default `Developer` profile, whatever agent is selected in the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default cron mails the final answer text; with the `-json` option right after `add`, the job runs with `--jsonl` and cron mails the JSONL records of the run. The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
 - `/cron remove <n>` — remove scheduled prompt `<n>`; the entries after it are renumbered.
 - `/cron run <n>` — run scheduled prompt `<n>` now, the way cron runs it, in the background, and show the result in the terminal instead of mailing it.
 - `/cron mailto [address|none|default]` — without an argument, show the address that receives scheduled-prompt results; with one, set it. `none` sends no mail; `default` removes the override and uses the local mailbox of the crontab owner.
@@ -576,7 +576,7 @@ Delegated sub-agents ask for the same approvals as the coordinator. Their reques
 `/cron` runs prompts at set times, even when no ZenCODE session is open. Each
 scheduled prompt is an entry in the crontab of the system user who runs
 ZenCODE: when the entry is due, cron starts a headless `zen -p` or `zen -f`
-turn and mails its output; with the `json` keyword the turn also gets
+turn and mails its output; with the `-json` option the turn also gets
 `--jsonl`, and the mail holds the JSONL records of the run. There is no daemon,
 no launchd or systemd unit, and no lock against overlapping runs: cron starts
 each entry when it is due, so if one run is still going when the next one is
@@ -591,7 +591,8 @@ and the model has no tool to create or change scheduled prompts.
 
 ```text
 /cron add 0 9 * * 1-5 Summarize the open pull requests
-/cron add json @daily Summarize the open pull requests
+/cron add -agent Organizer 30 7 * * 1-5 Prepare my daily briefing
+/cron add -json @daily Summarize the open pull requests
 /cron add @daily -f /Users/me/prompts/report.md
 /cron list
 /cron run 1
@@ -606,11 +607,14 @@ Results arrive by mail, which needs `sendmail` (see
 [Results and mail](#results-and-mail)). `zen --doctor` reports a missing
 `crontab` or `sendmail`.
 
-`/cron add` replies with the line it wrote and the `zen` that cron will run:
+`/cron add` replies with the line it wrote, the working directory the job runs
+in (always the one of the session where you typed the command), and the `zen`
+that cron will run:
 
 ```text
 Scheduled prompt #1 added:
-  0 9 * * 1-5 zen --agent 'Developer' --working-directory '/Users/me/Projects/app' -p 'Summarize the open pull requests'
+  0 9 * * 1-5 zen --working-directory '/Users/me/Projects/app' -p 'Summarize the open pull requests'
+  dir: /Users/me/Projects/app (working directory of this session)
   zen: /usr/local/bin/zen (PATH=/usr/local/bin:/usr/bin:/bin)
 ```
 
@@ -622,7 +626,7 @@ the entry has a prompt:
 
 ```text
 Scheduled prompts — MAILTO: not set (cron default: local mailbox of the crontab owner)
-  1. 0 9 * * 1-5 · agent: Developer · dir: /Users/me/Projects/app · output: text · prompt: Summarize the open pull requests
+  1. 0 9 * * 1-5 · agent: default · dir: /Users/me/Projects/app · output: text · prompt: Summarize the open pull requests
 Results are mailed by cron; set the recipient with /cron mailto <address>.
 ```
 
@@ -631,22 +635,32 @@ The number is the position of the entry in the crontab, so after a removal the
 following entries move up by one: list again before using a number. Entries are
 never edited in place; to change one, run `/cron remove` and then `/cron add`.
 
-Subcommands, the `json` keyword, and the `none` and `default` keywords are
-case-insensitive. Completion continues after the subcommand: `/cron add `
-offers the schedule aliases, example schedules, and `json`, and the other slots
-(cron fields, prompt, `<n>`, `mailto`) show a one-line guide that is never
-inserted.
+Subcommands and the `none` and `default` keywords are case-insensitive; the
+options `-json`, `-agent`, and `-f` are exact and case-sensitive, so `-JSON`,
+`JSON`, and `json` are not the `-json` option. Completion continues after the
+subcommand: `/cron add ` offers the schedule aliases, example schedules,
+`-json`, and `-agent`, and the other slots (agent name, cron fields, prompt,
+`<n>`, `mailto`) show a one-line guide that is never inserted.
 
 ### Schedules
 
-In `/cron add [json] <schedule> [-f <path>] <prompt>`, an optional leading
-`json` word selects JSONL output (see [Results and mail](#results-and-mail));
-only the word right after `add` is the keyword, so
-`/cron add @daily json report` schedules a text job whose prompt is
-`json report`. Then a first word that starts with `@` is the whole schedule;
-otherwise the first five words are the schedule. The rest of the line is the
-prompt. If it starts with `-f`, the next word, or the quoted text, is the path
-of a prompt file, and what follows is the optional prompt.
+In `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>`, an
+optional leading `-json` option selects JSONL output (see
+[Results and mail](#results-and-mail)); only the word right after `add` is the
+option, so `/cron add @daily -json report` schedules a text job whose prompt is
+`-json report`. Then `-agent` followed by a name selects the agent profile of
+the job (see [What a scheduled run does](#what-a-scheduled-run-does)). Then a
+first word that starts with `@` is the whole schedule; otherwise the first five
+words are the schedule. The rest of the line is the prompt. If it starts with
+`-f`, the next word, or the quoted text, is the path of a prompt file, and what
+follows is the optional prompt.
+
+`-agent` is recognized only right after `add`, or right after `-json`, and only
+in lower case. `--agent` is the flag of the `zen` command line, not an option of
+`/cron add`: typed after `add`, it is schedule or prompt text. The name is
+quoted like the path of `-f`: wrap it in single or double quotes to include
+spaces. After `-agent`, completion shows an `<agent>` guide and then completes
+the schedule.
 
 `-f` is recognized only as the first word right after the schedule, and only in
 lower case. The path must be absolute, starting with `/`. Wrap it in single
@@ -693,47 +707,52 @@ Cron reads these times in the time zone of the system.
 The prompt is trimmed and must fit on one line; without `-f`, it must also not
 be empty. Quotes and `%` are allowed, because ZenCODE quotes and escapes the
 prompt for cron. With `-f`, the file must exist and be readable, be UTF-8 text,
-and not be empty; its path must not contain a line break. The schedule, the
-prompt, and the file are checked before the crontab is read, so a rejected
-`/cron add` changes nothing.
+and not be empty; its path must not contain a line break. With `-agent`, the
+name must match the ID or the name of an existing agent profile, ignoring case
+and diacritics as `zen --agent` does; otherwise `/cron add` is refused with the
+list of available agents. The schedule, the prompt, the file, and the agent are
+checked before the crontab is read, so a rejected `/cron add` changes nothing.
 
 ### What a scheduled run does
 
 Each entry runs ZenCODE in headless mode:
 
 ```text
-[ZENCODE_SUPPORT_DIRECTORY='<value>' ]zen [--agent '<selected profile>'] --working-directory '<TUI session working directory>' [--jsonl] [-f '<path>'] [-p '<prompt>']
+[ZENCODE_SUPPORT_DIRECTORY='<value>' ]zen [--agent '<name>'] --working-directory '<TUI session working directory>' [--jsonl] [-f '<path>'] [-p '<prompt>']
 ```
 
 At least one of `-f` and `-p` is present, and `-f` comes first when both are.
-`--jsonl` is present for entries added with `json` and for entries written by
+`--jsonl` is present for entries added with `-json` and for entries written by
 earlier versions of ZenCODE, which always used it. The file of an `-f` entry is
 read again each time the entry runs, so later edits apply to the next runs; its
 content is never copied into the crontab. If the file is missing or invalid when
 a run starts, that run fails, and its error is mailed as described in
 [Results and mail](#results-and-mail).
 
-`/cron add` takes three things from the session where you type it:
+`--agent` is present in the line only for entries added with `-agent`, with the
+name as you typed it. An entry without `-agent` is listed as `agent: default`
+and runs with the `Developer` profile, as `zen -p` does; the agent selected in
+the session where you type `/cron add` is never used.
 
-- the selected agent profile, by name. An entry without `--agent` is listed as
-  `agent: default` and runs with the `Developer` profile, as `zen -p` does;
+`/cron add` takes two things from the session where you type it:
+
 - the working directory of the session;
 - `ZENCODE_SUPPORT_DIRECTORY`, only when it is set in the environment of that
   session.
 
 Nothing else carries over. Each run is a new headless turn without the
-conversation, and the choices made with `/models`, `/tools`, or `/skills` do
-not apply: the model and skills come from the agent profile when the entry
-runs, so later changes to the profile also change later runs. If the profile
-is renamed or deleted, every run fails with an error; remove the entry and add
-it again with an existing profile.
+conversation, and the choices made with `/agents`, `/models`, `/tools`, or
+`/skills` do not apply: the model and skills come from the agent profile when
+the entry runs, so later changes to the profile also change later runs. If the
+profile is renamed or deleted, every run fails with an error; remove the entry
+and add it again with an existing profile.
 
 Arguments use single-quote shell quoting, and each `%` is escaped as `\%`,
 because cron turns an unescaped `%` in a command into a newline.
 
 The non-interactive policy of `zen -p` and `zen -f` applies unchanged. A tool
 that would ask for approval is denied, except for approvals already saved with
-"always allow". With `json`, a denied tool appears in the output as a
+"always allow". With `-json`, a denied tool appears in the output as a
 `tool.completed` record with status `permissionDenied`. In both modes the agent
 continues without it.
 
@@ -814,7 +833,7 @@ standard output holds only the final answer text, which is the mail body. When
 the run fails, `zen` writes `ZenCODE: <message>` and a troubleshooting hint to
 standard error and exits with status 1, and cron mails that too.
 
-With the `json` keyword (`/cron add json <schedule> <prompt>`), standard output
+With the `-json` option (`/cron add -json <schedule> <prompt>`), standard output
 holds the [JSONL records](jsonl.md) of the run: `run.started`, the tool
 records, the final answer in `message.completed`, and `run.completed`, or an
 `error` record when the run fails. They land in the mail body as they are. In
