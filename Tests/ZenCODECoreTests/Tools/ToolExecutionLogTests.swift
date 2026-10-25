@@ -183,6 +183,71 @@ struct ToolExecutionLogTests {
         #expect(child.modelID == "parent-model")
     }
 
+    @Test(arguments: [true, false])
+    func subAgentBackendContextAdoptsTheChildProfileRole(locksModelToSession: Bool) {
+        let parent = Self.organizerCoordinator(locksModelToSession: locksModelToSession)
+        let developer = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            role: .developer,
+            tools: [],
+            modelBindings: [AgentModelBinding(id: "child", modelID: "child-model", capability: 5)]
+        )
+        let childContext = DirectSubAgentRuntime.BackendContext(
+            requestedName: "Developer 1",
+            requestedRole: "developer",
+            profile: developer,
+            sharedChatSenderID: "child-id",
+            sharedChatRoomID: "root-session"
+        )
+
+        let child = parent.applyingSubAgentBackendContext(childContext)
+
+        #expect(child.agentID == "child-id")
+        #expect(child.agentName == "Developer 1")
+        #expect(child.profileID == "developer")
+        #expect(child.profileName == "Developer")
+        #expect(child.profileRole == .developer)
+        #expect(child.modelID == (locksModelToSession ? "parent-model" : "child-model"))
+    }
+
+    @Test(arguments: [true, false])
+    func subAgentBackendContextWithoutProfileDoesNotInheritTheCoordinatorRole(
+        locksModelToSession: Bool
+    ) {
+        let parent = Self.organizerCoordinator(locksModelToSession: locksModelToSession)
+        let childContext = DirectSubAgentRuntime.BackendContext(
+            requestedName: "Reviewer 1",
+            requestedRole: "reviewer",
+            profile: nil,
+            sharedChatSenderID: "child-id",
+            sharedChatRoomID: "root-session"
+        )
+
+        let child = parent.applyingSubAgentBackendContext(childContext)
+
+        #expect(child.agentID == "child-id")
+        #expect(child.profileID == nil)
+        #expect(child.profileName == nil)
+        #expect(child.profileRole == nil)
+        #expect(child.modelID == "parent-model")
+    }
+
+    private static func organizerCoordinator(locksModelToSession: Bool) -> AgentRuntimeConfiguration {
+        AgentRuntimeConfiguration(
+            modelID: "parent-model",
+            workingDirectory: URL(fileURLWithPath: "/tmp"),
+            maxToolRounds: 4,
+            locksModelToSession: locksModelToSession,
+            toolAuthorizationHandler: nil,
+            agentID: "organizer-id",
+            agentName: "Organizer",
+            profileID: "organizer",
+            profileName: "Organizer",
+            profileRole: .organizer
+        )
+    }
+
     @Test
     func executionContextResolvesCoordinatorAndSubAgentFallbackIdentities() {
         let coordinator = ToolExecutionContext().resolved(fallbackAgentID: nil)
@@ -195,6 +260,26 @@ struct ToolExecutionLogTests {
         #expect(child.agentID == "child-id")
         #expect(child.isSubAgent)
         #expect(child.modelID == "child-model")
+    }
+
+    @Test
+    func executionContextKeepsTheProfileRoleWhenResolvingIdentities() {
+        let organizer = ToolExecutionContext(
+            profileID: "organizer",
+            profileName: "Organizer",
+            profileRole: .organizer,
+            modelID: "role-model"
+        )
+
+        #expect(organizer.resolved(fallbackAgentID: nil).profileRole == .organizer)
+        #expect(organizer.resolved(fallbackAgentID: "child-id").profileRole == .organizer)
+        #expect(organizer.resolved(fallbackAgentID: "child-id").profileID == "organizer")
+        #expect(ToolExecutionContext().resolved(fallbackAgentID: nil).profileRole == nil)
+        #expect(organizer != ToolExecutionContext(
+            profileID: "organizer",
+            profileName: "Organizer",
+            modelID: "role-model"
+        ))
     }
 
     @Test

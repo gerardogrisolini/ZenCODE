@@ -18,6 +18,21 @@ because it may embed float vectors. A process-wide `MemoryGraphStoreRegistry`
 caches one open store per graph URL so parallel tool executions share a single
 engine instance.
 
+The global graph is a second persisted store, with the same format, version, and
+registry as the workspace graphs, at
+`<supportDirectory>/memory/global/memory.graph.json` (default
+`~/.zencode/memory/global/memory.graph.json`, honouring
+`ZENCODE_SUPPORT_DIRECTORY`). It is independent of the working directory and is
+addressed as `MemoryGraphTarget.global`. A session whose selected profile has a
+role with `AgentProfileRole.usesGlobalMemory` (today only `organizer`) uses it
+for its `memory.*` tools and its automatic `<project-memory>` recall. Every other
+role, and a session without a profile, uses the workspace graph of its working
+directory (`MemoryGraphTarget.workspace(URL)`). Project graphs are never
+aggregated into the global graph, and automatic learning (`consolidateMemory`)
+never writes to it. A delegated sub-agent selects its graph from its own session
+in the same way: the workspace graph of its working directory, or the global
+graph when its profile has the `organizer` role.
+
 Opening loads only the JSON graph, or starts with an empty graph if no JSON
 file exists. `open` never persists: a cold `memory.search` / `memory.read`
 neither creates the graph file nor requires a writable support directory.
@@ -250,7 +265,8 @@ developer's shell exports `ZENCODE_MEMORY_EMBEDDING_ENDPOINT`.
 
 Automatic recall is on by default and adds no second LLM call. Before every
 turn — operator and delegated sub-agent alike — `MemoryTurnCoordinator`
-resolves the workspace graph and runs the store's `context(for:scope:)`
+resolves the session's graph (the workspace graph, or the global graph for
+`organizer` sessions) and runs the store's `context(for:scope:)`
 inline: offline BM25 seeds, graph expansion, and selection through
 `ScoreThresholdMemorySelector`. Without an endpoint, retrieval is local BM25
 and costs no extra round trip; with an endpoint, a bounded HTTP call to the

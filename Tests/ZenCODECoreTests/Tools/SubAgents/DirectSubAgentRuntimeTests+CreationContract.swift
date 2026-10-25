@@ -11,7 +11,7 @@ extension DirectSubAgentRuntimeTests {
         )
 
         #expect(descriptor.description.contains("canonical agents array"))
-        #expect(descriptor.description.contains("each item requires profile"))
+        #expect(descriptor.description.contains("each item requires exactly one of profile or profileRole."))
         #expect(descriptor.description.contains("omit model to inherit the main session model"))
         #expect(!descriptor.description.contains("each item requires profile and model"))
         #expect(descriptor.description.contains("exact profile and binding references"))
@@ -46,9 +46,38 @@ extension DirectSubAgentRuntimeTests {
 
         let item = try #require(agents["items"] as? [String: Any])
         let itemProperties = try #require(item["properties"] as? [String: Any])
-        #expect(Set(itemProperties.keys) == ["profile", "model", "taskID", "prompt", "name", "role"])
-        #expect(item["required"] as? [String] == ["profile"])
+        #expect(
+            Set(itemProperties.keys) == [
+                "profile", "model", "taskID", "prompt", "name", "role",
+                "profileRole", "complexity", "workingDirectory",
+            ]
+        )
+        // Exactly one of profile/profileRole is enforced at runtime, so the
+        // item schema must not mark either as required.
+        #expect(item["required"] == nil)
         #expect(item["additionalProperties"] as? Bool == false)
+
+        let profileRole = try #require(itemProperties["profileRole"] as? [String: Any])
+        #expect(profileRole["type"] as? String == "string")
+        #expect(
+            profileRole["enum"] as? [String] == AgentProfileRole.allCases.map(\.rawValue)
+        )
+        #expect(
+            (profileRole["description"] as? String)?.contains("Exclusive with profile") == true
+        )
+
+        let complexity = try #require(itemProperties["complexity"] as? [String: Any])
+        #expect(complexity["type"] as? String == "integer")
+        #expect((complexity["minimum"] as? NSNumber)?.intValue == 1)
+        #expect((complexity["maximum"] as? NSNumber)?.intValue == 10)
+        #expect(
+            (complexity["description"] as? String)?.contains(TaskRecord.complexityRubric) == true
+        )
+
+        let workingDirectory = try #require(
+            itemProperties["workingDirectory"] as? [String: Any]
+        )
+        #expect(workingDirectory["type"] as? String == "string")
 
         for legacyKey in [
             "agent", "agentName", "agent_name", "agentID", "agent_id",
@@ -73,7 +102,17 @@ extension DirectSubAgentRuntimeTests {
             let wireProperties = try #require(parameters["properties"] as? [String: Any])
             let wireAgents = try #require(wireProperties["agents"] as? [String: Any])
             let wireItem = try #require(wireAgents["items"] as? [String: Any])
-            #expect(wireItem["required"] as? [String] == ["profile"])
+            #expect(wireItem["required"] == nil)
+            let wireItemProperties = try #require(wireItem["properties"] as? [String: Any])
+            #expect(
+                Set(wireItemProperties.keys) == Set(itemProperties.keys)
+            )
+            let wireProfileRole = try #require(
+                wireItemProperties["profileRole"] as? [String: Any]
+            )
+            #expect(
+                wireProfileRole["enum"] as? [String] == AgentProfileRole.allCases.map(\.rawValue)
+            )
         }
     }
 
@@ -262,6 +301,264 @@ extension DirectSubAgentRuntimeTests {
                 ]),
                 fallbackIndex: 0
             )
+        }
+    }
+
+    @Test
+    func agentCreateParserReadsNewFieldsFromCanonicalAndSnakeCaseKeys() throws {
+        let canonical = try DirectSubAgentRuntime.requestedAgentPayload(
+            from: .object([
+                "profileRole": .string("planner"),
+                "complexity": .number(7),
+                "workingDirectory": .string("Sources/ZenCODECore"),
+            ]),
+            fallbackIndex: 0
+        )
+        #expect(canonical.profileRole == .planner)
+        #expect(canonical.complexity == 7)
+        #expect(canonical.workingDirectory == "Sources/ZenCODECore")
+        // An item without profile still parses: the "exactly one of profile
+        // and profileRole" rule and the missing-profile error are runtime concerns.
+        #expect(canonical.profileReference == nil)
+
+        let snakeCase = try DirectSubAgentRuntime.requestedAgentPayload(
+            from: .object([
+                "profile_role": .string("  Reviewer  "),
+                "working_directory": .string("  Tests  "),
+            ]),
+            fallbackIndex: 0
+        )
+        #expect(snakeCase.profileRole == .reviewer)
+        #expect(snakeCase.workingDirectory == "Tests")
+        #expect(snakeCase.complexity == nil)
+
+        let matchingAliases = try DirectSubAgentRuntime.requestedAgentPayload(
+            from: .object([
+                "profileRole": .string("builder"),
+                "profile_role": .string("BUILDER"),
+                "workingDirectory": .string("Docs"),
+                "working_directory": .string("Docs"),
+            ]),
+            fallbackIndex: 0
+        )
+        #expect(matchingAliases.profileRole == .builder)
+        #expect(matchingAliases.workingDirectory == "Docs")
+
+        // Blank values are ignored so they cannot shadow an informative alias.
+        let blankShadow = try DirectSubAgentRuntime.requestedAgentPayload(
+            from: .object([
+                "profileRole": .string("  "),
+                "profile_role": .string("promoter"),
+                "workingDirectory": .string("\n"),
+                "working_directory": .string("Sources"),
+                "complexity": .string("  "),
+            ]),
+            fallbackIndex: 0
+        )
+        #expect(blankShadow.profileRole == .promoter)
+        #expect(blankShadow.workingDirectory == "Sources")
+        #expect(blankShadow.complexity == nil)
+
+        let absent = try DirectSubAgentRuntime.requestedAgentPayload(
+            from: .object(["profile": .string("Developer")]),
+            fallbackIndex: 0
+        )
+        #expect(absent.profileRole == nil)
+        #expect(absent.complexity == nil)
+        #expect(absent.workingDirectory == nil)
+
+        for role in AgentProfileRole.allCases {
+            let payload = try DirectSubAgentRuntime.requestedAgentPayload(
+                from: .object(["profileRole": .string(role.rawValue)]),
+                fallbackIndex: 0
+            )
+            #expect(payload.profileRole == role)
+        }
+    }
+
+    @Test
+    func agentCreateParserAcceptsIntegerComplexityFromOneToTen() throws {
+        for value in 1...10 {
+            for json in [JSONValue.number(Double(value)), .string(" \(value) ")] {
+                let payload = try DirectSubAgentRuntime.requestedAgentPayload(
+                    from: .object(["complexity": json]),
+                    fallbackIndex: 0
+                )
+                #expect(payload.complexity == value)
+            }
+        }
+    }
+
+    @Test
+    func agentCreateParserRejectsUnknownProfileRole() throws {
+        for json in [
+            JSONValue.string("architect"),
+            .string("developers"),
+            .object(["role": .string("developer")]),
+        ] {
+            #expect(throws: DirectSubAgentRuntimeError.self) {
+                try DirectSubAgentRuntime.requestedAgentPayload(
+                    from: .object(["profileRole": json]),
+                    fallbackIndex: 0
+                )
+            }
+        }
+
+        do {
+            _ = try DirectSubAgentRuntime.requestedAgentPayload(
+                from: .object(["profile_role": .string("architect")]),
+                fallbackIndex: 0
+            )
+            Issue.record("Expected an unknown profileRole to be rejected.")
+        } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
+            #expect(
+                message == "agent.create profileRole must be one of: "
+                    + "developer, builder, minimal, planner, reviewer, reporter, organizer, promoter"
+            )
+        }
+    }
+
+    @Test
+    func agentCreateParserRejectsOutOfRangeOrNonIntegerComplexity() throws {
+        for json in [
+            JSONValue.number(0),
+            .number(11),
+            .number(-3),
+            .number(2.5),
+            .number(.nan),
+            .string("0"),
+            .string("11"),
+            .string("3.5"),
+            .string("high"),
+            .bool(true),
+            .null,
+            .array([.number(5)]),
+        ] {
+            do {
+                _ = try DirectSubAgentRuntime.requestedAgentPayload(
+                    from: .object(["complexity": json]),
+                    fallbackIndex: 0
+                )
+                Issue.record("Expected complexity \(json) to be rejected.")
+            } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
+                #expect(message == "agent.create complexity must be an integer from 1 to 10")
+            }
+        }
+    }
+
+    @Test
+    func agentCreateParserRejectsConflictingNewFieldAliases() throws {
+        do {
+            _ = try DirectSubAgentRuntime.requestedAgentPayload(
+                from: .object([
+                    "profileRole": .string("developer"),
+                    "profile_role": .string("reviewer"),
+                ]),
+                fallbackIndex: 0
+            )
+            Issue.record("Expected conflicting profileRole aliases to be rejected.")
+        } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
+            #expect(message.contains("profileRole aliases"))
+            #expect(message.contains("profileRole, profile_role"))
+        }
+
+        do {
+            _ = try DirectSubAgentRuntime.requestedAgentPayload(
+                from: .object([
+                    "workingDirectory": .string("Sources"),
+                    "working_directory": .string("Tests"),
+                ]),
+                fallbackIndex: 0
+            )
+            Issue.record("Expected conflicting workingDirectory aliases to be rejected.")
+        } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
+            #expect(message.contains("workingDirectory aliases"))
+            #expect(message.contains("workingDirectory, working_directory"))
+        }
+    }
+
+    @Test
+    func agentCreateParserTreatsNewFieldsAsRootFieldsInBatchesAndComparesThemAcrossAliases() throws {
+        let rootFields: [(String, JSONValue)] = [
+            ("profileRole", .string("developer")),
+            ("profile_role", .string("developer")),
+            ("complexity", .number(5)),
+            ("workingDirectory", .string("Sources")),
+            ("working_directory", .string("Sources")),
+        ]
+        for (key, value) in rootFields {
+            do {
+                _ = try DirectSubAgentRuntime.requestedAgentPayloads(
+                    from: [
+                        key: value,
+                        "agents": .array([.object(["profile": .string("Developer")])]),
+                    ]
+                )
+                Issue.record("Expected root \(key) mixed with a batch to be rejected.")
+            } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
+                #expect(message.contains("root agent fields"))
+            }
+        }
+
+        // The same fields at the root alone form a single agent.
+        let root = try DirectSubAgentRuntime.requestedAgentPayloads(
+            from: [
+                "profile_role": .string("reviewer"),
+                "complexity": .number(4),
+                "working_directory": .string("Tests"),
+            ]
+        )
+        #expect(root.count == 1)
+        #expect(root[0].profileRole == .reviewer)
+        #expect(root[0].complexity == 4)
+        #expect(root[0].workingDirectory == "Tests")
+
+        let matching = try DirectSubAgentRuntime.requestedAgentPayloads(
+            from: [
+                "agents": .array([
+                    .object([
+                        "profileRole": .string("planner"),
+                        "complexity": .number(6),
+                        "workingDirectory": .string("Sources"),
+                    ]),
+                ]),
+                "items": .array([
+                    .object([
+                        "profile_role": .string("Planner"),
+                        "complexity": .string("6"),
+                        "working_directory": .string("Sources"),
+                    ]),
+                ]),
+            ]
+        )
+        #expect(matching.count == 1)
+        #expect(matching[0].profileRole == .planner)
+        #expect(matching[0].complexity == 6)
+        #expect(matching[0].workingDirectory == "Sources")
+
+        let variations: [[String: JSONValue]] = [
+            ["profile_role": .string("reviewer"), "complexity": .number(6), "working_directory": .string("Sources")],
+            ["profile_role": .string("planner"), "complexity": .number(7), "working_directory": .string("Sources")],
+            ["profile_role": .string("planner"), "complexity": .number(6), "working_directory": .string("Tests")],
+        ]
+        for variation in variations {
+            do {
+                _ = try DirectSubAgentRuntime.requestedAgentPayloads(
+                    from: [
+                        "agents": .array([
+                            .object([
+                                "profileRole": .string("planner"),
+                                "complexity": .number(6),
+                                "workingDirectory": .string("Sources"),
+                            ]),
+                        ]),
+                        "items": .array([.object(variation)]),
+                    ]
+                )
+                Issue.record("Expected batches differing in a new field to be rejected.")
+            } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
+                #expect(message.contains("batch aliases"))
+            }
         }
     }
 

@@ -253,6 +253,7 @@ public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
                 agentName: configuration.agentName,
                 profileID: configuration.profileID,
                 profileName: configuration.profileName,
+                profileRole: configuration.profileRole,
                 modelID: configuration.modelID,
                 isSubAgent: sharedChatSenderID != nil
             ),

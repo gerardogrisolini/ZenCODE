@@ -144,6 +144,19 @@ extension DirectSubAgentRuntime {
         /// a global lookup after the task has been claimed.
         public let modelSelection: AgentModelSelection?
 
+        /// The directory the sub-agent works in, as supplied to `agent.create`
+        /// (absolute or relative to the coordinator's working directory). It is
+        /// validated and resolved at creation time, not by the parser.
+        public let workingDirectory: String?
+
+        /// Role-based delegation: the runtime resolves the profile for this role
+        /// instead of an explicit `profileReference`.
+        public let profileRole: AgentProfileRole?
+
+        /// Requested complexity (1-10) used to select a model binding for
+        /// role-based delegation. `nil` when the request did not provide one.
+        public let complexity: Int?
+
         /// The actual model selected by the authorized binding. Before
         /// selection this mirrors the request so profile resolvers can still
         /// inspect it.
@@ -166,7 +179,10 @@ extension DirectSubAgentRuntime {
             taskID: String? = nil,
             prompt: String? = nil,
             modelID: String? = nil,
-            modelBinding: AgentModelBinding? = nil
+            modelBinding: AgentModelBinding? = nil,
+            workingDirectory: String? = nil,
+            profileRole: AgentProfileRole? = nil,
+            complexity: Int? = nil
         ) {
             self.init(
                 name: name,
@@ -176,7 +192,10 @@ extension DirectSubAgentRuntime {
                 prompt: prompt,
                 modelID: modelID,
                 modelBinding: modelBinding,
-                modelSelection: nil
+                modelSelection: nil,
+                workingDirectory: workingDirectory,
+                profileRole: profileRole,
+                complexity: complexity
             )
         }
 
@@ -188,7 +207,10 @@ extension DirectSubAgentRuntime {
             prompt: String?,
             modelID: String?,
             modelBinding: AgentModelBinding?,
-            modelSelection: AgentModelSelection?
+            modelSelection: AgentModelSelection?,
+            workingDirectory: String? = nil,
+            profileRole: AgentProfileRole? = nil,
+            complexity: Int? = nil
         ) {
             self.name = name
             self.role = role
@@ -198,6 +220,9 @@ extension DirectSubAgentRuntime {
             self.requestedModelID = modelID?.nilIfBlank
             self.modelBinding = modelBinding
             self.modelSelection = modelSelection
+            self.workingDirectory = workingDirectory?.nilIfBlank
+            self.profileRole = profileRole
+            self.complexity = complexity
         }
 
         public func applying(
@@ -210,6 +235,20 @@ extension DirectSubAgentRuntime {
             modelBinding: AgentModelBinding?,
             modelSelection: AgentModelSelection?
         ) -> RequestedAgentPayload {
+            applying(
+                profileReference: profileReference,
+                modelBinding: modelBinding,
+                modelSelection: modelSelection
+            )
+        }
+
+        /// Same as ``applying(modelBinding:modelSelection:)`` but also replaces
+        /// the profile reference, e.g. once a role has been resolved to a profile.
+        func applying(
+            profileReference: String?,
+            modelBinding: AgentModelBinding?,
+            modelSelection: AgentModelSelection?
+        ) -> RequestedAgentPayload {
             RequestedAgentPayload(
                 name: name,
                 role: role,
@@ -218,7 +257,10 @@ extension DirectSubAgentRuntime {
                 prompt: prompt,
                 modelID: requestedModelID,
                 modelBinding: modelBinding,
-                modelSelection: modelSelection
+                modelSelection: modelSelection,
+                workingDirectory: workingDirectory,
+                profileRole: profileRole,
+                complexity: complexity
             )
         }
     }

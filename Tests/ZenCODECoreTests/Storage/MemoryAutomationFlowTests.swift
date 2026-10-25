@@ -227,6 +227,88 @@ struct MemoryAutomationFlowTests {
     }
 
     @Test
+    func globalTargetRecallsTheGlobalGraphRegardlessOfTheWorkspace() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let entry = try await MemoryService().writeEntryOutcome(
+                content: "Summary: the quantum flange calibrates every frobnicator.",
+                target: .global
+            ).entry
+            try await scopedEnv([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1",
+                MemoryAutomationSettings.environmentRecallTimeoutKey: nil,
+                MemoryAutomationSettings.environmentSemanticRecallTimeoutKey: nil
+            ]) {
+                try await MemoryEmbedding.withProvider(nil) {
+                    _ = try await MemoryGraphStoreRegistry.shared.store(graphURL: MemoryGraphLocation.globalGraphURL())
+                    _ = try await MemoryGraphStoreRegistry.shared.store(graphURL: workspace.graphURL())
+                    let prompt = "how do I calibrate the frobnicator"
+                    let coordinator = MemoryTurnCoordinator(visibleWarning: { _ in })
+
+                    let globalBlock = try #require(await coordinator.memoryBlock(
+                        sessionID: "global-\(UUID().uuidString)",
+                        graphTarget: .global,
+                        prompt: prompt
+                    ))
+                    #expect(globalBlock.contains("- [id: \(entry.id.uuidString)] Summary: the quantum flange calibrates every frobnicator."))
+
+                    // The workspace graph holds nothing, and the global entry
+                    // does not leak into it.
+                    let workspaceBlock = await coordinator.memoryBlock(
+                        sessionID: "workspace-\(UUID().uuidString)",
+                        graphTarget: .workspace(workspace.workspaceURL),
+                        prompt: prompt
+                    )
+                    #expect(workspaceBlock == nil)
+                }
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
+    @Test
+    func recallPauseIsTrackedPerGraphTarget() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            // A global graph that cannot be parsed makes every open throw.
+            let globalURL = MemoryGraphLocation.globalGraphURL()
+            try FileManager.default.createDirectory(
+                at: globalURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("{ this is not valid graph json ".utf8).write(to: globalURL)
+
+            await scopedEnv([MemoryAutomationSettings.environmentAutoRecallKey: "1"]) {
+                let coordinator = MemoryTurnCoordinator(visibleWarning: { _ in })
+                let sessionID = "global-paused-\(UUID().uuidString)"
+                for _ in 0..<3 {
+                    _ = await coordinator.memoryBlock(
+                        sessionID: sessionID,
+                        graphTarget: .global,
+                        prompt: "anything"
+                    )
+                }
+                #expect(await coordinator.isRecallPaused(sessionID: sessionID, graphTarget: .global))
+                // The same session id against the workspace graph is unaffected.
+                #expect(!(await coordinator.isRecallPaused(
+                    sessionID: sessionID,
+                    graphTarget: .workspace(workspace.workspaceURL)
+                )))
+                #expect(!(await coordinator.isRecallPaused(
+                    sessionID: sessionID,
+                    workspaceRootURL: workspace.workspaceURL
+                )))
+
+                await coordinator.discard(sessionID: sessionID)
+                #expect(!(await coordinator.isRecallPaused(sessionID: sessionID, graphTarget: .global)))
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
+    @Test
     func blockBudgetClampsToValidRange() async {
         let key = MemoryAutomationSettings.environmentRecallBudgetKey
         let minimum = MemoryAutomationSettings.minimumRecallBudgetCharacters
@@ -781,6 +863,77 @@ struct MemoryAutomationFlowTests {
         }
     }
 
+    // MARK: - An organizer sub-agent recalls from the global graph, not from the
+    // workspace graph of its working directory, which holds other memory.
+
+    @Test
+    func organizerSubAgentTurnRecallsTheGlobalGraph() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            _ = try await MemoryService().writeEntryOutcome(
+                content: "Summary: the quantum flange calibrates every frobnicator.",
+                target: .global
+            )
+            _ = try await MemoryService().writeEntry(
+                content: "Summary: the frobnicator flange workspace note.",
+                workspaceRootURL: workspace.workspaceURL
+            )
+
+            let backend = MemoryObservingBackend()
+            let organizer = AgentProfile(
+                id: AgentProfileRole.organizer.rawValue,
+                name: "Organizer",
+                role: .organizer,
+                tools: ["local.readFile"]
+            )
+            let executor = DirectToolExecutor(
+                swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+                subAgentContextualBackendFactory: { _ in backend },
+                subAgentProfileResolver: { _ in organizer }
+            )
+
+            await scopedEnv([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1",
+                MemoryAutomationSettings.environmentRecallTimeoutKey: nil,
+                MemoryAutomationSettings.environmentSemanticRecallTimeoutKey: nil
+            ]) {
+                let createResult = await executor.execute(
+                    sessionID: "root",
+                    toolCall: presentedToolCall(
+                        id: "create-organizer-worker",
+                        name: "agent.create",
+                        argumentsObject: [
+                            "name": "organizer-worker",
+                            "profile": "Organizer",
+                            "prompt": "calibrate the frobnicator flange"
+                        ],
+                        argumentsJSON: #"{"name":"organizer-worker","profile":"Organizer","prompt":"calibrate the frobnicator flange"}"#
+                    ),
+                    workingDirectory: workspace.workspaceURL
+                )
+                #expect(createResult.status == .completed)
+                _ = await executor.execute(
+                    sessionID: "root",
+                    toolCall: presentedToolCall(
+                        id: "wait-organizer-worker",
+                        name: "agent.wait",
+                        argumentsObject: ["name": "organizer-worker"],
+                        argumentsJSON: #"{"name":"organizer-worker"}"#
+                    ),
+                    workingDirectory: workspace.workspaceURL
+                )
+            }
+
+            let observed = try #require(await backend.observedMemoryBlock())
+            #expect(observed.contains("quantum flange"))
+            #expect(!observed.contains("workspace note"))
+
+            await executor.subAgentRuntime.shutdown()
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
     // MARK: - A sub-agent turn does not inherit the operator's per-turn
     // instruction, even though its Task is created inside that turn.
 
@@ -1132,10 +1285,104 @@ struct MemoryAutomationFlowTests {
         }
     }
 
+    // MARK: - Tool routing: the executing agent's profile role selects the graph
+    // that the memory.* tools address. An organizer uses the global graph; any
+    // other role, or no profile, keeps the workspace graph of its directory.
+
+    @Test
+    func organizerMemoryToolsAddressTheGlobalGraph() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let (write, read) = await writeThenRead(profileRole: .organizer, in: workspace)
+            #expect(write.status == .completed)
+            #expect(read.output.contains("organizer routing check frobnicator"))
+
+            // The entry is persisted in the global graph, and the workspace
+            // graph is never created for it.
+            let globalGraphURL = MemoryGraphLocation.globalGraphURL()
+            #expect(globalGraphURL.path.hasSuffix("/memory/global/memory.graph.json"))
+            let persisted = try String(contentsOf: globalGraphURL, encoding: .utf8)
+            #expect(persisted.contains("organizer routing check frobnicator"))
+            #expect(!FileManager.default.fileExists(
+                atPath: MemoryGraphLocation.graphURL(for: workspace.workspaceURL).path
+            ))
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
+    @Test
+    func memoryToolsWithoutAProfileAddressTheWorkspaceGraph() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        await workspace.withIsolatedSupport {
+            let (write, read) = await writeThenRead(profileRole: nil, in: workspace)
+            #expect(write.status == .completed)
+            #expect(read.output.contains("organizer routing check frobnicator"))
+
+            #expect(FileManager.default.fileExists(
+                atPath: MemoryGraphLocation.graphURL(for: workspace.workspaceURL).path
+            ))
+            #expect(!FileManager.default.fileExists(atPath: MemoryGraphLocation.globalGraphURL().path))
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
+    @Test
+    func developerMemoryToolsAddressTheWorkspaceGraph() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        await workspace.withIsolatedSupport {
+            let (write, read) = await writeThenRead(profileRole: .developer, in: workspace)
+            #expect(write.status == .completed)
+            #expect(read.output.contains("organizer routing check frobnicator"))
+
+            #expect(FileManager.default.fileExists(
+                atPath: MemoryGraphLocation.graphURL(for: workspace.workspaceURL).path
+            ))
+            #expect(!FileManager.default.fileExists(atPath: MemoryGraphLocation.globalGraphURL().path))
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
     // MARK: - Helpers
 
     private func occurrences(of needle: String, in haystack: String) -> Int {
         haystack.components(separatedBy: needle).count - 1
+    }
+
+    /// Runs `memory.write` then `memory.read` through a `DirectToolExecutor`
+    /// whose session runs under `profileRole`, as a live tool call would.
+    private func writeThenRead(
+        profileRole: AgentProfileRole?,
+        in workspace: MemoryTestWorkspace
+    ) async -> (write: DirectAgentToolResult, read: DirectAgentToolResult) {
+        let executor = DirectToolExecutor(
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            toolExecutionContext: ToolExecutionContext(profileRole: profileRole),
+            subAgentBackendFactory: { MemoryObservingBackend() }
+        )
+        let write = await executor.execute(
+            sessionID: "root",
+            toolCall: presentedToolCall(
+                id: "routing-write",
+                name: "memory.write",
+                argumentsObject: ["content": "Summary: organizer routing check frobnicator."],
+                argumentsJSON: #"{"content":"Summary: organizer routing check frobnicator."}"#
+            ),
+            workingDirectory: workspace.workspaceURL
+        )
+        let read = await executor.execute(
+            sessionID: "root",
+            toolCall: presentedToolCall(
+                id: "routing-read",
+                name: "memory.read",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            ),
+            workingDirectory: workspace.workspaceURL
+        )
+        return (write, read)
     }
 
     /// Writes a graph file that cannot be parsed, so every open throws and the

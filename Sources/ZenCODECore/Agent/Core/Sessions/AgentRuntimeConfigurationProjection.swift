@@ -38,7 +38,8 @@ extension AgentRuntimeConfigurationProjecting {
         agentID: String? = nil,
         agentName: String? = nil,
         profileID: String? = nil,
-        profileName: String? = nil
+        profileName: String? = nil,
+        profileRole: AgentProfileRole? = nil
     ) -> AgentRuntimeConfiguration {
         AgentRuntimeConfiguration(
             modelID: projectedRuntimeModelID,
@@ -53,7 +54,8 @@ extension AgentRuntimeConfigurationProjecting {
             agentID: agentID,
             agentName: agentName,
             profileID: profileID,
-            profileName: profileName
+            profileName: profileName,
+            profileRole: profileRole
         )
     }
 }

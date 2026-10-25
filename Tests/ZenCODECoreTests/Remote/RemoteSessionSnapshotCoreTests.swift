@@ -15,6 +15,29 @@ import ToolCore
 
 extension RemoteSessionSnapshotTests {
     @Test
+    func remoteClientCarriesTheProfileRoleIntoToolExecutionContext() async {
+        let client = RemoteGenerationClient(
+            configuration: AgentRuntimeConfiguration(
+                modelID: "unit-model",
+                workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
+                maxToolRounds: 4,
+                toolAuthorizationHandler: nil,
+                profileRole: .organizer
+            ),
+            provider: AgentRemoteProvider(
+                name: "OpenAI",
+                baseURL: "https://api.openai.com/v1",
+                modelID: "unit-model",
+                chatEndpoint: .responses
+            ),
+            apiKey: nil
+        )
+
+        #expect(await client.toolExecutor.toolExecutionContext.profileRole == .organizer)
+        await client.shutdown()
+    }
+
+    @Test
     func remoteToolCatalogRenderingIsByteStable() throws {
         let descriptors = [
             DirectToolDescriptor(

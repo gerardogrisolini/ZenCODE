@@ -213,6 +213,9 @@ public actor DirectSubAgentRuntime {
     /// validated against. Public initializers fail closed by default by loading
     /// the live settings snapshot.
     public let modelCatalogProvider: DirectSubAgentModelCatalogProvider
+    /// Supplies the profiles that role-based delegation (`profileRole`)
+    /// chooses from. Defaults to the persisted profiles.
+    public let profileCatalogProvider: DirectSubAgentProfileCatalogProvider
     let coordinatesLiveManifestReads: Bool
     public var taskOrchestrator: SessionTaskOrchestrator?
     /// The parent session's prompt-skill tool provider, propagated to each
@@ -302,12 +305,15 @@ public actor DirectSubAgentRuntime {
     public init(
         backendFactory: @escaping DirectSubAgentBackendFactory,
         profileResolver: @escaping DirectSubAgentProfileResolver,
-        modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider
+        modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider,
+        profileCatalogProvider: @escaping DirectSubAgentProfileCatalogProvider
+            = DirectSubAgentRuntime.liveProfileCatalogProvider
     ) {
         self.init(
             contextualBackendFactory: { _ in backendFactory() },
             profileResolver: profileResolver,
             modelCatalogProvider: modelCatalogProvider,
+            profileCatalogProvider: profileCatalogProvider,
             coordinatesLiveManifestReads: false
         )
     }
@@ -341,6 +347,8 @@ public actor DirectSubAgentRuntime {
         contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
         profileResolver: @escaping DirectSubAgentProfileResolver,
         modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider,
+        profileCatalogProvider: @escaping DirectSubAgentProfileCatalogProvider
+            = DirectSubAgentRuntime.liveProfileCatalogProvider,
         parentProfileID: String? = nil,
         parentProfileName: String? = nil
     ) {
@@ -348,6 +356,7 @@ public actor DirectSubAgentRuntime {
             contextualBackendFactory: contextualBackendFactory,
             profileResolver: profileResolver,
             modelCatalogProvider: modelCatalogProvider,
+            profileCatalogProvider: profileCatalogProvider,
             coordinatesLiveManifestReads: false,
             parentProfileID: parentProfileID,
             parentProfileName: parentProfileName
@@ -358,6 +367,8 @@ public actor DirectSubAgentRuntime {
         contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
         profileResolver: @escaping DirectSubAgentProfileResolver,
         modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider,
+        profileCatalogProvider: @escaping DirectSubAgentProfileCatalogProvider
+            = DirectSubAgentRuntime.liveProfileCatalogProvider,
         coordinatesLiveManifestReads: Bool,
         sharedChat: AgentSharedChat = AgentSharedChat(),
         sharedChatSenderID: String? = nil,
@@ -368,6 +379,7 @@ public actor DirectSubAgentRuntime {
         self.backendFactory = contextualBackendFactory
         self.profileResolver = profileResolver
         self.modelCatalogProvider = modelCatalogProvider
+        self.profileCatalogProvider = profileCatalogProvider
         self.coordinatesLiveManifestReads = coordinatesLiveManifestReads
         self.sharedChat = sharedChat
         self.sharedChatSenderID = sharedChatSenderID?.nilIfBlank
@@ -556,7 +568,11 @@ extension AgentRuntimeConfiguration {
         let identifiedConfiguration = withToolExecutionIdentity(
             agentID: context.sharedChatSenderID,
             agentName: context.requestedName
-        ).withProfileIdentity(profileID: context.profile?.id, profileName: context.profile?.name)
+        ).withProfileIdentity(
+            profileID: context.profile?.id,
+            profileName: context.profile?.name,
+            profileRole: context.profile?.role
+        )
         if locksModelToSession {
             return identifiedConfiguration
         }

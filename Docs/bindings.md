@@ -91,6 +91,18 @@ Worked example against the table above — a complexity 6 implementation task:
 The runtime only advises when complexity exceeds the chosen capability; the
 coordinator remains responsible for the explicit profile and binding choice.
 
+**Role-based delegation.** An item with `profileRole` names no profile or
+binding: the runtime applies these rules to the profiles of that role associated
+with the sub-agent's project (see [Project Agents](agents.md#project-agents)),
+choosing the profile and binding pair across all their delegatable bindings. The
+lowest capability that meets the complexity wins, or the highest with a
+capability-gap note when none does; ties go to the role's system profile, then
+to manifest order, then to roster order (model ID, then binding ID). When no
+candidate has a delegatable binding, a candidate without configured bindings runs
+on the main session model (system profile first); otherwise the item is rejected.
+With a `taskID`, the task's complexity applies and any gap is reported after the
+claim.
+
 ## Direct Work vs Delegation
 
 Bindings are also a **cost ladder**: a lower capability means a cheaper model,
@@ -132,6 +144,9 @@ the usable roster — which is why `Builder` in the screenshot is never routed t
 automatically. When no routable binding exists, the prompt says so explicitly
 and instructs the model not to call `agent.create`. The complete section is
 omitted only when delegation itself is unavailable or the session pins one model.
+An `organizer` coordinator gets a `Delegation by role:` section instead, which
+lists the roles of its visible profiles and no bindings (see
+[Organizer](organizer.md#delegated-work)).
 
 The `binding:<id>` token is the only reference advertised for `model`. Its
 namespace cannot collide with a model ID or provider slug. Provider and model
@@ -157,6 +172,8 @@ authoritative model-catalog snapshot**:
 | No bindings, no explicit model | Compatibility-only programmatic fallback: the child inherits the exact parent provider/model and stays out of the routing roster. |
 | No bindings, explicit model | Rejected — no authorized binding exists. |
 | No profile resolved, explicit model | Rejected — a model reference always requires a profile. |
+| `profileRole`, no `model` | The runtime resolves the role to a profile associated with the sub-agent's project and selects its binding from the complexity policy (see [Selection Policy](#selection-policy)). |
+| `profileRole`, with `model` | Rejected — a role never names a binding; use `profile` with its `model`. |
 
 Every rejection happens while the complete batch is prepared, before a taskless
 reservation or task claim. The resolved provider selection is carried to the

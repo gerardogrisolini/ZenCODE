@@ -64,6 +64,79 @@ import Testing
         }
     }
 
+    /// Sends one prompt whose verified delta reaches the proposal step under
+    /// `agentRole`, and returns the proposal requests the mock observed.
+    private func proposalRequests(
+        agentRole: AgentProfileRole?,
+        workspace: MemoryTestWorkspace
+    ) async throws -> [MemoryProposalMockBackend.Request] {
+        try await MemoryEmbedding.withProvider(LearningTestEmbeddingProvider()) {
+            let source = workspace.workspaceURL.appendingPathComponent("Sources/Widget.swift")
+            try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "let count = 0\n".write(to: source, atomically: true, encoding: .utf8)
+            // The regression the positive consolidation case uses: a failing
+            // test, a correction, then a passing test.
+            let failure = try toolCall(id: "widget-test-failure", name: "swift.test", args: [:])
+            let fix = try toolCall(id: "widget-count-edit", name: "local.editFile",
+                args: ["path": "Sources/Widget.swift", "old": "let count = 0", "new": "let count = 1"])
+            let verify = try toolCall(id: "widget-test-verification", name: "swift.test", args: [:])
+            let failedOutput = """
+            command: swift test
+            status: failed (exit 1)
+            exit_code: 1
+            timed_out: false
+            stdout_truncated: false
+            stderr_truncated: false
+            summary: WidgetTests.testInitialCount failed: expected count 1, got 0.
+            """
+            let passedOutput = """
+            command: swift test
+            status: passed (exit 0)
+            exit_code: 0
+            timed_out: false
+            stdout_truncated: false
+            stderr_truncated: false
+            summary: WidgetTests.testInitialCount passed; 1 test, 0 failures.
+            """
+            let mock = MemoryProposalMockBackend(rootEvents: [
+                .toolCallStarted(failure), .toolCallCompleted(failure, .init(output: failedOutput, summary: "Tests failed.")),
+                .toolCallStarted(fix), .toolCallCompleted(fix, .init(output: "Updated file. Replacements: 1.", summary: "Updated file.")),
+                .toolCallStarted(verify), .toolCallCompleted(verify, .init(output: passedOutput, summary: "Tests passed."))
+            ])
+            let runner = AgentCoreSessionRunner(backendFactory: { _, _ in mock })
+            let configuration = AgentCoreSessionConfiguration(sessionID: "root", modelID: "same-model",
+                agentRole: agentRole, workingDirectory: workspace.workspaceURL, systemPrompt: nil, cacheKey: nil,
+                history: [], allowedToolNames: ["memory.write"])
+            let response = try await runner.sendPrompt(configuration: configuration, prompt: "fix",
+                attachments: [], onEvent: { _ in })
+            #expect(response.text == "normal response")
+            await runner.shutdown()
+            return await mock.requests
+        }
+    }
+
+    @Test func organizerSessionNeverProposesAutomaticMemory() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let requests = try await proposalRequests(agentRole: .organizer, workspace: workspace)
+            #expect(requests.isEmpty)
+        }
+    }
+
+    @Test func roleLessSessionProposesForTheSameVerifiedDelta() async throws {
+        // Control for the organizer test: the same verified delta reaches the
+        // proposal step without an organizer role, so an empty result for the
+        // organizer comes from the guard rather than from a delta that never
+        // qualified. It runs in its own workspace, sharing no graph state.
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let requests = try await proposalRequests(agentRole: nil, workspace: workspace)
+            #expect(!requests.isEmpty)
+        }
+    }
+
     @Test func isolatedRequestHasNoToolsHistoryRecallOrUserCacheAndCloses() async throws {
         let mock = MemoryProposalMockBackend()
         let core = try await backend(mock)

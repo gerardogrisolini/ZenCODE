@@ -233,7 +233,7 @@ extension DirectSubAgentRuntimeTests {
             )
             Issue.record("Expected an explicit model without a profile to be rejected.")
         } catch DirectSubAgentRuntimeError.missingArgument(let argument) {
-            #expect(argument == "profile or agent")
+            #expect(argument == "profile or profileRole")
         }
     }
 

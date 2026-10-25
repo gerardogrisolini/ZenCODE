@@ -4,6 +4,7 @@ import ToolCore
 actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     struct CreatedSession: Sendable {
         let id: String
+        let cwd: String
         let cacheKey: String?
         let historyCount: Int
         let systemPrompt: String?
@@ -86,7 +87,7 @@ actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
 
     func createSession(
         id: String,
-        cwd _: String,
+        cwd: String,
         systemPrompt: String?,
         history: [AgentRuntimeMessage],
         cacheKey: String?,
@@ -97,6 +98,7 @@ actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
         sessions.append(
             CreatedSession(
                 id: id,
+                cwd: cwd,
                 cacheKey: cacheKey,
                 historyCount: history.count,
                 systemPrompt: systemPrompt,

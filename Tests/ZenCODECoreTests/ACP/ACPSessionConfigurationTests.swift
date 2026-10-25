@@ -55,6 +55,8 @@ extension ACPCompatibilityTests {
         #expect(initialConfiguration.agentName == agentA.name)
         #expect(initialConfiguration.runtimeConfiguration.profileID == agentA.id)
         #expect(initialConfiguration.runtimeConfiguration.profileName == agentA.name)
+        #expect(initialConfiguration.agentRole == agentA.role)
+        #expect(initialConfiguration.runtimeConfiguration.profileRole == agentA.role)
         #expect(await bridge.selectedAgentIDForTesting(sessionID: sessionID) == agentA.id)
 
         try await bridge.prompt(id: nil, params: [
@@ -70,6 +72,8 @@ extension ACPCompatibilityTests {
         #expect(routedConfiguration.agentName == agentB.name)
         #expect(routedConfiguration.runtimeConfiguration.profileID == agentB.id)
         #expect(routedConfiguration.runtimeConfiguration.profileName == agentB.name)
+        #expect(routedConfiguration.agentRole == agentB.role)
+        #expect(routedConfiguration.runtimeConfiguration.profileRole == agentB.role)
         #expect(await bridge.sessionRunner.sessions[sessionID]?.agentID == agentB.id)
         #expect(await bridge.sessionRunner.sessions[sessionID]?.agentName == agentB.name)
         #expect(routedConfiguration.systemPrompt?.contains("Instructions for Agent B.") == false)
@@ -108,6 +112,8 @@ extension ACPCompatibilityTests {
         #expect(restoredConfiguration.agentName == agentB.name)
         #expect(restoredConfiguration.runtimeConfiguration.profileID == agentB.id)
         #expect(restoredConfiguration.runtimeConfiguration.profileName == agentB.name)
+        #expect(restoredConfiguration.agentRole == agentB.role)
+        #expect(restoredConfiguration.runtimeConfiguration.profileRole == agentB.role)
         #expect(restoredConfiguration.systemPrompt?.contains("Instructions for Agent B.") == false)
         #expect(restoredConfiguration.dynamicContext?.contains("Instructions for Agent B.") == true)
         #expect(
@@ -144,6 +150,7 @@ extension ACPCompatibilityTests {
         #expect(runtimeConfiguration.agentName == agent.name)
         #expect(runtimeConfiguration.profileID == agent.id)
         #expect(runtimeConfiguration.profileName == agent.name)
+        #expect(runtimeConfiguration.profileRole == agent.role)
         await bridge.shutdown()
     }
 
@@ -301,6 +308,68 @@ extension ACPCompatibilityTests {
 
         #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
         #expect(allowedToolNames.contains("local.readFile"))
+        #expect(configuration.agentRole == reviewer.role)
+        #expect(configuration.runtimeConfiguration.profileRole == reviewer.role)
+    }
+
+    @Test
+    func acpSessionRoleFollowsTheSelectedProfileOnNewAndRestoredSessions() async throws {
+        let developer = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            role: .developer,
+            tools: []
+        )
+        let reviewer = AgentProfile(
+            id: "reviewer",
+            name: "Reviewer",
+            role: .reviewer,
+            tools: []
+        )
+        let models = [
+            AgentSettingsModelManifest(
+                id: "test-model",
+                kind: .remoteAPI,
+                modelID: "local/test-model"
+            )
+        ]
+        let bridge = try makeBridge(
+            models: models,
+            availableAgents: [developer, reviewer],
+            agentName: developer.name,
+            backendFactory: { _, _ in CapturingACPBackend() }
+        )
+
+        try await bridge.newSession(id: nil, params: [
+            "cwd": "/tmp/acp-role-new-session",
+            "agentId": reviewer.id
+        ])
+        let configuration = try #require(await bridge.sessionConfigurationsForTesting().first)
+        #expect(configuration.agentID == reviewer.id)
+        #expect(configuration.agentRole == reviewer.role)
+        #expect(configuration.runtimeConfiguration.profileRole == reviewer.role)
+
+        let restoredBridge = try makeBridge(
+            models: models,
+            availableAgents: [developer, reviewer],
+            agentName: developer.name,
+            backendFactory: { _, _ in CapturingACPBackend() }
+        )
+        try await restoredBridge.restoreSession(
+            id: nil,
+            params: [
+                "sessionId": "restored-developer-role",
+                "cwd": "/tmp/acp-role-new-session",
+                "agentId": developer.id
+            ],
+            replayHistory: false
+        )
+        let restoredConfiguration = try #require(
+            await restoredBridge.sessionConfigurationsForTesting().first
+        )
+        #expect(restoredConfiguration.agentID == developer.id)
+        #expect(restoredConfiguration.agentRole == developer.role)
+        #expect(restoredConfiguration.runtimeConfiguration.profileRole == developer.role)
     }
 
     @Test
@@ -369,6 +438,8 @@ extension ACPCompatibilityTests {
         #expect(configuration.modelID == model.id)
         #expect(configuration.agentID == agent.id)
         #expect(configuration.agentName == agent.name)
+        #expect(configuration.agentRole == agent.role)
+        #expect(configuration.runtimeConfiguration.profileRole == agent.role)
         #expect(configuration.thinkingSelection == .high)
     }
 
@@ -394,6 +465,7 @@ extension ACPCompatibilityTests {
             modelID: "test-model",
             agentID: "acp-refresh-profile",
             agentName: "ACP Refresh Profile",
+            agentRole: .developer,
             workingDirectory: FileManager.default.temporaryDirectory,
             systemPrompt: "test system prompt",
             cacheKey: "acp-refresh-cache",
@@ -417,6 +489,9 @@ extension ACPCompatibilityTests {
         #expect(refreshed.agentName == configuration.agentName)
         #expect(refreshed.runtimeConfiguration.profileID == configuration.agentID)
         #expect(refreshed.runtimeConfiguration.profileName == configuration.agentName)
+        #expect(refreshed.agentRole == configuration.agentRole)
+        #expect(refreshed.agentRole == .developer)
+        #expect(refreshed.runtimeConfiguration.profileRole == configuration.agentRole)
         #expect(refreshed.sessionRevision == configuration.sessionRevision)
         #expect(
             refreshed.configuredContextWindowLimit

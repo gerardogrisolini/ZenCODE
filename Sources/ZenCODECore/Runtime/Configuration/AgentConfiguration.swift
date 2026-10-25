@@ -385,7 +385,8 @@ public struct AgentConfiguration: Sendable {
             agentID: selectedAgent?.id,
             agentName: selectedAgent?.name,
             profileID: selectedAgent?.id,
-            profileName: selectedAgent?.name
+            profileName: selectedAgent?.name,
+            profileRole: selectedAgent?.role
         )
     }
 

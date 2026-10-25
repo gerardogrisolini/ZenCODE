@@ -13,6 +13,9 @@ extension AgentCoreSessionRunner {
         sessionGeneration: SessionGeneration?,
         authorize: AgentToolAuthorizationHandler?
     ) async {
+        // Automatic learning writes only the workspace graph. An organizer
+        // session's global graph changes solely through the explicit memory tools.
+        guard case .workspace(let workspaceRootURL) = configuration.memoryGraphTarget else { return }
         guard permit.canPropose, !Task.isCancelled,
               isCurrentBackendGeneration(generation),
               isCurrentSessionGeneration(sessionGeneration, for: configuration.sessionID) else { return }
@@ -20,7 +23,7 @@ extension AgentCoreSessionRunner {
         guard !evidence.isEmpty else { return }
         do {
             let store = try await memoryGraphStoreRegistry.store(
-                graphURL: MemoryGraphLocation.graphURL(for: configuration.workingDirectory)
+                graphURL: MemoryGraphLocation.graphURL(for: workspaceRootURL)
             )
             guard let snapshot = try await store.learningSnapshot(query: evidence.map { $0.location + " " + $0.detail }.joined(separator: " ")), permit.canPropose else { return }
             struct Existing: Encodable { let id: String; let content: String }

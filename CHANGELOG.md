@@ -73,7 +73,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   delegates to the planner profiles and forces their core tools read-only,
   `/review` delegates to the reviewer profiles, and the builder role enables
   `/feature` and the feature-management tools; the other roles have no
-  runtime effect beyond the profile's configuration. With several profiles in
+  runtime effect beyond the profile's configuration, except `organizer` (see
+  the Organizer entries below). With several profiles in
   the same role, the delegation prompt lists them all and the model may use
   any of them. `/setup` asks for the role with a required **Role** choice among
   the eight roles and adds the system Developer only when no profile has the
@@ -82,6 +83,36 @@ Release tags follow the strict `vX.Y.Z` contract described in
   Per-project selections and saved sessions that refer to the former UUIDs are
   not migrated and behave like references to a deleted profile. See
   [Docs/agents.md](Docs/agents.md#profile-roles).
+- Global Organizer memory: sessions whose profile has the `organizer` role keep
+  their memory in one global graph, `<supportDirectory>/memory/global/memory.graph.json`
+  (`~/.zencode/memory/global/memory.graph.json` by default), instead of the graph
+  of the working directory. Their `memory.*` tools and automatic recall use it
+  from any working directory. The graph has the same format and store as the
+  workspace graphs; project graphs are not aggregated into it, and automatic
+  learning never writes to it. Other roles keep the workspace graph. See
+  [Docs/memory.md](Docs/memory.md).
+- `agent.create` items accept `profileRole`, one of the eight roles, exclusive
+  with `profile` and not combined with `model`. The runtime chooses the profile
+  and its model binding together, among the profiles of that role associated
+  with the sub-agent's project and all their delegatable bindings: the lowest
+  capability that meets `complexity`, or the highest with a capability-gap
+  warning. `complexity` (1-10) is required with `profileRole` unless the item has
+  a `taskID`, whose complexity takes precedence. Each item also accepts
+  `workingDirectory`, an existing directory equal to or inside the coordinator's
+  working directory, absolute or relative to it. Omitted, the sub-agent inherits
+  the coordinator's directory; files, shell, git, project memory, and
+  project-agent association follow the sub-agent's directory. Symlinks are
+  resolved to check that directory: the sub-agent works under the
+  coordinator's own unresolved path, following any link inside it to its
+  target. See
+  [Docs/agents.md](Docs/agents.md#sub-agents).
+- Organizer delegation roster: the system prompt of an `organizer` session lists
+  the roles it can delegate to, with their descriptions and the rules for
+  `profileRole`, `complexity`, and `workingDirectory`, instead of the "Delegatable
+  agent profiles and model bindings" roster. Only the roles of the profiles
+  associated with the folder the Organizer is launched from are listed. Its task
+  workflow policy also delegates by role, never naming a profile or model. Other
+  coordinators are unchanged.
 
 ### Changed
 
@@ -96,6 +127,22 @@ Release tags follow the strict `vX.Y.Z` contract described in
   [Docs/organizer.md](Docs/organizer.md) guide describes the profile. Existing
   `agents.json` manifests are not changed; regenerate the recommended profiles
   in setup to apply the new instructions.
+- The recommended `Organizer` instructions keep project state in the global
+  memory graph, with one `entity` entry per project (name, absolute folder path,
+  purpose) and its state in `fact` entries. Project work is delegated by
+  `profileRole`, `complexity`, and `workingDirectory`, never by profile name or
+  model, and only when the user asks for it; to read a project's state, the
+  `Organizer` delegates to the `reporter` or `reviewer` role. Regenerate the
+  recommended profiles in setup to apply them; existing `agents.json` manifests
+  are not changed.
+- The `agent.create` item schema no longer marks `profile` as required: each
+  item must name exactly one of `profile` or `profileRole`, which the runtime
+  enforces.
+- The recommended `Reporter` agent profile is now `readOnly`, like `Reviewer`:
+  its core `files` and `text` tools are limited to read-only descriptors, while
+  its search and Git feature tools are unchanged. Existing `agents.json`
+  manifests are not changed; regenerate the recommended profiles in setup to
+  apply it.
 - Voice: voice mode now reads every final answer aloud in full, however long it
   is. The answer length limit in `/setup` > Voice mode is removed, and so is the
   `voice.maximumSpokenCharacters` setting that 2.4.0 saved: a saved value is

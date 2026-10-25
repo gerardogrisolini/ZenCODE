@@ -115,6 +115,7 @@ public enum AgentSessionComposition {
             selectedAgentSection: selectedAgent?.promptSection(
                 memoryToolEnabled: memoryToolEnabled
             ),
+            selectedAgentRole: selectedAgent?.role,
             selectedSkillSection: SystemPromptBuilder.staticSkillSection,
             responseLanguageSection: responseLanguageSection
         )
@@ -172,13 +173,15 @@ public enum AgentSessionComposition {
                 selectedAgentSection: selectedAgent?.promptSection(
                     memoryToolEnabled: memoryToolEnabled
                 ),
+                selectedAgentRole: selectedAgent?.role,
                 selectedSkillSection: SystemPromptBuilder.staticSkillSection
             )
             .dynamicContext
         } ?? [
             selectedAgent?.promptSection(memoryToolEnabled: memoryToolEnabled),
             SystemPromptBuilder.taskOrchestrationSection(
-                allowedToolNames: allowedToolNames
+                allowedToolNames: allowedToolNames,
+                delegatesByRole: selectedAgent?.role.delegatesByRole == true
             ),
             SystemPromptBuilder.collaborationSection(
                 allowedToolNames: allowedToolNames
@@ -209,6 +212,7 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
     public var modelID: String?
     public var agentID: String?
     public var agentName: String?
+    public var agentRole: AgentProfileRole?
     public var workingDirectory: URL
     public var systemPrompt: String?
     public var dynamicContext: String?
@@ -227,6 +231,7 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
         modelID: String?,
         agentID: String? = nil,
         agentName: String? = nil,
+        agentRole: AgentProfileRole? = nil,
         workingDirectory: URL,
         systemPrompt: String?,
         dynamicContext: String? = nil,
@@ -244,6 +249,7 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
         self.modelID = modelID
         self.agentID = agentID
         self.agentName = agentName
+        self.agentRole = agentRole
         self.workingDirectory = workingDirectory
         self.systemPrompt = systemPrompt
         self.dynamicContext = dynamicContext
@@ -266,6 +272,7 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
             modelID: modelID,
             agentID: agentID,
             agentName: agentName,
+            agentRole: agentRole,
             workingDirectory: workingDirectory,
             systemPrompt: systemPrompt,
             dynamicContext: dynamicContext,

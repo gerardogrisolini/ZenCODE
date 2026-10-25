@@ -77,7 +77,12 @@ public final class MemoryService: @unchecked Sendable {
 
     /// Absolute path of the graph backing a workspace.
     public func graphURL(workspaceRootURL: URL) -> URL {
-        MemoryGraphLocation.graphURL(for: workspaceRootURL, fileManager: fileManager)
+        graphURL(target: .workspace(workspaceRootURL))
+    }
+
+    /// Absolute path of the graph backing `target`.
+    public func graphURL(target: MemoryGraphTarget) -> URL {
+        MemoryGraphLocation.graphURL(for: target, fileManager: fileManager)
     }
 
     // MARK: - Reads
@@ -105,7 +110,24 @@ public final class MemoryService: @unchecked Sendable {
         limit: Int,
         filter: MemoryEntryFilter
     ) async throws -> [MemoryEntry] {
-        try await store(for: workspaceRootURL)
+        try await readEntries(
+            target: workspaceRootURL.map(MemoryGraphTarget.workspace),
+            includeArchived: includeArchived,
+            offset: offset,
+            limit: limit,
+            filter: filter
+        )
+    }
+
+    /// Journal page of the graph addressed by `target`.
+    public func readEntries(
+        target: MemoryGraphTarget?,
+        includeArchived: Bool,
+        offset: Int,
+        limit: Int,
+        filter: MemoryEntryFilter
+    ) async throws -> [MemoryEntry] {
+        try await store(for: target)
             .entries(includeArchived: includeArchived, offset: offset, limit: limit, filter: filter)
             .map { MemoryEntry($0) }
     }
@@ -133,11 +155,28 @@ public final class MemoryService: @unchecked Sendable {
         limit: Int,
         filter: MemoryEntryFilter
     ) async throws -> [MemoryEntry] {
+        try await searchEntries(
+            query: query,
+            target: workspaceRootURL.map(MemoryGraphTarget.workspace),
+            includeArchived: includeArchived,
+            limit: limit,
+            filter: filter
+        )
+    }
+
+    /// Ranked lookup in the graph addressed by `target`, narrowed by `filter`.
+    public func searchEntries(
+        query: String,
+        target: MemoryGraphTarget?,
+        includeArchived: Bool,
+        limit: Int,
+        filter: MemoryEntryFilter
+    ) async throws -> [MemoryEntry] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty else {
             throw MemoryServiceError.missingField("query")
         }
-        return try await store(for: workspaceRootURL).search(
+        return try await store(for: target).search(
             query: normalizedQuery,
             includeArchived: includeArchived,
             limit: limit,
@@ -149,7 +188,17 @@ public final class MemoryService: @unchecked Sendable {
         id: String,
         workspaceRootURL: URL?
     ) async throws -> MemoryEntry? {
-        try await store(for: workspaceRootURL)
+        try await entry(
+            id: id,
+            target: workspaceRootURL.map(MemoryGraphTarget.workspace)
+        )
+    }
+
+    public func entry(
+        id: String,
+        target: MemoryGraphTarget?
+    ) async throws -> MemoryEntry? {
+        try await store(for: target)
             .entry(id: MemoryIdentifier.validated(id))
             .map { MemoryEntry($0) }
     }
@@ -190,7 +239,24 @@ public final class MemoryService: @unchecked Sendable {
         tags: [String] = [],
         generatedTimestamp: Bool = false
     ) async throws -> MemoryWriteOutcome {
-        let result = try await store(for: workspaceRootURL).writeDetailed(
+        try await writeEntryOutcome(
+            content: content,
+            target: workspaceRootURL.map(MemoryGraphTarget.workspace),
+            category: category,
+            tags: tags,
+            generatedTimestamp: generatedTimestamp
+        )
+    }
+
+    /// `writeEntryOutcome` against the graph addressed by `target`.
+    func writeEntryOutcome(
+        content: String,
+        target: MemoryGraphTarget?,
+        category: MemoryCategory = .fact,
+        tags: [String] = [],
+        generatedTimestamp: Bool = false
+    ) async throws -> MemoryWriteOutcome {
+        let result = try await store(for: target).writeDetailed(
             content: content,
             category: category.engineCategory,
             tags: tags,
@@ -224,7 +290,27 @@ public final class MemoryService: @unchecked Sendable {
         updatedAt: Date = Date(),
         timeZone: TimeZone = .current
     ) async throws -> MemoryEntry {
-        let entry = try await store(for: workspaceRootURL).update(
+        try await updateEntry(
+            id: id,
+            content: content,
+            target: workspaceRootURL.map(MemoryGraphTarget.workspace),
+            tags: tags,
+            updatedAt: updatedAt,
+            timeZone: timeZone
+        )
+    }
+
+    /// Replaces the content of an entry of the graph addressed by `target`.
+    @discardableResult
+    public func updateEntry(
+        id: String,
+        content: String,
+        target: MemoryGraphTarget?,
+        tags: [String]? = nil,
+        updatedAt: Date = Date(),
+        timeZone: TimeZone = .current
+    ) async throws -> MemoryEntry {
+        let entry = try await store(for: target).update(
             id: id,
             content: content,
             tags: tags,
@@ -258,7 +344,20 @@ public final class MemoryService: @unchecked Sendable {
         id: String,
         workspaceRootURL: URL?
     ) async throws -> MemoryEntry {
-        let entry = try await store(for: workspaceRootURL)
+        try await setArchived(
+            isArchived,
+            id: id,
+            target: workspaceRootURL.map(MemoryGraphTarget.workspace)
+        )
+    }
+
+    @discardableResult
+    public func setArchived(
+        _ isArchived: Bool,
+        id: String,
+        target: MemoryGraphTarget?
+    ) async throws -> MemoryEntry {
+        let entry = try await store(for: target)
             .setArchived(isArchived, id: id)
         Self.notifyMemoryEntriesChanged()
         return MemoryEntry(entry)
@@ -268,20 +367,29 @@ public final class MemoryService: @unchecked Sendable {
         id: String,
         workspaceRootURL: URL?
     ) async throws {
-        try await store(for: workspaceRootURL).delete(id: id)
+        try await deleteEntry(
+            id: id,
+            target: workspaceRootURL.map(MemoryGraphTarget.workspace)
+        )
+    }
+
+    public func deleteEntry(
+        id: String,
+        target: MemoryGraphTarget?
+    ) async throws {
+        try await store(for: target).delete(id: id)
         Self.notifyMemoryEntriesChanged()
     }
 
     // MARK: - Store resolution
 
-    private func store(for workspaceRootURL: URL?) async throws -> MemoryGraphStore {
-        guard let workspaceRootURL else {
+    private func store(for target: MemoryGraphTarget?) async throws -> MemoryGraphStore {
+        guard let target else {
             throw MemoryServiceError.scopeUnavailable("project")
         }
-        let standardizedRoot = workspaceRootURL.standardizedFileURL
         return try await MemoryGraphStoreRegistry.shared.store(
             graphURL: MemoryGraphLocation.graphURL(
-                for: standardizedRoot,
+                for: target,
                 fileManager: fileManager
             )
         )

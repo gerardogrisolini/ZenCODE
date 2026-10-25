@@ -101,17 +101,21 @@ extension DirectSubAgentRuntime {
                 // Delegated turns get automatic recall as well. The workspace
                 // is read from the agent's own session snapshot, so a sub-agent
                 // working in a different directory recalls from that
-                // workspace's graph rather than the coordinator's. The main
-                // model reads and writes durable memory explicitly through the
-                // five `memory.*` tools — there is no automatic extraction and
-                // no second LLM call after any turn.
+                // workspace's graph rather than the coordinator's; an organizer
+                // profile recalls from the global graph instead, as its memory
+                // tools do. The main model reads and writes durable memory
+                // explicitly through the `memory.*` tools — there is no automatic
+                // extraction and no second LLM call after any turn.
                 let memoryBlock: String?
                 if let workspaceRootURL = await work.backend
                     .snapshotSession(id: work.sessionID)
                     .map({ URL(fileURLWithPath: $0.workingDirectoryPath) }) {
                     memoryBlock = await MemoryTurnCoordinator.shared.memoryBlock(
                         sessionID: work.sessionID,
-                        workspaceRootURL: workspaceRootURL,
+                        graphTarget: MemoryGraphTarget.resolved(
+                            profileRole: agents[agentID]?.profileRole,
+                            workingDirectory: workspaceRootURL
+                        ),
                         prompt: work.prompt
                     )
                 } else {

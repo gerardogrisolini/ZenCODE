@@ -4,6 +4,22 @@ import Testing
 @testable import ZenCODECore
 
 extension RemoteSessionSnapshotTests {
+    @Test
+    func chatGPTClientCarriesTheProfileRoleIntoToolExecutionContext() async {
+        let client = ChatGPTSubscriptionGenerationClient(
+            configuration: AgentRuntimeConfiguration(
+                modelID: "unit-model",
+                workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
+                maxToolRounds: 4,
+                toolAuthorizationHandler: nil,
+                profileRole: .organizer
+            )
+        )
+
+        #expect(await client.toolExecutor.toolExecutionContext.profileRole == .organizer)
+        await client.shutdown()
+    }
+
     private func subscriptionRecoveryCredentials() async throws -> CodexAgentCredentials {
         CodexAgentCredentials(accessToken: "fixture", refreshToken: "fixture", expiresAt: .distantFuture, accountID: "fixture")
     }

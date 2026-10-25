@@ -38,11 +38,11 @@ actor MemoryTurnCoordinator {
         emitVisibleWarning = visibleWarning
     }
 
-    /// Identifies one session's recall state within one workspace. Both parts
-    /// are required: a session id alone collides across workspaces, while a
-    /// workspace alone would merge an operator and its delegated sub-agents.
+    /// Identifies one session's recall state within one graph. Both parts are
+    /// required: a session id alone collides across graphs, while a graph alone
+    /// would merge an operator and its delegated sub-agents.
     private struct Key: Hashable {
-        let workspacePath: String
+        let graphPath: String
         let sessionID: String
     }
 
@@ -81,15 +81,27 @@ actor MemoryTurnCoordinator {
         workspaceRootURL: URL,
         prompt: String
     ) async -> String? {
+        await memoryBlock(
+            sessionID: sessionID,
+            graphTarget: .workspace(workspaceRootURL),
+            prompt: prompt
+        )
+    }
+
+    /// `memoryBlock` against the graph addressed by `graphTarget`.
+    func memoryBlock(
+        sessionID: String,
+        graphTarget: MemoryGraphTarget,
+        prompt: String
+    ) async -> String? {
         guard MemoryAutomationSettings.isAutoRecallEnabled else {
             return nil
         }
         guard let normalizedPrompt = prompt.nilIfBlank else {
             return nil
         }
-        let standardizedRoot = workspaceRootURL.standardizedFileURL
         let key = Key(
-            workspacePath: standardizedRoot.path,
+            graphPath: MemoryGraphLocation.graphURL(for: graphTarget).path,
             sessionID: sessionID
         )
         guard !(sessionStates[key]?.isDisabled(at: Date()) ?? false) else {
@@ -100,7 +112,7 @@ actor MemoryTurnCoordinator {
             local: MemoryAutomationSettings.recallTimeout,
             semantic: MemoryAutomationSettings.semanticRecallTimeout,
             store: {
-                try await Self.store(workspaceRootURL: standardizedRoot)
+                try await Self.store(graphTarget: graphTarget)
             },
             operation: { store in
                 try await store.context(for: normalizedPrompt)
@@ -132,7 +144,7 @@ actor MemoryTurnCoordinator {
         return block
     }
 
-    /// Removes health state for every workspace in which `sessionID` was used.
+    /// Removes health state for every graph in which `sessionID` was used.
     /// Close/reset callers frequently no longer have a workspace URL, and a
     /// retiring session can safely drop all of its own recall state.
     func discard(sessionID: String) {
@@ -144,16 +156,20 @@ actor MemoryTurnCoordinator {
     /// Whether recall is currently paused for a session. Diagnostics and tests
     /// only; the recall path reads its state directly.
     func isRecallPaused(sessionID: String, workspaceRootURL: URL) -> Bool {
+        isRecallPaused(sessionID: sessionID, graphTarget: .workspace(workspaceRootURL))
+    }
+
+    func isRecallPaused(sessionID: String, graphTarget: MemoryGraphTarget) -> Bool {
         let key = Key(
-            workspacePath: workspaceRootURL.standardizedFileURL.path,
+            graphPath: MemoryGraphLocation.graphURL(for: graphTarget).path,
             sessionID: sessionID
         )
         return sessionStates[key]?.isDisabled(at: Date()) ?? false
     }
 
-    private static func store(workspaceRootURL: URL) async throws -> MemoryGraphStore {
+    private static func store(graphTarget: MemoryGraphTarget) async throws -> MemoryGraphStore {
         try await MemoryGraphStoreRegistry.shared.store(
-            graphURL: MemoryGraphLocation.graphURL(for: workspaceRootURL)
+            graphURL: MemoryGraphLocation.graphURL(for: graphTarget)
         )
     }
 

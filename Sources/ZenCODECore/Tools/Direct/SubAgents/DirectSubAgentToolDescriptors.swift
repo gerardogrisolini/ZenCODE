@@ -39,16 +39,24 @@ extension DirectSubAgentRuntime {
         .argument(["prompt", "message", "initialPrompt", "initial_prompt"])
     ], separator: " ")
 
+    /// Quoted, comma-separated `AgentProfileRole` raw values for the `profileRole`
+    /// enum, so the schema cannot drift from the role list.
+    private static let agentCreateProfileRoleEnum = AgentProfileRole.allCases
+        .map { "\"\($0.rawValue)\"" }
+        .joined(separator: ",")
+
     /// Provider-neutral model-visible contract. A single batch shape avoids
     /// `oneOf`/`not`, which different remote APIs normalize inconsistently.
     /// Root calls and aliases remain accepted only by the compatibility parser.
-    private static let agentCreateItemSchema = #"{"type":"object","properties":{"profile":{"type":"string","description":"Exact profile name from the delegatable roster."},"model":{"type":"string","description":"Exact binding:... reference from the selected profile when it has configured bindings. Otherwise omit model to inherit the main session model."},"taskID":{"type":"string","description":"Task ID returned by tasks.create/tasks.list. Put it in this agents item, never at the agent.create root."},"prompt":{"type":"string"},"name":{"type":"string"},"role":{"type":"string"}},"required":["profile"],"additionalProperties":false}"#
+    /// Neither `profile` nor `profileRole` is schema-required: the runtime
+    /// enforces that exactly one of them is present.
+    private static let agentCreateItemSchema = #"{"type":"object","properties":{"profile":{"type":"string","description":"Exact profile name from the delegatable roster."},"model":{"type":"string","description":"Exact binding:... reference from the selected profile when it has configured bindings. Otherwise omit model to inherit the main session model."},"taskID":{"type":"string","description":"Task ID returned by tasks.create/tasks.list. Put it in this agents item, never at the agent.create root."},"prompt":{"type":"string"},"name":{"type":"string"},"role":{"type":"string"},"profileRole":{"type":"string","enum":[\#(agentCreateProfileRoleEnum)],"description":"Delegate by role: the runtime resolves the profile associated with the sub-agent's working directory and selects its model binding from complexity. Exclusive with profile; never combine with model."},"complexity":{"type":"integer","minimum":1,"maximum":10,"description":"Difficulty 1-10. \#(TaskRecord.complexityRubric). Required with profileRole unless taskID is set; a task's complexity takes precedence."},"workingDirectory":{"type":"string","description":"Optional. Directory the sub-agent works in: absolute or relative to the coordinator's working directory; must be an existing directory inside it. Omit to inherit the coordinator's working directory. Files, shell, git, project memory, and project-agent association follow this directory."}},"additionalProperties":false}"#
 
     private static let agentCreateSchema = #"{"type":"object","properties":{"agents":{"type":"array","minItems":1,"maxItems":8,"items":\#(agentCreateItemSchema)}},"required":["agents"],"additionalProperties":false}"#
 
     private static let createDescriptor = DirectToolDescriptor(
             name: "agent.create",
-            description: "Creates 1–8 delegated sub-agents from the exact profile and binding references in the delegatable roster. Use only the canonical agents array; each item requires profile. If the profile has configured bindings, model is required; otherwise omit model to inherit the main session model and provider. For graph work, put the task ID returned by tasks.create/tasks.list in that item's taskID field; taskID is never a root argument. Independent items run in parallel. A task-bound item claims its task atomically, and the child receives tasks.list, tasks.get, and tasks.update for attempt reporting. Different profiles retain their own tool grant; a child resolved to the coordinator's same profile inherits the coordinator's effective session allowlist. Child-intrinsic skills, collaboration, and applicable task-reporting tools are added automatically. Legacy root fields and aliases remain input-compatible but are intentionally not model-visible.",
+            description: "Creates 1–8 delegated sub-agents from the exact profile and binding references in the delegatable roster. Use only the canonical agents array; each item requires exactly one of profile or profileRole. If the profile has configured bindings, model is required; otherwise omit model to inherit the main session model and provider. For graph work, put the task ID returned by tasks.create/tasks.list in that item's taskID field; taskID is never a root argument. Independent items run in parallel. A task-bound item claims its task atomically, and the child receives tasks.list, tasks.get, and tasks.update for attempt reporting. Different profiles retain their own tool grant; a child resolved to the coordinator's same profile inherits the coordinator's effective session allowlist. Child-intrinsic skills, collaboration, and applicable task-reporting tools are added automatically. Legacy root fields and aliases remain input-compatible but are intentionally not model-visible.",
             inputSchema: agentCreateSchema,
             presentation: ToolPresentationDefinition(
                 title: "Agent",

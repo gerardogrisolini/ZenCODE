@@ -182,6 +182,7 @@ extension AgentCoreSessionConfiguration {
             modelID: snapshot.modelID ?? modelID,
             agentID: agentID,
             agentName: agentName,
+            agentRole: agentRole,
             workingDirectory: URL(fileURLWithPath: snapshot.workingDirectoryPath),
             systemPrompt: snapshot.systemPrompt,
             dynamicContext: snapshot.dynamicContext,

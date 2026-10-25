@@ -442,6 +442,305 @@ struct MemoryServiceTests {
         }
     }
 
+    // MARK: - Graph targets
+
+    @Test
+    func globalTargetPersistsItsOwnGraphIsolatedFromTheWorkspace() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let globalURL = service.graphURL(target: .global)
+            let expectedGlobalURL = workspace.supportDirectoryURL
+                .appendingPathComponent("memory", isDirectory: true)
+                .appendingPathComponent("global", isDirectory: true)
+                .appendingPathComponent("memory.graph.json", isDirectory: false)
+            #expect(globalURL.standardizedFileURL.path == expectedGlobalURL.standardizedFileURL.path)
+            #expect(globalURL == MemoryGraphLocation.globalGraphURL())
+            #expect(globalURL != workspace.graphURL())
+            #expect(workspace.graphURL().deletingLastPathComponent().lastPathComponent != MemoryGraphLocation.globalDirectoryName)
+            #expect(service.graphURL(target: .workspace(workspace.workspaceURL)) == workspace.graphURL())
+            #expect(!FileManager.default.fileExists(atPath: globalURL.path))
+
+            let globalOutcome = try await service.writeEntryOutcome(
+                content: "Summary: the organizer keeps one machine-wide memory graph.",
+                target: .global
+            )
+            #expect(globalOutcome.created)
+            #expect(FileManager.default.fileExists(atPath: globalURL.path))
+            let persisted = try String(contentsOf: globalURL, encoding: .utf8)
+            #expect(persisted.contains("one machine-wide memory graph"))
+            // The workspace graph was never created by a global write.
+            #expect(!FileManager.default.fileExists(atPath: workspace.graphURL().path))
+
+            let workspaceOutcome = try await service.writeEntryOutcome(
+                content: "Summary: the workspace keeps its own project notes.",
+                target: .workspace(workspace.workspaceURL)
+            )
+            #expect(workspaceOutcome.created)
+            #expect(FileManager.default.fileExists(atPath: workspace.graphURL().path))
+
+            let globalEntries = try await service.readEntries(
+                target: .global,
+                includeArchived: false,
+                offset: 0,
+                limit: 10,
+                filter: .none
+            )
+            #expect(globalEntries.map(\.id) == [globalOutcome.entry.id])
+
+            let workspaceEntries = try await service.readEntries(
+                target: .workspace(workspace.workspaceURL),
+                includeArchived: false,
+                offset: 0,
+                limit: 10,
+                filter: .none
+            )
+            #expect(workspaceEntries.map(\.id) == [workspaceOutcome.entry.id])
+
+            // Neither graph can resolve the other's entry.
+            #expect(
+                try await service.entry(id: globalOutcome.entry.id.uuidString, target: .workspace(workspace.workspaceURL)) == nil
+            )
+            #expect(
+                try await service.entry(id: workspaceOutcome.entry.id.uuidString, target: .global) == nil
+            )
+            #expect(
+                try await service.entry(id: globalOutcome.entry.id.uuidString, target: .global)?.id == globalOutcome.entry.id
+            )
+        }
+    }
+
+    @Test
+    func globalGraphIsIndependentOfTheWorkspace() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        let otherWorkspaceURL = workspace.rootURL
+            .appendingPathComponent("other-workspace-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: otherWorkspaceURL, withIntermediateDirectories: true)
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let written = try await service.writeEntryOutcome(
+                content: "Summary: a global note visible from any directory.",
+                target: .global
+            )
+
+            for workspaceURL in [workspace.workspaceURL, otherWorkspaceURL] {
+                // The workspace graphs stay empty, while the global graph is the
+                // same regardless of which directory the session runs in.
+                let workspaceEntries = try await service.readEntries(
+                    target: .workspace(workspaceURL),
+                    includeArchived: true,
+                    offset: 0,
+                    limit: 10,
+                    filter: .none
+                )
+                #expect(workspaceEntries.isEmpty)
+            }
+            #expect(
+                try await service.searchEntries(
+                    query: "global note directory",
+                    target: .global,
+                    includeArchived: false,
+                    limit: 10,
+                    filter: .none
+                ).map(\.id) == [written.entry.id]
+            )
+            #expect(
+                try await service.searchEntries(
+                    query: "global note directory",
+                    target: .workspace(otherWorkspaceURL),
+                    includeArchived: false,
+                    limit: 10,
+                    filter: .none
+                ).isEmpty
+            )
+        }
+    }
+
+    @Test
+    func targetVariantsCoverEveryOperationOnTheGlobalGraph() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let alpha = try await service.writeEntryOutcome(
+                content: "Summary: alpha quokka finding.",
+                target: .global,
+                category: .fact,
+                tags: ["alpha", "shared"]
+            ).entry
+            let beta = try await service.writeEntryOutcome(
+                content: "Summary: beta quokka preference.",
+                target: .global,
+                category: .preference,
+                tags: ["beta", "shared"]
+            ).entry
+
+            // Pagination and filters apply to the addressed graph.
+            let shared = try await service.readEntries(
+                target: .global,
+                includeArchived: false,
+                offset: 0,
+                limit: 10,
+                filter: MemoryEntryFilter(tags: ["shared"])
+            )
+            #expect(Set(shared.map(\.id)) == [alpha.id, beta.id])
+            let secondPage = try await service.readEntries(
+                target: .global,
+                includeArchived: false,
+                offset: 1,
+                limit: 1,
+                filter: MemoryEntryFilter(tags: ["shared"])
+            )
+            #expect(secondPage.count == 1)
+            let onlyPreference = try await service.readEntries(
+                target: .global,
+                includeArchived: false,
+                offset: 0,
+                limit: 10,
+                filter: MemoryEntryFilter(category: .preference)
+            )
+            #expect(onlyPreference.map(\.id) == [beta.id])
+
+            let searched = try await service.searchEntries(
+                query: "quokka",
+                target: .global,
+                includeArchived: false,
+                limit: 10,
+                filter: MemoryEntryFilter(tags: ["alpha"])
+            )
+            #expect(searched.map(\.id) == [alpha.id])
+
+            // Update keeps the id and rewrites the content in place.
+            let updated = try await service.updateEntry(
+                id: alpha.id.uuidString,
+                content: "Summary: alpha quokka finding, revised.",
+                target: .global
+            )
+            #expect(updated.id == alpha.id)
+            #expect(updated.content.contains("revised"))
+            #expect(
+                try await service.entry(id: alpha.id.uuidString, target: .global)?.content.contains("revised") == true
+            )
+
+            // Archive hides the entry from default reads; restore brings it back.
+            let archived = try await service.setArchived(true, id: alpha.id.uuidString, target: .global)
+            #expect(archived.isArchived)
+            #expect(
+                try await service.readEntries(
+                    target: .global,
+                    includeArchived: false,
+                    offset: 0,
+                    limit: 10,
+                    filter: .none
+                ).map(\.id) == [beta.id]
+            )
+            let restored = try await service.setArchived(false, id: alpha.id.uuidString, target: .global)
+            #expect(!restored.isArchived)
+
+            try await service.deleteEntry(id: beta.id.uuidString, target: .global)
+            #expect(try await service.entry(id: beta.id.uuidString, target: .global) == nil)
+            #expect(
+                try await service.readEntries(
+                    target: .global,
+                    includeArchived: true,
+                    offset: 0,
+                    limit: 10,
+                    filter: .none
+                ).map(\.id) == [alpha.id]
+            )
+        }
+    }
+
+    @Test
+    func workspaceRootURLAPIsDelegateToTheWorkspaceTarget() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let viaLegacy = try await service.writeEntry(
+                content: "Summary: written through the workspaceRootURL API.",
+                workspaceRootURL: workspace.workspaceURL
+            )
+            let viaTarget = try await service.writeEntryOutcome(
+                content: "Summary: written through the target API.",
+                target: .workspace(workspace.workspaceURL)
+            ).entry
+
+            let legacyRead = try await service.readEntries(
+                workspaceRootURL: workspace.workspaceURL,
+                limit: 10
+            )
+            let targetRead = try await service.readEntries(
+                target: .workspace(workspace.workspaceURL),
+                includeArchived: false,
+                offset: 0,
+                limit: 10,
+                filter: .none
+            )
+            #expect(Set(legacyRead.map(\.id)) == [viaLegacy.id, viaTarget.id])
+            #expect(legacyRead.map(\.id) == targetRead.map(\.id))
+            #expect(service.graphURL(workspaceRootURL: workspace.workspaceURL) == service.graphURL(target: .workspace(workspace.workspaceURL)))
+            // Nothing leaked into the global graph.
+            #expect(!FileManager.default.fileExists(atPath: service.graphURL(target: .global).path))
+        }
+    }
+
+    @Test
+    func missingTargetReportsScopeUnavailableForEveryOperation() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let id = UUID().uuidString
+
+            await #expect(throws: MemoryServiceError.self) {
+                try await service.readEntries(
+                    target: nil,
+                    includeArchived: false,
+                    offset: 0,
+                    limit: 10,
+                    filter: .none
+                )
+            }
+            await #expect(throws: MemoryServiceError.self) {
+                try await service.searchEntries(
+                    query: "anything",
+                    target: nil,
+                    includeArchived: false,
+                    limit: 10,
+                    filter: .none
+                )
+            }
+            await #expect(throws: MemoryServiceError.self) {
+                try await service.entry(id: id, target: nil)
+            }
+            await #expect(throws: MemoryServiceError.self) {
+                try await service.writeEntryOutcome(content: "Summary: x.", target: nil)
+            }
+            await #expect(throws: MemoryServiceError.self) {
+                try await service.updateEntry(id: id, content: "Summary: x.", target: nil)
+            }
+            await #expect(throws: MemoryServiceError.self) {
+                try await service.setArchived(true, id: id, target: nil)
+            }
+            await #expect(throws: MemoryServiceError.self) {
+                try await service.deleteEntry(id: id, target: nil)
+            }
+            // The same `nil` resolution backs the `workspaceRootURL:` wrappers.
+            await #expect(throws: MemoryServiceError.self) {
+                try await service.readEntries(workspaceRootURL: nil, limit: 10)
+            }
+            #expect(!FileManager.default.fileExists(atPath: service.graphURL(target: .global).path))
+        }
+    }
+
     @Test
     func recallWorksWithNoEmbedderAndEntriesCarryNoVector() async throws {
         // Embeddings are opt-in: with no ZENCODE_MEMORY_EMBEDDING_* configured,

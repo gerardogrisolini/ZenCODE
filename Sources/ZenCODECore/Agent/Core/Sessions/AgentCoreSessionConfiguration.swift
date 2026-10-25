@@ -13,6 +13,9 @@ public struct AgentCoreSessionConfiguration: Sendable {
     public let modelID: String?
     public let agentID: String?
     public let agentName: String?
+    /// Role of the selected agent profile, `nil` when none is selected. Decides
+    /// which memory graph the session addresses (see `memoryGraphTarget`).
+    public let agentRole: AgentProfileRole?
     public let workingDirectory: URL
     public let systemPrompt: String?
     /// Session-specific context is delivered as the first user message rather
@@ -35,6 +38,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
         modelID: String?,
         agentID: String? = nil,
         agentName: String? = nil,
+        agentRole: AgentProfileRole? = nil,
         workingDirectory: URL,
         systemPrompt: String?,
         dynamicContext: String? = nil,
@@ -55,6 +59,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
         self.modelID = modelID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.agentID = agentID?.nilIfBlank
         self.agentName = agentName?.nilIfBlank
+        self.agentRole = agentRole
         self.workingDirectory = workingDirectory
         self.systemPrompt = systemPrompt?.nilIfBlank
         self.dynamicContext = dynamicContext?.nilIfBlank
@@ -82,6 +87,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
         modelID: String?,
         agentID: String? = nil,
         agentName: String? = nil,
+        agentRole: AgentProfileRole? = nil,
         workingDirectory: String,
         systemPrompt: String?,
         dynamicContext: String? = nil,
@@ -102,6 +108,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
             modelID: modelID,
             agentID: agentID,
             agentName: agentName,
+            agentRole: agentRole,
             workingDirectory: URL(fileURLWithPath: workingDirectory),
             systemPrompt: systemPrompt,
             dynamicContext: dynamicContext,
@@ -123,6 +130,15 @@ public struct AgentCoreSessionConfiguration: Sendable {
         workingDirectory.path
     }
 
+    /// The memory graph this session addresses: the global graph for an
+    /// `organizer` profile, the working directory's workspace graph otherwise.
+    public var memoryGraphTarget: MemoryGraphTarget {
+        MemoryGraphTarget.resolved(
+            profileRole: agentRole,
+            workingDirectory: workingDirectory
+        )
+    }
+
     /// Projects the shared runtime fields and adds the model-scoped settings
     /// this session owns.
     public var runtimeConfiguration: AgentRuntimeConfiguration {
@@ -132,7 +148,8 @@ public struct AgentCoreSessionConfiguration: Sendable {
             agentID: agentID,
             agentName: agentName,
             profileID: agentID,
-            profileName: agentName
+            profileName: agentName,
+            profileRole: agentRole
         )
     }
 
@@ -140,6 +157,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
         modelID == other.modelID
             && agentID == other.agentID
             && agentName == other.agentName
+            && agentRole == other.agentRole
             && workingDirectory.standardizedFileURL == other.workingDirectory.standardizedFileURL
             && configuredContextWindowLimit == other.configuredContextWindowLimit
             && generationParameterOverrides == other.generationParameterOverrides
@@ -187,6 +205,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
             modelID: modelID,
             agentID: agentID,
             agentName: agentName,
+            agentRole: agentRole,
             workingDirectory: workingDirectory,
             systemPrompt: systemPrompt,
             dynamicContext: dynamicContext,

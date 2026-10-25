@@ -9,7 +9,12 @@ import Foundation
 import ToolCore
 
 public struct MemoryToolContext: Sendable {
+    /// The workspace root of a `.workspace` target; `nil` for the global graph
+    /// or when no workspace is available.
     public let workingDirectory: URL?
+    /// The graph every memory tool addresses; `nil` when none is available, in
+    /// which case the tools fail with `scopeUnavailable`.
+    public let graphTarget: MemoryGraphTarget?
     public let currentDate: Date
     public let currentTimeZone: TimeZone
 
@@ -19,6 +24,22 @@ public struct MemoryToolContext: Sendable {
         currentTimeZone: TimeZone = .current
     ) {
         self.workingDirectory = workingDirectory
+        self.graphTarget = workingDirectory.map { .workspace($0.standardizedFileURL) }
+        self.currentDate = currentDate
+        self.currentTimeZone = currentTimeZone
+    }
+
+    public init(
+        graphTarget: MemoryGraphTarget?,
+        currentDate: Date = Date(),
+        currentTimeZone: TimeZone = .current
+    ) {
+        if case .workspace(let workspaceRootURL)? = graphTarget {
+            self.workingDirectory = workspaceRootURL
+        } else {
+            self.workingDirectory = nil
+        }
+        self.graphTarget = graphTarget
         self.currentDate = currentDate
         self.currentTimeZone = currentTimeZone
     }
@@ -301,7 +322,7 @@ public enum MemoryTool {
 
         // One extra entry tells whether the journal continues past this page.
         let page = try await memoryService.readEntries(
-            workspaceRootURL: context.workingDirectory,
+            target: context.graphTarget,
             includeArchived: includeArchived,
             offset: offset,
             limit: limit + 1,
@@ -344,7 +365,7 @@ public enum MemoryTool {
 
         let entries = try await memoryService.searchEntries(
             query: query,
-            workspaceRootURL: context.workingDirectory,
+            target: context.graphTarget,
             includeArchived: includeArchived,
             limit: limit,
             filter: filter
@@ -376,7 +397,7 @@ public enum MemoryTool {
         }
         guard let entry = try await memoryService.entry(
             id: rawIdentifier,
-            workspaceRootURL: context.workingDirectory
+            target: context.graphTarget
         ) else {
             throw MemoryServiceError.entryNotFound(rawIdentifier)
         }
@@ -404,7 +425,7 @@ public enum MemoryTool {
         )
         let outcome = try await memoryService.writeEntryOutcome(
             content: stamped.content,
-            workspaceRootURL: context.workingDirectory,
+            target: context.graphTarget,
             category: parsedCategory(from: arguments),
             tags: parsedTags(from: arguments) ?? [],
             // Only a stamp this call generated may be ignored by the duplicate
@@ -490,7 +511,7 @@ public enum MemoryTool {
         let entry = try await memoryService.updateEntry(
             id: rawIdentifier,
             content: content,
-            workspaceRootURL: context.workingDirectory,
+            target: context.graphTarget,
             tags: parsedTags(from: arguments),
             updatedAt: context.currentDate,
             timeZone: context.currentTimeZone
@@ -519,9 +540,10 @@ public enum MemoryTool {
             throw MemoryServiceError.missingField("id")
         }
 
-        let entry = try await memoryService.archiveEntry(
+        let entry = try await memoryService.setArchived(
+            true,
             id: entryID,
-            workspaceRootURL: context.workingDirectory
+            target: context.graphTarget
         )
 
         return ToolExecutionOutput(
@@ -547,9 +569,10 @@ public enum MemoryTool {
             throw MemoryServiceError.missingField("id")
         }
 
-        let entry = try await memoryService.restoreEntry(
+        let entry = try await memoryService.setArchived(
+            false,
             id: entryID,
-            workspaceRootURL: context.workingDirectory
+            target: context.graphTarget
         )
 
         return ToolExecutionOutput(

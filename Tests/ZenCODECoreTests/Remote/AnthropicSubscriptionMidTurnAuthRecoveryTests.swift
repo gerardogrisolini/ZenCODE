@@ -241,6 +241,28 @@ struct AnthropicSubscriptionMidTurnAuthRecoveryTests {
         #expect(!AnthropicSubscriptionGenerationClient.isAuthenticationFailure(URLError(.userAuthenticationRequired)))
     }
 
+    @Test
+    func anthropicClientCarriesTheProfileRoleIntoToolExecutionContext() async {
+        let client = AnthropicSubscriptionGenerationClient(
+            configuration: AgentRuntimeConfiguration(
+                modelID: "claude-haiku-4-5",
+                workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
+                maxToolRounds: 4,
+                toolAuthorizationHandler: nil,
+                profileRole: .organizer
+            ),
+            provider: AgentRemoteProvider(
+                name: "Anthropic Subscription",
+                baseURL: AgentRemoteProvider.anthropicSubscriptionBaseURL,
+                modelID: "claude-haiku-4-5",
+                chatEndpoint: .responses
+            )
+        )
+
+        #expect(await client.toolExecutor.toolExecutionContext.profileRole == .organizer)
+        await client.shutdown()
+    }
+
     private static func credentials(_ accessToken: String) -> AnthropicSubscriptionCredentials {
         AnthropicSubscriptionCredentials(
             accessToken: accessToken,

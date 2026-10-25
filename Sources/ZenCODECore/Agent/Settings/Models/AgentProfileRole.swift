@@ -63,6 +63,18 @@ public enum AgentProfileRole: String, Codable, Sendable, CaseIterable, Hashable 
     static var allowedValuesDescription: String {
         allCases.map(\.rawValue).joined(separator: ", ")
     }
+
+    /// Whether a session running this role keeps its memory in the global
+    /// graph instead of the one owned by the current workspace.
+    public var usesGlobalMemory: Bool {
+        self == .organizer
+    }
+
+    /// Whether a session running this role delegates to sub-agents by role
+    /// rather than by profile ID.
+    public var delegatesByRole: Bool {
+        self == .organizer
+    }
 }
 
 /// Decoding failure of a profile's required `role` field. The manifest that

@@ -94,7 +94,8 @@ public enum SystemPromptBuilder {
         memoryToolEnabled: Bool,
         allowedToolNames: Set<String>? = nil,
         selectedSkillSection: String? = nil,
-        responseLanguageSection: String? = nil
+        responseLanguageSection: String? = nil,
+        delegatesByRole: Bool = false
     ) -> String {
         let sections = standalonePromptSections(
             cwd: cwd,
@@ -103,7 +104,8 @@ public enum SystemPromptBuilder {
             memoryToolEnabled: memoryToolEnabled,
             allowedToolNames: allowedToolNames,
             selectedSkillSection: selectedSkillSection,
-            responseLanguageSection: responseLanguageSection
+            responseLanguageSection: responseLanguageSection,
+            delegatesByRole: delegatesByRole
         )
         // Source-compatible combined form for callers that still ask for one
         // prompt string. Keep it byte-for-byte aligned with the sections used
@@ -121,7 +123,8 @@ public enum SystemPromptBuilder {
         memoryToolEnabled _: Bool,
         allowedToolNames: Set<String>? = nil,
         selectedSkillSection: String? = nil,
-        responseLanguageSection: String? = nil
+        responseLanguageSection: String? = nil,
+        delegatesByRole: Bool = false
     ) -> SystemPromptSections {
         SystemPromptSections(
             systemPrompt: joined([
@@ -132,7 +135,10 @@ public enum SystemPromptBuilder {
                 turnClosingSection(instruction: standaloneTurnClosingInstruction)
             ]),
             dynamicContext: joined([
-                taskOrchestrationSection(allowedToolNames: allowedToolNames),
+                taskOrchestrationSection(
+                    allowedToolNames: allowedToolNames,
+                    delegatesByRole: delegatesByRole
+                ),
                 collaborationSection(allowedToolNames: allowedToolNames),
                 agentsSection,
                 memorySection,
@@ -154,30 +160,53 @@ public enum SystemPromptBuilder {
 
     /// Returns guidance for deliberately using the session task graph only when the
     /// current tool surface can create, inspect, and update that graph.
+    ///
+    /// A coordinator whose profile role delegates by role (`delegatesByRole`)
+    /// never names a profile or model, so, when it can delegate, its guidance
+    /// replaces the profile selection and cost wording with role delegation;
+    /// every other coordinator keeps the original text.
     public static func taskOrchestrationSection(
-        allowedToolNames: Set<String>?
+        allowedToolNames: Set<String>?,
+        delegatesByRole: Bool = false
     ) -> String? {
         guard taskWorkflowToolsAreAvailable(allowedToolNames) else {
             return nil
         }
 
+        let delegationIsAvailable = agentDelegationIsAvailable(allowedToolNames)
+        let usesRoleDelegation = delegatesByRole && delegationIsAvailable
         let delegationInstruction: String
-        if agentDelegationIsAvailable(allowedToolNames) {
+        if delegationIsAvailable {
+            let delegationCostSentence = usesRoleDelegation
+                ? ""
+                : "\(TaskRecord.delegationCostPolicy) "
+            let agentSelectionSentence = usesRoleDelegation
+                ? """
+                Delegate by role: in each item set `profileRole` to the role that fits the task \
+                type and required tools, `workingDirectory` to the project folder, and `taskID`; \
+                omit `complexity`, because the task's complexity applies, and never pass `profile` \
+                or `model`: the runtime selects the profile associated with that project and the \
+                lowest-capability authorized binding that meets the task complexity.
+                """
+                : """
+                Select the most suitable \
+                agent profile from the delegatable roster: determine the task type and required tools, \
+                then, if the profile has bindings, choose the lowest-capability authorized binding \
+                that meets the task complexity. For profiles without bindings, omit `model` to inherit \
+                the main session model.
+                """
             delegationInstruction = """
             In `/goal`, execute graph work directly or delegate when useful; delegation is optional. \
             For other task graphs, prefer delegation for non-trivial work whenever a compatible \
             profile has the tools required to perform it. Execute other graph work directly only \
             when it is trivial, delegation offers no meaningful benefit, no compatible profile \
             can perform it, or shared mutable state makes delegation unsafe. \
-            \(TaskRecord.delegationCostPolicy) \
+            \(delegationCostSentence)\
             When delegating graph work, put \
             the task ID returned by tasks.create/tasks.list in each canonical \
             agent.create `agents` item as `taskID`; never pass taskID as a root argument. This \
-            claims the assignment and execution attempt atomically. Select the most suitable \
-            agent profile from the delegatable roster: determine the task type and required tools, \
-            then, if the profile has bindings, choose the lowest-capability authorized binding \
-            that meets the task complexity. For profiles without bindings, omit `model` to inherit \
-            the main session model. Delegate independent runnable tasks together when \
+            claims the assignment and execution attempt atomically. \(agentSelectionSentence) \
+            Delegate independent runnable tasks together when \
             parallel execution is safe and useful; serialize work that mutates overlapping \
             files or shared state. When a task graph is already active, every delegated agent \
             must use `agents[].taskID`; do not create taskless agents outside that workflow. A \
@@ -198,6 +227,10 @@ public enum SystemPromptBuilder {
             do not request unavailable tools or bypass the current permission boundary.
             """
         }
+
+        let agentSelectionPolicySentence = usesRoleDelegation
+            ? "The runtime uses each task's complexity to select the model binding of the delegated role."
+            : "Agent selection policy: \(TaskRecord.agentSelectionPolicy)"
 
         return """
         Task workflow policy:
@@ -228,7 +261,7 @@ public enum SystemPromptBuilder {
 
         Complexity: set tasks.create `complexity` (1–10) on every task. \
         \(TaskRecord.complexityRubric). \
-        Agent selection policy: \(TaskRecord.agentSelectionPolicy)
+        \(agentSelectionPolicySentence)
 
         \(delegationInstruction)
         Outside `/goal`, a single self-contained delegation or a short disposable lookup does not require a \
@@ -372,6 +405,29 @@ public enum SystemPromptBuilder {
         Delegatable agent profiles and model bindings:
         No agent profile is associated with this project, so none can be delegated.
         Do not call agent.create. The operator can associate profiles with this project using /agents.
+        """
+    }
+
+    /// Roster replacement for a coordinator whose profile role delegates by
+    /// role (see ``AgentProfileRole/delegatesByRole``). It lists no profile or
+    /// model: each project resolves the role to its own profile and binding.
+    /// `roles` are the roles of the profiles visible to the project, in the
+    /// order they are listed; the section is omitted when there are none.
+    public static func roleDelegationSection(
+        allowedToolNames: Set<String>?,
+        roles: [AgentProfileRole]
+    ) -> String? {
+        guard agentDelegationIsAvailable(allowedToolNames), !roles.isEmpty else {
+            return nil
+        }
+        let roleLines = roles
+            .map { "- \($0.rawValue): \($0.summary)" }
+            .joined(separator: "\n")
+        return """
+        Delegation by role:
+        You delegate by profile role, never by profile name: each project resolves the role to its own associated profiles and model bindings, so a profile or model you name may not exist there.
+        \(roleLines)
+        In every agent.create `agents` item pass `profileRole`, `complexity` (1-10: \(TaskRecord.complexityRubric)), `workingDirectory` (the project folder, an existing directory inside your working directory), a precise `prompt`, and a short descriptive `role`. Omit `complexity` when the item has `taskID`: the task's complexity applies. Never pass `profile` or `model`: the runtime picks the profile visible to that project and the lowest-capability authorized binding that meets the complexity (otherwise its highest binding, reporting the capability gap), and the agent.create result names the chosen profile and model.
         """
     }
 

@@ -12,7 +12,8 @@ import ToolCore
 
 /// Environment-driven configuration for the automatic recall pipeline.
 ///
-/// Recall runs over the workspace graph inline before each turn. With no
+/// Recall runs over the session's memory graph inline before each turn: the
+/// workspace graph, or the global graph for an organizer profile. With no
 /// embedding endpoint configured it is pure lexical BM25 plus graph expansion,
 /// which is local and bounded by the recall timeout. When an endpoint is
 /// configured, semantic similarity adds a bounded HTTP call to that endpoint —

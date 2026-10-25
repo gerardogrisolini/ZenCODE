@@ -92,6 +92,7 @@ extension ZenCODEACPBridge {
             modelID: modelID,
             agentID: agent.id,
             agentName: agent.name,
+            agentRole: agent.role,
             workingDirectory: baseConfiguration.workingDirectory,
             systemPrompt: promptSections.systemPrompt,
             dynamicContext: promptSections.dynamicContext,

@@ -61,7 +61,7 @@ and a profile can have any name in any role.
 | `planner` | `/plan` delegates to it; its catalog-owned core tools are forced read-only, whatever `readOnly` says |
 | `reviewer` | `/review` delegates to it |
 | `reporter` | No runtime effect beyond the profile's own configuration |
-| `organizer` | No runtime effect beyond the profile's own configuration |
+| `organizer` | Its sessions use the global memory graph and delegate by role (see [memory.md](memory.md)); otherwise no runtime effect beyond the profile's own configuration |
 | `promoter` | No runtime effect beyond the profile's own configuration |
 
 ```json
@@ -110,8 +110,9 @@ describes every profile by its role.
 ## Project Agents
 
 The `sub-agents` tool delegates only to the profiles associated with the
-current project (the working directory). `/agents` opens one multiple-selection
-menu for both choices:
+project of each sub-agent: the directory it works in, which is the coordinator's
+unless `workingDirectory` is set (see [Sub-Agents](#sub-agents)). `/agents`
+opens one multiple-selection menu for both choices:
 
 ```text
 > [x] Developer * - General software development; the default agent
@@ -167,8 +168,8 @@ without a file does not create one.
   profile is associated with the project and tells the model not to call
   `agent.create`; the operator can associate profiles again with `/agents`.
 - **Enforcement:** `agent.create` rejects a profile that is not associated with
-  the project even if the model names it, so the roster is a boundary and not
-  only a hint.
+  the sub-agent's project even if the model names it, so the roster is a boundary
+  and not only a hint.
 - **`/plan`, `/review`, and `/goal`:** these workflows delegate through the same
   `agent.create` call, so they can only delegate to the profiles visible to the
   project. `/plan` and `/review` use the visible profiles with the `planner`
@@ -188,7 +189,7 @@ without a file does not create one.
 | `Builder` | `builder` | Swift feature packages | coding + web |
 | `Minimal` | `minimal` | Essential tools, brief replies | shell, files, text |
 | `Reviewer` | `reviewer` | Read-only code review | coding without shell; `readOnly` enforced |
-| `Reporter` | `reporter` | Code analysis and evidence-based reports | files, search, text, git |
+| `Reporter` | `reporter` | Code analysis and evidence-based reports | files, search, text, git; `readOnly` enforced |
 | `Planner` | `planner` | Read-only planning | files, search, text, git, memory, web; `readOnly` enforced |
 | `Organizer` | `organizer` | Personal assistant: macOS apps, project state, delegation (macOS only) | macOS feature + memory + sub-agents |
 | `Promoter` | `promoter` | Daily project promotion step with Browser drafts | memory + browser-tools |
@@ -198,6 +199,9 @@ edit, add, or remove optional profiles in setup. A profile with the
 `developer` role must always remain present, because it is the default agent;
 `/feature` and its intrinsic feature-management tools are available only to a
 profile with the `builder` role.
+
+Existing `agents.json` manifests are not changed: regenerate the recommended
+profiles in setup to give an existing `Reporter` the read-only setting.
 
 ## Tool Groups
 
@@ -219,9 +223,11 @@ coordinator. The coordinator stays in its own profile and directs the work.
 Lifecycle:
 
 1. The coordinator calls `agent.create` with the canonical `agents` array. Every
-   model-visible item names an exact `profile` (one associated with the project,
-   see [Project Agents](#project-agents)) and the exact `binding:<id>` value
-   shown in the delegation roster as `model`.
+   model-visible item names either an exact `profile` (one associated with the
+   project, see [Project Agents](#project-agents)) and the exact `binding:<id>`
+   value shown in the delegation roster as `model`, or a `profileRole`. A
+   `profileRole` is resolved to a profile associated with the sub-agent's
+   directory, and its model binding is chosen from `complexity`.
 2. The runtime resolves the profile and binding against one authoritative
    snapshot of the configured model catalog. Missing, stale, ambiguous, or
    capability-less bindings, and providers missing required authentication, are
@@ -229,8 +235,16 @@ Lifecycle:
 3. The resolved provider, model, API-key lookup, and generation settings travel
    with the child backend context. Backend creation does not repeat a global
    model lookup or route by a bare provider model slug.
-4. The sub-agent inherits the workspace and receives the tools configured on
-   that profile. `agent.create` cannot replace or narrow them.
+4. The sub-agent works in the coordinator's working directory, or in the
+   directory set by `workingDirectory`: an existing directory equal to or inside
+   it, given as an absolute or relative path. Files, shell, git, project memory,
+   and project-agent association follow that directory. Symlinks are resolved
+   to check that it is inside the coordinator's directory and to name its target
+   there: the sub-agent then works under the coordinator's own unresolved path
+   (a link inside it is followed to the directory it points to), so it sees the
+   same project selection and memory as a `zen` session started there. It
+   receives the tools configured on that profile; `agent.create` cannot replace
+   or narrow them.
 5. While the child is active, the coordinator uses `agent.message`,
    `agent.wait`, `agent.get`, and `agent.close`.
 
@@ -327,9 +341,9 @@ send them.
 
 Write authority normally comes from the selected profile's configured tools. A child resolved to the coordinator's same profile instead inherits the coordinator's effective session allowlist; different profiles remain isolated:
 
-- `profile` is required in every model-visible batch item and must resolve to a
-  configured profile; otherwise `agent.create` fails. The `agent` name is a
-  compatibility-only input alias.
+- Every model-visible batch item names exactly one of `profile` or `profileRole`,
+  which must resolve to a configured profile; otherwise `agent.create` fails.
+  The `agent` name is a compatibility-only input alias.
 - The request cannot assign, add, remove, or override the profile's tools.
 - When `readOnly` is `true`, the runtime removes mutable descriptors from the
   catalog-owned core grant after resolving profile tools, `/tools`, app/ACP
@@ -350,9 +364,12 @@ Which model a sub-agent runs on is decided by the profile's currently routable
 authorized bindings and the task complexity. The prompt lists one exact
 `binding:<id>` reference for each eligible binding; `agent.create` requires that
 explicit reference and carries the resulting provider selection through backend
-creation. A profile with no bindings can still inherit the parent model through
-the legacy programmatic input path, but it is not model-visible or eligible for
-capability routing. The resolution table, the capability scale, and the ordered
+creation. The exception is an item with `profileRole`: the runtime chooses its
+profile and binding together from `complexity` (see
+[Selection Policy](bindings.md#selection-policy)). A profile with no bindings can
+still inherit the parent model through the legacy programmatic input path, but it
+is not model-visible or eligible for capability routing. The resolution table,
+the capability scale, and the ordered
 selection policy are documented in [bindings.md](bindings.md).
 
 ## Task Graph Integration

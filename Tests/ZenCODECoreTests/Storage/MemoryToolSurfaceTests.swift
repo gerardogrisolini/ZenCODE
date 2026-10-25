@@ -31,6 +31,33 @@ struct MemoryToolSurfaceTests {
         return (output.text, result)
     }
 
+    private static func execute(
+        _ name: String,
+        _ arguments: [String: JSONValue],
+        context: MemoryToolContext,
+        service: MemoryService
+    ) async throws -> (text: String, result: [String: JSONValue]) {
+        let output = try await MemoryTool.executeAsync(
+            ToolRequest(name: name, arguments: arguments),
+            context: context,
+            memoryService: service
+        )
+        guard case let .object(result)? = output.rawResult else {
+            throw MemoryServiceError.missingField("rawResult")
+        }
+        return (output.text, result)
+    }
+
+    private static func entryIDs(in result: [String: JSONValue]) -> [String] {
+        guard case let .array(entries)? = result["entries"] else {
+            return []
+        }
+        return entries.compactMap { value -> String? in
+            guard case let .object(entry) = value, case let .string(id)? = entry["id"] else { return nil }
+            return id
+        }
+    }
+
     @Test
     func descriptorsExposeGetAsReadOnlyAndRestoreAsMutating() {
         #expect(MemoryTool.readOnlyToolDescriptors.map(\.name) == ["memory.read", "memory.search", "memory.get"])
@@ -331,6 +358,172 @@ struct MemoryToolSurfaceTests {
             #expect(updated.metadata.updated == "2026-08-09 12:30 Europe/Rome")
             let updatedLines = updated.content.components(separatedBy: "\n").filter { $0.hasPrefix("Updated:") }
             #expect(updatedLines.count == 1)
+        }
+    }
+
+    @Test
+    func contextDerivesTheGraphTargetFromTheWorkingDirectory() {
+        let url = URL(fileURLWithPath: "/tmp/memory-context-\(UUID().uuidString)", isDirectory: true)
+
+        let workspaceContext = MemoryToolContext(workingDirectory: url)
+        #expect(workspaceContext.graphTarget == .workspace(url))
+        #expect(workspaceContext.workingDirectory == url)
+
+        let empty = MemoryToolContext()
+        #expect(empty.graphTarget == nil)
+        #expect(empty.workingDirectory == nil)
+
+        let explicitWorkspace = MemoryToolContext(graphTarget: .workspace(url))
+        #expect(explicitWorkspace.graphTarget == .workspace(url))
+        #expect(explicitWorkspace.workingDirectory == url)
+
+        let global = MemoryToolContext(graphTarget: .global)
+        #expect(global.graphTarget == .global)
+        #expect(global.workingDirectory == nil)
+
+        #expect(MemoryToolContext(graphTarget: nil).graphTarget == nil)
+    }
+
+    @Test
+    func readReturnsTheGlobalEntriesForAGlobalContext() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let globalEntry = try await service.writeEntryOutcome(
+                content: "Summary: global organizer note.",
+                target: .global
+            ).entry
+            let workspaceEntry = try await service.writeEntry(
+                content: "Summary: workspace-only note.",
+                workspaceRootURL: workspace.workspaceURL
+            )
+
+            let globalRead = try await Self.execute(
+                "memory.read", [:],
+                context: MemoryToolContext(graphTarget: .global),
+                service: service
+            )
+            #expect(globalRead.result["count"] == .number(1))
+            #expect(Self.entryIDs(in: globalRead.result) == [globalEntry.id.uuidString])
+
+            let workspaceRead = try await Self.execute("memory.read", [:], in: workspace, service: service)
+            #expect(workspaceRead.result["count"] == .number(1))
+            #expect(Self.entryIDs(in: workspaceRead.result) == [workspaceEntry.id.uuidString])
+
+            // The global graph is the same from any other workspace context, and
+            // an unrelated workspace does not see it.
+            let elsewhere = workspace.rootURL.appendingPathComponent("elsewhere-\(UUID().uuidString)", isDirectory: true)
+            let elsewhereRead = try await Self.execute(
+                "memory.read", [:],
+                context: MemoryToolContext(workingDirectory: elsewhere),
+                service: service
+            )
+            #expect(elsewhereRead.result["count"] == .number(0))
+
+            let globalSearch = try await Self.execute(
+                "memory.search", ["query": .string("organizer note")],
+                context: MemoryToolContext(graphTarget: .global),
+                service: service
+            )
+            #expect(Self.entryIDs(in: globalSearch.result) == [globalEntry.id.uuidString])
+            let workspaceSearch = try await Self.execute(
+                "memory.search", ["query": .string("organizer note")],
+                in: workspace, service: service
+            )
+            #expect(!Self.entryIDs(in: workspaceSearch.result).contains(globalEntry.id.uuidString))
+
+            let globalGet = try await Self.execute(
+                "memory.get", ["id": .string(globalEntry.id.uuidString)],
+                context: MemoryToolContext(graphTarget: .global),
+                service: service
+            )
+            #expect(globalGet.result["found"] == .bool(true))
+            await #expect(throws: MemoryServiceError.self) {
+                _ = try await Self.execute(
+                    "memory.get", ["id": .string(globalEntry.id.uuidString)],
+                    in: workspace, service: service
+                )
+            }
+        }
+    }
+
+    @Test
+    func mutatingToolsWriteToTheGlobalGraphOnly() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let context = MemoryToolContext(graphTarget: .global)
+
+            let written = try await Self.execute(
+                "memory.write", ["content": .string("Summary: global tool write.")],
+                context: context, service: service
+            )
+            #expect(written.result["written"] == .bool(true))
+            guard case let .object(writtenEntry)? = written.result["entry"],
+                  case let .string(id)? = writtenEntry["id"] else {
+                Issue.record("Expected the written entry id.")
+                return
+            }
+            #expect(FileManager.default.fileExists(atPath: service.graphURL(target: .global).path))
+            #expect(!FileManager.default.fileExists(atPath: workspace.graphURL().path))
+
+            let updated = try await Self.execute(
+                "memory.update",
+                ["id": .string(id), "content": .string("Summary: global tool write, revised.")],
+                context: context, service: service
+            )
+            #expect(updated.result["updated"] == .bool(true))
+
+            let archived = try await Self.execute(
+                "memory.archive", ["id": .string(id)],
+                context: context, service: service
+            )
+            #expect(archived.result["archived"] == .bool(true))
+            let hidden = try await Self.execute("memory.read", [:], context: context, service: service)
+            #expect(hidden.result["count"] == .number(0))
+
+            let restored = try await Self.execute(
+                "memory.restore", ["id": .string(id)],
+                context: context, service: service
+            )
+            #expect(restored.result["restored"] == .bool(true))
+            let visible = try await Self.execute("memory.read", [:], context: context, service: service)
+            #expect(Self.entryIDs(in: visible.result) == [id])
+
+            // Mutations aimed at a workspace context cannot reach the global entry.
+            await #expect(throws: MemoryServiceError.self) {
+                _ = try await Self.execute(
+                    "memory.archive", ["id": .string(id)],
+                    in: workspace, service: service
+                )
+            }
+            #expect(!FileManager.default.fileExists(atPath: workspace.graphURL().path))
+        }
+    }
+
+    @Test
+    func toolsWithoutAGraphTargetReportScopeUnavailable() async throws {
+        let workspace = try MemoryTestWorkspace()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            await #expect(throws: MemoryServiceError.self) {
+                _ = try await Self.execute(
+                    "memory.read", [:],
+                    context: MemoryToolContext(),
+                    service: service
+                )
+            }
+            await #expect(throws: MemoryServiceError.self) {
+                _ = try await Self.execute(
+                    "memory.write", ["content": .string("Summary: nowhere to go.")],
+                    context: MemoryToolContext(graphTarget: nil),
+                    service: service
+                )
+            }
+            #expect(!FileManager.default.fileExists(atPath: service.graphURL(target: .global).path))
         }
     }
 

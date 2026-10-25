@@ -15,7 +15,8 @@ extension DirectSubAgentRuntime {
         taskID: String? = nil,
         taskAttemptID: String? = nil,
         allowedToolNames: Set<String>? = nil,
-        selectedProfile: AgentProfile? = nil
+        selectedProfile: AgentProfile? = nil,
+        workingDirectory: URL? = nil
     ) -> String {
         var lines = [
             "You are ZenCODE delegated sub-agent \(name).",
@@ -39,6 +40,11 @@ extension DirectSubAgentRuntime {
             lines.append(taskWorkflowSection)
         }
         lines.append("Shared chat: when you hit an ambiguity, a decision outside your brief, or a conflict with it, stop and ask with agent.message to=\"coordinator\" and awaitReply=true, and do not proceed on assumptions until the reply arrives. Do not use the chat for progress reports. Unless your role or profile defines its own protocol for questions, follow this rule.")
+        // Only an explicit `agent.create` workingDirectory is announced; an
+        // inherited directory leaves the prompt unchanged.
+        if let workingDirectory {
+            lines.append(SystemPromptBuilder.workingDirectorySection(path: workingDirectory.path))
+        }
         if let profileSection = selectedProfile?.promptSection(
             memoryToolEnabled: AgentSessionComposition.memoryToolEnabled(allowedToolNames)
         ), !lines.contains(profileSection) {

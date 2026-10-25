@@ -17,6 +17,9 @@ public struct ToolExecutionContext: Sendable, Equatable {
     public let agentName: String?
     public let profileID: String?
     public let profileName: String?
+    /// Role of the executing agent's profile. Selects the memory graph the
+    /// agent's tools address; `nil` when the agent has no profile.
+    public let profileRole: AgentProfileRole?
     public let modelID: String?
     public let isSubAgent: Bool
 
@@ -25,6 +28,7 @@ public struct ToolExecutionContext: Sendable, Equatable {
         agentName: String? = nil,
         profileID: String? = nil,
         profileName: String? = nil,
+        profileRole: AgentProfileRole? = nil,
         modelID: String? = nil,
         isSubAgent: Bool = false
     ) {
@@ -32,6 +36,7 @@ public struct ToolExecutionContext: Sendable, Equatable {
         self.agentName = agentName?.nilIfBlank
         self.profileID = profileID?.nilIfBlank
         self.profileName = profileName?.nilIfBlank
+        self.profileRole = profileRole
         self.modelID = modelID?.nilIfBlank
         self.isSubAgent = isSubAgent
     }
@@ -44,6 +49,7 @@ public struct ToolExecutionContext: Sendable, Equatable {
             agentName: agentName ?? (isSubAgent ? nil : "coordinator"),
             profileID: self.profileID,
             profileName: self.profileName,
+            profileRole: profileRole,
             modelID: modelID,
             isSubAgent: isSubAgent
         )

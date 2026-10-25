@@ -70,6 +70,7 @@ extension TerminalChat {
             modelID: currentEffectiveModelID(),
             agentID: selectedAgent?.id,
             agentName: selectedAgent?.name,
+            agentRole: selectedAgent?.role,
             workingDirectory: configuration.workingDirectory,
             systemPrompt: promptSections.systemPrompt,
             dynamicContext: dynamicContext,

@@ -29,6 +29,21 @@ extension DirectSubAgentRuntime {
             )
         }
         pruneTerminalAgentRecords()
+        // Role-based items bound to a task are resolved against the task's own
+        // complexity, read before the synchronous preparation below.
+        var complexityByTaskID: [String: Int] = [:]
+        for payload in payloads where payload.profileRole != nil {
+            guard let taskID = payload.taskID else { continue }
+            guard let taskOrchestrator else {
+                throw SessionTaskOrchestratorError.permissionDenied(
+                    "Task assignment is unavailable because no session task orchestrator is installed."
+                )
+            }
+            complexityByTaskID[taskID] = try await taskOrchestrator.task(
+                sessionID: rootSessionID,
+                taskID: taskID
+            ).task.complexity
+        }
         // Sub-agents created while an earlier batch is still working join that
         // batch, so sequential `agent.create` calls stay visible together in the
         // transient overview instead of replacing each other.
@@ -38,7 +53,9 @@ extension DirectSubAgentRuntime {
             offset: Int,
             payload: RequestedAgentPayload,
             id: String,
-            profile: AgentProfile
+            profile: AgentProfile,
+            workingDirectory: URL,
+            note: String?
         )] in
             // Capture one authoritative snapshot so every agent in this batch
             // uses the same provider identities through backend creation.
@@ -47,14 +64,72 @@ extension DirectSubAgentRuntime {
                     fileManager: .default
                 )
                 : self.modelCatalogProvider()
-            // Only profiles visible to this project may be delegated to: the
-            // saved selection, or the system profiles when there is none.
-            let projectSelection = ProjectAgentSelectionStore.load(
-                workspaceRootURL: workingDirectory
-            )
+            // Role-based items choose among the configured profiles; read them
+            // once per batch and only when needed.
+            let roleCatalog = payloads.contains { $0.profileRole != nil }
+                ? self.profileCatalogProvider()
+                : []
+            // Only profiles visible to the item's project may be delegated to:
+            // the saved selection, or the system profiles when there is none.
+            // The selection is read once per distinct directory.
+            var projectSelections: [String: Set<String>?] = [:]
             return try payloads.enumerated().map { offset, payload in
+                let itemDirectory = try payload.workingDirectory.map {
+                    try Self.resolvedAgentWorkingDirectory(
+                        $0,
+                        coordinatorDirectory: workingDirectory
+                    )
+                } ?? workingDirectory
+                let projectSelection: Set<String>?
+                if let cached = projectSelections[itemDirectory.path] {
+                    projectSelection = cached
+                } else {
+                    projectSelection = ProjectAgentSelectionStore.load(
+                        workspaceRootURL: itemDirectory
+                    )
+                    projectSelections[itemDirectory.path] = projectSelection
+                }
+                let projectPath = ProjectAgentSelectionStore.workspacePath(
+                    workspaceRootURL: itemDirectory
+                )
+                let id = "agent_\(UUID().uuidString.lowercased())"
+
+                if let profileRole = payload.profileRole {
+                    guard payload.profileReference == nil else {
+                        throw DirectSubAgentRuntimeError.invalidArgument(
+                            "agent.create profile and profileRole are mutually exclusive"
+                        )
+                    }
+                    guard payload.requestedModelID == nil else {
+                        throw DirectSubAgentRuntimeError.invalidArgument(
+                            "agent.create model cannot be combined with profileRole"
+                        )
+                    }
+                    guard let complexity = payload.taskID.flatMap({ complexityByTaskID[$0] })
+                        ?? payload.complexity else {
+                        throw DirectSubAgentRuntimeError.missingArgument("complexity")
+                    }
+                    let resolution = try Self.resolvingProfileRole(
+                        for: payload,
+                        role: profileRole,
+                        complexity: complexity,
+                        profiles: roleCatalog,
+                        projectSelection: projectSelection,
+                        projectPath: projectPath,
+                        snapshot: catalogSnapshot
+                    )
+                    return (
+                        offset: offset,
+                        payload: resolution.payload,
+                        id: id,
+                        profile: resolution.profile,
+                        workingDirectory: itemDirectory,
+                        note: resolution.note
+                    )
+                }
+
                 guard let profileReference = payload.profileReference?.nilIfBlank else {
-                    throw DirectSubAgentRuntimeError.missingArgument("profile or agent")
+                    throw DirectSubAgentRuntimeError.missingArgument("profile or profileRole")
                 }
                 guard let profile = self.profileResolver(payload) else {
                     throw DirectSubAgentRuntimeError.agentProfileNotFound(profileReference)
@@ -65,9 +140,7 @@ extension DirectSubAgentRuntime {
                 ) else {
                     throw DirectSubAgentRuntimeError.agentProfileNotAssociatedWithProject(
                         profileReference,
-                        ProjectAgentSelectionStore.workspacePath(
-                            workspaceRootURL: workingDirectory
-                        )
+                        projectPath
                     )
                 }
                 return (
@@ -77,8 +150,10 @@ extension DirectSubAgentRuntime {
                         profile: profile,
                         snapshot: catalogSnapshot
                     ),
-                    id: "agent_\(UUID().uuidString.lowercased())",
-                    profile: profile
+                    id: id,
+                    profile: profile,
+                    workingDirectory: itemDirectory,
+                    note: nil
                 )
             }
         }
@@ -104,7 +179,8 @@ extension DirectSubAgentRuntime {
         var createdIDs: [String] = []
         var createdBackends: [(String, any AgentRuntimeBackend)] = []
         var claimReceipts: [TaskClaimReceipt] = []
-        var advisories: [String] = []
+        // Role-resolution notes report the chosen profile and binding.
+        var advisories: [String] = prepared.compactMap(\.note)
         do {
             let claims = prepared.compactMap { item -> TaskClaim? in
                 guard let taskID = item.payload.taskID else { return nil }
@@ -194,17 +270,33 @@ extension DirectSubAgentRuntime {
                        ),
                        taskView.task.complexity > capability {
                         let capabilityGap = taskView.task.complexity - capability
-                        advisories.append(
-                            "Warning: task \"\(receipt.taskID)\" has complexity "
-                                + "\(taskView.task.complexity) but agent \"\(payload.name)\" "
-                                + "uses profile \"\(item.profile.name)\" with "
-                                + "model \"\(payload.modelID ?? "unknown")\" at capability "
-                                + "\(capability)/10, a capability gap of "
-                                + "\(capabilityGap). Use this profile only when no "
-                                + "role-compatible profile with the required tool access has "
-                                + "sufficient capability; otherwise select the lowest-capability "
-                                + "compatible profile that meets the task complexity."
-                        )
+                        if let profileRole = payload.profileRole {
+                            // The runtime chose the profile and binding, so the
+                            // coordinator has no other choice to make here.
+                            advisories.append(
+                                "Warning: task \"\(receipt.taskID)\" has complexity "
+                                    + "\(taskView.task.complexity) but profileRole "
+                                    + "\"\(profileRole.rawValue)\" for agent "
+                                    + "\"\(payload.name)\" resolved to profile "
+                                    + "\"\(item.profile.name)\" with model "
+                                    + "\"\(payload.modelID ?? "unknown")\" at capability "
+                                    + "\(capability)/10, a capability gap of \(capabilityGap); "
+                                    + "no authorized binding with this role meets the "
+                                    + "complexity in this project."
+                            )
+                        } else {
+                            advisories.append(
+                                "Warning: task \"\(receipt.taskID)\" has complexity "
+                                    + "\(taskView.task.complexity) but agent \"\(payload.name)\" "
+                                    + "uses profile \"\(item.profile.name)\" with "
+                                    + "model \"\(payload.modelID ?? "unknown")\" at capability "
+                                    + "\(capability)/10, a capability gap of "
+                                    + "\(capabilityGap). Use this profile only when no "
+                                    + "role-compatible profile with the required tool access has "
+                                    + "sufficient capability; otherwise select the lowest-capability "
+                                    + "compatible profile that meets the task complexity."
+                            )
+                        }
                     }
                     try await taskOrchestrator.registerExecutionScope(
                         executionSessionID: sessionID,
@@ -254,14 +346,17 @@ extension DirectSubAgentRuntime {
                 ])
                 await backend.createSession(
                     id: sessionID,
-                    cwd: workingDirectory.path,
+                    cwd: item.workingDirectory.path,
                     systemPrompt: Self.systemPrompt(
                         name: payload.name,
                         role: payload.role,
                         taskID: payload.taskID,
                         taskAttemptID: receipt?.attemptID,
                         allowedToolNames: childAllowedToolNames,
-                        selectedProfile: item.profile
+                        selectedProfile: item.profile,
+                        workingDirectory: payload.workingDirectory == nil
+                            ? nil
+                            : item.workingDirectory
                     ),
                     history: [],
                     cacheKey: nil,
@@ -364,6 +459,42 @@ extension DirectSubAgentRuntime {
             response += "\n" + advisories.joined(separator: "\n")
         }
         return response
+    }
+
+    /// Resolves an `agent.create` `workingDirectory`: `~` is expanded and a
+    /// relative path is taken from the coordinator's directory. Both paths are
+    /// standardized with symlinks resolved only to verify that the result is an
+    /// existing directory equal to or inside the coordinator's directory. The
+    /// returned URL is expressed under the coordinator's own (unresolved) path,
+    /// the one `ProjectAgentSelectionStore` and the memory digest key on, so a
+    /// child sees the same project selection and memory as a `zen` launched in
+    /// that directory; a directory equal to the root returns it unchanged.
+    static func resolvedAgentWorkingDirectory(
+        _ value: String,
+        coordinatorDirectory: URL,
+        fileManager: FileManager = .default
+    ) throws -> URL {
+        let expandedPath = NSString(string: value).expandingTildeInPath
+        let candidate = expandedPath.hasPrefix("/")
+            ? URL(fileURLWithPath: expandedPath, isDirectory: true)
+            : coordinatorDirectory.appendingPathComponent(expandedPath, isDirectory: true)
+        let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
+        let root = coordinatorDirectory.standardizedFileURL.resolvingSymlinksInPath()
+        let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: resolved.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              resolved.path == root.path || resolved.path.hasPrefix(rootPrefix) else {
+            throw DirectSubAgentRuntimeError.invalidArgument(
+                "agent.create workingDirectory must be an existing directory inside "
+                    + "\(coordinatorDirectory.standardizedFileURL.path): \(value)"
+            )
+        }
+        guard resolved.path != root.path else { return coordinatorDirectory }
+        let relativePath = String(resolved.path.dropFirst(rootPrefix.count))
+        return coordinatorDirectory.standardizedFileURL
+            .appendingPathComponent(relativePath, isDirectory: true)
+            .standardizedFileURL
     }
 
     private func inheritsParentToolGrant(for profile: AgentProfile) -> Bool {

@@ -75,7 +75,7 @@ Creates files under `~/.zencode/`:
 - `agents.json` — agent profiles, authorized model bindings, tools, and instructions.
 - `AGENTS.md` — global operating guidance shared across workspaces. This is
   separate from an optional project `AGENTS.md` in the working directory.
-- `memory/` — per-workspace project memory graphs: one `memory.graph.json` per workspace, under a SHA-256 digest of the workspace path.
+- `memory/` — project memory graphs: one `memory.graph.json` per workspace, under a SHA-256 digest of the workspace path, plus `global/` for the global graph used by `organizer` sessions.
 - `sessions/` — saved session snapshots grouped by project.
 - `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans.
 - `features/` — generated Builder packages and installed optional feature packages.
@@ -945,7 +945,7 @@ Durable context is separated by responsibility:
   automatically.
 - Global `~/.zencode/AGENTS.md` — cross-workspace operating rules. This file is
   separate from the project file and applies across working directories.
-- Project memory — a per-workspace graph of durable project facts stored outside the working tree at `~/.zencode/memory/<workspace-digest>/memory.graph.json` (honouring `ZENCODE_SUPPORT_DIRECTORY`). Opening loads that JSON graph or starts empty when it is absent; a cold search/read never writes. Existing `MEMORY.md` files are completely ignored, even when malformed, and are never imported, embedded, rewritten or deleted. Facts already persisted in JSON remain available. Memory is project-scoped only; there is no global memory store.
+- Project memory — a per-workspace graph of durable project facts stored outside the working tree at `~/.zencode/memory/<workspace-digest>/memory.graph.json` (honouring `ZENCODE_SUPPORT_DIRECTORY`). Opening loads that JSON graph or starts empty when it is absent; a cold search/read never writes. Existing `MEMORY.md` files are completely ignored, even when malformed, and are never imported, embedded, rewritten or deleted. Facts already persisted in JSON remain available. A separate global graph at `~/.zencode/memory/global/memory.graph.json` (same format) is used only by sessions whose profile has the `organizer` role, for their `memory.*` tools and recall; project graphs are never aggregated into it, and automatic learning never writes to it.
 
 The Memory tool group maintains project memory without accumulating avoidable duplicates:
 

@@ -451,6 +451,10 @@ public struct AgentRuntimeConfiguration: Sendable {
     /// inherit the coordinator's effective session allowlist.
     public let profileID: String?
     public let profileName: String?
+    /// Role of the selected profile. Selects the memory graph a session uses
+    /// and whether role-based delegation applies; `nil` when no profile is
+    /// selected.
+    public let profileRole: AgentProfileRole?
 
     public init(
         modelID: String?,
@@ -465,7 +469,8 @@ public struct AgentRuntimeConfiguration: Sendable {
         agentID: String? = nil,
         agentName: String? = nil,
         profileID: String? = nil,
-        profileName: String? = nil
+        profileName: String? = nil,
+        profileRole: AgentProfileRole? = nil
     ) {
         self.modelID = modelID?.nilIfBlank
         self.workingDirectory = workingDirectory
@@ -482,6 +487,7 @@ public struct AgentRuntimeConfiguration: Sendable {
         self.agentName = agentName?.nilIfBlank
         self.profileID = profileID?.nilIfBlank
         self.profileName = profileName?.nilIfBlank
+        self.profileRole = profileRole
     }
 
     public func withModelID(_ modelID: String?) -> AgentRuntimeConfiguration {
@@ -498,7 +504,8 @@ public struct AgentRuntimeConfiguration: Sendable {
             agentID: agentID,
             agentName: agentName,
             profileID: profileID,
-            profileName: profileName
+            profileName: profileName,
+            profileRole: profileRole
         )
     }
 
@@ -523,7 +530,8 @@ public struct AgentRuntimeConfiguration: Sendable {
             agentID: agentID,
             agentName: agentName,
             profileID: profileID,
-            profileName: profileName
+            profileName: profileName,
+            profileRole: profileRole
         )
     }
 
@@ -543,13 +551,15 @@ public struct AgentRuntimeConfiguration: Sendable {
             agentID: agentID,
             agentName: agentName,
             profileID: profileID,
-            profileName: profileName
+            profileName: profileName,
+            profileRole: profileRole
         )
     }
 
     public func withProfileIdentity(
         profileID: String?,
-        profileName: String?
+        profileName: String?,
+        profileRole: AgentProfileRole?
     ) -> AgentRuntimeConfiguration {
         AgentRuntimeConfiguration(
             modelID: modelID,
@@ -564,7 +574,8 @@ public struct AgentRuntimeConfiguration: Sendable {
             agentID: agentID,
             agentName: agentName,
             profileID: profileID,
-            profileName: profileName
+            profileName: profileName,
+            profileRole: profileRole
         )
     }
 
@@ -585,7 +596,8 @@ public struct AgentRuntimeConfiguration: Sendable {
             agentID: agentID,
             agentName: agentName,
             profileID: profileID,
-            profileName: profileName
+            profileName: profileName,
+            profileRole: profileRole
         )
     }
 }
@@ -599,6 +611,7 @@ public enum AgentStandaloneSystemPrompt {
         fileManager: FileManager = .default,
         globalAgentsDirectoryURL: URL? = nil,
         selectedAgentSection: String? = nil,
+        selectedAgentRole: AgentProfileRole? = nil,
         selectedSkillSection: String? = nil,
         responseLanguageSection: String? = nil
     ) -> String {
@@ -610,6 +623,7 @@ public enum AgentStandaloneSystemPrompt {
             fileManager: fileManager,
             globalAgentsDirectoryURL: globalAgentsDirectoryURL,
             selectedAgentSection: selectedAgentSection,
+            selectedAgentRole: selectedAgentRole,
             selectedSkillSection: selectedSkillSection,
             responseLanguageSection: responseLanguageSection
         )
@@ -624,6 +638,7 @@ public enum AgentStandaloneSystemPrompt {
         fileManager: FileManager = .default,
         globalAgentsDirectoryURL: URL? = nil,
         selectedAgentSection: String? = nil,
+        selectedAgentRole: AgentProfileRole? = nil,
         selectedSkillSection: String? = nil,
         responseLanguageSection: String? = nil
     ) -> SystemPromptSections {
@@ -633,6 +648,9 @@ public enum AgentStandaloneSystemPrompt {
             globalAgentsDirectoryURL: globalAgentsDirectoryURL
         )
         .promptSection(workingDirectory: workingDirectory)
+        // An organizer delegates by role, so it gets the role guidance instead
+        // of the project roster: the runtime resolves the role per project.
+        let delegatesByRole = selectedAgentRole?.delegatesByRole == true
         let delegatableSection: String? = locksModelToSession
             ? nil
             : {
@@ -650,6 +668,15 @@ public enum AgentStandaloneSystemPrompt {
                   guard !projectProfiles.isEmpty else {
                       return SystemPromptBuilder.noProjectAgentsSection(
                           allowedToolNames: allowedToolNames
+                      )
+                  }
+                  // The organizer lists the roles of those same profiles.
+                  guard !delegatesByRole else {
+                      return SystemPromptBuilder.roleDelegationSection(
+                          allowedToolNames: allowedToolNames,
+                          roles: AgentProfileRole.allCases.filter { role in
+                              projectProfiles.contains { $0.role == role }
+                          }
                       )
                   }
                   return SystemPromptBuilder.delegatableAgentsSection(
@@ -673,7 +700,8 @@ public enum AgentStandaloneSystemPrompt {
             memoryToolEnabled: memoryToolEnabled,
             allowedToolNames: allowedToolNames,
             selectedSkillSection: selectedSkillSection,
-            responseLanguageSection: responseLanguageSection
+            responseLanguageSection: responseLanguageSection,
+            delegatesByRole: delegatesByRole
         )
     }
 }

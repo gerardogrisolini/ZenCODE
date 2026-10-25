@@ -87,6 +87,34 @@ struct AgentProfileRoleTests {
         #expect(Set(AgentProfileRole.allCases.map(\.summary)).count == AgentProfileRole.allCases.count)
     }
 
+    @Test
+    func onlyTheOrganizerRoleUsesGlobalMemoryAndDelegatesByRole() {
+        for role in AgentProfileRole.allCases {
+            #expect(role.usesGlobalMemory == (role == .organizer))
+            #expect(role.delegatesByRole == (role == .organizer))
+        }
+    }
+
+    @Test
+    func memoryGraphTargetResolvesFromTheProfileRole() {
+        let workingDirectory = URL(fileURLWithPath: "/tmp/role-memory", isDirectory: true)
+
+        #expect(
+            MemoryGraphTarget.resolved(profileRole: .organizer, workingDirectory: workingDirectory)
+                == .global
+        )
+        #expect(
+            MemoryGraphTarget.resolved(profileRole: nil, workingDirectory: workingDirectory)
+                == .workspace(workingDirectory)
+        )
+        for role in AgentProfileRole.allCases where role != .organizer {
+            #expect(
+                MemoryGraphTarget.resolved(profileRole: role, workingDirectory: workingDirectory)
+                    == .workspace(workingDirectory)
+            )
+        }
+    }
+
     // MARK: - Strict decoding
 
     @Test

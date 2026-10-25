@@ -9,7 +9,7 @@
 
 import Foundation
 
-/// Resolves the on-disk location of the per-workspace memory graph.
+/// Resolves the on-disk location of the per-workspace and global memory graphs.
 ///
 /// The graph is a machine-readable blob (it embeds float vectors), so it is
 /// deliberately kept out of the workspace working tree and stored beside the
@@ -19,6 +19,9 @@ import Foundation
 enum MemoryGraphLocation {
     static let directoryName = "memory"
     static let graphFilename = "memory.graph.json"
+    /// Directory of the global graph. It cannot collide with a workspace
+    /// directory, which is always named after a 64-character SHA256 hex digest.
+    static let globalDirectoryName = "global"
 
     /// Full SHA256 hex of the standardized workspace path.
     ///
@@ -46,4 +49,24 @@ enum MemoryGraphLocation {
             .standardizedFileURL
     }
 
+    /// `<support>/memory/global/memory.graph.json`, independent of any workspace.
+    static func globalGraphURL(fileManager: FileManager = .default) -> URL {
+        AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
+            .appendingPathComponent(directoryName, isDirectory: true)
+            .appendingPathComponent(globalDirectoryName, isDirectory: true)
+            .appendingPathComponent(graphFilename, isDirectory: false)
+            .standardizedFileURL
+    }
+
+    static func graphURL(
+        for target: MemoryGraphTarget,
+        fileManager: FileManager = .default
+    ) -> URL {
+        switch target {
+        case .workspace(let workspaceRootURL):
+            graphURL(for: workspaceRootURL, fileManager: fileManager)
+        case .global:
+            globalGraphURL(fileManager: fileManager)
+        }
+    }
 }

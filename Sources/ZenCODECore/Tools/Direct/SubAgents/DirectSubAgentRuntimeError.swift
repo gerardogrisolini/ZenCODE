@@ -18,6 +18,8 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
     case taskIDRequiredForActiveTaskGraph(String)
     case agentProfileNotFound(String)
     case agentProfileNotAssociatedWithProject(String, String)
+    case agentProfileRoleNotAvailableForProject(AgentProfileRole, String)
+    case agentProfileRoleHasNoRoutableBinding(AgentProfileRole, [String])
     case modelNotAllowedForProfile(modelID: String, profile: String)
     case modelBindingUnavailable(modelID: String, profile: String, reason: String)
     case ambiguousModelReference(modelID: String, profile: String, candidates: [String])
@@ -46,6 +48,14 @@ public enum DirectSubAgentRuntimeError: LocalizedError {
             return "Agent profile '\(profile)' is not associated with this project (\(workspace)), "
                 + "so it cannot be delegated to. Use a profile listed in the delegatable roster; "
                 + "the operator can associate profiles with this project using /agents."
+        case let .agentProfileRoleNotAvailableForProject(role, workspace):
+            return "No agent profile with the \(role.rawValue) role is associated with this project "
+                + "(\(workspace)), so it cannot be delegated to; the operator can associate one "
+                + "using /agents."
+        case let .agentProfileRoleHasNoRoutableBinding(role, profiles):
+            return "No profile with the \(role.rawValue) role visible to this project has a "
+                + "routable model binding (\(profiles.joined(separator: ", "))); reconfigure "
+                + "providers or bindings, or associate another profile with /agents."
         case let .modelNotAllowedForProfile(modelID, profile):
             return "Model '\(modelID)' is not an authorized binding for agent profile '\(profile)'."
         case let .modelBindingUnavailable(modelID, profile, reason):

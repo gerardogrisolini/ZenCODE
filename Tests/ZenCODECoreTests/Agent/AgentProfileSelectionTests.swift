@@ -73,10 +73,13 @@ extension AgentConfigurationTests {
         #expect(reporterProfile.tools == AgentProfileStore.reporterToolNames)
         #expect(reporterProfile.tools == ["files", searchKey, "text", gitKey])
         #expect(reporterProfile.instructions?.contains("Reporter agent") == true)
+        #expect(reporterProfile.readOnly)
         let reporterAllowedToolNames = reporterProfile.allowedToolNames(
             featureStatuses: unavailableOptionalFeatureStatuses
         )
-        #expect(reporterAllowedToolNames.contains("local.writeFile"))
+        #expect(reporterAllowedToolNames.contains("local.readFile"))
+        #expect(!reporterAllowedToolNames.contains("local.writeFile"))
+        #expect(!reporterAllowedToolNames.contains("local.editFile"))
         // Package selections remain in the profile allowlist, but an
         // uninstalled optional feature contributes no executable tool prefix.
         #expect(reporterAllowedToolNames.contains(searchKey))
@@ -110,6 +113,7 @@ extension AgentConfigurationTests {
                 featureStatuses: unavailableOptionalFeatureStatuses
             ).isDisjoint(with: mutatingCoreNames)
         )
+        #expect(reporterAllowedToolNames.isDisjoint(with: mutatingCoreNames))
         #expect(
             plannerProfile.allowedToolNames(
                 featureStatuses: unavailableOptionalFeatureStatuses
@@ -157,6 +161,8 @@ extension AgentConfigurationTests {
         #expect(organizerProfile.instructions?.contains("Drafts") == true)
         #expect(organizerProfile.instructions?.contains("Preferences") == true)
         #expect(organizerProfile.instructions?.contains("unvalidated") == true)
+        #expect(organizerProfile.instructions?.contains("profileRole") == true)
+        #expect(organizerProfile.instructions?.contains("workingDirectory") == true)
         let organizerAllowedToolNames = organizerProfile.allowedToolNames(
             featureStatuses: unavailableOptionalFeatureStatuses
         )

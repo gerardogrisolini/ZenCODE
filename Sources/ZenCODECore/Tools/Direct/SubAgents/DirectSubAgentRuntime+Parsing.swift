@@ -15,6 +15,9 @@ private struct RequestedAgentPayloadSignature: Equatable {
     let taskID: String?
     let prompt: String?
     let modelID: String?
+    let workingDirectory: String?
+    let profileRole: AgentProfileRole?
+    let complexity: Int?
 
     init(_ payload: DirectSubAgentRuntime.RequestedAgentPayload) {
         name = payload.name
@@ -23,6 +26,9 @@ private struct RequestedAgentPayloadSignature: Equatable {
         taskID = payload.taskID
         prompt = payload.prompt
         modelID = payload.requestedModelID?.lowercased()
+        workingDirectory = payload.workingDirectory
+        profileRole = payload.profileRole
+        complexity = payload.complexity
     }
 }
 
@@ -158,8 +164,62 @@ extension DirectSubAgentRuntime {
                 field: "model",
                 in: object,
                 comparisonKey: { $0.lowercased() }
-            )
+            ),
+            workingDirectory: try resolvedAgentString(
+                ["workingDirectory", "working_directory"],
+                field: "workingDirectory",
+                in: object
+            ),
+            profileRole: try resolvedAgentProfileRole(in: object),
+            complexity: try resolvedAgentComplexity(in: object)
         )
+    }
+
+    /// Parses `profileRole` (or `profile_role`) into one of the fixed
+    /// ``AgentProfileRole`` cases. Matching is case-insensitive; unknown values
+    /// are rejected so a typo cannot silently fall back to another role.
+    private static func resolvedAgentProfileRole(
+        in arguments: [String: JSONValue]
+    ) throws -> AgentProfileRole? {
+        guard let value = try resolvedAgentString(
+            ["profileRole", "profile_role"],
+            field: "profileRole",
+            in: arguments,
+            comparisonKey: { $0.lowercased() }
+        ) else {
+            return nil
+        }
+        guard let role = AgentProfileRole(rawValue: value.lowercased()) else {
+            throw DirectSubAgentRuntimeError.invalidArgument(
+                "agent.create profileRole must be one of: "
+                    + AgentProfileRole.allowedValuesDescription
+            )
+        }
+        return role
+    }
+
+    /// Parses `complexity` as an integer within `TaskRecord.complexityRange`
+    /// (1 to 10). A blank string counts as absent, like the other optional agent
+    /// fields; any other value that is not an integer in range is rejected.
+    private static func resolvedAgentComplexity(
+        in arguments: [String: JSONValue]
+    ) throws -> Int? {
+        guard let rawValue = arguments["complexity"] else {
+            return nil
+        }
+        if case let .string(string) = rawValue, string.nilIfBlank == nil {
+            return nil
+        }
+        let range = TaskRecord.complexityRange
+        guard let number = firstNumber(["complexity"], in: arguments),
+              let complexity = Int(exactly: number),
+              range.contains(complexity) else {
+            throw DirectSubAgentRuntimeError.invalidArgument(
+                "agent.create complexity must be an integer from "
+                    + "\(range.lowerBound) to \(range.upperBound)"
+            )
+        }
+        return complexity
     }
 
     /// Resolves the canonical `agents` batch and its legacy `items` alias
@@ -226,6 +286,9 @@ extension DirectSubAgentRuntime {
             "taskID", "task_id",
             "prompt", "message", "initialPrompt", "initial_prompt",
             "model", "modelID", "model_id",
+            "profileRole", "profile_role",
+            "complexity",
+            "workingDirectory", "working_directory",
         ]
         for key in rootKeys {
             guard let value = arguments[key] else {
