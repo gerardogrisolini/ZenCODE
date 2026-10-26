@@ -135,6 +135,10 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
 
 public enum TerminalSessionStore {
     public static let fileExtension = "session"
+    /// Extension of the optional engine checkpoint (DS4 KV cache) stored next
+    /// to a `.session` file. It is written only by an explicit session save
+    /// (`TerminalChat.saveCurrentSession`) and removed together with the session.
+    public static let engineCheckpointFileExtension = "ds4kv"
 
     public static func save(
         _ session: TerminalSavedSession,
@@ -244,6 +248,14 @@ public enum TerminalSessionStore {
         fileManager: FileManager = .default,
         supportDirectoryURL: URL? = nil
     ) throws -> Bool {
+        // The engine checkpoint lives and dies with its session (best effort:
+        // an orphan checkpoint is removed even when the `.session` is gone).
+        deleteEngineCheckpoint(
+            name: name,
+            workingDirectory: workingDirectory,
+            fileManager: fileManager,
+            supportDirectoryURL: supportDirectoryURL
+        )
         let fileURL = sessionFileURL(
             name: name,
             workingDirectory: workingDirectory,
@@ -255,6 +267,55 @@ public enum TerminalSessionStore {
         }
         try fileManager.removeItem(at: fileURL)
         return true
+    }
+
+    /// URL of the engine checkpoint of the saved session `name`: the session
+    /// file URL with the `ds4kv` extension (same directory, same stem).
+    public static func engineCheckpointURL(
+        name: String,
+        workingDirectory: URL,
+        fileManager: FileManager = .default,
+        supportDirectoryURL: URL? = nil
+    ) -> URL {
+        sessionFileURL(
+            name: name,
+            workingDirectory: workingDirectory,
+            fileManager: fileManager,
+            supportDirectoryURL: supportDirectoryURL
+        )
+        .deletingPathExtension()
+        .appendingPathExtension(engineCheckpointFileExtension)
+    }
+
+    /// Removes the engine checkpoint of the saved session `name`, if any.
+    /// Best effort: a missing file is not an error and a failure is logged.
+    /// Returns whether a file was removed.
+    @discardableResult
+    public static func deleteEngineCheckpoint(
+        name: String,
+        workingDirectory: URL,
+        fileManager: FileManager = .default,
+        supportDirectoryURL: URL? = nil
+    ) -> Bool {
+        let checkpointURL = engineCheckpointURL(
+            name: name,
+            workingDirectory: workingDirectory,
+            fileManager: fileManager,
+            supportDirectoryURL: supportDirectoryURL
+        )
+        guard fileManager.fileExists(atPath: checkpointURL.path) else {
+            return false
+        }
+        do {
+            try fileManager.removeItem(at: checkpointURL)
+            return true
+        } catch {
+            ZenLogger.warning(
+                .sessionService,
+                "Failed to remove engine checkpoint \(checkpointURL.lastPathComponent): \(error.localizedDescription)"
+            )
+            return false
+        }
     }
 
     public static func sessionFileURL(
@@ -340,6 +401,11 @@ public enum TerminalSessionStore {
             includingPropertiesForKeys: nil
         )
         for sourceURL in fileURLs {
+            // Engine checkpoints (and their temporary files, `<name>.ds4kv.tmp.*`)
+            // are not sessions and can weigh gigabytes: never read them here.
+            guard !isEngineCheckpointArtifact(sourceURL) else {
+                continue
+            }
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(
                 atPath: sourceURL.path,
@@ -365,6 +431,10 @@ public enum TerminalSessionStore {
                 )
             }
         }
+    }
+
+    private static func isEngineCheckpointArtifact(_ url: URL) -> Bool {
+        url.lastPathComponent.contains(".\(engineCheckpointFileExtension)")
     }
 
     private static func validate(_ session: TerminalSavedSession) throws {

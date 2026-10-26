@@ -128,10 +128,15 @@ plan store or directory is created, and `/sessions new` can discard the live
 chat checkpoint without deleting the saved plan.
 
 If no plan is active, `/plan save` can promote the latest non-empty assistant
-response into an unstructured active plan and persist it through the same
-checkpoint mechanism. This supports plans written outside `/plan`; a text-only
-save receives one stable implementation task at approval time rather than an
-invented task breakdown.
+response into an active plan and persist it through the same checkpoint
+mechanism. This supports plans written outside `/plan`. When the promoted answer
+is in the strict Planner format — `Specifiche concordate`, a numbered
+`Implementation plan`, and a `Dependencies:` line on its own line for every
+point, with closed and acyclic dependencies — it is saved with its structured
+tasks and dependencies exactly like a plan produced by `/plan`, so `/plan load`
+and `/plan approve` use one task per point. Any other answer stays a text-only
+plan, which receives one stable implementation task at approval time rather than
+an invented task breakdown. Plans already in the library are not rewritten.
 
 In a session for the same working directory with **no active plan**, `/plan load`
 retrieves the newest saved plan, displays it, adds it to the model context, and

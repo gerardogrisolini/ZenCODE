@@ -163,4 +163,184 @@ struct AgentConfigurationTests {
             ) == explicitDirectory
         )
     }
+
+    // MARK: - Default agent per project
+
+    @Test
+    func defaultAgentIsTheDeveloperAssociatedWithTheLaunchProject() throws {
+        let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
+        let agents = [AgentProfileRoleTestSupport.developer, custom, AgentProfileRoleTestSupport.pluto]
+
+        try ProjectAgentSelectionTestSupport.withTemporaryProject { _, workspace in
+            // No saved selection: the system developer.
+            let unconfigured = try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: agents,
+                workingDirectory: workspace
+            )
+            #expect(unconfigured.selectedAgent?.id == "developer")
+            #expect(unconfigured.requestedAgentName == nil)
+
+            // The project associates a custom developer but not the system one.
+            try ProjectAgentSelectionStore.save(
+                agentIDs: [custom.id, AgentProfileRoleTestSupport.pluto.id],
+                workspaceRootURL: workspace
+            )
+            let associated = try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: agents,
+                workingDirectory: workspace
+            )
+            #expect(associated.selectedAgent == custom)
+            #expect(associated.agentName == custom.displayName)
+            #expect(associated.requestedAgentName == nil)
+
+            // A project without any visible developer keeps the global default.
+            try ProjectAgentSelectionStore.save(
+                agentIDs: [AgentProfileRoleTestSupport.pluto.id],
+                workspaceRootURL: workspace
+            )
+            let withoutDeveloper = try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: agents,
+                workingDirectory: workspace
+            )
+            #expect(withoutDeveloper.selectedAgent?.id == "developer")
+            #expect(withoutDeveloper.requestedAgentName == nil)
+        }
+    }
+
+    @Test
+    func explicitAgentNameStillSelectsAnyProfileRegardlessOfTheProject() throws {
+        let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
+        let pluto = AgentProfileRoleTestSupport.pluto
+        let agents = [AgentProfileRoleTestSupport.developer, custom, pluto]
+
+        try ProjectAgentSelectionTestSupport.withTemporaryProject { _, workspace in
+            try ProjectAgentSelectionStore.save(agentIDs: [custom.id], workspaceRootURL: workspace)
+
+            let explicit = try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                agentName: "  Pluto  ",
+                availableAgents: agents,
+                workingDirectory: workspace
+            )
+            #expect(explicit.selectedAgent == pluto)
+            #expect(explicit.requestedAgentName == "Pluto")
+            #expect(explicit.agentName == "Pluto")
+
+            let blank = try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                agentName: "   ",
+                availableAgents: agents,
+                workingDirectory: workspace
+            )
+            #expect(blank.selectedAgent == custom)
+            #expect(blank.requestedAgentName == nil)
+        }
+    }
+
+    // MARK: - Launch working directory
+
+    /// A real, symlink-resolved temporary directory removed on exit, so
+    /// expectations compare against the same canonical path the resolver returns.
+    private func withTemporaryDirectory(
+        _ body: (URL) throws -> Void
+    ) throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-launch-cwd-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try body(directory.standardizedFileURL.resolvingSymlinksInPath())
+    }
+
+    @Test
+    func launchWorkingDirectoryPrefersArgumentOverEnvironmentAndShell() throws {
+        try withTemporaryDirectory { argumentDirectory in
+            try withTemporaryDirectory { environmentDirectory in
+                try withTemporaryDirectory { shellDirectory in
+                    let environment = [
+                        "ZENCODE_AGENT_CWD": environmentDirectory.path,
+                        "PWD": shellDirectory.path,
+                    ]
+                    #expect(
+                        AgentConfiguration.launchWorkingDirectoryURL(
+                            arguments: ["zen", "--working-directory", argumentDirectory.path],
+                            environment: environment
+                        ) == argumentDirectory
+                    )
+                    #expect(
+                        AgentConfiguration.launchWorkingDirectoryURL(
+                            arguments: ["zen"],
+                            environment: environment
+                        ) == environmentDirectory
+                    )
+                    #expect(
+                        AgentConfiguration.launchWorkingDirectoryURL(
+                            arguments: ["zen"],
+                            environment: ["PWD": shellDirectory.path]
+                        ) == shellDirectory
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    func launchWorkingDirectoryLastArgumentWins() throws {
+        try withTemporaryDirectory { first in
+            try withTemporaryDirectory { second in
+                #expect(
+                    AgentConfiguration.launchWorkingDirectoryURL(
+                        arguments: [
+                            "zen",
+                            "--working-directory", first.path,
+                            "--agent", "Developer",
+                            "--working-directory", second.path,
+                        ],
+                        environment: [:]
+                    ) == second
+                )
+            }
+        }
+    }
+
+    @Test
+    func launchWorkingDirectoryIgnoresRelativeOrMissingShellDirectory() {
+        let currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let missing = "/zencode-missing-\(UUID().uuidString)"
+        for shellValue in ["relative/path", missing] {
+            let resolved = AgentConfiguration.launchWorkingDirectoryURL(
+                arguments: ["zen"],
+                environment: ["PWD": shellValue]
+            )
+            // Falls through to the process's current directory (or home, when
+            // that is the executable's directory), never to the ignored value.
+            #expect(
+                resolved == currentDirectory
+                    || resolved == UserHomeDirectory.current().standardizedFileURL.resolvingSymlinksInPath()
+            )
+        }
+        #expect(
+            AgentConfiguration.defaultWorkingDirectoryRawPath(environment: ["PWD": "relative/path"])
+                == FileManager.default.currentDirectoryPath
+        )
+        #expect(
+            AgentConfiguration.defaultWorkingDirectoryRawPath(environment: ["PWD": missing])
+                == FileManager.default.currentDirectoryPath
+        )
+    }
+
+    @Test
+    func defaultWorkingDirectoryRawPathIgnoresBlankEnvironmentValue() throws {
+        try withTemporaryDirectory { shellDirectory in
+            #expect(
+                AgentConfiguration.defaultWorkingDirectoryRawPath(
+                    environment: ["ZENCODE_AGENT_CWD": "   ", "PWD": shellDirectory.path]
+                ) == shellDirectory.path
+            )
+        }
+    }
 }

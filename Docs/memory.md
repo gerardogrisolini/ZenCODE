@@ -402,6 +402,58 @@ stay unwired internals of `ZenMemory`. Selective product consolidation instead
 uses the runner-owned same-backend path described below; opening a store alone
 still never performs an extraction request.
 
+## Memory cleanup
+
+Bulk cleanup of a graph runs only from `/setup` › Data management ›
+**Clean memory**: there is no slash command, command-line flag, `memory.*` tool
+or automatic run, and nothing is saved in `settings.json` or read from the
+environment (the thresholds are asked for each time). The flow lists the graphs
+found under `<supportDirectory>/memory/` (the current project, the global graph,
+and the other projects), applies the chosen rules to one of them, and shows a
+preview with counts and titles before asking for an explicit confirmation
+(default No). The rules, which can be combined, measure age from the last
+change, `max(createdAt, updatedAt)`, like retrieval does:
+
+- **Remove archived entries** physically deletes archived entries
+  (`active == false`) unchanged for at least N days (default 30; 0 removes
+  every archived entry).
+- **Archive stale entries** archives active entries that were never recalled
+  (`accessCount == 0`) and have not changed for at least N days (default 180,
+  at least 1). The threshold is scaled per category with the half-lives of
+  `MemoryAgePolicy.default`, `N × halfLife(category) / 120`: a preference
+  after 0.75 N, a correction after about 3.04 N, the other categories after N.
+  Archiving stamps `updatedAt`, so **Remove archived entries** can only delete
+  such an entry N days later; an entry archived in a run is never removed in the
+  same run.
+- **Graph hygiene** removes inactive entries that were superseded
+  (`supersededBy`), edges whose source or target no longer exists, tags and
+  clusters without members (recounting the others), and embedding vectors the
+  store cannot use: every vector when no embedding provider is configured,
+  otherwise those whose `embedding_model` differs from the provider the store
+  was opened with. A vector is not recomputed by the cleanup; it is regenerated
+  only by the next `memory.update` or `memory.write` of that entry (there is no
+  batch re-embedding).
+
+Applying a cleanup is one engine transaction under the graph's file lock. The
+plan is computed again on the graph reloaded under the lock, so it can differ
+from the preview if another process wrote in between, and the report shown
+afterwards is the one applied. Before the graph changes, the pre-cleanup graph
+is written in the persisted format to `memory.graph.json.bak` in the same
+directory, through the owner-only staging file and `rename` used by saves: a
+previous copy is replaced atomically, only the last pre-cleanup state is kept,
+and a failing backup aborts the transaction with nothing saved. A plan that
+changes nothing writes neither the graph nor the backup. The engine never loads
+the `.bak` file; restoring it is manual, with `zen` closed (copy it over
+`memory.graph.json`). It lives in the support directory, so a Data management
+export includes it. `graph_version`, the on-disk formats, the `memory.*` tools
+and the public `MemoryService` API are unchanged.
+
+For the graph of another project (never the current project and never the
+global graph), the same menu can instead delete the whole
+`<supportDirectory>/memory/<project key>/` directory. The confirmation names the
+exact path, no copy is made, and the cached store for that graph is dropped so
+a stale engine cannot write it back.
+
 ## Conservative project-memory consolidation
 
 `AgentCoreSessionRunner` is the sole automatic writer owner. After a successful

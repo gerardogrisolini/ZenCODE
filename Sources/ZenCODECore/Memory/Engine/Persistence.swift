@@ -309,16 +309,32 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         return graph
     }
 
-    private func saveSynchronously(_ graph: MemoryGraph) throws {
-        let directory = url.deletingLastPathComponent()
-        try Self.prepareOwnerOnlyDirectory(directory)
+    /// The persisted wire form of a graph: ISO-8601 dates with a nanosecond
+    /// fraction, snake_case keys, sorted and pretty-printed. The single place
+    /// that configures the encoder, shared by saves and backups.
+    static func encodeGraph(_ graph: MemoryGraph) throws -> Data {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = MemoryJSONDateCoding.encodingStrategy()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(graph)
+    }
+
+    /// Writes `graph` in the persisted format to `url` through the same owner-only
+    /// staging file and `rename` as a save: an existing copy is replaced
+    /// atomically and a partial copy is never visible. Touches neither the
+    /// store's reload cache nor its lock, so it is meant for a caller that
+    /// already holds the transaction (a copy taken before the graph is changed).
+    static func writeBackup(of graph: MemoryGraph, to url: URL) throws {
+        _ = try publishPrivately(encodeGraph(graph), to: url)
+    }
+
+    private func saveSynchronously(_ graph: MemoryGraph) throws {
+        let directory = url.deletingLastPathComponent()
+        try Self.prepareOwnerOnlyDirectory(directory)
         // Byte-identical payload to every previous version of this method; only
         // the way it reaches the final path changed.
-        let data = try encoder.encode(graph)
+        let data = try Self.encodeGraph(graph)
         let identity = try Self.publishPrivately(data, to: url)
         // Re-prime from the bytes just published, so the next read — typically
         // the next turn's recall — pays no decode. Decoding what this build has
@@ -345,7 +361,7 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
     /// identity is taken from the private staging file before the rename,
     /// which preserves it: it is the published inode's identity whatever
     /// another writer does afterwards.
-    private static func publishPrivately(_ data: Data, to url: URL) throws -> FileIdentity {
+    static func publishPrivately(_ data: Data, to url: URL) throws -> FileIdentity {
         let directory = url.deletingLastPathComponent()
         let staging = directory.appendingPathComponent(
             ".\(url.lastPathComponent).\(UUID().uuidString).staging"

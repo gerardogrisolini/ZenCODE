@@ -234,8 +234,89 @@ extension TerminalChat {
             )
         } catch {
             await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            return
+        }
+        // The only place that writes a DS4 KV checkpoint: an explicit save.
+        await saveEngineCheckpoint(forSavedSession: savedSession)
+    }
+
+    /// Writes the engine KV checkpoint (DS4) next to the `.session` file that
+    /// was just saved. Reached only through `saveCurrentSession`, that is
+    /// `/sessions save` and `/sessions <name>`: ZenCODE never saves a
+    /// checkpoint after a generation, on session close or on shutdown.
+    /// Non-blocking: a failure is reported and the saved session stays valid.
+    /// Whenever no new checkpoint is written, a checkpoint left by an earlier
+    /// save of the same name is removed so it cannot outlive its session state.
+    func saveEngineCheckpoint(forSavedSession savedSession: TerminalSavedSession) async {
+        let checkpointURL = TerminalSessionStore.engineCheckpointURL(
+            name: savedSession.name,
+            workingDirectory: configuration.workingDirectory
+        )
+        do {
+            let outcome = try await sessionRunner.saveEngineCheckpoint(
+                sessionID: sessionID,
+                to: checkpointURL
+            )
+            switch outcome {
+            case .saved:
+                await writeSystemMessage(Self.engineCheckpointSavedMessage)
+                return
+            case .skippedImages:
+                await writeSystemMessage(Self.engineCheckpointSkippedImagesMessage)
+            case .skippedNoLiveState:
+                await writeSystemMessage(Self.engineCheckpointSkippedNoLiveStateMessage)
+            case .notApplicable:
+                break
+            }
+        } catch {
+            await writeFailureMessage(
+                "ZenCODE: DS4 KV checkpoint not saved: \(error.localizedDescription)\n"
+            )
+        }
+        TerminalSessionStore.deleteEngineCheckpoint(
+            name: savedSession.name,
+            workingDirectory: configuration.workingDirectory
+        )
+    }
+
+    /// Loads the engine KV checkpoint of a restored session, when the current
+    /// model is DS4 and the file exists. Reached only from `loadSavedSession`,
+    /// after `restoreSession`. Never blocks loading the session.
+    func restoreEngineCheckpoint(forSavedSession savedSession: TerminalSavedSession) async {
+        let checkpointURL = TerminalSessionStore.engineCheckpointURL(
+            name: savedSession.name,
+            workingDirectory: configuration.workingDirectory
+        )
+        guard FileManager.default.fileExists(atPath: checkpointURL.path) else {
+            return
+        }
+        let outcome = await sessionRunner.restoreEngineCheckpoint(
+            sessionID: sessionID,
+            from: checkpointURL
+        ) { @TerminalChatActor event in
+            if case let .status(message) = event {
+                await self.writeSystemMessage("\(message)\n")
+            }
+        }
+        switch outcome {
+        case .restored:
+            await writeSystemMessage(Self.engineCheckpointRestoredMessage)
+        case .incompatible:
+            await writeSystemMessage(Self.engineCheckpointIncompatibleMessage)
+        case .notApplicable:
+            break
+        case let .failed(reason):
+            await writeFailureMessage("ZenCODE: DS4 KV checkpoint not restored: \(reason)\n")
         }
     }
+
+    static let engineCheckpointSavedMessage = "Saved DS4 KV checkpoint.\n"
+    static let engineCheckpointSkippedImagesMessage = "KV checkpoint skipped: session contains images.\n"
+    static let engineCheckpointSkippedNoLiveStateMessage =
+        "DS4 KV checkpoint skipped: no live DS4 state for this session.\n"
+    static let engineCheckpointRestoredMessage = "Restored DS4 KV checkpoint.\n"
+    static let engineCheckpointIncompatibleMessage =
+        "DS4 checkpoint not compatible, the prompt will be re-evaluated.\n"
 
     public func compactCurrentSession() async {
         do {
@@ -391,6 +472,8 @@ extension TerminalChat {
         await writeSystemMessage(
             "Loaded session: \(savedSession.name) (\(savedSession.messageCount) messages).\n"
         )
+        // The only place that reads a DS4 KV checkpoint: loading a saved session.
+        await restoreEngineCheckpoint(forSavedSession: savedSession)
     }
 
     public func renderSavedSessionHistory(_ history: [AgentRuntimeMessage]) async {

@@ -305,7 +305,8 @@ extension RemoteGenerationClient {
             responseDurationSeconds: responseDurationSeconds,
             contextTokenCount: contextTokenCount,
             clearsPromptMetrics: true,
-            replacesPreviousMetrics: true
+            replacesPreviousMetrics: true,
+            throughput: stats.last?.throughput
         )
     }
 
@@ -313,6 +314,7 @@ extension RemoteGenerationClient {
         _ metrics: DirectAgentGenerationMetrics,
         maxTokens: Int?,
         modelID: String,
+        isApproximate: Bool = true,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async {
         await onEvent(.metrics(metrics))
@@ -322,7 +324,7 @@ extension RemoteGenerationClient {
                     usedTokens: metrics.totalTokenCount,
                     maxTokens: maxTokens,
                     modelID: modelID,
-                    isApproximate: true
+                    isApproximate: isApproximate
                 )
             )
         )
@@ -364,6 +366,7 @@ extension RemoteGenerationClient {
                 ] as [String: Any]
             }
         }
+        streamResult.ds4Turn?.apply(to: &message)
 
         let hasContent = !streamResult.text
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -371,7 +374,10 @@ extension RemoteGenerationClient {
         let hasReasoning = streamResult.reasoningText.nilIfBlank != nil
         let hasReasoningItems = streamResult.reasoningItemsJSON?.nilIfBlank != nil
         let hasAnthropicBlocks = streamResult.anthropicContentBlocksJSON?.nilIfBlank != nil
-        if hasContent || hasReasoning || hasReasoningItems || hasAnthropicBlocks || !streamResult.toolCalls.isEmpty {
+        // A DS4 turn is part of the engine KV even without visible content.
+        let hasDS4Turn = streamResult.ds4Turn?.requiresHistoryEntry == true
+        if hasContent || hasReasoning || hasReasoningItems || hasAnthropicBlocks || hasDS4Turn
+            || !streamResult.toolCalls.isEmpty {
             messages.append(message)
         }
     }

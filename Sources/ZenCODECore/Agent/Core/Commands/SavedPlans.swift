@@ -45,6 +45,18 @@ extension PlanningCommandKernel {
             in: messages,
             beforeAssistantAt: assistantIndex
         ) ?? "Saved plan"
+        // A promoted answer that passes the strict Planner parser keeps every
+        // point and dependency, exactly like a plan created by `/plan`. Any
+        // other text stays text-only and receives one generic task at approval.
+        if let points = planPoints(derivedFromFinalText: content) {
+            return TerminalSessionPlan(
+                id: planID(from: points),
+                originalGoal: originalGoal,
+                consolidatedText: content,
+                createdAt: createdAt,
+                points: points
+            )
+        }
         return TerminalSessionPlan(
             originalGoal: originalGoal,
             consolidatedText: content,

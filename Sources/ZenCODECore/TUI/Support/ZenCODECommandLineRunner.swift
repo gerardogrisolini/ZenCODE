@@ -96,6 +96,22 @@ public enum ZenCODECommandLineRunner {
             switch resolvedRunMode {
             case .headless:
                 AgentOutput.silenceInheritedProcessOutput()
+                if let recipient = ZenCronMailDelivery.recipient(
+                    environment: ProcessInfo.processInfo.environment,
+                    standardOutputIsTerminal: AgentOutput.standardOutputIsTerminal
+                ) {
+                    let succeeded = await runHeadlessDeliveringByMail(
+                        to: recipient,
+                        configuration: configuration,
+                        requestedJSONL: requestedJSONL,
+                        stdinIsTerminal: stdinIsTerminal,
+                        backendFactory: backendFactory
+                    )
+                    if !succeeded {
+                        Foundation.exit(1)
+                    }
+                    return
+                }
                 if configuration.jsonl {
                     AgentOutput.silenceAllStandardError()
                 }
@@ -169,12 +185,86 @@ public enum ZenCODECommandLineRunner {
                     ZenCODEHeadlessJSONLProtocol.writeFramedError(error)
                 }
             } else {
-                AgentOutput.standardError.writeString(
-                    "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"
-                )
+                AgentOutput.standardError.writeString(failureMessage(for: error))
             }
             Foundation.exit(1)
         }
+    }
+
+    /// What a failed text-mode run prints on standard error.
+    static func failureMessage(for error: Error) -> String {
+        "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"
+    }
+
+    /// Runs a headless turn started by cron with a deliverable `MAILTO` (see
+    /// `ZenCronMailDelivery`) and sends its output through Mail.app.
+    ///
+    /// The run is the ordinary one: only what it would print is captured
+    /// instead, failures included, with the same bytes the ordinary path
+    /// prints. That is what the fallback prints when Mail.app cannot send.
+    ///
+    /// - Returns: Whether the run succeeded; the delivery outcome never
+    ///   changes the exit status.
+    private static func runHeadlessDeliveringByMail(
+        to recipient: String,
+        configuration: AgentConfiguration,
+        requestedJSONL: Bool,
+        stdinIsTerminal: Bool,
+        backendFactory: AgentRuntimeBackendFactory?
+    ) async -> Bool {
+        let fallbackOutput = ZenCronFallbackOutput.duplicatingAgentOutput()
+        // Anything that still reached a real stream would be cron output, and
+        // cron would queue it as a second message that never leaves the Mac.
+        AgentOutput.silenceAllStandardError()
+
+        let output = ZenCronCapturedOutput()
+        var jsonlRunnerStarted = false
+        var succeeded = true
+        do {
+            let prompt = try ZenCODEHeadlessRunner.prompt(
+                inlinePrompt: configuration.headlessPrompt,
+                promptFile: configuration.headlessPromptFile,
+                stdinIsTerminal: stdinIsTerminal
+            )
+            let permissionAuthorizer = LocalExecPermissionAuthorizer()
+            jsonlRunnerStarted = configuration.jsonl
+            try await AgentRuntimeLauncher.runHeadless(
+                configuration: configuration,
+                prompt: prompt,
+                permissionAuthorizer: permissionAuthorizer,
+                backendFactory: backendFactory,
+                jsonlSink: { data in output.append(data) },
+                textSink: { text in output.append(text) }
+            )
+        } catch {
+            succeeded = false
+            // Mirrors the catch of `main`: a started JSONL runner has already
+            // written its terminal error record.
+            if requestedJSONL {
+                if !jsonlRunnerStarted,
+                   let record = ZenCODEHeadlessJSONLProtocol.framedErrorData(error) {
+                    output.append(record)
+                }
+            } else {
+                output.append(failureMessage(for: error), to: .standardError)
+            }
+        }
+
+        await ZenCronMailDelivery.deliver(
+            output.chunks,
+            to: recipient,
+            subject: ZenCronMailDelivery.subject(
+                succeeded: succeeded,
+                promptFile: configuration.headlessPromptFile,
+                prompt: configuration.headlessPrompt,
+                date: Date(),
+                timeZone: .current
+            ),
+            sender: ZenCronFeatureMailSender(workingDirectory: configuration.workingDirectory),
+            writeStandardOutput: { data in fallbackOutput.standardOutput.write(data) },
+            writeStandardError: { data in fallbackOutput.standardError.write(data) }
+        )
+        return succeeded
     }
 
     public static func shouldRunAsCommandLine(

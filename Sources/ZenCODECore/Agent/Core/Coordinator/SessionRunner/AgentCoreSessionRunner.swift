@@ -101,6 +101,9 @@ public actor AgentCoreSessionRunner {
     public nonisolated let swiftFeatureRuntime: SwiftFeatureRuntime
     public let taskOrchestrator: SessionTaskOrchestrator
     let backendFactory: AgentRuntimeBackendFactory?
+    /// Process-wide DS4 engine owner, closed by `shutdown()` once no DS4
+    /// session is live. The public initializer always uses the shared registry.
+    let ds4EngineRegistry: DS4EngineRegistry
 
     struct LifecycleResourceCounts: Equatable {
         let promptSkillProviders: Int
@@ -142,7 +145,8 @@ public actor AgentCoreSessionRunner {
         taskOrchestrator: SessionTaskOrchestrator? = nil,
         taskGraphStore: SessionTaskGraphStore? = SessionTaskGraphStore(),
         sessionTurnLease: AgentSessionTurnLease,
-        memoryGraphStoreRegistry: MemoryGraphStoreRegistry = .shared
+        memoryGraphStoreRegistry: MemoryGraphStoreRegistry = .shared,
+        ds4EngineRegistry: DS4EngineRegistry = .shared
     ) {
         self.defaultToolAuthorizationHandler = defaultToolAuthorizationHandler
         self.mcpRuntime = mcpRuntime
@@ -152,6 +156,7 @@ public actor AgentCoreSessionRunner {
             ?? SessionTaskOrchestrator(store: taskGraphStore)
         self.sessionTurnLease = sessionTurnLease
         self.memoryGraphStoreRegistry = memoryGraphStoreRegistry
+        self.ds4EngineRegistry = ds4EngineRegistry
     }
 
     func localExecAccessMode() -> AgentLocalExecAccessMode {

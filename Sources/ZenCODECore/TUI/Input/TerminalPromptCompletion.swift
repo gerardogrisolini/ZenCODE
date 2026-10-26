@@ -373,6 +373,24 @@ enum TerminalPromptCompletionCatalog {
             TerminalCommandSuggestion(command: "on", summary: "start Telegram control"),
             TerminalCommandSuggestion(command: "off", summary: "stop Telegram control")
         ],
+        "/ds4": [
+            TerminalCommandSuggestion(command: "status", summary: "show engine, context and runtime values"),
+            TerminalCommandSuggestion(
+                command: "power",
+                summary: "<1-100> · engine power for this session",
+                requiresArgument: true
+            ),
+            TerminalCommandSuggestion(
+                command: "steer",
+                summary: "<-100..100> · FFN steering scale",
+                requiresArgument: true
+            ),
+            TerminalCommandSuggestion(
+                command: "hints",
+                summary: "on|off · brief programming hints",
+                requiresArgument: true
+            )
+        ],
         "/cron": [
             TerminalCommandSuggestion(
                 command: "list",

@@ -33,8 +33,8 @@ extension LocalToolsSupport {
         init(_ text: String, isNewFile: Bool = false) {
             var lines = text.isEmpty && isNewFile
                 ? []
-                : text.components(separatedBy: "\n")
-            let trailingNewline = text.hasSuffix("\n")
+                : PatchLines.split(text)
+            let trailingNewline = PatchLines.endsWithLineFeed(text)
             if trailingNewline, lines.last == "" {
                 lines.removeLast()
             }
@@ -63,14 +63,19 @@ extension LocalToolsSupport {
         let hunks: [[DiffLine]]
     }
 
+    /// Whether `patch` is a Begin Patch payload: its first non-blank line is
+    /// `*** Begin Patch`, with or without a trailing `\r` (CRLF payloads).
     static func isBeginPatchFormat(_ patch: String) -> Bool {
-        patch.split(separator: "\n", omittingEmptySubsequences: false)
-            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } == "*** Begin Patch"
+        PatchLines.split(patch)
+            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map(PatchLines.withoutTrailingCarriageReturn) == "*** Begin Patch"
     }
 
     static func parseBeginPatch(_ patch: String) throws -> [BeginPatchFilePatch] {
-        let lines = patch.components(separatedBy: "\n")
-        guard lines.contains("*** End Patch") else {
+        // Lines keep their `\r`, so added and context content stays byte-exact;
+        // only the structural markers below are recognized without it.
+        let lines = PatchLines.split(patch)
+        guard lines.contains(where: { isEndPatchMarker($0) }) else {
             throw LocalToolsFeatureError.permissionDenied("Malformed patch: missing *** End Patch.")
         }
         var patches: [BeginPatchFilePatch] = []
@@ -110,7 +115,7 @@ extension LocalToolsSupport {
                 if raw.hasPrefix("*** Add File: ")
                     || raw.hasPrefix("*** Update File: ")
                     || raw.hasPrefix("*** Delete File: ")
-                    || raw == "*** End Patch" {
+                    || isEndPatchMarker(raw) {
                     break
                 }
                 if raw.hasPrefix("@@") {
@@ -121,7 +126,7 @@ extension LocalToolsSupport {
                     index += 1
                     continue
                 }
-                if raw == "\\ No newline at end of file" {
+                if isNoNewlineMarker(raw) {
                     index += 1
                     continue
                 }
@@ -159,6 +164,16 @@ extension LocalToolsSupport {
             patches.append(BeginPatchFilePatch(path: path, action: action, hunks: hunks))
         }
         return patches
+    }
+
+    /// `*** End Patch`, ignoring one trailing `\r` of a CRLF payload.
+    private static func isEndPatchMarker(_ line: String) -> Bool {
+        PatchLines.withoutTrailingCarriageReturn(line) == "*** End Patch"
+    }
+
+    /// `\ No newline at end of file`, ignoring one trailing `\r` of a CRLF payload.
+    private static func isNoNewlineMarker(_ line: String) -> Bool {
+        PatchLines.withoutTrailingCarriageReturn(line) == "\\ No newline at end of file"
     }
 
     static func applyBeginPatch(_ filePatch: BeginPatchFilePatch, at url: URL) throws -> FilePatchResult {
@@ -253,7 +268,13 @@ extension LocalToolsSupport {
     }
 
     static func parseUnifiedDiff(_ patch: String) throws -> [FilePatch] {
-        let lines = patch.components(separatedBy: "\n")
+        // Lines keep their `\r`, so context and removals compare byte-exactly
+        // with the file; only headers and markers are read without it.
+        let lines = PatchLines.split(patch)
+        // Same line split as `PatchFileHeaders`, so its indices address `lines`.
+        // A `--- ` line inside a hunk body is removed content (`-- note`) unless
+        // the shared rule recognizes it as the start of a file header.
+        let headerIndices = PatchFileHeaders.fileHeaderLineIndices(in: patch)
         var patches: [FilePatch] = []
         var index = 0
 
@@ -269,6 +290,11 @@ extension LocalToolsSupport {
                 value.removeFirst(2)
             }
             return value
+        }
+
+        /// The text after the `--- ` / `+++ ` prefix, without a CRLF payload's `\r`.
+        func headerValue(_ line: String) -> String {
+            PatchLines.withoutTrailingCarriageReturn(String(line.dropFirst(4)))
         }
 
         while index < lines.count {
@@ -294,12 +320,12 @@ extension LocalToolsSupport {
                 guard index < lines.count, lines[index].hasPrefix("--- ") else {
                     continue
                 }
-                let oldPath = stripPrefix(String(lines[index].dropFirst(4)))
+                let oldPath = stripPrefix(headerValue(lines[index]))
                 index += 1
                 guard index < lines.count, lines[index].hasPrefix("+++ ") else {
                     throw LocalToolsFeatureError.permissionDenied("Malformed patch: missing +++ header after \(oldPath).")
                 }
-                let newPath = stripPrefix(String(lines[index].dropFirst(4)))
+                let newPath = stripPrefix(headerValue(lines[index]))
                 index += 1
                 if oldPath == "/dev/null" {
                     isNewFile = true
@@ -317,10 +343,10 @@ extension LocalToolsSupport {
                     var hunkLines: [DiffLine] = []
                     while index < lines.count,
                           !lines[index].hasPrefix("@@"),
-                          !lines[index].hasPrefix("--- "),
+                          !headerIndices.contains(index),
                           !lines[index].hasPrefix("diff --git") {
                         let raw = lines[index]
-                        if raw == "\\ No newline at end of file" {
+                        if isNoNewlineMarker(raw) {
                             index += 1
                             continue
                         }
@@ -330,8 +356,9 @@ extension LocalToolsSupport {
                             hunkLines.append(.removed(String(raw.dropFirst())))
                         } else if raw.hasPrefix(" ") {
                             hunkLines.append(.context(String(raw.dropFirst())))
-                        } else if raw.isEmpty {
-                            hunkLines.append(.context(""))
+                        } else if raw.isEmpty || raw == "\r" {
+                            // The empty line of an LF or CRLF file: content keeps its `\r`.
+                            hunkLines.append(.context(raw))
                         } else {
                             // Unknown line; stop this hunk.
                             break

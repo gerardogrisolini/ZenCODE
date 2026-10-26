@@ -1156,6 +1156,329 @@ struct TerminalChatRenderingTests {
         )
     }
 
+    // MARK: - DS4 throughput label
+
+    @Test
+    func throughputFragmentShowsPrefillProgressWithAndWithoutRate() {
+        func metrics(
+            processed: Int,
+            target: Int,
+            rate: Double?
+        ) -> DirectAgentGenerationMetrics {
+            DirectAgentGenerationMetrics(
+                promptTokenCount: nil,
+                completionTokenCount: nil,
+                throughput: DirectAgentGenerationThroughput(
+                    phase: .prefill,
+                    prefillTokensPerSecond: rate,
+                    processedTokens: processed,
+                    targetTokens: target
+                )
+            )
+        }
+
+        #expect(
+            TerminalStatusBar.generationThroughputFragment(
+                metrics(processed: 1_200, target: 8_000, rate: 512)
+            ) == "p:1.2k/8.0k 512.0 tok/s"
+        )
+        #expect(
+            TerminalStatusBar.generationThroughputFragment(
+                metrics(processed: 0, target: 8_000, rate: nil)
+            ) == "p:0/8.0k"
+        )
+        #expect(
+            TerminalStatusBar.generationThroughputFragment(
+                metrics(processed: 800, target: 25_000, rate: 64.26)
+            ) == "p:800/25k 64.3 tok/s"
+        )
+        // An unusable rate is dropped, the progress stays.
+        #expect(
+            TerminalStatusBar.generationThroughputFragment(
+                metrics(processed: 10, target: 100, rate: .infinity)
+            ) == "p:10/100"
+        )
+        #expect(
+            TerminalStatusBar.generationThroughputFragment(
+                metrics(processed: 10, target: 100, rate: -3)
+            ) == "p:10/100"
+        )
+    }
+
+    @Test
+    func liveProgressIgnoresTheGenerationRate() {
+        let metrics = DirectAgentGenerationMetrics(
+            promptTokenCount: nil,
+            completionTokenCount: nil,
+            throughput: DirectAgentGenerationThroughput(
+                phase: .prefill,
+                prefillTokensPerSecond: 512,
+                generationTokensPerSecond: 42.1,
+                processedTokens: 1_200,
+                targetTokens: 8_000
+            )
+        )
+
+        #expect(TerminalStatusBar.generationThroughputFragment(metrics) == "p:1.2k/8.0k 512.0 tok/s")
+    }
+
+    @Test
+    func throughputFragmentShowsBothSpeedsInOneLabel() {
+        func fragment(prefill: Double?, generation: Double?) -> String? {
+            TerminalStatusBar.generationThroughputFragment(
+                DirectAgentGenerationMetrics(
+                    promptTokenCount: nil,
+                    completionTokenCount: nil,
+                    throughput: DirectAgentGenerationThroughput(
+                        phase: .generation,
+                        prefillTokensPerSecond: prefill,
+                        generationTokensPerSecond: generation
+                    )
+                )
+            )
+        }
+
+        #expect(fragment(prefill: 512, generation: 42.1) == "p:512.0 g:42.1 tok/s")
+        #expect(fragment(prefill: 612.34, generation: 43.2) == "p:612.3 g:43.2 tok/s")
+        #expect(fragment(prefill: 1_234.6, generation: 41.23) == "p:1234.6 g:41.2 tok/s")
+        #expect(fragment(prefill: 512, generation: nil) == "p:512.0 tok/s")
+        #expect(fragment(prefill: nil, generation: 42.1) == "g:42.1 tok/s")
+        // Unusable values are dropped one by one.
+        #expect(fragment(prefill: .nan, generation: 42.1) == "g:42.1 tok/s")
+        #expect(fragment(prefill: 512, generation: -1) == "p:512.0 tok/s")
+        #expect(fragment(prefill: nil, generation: nil) == nil)
+        #expect(fragment(prefill: .infinity, generation: .nan) == nil)
+    }
+
+    @Test
+    func throughputFragmentFormatsTheGenerationRate() {
+        func fragment(_ rate: Double?) -> String? {
+            TerminalStatusBar.generationThroughputFragment(
+                DirectAgentGenerationMetrics(
+                    promptTokenCount: nil,
+                    completionTokenCount: nil,
+                    throughput: DirectAgentGenerationThroughput(
+                        phase: .generation,
+                        generationTokensPerSecond: rate
+                    )
+                )
+            )
+        }
+
+        #expect(fragment(41.23) == "g:41.2 tok/s")
+        #expect(fragment(0) == "g:0.0 tok/s")
+        #expect(fragment(99.94) == "g:99.9 tok/s")
+        #expect(fragment(100) == "g:100.0 tok/s")
+        #expect(fragment(100.44) == "g:100.4 tok/s")
+        #expect(fragment(1_234.6) == "g:1234.6 tok/s")
+        #expect(fragment(nil) == nil)
+        #expect(fragment(-1) == nil)
+        #expect(fragment(.nan) == nil)
+        #expect(fragment(.infinity) == nil)
+    }
+
+    @Test
+    func throughputFragmentIsAbsentWithoutThroughput() {
+        let metrics = DirectAgentGenerationMetrics(
+            promptTokenCount: 120,
+            cachedPromptTokenCount: 800,
+            completionTokenCount: 32
+        )
+
+        #expect(TerminalStatusBar.generationThroughputFragment(metrics) == nil)
+        #expect(TerminalStatusBar.styledGenerationThroughputFragment(metrics) == nil)
+    }
+
+    @Test
+    func styledThroughputFragmentMutesOnlyTheLabels() throws {
+        let muted = TerminalStyle.Text.muted
+        let reset = TerminalStyle.reset
+
+        let prefill = DirectAgentGenerationMetrics(
+            promptTokenCount: nil,
+            completionTokenCount: nil,
+            throughput: DirectAgentGenerationThroughput(
+                phase: .prefill,
+                prefillTokensPerSecond: 512,
+                processedTokens: 1_200,
+                targetTokens: 8_000
+            )
+        )
+        let styledPrefill = try #require(TerminalStatusBar.styledGenerationThroughputFragment(prefill))
+        #expect(styledPrefill == "\(muted)p:\(reset)1.2k/8.0k 512.0 tok/s")
+        #expect(TerminalANSIText.stripANSI(styledPrefill) == "p:1.2k/8.0k 512.0 tok/s")
+
+        let both = DirectAgentGenerationMetrics(
+            promptTokenCount: nil,
+            completionTokenCount: nil,
+            throughput: DirectAgentGenerationThroughput(
+                phase: .generation,
+                prefillTokensPerSecond: 512,
+                generationTokensPerSecond: 42.1
+            )
+        )
+        let styledBoth = try #require(TerminalStatusBar.styledGenerationThroughputFragment(both))
+        #expect(styledBoth == "\(muted)p:\(reset)512.0 \(muted)g:\(reset)42.1 tok/s")
+        #expect(
+            TerminalANSIText.stripANSI(styledBoth)
+                == TerminalStatusBar.generationThroughputFragment(both)
+        )
+
+        let onlyGeneration = DirectAgentGenerationMetrics(
+            promptTokenCount: nil,
+            completionTokenCount: nil,
+            throughput: DirectAgentGenerationThroughput(phase: .generation, generationTokensPerSecond: 42.1)
+        )
+        #expect(
+            TerminalStatusBar.styledGenerationThroughputFragment(onlyGeneration)
+                == "\(muted)g:\(reset)42.1 tok/s"
+        )
+
+        let noRatePrefill = DirectAgentGenerationMetrics(
+            promptTokenCount: nil,
+            completionTokenCount: nil,
+            throughput: DirectAgentGenerationThroughput(
+                phase: .prefill, processedTokens: 0, targetTokens: 8_000
+            )
+        )
+        #expect(
+            TerminalStatusBar.styledGenerationThroughputFragment(noRatePrefill)
+                == "\(muted)p:\(reset)0/8.0k"
+        )
+    }
+
+    @Test
+    func statusBarTextPlacesTheThroughputRightAfterTheTokenCounts() {
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        var state = TerminalStatusBar.State()
+        state.latestMetrics = DirectAgentGenerationMetrics(
+            promptTokenCount: 120,
+            cachedPromptTokenCount: 800,
+            completionTokenCount: 32,
+            responseDurationSeconds: 12,
+            throughput: DirectAgentGenerationThroughput(
+                phase: .generation,
+                prefillTokensPerSecond: 512,
+                generationTokensPerSecond: 41.2
+            )
+        )
+        state.latestSubscriptionUsage = DirectAgentSubscriptionUsageStatus(
+            provider: "test",
+            dailyUsedPercent: 12,
+            weeklyUsedPercent: nil
+        )
+
+        #expect(
+            TerminalANSIText.stripANSI(statusBar.statusTextLocked(state: &state))
+                .contains("0:00:12 · c:800 p:120 g:32 · p:512.0 g:41.2 tok/s · d:12%")
+        )
+    }
+
+    @Test
+    func statusBarLiveThroughputKeepsPreviousCountersUntilTheFinalSnapshot() async {
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        let previousThroughput = DirectAgentGenerationThroughput(phase: .generation, generationTokensPerSecond: 30)
+        _ = await statusBar.update(
+            metrics: DirectAgentGenerationMetrics(
+                promptTokenCount: 120,
+                cachedPromptTokenCount: 800,
+                completionTokenCount: 32,
+                responseDurationSeconds: 4,
+                contextTokenCount: 952,
+                clearsPromptMetrics: true,
+                replacesPreviousMetrics: true,
+                throughput: previousThroughput
+            )
+        )
+
+        await statusBar.beginRequest()
+        let prefill = DirectAgentGenerationThroughput(
+            phase: .prefill, processedTokens: 0, targetTokens: 8_000
+        )
+        _ = await statusBar.update(
+            metrics: DirectAgentGenerationMetrics(
+                promptTokenCount: nil,
+                completionTokenCount: nil,
+                throughput: prefill,
+                isLiveProgress: true
+            )
+        )
+
+        // The live event neither wipes the previous counters nor uses up the
+        // replacement reserved for the first metrics event of the request.
+        var state = await statusBar.state
+        #expect(state.shouldReplaceMetricsOnNextUpdate)
+        #expect(state.latestMetrics?.promptTokenCount == 120)
+        #expect(state.latestMetrics?.cachedPromptTokenCount == 800)
+        #expect(state.latestMetrics?.completionTokenCount == 32)
+        #expect(state.latestMetrics?.responseDurationSeconds == 4)
+        #expect(state.latestMetrics?.throughput == prefill)
+
+        let generation = DirectAgentGenerationThroughput(phase: .generation, generationTokensPerSecond: 41.2)
+        _ = await statusBar.update(
+            metrics: DirectAgentGenerationMetrics(
+                promptTokenCount: nil,
+                completionTokenCount: nil,
+                throughput: generation,
+                isLiveProgress: true
+            )
+        )
+        state = await statusBar.state
+        #expect(state.shouldReplaceMetricsOnNextUpdate)
+        #expect(state.latestMetrics?.promptTokenCount == 120)
+        #expect(state.latestMetrics?.throughput == generation)
+
+        // The round's final snapshot replaces the counters and the throughput.
+        let finalThroughput = DirectAgentGenerationThroughput(
+            phase: .generation, prefillTokensPerSecond: 512, generationTokensPerSecond: 39.9
+        )
+        _ = await statusBar.update(
+            metrics: DirectAgentGenerationMetrics(
+                promptTokenCount: 5_000,
+                cachedPromptTokenCount: 4_000,
+                completionTokenCount: 77,
+                responseDurationSeconds: 9,
+                contextTokenCount: 9_077,
+                clearsPromptMetrics: true,
+                replacesPreviousMetrics: true,
+                throughput: finalThroughput
+            )
+        )
+        state = await statusBar.state
+        #expect(!state.shouldReplaceMetricsOnNextUpdate)
+        #expect(state.latestMetrics?.promptTokenCount == 5_000)
+        #expect(state.latestMetrics?.cachedPromptTokenCount == 4_000)
+        #expect(state.latestMetrics?.completionTokenCount == 77)
+        #expect(state.latestMetrics?.responseDurationSeconds == 9)
+        #expect(state.latestMetrics?.throughput == finalThroughput)
+        #expect(state.latestMetrics?.isLiveProgress == false)
+    }
+
+    @Test
+    func statusBarFinalSnapshotWithoutThroughputClearsTheLabel() async {
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        _ = await statusBar.update(
+            metrics: DirectAgentGenerationMetrics(
+                promptTokenCount: nil,
+                completionTokenCount: nil,
+                throughput: DirectAgentGenerationThroughput(phase: .generation, generationTokensPerSecond: 41.2),
+                isLiveProgress: true
+            )
+        )
+        #expect(await statusBar.state.latestMetrics?.throughput != nil)
+
+        _ = await statusBar.update(
+            metrics: DirectAgentGenerationMetrics(
+                promptTokenCount: 10,
+                completionTokenCount: 5,
+                clearsPromptMetrics: true,
+                replacesPreviousMetrics: true
+            )
+        )
+
+        #expect(await statusBar.state.latestMetrics?.throughput == nil)
+    }
+
     @Test
     func gitNumstatSummaryCountsFilesAdditionsAndDeletions() {
         let output = """

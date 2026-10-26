@@ -285,6 +285,60 @@ extension DirectSubAgentRuntimeTests {
         await runtime.shutdown()
     }
 
+    /// A throttled live throughput update is not rendered by the overview: it
+    /// leaves the agent untouched and does not consume the replacement of the
+    /// previous turn's counters.
+    @Test
+    func liveThroughputEventsAreIgnoredByTheOverview() async throws {
+        let (runtime, backend) = try await streamingScenario(
+            name: "throughput-worker",
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-throughput-tests")
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+        await backend.waitUntilSentPromptCount(1)
+        let live = DirectAgentGenerationMetrics(
+            promptTokenCount: nil,
+            completionTokenCount: nil,
+            throughput: DirectAgentGenerationThroughput(
+                phase: .generation, prefillTokensPerSecond: 512, generationTokensPerSecond: 41.2
+            ),
+            isLiveProgress: true
+        )
+
+        await runtime.recordEvent(
+            .metrics(DirectAgentGenerationMetrics(promptTokenCount: 1_200, completionTokenCount: 42)),
+            agentID: agentID
+        )
+        let before = try #require(await runtime.snapshots().first)
+        await runtime.recordEvent(.metrics(live), agentID: agentID)
+        let after = try #require(await runtime.snapshots().first)
+
+        #expect(after.latestMetrics?.promptTokenCount == 1_200)
+        #expect(after.latestMetrics?.completionTokenCount == 42)
+        #expect(after.latestMetrics?.throughput == nil)
+        #expect(after.latestEventAt == before.latestEventAt)
+        #expect(after.updatedAt == before.updatedAt)
+        #expect(
+            TerminalChat.subAgentOverviewSignature([after])
+                == TerminalChat.subAgentOverviewSignature([before])
+        )
+
+        // A live update at the start of the next turn must not use up the
+        // replacement of the previous turn's counters.
+        try await runtime.queuePrompt("Second turn", for: agentID)
+        _ = await runtime.startNextTurnForTesting(agentID: agentID)
+        await runtime.recordEvent(.metrics(live), agentID: agentID)
+        await runtime.recordEvent(
+            .metrics(DirectAgentGenerationMetrics(promptTokenCount: nil, completionTokenCount: 7)),
+            agentID: agentID
+        )
+        let secondTurn = try #require(await runtime.snapshots().first?.latestMetrics)
+        #expect(secondTurn.completionTokenCount == 7)
+        #expect(secondTurn.promptTokenCount == nil)
+
+        await runtime.shutdown()
+    }
+
     /// Assistant content that literally starts with the thinking marker is
     /// still a message: the typed kind, not the text, selects the affordance.
     @Test

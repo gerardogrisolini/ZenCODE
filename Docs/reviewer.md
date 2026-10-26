@@ -24,7 +24,7 @@ Findings include severity and concrete `file:line` references.
 /review check the session restore flow          # focus on a concern
 ```
 
-With no argument, `/review` reviews the latest tracked file changes. If a task graph or approved plan exists, it also verifies every task/plan claim against current files and actual validation output, classifying each as `implemented`, `validated`, `unverified`, `failed`, `deviated`, `cancelled`, or `blocked`.
+With no argument, `/review` reviews the latest tracked file changes. The Reviewers receive the list of changed files with their status and line counts, not their diffs, and read the current files. If a task graph or approved plan exists, it also verifies every task/plan claim against current files and actual validation output, classifying each as `implemented`, `validated`, `unverified`, `failed`, `deviated`, `cancelled`, or `blocked`.
 
 A graph or approved plan enables coverage-only review even without tracked changes. With no inputs, terminal and Telegram `/review` exit with `No tracked session file changes to review.` ACP does not own the TUI change tracker, so its fallback reviews the current workspace changes directly, constrained by any supplied focus.
 

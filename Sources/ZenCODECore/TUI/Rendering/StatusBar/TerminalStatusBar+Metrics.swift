@@ -137,6 +137,68 @@ extension TerminalStatusBar {
         return fragments.joined(separator: " ")
     }
 
+    /// Plain throughput label, a single one with the `tok/s` unit at the end.
+    /// While the prompt is evaluated it shows the progress relative to the sync
+    /// and the prefill rate once measurable (`p:1.2k/8.0k 512.0 tok/s`, `p:0/8.0k`
+    /// before the first measure). Otherwise it shows the speeds that are known:
+    /// `p:512.0 g:42.1 tok/s`, `p:512.0 tok/s` or `g:42.1 tok/s`. `nil` without a
+    /// throughput or with nothing usable to show.
+    static func generationThroughputFragment(
+        _ metrics: DirectAgentGenerationMetrics
+    ) -> String? {
+        generationThroughputText(metrics) { $0 }
+    }
+
+    /// Status-bar presentation of the throughput label: `p:` / `g:` are muted
+    /// so only the values and the unit keep the default foreground.
+    static func styledGenerationThroughputFragment(
+        _ metrics: DirectAgentGenerationMetrics
+    ) -> String? {
+        generationThroughputText(metrics, styleLabel: mutedLabel)
+    }
+
+    /// The single implementation behind the plain and the styled label:
+    /// `styleLabel` decorates the `p:` / `g:` prefixes only.
+    private static func generationThroughputText(
+        _ metrics: DirectAgentGenerationMetrics,
+        styleLabel: (String) -> String
+    ) -> String? {
+        guard let throughput = metrics.throughput else {
+            return nil
+        }
+        let prefillRate = throughput.prefillTokensPerSecond.flatMap(throughputRateText)
+        let unit = "tok/s"
+
+        if let processed = throughput.processedTokens,
+           let target = throughput.targetTokens {
+            let progress = styleLabel("p:") + "\(tokenCountText(processed))/\(tokenCountText(target))"
+            guard let prefillRate else {
+                return progress
+            }
+            return "\(progress) \(prefillRate) \(unit)"
+        }
+
+        let segments = [
+            prefillRate.map { styleLabel("p:") + $0 },
+            throughput.generationTokensPerSecond
+                .flatMap(throughputRateText)
+                .map { styleLabel("g:") + $0 }
+        ].compactMap(\.self)
+        guard !segments.isEmpty else {
+            return nil
+        }
+        return "\(segments.joined(separator: " ")) \(unit)"
+    }
+
+    /// One decimal (`%.1f`) for every speed, prefill and generation alike;
+    /// nothing for a value that is not a finite, non-negative speed.
+    static func throughputRateText(_ value: Double) -> String? {
+        guard value.isFinite, value >= 0 else {
+            return nil
+        }
+        return String(format: "%.1f", value)
+    }
+
     static func subscriptionUsageFragment(
         _ status: DirectAgentSubscriptionUsageStatus
     ) -> String? {

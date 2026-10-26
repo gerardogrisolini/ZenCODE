@@ -22,7 +22,10 @@ During the active terminal session, ZenCODE keeps an in-memory history
 of effective file mutations, grouped by turn. Use `/artifacts` without arguments
 to show the complete history, including text evidence, patches, and explicit
 fallbacks for binary, uncertain, or over-budget evidence (64 KiB per text and
-256 KiB per turn). Normal tool blocks remain compact without code or diffs.
+256 KiB per turn). When the workspace checkpoint's evidence for an added,
+deleted or modified text file exceeds that limit, the artifact shows the first
+whole diff lines that fit, with a truncation note; `/undo` still uses the full
+patch. Normal tool blocks remain compact without code or diffs.
 The history is scoped to the active
 session and is cleared by `/sessions new`, loading/restoring a session, and
 `/setup`; it is never written to saved snapshots, checkpoints, transcripts, or
@@ -137,6 +140,23 @@ directory between machines in one step:
   concurrent processes keep a single shared exclusion boundary before,
   during, and after the swap. Because the whole directory is replaced, the
   Linux voice mode files are removed: download them again afterwards.
+- **Clean memory** lists the memory graphs under `~/.zencode/memory/` (the
+  current project, the global graph, and the other projects, with size and
+  modification date), then lets you choose the rules to apply to one of them:
+  remove archived entries unchanged for N days (default 30), archive entries
+  that were never recalled and have not changed for N days (default 180, scaled
+  per category), and graph hygiene (superseded entries, dangling links, unused
+  tags and clusters, unusable embedding vectors). The days are asked each time
+  and never saved. A preview shows the counts and the titles that would be
+  affected; nothing changes until you confirm (default No). The current graph is
+  then copied to `memory.graph.json.bak` next to it, replacing any previous
+  copy, and the cleanup is applied as one atomic transaction. The copy is never
+  loaded by `zen`: to undo, close `zen` and copy it over `memory.graph.json`. See
+  [Docs/memory.md](memory.md#memory-cleanup).
+- **Delete project memory folder**, offered by **Clean memory** for the graph of
+  another project only (not the current project and not the global graph),
+  removes that project's whole memory directory after a confirmation that shows
+  the exact path. No copy is kept: export a backup first if you may need it.
 - **Reset remote configuration** is the same reset previously found in the
   main setup menu, now grouped here with the other data operations.
 - **Back** returns to the main setup menu. Cancelling any prompt leaves
@@ -177,7 +197,7 @@ zen [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--install-features [
 - `--install-features [id,id,...]`: copy the requested optional feature package(s), build their release products, and enable them. With no IDs in an interactive terminal, opens the optional-feature picker.
 - `--no-features`: skip optional-feature installation when used with `--install-features`.
 - `--zen-package-path DIR`: use this ZenCODE checkout as the feature source and rewritten local package dependency. This is useful after a manual installation; platform installers preserve their checkout under `~/.zencode/source/` automatically.
-- `--agent NAME`: select an agent profile (default: `Developer`).
+- `--agent NAME`: select an agent profile (default: the project's default developer, normally `Developer`; see [agents.md](agents.md#profile-roles)).
 - `--model MODEL_ID`: request a model override for the direct session; delegated sub-agents remain restricted to the selected profile's authorized bindings.
 - `--working-directory PATH`: working directory for local tools.
 - `--skills LIST`: initial skill selection by name/number, `all`, or `none`.
@@ -369,6 +389,7 @@ Commands start with `/`:
 - `/setup` — save the current session, open setup, rebuild the runtime from the updated configuration, and restore the conversation.
 - `/models` — show every configured model and choose the model for the current session.
 - `/think` — open a menu to select the thinking level of the current model.
+- `/ds4 status|power <1-100>|steer <scale>|hints on|off` — inspect and tune the in-process DS4 engine; available only when the current model has a DS4 runtime. Values are not persisted. See [DS4 local runtime](ds4.md).
 - `/agents [list|<name>|<number>]` — open the agent menu: `Enter` switches the active agent, `Space`/`X` associates profiles with the current project (the only ones the sub-agents tool can delegate to); `list`, `<name>`, and `<number>` select directly. See [Agent Profiles](#agent-profiles).
 - `/tools [all|none|tool-name|package-name|number]` — select exposed tool groups; `/tools logs` opens the platform system log viewer (Console.app on macOS).
 - `/skills` — select or install prompt skills; `/skills uninstall` opens a multi-selection menu for removing app-installed skills.
@@ -376,8 +397,8 @@ Commands start with `/`:
 
 **Sessions and memory:**
 - `/sessions` — list and select saved sessions.
-- `/sessions <name>` — save or overwrite a named snapshot.
-- `/sessions save` — save the current session (derives a name from the first prompt if none is active).
+- `/sessions <name>` — save or overwrite a named snapshot. With a DS4 model it also writes the DS4 KV checkpoint (`<name>.ds4kv`) next to the snapshot.
+- `/sessions save` — save the current session (derives a name from the first prompt if none is active); with a DS4 model it also writes the DS4 KV checkpoint.
 - `/sessions compact` — force context compaction without saving.
 - `/sessions new` — reset to a fresh, unsaved session.
 - `/sessions delete` — delete a saved snapshot.
@@ -401,7 +422,7 @@ Commands start with `/`:
 
 **Scheduling:**
 - `/cron` / `/cron list` — show the `MAILTO` recipient and the scheduled prompts, each with its number, schedule, agent, working directory, output kind (`text` or `JSONL`), and prompt. See [Scheduled Prompts (crontab)](#scheduled-prompts-crontab).
-- `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>` — schedule a prompt for the working directory of the session. With `-agent <name>`, the job runs with that agent profile; without it, with the default `Developer` profile, whatever agent is selected in the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default cron mails the final answer text; with the `-json` option right after `add`, the job runs with `--jsonl` and cron mails the JSONL records of the run. The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
+- `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>` — schedule a prompt for the working directory of the session. With `-agent <name>`, the job runs with that agent profile; without it, with the default developer of the project (normally `Developer`), whatever agent is selected in the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default cron mails the final answer text; with the `-json` option right after `add`, the job runs with `--jsonl` and cron mails the JSONL records of the run. The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
 - `/cron remove <n>` — remove scheduled prompt `<n>`; the entries after it are renumbered.
 - `/cron run <n>` — run scheduled prompt `<n>` now, the way cron runs it, in the background, and show the result in the terminal instead of mailing it.
 - `/cron mailto [address|none|default]` — without an argument, show the address that receives scheduled-prompt results; with one, set it. `none` sends no mail; `default` removes the override and uses the local mailbox of the crontab owner.
@@ -484,9 +505,12 @@ only terminal rendering surface for these live chat entries.
 
 `/plan save` stores a reusable copy for the current working directory. It uses
 the active plan when one exists; otherwise it can promote the latest non-empty
-assistant response into a text-only plan. The saved copy is reset to an
-unapproved draft with pending task statuses, while the currently active plan is
-left unchanged.
+assistant response into a plan. If that response is in the strict Planner format
+(`Specifiche concordate`, a numbered `Implementation plan`, and a `Dependencies:`
+line on its own line for every point), the plan is saved with its structured
+tasks and dependencies; any other response is saved as a text-only plan. The
+saved copy is reset to an unapproved draft with pending task statuses, while the
+currently active plan is left unchanged.
 
 To hand a plan to another session, start a new session with `/sessions new` (or
 use any session for the same working directory with no active plan), then run
@@ -497,8 +521,9 @@ session, its active attempts, or its execution progress; review or revise the
 draft, then run `/plan approve` to begin implementation.
 
 Approval creates and activates the plan's task graph in the receiving session.
-For a saved text-only plan with no structured items, ZenCODE creates one stable
-implementation task rather than guessing a task breakdown from prose.
+A plan saved with structured tasks keeps them. For a saved text-only plan with
+no structured items, ZenCODE creates one stable implementation task rather than
+guessing a task breakdown from prose.
 
 **Optional integrations:**
 - `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup). Available even while a prompt is running.
@@ -731,7 +756,8 @@ a run starts, that run fails, and its error is mailed as described in
 
 `--agent` is present in the line only for entries added with `-agent`, with the
 name as you typed it. An entry without `-agent` is listed as `agent: default`
-and runs with the `Developer` profile, as `zen -p` does; the agent selected in
+and runs with the default developer of its working directory's project
+(normally `Developer`), as `zen -p` does; the agent selected in
 the session where you type `/cron add` is never used.
 
 `/cron add` takes two things from the session where you type it:

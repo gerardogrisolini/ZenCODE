@@ -19,6 +19,8 @@ enum TerminalChatCommandAvailability: Sendable, Equatable {
     case always
     case builderAgent
     case telegramEnabled
+    /// The current model has a DS4 runtime (in-process engine).
+    case ds4Model
 }
 
 struct TerminalOptionalCommandAvailability: Sendable, Equatable {
@@ -113,6 +115,10 @@ extension TerminalChat {
             return isTelegramCommandVisible()
                 ? nil
                 : Self.unknownCommandMessage(for: line)
+        case "/ds4":
+            return currentModelUsesDS4Runtime()
+                ? nil
+                : Self.unknownCommandMessage(for: line)
         default:
             return nil
         }
@@ -133,13 +139,15 @@ extension TerminalChat {
         let availability = optionalCommandAvailability
         return Self.visibleCommandDescriptors(
             builderAgentEnabled: AgentProfileStore.isBuilderAgent(selectedAgent),
-            telegramEnabled: availability.telegramEnabled
+            telegramEnabled: availability.telegramEnabled,
+            ds4ModelEnabled: currentModelUsesDS4Runtime()
         )
     }
 
     nonisolated static func visibleCommandDescriptors(
         builderAgentEnabled: Bool,
-        telegramEnabled: Bool
+        telegramEnabled: Bool,
+        ds4ModelEnabled: Bool = false
     ) -> [TerminalChatCommandDescriptor] {
         allCommandDescriptors.filter { descriptor in
             switch descriptor.availability {
@@ -149,6 +157,8 @@ extension TerminalChat {
                 return builderAgentEnabled
             case .telegramEnabled:
                 return telegramEnabled
+            case .ds4Model:
+                return ds4ModelEnabled
             }
         }
     }
@@ -205,6 +215,18 @@ extension TerminalChat {
             command: "/think",
             summary: "set thinking level",
             help: "/think opens a menu to select the current model thinking level."
+        ),
+        TerminalChatCommandDescriptor(
+            command: "/ds4",
+            summary: "DS4 engine status and runtime controls",
+            help: """
+            /ds4 status             Show model, backend, library, context, KV cache and runtime values (DS4 models only)
+            /ds4 power <1-100>      Set the engine power for this session
+            /ds4 steer <-100..100>  Set the FFN directional steering scale (needs a steering file)
+            /ds4 hints on|off       Brief programming hints, from the next conversation boundary
+            DS4 values last for this session only and are never saved.
+            """,
+            availability: .ds4Model
         ),
         TerminalChatCommandDescriptor(
             command: "/agents",

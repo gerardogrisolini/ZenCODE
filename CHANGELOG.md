@@ -12,6 +12,59 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- DS4 runs in-process: a DS4 model is served by the `zen` process itself,
+  with no `ds4-server` child and no loopback endpoint. `ZenCODECore` loads
+  `libzencode-ds4.{dylib,so}` at runtime with `dlopen`. The library is a ZenCODE
+  C shim built on your machine against your DS4 checkout, by
+  `Scripts/build-ds4-engine.sh` or from `/setup`, which offers to build it. `zen`
+  has no compile-time dependency on DS4. The `metal`, `cpu`, `cuda`, and `rocm`
+  backends are supported; `cuda` and `rocm` are not yet verified on a real GPU.
+  Closing an agent backend (for example on an agent switch) releases only its DS4
+  sessions; the loaded model stays resident. The engine is closed when `zen` exits,
+  when a different DS4 model is requested, or when a new agent backend uses a
+  non-DS4 model while no DS4 session is live.
+  See [Docs/ds4.md](Docs/ds4.md).
+- DS4 `/ds4` command, available with a DS4 model: `/ds4 status` shows the model,
+  engine, library, context, KV cache, pool sessions, power, steering, and hints
+  without opening the model. `/ds4 power <1-100>`, `/ds4 steer <-100..100>`, and
+  `/ds4 hints on|off` change the values for the session only; they are never
+  saved.
+- DS4 KV checkpoints: `/sessions save` and `/sessions <name>` write
+  `<name>.ds4kv` beside the session file, and loading that session with a DS4
+  model restores it, so the saved KV state is reused instead of evaluating the
+  whole prompt again when the checkpoint is compatible. Nothing else writes a
+  checkpoint. A checkpoint is skipped for sessions with images or
+  without live DS4 state, is deleted with its session, and is not part of
+  snapshots or task checkpoints. It can be several GB. See
+  [Docs/ds4.md](Docs/ds4.md#kv-checkpoints-ds4kv).
+- DS4 vision: with a vision projector (`visionRelativePath`), images in user
+  messages and tool results are encoded for the model. Without one, the images
+  are ignored and a diagnostic is shown. Images in the history are encoded again
+  on every round.
+- DS4 native transcript and tools: prompts use the chat template and tool syntax
+  of each model family (DSML for DeepSeek V4, DSML41 for DeepSeek V4.1, GLM, and
+  Qwen), reuse the KV cache of the common prefix, and map `/think` to the engine
+  modes. Session compaction follows the ds4-agent rule at 85% of the context.
+  Turns the model generated are replayed with the exact token ids it sampled
+  instead of tokenizing their text again, so a model with recurrent state
+  (Qwen3.8-Flash-Next) reuses the KV of the previous round instead of rebuilding
+  the whole prompt. The engine library ABI is now version 2, so a library built
+  before this change must be rebuilt (from `/setup` or with
+  `Scripts/build-ds4-engine.sh`).
+- DS4 engine options per model: the MTP and DSpark support models, the steering
+  file and scales, quality, warm weights, threads, prefill chunk, the CUDA or
+  ROCm architecture, the number of engine sessions (`engineSessions`, 1 to 8,
+  default 2), and advanced extra arguments for DS4's distributed or multi-GPU
+  options, validated by DS4's own parsers.
+- DS4 live throughput: while a DS4 model works, the status bar shows one label
+  after the token counters. During prefill it reads `p:1.2k/8.0k 512.0 tok/s`:
+  the tokens evaluated so far out of those to evaluate (the cached prefix is not
+  counted) and the prefill speed, as soon as it can be measured. Then it
+  becomes `p:512.0 g:42.1 tok/s`: the prefill speed stays next to the live
+  generation speed. Both speeds always show one decimal. At the end of the round
+  the label keeps the exact values reported by the engine, until the next
+  request replaces them; when the whole prompt was already cached only `g:` is
+  shown. Other providers do not show it.
 - Voice: while voice mode listens, the speech recognized but not yet sent
   appears live at the end of the prompt draft: word by word on macOS, in both
   Send modes, and one speech segment at a time on Linux with the Send mode
@@ -146,9 +199,45 @@ Release tags follow the strict `vX.Y.Z` contract described in
   project folder from that list or from memory. Regenerate the recommended
   profiles in setup to apply them. See
   [Docs/organizer.md](Docs/organizer.md#selecting-organizer).
+- Memory cleanup from `/setup` › Data management › Clean memory: pick a memory
+  graph (the current project, the global graph, or another project) and remove
+  archived entries unchanged for N days (default 30), archive entries that were
+  never recalled and have not changed for N days (default 180, scaled per
+  category), and tidy the graph (superseded entries, dangling links, unused tags
+  and clusters, unusable embedding vectors). A preview with counts and titles
+  comes first and nothing changes without a confirmation. The graph is copied to
+  `memory.graph.json.bak` in the same transaction, replacing any previous copy;
+  `zen` never loads it, and it is restored by hand with `zen` closed. The memory
+  folder of another project can be deleted from the same menu, with no copy.
+  Nothing is saved in settings or read from the environment, and a cleared
+  embedding vector is regenerated only when its entry is next written or updated.
+  See [Docs/memory.md](Docs/memory.md#memory-cleanup).
 
 ### Changed
 
+- The default agent is now chosen per project. When no agent is given with
+  `--agent`, the launch agent is the system Developer if the project associates
+  it, otherwise the first associated `developer` profile in `agents.json` order;
+  a project with no associated developer keeps the global default. ACP resolves
+  it again for the working directory of each `session/new` and `session/load`,
+  while an explicit `--agent`, `agentId`, or `agentName` still selects any
+  profile. See [Docs/agents.md](Docs/agents.md#profile-roles).
+- DS4 setup builds the engine. After you select the GGUF files and the settings
+  of each model, setup checks the engine library and, when it is missing or must
+  be rebuilt, asks **Build the DS4 engine now?** (default: yes). The library
+  state (built, missing, or rebuild required) is shown in the setup detail. A
+  failed build prints the error and the manual command, and keeps the staged
+  settings. Each model can also take an optional vision projector and an MTP or
+  DSpark support GGUF. Setup still does not download a checkout or models, probe
+  the hardware, or call `/models`. See [Docs/ds4.md](Docs/ds4.md#setup).
+- The DS4 `ds4Runtime` manifest gains optional fields: `visionRelativePath`,
+  `mtpRelativePath`, `steeringRelativePath`, `dspark`, `mtpDraftTokens`,
+  `mtpMargin`, `quality`, `threads`, `prefillChunk`, `warmWeights`,
+  `steeringFFN`, `steeringAttn`, `cudaArch`, `rocmArch`, `engineSessions`, and
+  `extraEngineArguments`. Manifests without them remain valid. Auxiliary paths
+  are relative to the DS4 checkout and must not be symlinks.
+- The DS4 provider base URL `http://127.0.0.1:8000/v1` is now only a
+  compatibility placeholder, which the in-process engine does not use.
 - Project data now follows a moved project folder. Project memory, the project
   agents chosen with `/agents`, saved sessions, task graphs, and saved plans are
   stored under a project key derived from the project name (the name of the
@@ -199,6 +288,33 @@ Release tags follow the strict `vX.Y.Z` contract described in
   of the `[R]`, `[A]`, and `[C]` keys, instead of full orange, so the card looks
   lighter, like the prompt frame. The "Authorization" title in the top border
   and the `❯` marker before the command stay full orange, without dimming.
+- File artifacts larger than the 64 KiB evidence limit now show the start of
+  their diff instead of only "Diff unavailable: file or operation evidence
+  exceeds the byte limit." This covers files added, deleted, or modified during
+  a turn and detected by the workspace checkpoint, including files created by
+  `local.exec` or a script. The artifact keeps the whole hunks and lines that
+  fit in 64 KiB, or in what is left of the 256 KiB per-turn limit. It also
+  shows the full `+N -M` counts and a note such as "Diff truncated: showing the
+  first 1200 of 3142 diff lines". Only the printed diff is shortened: `/undo`
+  still uses the complete patch. ACP tool updates are unchanged.
+- `/review` no longer puts the diffs of the changed files in its request to
+  the Reviewers. It lists each file with its status and `+N -M` counts, or
+  `(binary)`, and the Reviewers read the current files. Before, every diff was
+  sent in full, so a large or generated file made the request very large.
+
+### Removed
+
+- **Breaking:** Removed the `ds4-server` integration. ZenCODE no longer starts,
+  adopts, probes, or stops a `ds4-server` on loopback, and it no longer waits
+  for `/v1/models`. The `DS4ServerSupervisor` actor and its port reservation are
+  gone. Before you use DS4 again, build the engine library: run `/setup` for the
+  DS4 provider, or `Scripts/build-ds4-engine.sh`.
+- **Breaking:** Removed the injected `DS4ServerEndpoint` seam (`ds4Endpoint` in
+  composition roots and tests). A DS4 model always runs as the in-process engine,
+  and no ready loopback endpoint is injected.
+- **Breaking:** Removed `batchedSessions` from the DS4 `ds4Runtime`. It is
+  ignored when a manifest is read and is never written again; the number of
+  sessions the engine keeps is `engineSessions`.
 
 ### Fixed
 
@@ -215,6 +331,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   each point, and dependencies translated to those IDs. It also asks the
   Planner to write each `Dependencies:` line on its own line, never at the end
   of a bullet or a paragraph.
+- `/plan save` without an active plan now keeps the whole task list of a plan
+  written in the Planner format. When the promoted answer has `Specifiche
+  concordate`, a numbered `Implementation plan`, and a `Dependencies:` line on
+  its own line for every point, the saved plan has one task per point with its
+  dependencies, and `/plan load` and `/plan approve` use those tasks. Before,
+  the saved plan had no tasks and approval replaced it with a single generic
+  task. Any other answer is still saved as text only and still receives one
+  task at approval.
 - Voice: on macOS, a short pause while dictating no longer replaces the words
   said before it with the next ones; after a pause the dictation continues on a
   new line and the whole text is sent.
@@ -223,6 +347,45 @@ Release tags follow the strict `vX.Y.Z` contract described in
   decodes the same file if it is installed. The error is reported only when
   both decoders fail, and then it names the reason of each one. Without
   `ffmpeg` the `opusdec` error is reported as before.
+- File artifacts: a file created during a turn by a tool other than a direct
+  file edit (for example a script run with `local.exec`) now shows its content
+  as an added-file diff instead of "Diff unavailable: text evidence is binary,
+  uncertain, or outside the evidence byte limit." The workspace checkpoint
+  computed no diff for added and deleted files. Undo of a turn that adds or
+  deletes files now reverses the same patch as other changes and still falls
+  back to the saved file content if the patch cannot be applied.
+- File artifacts and undo: a change that removes a line starting with `-- `
+  (for example an SQL or Lua comment) or adds a line starting with `++ ` no
+  longer shows that line replaced by the file name in the diff. The workspace
+  checkpoint rewrote such lines as if they were the `---`/`+++` file headers,
+  so the diff was wrong and undo of that turn could not reverse the patch and
+  had to restore the saved file content instead.
+- `local.applyPatch`: a patch that removes a line starting with `-- ` or adds a
+  line starting with `++ ` no longer lists that line as an extra file. The
+  terminal tool call line showed, for example, `schema.sql (+2 more)` instead
+  of `schema.sql`, and ACP tool calls listed those lines as file `locations`.
+  Lines inside a hunk or inside a `*** Update File:` section are no longer read
+  as `---`/`+++` file headers.
+- `local.applyPatch` now applies a unified diff that removes a line starting
+  with `-- `, for example an SQL or Lua comment. The removed line was read as
+  the header of another file: the tool failed with "Malformed patch: missing
+  +++ header", or, when the next line started with `+++ `, it reported success
+  without changing the file and created an empty file named after that line.
+  The tool now recognizes file headers with the same rule as the tool call
+  line, so both list the same files.
+- `local.applyPatch` now reads CRLF payloads the same way on every platform. On
+  Linux, a CRLF patch and a CRLF file were not split into lines, so the patch
+  failed. On every platform, a `*** Begin Patch` payload with CRLF was rejected,
+  and the `---`/`+++` headers of a CRLF unified diff kept the `\r` in the file
+  name. Line content is compared byte for byte: a CRLF patch matches a CRLF file
+  and keeps its line endings, while an LF patch does not match a CRLF file. A
+  CRLF unified diff still cannot end with a context or removed line, because the
+  last line of the payload has no `\r`; end it with a `\ No newline at end of
+  file` line.
+- Headless runs (`zen -p`, `zen -f`, `--jsonl`, and `/cron` jobs) now apply the
+  prompt skills of the selected agent profile. Before, a headless turn had no
+  skill selected. `--skills` and `ZENCODE_AGENT_SKILLS` still apply only to the
+  chat startup and are ignored by headless runs.
 
 ## [2.4.0] - 2026-10-24
 

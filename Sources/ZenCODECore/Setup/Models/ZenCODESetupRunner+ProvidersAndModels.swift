@@ -167,7 +167,7 @@ extension ZenCODESetupRunner {
                         .filter { $0.offset != index }
                         .flatMap { $0.element.models.map(\.id) }
                 )
-                providerInputs[index] = reconfigureDS4ProviderInput(
+                providerInputs[index] = await reconfigureDS4ProviderInput(
                     providerInput,
                     reservedModelIDs: reservedModelIDs
                 )

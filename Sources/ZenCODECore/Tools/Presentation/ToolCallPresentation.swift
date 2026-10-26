@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import LocalToolsSupport
 import ToolCore
 
 /// Shared presentation metadata for direct-agent tool calls.
@@ -283,38 +284,13 @@ public enum ToolCallPresentation {
 
     private static func patchPathCandidates(from rawPatch: String) -> [String] {
         var seen = Set<String>()
-        var candidates: [String] = []
-
-        func appendStripped(_ value: String) {
+        return PatchFileHeaders.rawPathValues(in: rawPatch).compactMap { value in
             guard let normalized = TextUtilities.normalizedPatchPath(value),
                   seen.insert(normalized).inserted else {
-                return
+                return nil
             }
-            candidates.append(normalized)
+            return normalized
         }
-
-        for rawLine in rawPatch.components(separatedBy: "\n") {
-            if let value = patchSectionValue(rawLine, prefix: "*** Add File: ")
-                ?? patchSectionValue(rawLine, prefix: "*** Update File: ")
-                ?? patchSectionValue(rawLine, prefix: "*** Delete File: ") {
-                appendStripped(value)
-            } else if rawLine.hasPrefix("+++ ") {
-                appendStripped(String(rawLine.dropFirst(4)))
-            } else if rawLine.hasPrefix("--- ") {
-                appendStripped(String(rawLine.dropFirst(4)))
-            }
-        }
-
-        return candidates
-    }
-
-    private static func patchSectionValue(_ line: String, prefix: String) -> String? {
-        guard line.hasPrefix(prefix) else {
-            return nil
-        }
-        let value = String(line.dropFirst(prefix.count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
     }
 
 

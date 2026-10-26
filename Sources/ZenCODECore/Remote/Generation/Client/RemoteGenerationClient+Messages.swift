@@ -284,6 +284,8 @@ extension RemoteGenerationClient {
             // `tool_result` block. OpenAI-compatible tool messages do not admit
             // it at the message level.
             message.removeValue(forKey: "is_error")
+            // Private replay data of the in-process DS4 path never reaches a wire payload.
+            message = DS4MessageKeys.removingPrivateKeys(from: message)
 
             let role = stringValue(message["role"])?
                 .trimmingCharacters(in: .whitespacesAndNewlines)

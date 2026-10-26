@@ -95,14 +95,17 @@ extension TurnFileChangeTracker {
                 try? fileManager.removeItem(at: temporaryDirectory)
             }
 
+            // A missing side must be /dev/null: `git diff --no-index` rejects a
+            // nonexistent path with exit 1 and empty output, indistinguishable
+            // from "differences found", which left added/deleted files patchless.
             let result = try await runGitDiff(
                 arguments: [
                     "diff",
                     "--no-index",
                     "--binary",
                     "--",
-                    beforeURL.path,
-                    afterURL.path
+                    existedBefore ? beforeURL.path : "/dev/null",
+                    existsNow ? afterURL.path : "/dev/null"
                 ]
             )
 

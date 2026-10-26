@@ -55,7 +55,7 @@ and a profile can have any name in any role.
 
 | Role | Effect |
 | --- | --- |
-| `developer` | The default agent: used when no agent is chosen at launch. Setup always keeps a profile with this role |
+| `developer` | The default agent: used when no agent is chosen at launch (`--agent`), picked among the profiles associated with the project (see **Default developer** below). Setup always keeps a profile with this role |
 | `builder` | It can use `/feature` and receives the intrinsic feature-management tools |
 | `minimal` | No runtime effect beyond the profile's own configuration |
 | `planner` | `/plan` delegates to it; its catalog-owned core tools are forced read-only, whatever `readOnly` says |
@@ -93,10 +93,18 @@ confirmed, starts over and offers to create the recommended profiles.
 
 Set the role in `/setup` (the **Role** choice) or edit `agents.json`.
 
-**Default developer.** With several profiles in the `developer` role, the
-default agent is the system Developer (`"id" : "developer"`) when present,
-otherwise the first developer profile in `agents.json` order. Setup adds the
-system Developer only when no profile has the `developer` role, and the default
+**Default developer.** The default agent is the `developer` profile of the
+project, chosen among the profiles associated with it (see
+[Project Agents](#project-agents)): the system Developer (`"id" : "developer"`)
+when it is associated, otherwise the first associated developer profile in
+`agents.json` order. Without a saved selection only the system profiles are
+associated, so the system Developer is the default. When the project has no
+associated developer, the global default applies: the system Developer when
+present, otherwise the first developer profile in `agents.json` order. The
+project is the launch directory; ACP resolves it again for the working
+directory (`cwd`) of every `session/new` and `session/load`. `--agent`, and an
+ACP `agentId`/`agentName`, still select any profile. Setup adds the system
+Developer only when no profile has the `developer` role, and the global default
 developer cannot be deleted in setup.
 
 Several profiles can share a role. `/plan` and `/review` then list every

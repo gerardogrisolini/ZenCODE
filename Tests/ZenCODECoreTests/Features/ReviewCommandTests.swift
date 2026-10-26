@@ -59,7 +59,9 @@ struct ReviewCommandTests {
 
         #expect(prompt.contains("Session change surface:"))
         #expect(prompt.contains("- modified Sources/Example.swift  +2 -1"))
-        #expect(prompt.contains("diff --git a/Sources/Example.swift b/Sources/Example.swift"))
+        #expect(prompt.contains("No diffs are included. Read the current content of each listed file"))
+        #expect(!prompt.contains("diff --git a/Sources/Example.swift b/Sources/Example.swift"))
+        #expect(!prompt.contains("+line"))
         #expect(prompt.contains("Review focus requested by the user: focus on errors"))
         #expect(prompt.contains("Apply this focus only within the tracked file changes"))
         #expect(prompt.contains("profile \"\(reviewer.id)\""))
@@ -71,6 +73,134 @@ struct ReviewCommandTests {
         #expect(!prompt.contains("memory tools"))
         #expect(!prompt.contains("Approved plan under verification"))
         #expect(!prompt.contains("done, partial, missing, or deviated"))
+    }
+
+    @Test
+    func reviewPromptsListFilesWithoutDiffsEvenForHugePatches() {
+        let marker = "PATCHBODY-MARKER"
+        let hugePatch = """
+        diff --git a/Sources/Generated.swift b/Sources/Generated.swift
+        new file mode 100644
+        --- /dev/null
+        +++ b/Sources/Generated.swift
+        @@ -0,0 +1,8000 @@
+        """ + "\n" + (0..<8_000).map { "+\(marker) generated line \($0)" }.joined(separator: "\n")
+        #expect(hugePatch.utf8.count >= 200_000)
+
+        let summary = TurnFileChangeSummary(entries: [
+            TurnFileChangeSummary.Entry(
+                path: "Sources/Generated.swift",
+                additions: 8_000,
+                deletions: 0,
+                status: .added,
+                isBinary: false,
+                existedBefore: false,
+                beforeDataBase64: nil,
+                patch: hugePatch
+            ),
+            TurnFileChangeSummary.Entry(
+                path: "Sources/Removed.swift",
+                additions: 0,
+                deletions: 3,
+                status: .deleted,
+                isBinary: false,
+                existedBefore: true,
+                beforeDataBase64: nil,
+                patch: """
+                diff --git a/Sources/Removed.swift b/Sources/Removed.swift
+                deleted file mode 100644
+                --- a/Sources/Removed.swift
+                +++ /dev/null
+                @@ -1,3 +0,0 @@
+                -\(marker) removed one
+                -\(marker) removed two
+                -\(marker) removed three
+                """
+            ),
+            TurnFileChangeSummary.Entry(
+                path: "Assets/logo.png",
+                additions: 0,
+                deletions: 0,
+                status: .added,
+                isBinary: true,
+                existedBefore: false,
+                beforeDataBase64: nil,
+                patch: "Binary files /dev/null and b/Assets/logo.png differ"
+            ),
+            TurnFileChangeSummary.Entry(
+                path: "Sources/Edited.swift",
+                additions: 1,
+                deletions: 1,
+                status: .modified,
+                isBinary: false,
+                existedBefore: true,
+                beforeDataBase64: nil,
+                patch: """
+                diff --git a/Sources/Edited.swift b/Sources/Edited.swift
+                --- a/Sources/Edited.swift
+                +++ b/Sources/Edited.swift
+                @@ -1 +1 @@
+                -\(marker) before
+                +\(marker) after
+                """
+            )
+        ])
+        let reviewer = AgentProfile(
+            id: AgentProfileRole.reviewer.rawValue,
+            name: AgentProfileStore.reviewerAgentName,
+            role: .reviewer,
+            tools: []
+        )
+
+        let legacyPrompt = TerminalChat.reviewDelegationPrompt(
+            scope: "",
+            reviewer: reviewer,
+            changeSummary: summary
+        )
+        let planPrompt = TerminalChat.reviewDelegationPrompt(
+            scope: "",
+            reviewer: reviewer,
+            changeSummary: summary,
+            approvedPlan: TerminalSessionPlan(
+                originalGoal: "goal",
+                consolidatedText: "plan",
+                isApproved: true
+            )
+        )
+
+        let expectedLines = [
+            "Files: 4  +8001 -4",
+            "- added Sources/Generated.swift  +8000 -0",
+            "- deleted Sources/Removed.swift  +0 -3",
+            "- added Assets/logo.png (binary)",
+            "- modified Sources/Edited.swift  +1 -1",
+            "No diffs are included. Read the current content of each listed file; a deleted file no longer exists."
+        ]
+        let legacyRule = "Reviewers must read the current content of the files listed above, "
+            + "since no diffs are included, and base findings on those files only."
+        let planRule = "Code-quality Reviewers must read the current content of the listed files, "
+            + "since no diffs are included, and base findings on those files only."
+
+        #expect(legacyPrompt.contains(legacyRule))
+        #expect(planPrompt.contains(planRule))
+        #expect(!legacyPrompt.contains(planRule))
+        #expect(!planPrompt.contains(legacyRule))
+
+        for prompt in [legacyPrompt, planPrompt] {
+            for line in expectedLines {
+                #expect(prompt.contains(line), "missing line: \(line)")
+            }
+            #expect(!prompt.contains("Assets/logo.png  +"))
+            #expect(!prompt.contains(marker))
+            #expect(!prompt.contains("diff --git"))
+            #expect(!prompt.contains("```diff"))
+            #expect(!prompt.contains("Patch:"))
+            #expect(!prompt.contains("No text patch available"))
+            #expect(!prompt.contains("Binary file; inspect"))
+            #expect(!prompt.contains("listed session changes"))
+            #expect(!prompt.contains("git status"))
+            #expect(prompt.utf8.count < 20_000)
+        }
     }
 
     @Test

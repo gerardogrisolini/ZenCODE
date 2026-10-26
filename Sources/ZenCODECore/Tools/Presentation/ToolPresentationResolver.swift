@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import LocalToolsSupport
 import ToolCore
 
 /// Resolves serializable tool-owned metadata into unstyled semantic elements.
@@ -393,26 +394,10 @@ public nonisolated enum ToolPresentationResolver {
 
     private static func patchDisplayTarget(_ rawPatch: String) -> String? {
         var seen = Set<String>()
-        var paths: [String] = []
-        func append(_ rawValue: String) {
-            var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !value.isEmpty, value != "/dev/null" else { return }
-            if value.hasPrefix("a/") || value.hasPrefix("b/") {
-                value = String(value.dropFirst(2))
-            }
-            guard !value.isEmpty,
-                  value != "/dev/null",
-                  seen.insert(value).inserted else { return }
-            paths.append(value)
-        }
-        for line in rawPatch.components(separatedBy: "\n") {
-            let prefixes = [
-                "*** Add File: ", "*** Update File: ", "*** Delete File: ",
-                "+++ ", "--- "
-            ]
-            if let prefix = prefixes.first(where: { line.hasPrefix($0) }) {
-                append(String(line.dropFirst(prefix.count)))
-            }
+        let paths = PatchFileHeaders.rawPathValues(in: rawPatch).compactMap { value -> String? in
+            guard let normalized = TextUtilities.normalizedPatchPath(value),
+                  seen.insert(normalized).inserted else { return nil }
+            return normalized
         }
         guard let first = paths.first else { return nil }
         return paths.count == 1 ? first : "\(first) (+\(paths.count - 1) more)"

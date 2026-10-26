@@ -560,6 +560,60 @@ actor MemoryGraphStore {
         }
     }
 
+    // MARK: - Cleanup
+
+    /// The file the graph is copied to before a cleanup changes it, next to the
+    /// graph so it stays on the same volume and under the same owner-only
+    /// directory. The engine never loads it.
+    nonisolated var backupURL: URL {
+        graphURL.appendingPathExtension("bak")
+    }
+
+    /// What ``cleanup(_:now:)`` would change right now. Reads one coherent
+    /// snapshot and mutates nothing: no save, no backup.
+    func cleanupPreview(
+        _ policy: MemoryCleanupPolicy,
+        now: Date = Date()
+    ) async throws -> MemoryCleanupReport {
+        let graph = try await engine.freshSnapshotForReadOnly()
+        return MemoryCleanup.plan(
+            graph,
+            policy: policy,
+            now: now,
+            embeddingModel: embedder?.modelID
+        ).report
+    }
+
+    /// Cleans the graph in one engine transaction and returns the report of what
+    /// was applied.
+    ///
+    /// The plan is recomputed on the graph the transaction reloads under the
+    /// file lock, so the report can differ from an earlier preview when another
+    /// process wrote in between. A plan that changes nothing leaves the graph
+    /// file and the backup alone. Otherwise the pre-cleanup graph is first
+    /// written to ``backupURL`` (replacing any previous copy) inside the same
+    /// transaction: a failing backup throws before anything is saved.
+    @discardableResult
+    func cleanup(
+        _ policy: MemoryCleanupPolicy,
+        now: Date = Date()
+    ) async throws -> MemoryCleanupReport {
+        let embeddingModel = embedder?.modelID
+        let backupURL = backupURL
+        return try await engine.transaction { graph in
+            let (cleaned, report) = MemoryCleanup.plan(
+                graph,
+                policy: policy,
+                now: now,
+                embeddingModel: embeddingModel
+            )
+            guard !report.isEmpty else { return report }
+            try JSONMemoryPersistence.writeBackup(of: graph, to: backupURL)
+            graph = cleaned
+            return report
+        }
+    }
+
     // MARK: - Helpers
 
     /// Each retry is caused by a *concurrent* commit on the same entry; the last

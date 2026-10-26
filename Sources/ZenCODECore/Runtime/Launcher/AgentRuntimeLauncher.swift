@@ -10,19 +10,24 @@ import Foundation
 /// Shared entry points for launching ZenCODE terminal and ACP runtimes.
 public enum AgentRuntimeLauncher {
     /// Runs one non-interactive turn. Legacy headless mode writes only the final
-    /// assistant text; JSONL mode writes the approved lifecycle records.
+    /// assistant text; JSONL mode writes the approved lifecycle records. The
+    /// sinks receive that output instead of standard output (nil prints it).
     @TerminalChatActor
     public static func runHeadless(
         configuration: AgentConfiguration,
         prompt: String,
         permissionAuthorizer: LocalExecPermissionAuthorizer,
-        backendFactory: AgentRuntimeBackendFactory? = nil
+        backendFactory: AgentRuntimeBackendFactory? = nil,
+        jsonlSink: ZenCODEHeadlessJSONLWriter.Sink? = nil,
+        textSink: ZenCODEHeadlessRunner.TextSink? = nil
     ) async throws {
         try await ZenCODEHeadlessRunner.run(
             configuration: configuration,
             prompt: prompt,
             permissionAuthorizer: permissionAuthorizer,
-            backendFactory: backendFactory
+            backendFactory: backendFactory,
+            jsonlSink: jsonlSink,
+            textSink: textSink
         )
     }
 

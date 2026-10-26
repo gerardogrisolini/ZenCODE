@@ -677,6 +677,95 @@ struct ACPCommandRoutingTests {
     }
 
     @Test
+    func acpPlanSavePromotesStructuredHistoryResponseWithEveryTask() async throws {
+        let planText = """
+        Specifiche concordate
+        - Keep compatibility.
+
+        Implementation plan
+        1. Add the shared model.
+           Dependencies: none
+        2. Wire the ACP command.
+           Dependencies: 1
+        3. Validate every frontend.
+           Dependencies: 1, 2
+        """
+        let fixture = try await makeFixture(
+            sessionID: "acp-command-structured-save",
+            history: [
+                AgentRuntimeMessage(role: .user, content: "Ship the shared routing"),
+                AgentRuntimeMessage(role: .assistant, content: planText),
+            ]
+        )
+        let bridge = fixture.bridge
+        let sessionID = fixture.sessionID
+
+        try await bridge.prompt(id: .number(1), params: [
+            "sessionId": sessionID,
+            "prompt": "/plan save",
+        ])
+
+        let promoted = try #require(
+            await bridge.planStateForTesting(sessionID: sessionID).activePlan
+        )
+        let taskIDs = (1...3).map { "\(promoted.id)-\($0)" }
+        let titles = [
+            "Add the shared model.",
+            "Wire the ACP command.",
+            "Validate every frontend.",
+        ]
+        let dependencies = [[], [taskIDs[0]], [taskIDs[0], taskIDs[1]]]
+        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").contains {
+            $0.contains("Saved plan: \(promoted.id)")
+        })
+        #expect(promoted.originalGoal == "Ship the shared routing")
+        #expect(promoted.points.map(\.id) == taskIDs)
+        #expect(promoted.points.map(\.dependsOn) == dependencies)
+
+        let stored = try #require(await bridge.sessionRunner.savedTaskPlans(
+            workingDirectory: bridge.configuration.workingDirectory
+        ).first)
+        #expect(stored.graph.id == promoted.id)
+        #expect(stored.graph.tasks.map(\.id) == taskIDs)
+        #expect(stored.graph.tasks.map(\.title) == titles)
+        #expect(stored.graph.tasks.map(\.dependsOn) == dependencies)
+
+        try await bridge.prompt(id: .number(2), params: [
+            "sessionId": sessionID,
+            "prompt": "/plan clear",
+        ])
+        try await bridge.prompt(id: .number(3), params: [
+            "sessionId": sessionID,
+            "prompt": "/plan load",
+        ])
+        let loaded = try #require(
+            await bridge.planStateForTesting(sessionID: sessionID).activePlan
+        )
+        #expect(loaded.id == promoted.id)
+        #expect(loaded.points.map(\.id) == taskIDs)
+        #expect(loaded.points.map(\.dependsOn) == dependencies)
+
+        try await bridge.prompt(id: .number(4), params: [
+            "sessionId": sessionID,
+            "prompt": "/plan approve",
+        ])
+        try await bridge.prompt(id: .number(5), params: [
+            "sessionId": sessionID,
+            "prompt": "Ship the shared routing safely",
+        ])
+        let graph = try #require(
+            try await bridge.sessionRunner.taskGraphSnapshot(
+                sessionID: sessionID,
+                graphID: promoted.id
+            )
+        )
+        #expect(graph.state == .active)
+        #expect(graph.tasks.map(\.id) == taskIDs)
+        #expect(graph.tasks.map(\.dependsOn) == dependencies)
+        #expect(!graph.tasks.contains { $0.id.hasSuffix("-implementation") })
+    }
+
+    @Test
     func acpCancelAbandonsThePlannerCollectionInsteadOfLeavingAZombie() async throws {
         let fixture = try await makeFixture(sessionID: "acp-command-cancel")
         try await fixture.bridge.prompt(id: .number(1), params: [
@@ -1001,7 +1090,8 @@ struct ACPCommandRoutingTests {
     private func makeFixture(
         sessionID: String,
         allowedToolNames: Set<String>? = nil,
-        availableAgents: [AgentProfile] = AgentProfileStore.defaultProfiles()
+        availableAgents: [AgentProfile] = AgentProfileStore.defaultProfiles(),
+        history: [AgentRuntimeMessage] = []
     ) async throws -> (
         bridge: ZenCODEACPBridge,
         backend: ScriptedACPCommandBackend,
@@ -1036,7 +1126,7 @@ struct ACPCommandRoutingTests {
             workingDirectory: workingDirectory,
             systemPrompt: "ACP command routing test",
             cacheKey: nil,
-            history: [],
+            history: history,
             allowedToolNames: allowedToolNames
         )
         try await bridge.sessionRunner.createSession(

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import LocalToolsSupport
 import ToolCore
 
 public actor TurnFileChangeTracker {
@@ -267,39 +268,9 @@ public actor TurnFileChangeTracker {
             return []
         }
 
-        var candidates: [String] = []
-        let lines = rawPatch.components(separatedBy: "\n")
-
-        func appendStripped(_ value: String) {
-            guard let normalized = TextUtilities.normalizedPatchPath(value, stripTabSuffix: true) else {
-                return
-            }
-            candidates.append(normalized)
+        return PatchFileHeaders.rawPathValues(in: rawPatch).compactMap {
+            TextUtilities.normalizedPatchPath($0, stripTabSuffix: true)
         }
-
-        for rawLine in lines {
-            let line = rawLine
-            if let value = sectionValue(line, prefix: "*** Add File: ")
-                ?? sectionValue(line, prefix: "*** Update File: ")
-                ?? sectionValue(line, prefix: "*** Delete File: ") {
-                appendStripped(value)
-            } else if line.hasPrefix("+++ ") {
-                appendStripped(String(line.dropFirst(4)))
-            } else if line.hasPrefix("--- ") {
-                appendStripped(String(line.dropFirst(4)))
-            }
-        }
-
-        return candidates
-    }
-
-    private static func sectionValue(_ line: String, prefix: String) -> String? {
-        guard line.hasPrefix(prefix) else {
-            return nil
-        }
-        let value = String(line.dropFirst(prefix.count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
     }
 
 
@@ -472,20 +443,28 @@ public actor TurnFileChangeTracker {
         }
 
         let lines = patch.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        let rewrittenLines = lines.map { line -> String in
+        // Only file headers carry the temporary paths. Hunk bodies can hold
+        // lines that look like headers (removing "-- note" yields "--- note"),
+        // so a header ends at its first hunk or binary payload.
+        var isInHeader = false
+        var rewrittenLines: [String] = []
+        rewrittenLines.reserveCapacity(lines.count)
+        for line in lines {
             if line.hasPrefix("diff --git ") {
-                return "diff --git a/\(displayPath) b/\(displayPath)"
+                isInHeader = true
+                rewrittenLines.append("diff --git a/\(displayPath) b/\(displayPath)")
+                continue
             }
-
-            if line.hasPrefix("--- ") {
-                return "--- \(beforePath)"
+            if line.hasPrefix("@@ ") || line == "GIT binary patch" {
+                isInHeader = false
             }
-
-            if line.hasPrefix("+++ ") {
-                return "+++ \(afterPath)"
+            if isInHeader, line.hasPrefix("--- ") {
+                rewrittenLines.append("--- \(beforePath)")
+            } else if isInHeader, line.hasPrefix("+++ ") {
+                rewrittenLines.append("+++ \(afterPath)")
+            } else {
+                rewrittenLines.append(line)
             }
-
-            return line
         }
 
         return rewrittenLines.joined(separator: "\n")

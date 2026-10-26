@@ -155,7 +155,7 @@ extension ZenCODESetupRunner {
             ),
             SetupSectionOption(
                 section: .dataManagement,
-                detail: "export, import, and reset ZenCODE data"
+                detail: "export, import, clean memory, and reset ZenCODE data"
             ),
             SetupSectionOption(section: .finish, detail: "save and exit"),
             SetupSectionOption(section: .cancel, detail: "discard changes")

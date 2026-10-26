@@ -28,7 +28,7 @@ Guides for using, extending, and maintaining ZenCODE. Start with the
 | Guide | Read it for |
 | --- | --- |
 | [xcode.md](xcode.md) | Running `zen` as an ACP coding agent in Xcode 27 |
-| [ds4.md](ds4.md) | Folder-only DS4 setup, compatibility checks, ownership, and supported integration levels |
+| [ds4.md](ds4.md) | DS4 in-process engine: toolchain requirements, building the engine library, setup, `/ds4`, KV checkpoints, and limits |
 | [voice.md](voice.md) | Voice mode (`/voice`) and Telegram voice messages on macOS and Linux: setup, language, privacy, troubleshooting |
 
 ## Project and maintenance

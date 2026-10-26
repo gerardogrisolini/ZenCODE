@@ -471,6 +471,10 @@ extension TerminalStatusBar {
            let tokenCountsText = Self.styledGenerationTokenCountsFragment(latestMetrics) {
             fragments.append(tokenCountsText)
         }
+        if let latestMetrics = state.latestMetrics,
+           let throughputText = Self.styledGenerationThroughputFragment(latestMetrics) {
+            fragments.append(throughputText)
+        }
         if let latestSubscriptionUsage = state.latestSubscriptionUsage,
            let usageText = Self.styledSubscriptionUsageFragment(latestSubscriptionUsage) {
             fragments.append(usageText)

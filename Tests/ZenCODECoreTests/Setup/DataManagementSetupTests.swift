@@ -20,7 +20,7 @@ struct DataManagementSetupTests {
         #expect(!SetupSection.dataManagement.requiresConfiguredModels)
         #expect(SetupSection.dataManagement.category == .optional)
         #expect(SetupSection.dataManagement.title == "Data management")
-        #expect(dataOption?.detail == "export, import, and reset ZenCODE data")
+        #expect(dataOption?.detail == "export, import, clean memory, and reset ZenCODE data")
     }
 
     @Test
@@ -43,16 +43,22 @@ struct DataManagementSetupTests {
     }
 
     @Test
-    func dataManagementMenuItemsContainExportImportResetAndBack() throws {
+    func dataManagementMenuItemsContainExportImportCleanMemoryResetAndBack() throws {
         let items = ZenCODESetupRunner.dataManagementMenuItems()
         let titles = items.map(\.title)
 
         #expect(titles.contains("Export backup"))
         #expect(titles.contains("Import backup"))
+        #expect(titles.contains("Clean memory"))
         #expect(titles.contains("Reset remote configuration"))
         #expect(titles.contains("Back"))
         #expect(titles.last == "Back")
-        #expect(titles.count == 4)
+        #expect(titles.count == 5)
+        // Clean memory sits between Import backup and Reset.
+        let importIndex = try #require(titles.firstIndex(of: "Import backup"))
+        #expect(titles[importIndex + 1] == "Clean memory")
+        #expect(titles[importIndex + 2] == "Reset remote configuration")
+        #expect(items.map(\.value) == [.export, .importBackup, .cleanMemory, .reset, .back])
     }
 
     @Test
