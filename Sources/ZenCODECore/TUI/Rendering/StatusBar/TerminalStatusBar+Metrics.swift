@@ -139,9 +139,9 @@ extension TerminalStatusBar {
 
     /// Plain throughput label, a single one with the `tok/s` unit at the end.
     /// While the prompt is evaluated it shows the progress relative to the sync
-    /// and the prefill rate once measurable (`p:1.2k/8.0k 512 tok/s`, `p:0/8.0k`
+    /// and the prefill rate once measurable (`p:1.2k/8.0k 512.0 tok/s`, `p:0/8.0k`
     /// before the first measure). Otherwise it shows the speeds that are known:
-    /// `p:512 g:42.1 tok/s`, `p:512 tok/s` or `g:42.1 tok/s`. `nil` without a
+    /// `p:512.0 g:42.1 tok/s`, `p:512.0 tok/s` or `g:42.1 tok/s`. `nil` without a
     /// throughput or with nothing usable to show.
     static func generationThroughputFragment(
         _ metrics: DirectAgentGenerationMetrics
@@ -190,13 +190,13 @@ extension TerminalStatusBar {
         return "\(segments.joined(separator: " ")) \(unit)"
     }
 
-    /// `%.1f` below 100 tokens per second, a rounded integer from 100 on;
+    /// One decimal (`%.1f`) for every speed, prefill and generation alike;
     /// nothing for a value that is not a finite, non-negative speed.
     static func throughputRateText(_ value: Double) -> String? {
         guard value.isFinite, value >= 0 else {
             return nil
         }
-        return value < 100 ? String(format: "%.1f", value) : String(format: "%.0f", value)
+        return String(format: "%.1f", value)
     }
 
     static func subscriptionUsageFragment(

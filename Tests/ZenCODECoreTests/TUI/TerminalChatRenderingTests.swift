@@ -1180,7 +1180,7 @@ struct TerminalChatRenderingTests {
         #expect(
             TerminalStatusBar.generationThroughputFragment(
                 metrics(processed: 1_200, target: 8_000, rate: 512)
-            ) == "p:1.2k/8.0k 512 tok/s"
+            ) == "p:1.2k/8.0k 512.0 tok/s"
         )
         #expect(
             TerminalStatusBar.generationThroughputFragment(
@@ -1219,7 +1219,7 @@ struct TerminalChatRenderingTests {
             )
         )
 
-        #expect(TerminalStatusBar.generationThroughputFragment(metrics) == "p:1.2k/8.0k 512 tok/s")
+        #expect(TerminalStatusBar.generationThroughputFragment(metrics) == "p:1.2k/8.0k 512.0 tok/s")
     }
 
     @Test
@@ -1238,13 +1238,14 @@ struct TerminalChatRenderingTests {
             )
         }
 
-        #expect(fragment(prefill: 512, generation: 42.1) == "p:512 g:42.1 tok/s")
-        #expect(fragment(prefill: 1_234.6, generation: 41.23) == "p:1235 g:41.2 tok/s")
-        #expect(fragment(prefill: 512, generation: nil) == "p:512 tok/s")
+        #expect(fragment(prefill: 512, generation: 42.1) == "p:512.0 g:42.1 tok/s")
+        #expect(fragment(prefill: 612.34, generation: 43.2) == "p:612.3 g:43.2 tok/s")
+        #expect(fragment(prefill: 1_234.6, generation: 41.23) == "p:1234.6 g:41.2 tok/s")
+        #expect(fragment(prefill: 512, generation: nil) == "p:512.0 tok/s")
         #expect(fragment(prefill: nil, generation: 42.1) == "g:42.1 tok/s")
         // Unusable values are dropped one by one.
         #expect(fragment(prefill: .nan, generation: 42.1) == "g:42.1 tok/s")
-        #expect(fragment(prefill: 512, generation: -1) == "p:512 tok/s")
+        #expect(fragment(prefill: 512, generation: -1) == "p:512.0 tok/s")
         #expect(fragment(prefill: nil, generation: nil) == nil)
         #expect(fragment(prefill: .infinity, generation: .nan) == nil)
     }
@@ -1267,9 +1268,9 @@ struct TerminalChatRenderingTests {
         #expect(fragment(41.23) == "g:41.2 tok/s")
         #expect(fragment(0) == "g:0.0 tok/s")
         #expect(fragment(99.94) == "g:99.9 tok/s")
-        #expect(fragment(100) == "g:100 tok/s")
-        #expect(fragment(100.4) == "g:100 tok/s")
-        #expect(fragment(1_234.6) == "g:1235 tok/s")
+        #expect(fragment(100) == "g:100.0 tok/s")
+        #expect(fragment(100.44) == "g:100.4 tok/s")
+        #expect(fragment(1_234.6) == "g:1234.6 tok/s")
         #expect(fragment(nil) == nil)
         #expect(fragment(-1) == nil)
         #expect(fragment(.nan) == nil)
@@ -1304,8 +1305,8 @@ struct TerminalChatRenderingTests {
             )
         )
         let styledPrefill = try #require(TerminalStatusBar.styledGenerationThroughputFragment(prefill))
-        #expect(styledPrefill == "\(muted)p:\(reset)1.2k/8.0k 512 tok/s")
-        #expect(TerminalANSIText.stripANSI(styledPrefill) == "p:1.2k/8.0k 512 tok/s")
+        #expect(styledPrefill == "\(muted)p:\(reset)1.2k/8.0k 512.0 tok/s")
+        #expect(TerminalANSIText.stripANSI(styledPrefill) == "p:1.2k/8.0k 512.0 tok/s")
 
         let both = DirectAgentGenerationMetrics(
             promptTokenCount: nil,
@@ -1317,7 +1318,7 @@ struct TerminalChatRenderingTests {
             )
         )
         let styledBoth = try #require(TerminalStatusBar.styledGenerationThroughputFragment(both))
-        #expect(styledBoth == "\(muted)p:\(reset)512 \(muted)g:\(reset)42.1 tok/s")
+        #expect(styledBoth == "\(muted)p:\(reset)512.0 \(muted)g:\(reset)42.1 tok/s")
         #expect(
             TerminalANSIText.stripANSI(styledBoth)
                 == TerminalStatusBar.generationThroughputFragment(both)
@@ -1369,7 +1370,7 @@ struct TerminalChatRenderingTests {
 
         #expect(
             TerminalANSIText.stripANSI(statusBar.statusTextLocked(state: &state))
-                .contains("0:00:12 · c:800 p:120 g:32 · p:512 g:41.2 tok/s · d:12%")
+                .contains("0:00:12 · c:800 p:120 g:32 · p:512.0 g:41.2 tok/s · d:12%")
         )
     }
 
