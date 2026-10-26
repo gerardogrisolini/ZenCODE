@@ -193,7 +193,7 @@ enum SetupSection: Equatable, Hashable {
         .agentModels: .init(title: "Agent model bindings", category: .recommended, requiresConfiguredModels: true, aliases: ["agent models", "agent model bindings", "agent bindings", "agent capability", "models", "capability", "agent models & capability"]),
         .responseLanguage: .init(title: "Response language", category: .recommended, requiresConfiguredModels: false, aliases: ["language", "response language", "locale", "response_language"]),
         .memoryEmbedding: .init(title: "Memory embeddings", category: .recommended, requiresConfiguredModels: false, aliases: ["memory embeddings", "memory embedding", "embeddings", "embedding", "bm25"]),
-        .ds4Runtime: .init(title: "DS4 local runtime", category: .optional, requiresConfiguredModels: false, aliases: ["ds4", "ds4 runtime", "ds4 setup", "local ds4", "local runtime"]),
+        .ds4Runtime: .init(title: "DS4 local runtime (in-process engine)", category: .optional, requiresConfiguredModels: false, aliases: ["ds4", "ds4 runtime", "ds4 setup", "local ds4", "local runtime", "ds4 engine", "in-process engine"]),
         .voiceMode: .init(title: "Voice mode", category: .optional, requiresConfiguredModels: false, aliases: ["voice", "voice mode", "speech", "dictation", "sherpa", "sherpa-onnx"]),
         .dataManagement: .init(title: "Data management", category: .optional, requiresConfiguredModels: false, aliases: ["data", "data management", "backup", "backups", "export", "import", "transfer", "manage data"]),
         .resetRemoteConfiguration: .init(title: "Reset remote configuration", category: .optional, requiresConfiguredModels: false, aliases: ["reset", "reset remote configuration", "reset configuration"]),

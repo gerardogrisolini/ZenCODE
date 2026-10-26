@@ -369,6 +369,7 @@ Commands start with `/`:
 - `/setup` — save the current session, open setup, rebuild the runtime from the updated configuration, and restore the conversation.
 - `/models` — show every configured model and choose the model for the current session.
 - `/think` — open a menu to select the thinking level of the current model.
+- `/ds4 status|power <1-100>|steer <scale>|hints on|off` — inspect and tune the in-process DS4 engine; available only when the current model has a DS4 runtime. Values are not persisted. See [DS4 local runtime](ds4.md).
 - `/agents [list|<name>|<number>]` — open the agent menu: `Enter` switches the active agent, `Space`/`X` associates profiles with the current project (the only ones the sub-agents tool can delegate to); `list`, `<name>`, and `<number>` select directly. See [Agent Profiles](#agent-profiles).
 - `/tools [all|none|tool-name|package-name|number]` — select exposed tool groups; `/tools logs` opens the platform system log viewer (Console.app on macOS).
 - `/skills` — select or install prompt skills; `/skills uninstall` opens a multi-selection menu for removing app-installed skills.
@@ -376,8 +377,8 @@ Commands start with `/`:
 
 **Sessions and memory:**
 - `/sessions` — list and select saved sessions.
-- `/sessions <name>` — save or overwrite a named snapshot.
-- `/sessions save` — save the current session (derives a name from the first prompt if none is active).
+- `/sessions <name>` — save or overwrite a named snapshot. With a DS4 model it also writes the DS4 KV checkpoint (`<name>.ds4kv`) next to the snapshot.
+- `/sessions save` — save the current session (derives a name from the first prompt if none is active); with a DS4 model it also writes the DS4 KV checkpoint.
 - `/sessions compact` — force context compaction without saving.
 - `/sessions new` — reset to a fresh, unsaved session.
 - `/sessions delete` — delete a saved snapshot.

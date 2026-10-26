@@ -12,6 +12,50 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- DS4 runs in-process: a DS4 model is served by the `zen` process itself,
+  with no `ds4-server` child and no loopback endpoint. `ZenCODECore` loads
+  `libzencode-ds4.{dylib,so}` at runtime with `dlopen`. The library is a ZenCODE
+  C shim built on your machine against your DS4 checkout, by
+  `Scripts/build-ds4-engine.sh` or from `/setup`, which offers to build it. `zen`
+  has no compile-time dependency on DS4. The `metal`, `cpu`, `cuda`, and `rocm`
+  backends are supported; `cuda` and `rocm` are not yet verified on a real GPU.
+  Closing an agent backend (for example on an agent switch) releases only its DS4
+  sessions; the loaded model stays resident. The engine is closed when `zen` exits,
+  when a different DS4 model is requested, or when a new agent backend uses a
+  non-DS4 model while no DS4 session is live.
+  See [Docs/ds4.md](Docs/ds4.md).
+- DS4 `/ds4` command, available with a DS4 model: `/ds4 status` shows the model,
+  engine, library, context, KV cache, pool sessions, power, steering, and hints
+  without opening the model. `/ds4 power <1-100>`, `/ds4 steer <-100..100>`, and
+  `/ds4 hints on|off` change the values for the session only; they are never
+  saved.
+- DS4 KV checkpoints: `/sessions save` and `/sessions <name>` write
+  `<name>.ds4kv` beside the session file, and loading that session with a DS4
+  model restores it, so the saved KV state is reused instead of evaluating the
+  whole prompt again when the checkpoint is compatible. Nothing else writes a
+  checkpoint. A checkpoint is skipped for sessions with images or
+  without live DS4 state, is deleted with its session, and is not part of
+  snapshots or task checkpoints. It can be several GB. See
+  [Docs/ds4.md](Docs/ds4.md#kv-checkpoints-ds4kv).
+- DS4 vision: with a vision projector (`visionRelativePath`), images in user
+  messages and tool results are encoded for the model. Without one, the images
+  are ignored and a diagnostic is shown. Images in the history are encoded again
+  on every round.
+- DS4 native transcript and tools: prompts use the chat template and tool syntax
+  of each model family (DSML for DeepSeek V4, DSML41 for DeepSeek V4.1, GLM, and
+  Qwen), reuse the KV cache of the common prefix, and map `/think` to the engine
+  modes. Session compaction follows the ds4-agent rule at 85% of the context.
+  Turns the model generated are replayed with the exact token ids it sampled
+  instead of tokenizing their text again, so a model with recurrent state
+  (Qwen3.8-Flash-Next) reuses the KV of the previous round instead of rebuilding
+  the whole prompt. The engine library ABI is now version 2, so a library built
+  before this change must be rebuilt (from `/setup` or with
+  `Scripts/build-ds4-engine.sh`).
+- DS4 engine options per model: the MTP and DSpark support models, the steering
+  file and scales, quality, warm weights, threads, prefill chunk, the CUDA or
+  ROCm architecture, the number of engine sessions (`engineSessions`, 1 to 8,
+  default 2), and advanced extra arguments for DS4's distributed or multi-GPU
+  options, validated by DS4's own parsers.
 - Voice: while voice mode listens, the speech recognized but not yet sent
   appears live at the end of the prompt draft: word by word on macOS, in both
   Send modes, and one speech segment at a time on Linux with the Send mode
@@ -149,6 +193,22 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- DS4 setup builds the engine. After you select the GGUF files and the settings
+  of each model, setup checks the engine library and, when it is missing or must
+  be rebuilt, asks **Build the DS4 engine now?** (default: yes). The library
+  state (built, missing, or rebuild required) is shown in the setup detail. A
+  failed build prints the error and the manual command, and keeps the staged
+  settings. Each model can also take an optional vision projector and an MTP or
+  DSpark support GGUF. Setup still does not download a checkout or models, probe
+  the hardware, or call `/models`. See [Docs/ds4.md](Docs/ds4.md#setup).
+- The DS4 `ds4Runtime` manifest gains optional fields: `visionRelativePath`,
+  `mtpRelativePath`, `steeringRelativePath`, `dspark`, `mtpDraftTokens`,
+  `mtpMargin`, `quality`, `threads`, `prefillChunk`, `warmWeights`,
+  `steeringFFN`, `steeringAttn`, `cudaArch`, `rocmArch`, `engineSessions`, and
+  `extraEngineArguments`. Manifests without them remain valid. Auxiliary paths
+  are relative to the DS4 checkout and must not be symlinks.
+- The DS4 provider base URL `http://127.0.0.1:8000/v1` is now only a
+  compatibility placeholder, which the in-process engine does not use.
 - Project data now follows a moved project folder. Project memory, the project
   agents chosen with `/agents`, saved sessions, task graphs, and saved plans are
   stored under a project key derived from the project name (the name of the
@@ -199,6 +259,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
   of the `[R]`, `[A]`, and `[C]` keys, instead of full orange, so the card looks
   lighter, like the prompt frame. The "Authorization" title in the top border
   and the `❯` marker before the command stay full orange, without dimming.
+
+### Removed
+
+- **Breaking:** Removed the `ds4-server` integration. ZenCODE no longer starts,
+  adopts, probes, or stops a `ds4-server` on loopback, and it no longer waits
+  for `/v1/models`. The `DS4ServerSupervisor` actor and its port reservation are
+  gone. Before you use DS4 again, build the engine library: run `/setup` for the
+  DS4 provider, or `Scripts/build-ds4-engine.sh`.
+- **Breaking:** Removed the injected `DS4ServerEndpoint` seam (`ds4Endpoint` in
+  composition roots and tests). A DS4 model always runs as the in-process engine,
+  and no ready loopback endpoint is injected.
+- **Breaking:** Removed `batchedSessions` from the DS4 `ds4Runtime`. It is
+  ignored when a manifest is read and is never written again; the number of
+  sessions the engine keeps is `engineSessions`.
 
 ### Fixed
 

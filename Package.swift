@@ -73,6 +73,7 @@ let targets: [Target] = [
             "LocalToolsSupport",
             "ZenPackageMetadata"
         ],
+        exclude: ["Resources/DS4Engine"],
         swiftSettings: memberImportVisibilitySettings
     ),
     .target(

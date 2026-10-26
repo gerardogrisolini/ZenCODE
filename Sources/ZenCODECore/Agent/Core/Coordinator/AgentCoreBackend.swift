@@ -45,6 +45,9 @@ public actor AgentCoreBackend {
     private var subAgentToolEventHandler: DirectSubAgentToolEventHandler?
     private var toolProvidersBySessionID: [String: [AgentToolProvider]] = [:]
     private let backendFactory: AgentRuntimeBackendFactory?
+    /// Owner of the in-process DS4 engine. A non-DS4 root backend that replaces
+    /// a DS4 one closes it when no DS4 session is live. Injectable for tests.
+    let ds4EngineRegistry: DS4EngineRegistry
 
     public init(
         configuration: AgentRuntimeConfiguration,
@@ -52,10 +55,27 @@ public actor AgentCoreBackend {
         swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
         backendFactory: AgentRuntimeBackendFactory? = nil
     ) {
+        self.init(
+            configuration: configuration,
+            mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime,
+            backendFactory: backendFactory,
+            ds4EngineRegistry: .shared
+        )
+    }
+
+    init(
+        configuration: AgentRuntimeConfiguration,
+        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
+        swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
+        backendFactory: AgentRuntimeBackendFactory? = nil,
+        ds4EngineRegistry: DS4EngineRegistry = .shared
+    ) {
         self.configuration = configuration
         self.mcpRuntime = mcpRuntime
         self.swiftFeatureRuntime = swiftFeatureRuntime
         self.backendFactory = backendFactory
+        self.ds4EngineRegistry = ds4EngineRegistry
     }
 
     public static func makeRemoteBackend(
@@ -64,10 +84,7 @@ public actor AgentCoreBackend {
         fallbackProvider: AgentRemoteProvider? = nil,
         fallbackAPIKey: String? = nil,
         chatGPTConnectionScopeID: String? = nil,
-        swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
-        ds4Supervisor: DS4ServerSupervisor? = nil,
-        ds4Endpoint: DS4ServerEndpoint? = nil,
-        ownsDS4Supervisor: Bool = true
+        swiftFeatureRuntime: SwiftFeatureRuntime? = nil
     ) throws -> any AgentRuntimeBackend {
         try AgentRemoteBackendFactory.makeRemoteBackend(
             configuration: configuration,
@@ -75,10 +92,7 @@ public actor AgentCoreBackend {
             fallbackProvider: fallbackProvider,
             fallbackAPIKey: fallbackAPIKey,
             chatGPTConnectionScopeID: chatGPTConnectionScopeID,
-            swiftFeatureRuntime: swiftFeatureRuntime,
-            ds4Supervisor: ds4Supervisor,
-            ds4Endpoint: ds4Endpoint,
-            ownsDS4Supervisor: ownsDS4Supervisor
+            swiftFeatureRuntime: swiftFeatureRuntime
         )
     }
 
@@ -335,6 +349,36 @@ public actor AgentCoreBackend {
         return await activeBackend.interruptBackgroundJobs()
     }
 
+    /// Forwards to the active backend; `.notApplicable` while none is resolved
+    /// (saving never builds a backend nor opens a model).
+    public func saveEngineCheckpoint(
+        sessionID: String,
+        to url: URL
+    ) async throws -> AgentEngineCheckpointSaveOutcome {
+        guard let activeBackend else { return .notApplicable }
+        return try await activeBackend.saveEngineCheckpoint(sessionID: sessionID, to: url)
+    }
+
+    /// Forwards to the active backend; `.notApplicable` while none is resolved.
+    public func restoreEngineCheckpoint(
+        sessionID: String,
+        from url: URL,
+        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async -> AgentEngineCheckpointRestoreOutcome {
+        guard let activeBackend else { return .notApplicable }
+        return await activeBackend.restoreEngineCheckpoint(sessionID: sessionID, from: url, onEvent: onEvent)
+    }
+
+    /// Forwards to the active backend; rejects while none is resolved (a DS4
+    /// control never builds a backend nor opens a model).
+    public func ds4Control(
+        _ command: AgentDS4ControlCommand,
+        sessionID: String
+    ) async throws -> AgentDS4ControlResult {
+        guard let activeBackend else { throw AgentDS4ControlError.noActiveBackend }
+        return try await activeBackend.ds4Control(command, sessionID: sessionID)
+    }
+
     public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
         if let backend = activeBackend {
             return await backend.subAgentSnapshots()
@@ -472,6 +516,7 @@ public actor AgentCoreBackend {
             let backend = try backendFactory(configuration, mcpRuntime)
             do {
                 try await installResolvedBackend(backend, generation: generation)
+                await closeDS4EngineIfNonDS4Backend(backend)
                 return backend
             } catch {
                 await backend.shutdown()
@@ -497,11 +542,24 @@ public actor AgentCoreBackend {
 
         do {
             try await installResolvedBackend(backend, generation: generation)
+            await closeDS4EngineIfNonDS4Backend(backend)
             return backend
         } catch {
             await backend.shutdown()
             throw error
         }
+    }
+
+    /// Frees the in-process DS4 engine when the root backend that was just
+    /// installed does not use it (a remote provider or a subscription client),
+    /// so its memory is released. A DS4 client keeps the engine: its model is
+    /// the one in use. The engine stays open while a DS4 session is live, and
+    /// the close never waits for a generation lease.
+    private func closeDS4EngineIfNonDS4Backend(_ backend: any AgentRuntimeBackend) async {
+        guard (backend as? RemoteGenerationClient)?.ds4Generation == nil else {
+            return
+        }
+        _ = await ds4EngineRegistry.closeIfIdle()
     }
 
     /// Hydrates a backend completely before making it observable through

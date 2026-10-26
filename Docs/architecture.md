@@ -224,11 +224,16 @@ will be sent.
 
 ## Provider Boundary
 
-ZenCODE composes its agent backend exclusively from remote providers reached
-over the network: OpenAI-compatible HTTP endpoints and the browser-authenticated
-subscription bridges. This remote-provider boundary is an intentional,
-announced compatibility migration, not an incidental gap: the runtime holds no
-model weights and performs no inference in-process, so generation, token
+ZenCODE composes its agent backend from remote providers reached over the
+network: OpenAI-compatible HTTP endpoints and the browser-authenticated
+subscription bridges. The single exception is the optional DS4 local runtime:
+a model whose manifest carries `ds4Runtime` is served in-process by a
+user-built engine library loaded at runtime (see
+[DS4 Local Runtime Compatibility, Ownership, and Persistence](#ds4-local-runtime-compatibility-ownership-and-persistence)).
+This remote-provider boundary is an intentional,
+announced compatibility migration, not an incidental gap: apart from that DS4
+exception the runtime holds no model weights and performs no inference
+in-process, so generation, token
 budgeting, and any model/attention cache belong to the provider. `zen` remains
 the only composition root that selects a backend, and it injects the chosen
 remote provider through the same runtime contracts described below. The
@@ -381,130 +386,140 @@ generation transport.
 
 ## DS4 Local Runtime Compatibility, Ownership, and Persistence
 
-DS4 is an optional local OpenAI-compatible provider layered on top of the
-remote-generation contracts. ZenCODE never loads model weights or performs
-inference in `ZenCODECore`: a configured DS4 runtime is a separately managed
-HTTP child reached through loopback. This extension does not change the
-remote-only provider boundary, the `zen` composition-root rule, or the
-provider-agnostic session and checkpoint formats.
+DS4 is an optional local runtime that `ZenCODECore` runs in-process. The engine
+is `libzencode-ds4.{dylib,so}`, a ZenCODE-owned C shim compiled on the user's
+machine against the user's DS4 checkout. `ZenCODECore` loads it at runtime with
+`dlopen(RTLD_NOW | RTLD_LOCAL)`, so `zen` has no compile-time dependency on DS4.
+No DS4 server process and no loopback endpoint exist. The DS4 provider remains
+a provider in the manifest. Its generation goes through a dedicated branch of
+`RemoteGenerationClient` that calls the in-process engine instead of HTTP.
 
-### Supported integration levels
+This is a local, in-process exception to the remote-only boundary described in
+[Provider Boundary](#provider-boundary). The `zen` composition-root rule and the
+provider-agnostic session and checkpoint formats are unchanged. The operational
+guide is [ds4.md](ds4.md).
 
-The public contract has three user-facing levels:
+### Components
 
-1. **Folder discovery.** Setup accepts one existing absolute DS4 checkout and
-   performs a read-only scan of only `<root>/*.gguf` and `<root>/gguf/*.gguf`.
-   `DS4InstallationScanner` ignores arbitrary nested project paths, symlinked
-   directories/files, non-regular artifacts, and unavailable sizes.
-2. **Staged setup.** `DS4ModelCatalog` is small, static metadata: catalog id,
-   display name, artifact paths/roles, and the API model id. Setup offers every
-   regular GGUF found by the scanner (except shards of multi-artifact catalog
-   entries) in a multi-select menu, then asks once for the backend (single
-   choice) and the runtime tuning. There is no hardware probe or compatibility
-   advice. Each selected file becomes one model of the DS4 provider, sharing the
-   same `ds4Runtime` settings except `modelRelativePath`. Setup never downloads,
-   builds, parses GGUF headers, starts DS4, or calls `/models`. The same staged
-   flow serves the DS4 setup section and the DS4 provider reconfigured from
-   "Providers & models". The resulting provider/models are staged and reach
-   settings only through the normal setup transaction.
-3. **Managed local runtime.** On first model use, `DS4ServerSupervisor` launches
-   the existing checkout executable, binds a loopback address, waits for the
-   OpenAI-compatible `/v1/models` response, and then lets the common remote
-   client send generation requests to the ready endpoint.
-
-A ready endpoint injected by a composition root or test is a fourth, internal
-integration seam. Its embedding owner is responsible for the external process
-and readiness; it is not a user-facing setup mode. Downloading weights,
-building DS4, launching a server during setup, embedding a model, and running
-inference in ZenCODE remain explicit non-goals. The complete operational guide
-and level table are in [ds4.md](ds4.md).
+1. **Engine library.** `DS4EngineLibrary` resolves the symbols of the ABI version
+   `DS4EngineABI.expectedVersion` (2; version 2 added `zencode_ds4_tokens_push`, so
+   a version 1 library is obsolete). A version mismatch or a missing symbol is
+   reported as a stale or foreign build. `DS4EngineLibraryLocator` finds the
+   library at `<support>/ds4/engines/<backend>-<hash16>/libzencode-ds4.{dylib,so}`.
+   The hash is the first 16 hex characters of the SHA-256 of `ds4.h`,
+   `zencode_ds4_shim.c`, and `zencode_ds4_abi.h`, concatenated. `build.json`
+   records the root, backend, architecture, date, hash, and ABI version. A
+   library whose metadata does not match is `stale`.
+2. **Build.** `DS4EngineBuilder` extracts the embedded shim sources and
+   `Scripts/build-ds4-engine.sh` into `<support>/ds4/shim/` and runs the script
+   through setup or by hand. The shim is compiled against the checkout's
+   `ds4.h` and linked with the objects of the DS4 Makefile that it needs. Only
+   those objects are built, by name; `make clean` is never run. The toolchains
+   are Xcode Command Line Tools (`metal`), `cc` with `-DDS4_NO_GPU` (`cpu`),
+   `nvcc` (`cuda`), and `hipcc` (`rocm`).
+3. **Shim sources.** The canonical copies are
+   `Sources/ZenCODECore/Resources/DS4Engine/zencode_ds4_abi.h` and
+   `zencode_ds4_shim.c`, excluded from the SwiftPM target. The generator
+   `Scripts/GenerateDS4EngineShimSources.swift` embeds them in
+   `Sources/ZenCODECore/Local/DS4/Engine/DS4EngineShimSources.generated.swift`.
+   Its `--check` mode verifies that the embedded copy is current, and a parity
+   test compares the two. The sources live in the binary because the installers
+   copy only `zen`, not SwiftPM resources.
+4. **Runtime.** `DS4NativeEngine` implements `DS4Engine` and runs every C call on
+   one dedicated thread (`DS4EngineThread`). `DS4EngineRegistry` is process-wide
+   and keeps at most one engine open. Its FIFO generation lock serializes the
+   `sync` and `generate` rounds, and a different model closes the open engine
+   after the round in progress. `DS4SessionPool` maps ZenCODE sessions to live
+   engine sessions, with LRU eviction and the capacity `engineSessions`.
+5. **Transcript and tools.** `Local/DS4/Generation` renders the transcript with
+   the native chat template and tool syntax of the model family, compacts it
+   (`DS4CompactionPolicy`), maps `/think` (`DS4ThinkModeMapping`), and stages
+   images (`DS4ImageStaging`). `Local/DS4/Tools` holds the tool syntax and the
+   streaming parsers. The private `ds4_*` message keys (`DS4MessageKeys`) let
+   already sent turns be reproduced exactly: a generated turn is replayed with
+   the token ids the engine committed (`DS4GenerateResult.tokens`, kept as
+   `ds4_raw_tokens` with the identity of the model, `DS4TranscriptOperation.tokens`)
+   so the common prefix with the live KV does not depend on how the text would
+   be tokenized again, and falls back to the raw text for another model. They
+   never reach snapshots or other providers.
+6. **Remote client and control.** `RemoteGenerationClient+DS4Engine.swift` drives
+   the rounds, and `RemoteGenerationClient+DS4Checkpoint.swift` saves and restores
+   KV checkpoints. `AgentDS4Control` holds the values changed with `/ds4`, which
+   are never persisted.
 
 ### Identity rules
 
-The checkout's catalog/download identity and the server's wire model identity
-are separate compatibility surfaces. A catalog entry exposes `apiModelID`,
-which maps a download/quantization key to the canonical ID emitted by the
-checked-out DS4 server; for a GGUF outside the catalog the API ID is inferred
-from the file name (`DS4ModelCatalog.inferredAPIModelID`) or chosen among the
-ids the server serves. Fresh setup may retain a stable ZenCODE selection key
-such as `ds4:<catalog-id>` or `ds4:<file stem>`, but provider payloads and
-supervisor readiness use that canonical API ID. The supervisor accepts readiness only when `/v1/models`
-advertises the expected ID; it does not invent an alias or accept an unrelated
-model.
-
-The setup-created provider uses the ordinary OpenAI-compatible Chat Completions
-profile and a loopback base URL. The runtime permits only loopback hosts,
-canonical model paths below the configured root, regular non-symlink model
-files, bounded readiness/output bodies, and direct argv. Supervisor-owned
-flags (host, port, model path, working directory, backend, context, SSD
-streaming, MTP, power, and related server/security flags) cannot be replaced by
-`additionalArguments`.
-The backend is chosen by the user from `metal`, `cuda`, `rocm` and `cpu`;
-setup does not verify it against the host.
+The checkout's catalog and download identity is separate from the model's API
+identity. A `DS4ModelCatalog` entry exposes `apiModelID`. For a GGUF outside the
+catalog, the API id is inferred from the file name (`DS4ModelCatalog.inferredAPIModelID`)
+or chosen among the six ids that DS4 serves. Setup may keep a stable ZenCODE
+selection key, `ds4:<catalog-id>` or `ds4:<file stem>`, but the model manifest and
+provider payloads use the canonical API id. The engine has no `/v1/models`
+readiness step: the API id is the model id recorded on the manifest, and no alias is
+invented.
 
 ### Ownership and lifecycle
 
-`ZenCODECore` owns the DS4 scanner, catalog, setup integration,
-persisted DTOs, remote-client endpoint adaptation, and
-`DS4ServerSupervisor`. `zen` remains the only composition root that selects and
-injects a backend. Terminal UI, Telegram, ACP, and delegated-agent presentation
-layers do not own DS4 processes.
+`ZenCODECore` owns the DS4 scanner and catalog, the setup integration, the
+persisted DTOs, the library locator and builder, the engine registry and pool,
+and the remote-client adaptation. `zen` remains the only composition root that
+selects the backend. Terminal UI, Telegram, ACP, and delegated-agent layers do
+not own the engine.
 
-A supervisor is an actor-isolated owner for one child and its readiness state.
-Startup is single-flight: concurrent callers share one launch/readiness attempt;
-a cancelled waiter cannot cancel a launch still needed by another waiter.
-`stop()` reaps only that supervisor's child and leaves it reusable. `shutdown()`
-is a terminal fence that cancels pending startup, reaps the owned child, closes
-an owned transport when applicable, and rejects late resurrection. A
-factory-created supervisor belongs to its backend incarnation, so backend
-replacement shuts down the old owner before a replacement can start. A
-`RemoteGenerationClient` may borrow a supervisor or ready endpoint without
-owning it when the composition root says so.
+Sub-agents that use the same DS4 model share the open engine and its FIFO queue.
+A sub-agent that selects another provider is an ordinary remote client and never
+touches the engine.
 
-Delegated clients borrow the root owner only while retaining the same DS4
-provider/model selection (or while model selection is locked to the session). A
-child that selects a different provider is an ordinary remote client and must
-not inherit the root supervisor, loopback endpoint, or local credential policy.
-When a local endpoint is active, the transport suppresses persisted credentials
-for that loopback request; the provider's remote authentication behavior is
-unchanged when no local DS4 endpoint is active.
+Closing an agent backend is handled as follows:
+
+Closing an agent backend (for example on an agent switch) releases only its DS4 sessions; the loaded model stays resident. The engine is closed when `zen` exits, when a different DS4 model is requested, or when a new agent backend uses a non-DS4 model while no DS4 session is live.
+
+### Process boundary
+
+One DS4 model runs per `zen` process. DS4's instance lock (`/tmp/ds4.lock`, or
+the path in `DS4_LOCK_FILE`) prevents a second DS4 process from using the model,
+and that process fails with an explicit error. DS4 calls `exit()` on a malformed
+or unsupported GGUF, which ends `zen`; this is an accepted limit.
 
 ### Persistence boundary
 
-`ds4Runtime` is an additive optional field in provider and model manifests.
-A model-level runtime is authoritative for that model, so one DS4 provider can
+`ds4Runtime` is an additive optional field in provider and model manifests. A
+model-level runtime is authoritative for that model, so one DS4 provider can
 serve several GGUFs from the same folder, each recorded on its own model
-manifest; the provider runtime is the fallback for models that carry none.
-Manifests written before this rule stored the same runtime on both records and
-therefore resolve identically. Manifests without this field remain decodable.
-The persisted runtime contract contains only:
+manifest. The provider runtime is the fallback for models that carry none.
+Manifests that stored the same runtime on both records resolve identically, and
+manifests without the field remain decodable.
+
+The persisted runtime contains configuration only:
 
 - canonical absolute `rootDirectory`;
-- relative `modelRelativePath` below that root;
-- `backend`;
-- `contextWindow` and `batchedSessions`;
-- SSD streaming, MTP, and power tuning, including cache-expert/cache-byte,
-  preload, and cold-streaming options.
+- `modelRelativePath`, and the auxiliary paths `visionRelativePath`,
+  `mtpRelativePath`, and `steeringRelativePath`, relative to that root;
+- `backend`, `contextWindow`, the SSD streaming options, and the MTP, DSpark,
+  steering, and engine options;
+- `cudaArch`, `rocmArch`, `engineSessions` (1...8), and `extraEngineArguments`,
+  opaque tokens that the shim validates with DS4's public parsers.
 
-Path validation canonicalizes the root and rejects absolute/traversal model
+The retired `batchedSessions` key is ignored when decoding and never written.
+Path validation canonicalizes the root and rejects absolute or traversal model
 paths, escapes, symlink components, missing required files, and non-regular
-files. The manifest deliberately excludes process IDs, ports, endpoint URLs
-selected at runtime, executable discovery, readiness/diagnostic state, process
-handles, and hardware information. The persisted provider URL is an explicit
-loopback adoption hint (the setup default is `http://127.0.0.1:8000/v1`,
-matching ds4-server's conventional port). The supervisor first probes that
-bounded candidate and verifies `/v1/models` plus the expected model alias. If no
-compatible listener answers, it falls back to a dynamically reserved loopback
-port for a child it starts; runtime endpoint/port state remains transient.
+files. Process IDs, runtime state, readiness, diagnostics, and hardware
+information are not persisted. The provider base URL, `http://127.0.0.1:8000/v1`,
+is only a compatibility placeholder that the in-process engine does not use.
 
 Setup stages a complete candidate and commits it only through the existing
 cooperative manifest transaction. A failed scan, validation, cancellation, or
-empty selection returns the prior manifest;
-non-DS4 providers, models, credentials, and unrelated settings are retained.
-Runtime process state is reconstructed lazily from the persisted metadata after
-backend creation and is not part of session snapshots, task checkpoints, cache
-keys, or any other durable session state. See [ds4.md](ds4.md) for the
-folder-only operator flow and supported levels.
+empty selection returns the prior manifest, and non-DS4 providers, models,
+credentials, and unrelated settings are retained.
+
+Engine state is not part of session snapshots, task checkpoints, cache keys, or
+any other durable session state. The one exception is the explicit KV checkpoint
+`<name>.ds4kv`, written beside the session file by `/sessions save` and
+`/sessions <name>`. It is restored when the session loads with a DS4 model, and
+it carries a versioned trailer with the DS4 metadata of each message. It is
+skipped for sessions with images or without live DS4 state, and it is deleted
+with its session. It is not part of snapshots or task checkpoints. See
+[ds4.md](ds4.md#kv-checkpoints-ds4kv) for the operator flow.
 
 `SensitiveManifestCoordination` is the cross-process ownership boundary for
 cooperative writes and destructive reset of application-support manifests.

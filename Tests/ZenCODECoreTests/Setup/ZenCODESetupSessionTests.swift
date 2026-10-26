@@ -291,7 +291,8 @@ struct ZenCODESetupSessionTests {
         #expect(options.contains { $0.section == .responseLanguage })
         #expect(options.contains { $0.section == .ds4Runtime })
         #expect(!SetupSection.responseLanguage.requiresConfiguredModels)
-        #expect(SetupSection.ds4.title == "DS4 local runtime")
+        #expect(SetupSection.ds4.title == "DS4 local runtime (in-process engine)")
+        #expect(SetupSection.ds4.matches("ds4 engine"))
         #expect(SetupSection.responseLanguage.category == .recommended)
         #expect(SetupSection.responseLanguage.title == "Response language")
         // A configured language is reflected in the menu detail.

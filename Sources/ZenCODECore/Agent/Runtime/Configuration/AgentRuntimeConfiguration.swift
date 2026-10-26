@@ -857,9 +857,61 @@ public protocol AgentRuntimeBackend: Actor {
     ) async throws -> DirectAgentResponse
 
     func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot?
+
+    /// Persists the engine KV cache of `sessionID` to `url`. Called ONLY when
+    /// the user saves a session explicitly. Backends with an in-process engine
+    /// (DS4) write the live state of the session; they never open the model nor
+    /// evaluate a prompt for it. The default implementation does nothing.
+    func saveEngineCheckpoint(
+        sessionID: String,
+        to url: URL
+    ) async throws -> AgentEngineCheckpointSaveOutcome
+
+    /// Loads the engine KV cache stored at `url` into `sessionID`, and
+    /// re-attaches the private replay data of the checkpoint to the restored
+    /// messages. Called ONLY when a saved session is loaded. `onEvent` receives
+    /// the engine status when the model has to be opened. The default
+    /// implementation does nothing.
+    func restoreEngineCheckpoint(
+        sessionID: String,
+        from url: URL,
+        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async -> AgentEngineCheckpointRestoreOutcome
+
+    /// Runtime control of the in-process DS4 engine (`/ds4`): status, power,
+    /// directional steering and programming hints for `sessionID`. Values are
+    /// never persisted. The default implementation rejects every command with
+    /// `AgentDS4ControlError.unavailable`: only the backend of a DS4 model
+    /// implements it.
+    func ds4Control(
+        _ command: AgentDS4ControlCommand,
+        sessionID: String
+    ) async throws -> AgentDS4ControlResult
 }
 
 extension AgentRuntimeBackend {
+    public func ds4Control(
+        _: AgentDS4ControlCommand,
+        sessionID _: String
+    ) async throws -> AgentDS4ControlResult {
+        throw AgentDS4ControlError.unavailable
+    }
+
+    public func saveEngineCheckpoint(
+        sessionID _: String,
+        to _: URL
+    ) async throws -> AgentEngineCheckpointSaveOutcome {
+        .notApplicable
+    }
+
+    public func restoreEngineCheckpoint(
+        sessionID _: String,
+        from _: URL,
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async -> AgentEngineCheckpointRestoreOutcome {
+        .notApplicable
+    }
+
     public func activeToolDescriptors(
         sessionID _: String?
     ) async -> [DirectToolDescriptor] {

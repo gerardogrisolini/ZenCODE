@@ -224,6 +224,9 @@ extension TerminalChat {
         case let command where command == "/voice" || command.hasPrefix("/voice "):
             await handleVoiceCommand(command)
             return .continueChat
+        case let command where command == "/ds4" || command.hasPrefix("/ds4 "):
+            await handleDS4Command(command)
+            return .continueChat
         default:
             if case .slashCommand = Self.submittedLineRole(for: prompt) {
                 await writeFailureMessage(Self.unknownCommandMessage(for: prompt))

@@ -41,18 +41,15 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
     private var sessionGenerations: [String: UInt64] = [:]
     private var nextSessionGeneration: UInt64 = 0
     public var didEmitLoadedModel = false
-    /// Endpoint used for requests after a local DS4 supervisor becomes ready.
+    /// Endpoint base override used only by deterministic loopback tests.
     /// The provider's persisted base URL remains the capability/payload source;
     /// this value only changes where the HTTP request is sent.
-    public private(set) var streamEndpointBaseURLOverride: URL?
-    public private(set) var ds4Endpoint: DS4ServerEndpoint?
-    private let ds4Supervisor: DS4ServerSupervisor?
-    /// This flag owns the supervisor actor reference for the backend
-    /// incarnation; it is intentionally not process ownership. The supervisor
-    /// carries `DS4ServerEndpointOwnership` and only terminates a child it
-    /// launched itself (an adopted endpoint is always detached safely).
-    private let ownsDS4Supervisor: Bool
-    private var ds4Shutdown = false
+    public let streamEndpointBaseURLOverride: URL?
+    /// In-process DS4 engine used instead of HTTP when the selected model has
+    /// a DS4 runtime (`RemoteGenerationClient+DS4Engine.swift`).
+    let ds4Generation: DS4LocalGeneration?
+    /// Per-client bookkeeping of the DS4 path.
+    var ds4State = DS4ClientState()
 
     public init(
         configuration: AgentRuntimeConfiguration,
@@ -64,9 +61,40 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         /// and loopback tests. Provider capability decisions continue to use
         /// `provider.baseURL`, so the request payload remains provider-accurate.
         streamEndpointBaseURLOverride: URL? = nil,
-        ds4Supervisor: DS4ServerSupervisor? = nil,
-        ds4Endpoint: DS4ServerEndpoint? = nil,
-        ownsDS4Supervisor: Bool = false,
+        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
+        swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
+        sharedChat: AgentSharedChat? = nil,
+        sharedChatSenderID: String? = nil,
+        sharedChatRootSessionID: String? = nil,
+        subAgentContextualBackendFactory: DirectSubAgentContextualBackendFactory? = nil
+    ) {
+        self.init(
+            configuration: configuration,
+            provider: provider,
+            apiKey: apiKey,
+            thinkingOptions: thinkingOptions,
+            transport: transport,
+            streamEndpointBaseURLOverride: streamEndpointBaseURLOverride,
+            ds4Generation: nil,
+            mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime,
+            sharedChat: sharedChat,
+            sharedChatSenderID: sharedChatSenderID,
+            sharedChatRootSessionID: sharedChatRootSessionID,
+            subAgentContextualBackendFactory: subAgentContextualBackendFactory
+        )
+    }
+
+    /// Designated initializer; `ds4Generation` routes generation through the
+    /// in-process DS4 engine.
+    init(
+        configuration: AgentRuntimeConfiguration,
+        provider: AgentRemoteProvider,
+        apiKey: String?,
+        thinkingOptions: [AgentThinkingSelection]? = nil,
+        transport: RemoteTransportCore? = nil,
+        streamEndpointBaseURLOverride: URL? = nil,
+        ds4Generation: DS4LocalGeneration?,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
         swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
         sharedChat: AgentSharedChat? = nil,
@@ -81,10 +109,8 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         let resolvedTransport = transport ?? RemoteTransportCore()
         self.transport = resolvedTransport
         ownsTransport = transport == nil
-        self.ds4Supervisor = ds4Supervisor
-        self.ds4Endpoint = ds4Endpoint
-        self.ownsDS4Supervisor = ds4Supervisor != nil && ownsDS4Supervisor
-        self.streamEndpointBaseURLOverride = streamEndpointBaseURLOverride ?? ds4Endpoint?.baseURL
+        self.streamEndpointBaseURLOverride = streamEndpointBaseURLOverride
+        self.ds4Generation = ds4Generation
         self.toolExecutor = DirectToolExecutor(
             authorizationHandler: configuration.toolAuthorizationHandler,
             mcpRuntime: mcpRuntime,
@@ -162,6 +188,7 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
     public func closeSession(id: String) async {
         invalidateSession(id: id)
         await toolExecutor.removeToolProviders(sessionID: id)
+        await releaseDS4EngineSession(id: id)
     }
 
     public func updateSessionOptions(
@@ -188,60 +215,22 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
     }
 
     public func shutdown() async {
-        ds4Shutdown = true
-        // Drop endpoint state as part of the terminal transition. A later
-        // caller cannot accidentally reuse a stale local override, even when
-        // this client borrowed an endpoint without owning its supervisor.
-        streamEndpointBaseURLOverride = nil
-        ds4Endpoint = nil
         sessions.removeAll()
         sessionGenerations.removeAll()
+        await releaseDS4EngineSessions()
         await toolExecutor.shutdown()
-        if ownsDS4Supervisor, let ds4Supervisor {
-            await ds4Supervisor.shutdown()
-        }
         if ownsTransport {
             try? await transport.shutdown()
         }
     }
 
-    /// Whether this client is bound to a local DS4 endpoint. This is kept
-    /// separate from the provider's persisted base URL so an ordinary remote
-    /// provider redirected to a test endpoint keeps its normal auth behavior.
-    var usesLocalDS4Endpoint: Bool {
-        ds4Supervisor != nil || ds4Endpoint != nil || provider.ds4Runtime != nil
-    }
-
-    var isDS4Shutdown: Bool {
-        ds4Shutdown
-    }
-
-    /// Opens a local DS4 server only when a caller actually needs the model.
-    /// A concrete endpoint injection remains useful for composition roots that
-    /// own readiness themselves; in that case no supervisor call is required.
-    func ensureDS4Ready() async throws {
-        guard !ds4Shutdown else {
-            throw DS4ServerSupervisorError.shutdown
-        }
-        guard let ds4Supervisor else {
-            return
-        }
-        let endpoint = try await ds4Supervisor.ensureRunning()
-        guard !ds4Shutdown else {
-            throw DS4ServerSupervisorError.shutdown
-        }
-        ds4Endpoint = endpoint
-        streamEndpointBaseURLOverride = endpoint.baseURL
-    }
-
     public func preloadModel(
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> String {
-        try await ensureDS4Ready()
-        guard !ds4Shutdown else {
-            throw DS4ServerSupervisorError.shutdown
-        }
         try validateConfiguration()
+        if let ds4Generation {
+            return try await preloadDS4Engine(ds4Generation, onEvent: onEvent)
+        }
         if !didEmitLoadedModel {
             didEmitLoadedModel = true
             await onEvent(.modelLoaded(provider.modelID))
@@ -290,14 +279,37 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         id: String,
         force: Bool
     ) async -> AgentRuntimeSessionCompactionResult? {
+        await compactSession(id: id, force: force, exactTokenCount: nil)
+    }
+
+    /// Compacts the session. `exactTokenCount` is the exact size of the
+    /// prompt the model would read for these messages (the DS4 path counts it
+    /// with the engine tokenizer); when given, the budget converts between
+    /// the shared estimator and real tokens with their ratio, so the compacted
+    /// history targets the real context window. `nil` keeps the estimator-only
+    /// budget used by every other provider.
+    public func compactSession(
+        id: String,
+        force: Bool,
+        exactTokenCount: Int?
+    ) async -> AgentRuntimeSessionCompactionResult? {
         guard var session = sessions[id] else {
             return nil
         }
+        let runtimeMessages = Self.agentRuntimeMessages(from: session.messages)
+        var inflationFactor = 1.0
+        if let exactTokenCount, exactTokenCount > 0 {
+            let estimated = AgentConversationCompactionSupport.estimatedTokenCount(for: runtimeMessages)
+            if estimated > 0 {
+                inflationFactor = Double(exactTokenCount) / Double(estimated)
+            }
+        }
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
-            Self.agentRuntimeMessages(from: session.messages),
+            runtimeMessages,
             budget: AgentConversationCompactionBudget(
                 contextWindowTokens: configuration.configuredContextWindowLimit,
-                maxOutputTokens: configuration.maxOutputTokens
+                maxOutputTokens: configuration.maxOutputTokens,
+                conversationInflationFactor: inflationFactor
             ),
             force: force
         )
@@ -310,6 +322,9 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
             preservingRecentFrom: session.messages
         )
         sessions[id] = session
+        // The compacted context forgot the `/ds4 hints` instructions and its tail
+        // may still hold an old on/off note: the next boundary states it again.
+        ds4State.hintsBySessionID[id]?.contextCompacted()
         guard let snapshot = snapshotSession(id: id) else {
             return nil
         }
@@ -325,9 +340,6 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         attachments: [AgentRuntimeAttachment],
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
-        guard !ds4Shutdown else {
-            throw DS4ServerSupervisorError.shutdown
-        }
         if sessions[sessionID] == nil {
             guard !MemoryConsolidationContext.isIsolated else { throw CancellationError() }
             createSession(id: sessionID, cwd: configuration.workingDirectory.path)
@@ -386,7 +398,16 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
                 }
                 let outgoingMessages = Self.applyingCurrentTurnMemory(to: activeSession.messages)
                 do {
-                    if provider.protocolProfileID == .anthropicMessages {
+                    if let ds4Generation {
+                        // The DS4 path renders its own prompt from the
+                        // session (it persists the current-turn memory and
+                        // may compact), so it takes the lease, not a copy.
+                        streamResult = try await streamDS4Engine(
+                            ds4Generation,
+                            lease: lease,
+                            onEvent: roundEvents
+                        )
+                    } else if provider.protocolProfileID == .anthropicMessages {
                         streamResult = try await streamAnthropicMessages(
                             messages: outgoingMessages,
                             sessionID: session.id,
@@ -477,10 +498,20 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
             if let metrics = Self.generationMetrics(generationStats) {
                 await Self.publishGenerationMetrics(
                     metrics,
-                    maxTokens: configuration.configuredContextWindowLimit,
+                    maxTokens: streamResult.ds4Turn?.contextSize ?? configuration.configuredContextWindowLimit,
                     modelID: provider.modelID,
+                    isApproximate: streamResult.ds4Turn == nil,
                     onEvent: onEvent
                 )
+            }
+
+            if streamResult.toolCalls.isEmpty, streamResult.ds4Turn?.toolObservation != nil {
+                // Malformed DS4 tool call: the observation is already in the
+                // assistant message; the model retries in a new round.
+                if round == configuration.maxToolRounds - 1 {
+                    throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)
+                }
+                continue
             }
 
             if streamResult.toolCalls.isEmpty {
@@ -566,7 +597,7 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)
     }
 
-    private struct SessionLease: Sendable {
+    struct SessionLease: Sendable {
         let id: String
         let generation: UInt64
     }
@@ -575,6 +606,8 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         nextSessionGeneration &+= 1
         sessionGenerations[id] = nextSessionGeneration
         sessions[id] = session
+        // A replaced transcript may hold hints notes of an earlier context.
+        ds4State.hintsBySessionID[id]?.contextCompacted()
     }
 
     private func invalidateSession(id: String) {
@@ -585,14 +618,14 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         sessions.removeValue(forKey: id)
     }
 
-    private func sessionLease(for id: String) -> SessionLease? {
+    func sessionLease(for id: String) -> SessionLease? {
         guard sessions[id] != nil, let generation = sessionGenerations[id] else {
             return nil
         }
         return SessionLease(id: id, generation: generation)
     }
 
-    private func currentSession(for lease: SessionLease) -> AgentSession? {
+    func currentSession(for lease: SessionLease) -> AgentSession? {
         guard sessionGenerations[lease.id] == lease.generation else {
             return nil
         }
@@ -600,7 +633,7 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
     }
 
     @discardableResult
-    private func mutateSession(
+    func mutateSession(
         for lease: SessionLease,
         _ mutation: (inout AgentSession) -> Void
     ) -> Bool {

@@ -486,6 +486,9 @@ extension AgentCoreSessionRunner {
         // their retry-and-rebuild behaviour.
         backendManager.latchShutdown()
         await shutdownBackendKeepingExternalTools()
+        // Process exit: the engine is freed unless a DS4 session is still live
+        // (another runner of this process uses the model). Never waits.
+        _ = await ds4EngineRegistry.closeIfIdle()
         await mcpRuntime.shutdown()
     }
 
@@ -672,7 +675,8 @@ extension AgentCoreSessionRunner {
             configuration: runtimeConfiguration,
             mcpRuntime: mcpRuntime,
             swiftFeatureRuntime: swiftFeatureRuntime,
-            backendFactory: backendFactory
+            backendFactory: backendFactory,
+            ds4EngineRegistry: ds4EngineRegistry
         )
         await backend.installTaskOrchestrator(taskOrchestrator)
         await backend.updateSubAgentToolEventHandler(
