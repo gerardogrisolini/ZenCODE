@@ -70,6 +70,14 @@ actor MemoryGraphStoreRegistry {
         stores.removeAll()
     }
 
+    /// Forgets the cached store for one graph, so the next `store(graphURL:)`
+    /// reopens it from disk. Used when the graph's directory is deleted, so a
+    /// stale engine can never write the removed graph back. Other graphs stay
+    /// cached.
+    func remove(graphURL: URL) {
+        stores[graphURL] = nil
+    }
+
     /// Flushes every open store, attempting all before throwing the first error,
     /// so one unwritable graph never hides the flush of the others. A durability
     /// barrier for automatic-recall maintenance, which deliberately stays in

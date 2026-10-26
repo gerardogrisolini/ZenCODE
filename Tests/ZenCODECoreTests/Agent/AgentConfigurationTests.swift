@@ -163,4 +163,108 @@ struct AgentConfigurationTests {
             ) == explicitDirectory
         )
     }
+
+    // MARK: - Launch working directory
+
+    /// A real, symlink-resolved temporary directory removed on exit, so
+    /// expectations compare against the same canonical path the resolver returns.
+    private func withTemporaryDirectory(
+        _ body: (URL) throws -> Void
+    ) throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-launch-cwd-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try body(directory.standardizedFileURL.resolvingSymlinksInPath())
+    }
+
+    @Test
+    func launchWorkingDirectoryPrefersArgumentOverEnvironmentAndShell() throws {
+        try withTemporaryDirectory { argumentDirectory in
+            try withTemporaryDirectory { environmentDirectory in
+                try withTemporaryDirectory { shellDirectory in
+                    let environment = [
+                        "ZENCODE_AGENT_CWD": environmentDirectory.path,
+                        "PWD": shellDirectory.path,
+                    ]
+                    #expect(
+                        AgentConfiguration.launchWorkingDirectoryURL(
+                            arguments: ["zen", "--working-directory", argumentDirectory.path],
+                            environment: environment
+                        ) == argumentDirectory
+                    )
+                    #expect(
+                        AgentConfiguration.launchWorkingDirectoryURL(
+                            arguments: ["zen"],
+                            environment: environment
+                        ) == environmentDirectory
+                    )
+                    #expect(
+                        AgentConfiguration.launchWorkingDirectoryURL(
+                            arguments: ["zen"],
+                            environment: ["PWD": shellDirectory.path]
+                        ) == shellDirectory
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    func launchWorkingDirectoryLastArgumentWins() throws {
+        try withTemporaryDirectory { first in
+            try withTemporaryDirectory { second in
+                #expect(
+                    AgentConfiguration.launchWorkingDirectoryURL(
+                        arguments: [
+                            "zen",
+                            "--working-directory", first.path,
+                            "--agent", "Developer",
+                            "--working-directory", second.path,
+                        ],
+                        environment: [:]
+                    ) == second
+                )
+            }
+        }
+    }
+
+    @Test
+    func launchWorkingDirectoryIgnoresRelativeOrMissingShellDirectory() {
+        let currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let missing = "/zencode-missing-\(UUID().uuidString)"
+        for shellValue in ["relative/path", missing] {
+            let resolved = AgentConfiguration.launchWorkingDirectoryURL(
+                arguments: ["zen"],
+                environment: ["PWD": shellValue]
+            )
+            // Falls through to the process's current directory (or home, when
+            // that is the executable's directory), never to the ignored value.
+            #expect(
+                resolved == currentDirectory
+                    || resolved == UserHomeDirectory.current().standardizedFileURL.resolvingSymlinksInPath()
+            )
+        }
+        #expect(
+            AgentConfiguration.defaultWorkingDirectoryRawPath(environment: ["PWD": "relative/path"])
+                == FileManager.default.currentDirectoryPath
+        )
+        #expect(
+            AgentConfiguration.defaultWorkingDirectoryRawPath(environment: ["PWD": missing])
+                == FileManager.default.currentDirectoryPath
+        )
+    }
+
+    @Test
+    func defaultWorkingDirectoryRawPathIgnoresBlankEnvironmentValue() throws {
+        try withTemporaryDirectory { shellDirectory in
+            #expect(
+                AgentConfiguration.defaultWorkingDirectoryRawPath(
+                    environment: ["ZENCODE_AGENT_CWD": "   ", "PWD": shellDirectory.path]
+                ) == shellDirectory.path
+            )
+        }
+    }
 }

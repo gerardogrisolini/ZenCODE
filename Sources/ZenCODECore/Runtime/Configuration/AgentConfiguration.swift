@@ -147,9 +147,7 @@ public struct AgentConfiguration: Sendable {
         var rawJSONL = false
         let environmentWorkingDirectory = agentEnvironmentValue("CWD")?.nilIfBlank
         var hasExplicitWorkingDirectory = environmentWorkingDirectory != nil
-        var rawWorkingDirectory = environmentWorkingDirectory
-            ?? Self.shellWorkingDirectory(environment: environment)
-            ?? FileManager.default.currentDirectoryPath
+        var rawWorkingDirectory = Self.defaultWorkingDirectoryRawPath(environment: environment)
         var rawInitialSkillSelection = agentEnvironmentValue("SKILLS")
         var rawMaxToolRounds = agentEnvironmentValue("MAX_TOOL_ROUNDS")
         var rawMaxOutputTokens = agentEnvironmentValue("MAX_OUTPUT_TOKENS")
@@ -440,6 +438,42 @@ public struct AgentConfiguration: Sendable {
         return UserHomeDirectory.current()
             .standardizedFileURL
             .resolvingSymlinksInPath()
+    }
+
+    /// The working directory used when no `--working-directory` argument is
+    /// given: `ZENCODE_AGENT_CWD`, else the shell's absolute and existing `PWD`,
+    /// else the process's current directory.
+    static func defaultWorkingDirectoryRawPath(environment: [String: String]) -> String {
+        environment["ZENCODE_AGENT_CWD"]?.nilIfBlank
+            ?? shellWorkingDirectory(environment: environment)
+            ?? FileManager.default.currentDirectoryPath
+    }
+
+    /// The directory a launch with `arguments` and `environment` works in,
+    /// resolved like the full parser does but without validating any other
+    /// option: the last `--working-directory <value>` wins over the default.
+    /// For flows that run before (or without) building a configuration, such as
+    /// `/setup`, which still has to know which project the session belongs to.
+    static func launchWorkingDirectoryURL(
+        arguments: [String],
+        environment: [String: String]
+    ) -> URL {
+        var argumentValue: String?
+        var index = 1
+        while index < arguments.count {
+            if arguments[index] == "--working-directory", index + 1 < arguments.count {
+                argumentValue = arguments[index + 1]
+                index += 2
+            } else {
+                index += 1
+            }
+        }
+        let hasExplicitWorkingDirectory = argumentValue != nil
+            || environment["ZENCODE_AGENT_CWD"]?.nilIfBlank != nil
+        return resolvedWorkingDirectory(
+            rawValue: argumentValue ?? defaultWorkingDirectoryRawPath(environment: environment),
+            applyLaunchDirectoryFallback: !hasExplicitWorkingDirectory
+        )
     }
 
     private static func shellWorkingDirectory(environment: [String: String]) -> String? {

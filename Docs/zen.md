@@ -140,6 +140,23 @@ directory between machines in one step:
   concurrent processes keep a single shared exclusion boundary before,
   during, and after the swap. Because the whole directory is replaced, the
   Linux voice mode files are removed: download them again afterwards.
+- **Clean memory** lists the memory graphs under `~/.zencode/memory/` (the
+  current project, the global graph, and the other projects, with size and
+  modification date), then lets you choose the rules to apply to one of them:
+  remove archived entries unchanged for N days (default 30), archive entries
+  that were never recalled and have not changed for N days (default 180, scaled
+  per category), and graph hygiene (superseded entries, dangling links, unused
+  tags and clusters, unusable embedding vectors). The days are asked each time
+  and never saved. A preview shows the counts and the titles that would be
+  affected; nothing changes until you confirm (default No). The current graph is
+  then copied to `memory.graph.json.bak` next to it, replacing any previous
+  copy, and the cleanup is applied as one atomic transaction. The copy is never
+  loaded by `zen`: to undo, close `zen` and copy it over `memory.graph.json`. See
+  [Docs/memory.md](memory.md#memory-cleanup).
+- **Delete project memory folder**, offered by **Clean memory** for the graph of
+  another project only (not the current project and not the global graph),
+  removes that project's whole memory directory after a confirmation that shows
+  the exact path. No copy is kept: export a backup first if you may need it.
 - **Reset remote configuration** is the same reset previously found in the
   main setup menu, now grouped here with the other data operations.
 - **Back** returns to the main setup menu. Cancelling any prompt leaves
@@ -488,9 +505,12 @@ only terminal rendering surface for these live chat entries.
 
 `/plan save` stores a reusable copy for the current working directory. It uses
 the active plan when one exists; otherwise it can promote the latest non-empty
-assistant response into a text-only plan. The saved copy is reset to an
-unapproved draft with pending task statuses, while the currently active plan is
-left unchanged.
+assistant response into a plan. If that response is in the strict Planner format
+(`Specifiche concordate`, a numbered `Implementation plan`, and a `Dependencies:`
+line on its own line for every point), the plan is saved with its structured
+tasks and dependencies; any other response is saved as a text-only plan. The
+saved copy is reset to an unapproved draft with pending task statuses, while the
+currently active plan is left unchanged.
 
 To hand a plan to another session, start a new session with `/sessions new` (or
 use any session for the same working directory with no active plan), then run
@@ -501,8 +521,9 @@ session, its active attempts, or its execution progress; review or revise the
 draft, then run `/plan approve` to begin implementation.
 
 Approval creates and activates the plan's task graph in the receiving session.
-For a saved text-only plan with no structured items, ZenCODE creates one stable
-implementation task rather than guessing a task breakdown from prose.
+A plan saved with structured tasks keeps them. For a saved text-only plan with
+no structured items, ZenCODE creates one stable implementation task rather than
+guessing a task breakdown from prose.
 
 **Optional integrations:**
 - `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup). Available even while a prompt is running.

@@ -20,6 +20,7 @@ extension ZenCODESetupRunner {
     enum DataManagementAction: Equatable {
         case export
         case importBackup
+        case cleanMemory
         case reset
         case back
     }
@@ -49,6 +50,11 @@ extension ZenCODESetupRunner {
                 value: .importBackup,
                 title: "Import backup",
                 detail: "replace the support directory with a validated archive"
+            ),
+            TerminalCheckboxMenuItem(
+                value: .cleanMemory,
+                title: "Clean memory",
+                detail: "preview and clean a memory graph, or delete an old project's memory"
             ),
             TerminalCheckboxMenuItem(
                 value: .reset,
@@ -88,6 +94,9 @@ extension ZenCODESetupRunner {
                     await MemoryGraphStoreRegistry.shared.reset()
                     return .dataReplaced
                 }
+            case .cleanMemory:
+                try await runMemoryCleanupMenu()
+                continue
             case .reset:
                 guard try confirmRemoteConfigurationReset() else {
                     continue

@@ -690,6 +690,97 @@ struct PlanCommandTests {
     }
 
     @Test
+    func planSavePromotesStructuredResponseWithEveryTaskAndApprovalKeepsThem() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PlanSaveStructuredTests-\(UUID().uuidString)", isDirectory: true)
+        let support = root.appendingPathComponent("support", isDirectory: true)
+        let workingDirectory = root.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: workingDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runner = AgentCoreSessionRunner(
+            taskGraphStore: SessionTaskGraphStore(supportDirectoryURL: support)
+        )
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                workingDirectory: workingDirectory
+            ),
+            stdinIsTerminal: false,
+            sessionRunner: runner
+        )
+        terminal.activeSessionTranscript = [
+            AgentRuntimeMessage(role: .user, content: "Ship the shared routing"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: Self.structuredThreePointPlannerFinalText
+            ),
+        ]
+
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan save")))
+
+        let promoted = try #require(terminal.activePlan)
+        let taskIDs = (1...3).map { "\(promoted.id)-\($0)" }
+        let expectedTitles = [
+            "Add the shared model.",
+            "Wire the TUI command.",
+            "Validate every frontend.",
+        ]
+        let expectedDependencies = [[], [taskIDs[0]], [taskIDs[0], taskIDs[1]]]
+        #expect(promoted.originalGoal == "Ship the shared routing")
+        #expect(promoted.points.map(\.id) == taskIDs)
+        #expect(promoted.points.map(\.dependsOn) == expectedDependencies)
+
+        let stored = try #require(await runner.savedTaskPlans(
+            workingDirectory: workingDirectory
+        ).first)
+        #expect(stored.graph.id == promoted.id)
+        #expect(stored.graph.state == .draft)
+        #expect(stored.graph.tasks.map(\.id) == taskIDs)
+        #expect(stored.graph.tasks.map(\.title) == expectedTitles)
+        #expect(stored.graph.tasks.map(\.dependsOn) == expectedDependencies)
+        #expect(stored.snapshot.plan == promoted)
+        #expect(stored.snapshot.plan.isApproved == false)
+
+        await terminal.startNewSession()
+        #expect(terminal.activePlan == nil)
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan load")))
+
+        let loaded = try #require(terminal.activePlan)
+        #expect(loaded.id == promoted.id)
+        #expect(loaded.isApproved == false)
+        #expect(loaded.points.map(\.id) == taskIDs)
+        #expect(loaded.points.map(\.text) == expectedTitles)
+        #expect(loaded.points.map(\.dependsOn) == expectedDependencies)
+        #expect(loaded.points.allSatisfy { $0.hasExplicitDependencies })
+
+        #expect(isContinueChat(await terminal.handlePlanCommand("/plan approve")))
+        let approval = await terminal.submittedLineAction("Ship the shared routing safely")
+        guard case let .runHiddenPrompt(_, purpose) = approval else {
+            Issue.record("Approval should start the implementation of a loaded structured plan")
+            return
+        }
+        #expect(purpose == .normal)
+
+        let graph = try #require(try await runner.taskGraphSnapshot(
+            sessionID: terminal.sessionID,
+            graphID: promoted.id
+        ))
+        #expect(graph.state == .active)
+        #expect(graph.source == .plan(planID: promoted.id))
+        #expect(graph.tasks.map(\.id) == taskIDs)
+        #expect(graph.tasks.map(\.title) == expectedTitles)
+        #expect(graph.tasks.map(\.dependsOn) == expectedDependencies)
+        #expect(!graph.tasks.contains { $0.id.hasSuffix("-implementation") })
+        #expect(terminal.activePlan?.isApproved == true)
+        #expect(terminal.activePlan?.points.map(\.id) == taskIDs)
+    }
+
+    @Test
     func planSaveWithoutAPlanDoesNotCreateCheckpoint() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("PlanSaveEmptyTests-\(UUID().uuidString)", isDirectory: true)
@@ -1436,6 +1527,121 @@ struct PlanCommandTests {
             PlanningCommandKernel.planFromLatestAssistantMessage(in: messages)
         )
         #expect(plan.originalGoal == "Plan the new export command")
+    }
+
+    private static let structuredThreePointPlannerFinalText = """
+    Specifiche concordate
+    - Keep compatibility.
+
+    Implementation plan
+    1. Add the shared model.
+       Dependencies: none
+    2. Wire the TUI command.
+       Dependencies: 1
+    3. Validate every frontend.
+       Dependencies: 1, 2
+    """
+
+    @Test
+    func promotedStructuredPlannerResponseKeepsEveryPointAndDependency() throws {
+        let messages = [
+            AgentRuntimeMessage(role: .user, content: "Ship the shared routing"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: Self.structuredThreePointPlannerFinalText
+            ),
+        ]
+
+        let plan = try #require(
+            PlanningCommandKernel.planFromLatestAssistantMessage(in: messages)
+        )
+        #expect(plan.originalGoal == "Ship the shared routing")
+        #expect(plan.consolidatedText == Self.structuredThreePointPlannerFinalText)
+        #expect(plan.isApproved == false)
+        #expect(plan.id == PlanningCommandKernel.planID(from: plan.points))
+        #expect(plan.id.hasPrefix("plan-"))
+        #expect(plan.points.map(\.id) == (1...3).map { "\(plan.id)-\($0)" })
+        #expect(plan.points.map(\.text) == [
+            "Add the shared model.",
+            "Wire the TUI command.",
+            "Validate every frontend.",
+        ])
+        #expect(plan.points.map(\.dependsOn) == [
+            [],
+            ["\(plan.id)-1"],
+            ["\(plan.id)-1", "\(plan.id)-2"],
+        ])
+        #expect(plan.points.allSatisfy { $0.hasExplicitDependencies })
+        #expect(plan.points.allSatisfy { $0.status == .pending })
+        #expect(PlanningCommandKernel.structuredPlanOutputIsCoherent(
+            text: plan.consolidatedText,
+            points: plan.points
+        ))
+    }
+
+    @Test
+    func promotedPlanFromAFreshMessageGetsADistinctIdentifierEachTime() throws {
+        let messages = [
+            AgentRuntimeMessage(role: .user, content: "Ship the shared routing"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: Self.structuredThreePointPlannerFinalText
+            ),
+        ]
+
+        let first = try #require(
+            PlanningCommandKernel.planFromLatestAssistantMessage(in: messages)
+        )
+        let second = try #require(
+            PlanningCommandKernel.planFromLatestAssistantMessage(in: messages)
+        )
+        #expect(first.id != second.id)
+    }
+
+    @Test
+    func promotedResponseOutsideTheStrictFormatStaysTextOnly() throws {
+        let nonStructuredTexts = [
+            "First inspect, then migrate and test.",
+            // The dependencies share the paragraph instead of owning a line.
+            """
+            Specifiche concordate
+            - Keep compatibility.
+
+            Implementation plan
+            1. Implement shared routing. Dependencies: none
+            2. Validate every frontend. Dependencies: 1
+            """,
+            // The second point never declares its dependencies.
+            """
+            Specifiche concordate
+            - Keep compatibility.
+
+            Implementation plan
+            1. Implement shared routing.
+               Dependencies: none
+            2. Validate every frontend.
+            """,
+            // A dependency on a point that does not exist.
+            """
+            Specifiche concordate
+            - Keep compatibility.
+
+            Implementation plan
+            1. Implement shared routing.
+               Dependencies: 4
+            """,
+        ]
+
+        for text in nonStructuredTexts {
+            let plan = try #require(
+                PlanningCommandKernel.planFromLatestAssistantMessage(in: [
+                    AgentRuntimeMessage(role: .user, content: "Ship the shared routing"),
+                    AgentRuntimeMessage(role: .assistant, content: text),
+                ])
+            )
+            #expect(plan.points.isEmpty)
+            #expect(plan.consolidatedText == text.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
     }
 
     @Test

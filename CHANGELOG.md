@@ -199,6 +199,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
   project folder from that list or from memory. Regenerate the recommended
   profiles in setup to apply them. See
   [Docs/organizer.md](Docs/organizer.md#selecting-organizer).
+- Memory cleanup from `/setup` › Data management › Clean memory: pick a memory
+  graph (the current project, the global graph, or another project) and remove
+  archived entries unchanged for N days (default 30), archive entries that were
+  never recalled and have not changed for N days (default 180, scaled per
+  category), and tidy the graph (superseded entries, dangling links, unused tags
+  and clusters, unusable embedding vectors). A preview with counts and titles
+  comes first and nothing changes without a confirmation. The graph is copied to
+  `memory.graph.json.bak` in the same transaction, replacing any previous copy;
+  `zen` never loads it, and it is restored by hand with `zen` closed. The memory
+  folder of another project can be deleted from the same menu, with no copy.
+  Nothing is saved in settings or read from the environment, and a cleared
+  embedding vector is regenerated only when its entry is next written or updated.
+  See [Docs/memory.md](Docs/memory.md#memory-cleanup).
 
 ### Changed
 
@@ -311,6 +324,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   each point, and dependencies translated to those IDs. It also asks the
   Planner to write each `Dependencies:` line on its own line, never at the end
   of a bullet or a paragraph.
+- `/plan save` without an active plan now keeps the whole task list of a plan
+  written in the Planner format. When the promoted answer has `Specifiche
+  concordate`, a numbered `Implementation plan`, and a `Dependencies:` line on
+  its own line for every point, the saved plan has one task per point with its
+  dependencies, and `/plan load` and `/plan approve` use those tasks. Before,
+  the saved plan had no tasks and approval replaced it with a single generic
+  task. Any other answer is still saved as text only and still receives one
+  task at approval.
 - Voice: on macOS, a short pause while dictating no longer replaces the words
   said before it with the next ones; after a pause the dictation continues on a
   new line and the whole text is sent.
