@@ -24,9 +24,9 @@ public enum PatchFileHeaders {
         scan(patch).values
     }
 
-    /// Returns the indices, in `patch.components(separatedBy: "\n")`, of the
-    /// `--- ` line of every `--- ` / `+++ ` pair recognized as a file header.
-    /// Any other line that merely starts with `--- ` is hunk content.
+    /// Returns the indices, in `PatchLines.split(patch)`, of the `--- ` line of
+    /// every `--- ` / `+++ ` pair recognized as a file header. Any other line
+    /// that merely starts with `--- ` is hunk content.
     public static func fileHeaderLineIndices(in patch: String) -> Set<Int> {
         scan(patch).headerLineIndices
     }
@@ -39,7 +39,7 @@ public enum PatchFileHeaders {
     }
 
     private static func scan(_ patch: String) -> Scan {
-        let lines = patch.components(separatedBy: "\n").map(withoutTrailingCarriageReturn)
+        let lines = PatchLines.split(patch).map(PatchLines.withoutTrailingCarriageReturn)
         var result = Scan()
         var isInSection = false
         var hunk = Hunk.none
@@ -209,10 +209,5 @@ public enum PatchFileHeaders {
 
     private static func value(of line: String, droppingPrefixOfLength length: Int) -> String {
         String(decoding: line.utf8.dropFirst(length), as: UTF8.self)
-    }
-
-    private static func withoutTrailingCarriageReturn(_ line: String) -> String {
-        guard line.utf8.last == 0x0D else { return line }
-        return String(decoding: line.utf8.dropLast(), as: UTF8.self)
     }
 }

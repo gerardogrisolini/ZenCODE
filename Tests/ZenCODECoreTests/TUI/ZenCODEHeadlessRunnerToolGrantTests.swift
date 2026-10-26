@@ -36,6 +36,10 @@ struct ZenCODEHeadlessRunnerToolGrantTests {
         }
     }
 
+    // Organizer is a recommended profile only on macOS (see
+    // `AgentProfileStore.defaultProfiles()`), so it cannot be selected by name
+    // on other platforms.
+    #if os(macOS)
     @Test
     func organizerHeadlessSessionCarriesTheOrganizerToolGrant() async throws {
         try await Support.withTemporaryProjectAsync { _, workspace in
@@ -56,6 +60,7 @@ struct ZenCODEHeadlessRunnerToolGrantTests {
             #expect(allowed.isSuperset(of: Self.expectedCoreGrant(forAgentNamed: AgentProfileStore.organizerAgentName)))
         }
     }
+    #endif
 
     @TerminalChatActor
     private static func headlessAllowedToolNames(

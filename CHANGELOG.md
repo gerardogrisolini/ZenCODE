@@ -373,6 +373,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
   without changing the file and created an empty file named after that line.
   The tool now recognizes file headers with the same rule as the tool call
   line, so both list the same files.
+- `local.applyPatch` now reads CRLF payloads the same way on every platform. On
+  Linux, a CRLF patch and a CRLF file were not split into lines, so the patch
+  failed. On every platform, a `*** Begin Patch` payload with CRLF was rejected,
+  and the `---`/`+++` headers of a CRLF unified diff kept the `\r` in the file
+  name. Line content is compared byte for byte: a CRLF patch matches a CRLF file
+  and keeps its line endings, while an LF patch does not match a CRLF file. A
+  CRLF unified diff still cannot end with a context or removed line, because the
+  last line of the payload has no `\r`; end it with a `\ No newline at end of
+  file` line.
 - Headless runs (`zen -p`, `zen -f`, `--jsonl`, and `/cron` jobs) now apply the
   prompt skills of the selected agent profile. Before, a headless turn had no
   skill selected. `--skills` and `ZENCODE_AGENT_SKILLS` still apply only to the
