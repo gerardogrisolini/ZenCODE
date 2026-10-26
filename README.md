@@ -41,10 +41,10 @@ ZenCODE supports several ways to run the model, all selected during automatic fi
 - **ChatGPT Subscription** — sign in with your existing ChatGPT subscription through the browser. No API key required.
 - **Claude Subscription** — sign in with your existing Claude (Anthropic) subscription through the browser. No API key required.
 - **DS4 local runtime** — run a DS4 model in-process from an existing DS4 checkout,
-  with no server process. Select **DS4 local runtime** in `/setup` to choose the
-  GGUF files and to build the small `libzencode-ds4` library against your checkout
-  with the toolchain of the chosen backend. Setup does not download a checkout or
-  models. See the [DS4 guide](Docs/ds4.md).
+  with no server process. Select **DS4 local runtime (in-process engine)** in
+  `/setup` to choose the GGUF files and to build the small `libzencode-ds4`
+  library against your checkout with the toolchain of the chosen backend. Setup
+  does not download a checkout or models. See the [DS4 guide](Docs/ds4.md).
 
 ## Run
 

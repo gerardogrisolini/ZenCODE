@@ -18,7 +18,8 @@ The architecture and persistence contract behind this guide is in
 | Provider | The DS4 provider, with a `ds4Runtime` on each of its models | `settings.json` |
 
 `<support>` is the ZenCODE support directory (`~/.zencode` by default). Setup
-copies the shim sources to `<support>/ds4/shim/` before it builds.
+copies the shim sources and `build-ds4-engine.sh` (executable) to
+`<support>/ds4/shim/` before it builds.
 
 ## Requirements by backend
 
@@ -48,6 +49,10 @@ run the script with the same arguments setup uses:
 Scripts/build-ds4-engine.sh --root ~/Projects/ds4 --backend metal \
   --shim <support>/ds4/shim --output <output-file>
 ```
+
+With a `zen` that is installed without the repository, run the script that
+setup extracted: `<support>/ds4/shim/build-ds4-engine.sh`. The manual command
+that setup prints after a build error uses that path.
 
 | Option | Meaning |
 | --- | --- |
@@ -83,24 +88,38 @@ The script behaves as follows:
   `abiVersion`.
 
 A change to `ds4.h`, to the shim, or to the ABI header changes the hash and
-therefore the directory. Setup then reports the library as **rebuild required**
-when a library of the same backend already exists, and as **missing** otherwise,
-and builds into the new directory. A change only to `ds4.c` does **not** change
-the hash, so the library is not reported as stale. After you update `ds4.c`, run
-the script again with the same arguments.
+therefore the directory. Setup reports the library as **rebuild required**
+when:
 
-The shim sources are embedded in the binary, so an installed `zen` can build
-the library without the repository. Their canonical copies are
-`Sources/ZenCODECore/Resources/DS4Engine/zencode_ds4_abi.h` and
-`zencode_ds4_shim.c`. `Scripts/GenerateDS4EngineShimSources.swift` generates the
-embedded copy (`DS4EngineShimSources.generated.swift`). Run it with `--check` to
-confirm that the copy is current; a parity test compares the two.
+- the expected library exists, but its `build.json` is missing, cannot be read,
+  or records another DS4 root, another backend, or another architecture (for
+  example after you change the DS4 folder, `cudaArch`, or `rocmArch`);
+- the expected directory has no library, but another `<backend>-<hash16>`
+  directory of the same backend contains one.
+
+Otherwise it reports the library as **missing**. In both cases the build goes
+into the expected directory.
+
+A change only to `ds4.c` does **not** change the hash, so the library is not
+reported as stale. After you update `ds4.c`, run the script again with the same
+arguments.
+
+The shim sources and the build script are embedded in the binary, so an
+installed `zen` can build the library without the repository. Three files are
+embedded: `zencode_ds4_abi.h`, `zencode_ds4_shim.c`, and `build-ds4-engine.sh`.
+Their canonical copies are
+`Sources/ZenCODECore/Resources/DS4Engine/zencode_ds4_abi.h`,
+`Sources/ZenCODECore/Resources/DS4Engine/zencode_ds4_shim.c`, and
+`Scripts/build-ds4-engine.sh`. `Scripts/GenerateDS4EngineShimSources.swift`
+generates the embedded copy (`DS4EngineShimSources.generated.swift`). Run it with
+`--check` to confirm that the copy is current; a parity test compares all three
+files.
 
 ## Setup
 
-1. Open `/setup` and select **DS4 local runtime**, or reconfigure the DS4
-   provider from **Providers & models**. Both use the same flow and never call
-   `/models`, because setup never loads the engine.
+1. Open `/setup` and select **DS4 local runtime (in-process engine)**, or
+   reconfigure the DS4 provider from **Providers and models**. Both use the same
+   flow and never call `/models`, because setup never loads the engine.
 2. Enter the absolute path of the DS4 checkout. A previously configured folder
    is offered as the default.
 3. ZenCODE scans only `<folder>/*.gguf` and `<folder>/gguf/*.gguf`, read-only,
@@ -113,16 +132,27 @@ confirm that the copy is current; a parity test compares the two.
    - optionally choose a vision projector and an MTP/DSpark support GGUF from
      the other GGUF files of the folder;
    - set the runtime tuning (listed below);
-   - confirm the API model id, which is asked only when the file name does not
-     match a known family.
+   - the API model id is never typed. Setup takes it from the catalog of known
+     models, then from the file name, then from the id already saved for the
+     model when it is a served id. Only when none of the three identifies it,
+     setup asks you to pick it from a menu of the ids that DS4 serves.
 5. Setup checks the engine library of each selected model. A library that is
    built needs nothing. A library that is missing, or that must be rebuilt, is
-   built after you answer **Build the DS4 engine now?** (default: yes). If you
-   decline, setup prints
+   built after you answer **Build the DS4 engine now?** (default: yes). Setup
+   asks this once for all the libraries to build; they are deduplicated by
+   folder, backend, and architecture. If you decline, setup prints
    `DS4 engine build skipped. Run the DS4 setup again to build it before using DS4.`
-   If the build fails, setup prints the error and the manual command, and keeps
-   the staged configuration. The library state (built, missing, or rebuild
-   required) is shown in the setup detail of the provider.
+   - If `ds4.h` is missing from the folder, the library cannot be derived. Setup
+     prints `DS4 engine (<target>) not built: <error>` and does not offer the
+     build.
+   - If the build fails, setup prints the error and, when the script was already
+     extracted, the manual command. For an unsupported platform, an invalid
+     architecture, or an error while extracting the shim, there is no manual
+     command: setup tells you to fix the problem and run the DS4 setup again.
+   - In every case the staged configuration is kept.
+
+   The library state (built, missing, or rebuild required) is shown in the setup
+   detail of the provider.
 6. Finish setup normally. Only the final setup transaction writes settings.
    Non-DS4 providers, models, API keys, and unrelated settings are kept.
    Re-running the flow replaces the DS4 models with the new selection and keeps
@@ -160,8 +190,9 @@ model keeps the values it already has.
 
 ## What is persisted
 
-Each DS4 model records an optional `ds4Runtime` object. Every key is optional
-when decoding, so older manifests load unchanged.
+Each DS4 model records an optional `ds4Runtime` object. `rootDirectory` is
+required; every other key is optional when decoding, so older manifests load
+unchanged.
 
 | Key | Meaning |
 | --- | --- |
@@ -211,21 +242,24 @@ checkpoint described in [KV checkpoints](#kv-checkpoints-ds4kv).
 
 - DS4 holds an instance lock on `/tmp/ds4.lock`, or on the path in
   `DS4_LOCK_FILE` when it is set. A DS4 process that starts while the lock is
-  held fails with `DS4 instance lock is held (...): another DS4 process is using this model.`
+  held fails with `DS4 instance lock is held (<detail>): another DS4 process is using this model. Stop the other ds4-server/ds4-agent/ZenCODE session and retry.`
 - A model is never shared between processes. Stop the other `zen`, `ds4-agent`,
   or `ds4-server` process and retry.
-- The shim checks that the GGUF files exist before it opens the model.
+- Before it opens the model, the shim checks that the model GGUF and the MTP
+  and vision GGUFs can be opened, are regular files, and are at least 32 bytes
+  long. Otherwise DS4 would call `exit()`.
 
 ### Errors and limits of DS4
 
-- The stderr of DS4 is captured while the engine opens and is included in the
-  error message.
+- The stderr of DS4 is captured while the engine opens, while a session is
+  created, and while power and steering are set. The captured text is included
+  in the error message.
 - DS4 calls `exit()` when a GGUF is malformed or unsupported, and that ends
   `zen`. This is an accepted limit.
 - The Metal kernel sources are found in the checkout. The shim exports
   `DS4_METAL_<STEM>_SOURCE` for each `<root>/metal/<stem>.metal`.
 
-Closing an agent backend (for example on an agent switch) releases only its DS4 sessions; the loaded model stays resident. The engine is closed when `zen` exits, when a different DS4 model is requested, or when a new agent backend uses a non-DS4 model while no DS4 session is live.
+Closing an agent backend (for example on an agent switch) releases only its DS4 sessions; the loaded model stays resident. The engine is closed when `zen` exits normally, when a different DS4 model is requested, or when a new agent backend uses a non-DS4 model while no DS4 session is live. On a normal exit the engine closes only when nothing uses it: no DS4 session is live, and no generation or engine opening is in progress. This check never waits; when the engine is in use, it is left open. An exit by signal does not go through this close: the operating system frees the memory and the lock.
 
 ## Using DS4 in ZenCODE
 
@@ -252,6 +286,9 @@ last for the session and are never saved.
 | `enabled` or `high` | 75 | HIGH |
 | `xhigh` | 90 | HIGH |
 | `max` or `ultra` | 100 | MAX |
+
+Without a selected level the mode is `enabled`, that is HIGH (75 for DeepSeek
+V4.1), the default of ds4-agent.
 
 DS4 adapts the mode to the context size, and it lowers MAX when the context is
 below the minimum of the model.
@@ -282,17 +319,40 @@ differ from the defaults of ds4-agent.
   are never sent to other providers.
 - The system prompt is repeated every 50,000 tokens.
 - A malformed tool call is returned to the model with a reminder of the syntax.
-  Sampling inside tool blocks is greedy, as in ds4-agent.
+  Sampling is greedy on the structural parts of a tool block (the opening, the
+  tags between the parameters, and the end of a value), as in ds4-agent. The
+  content of the parameter values is sampled normally.
 
 ### Context and compaction
 
-- The context window is always the `contextWindow` of the manifest.
+- The context window is the one reported by the open engine. In practice it is
+  the `contextWindow` of the manifest, passed as `--ctx`. The manifest is the
+  fallback when the engine does not report it.
 - ZenCODE compacts the session when the prompt reaches 85% of the context, or
   when the free room is at or below `max(min(8192, ctx/8), reserve + 128)`. The
   reserve is derived from the compaction request, as in ds4-agent. Compaction is
   deterministic: the compaction request is never sent to the model.
-- A round generates at most `maxOutputTokens` (50,000 when unset), and never
-  more than the room left in the context.
+- A round generates at most `min(maxOutputTokens, ctx - prompt - reserve)`
+  tokens, with `maxOutputTokens` at 50,000 when unset. The compaction reserve is
+  subtracted from the free room as well. When the result is not positive, the
+  request fails with `The DS4 context is exhausted: ...`.
+
+### Throughput
+
+- While a DS4 model works, the status bar of the TUI shows a single throughput
+  label after the token counters. Only DS4 shows it; other providers do not.
+- During prefill the label is `p:1.2k/8.0k 512.0 tok/s`: the tokens evaluated so
+  far out of the tokens to evaluate in this sync (the prefix already in cache
+  is not counted), and the prefill speed. It is `p:0/8.0k` until the speed can
+  be measured.
+- After prefill, and during generation, the label is `p:512.0 g:42.1 tok/s`: the
+  prefill speed next to the live generation speed. When the whole prompt was
+  already in cache, only `g:` is shown.
+- The label updates at most every 250 ms. The first update of each phase is
+  immediate.
+- At the end of a round the exact values reported by the engine stay on screen
+  until the next request replaces them.
+- Speeds always have one decimal.
 
 ### Vision
 
@@ -316,7 +376,9 @@ differ from the defaults of ds4-agent.
 - A checkpoint is skipped when the session contains images
   (`KV checkpoint skipped: session contains images.`) or when there is no live
   DS4 state for the session (`DS4 KV checkpoint skipped: no live DS4 state for this session.`).
-  Saving never opens the model.
+  Saving never opens the model. Restoring does: it opens the model if it is not
+  loaded yet (status `Loading DS4 model …`) and waits its turn in the generation
+  queue.
 - A save without a checkpoint removes an older `<name>.ds4kv`. Deleting a
   session deletes its checkpoint.
 - The checkpoint carries a versioned JSON trailer (version 1) with the DS4
