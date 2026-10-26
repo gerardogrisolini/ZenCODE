@@ -56,6 +56,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   ROCm architecture, the number of engine sessions (`engineSessions`, 1 to 8,
   default 2), and advanced extra arguments for DS4's distributed or multi-GPU
   options, validated by DS4's own parsers.
+- DS4 live throughput: while a DS4 model works, the status bar shows one label
+  after the token counters. During prefill it reads `p:1.2k/8.0k 512 tok/s`: the
+  tokens evaluated so far out of those to evaluate (the cached prefix is not
+  counted) and the prefill speed, as soon as it can be measured. Then it
+  becomes `p:512 g:42.1 tok/s`: the prefill speed stays next to the live
+  generation speed. At the end of the round the label keeps the exact values
+  reported by the engine, until the next request replaces them; when the whole
+  prompt was already cached only `g:` is shown. Other providers do not show it.
 - Voice: while voice mode listens, the speech recognized but not yet sent
   appears live at the end of the prompt draft: word by word on macOS, in both
   Send modes, and one speech segment at a time on Linux with the Send mode

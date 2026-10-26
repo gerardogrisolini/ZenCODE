@@ -207,6 +207,11 @@ extension DirectSubAgentRuntime {
               agent.status != .closed else {
             return
         }
+        if case let .metrics(metrics) = event, metrics.isLiveProgress {
+            // The overview does not render throughput: a live update must not
+            // touch the agent or bump its activity timestamps.
+            return
+        }
 
         var delegatedToolEvent: DirectSubAgentToolEvent?
         switch event {

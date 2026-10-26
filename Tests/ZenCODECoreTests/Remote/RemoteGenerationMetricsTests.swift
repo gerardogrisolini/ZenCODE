@@ -615,6 +615,141 @@ struct RemoteGenerationMetricsTests {
         )
     }
 
+    // MARK: - Throughput
+
+    private static let prefillThroughput = DirectAgentGenerationThroughput(
+        phase: .prefill, prefillTokensPerSecond: 512, processedTokens: 1_200, targetTokens: 8_000
+    )
+    private static let generationThroughput = DirectAgentGenerationThroughput(
+        phase: .generation, prefillTokensPerSecond: 512, generationTokensPerSecond: 41.2
+    )
+
+    @Test
+    func liveThroughputUpdateKeepsPreviousCountsAndReplacesThroughput() {
+        let previous = DirectAgentGenerationMetrics(
+            promptTokenCount: 120,
+            cachedPromptTokenCount: 800,
+            completionTokenCount: 32,
+            responseDurationSeconds: 4,
+            contextTokenCount: 952,
+            replacesPreviousMetrics: true,
+            throughput: Self.generationThroughput
+        )
+        let live = DirectAgentGenerationMetrics(
+            promptTokenCount: nil,
+            completionTokenCount: nil,
+            throughput: Self.prefillThroughput,
+            isLiveProgress: true
+        )
+
+        let merged = DirectAgentGenerationMetrics.merging(current: previous, update: live)
+
+        #expect(merged.promptTokenCount == 120)
+        #expect(merged.cachedPromptTokenCount == 800)
+        #expect(merged.completionTokenCount == 32)
+        #expect(merged.responseDurationSeconds == 4)
+        #expect(merged.contextTokenCount == 952)
+        #expect(merged.throughput == Self.prefillThroughput)
+        #expect(merged.isLiveProgress)
+        #expect(!merged.replacesPreviousMetrics)
+    }
+
+    @Test
+    func firstLiveThroughputUpdateWithoutPreviousMetricsIsKept() {
+        let live = DirectAgentGenerationMetrics(
+            promptTokenCount: nil,
+            completionTokenCount: nil,
+            throughput: Self.prefillThroughput,
+            isLiveProgress: true
+        )
+
+        let merged = DirectAgentGenerationMetrics.merging(current: nil, update: live)
+
+        #expect(merged.throughput == Self.prefillThroughput)
+        #expect(merged.isLiveProgress)
+        #expect(merged.promptTokenCount == nil)
+    }
+
+    @Test
+    func snapshotWithoutThroughputClearsIt() {
+        let current = DirectAgentGenerationMetrics(
+            promptTokenCount: nil,
+            completionTokenCount: nil,
+            throughput: Self.generationThroughput,
+            isLiveProgress: true
+        )
+        let snapshot = DirectAgentGenerationMetrics(
+            promptTokenCount: 200,
+            completionTokenCount: 25,
+            clearsPromptMetrics: true,
+            replacesPreviousMetrics: true
+        )
+
+        let merged = DirectAgentGenerationMetrics.merging(current: current, update: snapshot)
+
+        #expect(merged.throughput == nil)
+        #expect(!merged.isLiveProgress)
+        #expect(merged.promptTokenCount == 200)
+    }
+
+    @Test
+    func nonLivePartialUpdateInheritsThroughput() {
+        let current = DirectAgentGenerationMetrics(
+            promptTokenCount: 200,
+            completionTokenCount: nil,
+            throughput: Self.generationThroughput,
+            isLiveProgress: true
+        )
+        let partial = DirectAgentGenerationMetrics(promptTokenCount: nil, completionTokenCount: 25)
+
+        let merged = DirectAgentGenerationMetrics.merging(current: current, update: partial)
+
+        #expect(merged.throughput == Self.generationThroughput)
+        #expect(!merged.isLiveProgress)
+        #expect(merged.promptTokenCount == 200)
+        #expect(merged.completionTokenCount == 25)
+    }
+
+    @Test
+    func generationMetricsPropagatesTheLatestRoundThroughput() throws {
+        let startedAt = Date(timeIntervalSince1970: 100)
+        let throughput = DirectAgentGenerationThroughput(
+            phase: .generation, prefillTokensPerSecond: 640, generationTokensPerSecond: 37.5
+        )
+        let stats = [
+            RemoteGenerationStats(
+                usage: nil,
+                requestStartedAt: startedAt,
+                firstDeltaAt: nil,
+                finishedAt: startedAt,
+                generatedCharacterCount: 0,
+                throughput: DirectAgentGenerationThroughput(phase: .prefill, prefillTokensPerSecond: 900)
+            ),
+            RemoteGenerationStats(
+                usage: nil,
+                requestStartedAt: startedAt,
+                firstDeltaAt: nil,
+                finishedAt: startedAt,
+                generatedCharacterCount: 0,
+                throughput: throughput
+            )
+        ]
+        let withoutThroughput = RemoteGenerationStats(
+            usage: nil,
+            requestStartedAt: startedAt,
+            firstDeltaAt: nil,
+            finishedAt: startedAt,
+            generatedCharacterCount: 0
+        )
+
+        let metrics = try #require(RemoteGenerationClient.generationMetrics(stats))
+        let other = try #require(RemoteGenerationClient.generationMetrics([withoutThroughput]))
+
+        #expect(metrics.throughput == throughput)
+        #expect(!metrics.isLiveProgress)
+        #expect(other.throughput == nil)
+    }
+
 }
 
 private func anthropicPreflightCompactionMessages() -> [[String: Any]] {

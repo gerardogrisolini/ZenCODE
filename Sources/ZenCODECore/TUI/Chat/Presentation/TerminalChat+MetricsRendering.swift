@@ -10,7 +10,10 @@ import Foundation
 extension TerminalChat {
     public func writeMetricsStatus(_ metrics: DirectAgentGenerationMetrics) async {
         _ = await statusBar.update(metrics: metrics)
-        guard Self.shouldPrintMetricsForAutomation() else {
+        // Live throughput updates only drive the status bar: the automation
+        // summary is printed once per round, from its final snapshot.
+        guard !metrics.isLiveProgress,
+              Self.shouldPrintMetricsForAutomation() else {
             return
         }
         await writeChatError(

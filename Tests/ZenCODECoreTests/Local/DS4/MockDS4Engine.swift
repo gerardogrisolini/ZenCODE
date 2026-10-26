@@ -181,6 +181,8 @@ final class MockDS4Engine: DS4Engine {
         var checkpoints: [URL: [DS4TranscriptOperation]] = [:]
         var imageEncodes: [ImageEncode] = []
         var failImageEncoding = false
+        var prefillTokensPerSecond = 0.0
+        var generationTokensPerSecond = 0.0
         var preparedCreated = 0
         var preparedReleased = 0
         var nextTokenID = MockDS4Engine.firstGeneratedTokenID
@@ -261,6 +263,19 @@ final class MockDS4Engine: DS4Engine {
     var failImageEncoding: Bool {
         get { state.withLock { $0.failImageEncoding } }
         set { state.withLock { $0.failImageEncoding = newValue } }
+    }
+
+    /// Prefill speed the stats report after a sync that evaluated a suffix
+    /// (0, like an engine that has not measured it, by default).
+    var reportedPrefillTokensPerSecond: Double {
+        get { state.withLock { $0.prefillTokensPerSecond } }
+        set { state.withLock { $0.prefillTokensPerSecond = newValue } }
+    }
+
+    /// Generation speed the stats report once a generation has ended.
+    var reportedGenerationTokensPerSecond: Double {
+        get { state.withLock { $0.generationTokensPerSecond } }
+        set { state.withLock { $0.generationTokensPerSecond = newValue } }
     }
 
     /// Prepared transcripts created and not released yet.
@@ -501,7 +516,8 @@ final class MockDS4Engine: DS4Engine {
             session.stats = DS4SessionStats(
                 promptTokens: total, cachedTokens: cached, evaluatedTokens: total - cached,
                 generatedTokens: 0, prefillSeconds: 0, generationSeconds: 0,
-                prefillTokensPerSecond: 0, generationTokensPerSecond: 0,
+                prefillTokensPerSecond: total > cached ? state.prefillTokensPerSecond : 0,
+                generationTokensPerSecond: 0,
                 position: total, contextSize: info.contextSize
             )
             state.sessions[sessionID] = session
@@ -509,6 +525,9 @@ final class MockDS4Engine: DS4Engine {
             state.calls.append(.sync(sessionID: sessionID, cached: cached, suffix: total - cached))
             return result
         }
+        // Like the shim: announced once, before the evaluation starts, with
+        // the reused prefix and the prompt length.
+        onProgress("prefill_start", result.cached, result.tokenCount)
         onProgress("prefill", result.suffix, result.suffix)
         return result
     }
@@ -594,6 +613,7 @@ final class MockDS4Engine: DS4Engine {
         let stats = state.withLock { state -> DS4SessionStats in
             var session = state.sessions[sessionID] ?? SessionState()
             session.stats.generatedTokens = tokens.count
+            session.stats.generationTokensPerSecond = tokens.isEmpty ? 0 : state.generationTokensPerSecond
             session.stats.position += tokens.count
             // The native session transcript grows with the committed tokens.
             if !tokens.isEmpty, state.pool.contains(sessionID), state.sessions[sessionID] != nil {

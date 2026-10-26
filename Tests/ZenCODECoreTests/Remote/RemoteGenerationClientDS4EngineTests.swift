@@ -586,6 +586,86 @@ struct RemoteGenerationClientDS4EngineTests {
     }
 
     @Test
+    func liveThroughputPrecedesTheFinalSnapshotWhichCarriesTheEngineValues() async throws {
+        let harness = try DS4ClientHarness()
+        harness.mock.reportedPrefillTokensPerSecond = 640
+        harness.mock.reportedGenerationTokensPerSecond = 41.5
+        harness.mock.enqueueGeneration(["a", "b", "c"])
+        let client = try await harness.makeClient()
+        let recorder = DS4EventRecorder()
+
+        _ = try await client.sendPrompt(sessionID: "session", prompt: "Hi", attachments: [], onEvent: recorder.handler)
+
+        let metrics = recorder.events.compactMap { if case let .metrics(value) = $0 { value } else { nil } }
+        let live = metrics.filter(\.isLiveProgress)
+        for event in live {
+            #expect(event.promptTokenCount == nil)
+            #expect(event.completionTokenCount == nil)
+            #expect(!event.replacesPreviousMetrics)
+        }
+        // `prefill_start` of the sync announces the whole suffix at once.
+        let sync = try #require(harness.engine.syncs.first)
+        let started = try #require(live.first?.throughput)
+        #expect(started.phase == .prefill)
+        #expect(started.processedTokens == 0)
+        #expect(started.targetTokens == sync.suffix)
+        #expect(started.prefillTokensPerSecond == nil)
+        // The exact prefill speed of the engine switches the label to
+        // generation before the first token, and every later update keeps it.
+        let generationUpdates = live.compactMap(\.throughput).filter { $0.phase == .generation }
+        let beforeFirstToken = try #require(generationUpdates.first)
+        #expect(beforeFirstToken.prefillTokensPerSecond == 640)
+        #expect(beforeFirstToken.generationTokensPerSecond == nil)
+        for update in generationUpdates {
+            #expect(update.prefillTokensPerSecond == 640)
+            #expect(update.processedTokens == nil)
+            #expect(update.targetTokens == nil)
+        }
+        // The consumer is drained before the final snapshot: nothing live
+        // arrives after it.
+        let final = try #require(metrics.last)
+        #expect(!final.isLiveProgress)
+        #expect(final.replacesPreviousMetrics)
+        #expect(final.completionTokenCount == 3)
+        let stats = await harness.mock.stats(sessionID: "session")
+        #expect(stats.generatedTokens == 3)
+        #expect(stats.generationTokensPerSecond == 41.5)
+        #expect(
+            final.throughput == DirectAgentGenerationThroughput(
+                phase: .generation,
+                prefillTokensPerSecond: 640,
+                generationTokensPerSecond: 41.5
+            )
+        )
+        await client.shutdown()
+    }
+
+    @Test
+    func finalThroughputWithoutAnEngineReportedPrefillSpeedOnlyCarriesTheGenerationSpeed() async throws {
+        let harness = try DS4ClientHarness()
+        harness.mock.reportedGenerationTokensPerSecond = 41.5
+        harness.mock.enqueueGeneration(["a", "b"])
+        let client = try await harness.makeClient()
+        let recorder = DS4EventRecorder()
+
+        _ = try await client.sendPrompt(sessionID: "session", prompt: "Hi", attachments: [], onEvent: recorder.handler)
+
+        let metrics = recorder.events.compactMap { if case let .metrics(value) = $0 { value } else { nil } }
+        let final = try #require(metrics.last)
+        #expect(
+            final.throughput == DirectAgentGenerationThroughput(
+                phase: .generation,
+                prefillTokensPerSecond: nil,
+                generationTokensPerSecond: 41.5
+            )
+        )
+        // No exact prefill speed: nothing announces it before the first token.
+        let generationUpdates = metrics.filter(\.isLiveProgress).compactMap(\.throughput).filter { $0.phase == .generation }
+        #expect(generationUpdates.allSatisfy { $0.prefillTokensPerSecond == nil })
+        await client.shutdown()
+    }
+
+    @Test
     func closeSessionReleasesTheEngineSession() async throws {
         let harness = try DS4ClientHarness()
         harness.mock.enqueueGeneration(["ok"])

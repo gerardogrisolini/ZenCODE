@@ -72,7 +72,7 @@ struct ZenCODEHeadlessSession: Sendable {
 
 /// Executes one non-interactive text turn without starting the terminal UI.
 public enum ZenCODEHeadlessRunner {
-    typealias TextSink = @Sendable (String) -> Void
+    public typealias TextSink = @Sendable (String) -> Void
 
     /// Resolves the headless instruction from `-p`, `-f`, or both, and appends
     /// piped stdin as additional context.
@@ -115,12 +115,18 @@ public enum ZenCODEHeadlessRunner {
     /// Uses the normal Core session composition while deliberately omitting the
     /// TUI lifecycle, streaming chrome, setup UI, and interactive consent UI.
     /// `configuration.jsonl` is the sole source of truth for output mode.
+    ///
+    /// The sinks receive what would otherwise be printed on standard output
+    /// (nil prints it), so a caller can capture the run's output, as Mail.app
+    /// delivery of a scheduled run does.
     @TerminalChatActor
     public static func run(
         configuration: AgentConfiguration,
         prompt: String,
         permissionAuthorizer: LocalExecPermissionAuthorizer,
-        backendFactory: AgentRuntimeBackendFactory? = nil
+        backendFactory: AgentRuntimeBackendFactory? = nil,
+        jsonlSink: ZenCODEHeadlessJSONLWriter.Sink? = nil,
+        textSink: TextSink? = nil
     ) async throws {
         let sessionRunner = AgentCoreSessionRunner(
             // This path never opens or reads a terminal consent dialog. It still
@@ -139,7 +145,9 @@ public enum ZenCODEHeadlessRunner {
             prompt: prompt,
             sessionRunner: sessionRunner,
             sessionConfiguration: session.configuration,
-            promptSkills: session.promptSkills
+            promptSkills: session.promptSkills,
+            jsonlSink: jsonlSink,
+            textSink: textSink
         )
     }
 
@@ -179,7 +187,7 @@ public enum ZenCODEHeadlessRunner {
 
     /// Lifecycle seam for focused tests. Output mode still comes only from the
     /// same configuration used by production; sinks merely observe framed JSONL
-    /// records or the legacy final text.
+    /// records or the legacy final text. A nil sink writes to standard output.
     @TerminalChatActor
     static func runTurn(
         configuration: AgentConfiguration,
@@ -188,10 +196,11 @@ public enum ZenCODEHeadlessRunner {
         sessionConfiguration: AgentCoreSessionConfiguration,
         promptSkills: [PromptSkill] = [],
         jsonlSink: ZenCODEHeadlessJSONLWriter.Sink? = nil,
-        textSink: @escaping TextSink = { text in
+        textSink: TextSink? = nil
+    ) async throws {
+        let textSink = textSink ?? { text in
             AgentOutput.standardOutput.writeString(text)
         }
-    ) async throws {
         let writer = configuration.jsonl
             ? ZenCODEHeadlessJSONLWriter(sink: jsonlSink)
             : nil

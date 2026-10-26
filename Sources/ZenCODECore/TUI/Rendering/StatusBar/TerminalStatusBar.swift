@@ -483,12 +483,22 @@ public actor TerminalStatusBar {
 
     @discardableResult
     public func update(metrics: DirectAgentGenerationMetrics) -> Bool {
-        let currentMetrics = state.shouldReplaceMetricsOnNextUpdate ? nil : state.latestMetrics
-        state.shouldReplaceMetricsOnNextUpdate = false
-        state.latestMetrics = mergedMetrics(
-            current: currentMetrics,
-            update: metrics
-        )
+        if metrics.isLiveProgress {
+            // An in-flight throughput update is not the first metrics event of
+            // the request: the previous counters stay visible until the
+            // round's final snapshot, which still replaces them.
+            state.latestMetrics = mergedMetrics(
+                current: state.latestMetrics,
+                update: metrics
+            )
+        } else {
+            let currentMetrics = state.shouldReplaceMetricsOnNextUpdate ? nil : state.latestMetrics
+            state.shouldReplaceMetricsOnNextUpdate = false
+            state.latestMetrics = mergedMetrics(
+                current: currentMetrics,
+                update: metrics
+            )
+        }
         guard state.isStarted else {
             return false
         }

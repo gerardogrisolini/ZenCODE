@@ -305,7 +305,8 @@ extension RemoteGenerationClient {
             responseDurationSeconds: responseDurationSeconds,
             contextTokenCount: contextTokenCount,
             clearsPromptMetrics: true,
-            replacesPreviousMetrics: true
+            replacesPreviousMetrics: true,
+            throughput: stats.last?.throughput
         )
     }
 

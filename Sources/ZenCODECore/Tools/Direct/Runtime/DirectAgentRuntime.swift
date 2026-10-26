@@ -153,6 +153,45 @@ public struct DirectAgentToolResult: Sendable {
     }
 }
 
+/// Prefill and generation speed reported by an in-process engine, live while a
+/// round is running and with the exact engine values once it has ended.
+///
+/// Both speeds travel together: once the generation starts, the prefill speed
+/// of the same round stays available next to the live generation speed.
+public struct DirectAgentGenerationThroughput: Sendable, Equatable {
+    public enum Phase: Sendable, Equatable {
+        case prefill
+        case generation
+    }
+
+    /// The phase the engine is in, or the last one the round reached.
+    public let phase: Phase
+    /// Tokens per second of the prompt evaluation; `nil` while it cannot be
+    /// measured yet, or when the whole prompt came from the cache.
+    public let prefillTokensPerSecond: Double?
+    /// Tokens per second of the generation; `nil` until it can be measured.
+    public let generationTokensPerSecond: Double?
+    /// Live prefill progress, relative to the sync that is running: the prompt
+    /// prefix reused from cache is excluded from both counts. `nil` outside
+    /// the live prefill, including the final values of a round.
+    public let processedTokens: Int?
+    public let targetTokens: Int?
+
+    public init(
+        phase: Phase,
+        prefillTokensPerSecond: Double? = nil,
+        generationTokensPerSecond: Double? = nil,
+        processedTokens: Int? = nil,
+        targetTokens: Int? = nil
+    ) {
+        self.phase = phase
+        self.prefillTokensPerSecond = prefillTokensPerSecond
+        self.generationTokensPerSecond = generationTokensPerSecond
+        self.processedTokens = processedTokens
+        self.targetTokens = targetTokens
+    }
+}
+
 public struct DirectAgentGenerationMetrics: Sendable {
     /// Prompt tokens evaluated during prefill. Excludes tokens known to have
     /// been reused from the prompt cache.
@@ -168,6 +207,14 @@ public struct DirectAgentGenerationMetrics: Sendable {
     /// When true, this event is a complete metrics snapshot and must not
     /// inherit unavailable values from an earlier model round.
     public let replacesPreviousMetrics: Bool
+    /// Prefill and generation speed of the round in progress, or the exact
+    /// values of the round that just ended. `nil` for providers that do not
+    /// report it.
+    public let throughput: DirectAgentGenerationThroughput?
+    /// A throttled in-flight update carrying only `throughput`. It must not
+    /// count as the first metrics event of a turn, and automation printing
+    /// skips it.
+    public let isLiveProgress: Bool
 
     public init(
         promptTokenCount: Int?,
@@ -176,7 +223,9 @@ public struct DirectAgentGenerationMetrics: Sendable {
         responseDurationSeconds: Double? = nil,
         contextTokenCount: Int? = nil,
         clearsPromptMetrics: Bool = false,
-        replacesPreviousMetrics: Bool = false
+        replacesPreviousMetrics: Bool = false,
+        throughput: DirectAgentGenerationThroughput? = nil,
+        isLiveProgress: Bool = false
     ) {
         self.promptTokenCount = promptTokenCount
         self.cachedPromptTokenCount = cachedPromptTokenCount
@@ -185,6 +234,8 @@ public struct DirectAgentGenerationMetrics: Sendable {
         self.contextTokenCount = contextTokenCount
         self.clearsPromptMetrics = clearsPromptMetrics
         self.replacesPreviousMetrics = replacesPreviousMetrics
+        self.throughput = throughput
+        self.isLiveProgress = isLiveProgress
     }
 
     /// Folds an incoming metrics event into the metrics observed so far during
@@ -198,7 +249,10 @@ public struct DirectAgentGenerationMetrics: Sendable {
     /// - otherwise each unavailable field inherits the previous value, so a
     ///   completion-only update does not erase the prefill counters;
     /// - `clearsPromptMetrics` suppresses that inheritance for the prompt
-    ///   fields only, letting a provider retract stale prefill values.
+    ///   fields only, letting a provider retract stale prefill values;
+    /// - `throughput` follows the same inheritance, so a live update replaces
+    ///   the speed while the counters of the previous round stay visible, and
+    ///   a snapshot without it clears the speed.
     public static func merging(
         current: DirectAgentGenerationMetrics?,
         update: DirectAgentGenerationMetrics
@@ -217,7 +271,9 @@ public struct DirectAgentGenerationMetrics: Sendable {
             responseDurationSeconds: update.responseDurationSeconds ?? current.responseDurationSeconds,
             contextTokenCount: update.contextTokenCount ?? current.contextTokenCount,
             clearsPromptMetrics: update.clearsPromptMetrics,
-            replacesPreviousMetrics: update.replacesPreviousMetrics
+            replacesPreviousMetrics: update.replacesPreviousMetrics,
+            throughput: update.throughput ?? current.throughput,
+            isLiveProgress: update.isLiveProgress
         )
     }
 

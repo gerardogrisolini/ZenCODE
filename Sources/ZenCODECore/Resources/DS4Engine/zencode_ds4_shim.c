@@ -1463,6 +1463,12 @@ int32_t zencode_ds4_session_sync(void *session, void *tokens, zencode_ds4_progre
     if (out_cached) *out_cached = cached;
     if (out_suffix) *out_suffix = suffix;
 
+    /* DS4's own progress events do not report where the prefill starts on every
+     * path (Qwen only reports at the end of a chunk; DS4.1, GLM and CPU report no
+     * initial position), so announce the reused prefix and the prompt size here,
+     * once per sync, even when there is nothing left to evaluate. */
+    if (progress) progress(ud, "prefill_start", cached, t->tokens.len);
+
     s->transcript_valid = false;
     s->cancel = cancel;
     s->cancel_ud = ud;

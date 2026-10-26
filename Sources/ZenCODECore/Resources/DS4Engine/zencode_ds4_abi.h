@@ -144,7 +144,12 @@ extern "C" {
 /* Prefill progress (both durable and display-only DS4 progress events are
  * forwarded).  `event` is a borrowed DS4 event name valid only during the
  * call; while waiting for a distributed route the shim reports the event
- * "distributed_route_wait" with current = elapsed polls and total = 0. */
+ * "distributed_route_wait" with current = elapsed polls and total = 0.
+ * zencode_ds4_session_sync first reports the shim's own event "prefill_start"
+ * with current = reused (cached) prefix length and total = prompt tokens, once
+ * per sync before any evaluation (also when no suffix is left to evaluate).
+ * The DS4 "prefill_*" events that follow carry absolute positions on most
+ * paths. */
 typedef void (*zencode_ds4_progress_fn)(void *ud, const char *event, int current, int total);
 
 /* Cooperative cancellation: return non-zero to cancel. */
@@ -425,7 +430,8 @@ ZENCODE_DS4_EXPORT int32_t zencode_ds4_session_wait_distributed_route(
 /* Synchronizes the live KV to the full prompt in `tokens`: computes the
  * reusable prefix (ds4_session_common_prefix), then runs ds4_session_sync, or
  * ds4_session_sync_multimodal when the buffer holds images.  progress/cancel
- * (both optional) are installed for the duration of the call.
+ * (both optional) are installed for the duration of the call; progress first
+ * receives "prefill_start" (current = reused prefix, total = prompt tokens).
  * *out_cached / *out_suffix (optional) receive the reused prefix length and
  * the evaluated suffix length (also on interruption).
  * Returns 0, ZENCODE_DS4_SYNC_INTERRUPTED (the live KV may hold only a

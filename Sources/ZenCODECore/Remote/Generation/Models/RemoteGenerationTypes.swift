@@ -54,19 +54,24 @@ public struct RemoteGenerationStats: Sendable {
     public let firstDeltaAt: Date?
     public let finishedAt: Date
     public let generatedCharacterCount: Int
+    /// Exact speed of the round reported by an in-process engine (DS4);
+    /// `nil` for every other provider.
+    public let throughput: DirectAgentGenerationThroughput?
 
     public init(
         usage: RemoteGenerationUsage?,
         requestStartedAt: Date,
         firstDeltaAt: Date?,
         finishedAt: Date,
-        generatedCharacterCount: Int
+        generatedCharacterCount: Int,
+        throughput: DirectAgentGenerationThroughput? = nil
     ) {
         self.usage = usage
         self.requestStartedAt = requestStartedAt
         self.firstDeltaAt = firstDeltaAt
         self.finishedAt = finishedAt
         self.generatedCharacterCount = generatedCharacterCount
+        self.throughput = throughput
     }
 
     public var prefillElapsed: TimeInterval {

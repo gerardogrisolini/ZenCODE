@@ -758,6 +758,117 @@ struct ZenCODECommandLineRunnerTests {
         #expect(await runner.promptSkillsAtCreation() == [skill])
         #expect(await runner.lifecycle() == ["create", "send", "close", "shutdown"])
     }
+
+    @Test
+    func mailDeliveryCaptureReceivesTheLegacyTextUnchanged() async throws {
+        let output = ZenCronCapturedOutput()
+        let runner = ControlledHeadlessSessionRunner(
+            response: DirectAgentResponse(text: "legacy\ntext", stopReason: "stop", modelID: "test"),
+            events: [.status("hidden"), .content("hidden stream"), .turnEnded(.completed)]
+        )
+
+        try await ZenCODEHeadlessRunner.runTurn(
+            configuration: makeHeadlessConfiguration(jsonl: false),
+            prompt: "hello",
+            sessionRunner: runner,
+            sessionConfiguration: makeSessionConfiguration(),
+            jsonlSink: { data in output.append(data) },
+            textSink: { text in output.append(text) }
+        )
+
+        #expect(output.chunks == [
+            ZenCronCapturedOutput.Chunk(stream: .standardOutput, data: Data("legacy\ntext\n".utf8))
+        ])
+        #expect(await runner.lifecycle() == ["create", "send", "close", "shutdown"])
+    }
+
+    @Test
+    func mailDeliveryCaptureReceivesTheSameJSONLRecordsAsStandardOutput() async throws {
+        func runJSONLTurn(into sink: @escaping ZenCODEHeadlessJSONLWriter.Sink) async throws {
+            try await ZenCODEHeadlessRunner.runTurn(
+                configuration: makeHeadlessConfiguration(jsonl: true),
+                prompt: "hello",
+                sessionRunner: ControlledHeadlessSessionRunner(
+                    response: DirectAgentResponse(text: "first\nsecond", stopReason: "stop", modelID: "test"),
+                    events: [.content("first\nsecond"), .turnEnded(.completed)]
+                ),
+                sessionConfiguration: makeSessionConfiguration(),
+                jsonlSink: sink,
+                textSink: { _ in Issue.record("JSONL mode must not write text") }
+            )
+        }
+        let reference = Mutex<[Data]>([])
+        try await runJSONLTurn { data in reference.withLock { $0.append(data) } }
+        let output = ZenCronCapturedOutput()
+        try await runJSONLTurn { data in output.append(data) }
+
+        // Each run has its own run_id; everything else is byte-identical.
+        func normalized(_ writes: [Data]) throws -> [String] {
+            let runID = try #require(
+                try decodeRecords(writes).first?.objectValue?["run_id"]?.stringValue
+            )
+            return writes.map {
+                String(decoding: $0, as: UTF8.self).replacingOccurrences(of: runID, with: "<run>")
+            }
+        }
+        let chunks = output.chunks
+        #expect(chunks.allSatisfy { $0.stream == .standardOutput })
+        #expect(try normalized(chunks.map(\.data)) == normalized(reference.withLock { $0 }))
+        #expect(try decodeRecords(chunks.map(\.data)).map { $0.objectValue?["type"]?.stringValue } == [
+            "run.started", "message.completed", "run.completed"
+        ])
+    }
+
+    @Test
+    func mailDeliveryCaptureReceivesTheJSONLErrorOfAFailedTurn() async throws {
+        let output = ZenCronCapturedOutput()
+        let runner = ControlledHeadlessSessionRunner(
+            response: DirectAgentResponse(text: "unused", stopReason: "stop", modelID: "test"),
+            failure: .send
+        )
+
+        await #expect(throws: ControlledHeadlessSessionRunner.Failure.self) {
+            try await ZenCODEHeadlessRunner.runTurn(
+                configuration: makeHeadlessConfiguration(jsonl: true),
+                prompt: "hello",
+                sessionRunner: runner,
+                sessionConfiguration: makeSessionConfiguration(),
+                jsonlSink: { data in output.append(data) }
+            )
+        }
+
+        let records = try decodeRecords(output.chunks.map(\.data))
+        #expect(records.map { $0.objectValue?["type"]?.stringValue } == ["run.started", "error"])
+    }
+
+    @Test
+    func framedErrorDataIsExactlyWhatAnEarlyJSONLErrorWrites() throws {
+        let pipe = Pipe()
+        ZenCODEHeadlessJSONLProtocol.writeFramedError(
+            ZenCODEHeadlessRunnerError.noPrompt,
+            runID: "early",
+            to: pipe.fileHandleForWriting
+        )
+        try pipe.fileHandleForWriting.close()
+        let written = pipe.fileHandleForReading.readDataToEndOfFile()
+
+        #expect(written.last == 0x0A)
+        #expect(
+            ZenCODEHeadlessJSONLProtocol.framedErrorData(
+                ZenCODEHeadlessRunnerError.noPrompt,
+                runID: "early"
+            ) == written
+        )
+    }
+
+    @Test
+    func textModeFailureMessageCarriesTheTroubleshootingHint() {
+        #expect(
+            ZenCODECommandLineRunner.failureMessage(for: ZenCODEHeadlessRunnerError.noPrompt)
+                == "ZenCODE: No prompt provided. Pass text after -p/--prompt.\n"
+                + ZenCODEDoctorRunner.troubleshootingHint
+        )
+    }
     private func makeHeadlessConfiguration(jsonl: Bool) throws -> AgentConfiguration {
         try AgentConfiguration(
             hostedModelID: "test-model",

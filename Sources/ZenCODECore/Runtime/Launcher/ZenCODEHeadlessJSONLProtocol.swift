@@ -234,10 +234,9 @@ public enum ZenCODEHeadlessJSONLProtocol {
         _ record: JSONValue,
         to output: FileHandle = AgentOutput.standardOutput
     ) {
-        guard var data = try? encoded(record) else {
+        guard let data = framedRecordData(record) else {
             return
         }
-        data.append(0x0A)
         output.write(data)
     }
 
@@ -249,6 +248,23 @@ public enum ZenCODEHeadlessJSONLProtocol {
         to output: FileHandle = AgentOutput.standardOutput
     ) {
         writeFramedRecord(Self.error(runID: runID, error), to: output)
+    }
+
+    /// The exact bytes `writeFramedRecord(_:to:)` writes, for a caller that
+    /// captures the output instead of printing it (Mail.app delivery of a
+    /// scheduled run). Nil when the record cannot be encoded, in which case
+    /// nothing is written either.
+    static func framedRecordData(_ record: JSONValue) -> Data? {
+        guard var data = try? encoded(record) else {
+            return nil
+        }
+        data.append(0x0A)
+        return data
+    }
+
+    /// The exact bytes `writeFramedError(_:runID:to:)` writes.
+    static func framedErrorData(_ error: Error, runID: String = UUID().uuidString) -> Data? {
+        framedRecordData(Self.error(runID: runID, error))
     }
 
     /// The closed category set as raw strings, for validation and tests.
