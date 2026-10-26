@@ -197,7 +197,7 @@ zen [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--install-features [
 - `--install-features [id,id,...]`: copy the requested optional feature package(s), build their release products, and enable them. With no IDs in an interactive terminal, opens the optional-feature picker.
 - `--no-features`: skip optional-feature installation when used with `--install-features`.
 - `--zen-package-path DIR`: use this ZenCODE checkout as the feature source and rewritten local package dependency. This is useful after a manual installation; platform installers preserve their checkout under `~/.zencode/source/` automatically.
-- `--agent NAME`: select an agent profile (default: `Developer`).
+- `--agent NAME`: select an agent profile (default: the project's default developer, normally `Developer`; see [agents.md](agents.md#profile-roles)).
 - `--model MODEL_ID`: request a model override for the direct session; delegated sub-agents remain restricted to the selected profile's authorized bindings.
 - `--working-directory PATH`: working directory for local tools.
 - `--skills LIST`: initial skill selection by name/number, `all`, or `none`.
@@ -422,7 +422,7 @@ Commands start with `/`:
 
 **Scheduling:**
 - `/cron` / `/cron list` — show the `MAILTO` recipient and the scheduled prompts, each with its number, schedule, agent, working directory, output kind (`text` or `JSONL`), and prompt. See [Scheduled Prompts (crontab)](#scheduled-prompts-crontab).
-- `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>` — schedule a prompt for the working directory of the session. With `-agent <name>`, the job runs with that agent profile; without it, with the default `Developer` profile, whatever agent is selected in the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default cron mails the final answer text; with the `-json` option right after `add`, the job runs with `--jsonl` and cron mails the JSONL records of the run. The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
+- `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>` — schedule a prompt for the working directory of the session. With `-agent <name>`, the job runs with that agent profile; without it, with the default developer of the project (normally `Developer`), whatever agent is selected in the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default cron mails the final answer text; with the `-json` option right after `add`, the job runs with `--jsonl` and cron mails the JSONL records of the run. The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
 - `/cron remove <n>` — remove scheduled prompt `<n>`; the entries after it are renumbered.
 - `/cron run <n>` — run scheduled prompt `<n>` now, the way cron runs it, in the background, and show the result in the terminal instead of mailing it.
 - `/cron mailto [address|none|default]` — without an argument, show the address that receives scheduled-prompt results; with one, set it. `none` sends no mail; `default` removes the override and uses the local mailbox of the crontab owner.
@@ -756,7 +756,8 @@ a run starts, that run fails, and its error is mailed as described in
 
 `--agent` is present in the line only for entries added with `-agent`, with the
 name as you typed it. An entry without `-agent` is listed as `agent: default`
-and runs with the `Developer` profile, as `zen -p` does; the agent selected in
+and runs with the default developer of its working directory's project
+(normally `Developer`), as `zen -p` does; the agent selected in
 the session where you type `/cron add` is never used.
 
 `/cron add` takes two things from the session where you type it:

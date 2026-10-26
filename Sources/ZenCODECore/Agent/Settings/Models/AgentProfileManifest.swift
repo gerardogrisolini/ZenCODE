@@ -683,11 +683,18 @@ public enum AgentProfileStore {
     /// The default agent: the system developer profile when present,
     /// otherwise the first profile with the developer role in manifest order.
     public static func developerProfile(in agents: [AgentProfile]) throws -> AgentProfile {
-        let developers = roleProfiles(.developer, in: agents)
-        guard let agent = developers.first(where: \.isSystemProfile) ?? developers.first else {
+        guard let agent = preferredDeveloper(in: agents) else {
             throw AgentProfileStoreError.developerAgentMissing(agentsManifestURL())
         }
         return agent
+    }
+
+    /// The preferred developer among `agents`: the system developer profile
+    /// when present, otherwise the first profile with the developer role in
+    /// the given order. `nil` when none has the developer role.
+    static func preferredDeveloper(in agents: [AgentProfile]) -> AgentProfile? {
+        let developers = roleProfiles(.developer, in: agents)
+        return developers.first(where: \.isSystemProfile) ?? developers.first
     }
 
     public static func agentsManifestURL(fileManager: FileManager = .default) -> URL {

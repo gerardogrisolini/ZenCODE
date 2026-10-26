@@ -215,6 +215,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The default agent is now chosen per project. When no agent is given with
+  `--agent`, the launch agent is the system Developer if the project associates
+  it, otherwise the first associated `developer` profile in `agents.json` order;
+  a project with no associated developer keeps the global default. ACP resolves
+  it again for the working directory of each `session/new` and `session/load`,
+  while an explicit `--agent`, `agentId`, or `agentName` still selects any
+  profile. See [Docs/agents.md](Docs/agents.md#profile-roles).
 - DS4 setup builds the engine. After you select the GGUF files and the settings
   of each model, setup checks the engine library and, when it is missing or must
   be rebuilt, asks **Build the DS4 engine now?** (default: yes). The library

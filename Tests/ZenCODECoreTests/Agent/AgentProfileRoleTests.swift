@@ -333,6 +333,105 @@ struct AgentProfileRoleTests {
     }
 
     @Test
+    func projectDefaultDeveloperWithoutASavedSelectionIsTheSystemDeveloper() throws {
+        let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
+        let agents = [custom, Roles.systemReviewer, Roles.developer]
+
+        #expect(try AgentProfileStore.developerProfile(in: agents, projectSelection: nil) == Roles.developer)
+
+        // No system developer in the roster: the project sees no developer, so
+        // the global default (first developer in manifest order) applies.
+        let second = AgentProfile(id: "second-dev", name: "Second Dev", role: .developer)
+        #expect(
+            try AgentProfileStore.developerProfile(
+                in: [Roles.systemReviewer, second, custom],
+                projectSelection: nil
+            ) == second
+        )
+    }
+
+    @Test
+    func projectDefaultDeveloperIsTheFirstAssociatedDeveloperInManifestOrder() throws {
+        let first = AgentProfile(id: "first-dev", name: "First Dev", role: .developer)
+        let second = AgentProfile(id: "second-dev", name: "Second Dev", role: .developer)
+        // The system developer exists but the project does not associate it.
+        let agents = [Roles.developer, second, Roles.pluto, first]
+
+        #expect(
+            try AgentProfileStore.developerProfile(
+                in: agents,
+                projectSelection: [first.id, second.id, Roles.pluto.id]
+            ) == second
+        )
+        #expect(try AgentProfileStore.developerProfile(in: agents, projectSelection: [first.id]) == first)
+        // Selection keys are case-insensitive, like every profile reference.
+        #expect(try AgentProfileStore.developerProfile(in: agents, projectSelection: ["FIRST-DEV"]) == first)
+    }
+
+    @Test
+    func projectDefaultDeveloperPrefersTheAssociatedSystemDeveloper() throws {
+        let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
+        let agents = [custom, Roles.developer, Roles.pluto]
+
+        #expect(
+            try AgentProfileStore.developerProfile(
+                in: agents,
+                projectSelection: [custom.id, Roles.developer.id]
+            ) == Roles.developer
+        )
+    }
+
+    @Test
+    func projectDefaultDeveloperFallsBackToTheGlobalDefaultWhenNoneIsAssociated() throws {
+        let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
+        let agents = [custom, Roles.developer, Roles.pluto]
+
+        for selection: Set<String> in [[Roles.pluto.id], []] {
+            #expect(
+                try AgentProfileStore.developerProfile(in: agents, projectSelection: selection)
+                    == Roles.developer
+            )
+        }
+        #expect(
+            try AgentProfileStore.developerProfile(in: [custom, Roles.pluto], projectSelection: [Roles.pluto.id])
+                == custom
+        )
+
+        do {
+            _ = try AgentProfileStore.developerProfile(
+                in: [Roles.systemReviewer, Roles.pluto],
+                projectSelection: [Roles.pluto.id]
+            )
+            Issue.record("A roster without the developer role has no default developer.")
+        } catch let error as AgentProfileStoreError {
+            #expect(error.errorDescription?.contains("does not contain an agent with the developer role") == true)
+        }
+    }
+
+    @Test
+    func projectDefaultDeveloperReadsTheSavedProjectSelection() throws {
+        try ProjectSupport.withTemporaryProject { _, workspace in
+            let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
+            let agents = [Roles.developer, custom, Roles.pluto]
+
+            // No saved selection: only system profiles are visible.
+            #expect(try AgentProfileStore.developerProfile(in: agents, workspaceRootURL: workspace) == Roles.developer)
+
+            try ProjectAgentSelectionStore.save(agentIDs: [custom.id], workspaceRootURL: workspace)
+            #expect(try AgentProfileStore.developerProfile(in: agents, workspaceRootURL: workspace) == custom)
+
+            try ProjectAgentSelectionStore.save(
+                agentIDs: [custom.id, Roles.developer.id],
+                workspaceRootURL: workspace
+            )
+            #expect(try AgentProfileStore.developerProfile(in: agents, workspaceRootURL: workspace) == Roles.developer)
+
+            try ProjectAgentSelectionStore.save(agentIDs: [Roles.pluto.id], workspaceRootURL: workspace)
+            #expect(try AgentProfileStore.developerProfile(in: agents, workspaceRootURL: workspace) == Roles.developer)
+        }
+    }
+
+    @Test
     func setupRestoresTheSystemDeveloperOnlyWithoutADeveloperRoleAndProtectsTheDefaultOne() {
         let first = AgentProfile(id: "first", name: "First", role: .developer)
         let second = AgentProfile(id: "second", name: "Second", role: .developer)

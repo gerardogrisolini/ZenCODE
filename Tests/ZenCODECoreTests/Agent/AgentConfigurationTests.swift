@@ -164,6 +164,82 @@ struct AgentConfigurationTests {
         )
     }
 
+    // MARK: - Default agent per project
+
+    @Test
+    func defaultAgentIsTheDeveloperAssociatedWithTheLaunchProject() throws {
+        let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
+        let agents = [AgentProfileRoleTestSupport.developer, custom, AgentProfileRoleTestSupport.pluto]
+
+        try ProjectAgentSelectionTestSupport.withTemporaryProject { _, workspace in
+            // No saved selection: the system developer.
+            let unconfigured = try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: agents,
+                workingDirectory: workspace
+            )
+            #expect(unconfigured.selectedAgent?.id == "developer")
+            #expect(unconfigured.requestedAgentName == nil)
+
+            // The project associates a custom developer but not the system one.
+            try ProjectAgentSelectionStore.save(
+                agentIDs: [custom.id, AgentProfileRoleTestSupport.pluto.id],
+                workspaceRootURL: workspace
+            )
+            let associated = try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: agents,
+                workingDirectory: workspace
+            )
+            #expect(associated.selectedAgent == custom)
+            #expect(associated.agentName == custom.displayName)
+            #expect(associated.requestedAgentName == nil)
+
+            // A project without any visible developer keeps the global default.
+            try ProjectAgentSelectionStore.save(
+                agentIDs: [AgentProfileRoleTestSupport.pluto.id],
+                workspaceRootURL: workspace
+            )
+            let withoutDeveloper = try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: agents,
+                workingDirectory: workspace
+            )
+            #expect(withoutDeveloper.selectedAgent?.id == "developer")
+            #expect(withoutDeveloper.requestedAgentName == nil)
+        }
+    }
+
+    @Test
+    func explicitAgentNameStillSelectsAnyProfileRegardlessOfTheProject() throws {
+        let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
+        let pluto = AgentProfileRoleTestSupport.pluto
+        let agents = [AgentProfileRoleTestSupport.developer, custom, pluto]
+
+        try ProjectAgentSelectionTestSupport.withTemporaryProject { _, workspace in
+            try ProjectAgentSelectionStore.save(agentIDs: [custom.id], workspaceRootURL: workspace)
+
+            let explicit = try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                agentName: "  Pluto  ",
+                availableAgents: agents,
+                workingDirectory: workspace
+            )
+            #expect(explicit.selectedAgent == pluto)
+            #expect(explicit.requestedAgentName == "Pluto")
+            #expect(explicit.agentName == "Pluto")
+
+            let blank = try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                agentName: "   ",
+                availableAgents: agents,
+                workingDirectory: workspace
+            )
+            #expect(blank.selectedAgent == custom)
+            #expect(blank.requestedAgentName == nil)
+        }
+    }
+
     // MARK: - Launch working directory
 
     /// A real, symlink-resolved temporary directory removed on exit, so

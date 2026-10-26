@@ -82,6 +82,10 @@ public struct AgentConfiguration: Sendable {
 
     public let modelID: String?
     public let agentName: String?
+    /// The agent profile name explicitly requested (`--agent`, `ZENCODE_AGENT`,
+    /// or the hosted `agentName`), trimmed; `nil` when none was requested and
+    /// the project's default developer was used instead.
+    public let requestedAgentName: String?
     public let selectedAgent: AgentProfile?
     public let effectiveModelID: String?
     public let runMode: AgentRunMode
@@ -312,7 +316,8 @@ public struct AgentConfiguration: Sendable {
             let availableAgents = snapshot.profiles
             selectedAgent = try Self.selectedAgent(
                 named: requestedAgentName,
-                availableAgents: availableAgents
+                availableAgents: availableAgents,
+                workingDirectory: workingDirectory
             )
             agentName = requestedAgentName ?? selectedAgent?.displayName
         }
@@ -325,6 +330,7 @@ public struct AgentConfiguration: Sendable {
 
         self.modelID = modelID
         self.agentName = agentName
+        self.requestedAgentName = requestedAgentName
         self.selectedAgent = selectedAgent
         self.effectiveModelID = effectiveModelID
         self.runMode = runMode
@@ -361,7 +367,8 @@ public struct AgentConfiguration: Sendable {
         let requestedAgentName = rawAgentName?.nilIfBlank
         let selectedAgent = try Self.selectedAgent(
             named: requestedAgentName,
-            availableAgents: availableAgents
+            availableAgents: availableAgents,
+            workingDirectory: workingDirectory
         )
         let normalizedModelID = hostedModelID.nilIfBlank
         let requestedModelID = rawModelID?.nilIfBlank
@@ -377,6 +384,7 @@ public struct AgentConfiguration: Sendable {
 
         self.modelID = requestedModelID
         self.agentName = requestedAgentName ?? selectedAgent?.displayName
+        self.requestedAgentName = requestedAgentName
         self.selectedAgent = selectedAgent
         self.effectiveModelID = effectiveModelID
         self.runMode = runMode
@@ -528,10 +536,14 @@ public struct AgentConfiguration: Sendable {
 
     private static func selectedAgent(
         named rawAgentName: String?,
-        availableAgents: [AgentProfile]
+        availableAgents: [AgentProfile],
+        workingDirectory: URL
     ) throws -> AgentProfile? {
         guard let rawAgentName else {
-            return try AgentProfileStore.developerProfile(in: availableAgents)
+            return try AgentProfileStore.developerProfile(
+                in: availableAgents,
+                workspaceRootURL: workingDirectory
+            )
         }
 
         let normalizedName = TextUtilities.normalizedLookupValue(rawAgentName)

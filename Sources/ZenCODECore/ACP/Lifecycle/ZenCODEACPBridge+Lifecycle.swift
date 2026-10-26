@@ -114,7 +114,11 @@ extension ZenCODEACPBridge {
         let modelID = requestedModelID
             ?? configuration.effectiveModelID
 
-        let selectedAgent = try resolvedACPAgentProfile(from: params)
+        let workingDirectoryURL = URL(fileURLWithPath: cwd)
+        let selectedAgent = try resolvedACPAgentProfile(
+            from: params,
+            workingDirectory: workingDirectoryURL
+        )
         let sessionID = "swift-agent-\(UUID().uuidString.lowercased())"
         // Reserve the incarnation epoch before the MCP servers are installed:
         // the ownership stamped on those registrations must identify exactly
@@ -123,7 +127,6 @@ extension ZenCODEACPBridge {
         let sessionEpoch = makeSessionEpoch()
         let cacheKey = (params["sessionKey"] as? String)
             ?? (params["cacheKey"] as? String)
-        let workingDirectoryURL = URL(fileURLWithPath: cwd)
         // MCP servers installed below carry this incarnation's ownership. Every
         // `throw` from here on means this incarnation never became (or did not
         // stay) live, so the catch releases its registrations before
@@ -646,7 +649,10 @@ extension ZenCODEACPBridge {
                 operation: operation
             )
             try ensureLifecycleOperationLive(operation)
-            let selectedAgent = try resolvedACPAgentProfile(from: params)
+            let selectedAgent = try resolvedACPAgentProfile(
+                from: params,
+                workingDirectory: workingDirectory
+            )
             let configuration = await restoredACPClientSessionConfiguration(
                 sessionID: sessionID,
                 params: params,

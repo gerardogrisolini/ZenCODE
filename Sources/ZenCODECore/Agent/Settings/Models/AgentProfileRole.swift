@@ -136,6 +136,41 @@ extension AgentProfileStore {
         )
     }
 
+    /// The default agent of a project: the preferred developer among the
+    /// profiles visible to it (see
+    /// ``ProjectAgentSelectionStore/filter(_:selection:)``), that is the system
+    /// developer when visible, otherwise the first visible developer in
+    /// manifest order. A project with no visible developer falls back to the
+    /// global ``developerProfile(in:)``, so this only throws when `agents` has
+    /// no developer at all.
+    public static func developerProfile(
+        in agents: [AgentProfile],
+        projectSelection: Set<String>?
+    ) throws -> AgentProfile {
+        let visibleAgents = ProjectAgentSelectionStore.filter(agents, selection: projectSelection)
+        if let agent = preferredDeveloper(in: visibleAgents) {
+            return agent
+        }
+        return try developerProfile(in: agents)
+    }
+
+    /// The default agent of the project rooted at `workspaceRootURL`, using
+    /// the selection saved for it (see
+    /// ``ProjectAgentSelectionStore/load(workspaceRootURL:fileManager:)``).
+    public static func developerProfile(
+        in agents: [AgentProfile],
+        workspaceRootURL: URL,
+        fileManager: FileManager = .default
+    ) throws -> AgentProfile {
+        try developerProfile(
+            in: agents,
+            projectSelection: ProjectAgentSelectionStore.load(
+                workspaceRootURL: workspaceRootURL,
+                fileManager: fileManager
+            )
+        )
+    }
+
     /// Error shown when no profile visible to the project has the role a
     /// command needs.
     static func roleUnavailableForProjectMessage(_ role: AgentProfileRole) -> String {

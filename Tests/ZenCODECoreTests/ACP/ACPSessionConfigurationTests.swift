@@ -508,4 +508,161 @@ extension ACPCompatibilityTests {
         )
     }
 
+    // MARK: - Default agent per session working directory
+
+    private static let projectDefaultTestModel = AgentSettingsModelManifest(
+        id: "test-model",
+        kind: .remoteAPI,
+        modelID: "local/test-model"
+    )
+
+    @Test
+    func newSessionDefaultsToTheDeveloperAssociatedWithTheSessionWorkingDirectory() async throws {
+        let systemDeveloper = AgentProfileRoleTestSupport.developer
+        let projectDeveloper = AgentProfile(
+            id: "project-developer",
+            name: "Project Developer",
+            role: .developer,
+            tools: []
+        )
+        let agents = [systemDeveloper, projectDeveloper]
+
+        try await ProjectAgentSelectionTestSupport.withTemporaryProjectAsync { _, workspace in
+            try ProjectAgentSelectionStore.save(
+                agentIDs: [projectDeveloper.id],
+                workspaceRootURL: workspace
+            )
+            // The launch directory has no saved selection, so the bridge
+            // starts with the system developer.
+            let bridge = try makeBridge(
+                models: [Self.projectDefaultTestModel],
+                availableAgents: agents,
+                backendFactory: { _, _ in CapturingACPBackend() }
+            )
+            let launchConfiguration = await bridge.configuration
+            #expect(launchConfiguration.selectedAgent?.id == systemDeveloper.id)
+            #expect(launchConfiguration.requestedAgentName == nil)
+
+            try await bridge.newSession(id: nil, params: ["cwd": workspace.path])
+            let configuration = try #require(await bridge.sessionConfigurationsForTesting().first)
+            #expect(configuration.agentID == projectDeveloper.id)
+            #expect(configuration.agentName == projectDeveloper.name)
+            #expect(configuration.agentRole == .developer)
+            #expect(
+                await bridge.selectedAgentIDForTesting(sessionID: configuration.sessionID)
+                    == projectDeveloper.id
+            )
+            await bridge.shutdown()
+
+            // A directory without a saved selection keeps the system developer.
+            let otherBridge = try makeBridge(
+                models: [Self.projectDefaultTestModel],
+                availableAgents: agents,
+                backendFactory: { _, _ in CapturingACPBackend() }
+            )
+            let otherWorkspace = workspace
+                .deletingLastPathComponent()
+                .appendingPathComponent("unconfigured", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: otherWorkspace,
+                withIntermediateDirectories: true
+            )
+            try await otherBridge.newSession(id: nil, params: ["cwd": otherWorkspace.path])
+            let otherConfiguration = try #require(
+                await otherBridge.sessionConfigurationsForTesting().first
+            )
+            #expect(otherConfiguration.agentID == systemDeveloper.id)
+            await otherBridge.shutdown()
+        }
+    }
+
+    @Test
+    func newSessionExplicitAgentOrLaunchAgentOverridesTheProjectDefault() async throws {
+        let systemDeveloper = AgentProfileRoleTestSupport.developer
+        let projectDeveloper = AgentProfile(
+            id: "project-developer",
+            name: "Project Developer",
+            role: .developer,
+            tools: []
+        )
+        let agents = [systemDeveloper, projectDeveloper]
+
+        try await ProjectAgentSelectionTestSupport.withTemporaryProjectAsync { _, workspace in
+            try ProjectAgentSelectionStore.save(
+                agentIDs: [projectDeveloper.id],
+                workspaceRootURL: workspace
+            )
+
+            // `agentId` selects any profile, associated with the project or not.
+            let explicitBridge = try makeBridge(
+                models: [Self.projectDefaultTestModel],
+                availableAgents: agents,
+                backendFactory: { _, _ in CapturingACPBackend() }
+            )
+            try await explicitBridge.newSession(id: nil, params: [
+                "cwd": workspace.path,
+                "agentId": systemDeveloper.id,
+            ])
+            let explicitConfiguration = try #require(
+                await explicitBridge.sessionConfigurationsForTesting().first
+            )
+            #expect(explicitConfiguration.agentID == systemDeveloper.id)
+            await explicitBridge.shutdown()
+
+            // An agent requested at launch (`--agent`) is never replaced by the
+            // project default.
+            let launchBridge = try makeBridge(
+                models: [Self.projectDefaultTestModel],
+                availableAgents: agents,
+                agentName: systemDeveloper.name,
+                backendFactory: { _, _ in CapturingACPBackend() }
+            )
+            #expect(await launchBridge.configuration.requestedAgentName == systemDeveloper.name)
+            try await launchBridge.newSession(id: nil, params: ["cwd": workspace.path])
+            let launchConfiguration = try #require(
+                await launchBridge.sessionConfigurationsForTesting().first
+            )
+            #expect(launchConfiguration.agentID == systemDeveloper.id)
+            await launchBridge.shutdown()
+        }
+    }
+
+    @Test
+    func loadSessionDefaultsToTheDeveloperAssociatedWithTheSessionWorkingDirectory() async throws {
+        let systemDeveloper = AgentProfileRoleTestSupport.developer
+        let projectDeveloper = AgentProfile(
+            id: "project-developer",
+            name: "Project Developer",
+            role: .developer,
+            tools: []
+        )
+
+        try await ProjectAgentSelectionTestSupport.withTemporaryProjectAsync { _, workspace in
+            try ProjectAgentSelectionStore.save(
+                agentIDs: [projectDeveloper.id],
+                workspaceRootURL: workspace
+            )
+            let bridge = try makeBridge(
+                models: [Self.projectDefaultTestModel],
+                availableAgents: [systemDeveloper, projectDeveloper],
+                backendFactory: { _, _ in CapturingACPBackend() }
+            )
+
+            try await bridge.restoreSession(
+                id: nil,
+                params: [
+                    "sessionId": "restored-project-default",
+                    "cwd": workspace.path,
+                ],
+                replayHistory: false
+            )
+            let configuration = try #require(await bridge.sessionConfigurationsForTesting().first)
+            #expect(configuration.agentID == projectDeveloper.id)
+            #expect(
+                await bridge.selectedAgentIDForTesting(sessionID: "restored-project-default")
+                    == projectDeveloper.id
+            )
+            await bridge.shutdown()
+        }
+    }
 }

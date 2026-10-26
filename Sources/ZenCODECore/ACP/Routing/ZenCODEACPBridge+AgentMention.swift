@@ -45,14 +45,29 @@ extension ZenCODEACPBridge {
         return try AgentProfileStore.loadRequired()
     }
 
-    func resolvedACPAgentProfile(from params: [String: Any]) throws -> AgentProfile? {
+    /// Resolves the agent for a session. An explicit `agentId`/`agentName` in
+    /// `params` selects any profile. Without one, a launch-time default
+    /// developer is re-resolved for the session's `workingDirectory` so each
+    /// project gets its own default; an agent requested at launch
+    /// (`--agent`) is kept as is. A failure to read the project's selection
+    /// never breaks session creation: the launch agent is used instead.
+    func resolvedACPAgentProfile(
+        from params: [String: Any],
+        workingDirectory: URL
+    ) throws -> AgentProfile? {
         let rawAgentReference = (params["agentId"] as? String)?.nilIfBlank
             ?? (params["agentID"] as? String)?.nilIfBlank
             ?? (params["agent_id"] as? String)?.nilIfBlank
             ?? (params["agentName"] as? String)?.nilIfBlank
             ?? (params["agent_name"] as? String)?.nilIfBlank
         guard let rawAgentReference else {
-            return configuration.selectedAgent
+            if configuration.requestedAgentName != nil || configuration.selectedAgent == nil {
+                return configuration.selectedAgent
+            }
+            return (try? AgentProfileStore.developerProfile(
+                in: availableACPAgentProfiles(),
+                workspaceRootURL: workingDirectory
+            )) ?? configuration.selectedAgent
         }
 
         let lookupKey = Self.acpAgentMentionLookupKey(rawAgentReference)
