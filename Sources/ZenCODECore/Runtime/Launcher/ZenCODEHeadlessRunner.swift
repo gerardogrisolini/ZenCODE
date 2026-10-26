@@ -11,7 +11,11 @@ import Foundation
 /// delegates to `AgentCoreSessionRunner`; tests can supply a controlled actor
 /// without replacing the CLI or weakening the real session composition.
 protocol ZenCODEHeadlessSessionRunning: Actor {
-    func headlessCreateSession(configuration: AgentCoreSessionConfiguration) async throws
+    /// Creates the session and installs its prompt-skill selection.
+    func headlessCreateSession(
+        configuration: AgentCoreSessionConfiguration,
+        promptSkills: [PromptSkill]
+    ) async throws
     func headlessSendPrompt(
         configuration: AgentCoreSessionConfiguration,
         prompt: String,
@@ -22,8 +26,19 @@ protocol ZenCODEHeadlessSessionRunning: Actor {
 }
 
 extension AgentCoreSessionRunner: ZenCODEHeadlessSessionRunning {
-    func headlessCreateSession(configuration: AgentCoreSessionConfiguration) async throws {
+    /// Mirrors `TerminalChat.createCurrentSession()`: `createSession` installs
+    /// an empty session-scoped skill provider, so the selection is applied
+    /// right after it. Without this step a headless turn never sees the
+    /// selected prompt skills.
+    func headlessCreateSession(
+        configuration: AgentCoreSessionConfiguration,
+        promptSkills: [PromptSkill]
+    ) async throws {
         try await createSession(configuration: configuration)
+        await updatePromptSkillSelection(
+            promptSkills,
+            sessionID: configuration.sessionID
+        )
     }
 
     func headlessSendPrompt(
@@ -46,6 +61,13 @@ extension AgentCoreSessionRunner: ZenCODEHeadlessSessionRunning {
     func headlessShutdown() async {
         await shutdown()
     }
+}
+
+/// A headless session as composed by `TerminalChat`: the session
+/// configuration and the prompt skills selected for it.
+struct ZenCODEHeadlessSession: Sendable {
+    let configuration: AgentCoreSessionConfiguration
+    let promptSkills: [PromptSkill]
 }
 
 /// Executes one non-interactive text turn without starting the terminal UI.
@@ -108,19 +130,50 @@ public enum ZenCODEHeadlessRunner {
             },
             backendFactory: backendFactory
         )
-        let terminal = TerminalChat(
+        let session = await makeSession(
             configuration: configuration,
-            stdinIsTerminal: false,
             sessionRunner: sessionRunner
-        )
-        let sessionConfiguration = await terminal.currentSessionConfiguration(
-            discoverExternalTools: false
         )
         try await runTurn(
             configuration: configuration,
             prompt: prompt,
             sessionRunner: sessionRunner,
-            sessionConfiguration: sessionConfiguration
+            sessionConfiguration: session.configuration,
+            promptSkills: session.promptSkills
+        )
+    }
+
+    /// Composes the headless session configuration through the same
+    /// `TerminalChat` code used by the interactive session, without starting
+    /// its UI.
+    ///
+    /// `TerminalChat` only applies the selected agent profile (its tool
+    /// selection and prompt skills) from `run()`, which this path never
+    /// enters. Applying it here is what grants the profile's tools and skills
+    /// to the session: without it the allowlist would hold only the intrinsic
+    /// prompt-skill tools and no skill would be selected. The skills always
+    /// come from the profile: `--skills` / `ZENCODE_AGENT_SKILLS` are an
+    /// interactive startup selection and are deliberately not applied here.
+    /// Profile application has no terminal output, and tool authorization is
+    /// untouched: consent-requiring actions still go through the
+    /// non-interactive authorizer.
+    @TerminalChatActor
+    static func makeSession(
+        configuration: AgentConfiguration,
+        sessionRunner: AgentCoreSessionRunner
+    ) async -> ZenCODEHeadlessSession {
+        let terminal = TerminalChat(
+            configuration: configuration,
+            stdinIsTerminal: false,
+            sessionRunner: sessionRunner
+        )
+        await terminal.applyInitialAgentSelectionIfNeeded()
+        let sessionConfiguration = await terminal.currentSessionConfiguration(
+            discoverExternalTools: false
+        )
+        return ZenCODEHeadlessSession(
+            configuration: sessionConfiguration,
+            promptSkills: terminal.selectedPromptSkills()
         )
     }
 
@@ -133,6 +186,7 @@ public enum ZenCODEHeadlessRunner {
         prompt: String,
         sessionRunner: any ZenCODEHeadlessSessionRunning,
         sessionConfiguration: AgentCoreSessionConfiguration,
+        promptSkills: [PromptSkill] = [],
         jsonlSink: ZenCODEHeadlessJSONLWriter.Sink? = nil,
         textSink: @escaping TextSink = { text in
             AgentOutput.standardOutput.writeString(text)
@@ -146,7 +200,10 @@ public enum ZenCODEHeadlessRunner {
         }
 
         do {
-            try await sessionRunner.headlessCreateSession(configuration: sessionConfiguration)
+            try await sessionRunner.headlessCreateSession(
+                configuration: sessionConfiguration,
+                promptSkills: promptSkills
+            )
         } catch {
             await sessionRunner.headlessShutdown()
             if let writer {

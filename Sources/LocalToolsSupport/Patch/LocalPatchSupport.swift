@@ -254,6 +254,10 @@ extension LocalToolsSupport {
 
     static func parseUnifiedDiff(_ patch: String) throws -> [FilePatch] {
         let lines = patch.components(separatedBy: "\n")
+        // Same line split as `PatchFileHeaders`, so its indices address `lines`.
+        // A `--- ` line inside a hunk body is removed content (`-- note`) unless
+        // the shared rule recognizes it as the start of a file header.
+        let headerIndices = PatchFileHeaders.fileHeaderLineIndices(in: patch)
         var patches: [FilePatch] = []
         var index = 0
 
@@ -317,7 +321,7 @@ extension LocalToolsSupport {
                     var hunkLines: [DiffLine] = []
                     while index < lines.count,
                           !lines[index].hasPrefix("@@"),
-                          !lines[index].hasPrefix("--- "),
+                          !headerIndices.contains(index),
                           !lines[index].hasPrefix("diff --git") {
                         let raw = lines[index]
                         if raw == "\\ No newline at end of file" {

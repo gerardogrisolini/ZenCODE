@@ -259,6 +259,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
   of the `[R]`, `[A]`, and `[C]` keys, instead of full orange, so the card looks
   lighter, like the prompt frame. The "Authorization" title in the top border
   and the `❯` marker before the command stay full orange, without dimming.
+- File artifacts larger than the 64 KiB evidence limit now show the start of
+  their diff instead of only "Diff unavailable: file or operation evidence
+  exceeds the byte limit." This covers files added, deleted, or modified during
+  a turn and detected by the workspace checkpoint, including files created by
+  `local.exec` or a script. The artifact keeps the whole hunks and lines that
+  fit in 64 KiB, or in what is left of the 256 KiB per-turn limit. It also
+  shows the full `+N -M` counts and a note such as "Diff truncated: showing the
+  first 1200 of 3142 diff lines". Only the printed diff is shortened: `/undo`
+  still uses the complete patch. ACP tool updates are unchanged.
+- `/review` no longer puts the diffs of the changed files in its request to
+  the Reviewers. It lists each file with its status and `+N -M` counts, or
+  `(binary)`, and the Reviewers read the current files. Before, every diff was
+  sent in full, so a large or generated file made the request very large.
 
 ### Removed
 
@@ -297,6 +310,36 @@ Release tags follow the strict `vX.Y.Z` contract described in
   decodes the same file if it is installed. The error is reported only when
   both decoders fail, and then it names the reason of each one. Without
   `ffmpeg` the `opusdec` error is reported as before.
+- File artifacts: a file created during a turn by a tool other than a direct
+  file edit (for example a script run with `local.exec`) now shows its content
+  as an added-file diff instead of "Diff unavailable: text evidence is binary,
+  uncertain, or outside the evidence byte limit." The workspace checkpoint
+  computed no diff for added and deleted files. Undo of a turn that adds or
+  deletes files now reverses the same patch as other changes and still falls
+  back to the saved file content if the patch cannot be applied.
+- File artifacts and undo: a change that removes a line starting with `-- `
+  (for example an SQL or Lua comment) or adds a line starting with `++ ` no
+  longer shows that line replaced by the file name in the diff. The workspace
+  checkpoint rewrote such lines as if they were the `---`/`+++` file headers,
+  so the diff was wrong and undo of that turn could not reverse the patch and
+  had to restore the saved file content instead.
+- `local.applyPatch`: a patch that removes a line starting with `-- ` or adds a
+  line starting with `++ ` no longer lists that line as an extra file. The
+  terminal tool call line showed, for example, `schema.sql (+2 more)` instead
+  of `schema.sql`, and ACP tool calls listed those lines as file `locations`.
+  Lines inside a hunk or inside a `*** Update File:` section are no longer read
+  as `---`/`+++` file headers.
+- `local.applyPatch` now applies a unified diff that removes a line starting
+  with `-- `, for example an SQL or Lua comment. The removed line was read as
+  the header of another file: the tool failed with "Malformed patch: missing
+  +++ header", or, when the next line started with `+++ `, it reported success
+  without changing the file and created an empty file named after that line.
+  The tool now recognizes file headers with the same rule as the tool call
+  line, so both list the same files.
+- Headless runs (`zen -p`, `zen -f`, `--jsonl`, and `/cron` jobs) now apply the
+  prompt skills of the selected agent profile. Before, a headless turn had no
+  skill selected. `--skills` and `ZENCODE_AGENT_SKILLS` still apply only to the
+  chat startup and are ignored by headless runs.
 
 ## [2.4.0] - 2026-10-24
 

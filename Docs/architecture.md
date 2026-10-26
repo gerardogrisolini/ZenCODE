@@ -114,7 +114,20 @@ at 1 MiB per file and 4 MiB cumulatively per operation; compact-diff input scans
 have a separate 4 MiB cumulative reservation. The synchronous line diff keeps
 three context lines, preserves UTF-8 bytes and final-newline markers, and bounds
 line count, edit distance and comparison work. Exceeded budgets produce a clear
-explanation, not a truncated patch or unavailable counts displayed as zeros.
+explanation, never unavailable counts displayed as zeros. The one exception is
+a text file added, deleted or modified during the turn and detected by the
+workspace checkpoint: when its evidence exceeds 64 KiB (or the remaining
+operation budget), the artifact shows the leading part of its single-file git
+patch instead of an explanation only. File header lines stay verbatim, hunks
+that fit are kept whole, and the first hunk that does not fit keeps its longest
+prefix of whole lines, with its `@@` header recounted for the kept lines (for example
+`@@ -0,0 +1,K @@` for an added file, `@@ -1,K +0,0 @@` for a deleted one) and
+hunks after it dropped. The artifact keeps the full counts and carries a
+truncation explanation with the shown and total diff lines. Only the artifact is
+cut: the summary entry keeps the complete patch for `/undo`.
+Patches that are not a well-formed single-file git patch, binary evidence and
+direct operation evidence (so ACP) keep the explanation-only fallback without a
+truncated patch.
 Patch-only evidence is not a complete postimage for reconciliation. ACP uses
 existing standard text content for these patches; no persisted or wire fields
 are added.

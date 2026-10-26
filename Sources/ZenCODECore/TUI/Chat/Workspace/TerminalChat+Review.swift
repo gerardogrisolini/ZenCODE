@@ -166,10 +166,10 @@ extension TerminalChat {
         this before using more than one Reviewer. Partition independent files or concerns when \
         useful; a single taskless code Reviewer is sufficient only for a small self-contained \
         change.
-        - Code-quality Reviewers may inspect listed current files for context, but must \
-        base findings on the listed session changes only. Ask them to report correctness \
-        bugs, regressions, security/concurrency issues, missing tests, and convention \
-        violations with file:line references and severity.
+        - Code-quality Reviewers must read the current content of the listed files, since no \
+        diffs are included, and base findings on those files only. Ask them to report \
+        correctness bugs, regressions, security/concurrency issues, missing tests, and \
+        convention violations with file:line references and severity.
         """
     } else {
       changeSummaryBlock = """
@@ -359,8 +359,8 @@ extension TerminalChat {
       active, wait for it to finish and close it before activating a graph. If the change \
       is small or cannot be partitioned cleanly, a single self-contained Reviewer is fine.
       - Give each Reviewer a focused prompt describing its assigned subset of the \
-      session change surface above. Reviewers may inspect the listed current files \
-      for context, but must base findings on the listed session changes only.
+      session change surface above. Reviewers must read the current content of the files \
+      listed above, since no diffs are included, and base findings on those files only.
       - Ask Reviewers to report concrete findings: correctness bugs, regressions, \
       security/concurrency issues, missing tests, and style/convention violations, \
       each with file:line references and a severity.
@@ -385,36 +385,19 @@ extension TerminalChat {
     ]
 
     for entry in summary.entries {
-      lines.append(
-        "- \(entry.status.rawValue) \(entry.path)  +\(entry.additions) -\(entry.deletions)"
-      )
-
-      guard !entry.isBinary else {
-        lines.append("  Binary file; inspect the current file only if useful for context.")
-        continue
-      }
-
-      let patch = entry.patch?
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .nilIfBlank
-      if let patch {
-        lines.append("  Patch:")
-        lines.append("  ```diff")
-        lines.append(patch.indentedForReviewChangeSummary())
-        lines.append("  ```")
+      if entry.isBinary {
+        lines.append("- \(entry.status.rawValue) \(entry.path) (binary)")
       } else {
-        lines.append("  No text patch available; inspect this file only as needed for context.")
+        lines.append(
+          "- \(entry.status.rawValue) \(entry.path)  +\(entry.additions) -\(entry.deletions)"
+        )
       }
     }
 
-    return lines.joined(separator: "\n")
-  }
-}
+    lines.append(
+      "No diffs are included. Read the current content of each listed file; a deleted file no longer exists."
+    )
 
-private extension String {
-  func indentedForReviewChangeSummary() -> String {
-    split(separator: "\n", omittingEmptySubsequences: false)
-      .map { "  " + String($0) }
-      .joined(separator: "\n")
+    return lines.joined(separator: "\n")
   }
 }

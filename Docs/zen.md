@@ -22,7 +22,10 @@ During the active terminal session, ZenCODE keeps an in-memory history
 of effective file mutations, grouped by turn. Use `/artifacts` without arguments
 to show the complete history, including text evidence, patches, and explicit
 fallbacks for binary, uncertain, or over-budget evidence (64 KiB per text and
-256 KiB per turn). Normal tool blocks remain compact without code or diffs.
+256 KiB per turn). When the workspace checkpoint's evidence for an added,
+deleted or modified text file exceeds that limit, the artifact shows the first
+whole diff lines that fit, with a truncation note; `/undo` still uses the full
+patch. Normal tool blocks remain compact without code or diffs.
 The history is scoped to the active
 session and is cleared by `/sessions new`, loading/restoring a session, and
 `/setup`; it is never written to saved snapshots, checkpoints, transcripts, or

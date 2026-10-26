@@ -732,6 +732,32 @@ struct ZenCODECommandLineRunnerTests {
         #expect(textOutput.withLock { $0 } == ["legacy output\n"])
         #expect(await runner.lifecycle() == ["create", "send", "close", "shutdown"])
     }
+
+    @Test
+    func headlessTurnInstallsTheSelectedPromptSkillsWhenItCreatesTheSession() async throws {
+        let skill = PromptSkill(
+            canonicalName: "review",
+            title: "Review",
+            summary: "Review changes.",
+            promptBody: "Review the changes.",
+            sourceHash: "review-hash"
+        )
+        let runner = ControlledHeadlessSessionRunner(
+            response: DirectAgentResponse(text: "done", stopReason: "stop", modelID: "test")
+        )
+
+        try await ZenCODEHeadlessRunner.runTurn(
+            configuration: makeHeadlessConfiguration(jsonl: false),
+            prompt: "hello",
+            sessionRunner: runner,
+            sessionConfiguration: makeSessionConfiguration(),
+            promptSkills: [skill],
+            textSink: { _ in }
+        )
+
+        #expect(await runner.promptSkillsAtCreation() == [skill])
+        #expect(await runner.lifecycle() == ["create", "send", "close", "shutdown"])
+    }
     private func makeHeadlessConfiguration(jsonl: Bool) throws -> AgentConfiguration {
         try AgentConfiguration(
             hostedModelID: "test-model",
@@ -912,6 +938,7 @@ private actor ControlledHeadlessSessionRunner: ZenCODEHeadlessSessionRunning {
     private let events: [DirectAgentEvent]
     private let failure: Failure?
     private var calls: [String] = []
+    private var createdPromptSkills: [PromptSkill]?
 
     init(
         response: DirectAgentResponse,
@@ -923,8 +950,12 @@ private actor ControlledHeadlessSessionRunner: ZenCODEHeadlessSessionRunning {
         self.failure = failure
     }
 
-    func headlessCreateSession(configuration _: AgentCoreSessionConfiguration) async throws {
+    func headlessCreateSession(
+        configuration _: AgentCoreSessionConfiguration,
+        promptSkills: [PromptSkill]
+    ) async throws {
         calls.append("create")
+        createdPromptSkills = promptSkills
         if failure == .create { throw Failure.create }
     }
 
@@ -952,5 +983,9 @@ private actor ControlledHeadlessSessionRunner: ZenCODEHeadlessSessionRunning {
 
     func lifecycle() -> [String] {
         calls
+    }
+
+    func promptSkillsAtCreation() -> [PromptSkill]? {
+        createdPromptSkills
     }
 }
