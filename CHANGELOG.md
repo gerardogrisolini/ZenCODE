@@ -10,6 +10,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-26
+
+> **Breaking release:** compared with v2.4.0, v3.0.0 requires a `role` in every
+> `agents.json` profile, with no automatic migration (`/setup` offers to rewrite
+> the file with the recommended profiles). It removes the `ds4-server`
+> integration and the injected `DS4ServerEndpoint` seam: DS4 runs in-process, so
+> build the DS4 engine library from `/setup` or with
+> `Scripts/build-ds4-engine.sh` before you use a DS4 model again. It also stores
+> project data under a name-based project key, so the project memory, saved
+> sessions, task graphs, and saved plans written by v2.4.0 are no longer read.
+> See the **Breaking** entries below.
+
 ### Added
 
 - DS4 runs in-process: a DS4 model is served by the `zen` process itself,
@@ -238,16 +250,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
   are relative to the DS4 checkout and must not be symlinks.
 - The DS4 provider base URL `http://127.0.0.1:8000/v1` is now only a
   compatibility placeholder, which the in-process engine does not use.
-- Project data now follows a moved project folder. Project memory, the project
-  agents chosen with `/agents`, saved sessions, task graphs, and saved plans are
-  stored under a project key derived from the project name (the name of the
-  working directory folder, compared case-sensitively) instead of the SHA-256
-  digest of the full path:
+- **Breaking:** Project data now follows a moved project folder. Project
+  memory, the project agents chosen with `/agents`, saved sessions, task
+  graphs, and saved plans are stored under a project key derived from the
+  project name (the name of the working directory folder, compared
+  case-sensitively) instead of the SHA-256 digest of the full path:
   `~/.zencode/{memory,projects,sessions,task-graphs}/<name>-<24 hex of SHA-256(name)>/`.
   Two folders with the same name are now the same project and share all of
   this data, and `sessions.json` keeps one entry per project name. The macOS
   workspace tool consent ("Trust this folder?") stays tied to the folder path
-  and is asked again after a move. See
+  and is asked again after a move. There is no automatic migration: the
+  project memory, saved sessions, task graphs, and saved plans written by
+  v2.4.0 under `~/.zencode/{memory,sessions,task-graphs}/<64 hex of SHA-256(full path)>/`
+  are no longer read. They stay on disk unchanged. See
   [Docs/zen.md](Docs/zen.md#project-key).
 - The recommended `Organizer` agent profile has rewritten instructions. On
   request it gives a daily briefing (today's events, overdue reminders and
