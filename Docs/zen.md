@@ -72,6 +72,10 @@ When required configuration is missing or invalid (`settings.json` or
 reconfigure ZenCODE; the TUI saves the current session, rebuilds the runtime,
 and restores the conversation without closing the app.
 
+In ACP mode (`--acp` or `ZENCODE_AGENT_MODE=acp`), setup never starts inside
+the ACP stream. See [ACP Mode](#acp-mode) for the authentication methods and
+the behavior before ZenCODE is configured.
+
 Creates files under `~/.zencode/`:
 
 - `settings.json` — provider/model configuration, selected model, optional Telegram, voice (Telegram voice-message transcription and the macOS voice mode reading voice), and memory-embedding settings (endpoint, optional model).
@@ -1108,6 +1112,50 @@ stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions,
 and tool exposure. `--agent`, `--model`, `--working-directory`, `--skills`, and
 token environment variables still apply.
 
+### Authentication Methods
+
+`initialize` publishes authentication methods according to the client's
+`clientCapabilities`:
+
+- `zencode-client-compatibility` (`type: agent`, name **Continue with
+  ZenCODE**) is published when the client declares an `auth` capability. It
+  is a no-op confirmation, required by some clients (for example Xcode 27
+  beta 3) before they open a session. It does not configure or authenticate
+  any provider.
+- `zencode-setup` (`type: terminal`, name **Set up ZenCODE**, `args: []`) is
+  published when the client declares
+  `clientCapabilities._meta["terminal-auth"]` as `true`, as the ACP Registry
+  validator does. Its args replace `--acp`, so the client runs `zen` with no
+  arguments in a terminal. If configuration is missing, the interactive setup
+  (provider and sign-in) opens. When setup is finished, `zen` enters the chat,
+  which is left with `/exit`. If ZenCODE is already configured, the chat opens
+  directly. When the process exits, the client reconnects and initializes the
+  agent again.
+
+If both capabilities are declared, both methods are published, with the
+`agent` method first. If neither is declared, `authMethods` is empty.
+
+### Before ZenCODE Is Configured
+
+When `zen --acp` or `ZENCODE_AGENT_MODE=acp` runs without the configuration
+required by first setup (`settings.json` or `agents.json` missing or invalid,
+or no model configured), the interactive setup does not start inside the ACP
+stream, and stdout still contains only JSON-RPC messages:
+
+- `initialize` responds normally with `authMethods` and an empty model list.
+- `session/new`, `session/load`, `session/resume`, `session/prompt`, and
+  `_zencode/model/preload` respond with the ACP error `auth_required` (code
+  `-32000`) and this message:
+
+  ```text
+  Authentication required: ZenCODE is not configured. Use the "Set up ZenCODE" terminal authentication method, or run `zen` in a terminal.
+  ```
+
+The configuration is not reloaded while the agent runs. After setup, the client
+must restart the agent; the `zencode-setup` flow does this by itself. If setup
+is cancelled, ZenCODE stays unconfigured and those requests keep returning
+`-32000`.
+
 ## Recommended Workflow
 
 1. `cd /path/to/project && zen` — start in the target project; first-run setup opens automatically when required.
@@ -1123,6 +1171,7 @@ token environment variables still apply.
 ## Troubleshooting
 
 - **Setup starts automatically**: required configuration (`settings.json` or `agents.json`) is missing or invalid, or no model is configured; complete setup before the chat starts. Use `/setup` later to reconfigure.
+- **An ACP client reports "Authentication required: ZenCODE is not configured"**: start the client's **Set up ZenCODE** method, or run `zen` in a terminal, complete setup, and restart the agent in the client. See [ACP Mode](#acp-mode).
 - **Model not found**: run `/models` or check `settings.json`.
 - **A profile is never chosen for delegation**: check its role compatibility, its tool grant, and that it has a model binding with a capability — see [bindings.md](bindings.md).
 - **No tools available**: use `/tools`, switch profile, or check ACP client tool exposure.

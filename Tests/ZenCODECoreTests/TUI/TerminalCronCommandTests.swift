@@ -336,9 +336,10 @@ struct TerminalCronCommandTests {
 
         // The agent selected in the session is never written: without
         // `-agent`, the line has no `--agent` and `zen` runs its default profile.
-        terminal.selectedAgent = try #require(
+        let reviewer = try #require(
             AgentProfileStore.defaultProfiles().first { $0.name == AgentProfileStore.reviewerAgentName }
         )
+        terminal.selectedAgent = reviewer
         _ = await run("/cron add @hourly With a selected agent", in: terminal)
         let withSelection = try #require(client.writes.last)
         #expect(!withSelection.contains("--agent"))
@@ -389,9 +390,10 @@ struct TerminalCronCommandTests {
     @Test
     func addWithTheAgentOptionIgnoresTheAgentSelectedInTheSession() async throws {
         let (terminal, client) = try makeTerminal(crontab: "")
-        terminal.selectedAgent = try #require(
+        let planner = try #require(
             AgentProfileStore.defaultProfiles().first { $0.name == AgentProfileStore.plannerAgentName }
         )
+        terminal.selectedAgent = planner
 
         _ = await run("/cron add -agent Reviewer @daily Hello", in: terminal)
 
