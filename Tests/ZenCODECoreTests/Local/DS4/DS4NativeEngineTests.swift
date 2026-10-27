@@ -189,8 +189,8 @@ struct DS4NativeEngineThreadTests {
 
     @Test
     func jobsRunInOrderOnOneDedicatedThread() async {
-        // Linux truncates thread names to 15 bytes (pthread_setname_np), so
-        // the test name stays within that limit on every platform.
+        // Linux rejects thread names longer than 15 bytes (pthread_setname_np),
+        // so the test name stays within that limit on every platform.
         let thread = DS4EngineThread(name: "ds4-thread-test")
         let log = Log()
         let done = MockDS4Gate()

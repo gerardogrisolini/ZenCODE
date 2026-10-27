@@ -25,10 +25,13 @@ final class DS4EngineThread: @unchecked Sendable {
     private var isFinished = false
 
     init(name: String, stackSize: Int = DS4EngineThread.defaultStackSize) {
+        let started = DispatchSemaphore(value: 0)
         let thread = Thread { [self] in
-            // swift-corelibs-foundation applies a name only to the running
-            // thread (Linux keeps at most 15 bytes); set it from inside so the
-            // name is visible on every platform.
+            // swift-corelibs-foundation applies the name only after start() has
+            // registered the pthread on the calling thread, so wait for start()
+            // to return before naming ourselves. On Linux pthread_setname_np
+            // rejects (does not truncate) names longer than 15 bytes.
+            started.wait()
             Thread.current.name = name
             run()
         }
@@ -36,6 +39,7 @@ final class DS4EngineThread: @unchecked Sendable {
         thread.stackSize = stackSize
         thread.qualityOfService = .userInitiated
         thread.start()
+        started.signal()
     }
 
     /// Enqueues `job`. Returns false (the job is dropped) once `stop()` was called.

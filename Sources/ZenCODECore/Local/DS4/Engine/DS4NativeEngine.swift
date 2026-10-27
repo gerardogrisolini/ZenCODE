@@ -65,7 +65,8 @@ final class DS4NativeEngine: DS4Engine {
         if let modelPath = configuration.modelPath {
             await onStatus("Opening DS4 engine for \(URL(fileURLWithPath: modelPath).lastPathComponent)")
         }
-        let thread = DS4EngineThread(name: "ZenCODE DS4 engine")
+        // Linux rejects thread names longer than 15 bytes.
+        let thread = DS4EngineThread(name: "zencode-ds4")
         let symbols = library.symbols
         let opened: DS4NativeEngineCore.OpenResult
         do {
