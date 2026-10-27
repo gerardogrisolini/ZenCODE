@@ -70,13 +70,6 @@
       ]
     },
     {
-      "description" : "Find files by glob and search file contents with grep.",
-      "id" : "search-tools",
-      "isInstalledOnLinux" : true,
-      "productName" : "search-tools-feature",
-      "sourceRelativePath" : "Sources/Features/SearchTools"
-    },
-    {
       "description" : "Build, test, run, and inspect SwiftPM packages.",
       "discoversToolsAtRuntime" : true,
       "id" : "swift-tools",

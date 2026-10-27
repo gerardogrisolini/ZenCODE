@@ -21,6 +21,31 @@ Release tags follow the strict `vX.Y.Z` contract described in
   migrated: the next Jira call reopens the browser setup. You can remove the old
   `ZenCODE.JiraAPIToken` item with
   `security delete-generic-password -s ZenCODE.JiraAPIToken`.
+- `search.glob`, `search.grep`, and `search.locate` are now core tools of `zen`
+  instead of the optional `search-tools` feature package. Their names and
+  arguments are unchanged, but they run inside `zen` like the `files` and
+  `text` tools, work on macOS and Linux, and need no installation. `/tools`
+  lists them as the new **Search** group, with the key `search`, and the
+  recommended Developer, Builder, Reviewer, Reporter, and Planner profiles use
+  it. They only read, so profiles with `readOnly` set, such as Reviewer and
+  Planner, keep them. Existing setups keep working: `feature:search-tools` and
+  `search-tools` are still accepted as aliases of `search` in `agents.json`, in
+  tool selections, and in saved sessions. Nothing is rewritten when `zen`
+  starts; the key becomes `search` the next time ZenCODE saves your profiles.
+  No persisted file format changes.
+- **Breaking:** `search.` is now a reserved core tool prefix, like `local.` and
+  `text.`: an MCP bridge feature can no longer use it as its `toolPrefix`.
+
+### Removed
+
+- **Breaking:** The optional `search-tools` feature package
+  (`search-tools-feature`) is removed from the catalog of optional features.
+  `zen --install-features search-tools` now fails with
+  `Unknown optional Swift feature: search-tools.`, and the package no longer
+  appears in the optional-feature picker. A copy already installed in
+  `~/.zencode/features/search-tools/` (or under `ZENCODE_SUPPORT_DIRECTORY`) is
+  ignored: it is neither loaded nor listed. ZenCODE does not delete the folder,
+  so you can remove it yourself once you no longer need it.
 
 ## [3.0.1] - 2026-10-27
 

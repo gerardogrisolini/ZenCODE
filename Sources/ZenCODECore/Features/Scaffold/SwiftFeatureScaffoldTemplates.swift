@@ -61,7 +61,7 @@ extension SwiftFeatureRuntime {
                 "Tool namespace 'feature.' is reserved for kernel feature management: \(prefix)"
             )
         }
-        if prefix.hasPrefix("local.") || prefix.hasPrefix("text.") {
+        if prefix.hasPrefix("local.") || prefix.hasPrefix("search.") || prefix.hasPrefix("text.") {
             throw DirectToolError.permissionDenied(
                 "Tool prefix '\(prefix)' conflicts with a core tool namespace."
             )

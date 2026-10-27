@@ -565,8 +565,6 @@ extension TerminalChat {
             return displayName
         }
         switch status.id {
-        case "search-tools":
-            return "Search"
         case "web-tools":
             return "Web"
         case "git-tools":

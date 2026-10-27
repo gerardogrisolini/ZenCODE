@@ -11,9 +11,9 @@ import ZenPackageMetadata
 /// `feature.validate`, `feature.build`, `feature.reload`, and the `/feature`
 /// wizard keep working without any special case.
 public struct SwiftFeatureOptionalFeature: Codable, Sendable, Hashable {
-    /// Catalog identity (`search-tools`, `git-tools`, …).
+    /// Catalog identity (`git-tools`, `web-tools`, …).
     public let id: String
-    /// Human readable name used by the setup wizard (`Search`, `Git`, …).
+    /// Human readable name used by the setup wizard (`Git`, `Web`, …).
     public let displayName: String
     /// Short capability description shown next to the checkbox.
     public let description: String

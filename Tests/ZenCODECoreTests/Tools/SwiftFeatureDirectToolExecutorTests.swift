@@ -380,9 +380,9 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
-    func directToolExecutorDoesNotFallbackToExtractedSearchTools() async throws {
+    func directToolExecutorRunsCoreSearchToolsInProcessWithoutAFeature() async throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swift-feature-no-fallback-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("swift-feature-core-search-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
         }
@@ -390,13 +390,25 @@ extension SwiftFeatureRuntimeTests {
             at: rootURL,
             withIntermediateDirectories: true
         )
+        try "struct Fixture {}\n".write(
+            to: rootURL.appendingPathComponent("Fixture.swift"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "not swift\n".write(
+            to: rootURL.appendingPathComponent("notes.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
 
+        // No feature package is installed: `search.*` are core tools that
+        // run inside `zen`, like the Files and Text tools.
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
             subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
         )
         let toolCall = DirectAgentToolCall(
-            id: "no-fallback-call-1",
+            id: "core-search-call-1",
             name: "search.glob",
             argumentsObject: [
                 "pattern": "*.swift"
@@ -411,8 +423,10 @@ extension SwiftFeatureRuntimeTests {
             allowedToolNames: ["search.glob"]
         )
 
-        #expect(result.output == "Tool error: Unknown tool: search.glob")
-        #expect(result.status == .failed)
+        #expect(DirectToolExecutor.isCoreLocalFileOrTextToolName("search.glob"))
+        #expect(result.status == .completed)
+        #expect(result.output.contains("Fixture.swift"))
+        #expect(!result.output.contains("notes.txt"))
     }
 
     @Test

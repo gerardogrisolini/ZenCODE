@@ -17,18 +17,10 @@ extension AgentConfigurationTests {
         )
         let xcodeKey = TerminalToolSelectionCatalog.featurePackageKey(id: "xcode-tools")
         let figmaKey = TerminalToolSelectionCatalog.featurePackageKey(id: "figma-tools")
-        let searchKey = TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools")
         let gitKey = TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools")
         let webKey = TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools")
         let featureBuilderKey = TerminalToolSelectionCatalog.featureBuilderKey
         let unavailableOptionalFeatureStatuses = [
-            featureStatus(
-                id: "search-tools",
-                source: .bundled,
-                tools: [],
-                enabled: false,
-                available: false
-            ),
             featureStatus(
                 id: "git-tools",
                 source: .bundled,
@@ -71,7 +63,7 @@ extension AgentConfigurationTests {
         #expect(!reviewerProfile.tools.contains("sub-agents"))
         #expect(!reviewerProfile.tools.contains("shell"))
         #expect(reporterProfile.tools == AgentProfileStore.reporterToolNames)
-        #expect(reporterProfile.tools == ["files", searchKey, "text", gitKey])
+        #expect(reporterProfile.tools == ["files", "search", "text", gitKey])
         #expect(reporterProfile.instructions?.contains("Reporter agent") == true)
         #expect(reporterProfile.readOnly)
         let reporterAllowedToolNames = reporterProfile.allowedToolNames(
@@ -80,9 +72,13 @@ extension AgentConfigurationTests {
         #expect(reporterAllowedToolNames.contains("local.readFile"))
         #expect(!reporterAllowedToolNames.contains("local.writeFile"))
         #expect(!reporterAllowedToolNames.contains("local.editFile"))
+        // Search is a core group: it expands to the in-process `search.*`
+        // tools without any installed feature package.
+        #expect(reporterAllowedToolNames.contains("search.glob"))
+        #expect(reporterAllowedToolNames.contains("search.grep"))
+        #expect(reporterAllowedToolNames.contains("search.locate"))
         // Package selections remain in the profile allowlist, but an
         // uninstalled optional feature contributes no executable tool prefix.
-        #expect(reporterAllowedToolNames.contains(searchKey))
         #expect(reporterAllowedToolNames.contains(gitKey))
         #expect(!reporterAllowedToolNames.contains("git."))
         #expect(!reporterAllowedToolNames.contains("git.push"))
@@ -91,7 +87,7 @@ extension AgentConfigurationTests {
         #expect(!reporterAllowedToolNames.contains("web.fetch"))
         #expect(!reporterAllowedToolNames.contains("agent.create"))
         #expect(plannerProfile.tools == AgentProfileStore.plannerToolNames)
-        #expect(plannerProfile.tools == ["files", searchKey, "text", gitKey, "memory", webKey])
+        #expect(plannerProfile.tools == ["files", "search", "text", gitKey, "memory", webKey])
         #expect(plannerProfile.instructions?.contains("Planner agent") == true)
         #expect(plannerProfile.readOnly)
         #expect(!plannerProfile.tools.contains("sub-agents"))
@@ -99,7 +95,7 @@ extension AgentConfigurationTests {
         #expect(!plannerProfile.tools.contains("local.exec"))
         #expect(!plannerProfile.tools.contains("local.readFile"))
         #expect(!plannerProfile.tools.contains("local.writeFile"))
-        let optionalFeatureKeys = Set([searchKey, gitKey, webKey])
+        let optionalFeatureKeys = Set([gitKey, webKey])
         #expect(plannerProfile.tools.filter { !optionalFeatureKeys.contains($0) }.allSatisfy {
             !TerminalToolSelectionCatalog.selectionKeys(for: $0, items: toolSelectionItems).isEmpty
         })
@@ -132,6 +128,12 @@ extension AgentConfigurationTests {
         }
 
         #expect(developerProfile.tools.contains(webKey))
+        let legacySearchKey = TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools")
+        for name in ["Developer", "Builder", "Reviewer", "Reporter", "Planner"] {
+            let profile = try #require(profiles[name])
+            #expect(profile.tools.contains("search"))
+            #expect(!profile.tools.contains(legacySearchKey))
+        }
         #expect(developerProfile.instructions?.contains("Developer agent") == true)
         #expect(developerProfile.instructions?.contains("Do not take initiative") == true)
         #expect(developerProfile.instructions?.contains("multiple reasonable options") == true)
@@ -398,22 +400,27 @@ extension AgentConfigurationTests {
         )
         let coreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
         let coreReadNames = Set(DirectToolCatalog.coreReadDescriptors.map(\.name))
-        let nonCoreNames: Set<String> = ["search.", "external.inspect"]
+        let nonCoreNames: Set<String> = ["linear.", "external.inspect"]
+        let searchNames: Set<String> = ["search.glob", "search.grep", "search.locate"]
 
         let resolved = profile.resolvedAllowedToolNames(coreNames.union(nonCoreNames))
-        let broadGrantResolved = profile.resolvedAllowedToolNames(["local.", "search."])
+        let broadGrantResolved = profile.resolvedAllowedToolNames(["local.", "linear."])
+        let searchGrantResolved = profile.resolvedAllowedToolNames(["search."])
         let mutableLocalNames = Set(
             DirectToolCatalog.coreMutatingLocalFileAndTextDescriptors.map(\.name)
         )
 
+        #expect(searchNames.isSubset(of: coreReadNames))
         #expect(resolved == coreReadNames.union(nonCoreNames))
         #expect(
             AgentProfile(id: "writable", name: "Writable", role: .developer).resolvedAllowedToolNames(coreNames)
                 == coreNames
         )
-        #expect(broadGrantResolved.contains("search."))
+        #expect(broadGrantResolved.contains("linear."))
         #expect(broadGrantResolved.isDisjoint(with: mutableLocalNames))
         #expect(broadGrantResolved.contains("local.readFile"))
+        // `search.` covers only core read tools: a read-only profile keeps them.
+        #expect(searchGrantResolved == searchNames)
     }
 
     @Test

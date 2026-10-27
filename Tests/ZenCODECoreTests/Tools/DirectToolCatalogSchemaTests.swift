@@ -8,7 +8,6 @@ struct DirectToolCatalogSchemaTests {
     @Test
     func everyBuiltInDirectToolOwnsAValidPresentationDefinition() {
         let descriptors = DirectToolCatalog.baseDescriptors
-            + DirectToolCatalog.localSearchDescriptors
         let missing = descriptors
             .filter { $0.presentation == nil }
             .map(\.name)
@@ -28,6 +27,7 @@ struct DirectToolCatalogSchemaTests {
         let mutatingNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
         let expectedReadNames: Set<String> = [
             "local.pwd", "local.ls", "local.readFile", "local.readFiles", "local.inspectFile",
+            "search.glob", "search.grep", "search.locate",
             "text.head", "text.tail", "text.sort", "text.wc",
             "skills.list", "skills.read",
             "memory.read", "memory.search", "memory.get",
@@ -46,13 +46,13 @@ struct DirectToolCatalogSchemaTests {
 #endif
         let coreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
         let unclassifiedNames = Set(DirectToolCatalog.featureDescriptors.map(\.name))
-            .union(DirectToolCatalog.localSearchDescriptors.map(\.name))
 
         #expect(readNames == expectedReadNames)
         #expect(mutatingNames == expectedMutatingNames)
         #expect(readNames.isDisjoint(with: mutatingNames))
         #expect(coreNames == readNames.union(mutatingNames))
         #expect(coreNames.isDisjoint(with: unclassifiedNames))
+        #expect(Set(DirectToolCatalog.localSearchDescriptors.map(\.name)).isSubset(of: readNames))
     }
 
     @Test

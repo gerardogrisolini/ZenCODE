@@ -522,6 +522,33 @@ struct ZenCODECommandLineRunnerTests {
     }
 
     @Test
+    func zenExecutableRejectsInstallingTheRetiredSearchToolsFeature() throws {
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-retired-search-install-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: supportURL)
+        }
+        var environment = ProcessInfo.processInfo.environment
+        environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
+
+        let result = try runZen(
+            zenExecutableURL(),
+            arguments: ["--install-features", "search-tools"],
+            environment: environment
+        )
+        let stderr = String(decoding: result.stderr, as: UTF8.self)
+
+        #expect(result.exitCode == 1)
+        #expect(stderr.contains("Unknown optional Swift feature: search-tools."))
+        #expect(!FileManager.default.fileExists(
+            atPath: supportURL
+                .appendingPathComponent("features", isDirectory: true)
+                .appendingPathComponent("search-tools", isDirectory: true)
+                .path
+        ))
+    }
+
+    @Test
     func zenExecutableEarlyJSONLErrorOwnsStdoutAndExitOne() throws {
         let result = try runZen(zenExecutableURL(), arguments: ["--jsonl"])
         #expect(result.exitCode == 1)

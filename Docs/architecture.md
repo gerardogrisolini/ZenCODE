@@ -42,6 +42,31 @@ project without a saved agent selection sees only those. References persisted
 with the former UUIDs (saved sessions, per-project agent selections) are not
 migrated: they resolve like references to a deleted profile.
 
+**Migration: `search-tools` moved into the core.** The optional
+feature ID `search-tools` (package `Sources/Features/SearchTools`, product
+`search-tools-feature`, selection key `feature:search-tools`) is retired
+explicitly. The package and its `ZenBundledFeatureCatalog` entry are removed.
+The tools `search.glob`, `search.grep`, and `search.locate` keep their names and
+schemas but become core tools of `zen`, implemented in `LocalToolsSupport` and
+executed in-process like the file and text tools, so they are available on
+macOS and Linux without installation. They form the core group `search` (title
+"Search") in `/tools`, and the recommended Developer, Builder, Reviewer,
+Reporter, and Planner profiles select it. As read-only core descriptors they are
+kept by `readOnly` profiles such as Reviewer and Planner.
+
+- The legacy keys `feature:search-tools` and `search-tools` remain accepted as
+  aliases of `search` in `agents.json`, in tool selections, and in saved
+  sessions. Nothing is rewritten at startup; the key is rewritten as `search`
+  the next time profiles are saved.
+- A copy installed in `~/.zencode/features/search-tools` (or under
+  `ZENCODE_SUPPORT_DIRECTORY`) is ignored: it is neither loaded nor listed. The
+  folder is not modified or deleted, and the user may remove it by hand.
+- `zen --install-features search-tools` fails with
+  `Unknown optional Swift feature: search-tools.`.
+- `search.` is a reserved core namespace, like `local.` and `text.`: it cannot
+  be the `toolPrefix` of an MCP bridge.
+- No persisted format changes.
+
 `Package.swift` remains the authoritative declaration of the SwiftPM graph,
 platform conditions, products, and build flags. Every local Swift target enables
 `MemberImportVisibility`: each source file must import the module that defines
@@ -579,7 +604,7 @@ lookup, and persisted bindings are unchanged.
 | `Sources/Features/BrowserTools/Sources/BrowserToolsFeature` | `BrowserToolsFeature` library target owned by the standalone Browser package: the opt-in Chrome/CDP Browser runtime, direct URL policy plus a per-invocation Fetch/DNS request guard, persistent page handles, fixed viewport presets, scoped state reset, bounded semantic observations, snapshot-bound DOM/computed-CSS inspection, page and element wait/assertions, guarded interactions, redacted/filterable network diagnostics, decoded-pixel screenshot comparison with Browser-owned diff artifacts, and PNG/PDF artifacts. It denies downloads fail-closed, must not enable Browser in a default agent profile, and must not expose raw CDP/JavaScript evaluation or selectors to the model. The request guard is not a persistent network sandbox: pages may keep running between one-shot feature invocations, so durable isolation requires a separate browser guardian/proxy or host firewall boundary. |
 | `Sources/Features/BrowserTools/Sources/browser-tools-feature` | Thin `browser-tools-feature` executable target that delegates to `BrowserToolsFeatureRunner`. |
 | `Sources/Features/DesktopTools` | Standalone macOS-only `desktop-tools-feature` package exposing the single typed tool `desktop.run`: permission/system inspection, app and window enumeration, PNG screenshots attached to the model's multimodal context, pointer/keyboard/clipboard input, and app/window management through AppKit, Accessibility, and Quartz. It must never execute caller-supplied shell or AppleScript code, must not be enabled in a default agent profile, and requires Screen Recording plus Accessibility consent (`action=permissions` first). Actions that can run code or end processes (`open` of anything but a plain http/https URL, launching from an app path, and `terminate_app`) are gated in the host by `DirectToolExecutor`'s destructive-consent gate (`DirectToolExecutor+DesktopGating.swift`, which reuses the `local.exec` authorizer); the feature runs `/usr/bin/open` and `screencapture` from `/` so URL-looking targets cannot resolve to workspace files. `isInstalledOnLinux` is `false` because the platform integration does not exist there. |
-| `Sources/LocalToolsSupport` | Reusable local file, search, text, and patch tooling. |
+| `Sources/LocalToolsSupport` | Reusable local file, search, text, and patch tooling. It also implements the core `search.glob`, `search.grep`, and `search.locate` tools, which run in-process on macOS and Linux and replace the retired `search-tools` optional package (see the `search-tools` migration under Compatibility Contract). |
 | `Sources/ZenCODECore/Memory/Engine` | Internal memory implementation area within the `ZenCODECore` target; it is not a separate Foundation-only module or public product. It is an MIT-licensed independent Swift implementation of the memory architecture of `1jehuang/jcode`, attributed in `THIRD_PARTY_NOTICES.md`. It owns the memory graph, typed edges, lexical retrieval through a pluggable `MemoryIndex` protocol (default `BM25MemoryIndex`), optional semantic retrieval through a pluggable `EmbeddingProvider` (reciprocal-rank fusion only when one is present), a breadth-first cascade with depth decay, the confidence lifecycle, persistence, and embedding provider protocols. The graph, BM25 path, default selectors, and persistence remain dependency-free; opt-in OpenAI-compatible transport adapters and ZenCODE diagnostic seams live in the same implementation-private target and are not installed when a store opens. Retrieval is also pluggable end to end through a `MemoryQueryAnalyzer` (default `DirectMemoryQueryAnalyzer`, which uses the prompt verbatim as the query), a `MemorySelector` (default `TopScoreMemorySelector`), a `MemoryExtractor` (default `NoopMemoryExtractor`, which extracts nothing) and a `MemoryContextFormatter` (default `BulletMemoryContextFormatter`); every default is dependency-free and makes no network call. The engine additionally exposes `context(for:)` (a ready-to-inject memory block) and `learn(from:)` (automatic extraction), and ships LLM-backed analyzer/selector/extractor implementations over the `MemoryLanguageModel` / `OpenAICompatibleChatModel` contracts; all of these stay unwired engine internals — opening a product store never installs a network-backed extractor or makes a generation request. ZenCODECore wires automatic recall through its `MemoryTurnCoordinator`: it calls the store's `context(for:scope:)` inline before every turn and is on by default over the dependency-free BM25 path (no second LLM call — the formatted block rides the turn's own outgoing request). Durable entries are read and written explicitly by the main model through the five `memory.*` tools (`memory.read` / `memory.search` / `memory.write` / `memory.update` / `memory.archive`), guided by `MemoryService.toolUsagePromptSection()`. The `MemoryVerifier` protocol is deprecated in favour of `MemorySelector`. This source area is implementation-private within `ZenCODECore`, not a separate SwiftPM target or public library product. |
 | `Sources/ZenPackageMetadata` | Internal bundled-feature distribution metadata used for catalog parity; it is not a public product. |
 | `Sources/Features/<Feature>` | A self-contained optional SwiftPM package with its own `Package.swift`, `Sources/<product-name>/`, and package-local `Tests/`. It is outside the root graph; keep the entry point thin and place implementation in feature-owned support or library targets. The marker `// zencode:package-path` must immediately precede the root `.package(name: "ZenCODE", path: "../../..")` dependency so installation can rewrite only that path. |
@@ -749,6 +774,10 @@ Builder-feature wire and persistence contracts remain compatible. The former
 that imported it must depend on and import `ZenCODECore` instead. The former
 root `XcodeToolsFeature` product was also intentionally removed: consumers must use
 the standalone optional package rather than importing its implementation.
+The former optional `search-tools` package was folded into the core as well:
+its tools are now core tools implemented in `LocalToolsSupport`, and
+`zen --install-features search-tools` is refused (see the `search-tools`
+migration under Compatibility Contract).
 Optional feature executables
 are no longer installed beside the `zen` binary or built by the root package.
 Install the desired package with `zen --install-features [id,id,...]` (or select

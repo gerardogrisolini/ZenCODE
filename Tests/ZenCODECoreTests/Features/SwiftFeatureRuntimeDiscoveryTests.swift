@@ -383,7 +383,8 @@ extension SwiftFeatureRuntimeTests {
         )
         let ids = Set(statuses.map(\.id))
 
-        #expect(ids.contains("search-tools"))
+        // `search-tools` is retired: its tools are built into the core.
+        #expect(!ids.contains("search-tools"))
         #expect(ids.contains("web-tools"))
         #expect(ids.contains("git-tools"))
         #expect(ids.contains("swift-tools"))

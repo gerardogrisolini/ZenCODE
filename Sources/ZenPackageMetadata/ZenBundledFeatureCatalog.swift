@@ -58,12 +58,6 @@ public enum ZenBundledFeatureCatalog {
             isInstalledOnLinux: false,
         ),
         ZenBundledFeatureMetadata(
-            id: "search-tools",
-            productName: "search-tools-feature",
-            sourceRelativePath: "Sources/Features/SearchTools",
-            isInstalledOnLinux: true,
-        ),
-        ZenBundledFeatureMetadata(
             id: "swift-tools",
             productName: "swift-tools-feature",
             sourceRelativePath: "Sources/Features/SwiftTools",

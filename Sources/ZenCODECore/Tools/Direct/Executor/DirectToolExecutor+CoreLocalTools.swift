@@ -11,12 +11,17 @@ import LocalToolsSupport
 import ToolCore
 
 extension DirectToolExecutor {
+    /// Whether `toolName` is one of the in-process core local tools: Files
+    /// (`local.*` except `local.exec`), Search (`search.*`), and Text
+    /// (`text.*`).
     public static func isCoreLocalFileOrTextToolName(_ toolName: String) -> Bool {
         coreLocalFileAndTextTools.contains {
             $0.descriptor.name == toolName
         }
     }
 
+    /// Runs a core local Files, Search, or Text tool in-process. Returns `nil`
+    /// when `toolCall` does not name one of them.
     public func executeCoreLocalFileOrTextTool(
         toolCall: DirectAgentToolCall,
         workingDirectory: URL
@@ -58,7 +63,9 @@ extension DirectToolExecutor {
     }
 
     private static var coreLocalFileAndTextTools: [AnyFeatureTool] {
-        LocalFeatureTools.fileTools() + LocalFeatureTools.textTools()
+        LocalFeatureTools.fileTools()
+            + LocalFeatureTools.searchTools()
+            + LocalFeatureTools.textTools()
     }
 
     private static func renderCoreLocalOutput(_ data: Data) throws -> String {

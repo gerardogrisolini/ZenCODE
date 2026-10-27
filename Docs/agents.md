@@ -70,7 +70,7 @@ and a profile can have any name in any role.
   "name" : "Pippo",
   "readOnly" : true,
   "role" : "reviewer",
-  "tools" : ["files", "feature:search-tools", "text"]
+  "tools" : ["files", "search", "text"]
 }
 ```
 
@@ -218,15 +218,24 @@ profiles in setup to give an existing `Reporter` the read-only setting.
 
 ## Tool Groups
 
-**Core:** `shell`, `files`, `text`, `memory`, `sub-agents`.
+**Core:** `shell`, `files`, `search`, `text`, `memory`, `sub-agents`.
 
-**Feature packages** (discovered and enabled separately): `search-tools`,
-`web-tools`, `git-tools`, `swift-tools`, `xcode-tools`, `figma-tools`,
-`jira-tools`, `desktop-tools`, `browser-tools`, `macOS`.
+**Feature packages** (discovered and enabled separately): `web-tools`,
+`git-tools`, `swift-tools`, `xcode-tools`, `figma-tools`, `jira-tools`,
+`desktop-tools`, `browser-tools`, `macOS`.
 
 Enabling a package makes it available; `/tools` exposes it in the current
 session. The `sub-agents` group is what lets a profile create delegated
 sub-agents.
+
+The `search` group holds `search.glob`, `search.grep`, and `search.locate`. It
+is a core group, like `files` and `text`: the tools run inside `zen` on macOS
+and Linux, need no installation, and are read-only, so a `readOnly` profile
+such as `Reviewer` or `Planner` keeps them. Older `agents.json` files that
+name the former optional package as `feature:search-tools` or `search-tools`
+keep working: both keys are read as `search`, and the profile is rewritten with
+`search` the next time profiles are saved. See
+[Search tools moved into the core](zen.md#search-tools-moved-into-the-core).
 
 ## Sub-Agents
 

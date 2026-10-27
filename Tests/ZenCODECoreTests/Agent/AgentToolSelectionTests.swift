@@ -15,11 +15,6 @@ extension AgentConfigurationTests {
         let items = TerminalChat.toolSelectionItems(
             featureStatuses: [
                 featureStatus(
-                    id: "search-tools",
-                    source: .bundled,
-                    tools: ["search.glob", "search.grep", "search.locate"]
-                ),
-                featureStatus(
                     id: "git-tools",
                     source: .bundled,
                     tools: ["git.status"]
@@ -36,6 +31,7 @@ extension AgentConfigurationTests {
             items: items
         )
 
+        #expect(selectedKeys.contains("search"))
         #expect(allowedToolNames.contains("local.exec"))
         #expect(allowedToolNames.contains("local.readFile"))
         #expect(allowedToolNames.contains("local.inspectFile"))
@@ -55,8 +51,9 @@ extension AgentConfigurationTests {
             tools: AgentProfileStore.developerToolNames
         )
 
-        let searchSelectionKey = TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools")
-        #expect(profile.tools.contains(searchSelectionKey))
+        let gitSelectionKey = TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools")
+        #expect(profile.tools.contains(gitSelectionKey))
+        #expect(profile.tools.contains("search"))
 
         let coreItems = TerminalToolSelectionCatalog.items(featureStatuses: [])
         let coreAllowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
@@ -66,48 +63,51 @@ extension AgentConfigurationTests {
         #expect(coreAllowedToolNames.contains("local.exec"))
         #expect(coreAllowedToolNames.contains("local.readFile"))
         #expect(coreAllowedToolNames.contains("local.inspectFile"))
+        #expect(coreAllowedToolNames.contains("search.glob"))
+        #expect(coreAllowedToolNames.contains("search.grep"))
+        #expect(coreAllowedToolNames.contains("search.locate"))
         #expect(coreAllowedToolNames.contains("text.wc"))
         #expect(!coreAllowedToolNames.contains("feature.list"))
 
         let uninstalledItems = TerminalToolSelectionCatalog.items(
             featureStatuses: [
                 featureStatus(
-                    id: "search-tools",
+                    id: "git-tools",
                     source: .bundled,
-                    tools: ["search.glob", "search.grep"],
+                    tools: ["git.status", "git.diff"],
                     enabled: false,
                     available: false
                 )
             ]
         )
         let uninstalledAllowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
-            for: [searchSelectionKey],
+            for: [gitSelectionKey],
             items: uninstalledItems
         )
 
-        #expect(!uninstalledItems.contains { $0.key == searchSelectionKey })
-        #expect(!uninstalledAllowedToolNames.contains("search.glob"))
-        #expect(!uninstalledAllowedToolNames.contains("search.grep"))
+        #expect(!uninstalledItems.contains { $0.key == gitSelectionKey })
+        #expect(!uninstalledAllowedToolNames.contains("git.status"))
+        #expect(!uninstalledAllowedToolNames.contains("git.diff"))
 
         let installedItems = TerminalToolSelectionCatalog.items(
             featureStatuses: [
                 featureStatus(
-                    id: "search-tools",
+                    id: "git-tools",
                     source: .generated,
-                    tools: ["search.glob", "search.grep"],
+                    tools: ["git.status", "git.diff"],
                     enabled: true,
                     available: true
                 )
             ]
         )
         let installedAllowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
-            for: [searchSelectionKey],
+            for: [gitSelectionKey],
             items: installedItems
         )
 
-        #expect(installedItems.contains { $0.key == searchSelectionKey })
-        #expect(installedAllowedToolNames.contains("search.glob"))
-        #expect(installedAllowedToolNames.contains("search.grep"))
+        #expect(installedItems.contains { $0.key == gitSelectionKey })
+        #expect(installedAllowedToolNames.contains("git.status"))
+        #expect(installedAllowedToolNames.contains("git.diff"))
     }
 
     @Test

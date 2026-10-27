@@ -16,7 +16,7 @@ import ToolCore
 @Suite
 struct DirectToolExecutorLocalIOTests {
     @Test
-    func baseCatalogKeepsCoreLocalAndTextToolsOnly() {
+    func baseCatalogKeepsCoreLocalSearchAndTextToolsOnly() {
         let baseToolNames = Set(DirectToolCatalog.baseDescriptors.map(\.name))
         let selectableToolNames = Set(AgentToolSelection.selectableDescriptors().map(\.name))
 
@@ -28,8 +28,9 @@ struct DirectToolExecutorLocalIOTests {
         #expect(baseToolNames.contains("feature.list"))
         #expect(baseToolNames.contains("feature.enable"))
         #expect(baseToolNames.contains("feature.delete"))
-        #expect(!baseToolNames.contains("search.glob"))
-        #expect(!baseToolNames.contains("search.locate"))
+        #expect(baseToolNames.contains("search.glob"))
+        #expect(baseToolNames.contains("search.grep"))
+        #expect(baseToolNames.contains("search.locate"))
         #expect(!baseToolNames.contains("web.search"))
         #expect(!baseToolNames.contains("git.status"))
 
@@ -782,7 +783,7 @@ struct DirectToolExecutorAuthorizationTests {
             role: .developer
         )
         let executor = makeExecutor()
-        let rawToolName = "search.agent.create"
+        let rawToolName = "external.agent.create"
 
         #expect(
             SubAgentToolRequestCompatibility.canonicalToolName(for: rawToolName)
@@ -792,7 +793,7 @@ struct DirectToolExecutorAuthorizationTests {
             sessionID: "external-prefix-fallback",
             toolCall: toolCall(named: rawToolName),
             workingDirectory: URL(fileURLWithPath: "/tmp"),
-            allowedToolNames: profile.resolvedAllowedToolNames(["search."])
+            allowedToolNames: profile.resolvedAllowedToolNames(["external."])
         )
 
         #expect(result.status == .permissionDenied)
@@ -803,7 +804,7 @@ struct DirectToolExecutorAuthorizationTests {
     @Test
     func registeredExternalToolKeepsPriorityOverCompatibilityFallback() async {
         let executor = makeExecutor()
-        let rawToolName = "search.agent.create"
+        let rawToolName = "external.agent.create"
         await executor.updateToolProviders([
             AgentToolProvider(
                 tools: [
@@ -821,7 +822,7 @@ struct DirectToolExecutorAuthorizationTests {
             sessionID: nil,
             toolCall: toolCall(named: rawToolName),
             workingDirectory: URL(fileURLWithPath: "/tmp"),
-            allowedToolNames: ["search."]
+            allowedToolNames: ["external."]
         )
 
         #expect(result.status == .completed)
@@ -878,7 +879,7 @@ struct DirectToolExecutorAuthorizationTests {
             ofItemAtPath: executableURL.path
         )
 
-        let rawToolName = "search.agent.create"
+        let rawToolName = "external.agent.create"
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: SwiftFeatureRuntime(
                 features: [
@@ -902,7 +903,7 @@ struct DirectToolExecutorAuthorizationTests {
             sessionID: nil,
             toolCall: toolCall(named: rawToolName),
             workingDirectory: rootURL,
-            allowedToolNames: ["search."]
+            allowedToolNames: ["external."]
         )
 
         #expect(result.status == .completed)
@@ -912,7 +913,7 @@ struct DirectToolExecutorAuthorizationTests {
 
     @Test
     func registeredMCPToolKeepsPriorityOverCompatibilityFallback() async {
-        let rawToolName = "search.agent.create"
+        let rawToolName = "external.agent.create"
         let mcpRuntime = DirectMCPToolRuntime()
         let remoteExecutor = RemoteMCPToolExecutor(
             configuration: MCPServerConfiguration(
@@ -920,10 +921,10 @@ struct DirectToolExecutorAuthorizationTests {
                 arguments: [],
                 environment: [:]
             ),
-            toolNamePrefix: "search."
+            toolNamePrefix: "external."
         )
         _ = await mcpRuntime.installBorrowedExternalExecutor(
-            name: "search",
+            name: "external",
             executor: remoteExecutor,
             tools: [
                 ToolDescriptor(
@@ -943,7 +944,7 @@ struct DirectToolExecutorAuthorizationTests {
             sessionID: nil,
             toolCall: toolCall(named: rawToolName),
             workingDirectory: URL(fileURLWithPath: "/tmp"),
-            allowedToolNames: ["search."]
+            allowedToolNames: ["external."]
         )
 
         // The borrowed executor intentionally fails its transport connection.

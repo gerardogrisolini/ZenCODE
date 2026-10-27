@@ -21,8 +21,29 @@ import ZenPackageMetadata
 /// details such as descriptions, schemas, prefixes, aliases, and invocation
 /// timeouts live here.
 enum SwiftBundledFeatureCatalog {
+    /// Optional feature packages that this catalog no longer ships because
+    /// their tools are now built into the ZenCODE core, mapped to the core
+    /// `/tools` group key that replaced them.
+    ///
+    /// This is the single list of retired feature ids. Feature discovery
+    /// ignores a package installed under the user feature root with one of
+    /// these ids, so it is never loaded, listed, or run, and its folder is
+    /// left on disk untouched. Persisted `feature:<id>` and `<id>` tool
+    /// selections stay readable as aliases of the replacing core group and
+    /// are rewritten to its key only when agent profiles are saved.
+    static let retiredFeatureCoreGroupKeys: [String: String] = [
+        "search-tools": "search"
+    ]
+
+    static var retiredFeatureIDs: Set<String> {
+        Set(retiredFeatureCoreGroupKeys.keys)
+    }
+
+    static func isRetiredFeatureID(_ id: String) -> Bool {
+        retiredFeatureCoreGroupKeys[id] != nil
+    }
+
     static func definitions() -> [SwiftFeatureRuntime.BundledFeatureDefinition] {
-        let search = metadata(for: "search-tools")
         let web = metadata(for: "web-tools")
         let browser = metadata(for: "browser-tools")
         let git = metadata(for: "git-tools")
@@ -34,13 +55,6 @@ enum SwiftBundledFeatureCatalog {
         let macOS = metadata(for: "macOS")
 
         return [
-            SwiftFeatureRuntime.BundledFeatureDefinition(
-                id: search.id,
-                executableName: search.productName,
-                description: "Find files by glob and search file contents with grep.",
-                sourceRelativePath: search.sourceRelativePath,
-                tools: searchToolDescriptors()
-            ),
             SwiftFeatureRuntime.BundledFeatureDefinition(
                 id: web.id,
                 executableName: web.productName,
@@ -154,9 +168,5 @@ enum SwiftBundledFeatureCatalog {
             preconditionFailure("Missing bundled feature metadata for \(id).")
         }
         return feature
-    }
-
-    private static func searchToolDescriptors() -> [ToolDescriptor] {
-        DirectToolCatalog.localSearchDescriptors.map(\.toolDescriptor)
     }
 }

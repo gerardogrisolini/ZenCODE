@@ -254,6 +254,15 @@ public enum TerminalToolSelectionCatalog {
                 requiresWorkspaceAccess: true
             ),
             TerminalToolSelectionItem(
+                key: "search",
+                title: "Search",
+                detail: "Find files by glob and search file contents.",
+                groupTitle: coreGroup,
+                allowedToolNames: descriptorNames.filter { $0.hasPrefix("search.") },
+                aliases: Set(["grep", "glob"]).union(retiredFeatureAliases(forCoreKey: "search")),
+                requiresWorkspaceAccess: true
+            ),
+            TerminalToolSelectionItem(
                 key: "text",
                 title: "Text",
                 detail: "Inspect and transform local text files.",
@@ -286,6 +295,17 @@ public enum TerminalToolSelectionCatalog {
         ]
 
         return items.filter { !$0.allowedToolNames.isEmpty }
+    }
+
+    /// Selection references that named a retired optional feature package
+    /// replaced by the core group `key`: the package key (`feature:<id>`) and
+    /// the bare feature id, both still accepted as aliases of that group.
+    private static func retiredFeatureAliases(forCoreKey key: String) -> Set<String> {
+        Set(
+            SwiftBundledFeatureCatalog.retiredFeatureCoreGroupKeys
+                .filter { $0.value == key }
+                .flatMap { [$0.key, featurePackageKey(id: $0.key)] }
+        )
     }
 
     private static func featurePackageItems(
@@ -472,8 +492,6 @@ public enum TerminalToolSelectionCatalog {
         aliases.formUnion(status.toolNamePrefixes)
         aliases.formUnion(status.toolNameAliases)
         switch status.id {
-        case "search-tools":
-            aliases.formUnion(["search", "grep", "glob"])
         case "web-tools":
             aliases.insert("web")
         case "browser-tools":

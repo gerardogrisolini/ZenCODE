@@ -457,7 +457,7 @@ public enum AgentProfileStore {
     public static let codingToolNames: [String] = [
         "shell",
         "files",
-        TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools"),
+        "search",
         "text",
         TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools"),
         //TerminalToolSelectionCatalog.featurePackageKey(id: "swift-tools"),
@@ -473,13 +473,13 @@ public enum AgentProfileStore {
     public static let reviewerToolNames: [String] = codingToolNames.filter { $0 != "shell" }
     public static let reporterToolNames: [String] = [
         "files",
-        TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools"),
+        "search",
         "text",
         TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools")
     ]
     public static let plannerToolNames: [String] = [
         "files",
-        TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools"),
+        "search",
         "text",
         TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools"),
         "memory",
@@ -704,14 +704,20 @@ public enum AgentProfileStore {
             .standardizedFileURL
     }
 
+    /// Tool references as persisted by a save: blanks and feature-management
+    /// references are dropped, a reference to a retired optional feature
+    /// package (`feature:search-tools`, `search-tools`) becomes the key of the
+    /// core group that replaced it, and duplicates are removed keeping the
+    /// first occurrence. Loading never rewrites references; only saving does.
     private static func normalizedToolReferencesForSave(_ tools: [String]) -> [String] {
         var seen = Set<String>()
         var result: [String] = []
         for rawTool in tools {
-            guard let tool = rawTool.nilIfBlank,
-                  !isFeatureManagementToolReference(tool) else {
+            guard let referencedTool = rawTool.nilIfBlank,
+                  !isFeatureManagementToolReference(referencedTool) else {
                 continue
             }
+            let tool = retiredFeatureReplacementToolReference(referencedTool) ?? referencedTool
             let key = toolReferenceKey(tool)
             guard seen.insert(key).inserted else {
                 continue
@@ -719,6 +725,18 @@ public enum AgentProfileStore {
             result.append(tool)
         }
         return result
+    }
+
+    /// The core `/tools` group key that replaced the retired optional feature
+    /// package named by `value` (as `feature:<id>` or `<id>`), if any.
+    private static func retiredFeatureReplacementToolReference(_ value: String) -> String? {
+        let key = toolReferenceKey(value)
+        return SwiftBundledFeatureCatalog.retiredFeatureCoreGroupKeys
+            .first { featureID, _ in
+                key == toolReferenceKey(featureID)
+                    || key == toolReferenceKey(TerminalToolSelectionCatalog.featurePackageKey(id: featureID))
+            }?
+            .value
     }
 
     fileprivate static func isFeatureManagementToolReference(_ value: String) -> Bool {

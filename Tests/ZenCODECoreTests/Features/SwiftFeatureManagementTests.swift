@@ -745,9 +745,9 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
-    func featureEditCreatesLocalCopyForBundledSearchFeature() async throws {
+    func featureEditCreatesLocalCopyForBundledGitFeature() async throws {
         let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swift-feature-adopt-search-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("swift-feature-adopt-git-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: rootURL)
         }
@@ -756,7 +756,7 @@ extension SwiftFeatureRuntimeTests {
         let output = try await runtime.executeManagementTool(
             toolCall: featureManagementCall(
                 name: "feature.edit",
-                arguments: ["id": "search-tools"]
+                arguments: ["id": "git-tools"]
             )
         )
         let report = try JSONDecoder().decode(
@@ -765,10 +765,10 @@ extension SwiftFeatureRuntimeTests {
         )
 
         #expect(report.ok)
-        #expect(report.id == "search-tools")
+        #expect(report.id == "git-tools")
         #expect(report.adopted)
-        #expect(report.adoptedFrom == "search-tools")
-        #expect(report.manifestPath.hasSuffix("/search-tools/feature.json"))
+        #expect(report.adoptedFrom == "git-tools")
+        #expect(report.manifestPath.hasSuffix("/git-tools/feature.json"))
     }
 
     #if os(macOS)

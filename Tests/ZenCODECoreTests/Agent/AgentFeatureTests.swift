@@ -480,7 +480,7 @@ extension AgentConfigurationTests {
             featureStatus(id: "figma-tools", source: .bundled, tools: []),
             featureStatus(id: "git-tools", source: .bundled, tools: []),
             featureStatus(id: "jira-tools", source: .bundled, tools: []),
-            featureStatus(id: "search-tools", source: .bundled, tools: []),
+            featureStatus(id: "web-tools", source: .bundled, tools: []),
             featureStatus(id: "custom-linear", displayName: "Linear", source: .generated, tools: []),
             featureStatus(
                 id: "design-tools",
@@ -508,7 +508,7 @@ extension AgentConfigurationTests {
             "Git [git-tools]",
             "Jira [jira-tools]",
             "Linear [custom-linear]",
-            "Search [search-tools]"
+            "Web [web-tools]"
         ])
     }
 

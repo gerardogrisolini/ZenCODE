@@ -93,16 +93,22 @@ public enum DirectToolCatalog {
         baseDescriptors
     }
 
+    /// Core local tools executed in-process: Files (`local.*` except
+    /// `local.exec`), Search (`search.*`), and Text (`text.*`).
     public static var coreLocalFileAndTextDescriptors: [DirectToolDescriptor] {
         (
             LocalFeatureTools.fileTools()
+                + LocalFeatureTools.searchTools()
                 + LocalFeatureTools.textTools()
         ).map(\.descriptor.toolDescriptor).map(DirectToolDescriptor.init)
     }
 
+    /// The non-mutating subset of `coreLocalFileAndTextDescriptors`; every
+    /// Search tool only reads.
     public static var coreReadLocalFileAndTextDescriptors: [DirectToolDescriptor] {
         (
             LocalFeatureTools.readOnlyFileTools()
+                + LocalFeatureTools.searchTools()
                 + LocalFeatureTools.textTools()
         ).map(\.descriptor.toolDescriptor).map(DirectToolDescriptor.init)
     }
@@ -113,6 +119,7 @@ public enum DirectToolCatalog {
             .map(DirectToolDescriptor.init)
     }
 
+    /// The core Search tools (`search.glob`, `search.grep`, `search.locate`).
     public static var localSearchDescriptors: [DirectToolDescriptor] {
         filesystemDescriptors.filter { $0.name.hasPrefix("search.") }
     }

@@ -212,7 +212,7 @@ Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, 
 
 ## Optional Feature Packages
 
-Search, web, browser, Git, Swift, Jira, Figma, Xcode, and desktop integrations
+Web, browser, Git, Swift, Jira, Figma, Xcode, and desktop integrations
 are catalogued optional SwiftPM packages. They are **not** executable files
 shipped next to `zen`, and the root `swift build` does not build them. Install
 only the ones you need:
@@ -978,7 +978,35 @@ When a scheduled prompt seems never to run, or its mail never arrives:
 
 ## Tool Selection
 
-Tool groups include filesystem, shell, text, search, Git, memory, sub-agents, generated Swift features, and installed optional feature packages such as XcodeTools on macOS or FigmaTools. Use `/tools` to select per session. ACP clients pass enabled tools directly.
+Core tool groups are filesystem, shell, text, search, memory, and sub-agents; Git, generated Swift features, and installed optional feature packages such as XcodeTools on macOS or FigmaTools come in addition. Use `/tools` to select per session. ACP clients pass enabled tools directly.
+
+### Search tools moved into the core
+
+`search.glob`, `search.grep`, and `search.locate` were the optional
+`search-tools` feature package. They are now core tools of `zen`: their names
+and arguments are unchanged, they run inside `zen` like the `files` and `text`
+tools, they work on macOS and Linux, and they need no installation. `/tools`
+lists them as the **Search** group, whose key is `search`, and the recommended
+Developer, Builder, Reviewer, Reporter, and Planner profiles select it. They
+only read, so a `readOnly` profile such as Reviewer or Planner keeps them.
+
+What this means for an existing setup:
+
+- **Profiles and selections keep working.** `feature:search-tools` and
+  `search-tools` are still accepted as aliases of `search` in `agents.json`, in
+  tool selections, and in saved sessions. Nothing is rewritten when `zen`
+  starts: the key becomes `search` the next time ZenCODE saves your profiles.
+- **An installed copy is ignored.** A package installed in
+  `~/.zencode/features/search-tools/` (or under `ZENCODE_SUPPORT_DIRECTORY`) is
+  neither loaded nor listed. ZenCODE does not delete it; remove the folder
+  yourself when you no longer want it.
+- **It can no longer be installed.** `zen --install-features search-tools` now
+  fails with `Unknown optional Swift feature: search-tools.`: the package is no
+  longer in the optional-feature catalog, so the picker does not offer it.
+- **`search.` is a reserved core prefix**, like `local.` and `text.`: an MCP
+  bridge feature cannot use it as its `toolPrefix`.
+
+No persisted file format changes.
 
 ### Local file editing
 

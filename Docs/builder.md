@@ -132,8 +132,8 @@ Local copies keep the same feature id and shadow the bundled package. `/feature 
 
 ## Bundled Integrations
 
-Bundled feature packages can include Search, Web, Git, Swift, Xcode, Figma, and Jira. They can be enabled directly or copied for local editing.
+Bundled feature packages can include Web, Git, Swift, Xcode, Figma, and Jira. They can be enabled directly or copied for local editing.
 
-Core tools (shell, files, text, memory, sub-agents) are **not** feature packages — manage them through `/tools`, not `/feature`.
+Core tools (shell, files, text, search, memory, sub-agents) are **not** feature packages — manage them through `/tools`, not `/feature`.
 
 Some integrations need extra configuration. For example, Jira runs setup automatically on the first `jira.search` or `jira.read` call when no token is stored; `/feature enable jira-tools` only toggles package state and does not run authentication. On macOS you configure Jira through the form that opens in the browser; on Linux (no browser setup), set `ZENCODE_JIRA_SITE_URL`, `ZENCODE_JIRA_EMAIL` and `ZENCODE_JIRA_API_TOKEN` in the environment of `zen`. On every platform, macOS included, the token is stored in a `0600` file under `~/.zencode/jira/credentials/` (a `0700` directory; it honors `ZENCODE_SUPPORT_DIRECTORY`) and not in the Keychain, so the Jira tools also work in headless runs such as `/cron` jobs.
