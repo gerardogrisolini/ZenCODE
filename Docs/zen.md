@@ -229,7 +229,8 @@ marked dependency on the ZenCODE checkout, creates the normal Builder-compatible
 `feature.json`, builds its release product, then enables it. Consequently an
 uninstalled feature remains visible as installable but contributes no available
 tools to a profile or `/tools` selection. After installation, its package can be
-selected and managed exactly like a local Builder feature.
+selected and managed exactly like a local Builder feature. The Web feature
+(`web.search`, `web.fetch`) is described in [web.md](web.md).
 
 The **Features** step of `/setup` covers the same lifecycle. Its rows are
 grouped as `Bundled`/`Generated` (check to enable, uncheck to disable),

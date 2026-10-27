@@ -82,7 +82,7 @@
       ]
     },
     {
-      "description" : "Search the web and fetch URLs as text.",
+      "description" : "Search the web and fetch pages, PDFs, and JSON as Markdown or text.",
       "discoversToolsAtRuntime" : true,
       "id" : "web-tools",
       "invocationTimeoutSeconds" : 180,

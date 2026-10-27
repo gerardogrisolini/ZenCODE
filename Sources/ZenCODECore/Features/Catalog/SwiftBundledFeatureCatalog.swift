@@ -58,7 +58,7 @@ enum SwiftBundledFeatureCatalog {
             SwiftFeatureRuntime.BundledFeatureDefinition(
                 id: web.id,
                 executableName: web.productName,
-                description: "Search the web and fetch URLs as text.",
+                description: "Search the web and fetch pages, PDFs, and JSON as Markdown or text.",
                 sourceRelativePath: web.sourceRelativePath,
                 tools: [],
                 toolNamePrefixes: ["web."],

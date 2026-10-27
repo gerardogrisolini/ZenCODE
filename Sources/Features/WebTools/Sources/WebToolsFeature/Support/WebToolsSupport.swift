@@ -4,7 +4,16 @@ import FoundationNetworking
 #endif
 
 enum WebToolsSupport {
-    static let userAgent = "ZenCODE/1.0"
+    /// Browser-like user agent shared by the raw HTTP path and (later) the
+    /// WebKit renderer, so search engines and sites see one consistent client.
+    static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) ZenCODE/1.0"
+
+    static let acceptHeader = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    static let acceptLanguageHeader = "en-US,en;q=0.9,*;q=0.5"
+
+    /// Upper bound for a server-requested `Retry-After` wait; a longer
+    /// request is clamped so one tool call never stalls for minutes.
+    static let maxRetryAfterSeconds: TimeInterval = 10
 
     static func validateHTTPResponse(_ response: URLResponse) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -25,6 +34,18 @@ enum WebToolsSupport {
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(acceptHeader, forHTTPHeaderField: "Accept")
+        request.setValue(acceptLanguageHeader, forHTTPHeaderField: "Accept-Language")
+        return request
+    }
+
+    /// A POST request carrying `fields` as an `application/x-www-form-urlencoded`
+    /// body, with the same headers as ``makeRequest(url:timeout:)``.
+    static func makeFormPostRequest(url: URL, fields: [(name: String, value: String)], timeout: TimeInterval) -> URLRequest {
+        var request = makeRequest(url: url, timeout: timeout)
+        request.httpMethod = "POST"
+        request.httpBody = Data(formURLEncoded(fields).utf8)
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         return request
     }
 
@@ -38,8 +59,23 @@ enum WebToolsSupport {
         maxAttempts: Int = 3,
         timeout: TimeInterval = 20
     ) async throws -> WebBoundedResponse {
-        let request = makeRequest(url: url, timeout: timeout)
+        try await fetchWithRetry(
+            request: makeRequest(url: url, timeout: timeout),
+            session: session,
+            maxBytes: maxBytes,
+            maxAttempts: maxAttempts
+        )
+    }
 
+    /// Retrying fetch for a prepared request (any method and body). On 429 and
+    /// 503 a numeric `Retry-After` header replaces the exponential backoff for
+    /// that attempt (see ``retryAfterDelay(from:)``).
+    static func fetchWithRetry(
+        request: URLRequest,
+        session: URLSession,
+        maxBytes: Int,
+        maxAttempts: Int = 3
+    ) async throws -> WebBoundedResponse {
         var lastError: Error?
         for attempt in 0..<maxAttempts {
             try Task.checkCancellation()
@@ -52,14 +88,17 @@ enum WebToolsSupport {
                         "The web request failed with HTTP status \(status)."
                     )
                     if attempt < maxAttempts - 1 {
-                        try await sleepBeforeRetry(attempt)
+                        let serverDelay = status == 429 || status == 503
+                            ? retryAfterDelay(from: result.response.value(forHTTPHeaderField: "Retry-After"))
+                            : nil
+                        try await sleepBeforeRetry(attempt, retryAfter: serverDelay)
                         continue
                     }
                 }
                 return result
-            } catch is CancellationError {
+            } catch let error as CancellationError {
                 // Retrying a cancelled invocation would issue another request.
-                throw CancellationError()
+                throw error
             } catch let error as WebNetworkGuardError {
                 throw error
             } catch let error as WebURLPolicyError {
@@ -75,8 +114,29 @@ enum WebToolsSupport {
         throw lastError ?? WebToolsFeatureError.permissionDenied("The web request failed after \(maxAttempts) attempts.")
     }
 
-    private static func sleepBeforeRetry(_ attempt: Int) async throws {
+    private static func sleepBeforeRetry(_ attempt: Int, retryAfter: TimeInterval? = nil) async throws {
+        if let retryAfter {
+            try await Task.sleep(nanoseconds: UInt64(retryAfter * 1_000_000_000))
+            return
+        }
         try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt))) * 500_000_000)
+    }
+
+    /// Parses a `Retry-After` header given in delta-seconds. Returns the wait
+    /// clamped to ``maxRetryAfterSeconds``, or `nil` when the header is absent,
+    /// negative, not finite, or an HTTP date (the caller then falls back to the
+    /// exponential backoff).
+    static func retryAfterDelay(from header: String?) -> TimeInterval? {
+        guard let header else { return nil }
+        let trimmed = header.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }),
+              let seconds = Double(trimmed),
+              seconds.isFinite,
+              seconds >= 0 else {
+            return nil
+        }
+        return min(seconds, maxRetryAfterSeconds)
     }
 
     /// Decodes a response body as text. The charset comes from the
@@ -151,44 +211,5 @@ enum WebToolsSupport {
             return nil
         }
         return encoding(named: String(head[nameRange]))
-    }
-
-    /// Raw HTTP fetch used as the non-WebKit path for `web.fetch`: the only
-    /// request it makes is for the main document, through the guarded
-    /// session, so every hop is policy-checked and the body is never read
-    /// beyond `maxBytes`.
-    static func rawFetchPreview(
-        url: URL,
-        maxBytes: Int,
-        timeout: TimeInterval,
-        policy: WebNetworkRequestPolicy
-    ) async throws -> String {
-        try policy.validateRequestURL(url.absoluteString)
-
-        let session = makeBoundedSession(policy: policy, timeout: timeout)
-        defer { session.finishTasksAndInvalidate() }
-        let result = try await loadBounded(makeRequest(url: url, timeout: timeout), session: session, maxBytes: maxBytes)
-        try validateHTTPResponse(result.response)
-        let body = decodeBody(result.data, response: result.response)
-        let truncatedSuffix: String
-        if result.wasTruncated {
-            if let expected = result.expectedContentLength, expected > Int64(result.data.count) {
-                truncatedSuffix = "\n\n<truncated: \(expected - Int64(result.data.count)) bytes omitted>"
-            } else {
-                truncatedSuffix = "\n\n<truncated at \(result.data.count) bytes>"
-            }
-        } else {
-            truncatedSuffix = ""
-        }
-
-        return """
-        url: \(result.response.url?.absoluteString ?? url.absoluteString)
-        status: \(result.response.statusCode)
-        content-type: \(result.response.value(forHTTPHeaderField: "Content-Type") ?? "unknown")
-        engine: URLSession (raw fetch)
-        bytes: \(result.data.count)
-
-        \(body)\(truncatedSuffix)
-        """
     }
 }

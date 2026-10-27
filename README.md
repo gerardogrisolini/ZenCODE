@@ -103,7 +103,9 @@ invalid; use `/setup` later to reconfigure it without leaving the TUI. The
 standalone agent, TUI, and ACP bridge work normally. Optional Swift feature
 packages are selected from the Features step of `/setup`, or installed later with
 `zen --install-features`; they are compiled on demand under
-`~/.zencode/features/<id>/`, not distributed as executables next to `zen`.
+`~/.zencode/features/<id>/`, not distributed as executables next to `zen`. The
+[web tools guide](Docs/web.md) covers the `web-tools` package (`web.search`,
+`web.fetch`).
 
 Windows is supported through WSL. Install Ubuntu first, then run the Linux
 installer inside the Ubuntu shell:

@@ -91,7 +91,7 @@ final class WebBoundedLoaderDelegate: WebRedirectGuard, URLSessionDataDelegate, 
         }
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    override func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error {
             if let blocked = blockedRedirectError(for: task) {
                 finish(task, with: .failure(blocked))

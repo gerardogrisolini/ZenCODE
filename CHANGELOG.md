@@ -10,6 +10,34 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- `web.fetch` reads long pages in parts and returns only what you ask for. New
+  options: `format` (`markdown`, the default, `text`, or `html`), `offset` to
+  continue a truncated result from the `<truncated: … offset=N …>` hint,
+  `includeLinks` (a `## Links` section with up to 80 unique links on the first
+  call, `true` by default), `mainContentOnly` (`true` by default: navigation,
+  sidebars, footers, menus, and dialogs are dropped), `selector` (a CSS selector
+  subset such as `article .content` or `h1, h2`), and `render` (`auto`, `raw`,
+  or `rendered`). See [Docs/web.md](Docs/web.md).
+- `web.fetch` now recognizes the content type instead of treating every
+  response as a page: JSON is returned as is (single-line JSON under 256 KiB is
+  re-indented), text and XML as is, and PDF text is extracted on macOS (the first
+  200 pages, with `pages` and `bytes` header lines). Images and other binary
+  content return a `bytes` header and a short message instead of garbage text. A
+  missing or generic `Content-Type` is detected from the body.
+- `web.search` accepts `timeRange` (`day`, `week`, `month`, or `year`) and
+  `region` (a DuckDuckGo code such as `it-it`; `wt-wt`, worldwide, by default).
+  It loads up to 3 result pages to reach `limit`, within a 45-second budget.
+  When DuckDuckGo answers the HTML endpoint with a bot check, the search is
+  restarted on DuckDuckGo Lite; if Lite also asks for one, the call fails with
+  an error that tells you to wait about a minute and narrow the query. Results
+  from earlier pages are still returned, with a `Note:` line.
+- New [web tools guide](Docs/web.md): installation, the inputs and output of
+  `web.search` and `web.fetch`, content types, macOS and Linux differences,
+  limits, the public-network policy and the
+  `ZENCODE_WEBTOOLS_ALLOW_PRIVATE_NETWORK` opt-in, and troubleshooting.
+
 ### Changed
 
 - On macOS the `jira-tools` optional feature now stores the Jira API token in
@@ -35,6 +63,44 @@ Release tags follow the strict `vX.Y.Z` contract described in
   No persisted file format changes.
 - **Breaking:** `search.` is now a reserved core tool prefix, like `local.` and
   `text.`: an MCP bridge feature can no longer use it as its `toolPrefix`.
+- `web.fetch` now converts HTML to Markdown with a converter built into the
+  `web-tools` feature, on macOS and Linux alike. Linux used to return the raw
+  HTML cut at `maxBytes`, and macOS used a script that ran inside the WebKit
+  page. The whole document (up to 8 MiB) is converted before `maxBytes` and
+  `offset` apply, and navigation, sidebars, and footers are dropped by default
+  (`mainContentOnly`). See [Docs/web.md](Docs/web.md).
+- `web.fetch` output header changed. It lists `url`, `status`, `title`,
+  `engine`, `content-type`, `scope`, and `length`, plus `range`, `description`,
+  `pages`, `bytes`, and leading `note:` lines when they apply; macOS used to show
+  only `url`, `title`, and `engine`. A truncated result now ends with
+  `<truncated: N bytes omitted; call again with offset=M to continue>` instead
+  of `<truncated: N bytes omitted>`. An HTTP 4xx or 5xx now fails on both paths
+  (the rendered path used to show the error page) and the error includes the
+  start of the response text, not just the status.
+- `web.fetch` `maxBytes` (default 120000, clamped to 1024-1000000) now counts
+  the returned content only, not the header lines or the `## Links` section. It
+  no longer limits the download: the raw path reads up to 8 MiB.
+- `web.search` accepts `limit` up to 30 (it was 10; the default stays 5). The
+  output has a `Results: N (engine: …, pages: N)` summary line after `Query:`,
+  an empty result lists what to try, and `domains` now also adds `site:` terms
+  to the query sent to DuckDuckGo (shown on the `Query:` line) besides filtering
+  the results.
+- `web.search` and the raw path of `web.fetch` send a browser-like `User-Agent`
+  and `Accept` headers (the agent used to identify itself as `ZenCODE/1.0`), and
+  `web.search` honors a numeric `Retry-After` of up to 10 seconds when it retries
+  an HTTP 429 or 503.
+- The optional `web-tools` feature is now described as "Search the web and
+  fetch pages, PDFs, and JSON as Markdown or text." in the feature picker (it
+  was "Search the web and fetch URLs as text.").
+
+### Fixed
+
+- On Linux, `web.fetch` and `web.search` never completed: the loader's
+  completion callback was declared only on a subclass of the delegate that
+  conforms to `URLSessionTaskDelegate`, which swift-corelibs-foundation never
+  dispatches to. Every call hung until the feature invocation timeout. The
+  callback is now an override of the conforming class, and a test exercises the
+  dispatch path corelibs uses.
 
 ### Removed
 

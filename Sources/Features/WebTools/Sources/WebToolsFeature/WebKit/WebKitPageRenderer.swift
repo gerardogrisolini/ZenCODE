@@ -8,12 +8,35 @@ import WebKit
 #endif
 import FeatureKit
 
+/// Failures of the rendered path that send the tool to the raw path.
+enum WebRenderError: LocalizedError, Equatable, Sendable {
+    /// The main document is not an HTML page (JSON, PDF, text, XML, ...);
+    /// WebKit would only show it in a viewer, so the raw path extracts it.
+    case nonHTMLContent(mimeType: String, statusCode: Int?)
+
+    var errorDescription: String? {
+        switch self {
+        case let .nonHTMLContent(mimeType, statusCode):
+            let status = statusCode.map { " (HTTP \($0))" } ?? ""
+            return "The main document is \(mimeType)\(status), not HTML; it was not rendered in WebKit."
+        }
+    }
+}
+
 #if canImport(WebKit)
 
 struct RenderedPage: Sendable {
     let finalURL: String
     let title: String
-    let markdown: String
+    /// `document.documentElement.outerHTML` after rendering, with elements
+    /// hidden by computed style marked `hidden`, cut at
+    /// ``WebKitPageRenderer/maxHTMLLength`` UTF-16 code units.
+    let html: String
+    let htmlWasCut: Bool
+    /// HTTP status and MIME type of the main-frame response, when known.
+    let statusCode: Int?
+    let mimeType: String?
+    let blockedSubframeCount: Int
 }
 
 /// Compiles the content rule list from ``WebContentBlockerRules`` once per
@@ -121,6 +144,9 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
     /// Set when a subframe navigation was refused; reported alongside the
     /// page so callers know part of the content was withheld.
     private(set) var blockedSubframeCount = 0
+    /// Recorded from the main-frame navigation response.
+    private var mainFrameStatusCode: Int?
+    private var mainFrameMIMEType: String?
 
     private init(requestPolicy: WebNetworkRequestPolicy, ruleList: WKContentRuleList?) {
         self.requestPolicy = requestPolicy
@@ -134,8 +160,7 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
         self.webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1365, height: 900), configuration: configuration)
         super.init()
         self.webView.navigationDelegate = self
-        self.webView.customUserAgent =
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) ZenCODE/1.0"
+        self.webView.customUserAgent = WebToolsSupport.userAgent
     }
 
     /// Renders `url`, never exceeding `timeout` overall (navigation, settle
@@ -226,21 +251,27 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
 
         let title = (try? await evaluateString("document.title")) ?? ""
         let finalURL = (try? await evaluateString("location.href")) ?? url.absoluteString
-        var markdown = try await evaluateString(WebKitPageRenderer.extractionJS)
+        let html = try await evaluateString(WebKitPageRenderer.extractionJS)
         try checkAborted()
-        if blockedSubframeCount > 0 {
-            markdown += "\n\n[\(blockedSubframeCount) embedded frame(s) pointing at non-public hosts were not loaded.]"
-        }
-        return RenderedPage(finalURL: finalURL, title: title, markdown: markdown)
+        return RenderedPage(
+            finalURL: finalURL,
+            title: title,
+            html: html,
+            htmlWasCut: html.utf16.count >= Self.maxHTMLLength,
+            statusCode: mainFrameStatusCode,
+            mimeType: mainFrameMIMEType,
+            blockedSubframeCount: blockedSubframeCount
+        )
     }
 
-    /// Polls until the page is ready and its rendered text length stops growing.
+    /// Polls until the page is ready and its rendered text length stops
+    /// growing. One script per poll reports both values. A complete document
+    /// may return after one stable check once ``quickSettle`` elapsed;
+    /// otherwise two stable checks and ``minSettle`` are required.
     private func waitUntilSettled(timeout: TimeInterval) async throws {
         let start = Date()
         let deadline = start.addingTimeInterval(min(timeout, 6))
         let pollInterval: UInt64 = 200_000_000 // 200 ms
-        let minSettle: TimeInterval = 0.8
-        let requiredStableChecks = 2
         var lastLength = -1
         var stableChecks = 0
 
@@ -249,25 +280,44 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
         while Date() < deadline {
             try Task.checkCancellation()
             try checkAborted()
-            let ready = (try? await evaluateString("document.readyState")) ?? ""
-            let lengthString = (try? await evaluateString(
-                "String(((document.body && document.body.innerText) || '').length)"
-            )) ?? "0"
-            let length = Int(lengthString) ?? 0
-            let isReady = ready == "complete" || ready == "interactive"
+            let probe = Self.parseSettleProbe((try? await evaluateString(Self.settleProbeJS)) ?? "")
+            let isReady = probe.readyState == "complete" || probe.readyState == "interactive"
 
-            if isReady, length > 0, length == lastLength {
+            if isReady, probe.textLength > 0, probe.textLength == lastLength {
                 stableChecks += 1
-                if stableChecks >= requiredStableChecks,
-                   Date().timeIntervalSince(start) >= minSettle {
+                if Self.isSettled(
+                    readyState: probe.readyState,
+                    stableChecks: stableChecks,
+                    elapsed: Date().timeIntervalSince(start)
+                ) {
                     return
                 }
             } else {
                 stableChecks = 0
             }
-            lastLength = length
+            lastLength = probe.textLength
             try await Task.sleep(nanoseconds: pollInterval)
         }
+    }
+
+    nonisolated static let minSettle: TimeInterval = 0.8
+    nonisolated static let quickSettle: TimeInterval = 0.5
+    nonisolated static let requiredStableChecks = 2
+
+    nonisolated static func isSettled(readyState: String, stableChecks: Int, elapsed: TimeInterval) -> Bool {
+        if readyState == "complete", stableChecks >= 1, elapsed >= quickSettle {
+            return true
+        }
+        return stableChecks >= requiredStableChecks && elapsed >= minSettle
+    }
+
+    /// `readyState|innerTextLength`, read in one evaluation per poll.
+    nonisolated static let settleProbeJS =
+        "(document.readyState || '') + '|' + String(((document.body && document.body.innerText) || '').length)"
+
+    nonisolated static func parseSettleProbe(_ value: String) -> (readyState: String, textLength: Int) {
+        guard let separator = value.lastIndex(of: "|") else { return ("", 0) }
+        return (String(value[..<separator]), Int(value[value.index(after: separator)...]) ?? 0)
     }
 
     private func resume(_ result: Result<Void, Error>) {
@@ -377,6 +427,50 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
         resume(.success(()))
     }
 
+    /// Decision for a navigation response, factored out for unit tests:
+    /// subframes always load (their requests already passed the navigation
+    /// policy); a main-frame document that is not an HTML page fails the
+    /// render so the tool extracts it through the raw path instead.
+    enum ResponseDecision: Sendable, Equatable {
+        case allow
+        case cancelMainFrame(WebRenderError)
+    }
+
+    nonisolated static func decideResponse(mimeType: String?, statusCode: Int?, isMainFrame: Bool) -> ResponseDecision {
+        guard isMainFrame, !WebFetchContent.isHTMLDocumentMIMEType(mimeType) else { return .allow }
+        return .cancelMainFrame(.nonHTMLContent(
+            mimeType: WebFetchContent.normalizedMIMEType(mimeType) ?? "unknown",
+            statusCode: statusCode
+        ))
+    }
+
+    /// Records the main-frame status (WebKit renders error pages, so a 4xx
+    /// or 5xx is reported in the output instead of failing) and refuses
+    /// non-HTML main documents.
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void
+    ) {
+        let response = navigationResponse.response
+        let statusCode = (response as? HTTPURLResponse)?.statusCode
+        if navigationResponse.isForMainFrame {
+            mainFrameStatusCode = statusCode
+            mainFrameMIMEType = response.mimeType
+        }
+        switch Self.decideResponse(
+            mimeType: response.mimeType,
+            statusCode: statusCode,
+            isMainFrame: navigationResponse.isForMainFrame
+        ) {
+        case .allow:
+            decisionHandler(.allow)
+        case let .cancelMainFrame(error):
+            decisionHandler(.cancel)
+            resume(.failure(error))
+        }
+    }
+
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         resume(.failure(error))
     }
@@ -392,63 +486,29 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
         resume(.failure(WebToolsFeatureError.permissionDenied("The WebKit content process terminated while rendering the page.")))
     }
 
-    /// Visible-content extractor. Output is accumulated as a byte budget
-    /// instead of re-joining the whole array on every block, so a page with
-    /// tens of thousands of blocks stays linear.
-    static let extractionJS = #"""
+    /// Upper bound, in UTF-16 code units, of the HTML handed to the converter.
+    nonisolated static let maxHTMLLength = 8 * 1024 * 1024
+
+    /// Marks every element the page hides by computed style (`display:none`
+    /// or `visibility:hidden`) with the `hidden` attribute, which the Swift
+    /// converter skips, then returns the serialized document. Styles are read
+    /// for every element before any attribute is written, so the walk never
+    /// forces a style recalculation per element. Box sizes are deliberately
+    /// ignored: zero-size wrappers often hold visible, overflowing children.
+    nonisolated static let extractionJS = #"""
     (() => {
-      const LIMIT = 400000;
-      const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-      const visible = el => {
-        const r = el.getBoundingClientRect();
-        if (r.width <= 0 || r.height <= 0) return false;
-        const st = getComputedStyle(el);
-        return st.display !== 'none' && st.visibility !== 'hidden' && st.opacity !== '0';
-      };
-      const lines = [
-        '# ' + (clean(document.title) || location.href),
-        '',
-        'URL: ' + location.href,
-        '',
-        '## Content'
-      ];
-      let size = lines.reduce((n, l) => n + l.length + 1, 0);
-      const push = s => { lines.push('', s); size += s.length + 2; };
-      const blocks = document.body ? document.body.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,pre,blockquote,td,th') : [];
-      const seen = new Set();
-      let truncated = false;
-      for (const el of blocks) {
-        if (size > LIMIT) { truncated = true; break; }
-        if (el.closest('script,style,noscript,template')) continue;
-        if (!visible(el)) continue;
-        const tag = el.tagName;
-        let s = '';
-        if (/^H[1-6]$/.test(tag)) s = '#'.repeat(Number(tag[1])) + ' ' + clean(el.innerText);
-        else if (tag === 'LI') s = '- ' + clean(el.innerText);
-        else if (tag === 'PRE') s = '```\n' + (el.innerText || '').replace(/\s+$/, '') + '\n```';
-        else if (tag === 'BLOCKQUOTE') s = '> ' + clean(el.innerText);
-        else s = clean(el.innerText);
-        s = s.trim();
-        if (!s || seen.has(s)) continue;
-        seen.add(s);
-        push(s);
+      const LIMIT = \#(maxHTMLLength);
+      if (document.body) {
+        const hidden = [];
+        for (const el of document.body.querySelectorAll('*')) {
+          const style = getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') hidden.push(el);
+        }
+        for (const el of hidden) el.setAttribute('hidden', '');
       }
-      if (truncated) push('[Content truncated by extractor.]');
-      lines.push('', '## Visible links');
-      let n = 0;
-      const linkSeen = new Set();
-      for (const a of document.querySelectorAll('a[href]')) {
-        if (!visible(a)) continue;
-        const text = clean(a.innerText || a.textContent);
-        if (text.length < 3) continue;
-        let u;
-        try { u = new URL(a.href); } catch (e) { continue; }
-        if (!/^https?:$/.test(u.protocol) || linkSeen.has(u.href)) continue;
-        linkSeen.add(u.href);
-        lines.push('- [' + text.slice(0, 160) + '](' + u.href + ')');
-        if (++n >= 80) break;
-      }
-      return lines.join('\n');
+      const root = document.documentElement;
+      const html = root ? root.outerHTML : '';
+      return html.length > LIMIT ? html.slice(0, LIMIT) : html;
     })()
     """#
 }

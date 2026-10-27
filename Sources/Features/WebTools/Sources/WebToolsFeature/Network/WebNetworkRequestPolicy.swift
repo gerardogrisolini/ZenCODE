@@ -126,6 +126,15 @@ class WebRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
         redirectState.withLock { $0.blockedErrors[task.taskIdentifier] }
     }
 
+    /// Overridden by ``WebBoundedLoaderDelegate``. It must be declared here,
+    /// in the class that conforms to `URLSessionTaskDelegate`: on Linux
+    /// (swift-corelibs-foundation) a requirement that this class leaves to the
+    /// protocol-extension default keeps that default as its witness, so a
+    /// method added only by a subclass is never called and the load never
+    /// completes. Darwin dispatches through the Objective-C runtime and does
+    /// not have this limitation.
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {}
+
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,

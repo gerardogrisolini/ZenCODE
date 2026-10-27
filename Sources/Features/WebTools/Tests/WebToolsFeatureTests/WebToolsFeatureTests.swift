@@ -522,6 +522,34 @@ struct WebBoundedLoaderTests {
         delegate.urlSession(session, task: task, didCompleteWithError: URLError(.cancelled))
     }
 
+    /// swift-corelibs-foundation invokes `didCompleteWithError` through the
+    /// `URLSessionTaskDelegate` existential. The conformance lives on the
+    /// `WebRedirectGuard` base class, so the loader's implementation must be
+    /// a real override of a base-class method; a method declared only on the
+    /// subclass would be bypassed there and the load would never finish
+    /// (Darwin dispatches dynamically and would hide the bug).
+    @Test
+    func completionIsDeliveredThroughTheTaskDelegateExistential() async throws {
+        let session = makeSession()
+        defer { session.invalidateAndCancel() }
+        let delegate = try #require(session.delegate as? WebBoundedLoaderDelegate)
+        let task = session.dataTask(with: URL(string: "https://public.example/a")!)
+        let box = delegate.register(task: task, limit: 100)
+        let disposition = ResponseDispositionHook()
+
+        delegate.urlSession(session, dataTask: task, didReceive: try response(), completionHandler: { disposition.record($0) })
+        #expect(await disposition.value == .allow)
+        delegate.urlSession(session, dataTask: task, didReceive: Data("hello".utf8))
+        let taskDelegate: any URLSessionTaskDelegate = delegate
+        #if canImport(Darwin)
+        taskDelegate.urlSession?(session, task: task, didCompleteWithError: nil)
+        #else
+        taskDelegate.urlSession(session, task: task, didCompleteWithError: nil)
+        #endif
+        let result = try await awaitResult(of: box)
+        #expect(String(decoding: result.data, as: UTF8.self) == "hello")
+    }
+
     @Test
     func completeBodyWithinTheLimitIsNotTruncated() async throws {
         let session = makeSession()
@@ -865,6 +893,15 @@ struct WebSearchParsingTests {
         #expect(WebToolsSupport.decodeHTMLEntities("&#x1F600; &#128512;") == "😀 😀")
         #expect(WebToolsSupport.decodeHTMLEntities("&unknown; &#0; &#xD800; &") == "&unknown; &#0; &#xD800; &")
         #expect(WebToolsSupport.decodeHTMLEntities("plain") == "plain")
+    }
+
+    @Test
+    func entityDecodingUsesThePageConverterTable() {
+        // Same decoder as the page converter: the full Latin-1/Greek/punctuation names...
+        #expect(WebToolsSupport.decodeHTMLEntities("caf&eacute; &hellip; &alpha; &#65 &#x41;") == "café … α A A")
+        // ...while references that are not meaningful text stay as written.
+        #expect(WebToolsSupport.decodeHTMLEntities("&#1; &#127; &#x110000; &#xDFFF; &#9;") == "&#1; &#127; &#x110000; &#xDFFF; \t")
+        #expect(WebHTMLEntities.decode("&#0; &#1;") == "\u{FFFD} ")
     }
 }
 
