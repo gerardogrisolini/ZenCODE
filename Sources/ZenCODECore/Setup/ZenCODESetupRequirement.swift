@@ -16,4 +16,13 @@ public enum ZenCODESetupRequirement {
     ) -> Bool {
         manifest?.models.isEmpty != false || status.requiresSetup
     }
+
+    /// Evaluates the gate against the persisted configuration of this process:
+    /// the same rule the executable applies before it launches the chat.
+    static func isRequired() -> Bool {
+        let manifest = try? AgentSettingsManifestStore.loadRequired(
+            from: AgentSettingsManifestStore.settingsURL()
+        )
+        return isRequired(manifest: manifest, status: ZenInspector.status())
+    }
 }

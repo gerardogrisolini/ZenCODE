@@ -22,4 +22,10 @@ public struct ACPError: LocalizedError {
     public static func internalError(_ message: String) -> ACPError {
         ACPError(code: -32603, message: message)
     }
+
+    /// ACP `auth_required`: the agent cannot serve the request until the user
+    /// authenticates (here: until ZenCODE is configured).
+    public static func authRequired(_ message: String) -> ACPError {
+        ACPError(code: -32000, message: message)
+    }
 }

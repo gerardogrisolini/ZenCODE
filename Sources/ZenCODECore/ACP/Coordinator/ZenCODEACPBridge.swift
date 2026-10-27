@@ -87,6 +87,13 @@ public actor ZenCODEACPBridge {
     public let configuration: AgentConfiguration
     public let writer: ACPWriter
     public let permissionBroker: ACPPermissionBroker
+    /// `true` when ZenCODE has no usable configuration yet. `initialize` and
+    /// `authenticate` still answer so the client can offer the terminal setup
+    /// method; every handler that would build a session or a backend answers
+    /// with the ACP `auth_required` error instead (see `ensureConfigured()`).
+    /// The bridge never reloads the configuration: after the setup the client
+    /// reconnects to a fresh process.
+    let setupRequired: Bool
     var clientFileSystem: ACPClientFileSystem?
     public let sessionRunner: AgentCoreSessionRunner
     public var sessions: [String: SessionState] = [:]
@@ -134,10 +141,12 @@ public actor ZenCODEACPBridge {
         configuration: AgentConfiguration,
         writer: ACPWriter,
         backendFactory: AgentRuntimeBackendFactory? = nil,
-        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime()
+        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
+        setupRequired: Bool = false
     ) {
         self.configuration = configuration
         self.writer = writer
+        self.setupRequired = setupRequired
         let permissionBroker = ACPPermissionBroker(writer: writer)
         self.permissionBroker = permissionBroker
         self.sessionRunner = AgentCoreSessionRunner(
@@ -213,6 +222,26 @@ public actor ZenCODEACPBridge {
             throw ACPShutdownFenceError()
         }
     }
+
+    /// Fence for the handlers that need a configured ZenCODE: `session/new`,
+    /// `session/load`, `session/resume`, `session/prompt` and
+    /// `_zencode/model/preload`.
+    ///
+    /// The shutdown fence is checked first, so a request that reaches a bridge
+    /// that already shut down is still abandoned silently instead of being
+    /// answered with `auth_required` on a closed transport. It must be the
+    /// first statement of the handler, before any lifecycle operation is
+    /// registered or session state is touched.
+    func ensureConfigured() throws {
+        try ensureNotShutDown()
+        guard !setupRequired else {
+            throw ACPError.authRequired(Self.setupRequiredMessage)
+        }
+    }
+
+    static let setupRequiredMessage =
+        "Authentication required: ZenCODE is not configured. "
+        + "Use the \"Set up ZenCODE\" terminal authentication method, or run `zen` in a terminal."
 
     /// Registers a lifecycle operation and returns its cancellation token.
     ///

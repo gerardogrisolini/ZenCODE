@@ -130,6 +130,24 @@ public struct AgentConfiguration: Sendable {
         )
     }
 
+    /// Builds a configuration from command-line arguments alone, without reading
+    /// any persisted settings or agent profile. The arguments get the same
+    /// validation as `validateArguments(_:)`.
+    ///
+    /// Used by `zen --acp` while ZenCODE is not set up yet: the ACP bridge must
+    /// still answer `initialize` so the client can offer the terminal setup
+    /// method. The resulting configuration has no manifest, so
+    /// `effectiveModelID` is `nil` unless `--model` is given.
+    static func withoutPersistedConfiguration(
+        arguments rawArguments: [String]
+    ) throws -> AgentConfiguration {
+        try AgentConfiguration(
+            arguments: rawArguments,
+            appModeOverride: false,
+            loadPersistedConfiguration: false
+        )
+    }
+
     private init(
         arguments rawArguments: [String],
         appModeOverride: Bool?,

@@ -14,8 +14,9 @@ extension ZenCODEACPBridge {
         // `sessions`, so the reverse order would report "unknown session" and
         // `handleMessage` would turn that into a JSON-RPC error response on a
         // transport that is already closed. A post-shutdown prompt must be
-        // abandoned silently instead.
-        try ensureNotShutDown()
+        // abandoned silently instead. `ensureConfigured()` keeps that order and
+        // additionally answers `auth_required` while ZenCODE is not set up.
+        try ensureConfigured()
         guard let sessionID = Self.sessionID(from: params),
               var session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")

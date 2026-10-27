@@ -10,6 +10,36 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-10-27
+
+### Added
+
+- ACP terminal authentication: a client that declares
+  `clientCapabilities._meta["terminal-auth"]: true`, as the ACP Registry
+  validator does, receives the `zencode-setup` authentication method
+  (`type: terminal`, **Set up ZenCODE**, `args: []`). The client runs `zen`
+  without arguments in a terminal, which opens the interactive provider and
+  sign-in setup when ZenCODE is not configured yet, and then reconnects. The
+  **Continue with ZenCODE** acknowledgement offered to clients with an `auth`
+  capability is unchanged and comes first when both apply.
+
+### Changed
+
+- The Linux release archives and the downloadable Linux CI builds link the
+  Swift runtime and Foundation statically (`--static-swift-stdlib`), so the
+  prebuilt `zen` runs on Linux without a Swift toolchain. System libraries such
+  as libcurl are still loaded from the system.
+
+### Fixed
+
+- `zen --acp` (or `ZENCODE_AGENT_MODE=acp`) on an installation that is not
+  configured no longer starts the interactive setup inside the ACP stream,
+  where it consumed the client's input, wrote nothing on stdout, and exited
+  with status 1. The agent now answers `initialize` normally, and
+  `session/new`, `session/load`, `session/resume`, `session/prompt`, and
+  `_zencode/model/preload` return the ACP `auth_required` error (`-32000`)
+  until ZenCODE is set up.
+
 ## [3.0.0] - 2026-10-26
 
 > **Breaking release:** compared with v2.4.0, v3.0.0 requires a `role` in every

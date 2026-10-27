@@ -62,24 +62,52 @@ extension ZenCODEACPBridge {
         await writer.sendResultIfRequest(id: id, result: .object([:]))
     }
 
-    /// Some ACP clients require an authentication-method acknowledgement before
-    /// starting a session even when provider authentication is managed by the
-    /// agent itself.
+    /// Authentication methods advertised by `initialize`, depending on what the
+    /// client declares in `clientCapabilities`.
+    ///
+    /// - `zencode-client-compatibility` (`type: agent`): offered to clients that
+    ///   declare an `auth` capability. Some ACP clients require an
+    ///   authentication-method acknowledgement before starting a session even
+    ///   when provider authentication is managed by the agent itself, so this
+    ///   method is a no-op acknowledgement.
+    /// - `zencode-setup` (`type: terminal`): offered to clients that declare
+    ///   `_meta.terminal-auth: true`, the ACP terminal-authentication
+    ///   extension. The client launches the agent with the method's `args` in
+    ///   place of the default ones; the empty `args` here make it run plain
+    ///   `zen`, which opens the interactive setup (provider and sign-in) when
+    ///   ZenCODE is not configured yet, and exits once it completes. The client
+    ///   then reconnects and initializes the agent again.
+    ///
+    /// The agent method, when present, always comes first. A client declaring
+    /// neither capability receives no authentication method.
     static func authenticationMethods(from params: [String: Any]) -> [[String: Any]] {
         let clientCapabilities = params["clientCapabilities"] as? [String: Any]
-        guard clientCapabilities?["auth"] != nil else {
-            return []
+        var methods: [[String: Any]] = []
+
+        if clientCapabilities?["auth"] != nil {
+            methods.append([
+                "id": "zencode-client-compatibility",
+                "name": "Continue with ZenCODE",
+                "description": "Continue to the ZenCODE session.",
+                "type": "agent"
+            ])
         }
 
-        return [[
-            "id": "zencode-client-compatibility",
-            "name": "Continue with ZenCODE",
-            "description": "Continue to the ZenCODE session.",
-            "type": "agent"
-        ]]
+        let clientMeta = clientCapabilities?["_meta"] as? [String: Any]
+        if clientMeta?["terminal-auth"] as? Bool == true {
+            methods.append([
+                "id": "zencode-setup",
+                "name": "Set up ZenCODE",
+                "type": "terminal",
+                "args": [String]()
+            ])
+        }
+
+        return methods
     }
 
     public func preloadModel(id: JSONValue?, params: [String: Any]) async throws {
+        try ensureConfigured()
         // `preloadModel` builds a runtime backend, so it is fenced like the
         // session-creating handlers.
         let operation = try registerLifecycleOperation()
@@ -98,6 +126,7 @@ extension ZenCODEACPBridge {
     }
 
     public func newSession(id: JSONValue?, params: [String: Any]) async throws {
+        try ensureConfigured()
         // Claim the operation synchronously, before the first `await`: from now
         // on a concurrent `shutdown()` invalidates this token and every
         // re-check below aborts instead of creating a session or a backend.
@@ -585,6 +614,7 @@ extension ZenCODEACPBridge {
         params: [String: Any],
         replayHistory: Bool
     ) async throws {
+        try ensureConfigured()
         // Same claim-before-first-await rule as `newSession`: `session/load`
         // and `session/resume` also create sessions and backends.
         let operation = try registerLifecycleOperation()

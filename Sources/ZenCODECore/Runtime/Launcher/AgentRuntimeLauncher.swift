@@ -55,13 +55,15 @@ public enum AgentRuntimeLauncher {
     /// Reads ACP requests from standard input and shuts down the bridge when input ends.
     public static func runACP(
         configuration: AgentConfiguration,
-        backendFactory: AgentRuntimeBackendFactory? = nil
+        backendFactory: AgentRuntimeBackendFactory? = nil,
+        setupRequired: Bool = false
     ) async {
         let writer = ACPWriter()
         let bridge = ZenCODEACPBridge(
             configuration: configuration,
             writer: writer,
-            backendFactory: backendFactory
+            backendFactory: backendFactory,
+            setupRequired: setupRequired
         )
         let reader = StdioLineReader()
         let lines = acpLineStream(reader: reader)

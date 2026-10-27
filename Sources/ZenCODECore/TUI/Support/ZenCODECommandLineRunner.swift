@@ -73,9 +73,15 @@ public enum ZenCODECommandLineRunner {
                 // wins over --jsonl (see `jsonlIsActive(arguments:)`).
                 Foundation.exit(ZenCODEDoctorRunner.run())
             }
-            var configuration = try AgentConfiguration(
+            // While ZenCODE has no usable configuration, `--acp` must still
+            // answer `initialize` so the client can offer the terminal setup
+            // method. That path never reads the persisted configuration: the
+            // client relaunches the agent after the setup, so no hot reload.
+            let unconfiguredACPConfiguration = try Self.unconfiguredACPConfiguration(
                 arguments: sanitizedArguments
             )
+            var configuration = try unconfiguredACPConfiguration
+                ?? AgentConfiguration(arguments: sanitizedArguments)
             if configuration.printHelp {
                 AgentOutput.standardOutput.writeString(AgentConfiguration.helpText)
                 return
@@ -176,7 +182,8 @@ public enum ZenCODECommandLineRunner {
                 AgentOutput.silenceInheritedProcessError()
                 await AgentRuntimeLauncher.runACP(
                     configuration: configuration,
-                    backendFactory: backendFactory
+                    backendFactory: backendFactory,
+                    setupRequired: unconfiguredACPConfiguration != nil
                 )
             }
         } catch {
@@ -189,6 +196,44 @@ public enum ZenCODECommandLineRunner {
             }
             Foundation.exit(1)
         }
+    }
+
+    /// Whether ACP was requested: `--acp` among the arguments, or
+    /// `ZENCODE_AGENT_MODE=acp` (trimmed, case-insensitive).
+    static func requestsACP(
+        arguments: [String],
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        arguments.dropFirst().contains("--acp")
+            || environment["ZENCODE_AGENT_MODE"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() == AgentRunMode.acp.rawValue
+    }
+
+    /// The configuration for an ACP launch that must not read any persisted
+    /// setting because ZenCODE is not set up yet, or `nil` when the ordinary
+    /// configuration applies.
+    ///
+    /// Help and version requests are left to the ordinary path, which prints
+    /// them without ever needing a configuration. The persisted configuration
+    /// is only consulted for the setup gate, with the same rule the executable
+    /// applies before the interactive setup (`ZenCODESetupRequirement`).
+    private static func unconfiguredACPConfiguration(
+        arguments: [String]
+    ) throws -> AgentConfiguration? {
+        guard requestsACP(arguments: arguments) else {
+            return nil
+        }
+        let configuration = try AgentConfiguration.withoutPersistedConfiguration(
+            arguments: arguments
+        )
+        guard configuration.resolvedRunMode(stdinIsTerminal: false) == .acp,
+              !configuration.printHelp,
+              !configuration.printVersion,
+              ZenCODESetupRequirement.isRequired() else {
+            return nil
+        }
+        return configuration
     }
 
     /// What a failed text-mode run prints on standard error.

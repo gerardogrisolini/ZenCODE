@@ -55,7 +55,10 @@ struct ZenCODEMain {
             Foundation.exit(1)
         }
 
-        if requiresInteractiveSetup(), !runsHeadless(arguments) {
+        // ACP is exempt too: `--acp` must answer `initialize` even without a
+        // configuration, so the client can offer the terminal setup method. The
+        // setup then runs in its own terminal, never inside the ACP stream.
+        if requiresInteractiveSetup(), !runsHeadless(arguments), !runsACP(arguments) {
             do {
                 guard try await runInteractiveSetup() else {
                     Foundation.exit(0)
@@ -95,6 +98,13 @@ struct ZenCODEMain {
             || ProcessInfo.processInfo.environment["ZENCODE_AGENT_MODE"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased() == AgentRunMode.headless.rawValue
+    }
+
+    private static func runsACP(_ arguments: [String]) -> Bool {
+        arguments.dropFirst().contains("--acp")
+            || ProcessInfo.processInfo.environment["ZENCODE_AGENT_MODE"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() == AgentRunMode.acp.rawValue
     }
 
     private static func requiresInteractiveSetup() -> Bool {
