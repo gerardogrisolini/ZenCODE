@@ -10,6 +10,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- On macOS the `jira-tools` optional feature now stores the Jira API token in
+  the same `0600` file under `~/.zencode/jira/credentials/` that it already
+  used on Linux, instead of the login Keychain. `/cron` jobs run outside the
+  login session and cannot see the login Keychain, so `jira.search` and
+  `jira.read` from `/cron` opened the Jira setup in the browser and waited up to
+  10 minutes per call. A token already in the Keychain is no longer read or
+  migrated: the next Jira call reopens the browser setup. You can remove the old
+  `ZenCODE.JiraAPIToken` item with
+  `security delete-generic-password -s ZenCODE.JiraAPIToken`.
+
 ## [3.0.1] - 2026-10-27
 
 ### Added

@@ -11,7 +11,6 @@ enum JiraToolsError: LocalizedError {
     case browserSetupTimedOut
     case requestFailed(String)
     case issueNotFound(String, message: String? = nil)
-    case keychain(Int32)
     case environmentConfigurationRequired(missing: [String], reason: String? = nil)
 
     var errorDescription: String? {
@@ -37,8 +36,6 @@ enum JiraToolsError: LocalizedError {
                 return "Unable to load Jira issue \(issueKey) from the REST API."
             }
             return "Jira issue \(issueKey) was not found (HTTP 404): the issue does not exist or the account cannot view it. \(message)"
-        case let .keychain(status):
-            return "Unable to access the Jira API token in Keychain (\(status))."
         case let .environmentConfigurationRequired(missing, reason):
             let prefix = reason.map { "\($0) " } ?? ""
             return "\(prefix)Jira is not configured. On Linux, set ZENCODE_JIRA_SITE_URL, ZENCODE_JIRA_EMAIL and ZENCODE_JIRA_API_TOKEN in the environment of `zen` and retry (missing: \(missing.joined(separator: ", ")))."

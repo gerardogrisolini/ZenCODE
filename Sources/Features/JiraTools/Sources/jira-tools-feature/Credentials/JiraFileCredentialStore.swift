@@ -8,8 +8,9 @@ import Glibc
 import Musl
 #endif
 
-/// File-backed Jira API token store used as the credential backend on
-/// platforms without Keychain. Tokens live in
+/// File-backed Jira API token store, the credential backend on every platform
+/// (macOS included, so headless runs such as `/cron` jobs can read the token).
+/// Tokens live in
 /// `<support dir>/jira/credentials/<percent-encoded account>.token`
 /// with `0600` permissions inside a `0700` directory.
 struct JiraFileCredentialStore: Sendable {
