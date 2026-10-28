@@ -129,6 +129,13 @@ public enum ZenCODESetupRunner {
                 await MemoryGraphStoreRegistry.shared.reset()
             }
             printResult(result, settingsWasWritten: shouldWriteSettings)
+            // Only now, with the settings saved and the registry reset, so the
+            // stores open with the new provider; a cancelled setup never
+            // reaches this point.
+            await offerMemoryReembeddingAfterSetup(
+                originalSettings: session.originalManifest?.memoryEmbedding,
+                finalManifest: finalManifest
+            )
             printCompletion()
             return .configured
         }

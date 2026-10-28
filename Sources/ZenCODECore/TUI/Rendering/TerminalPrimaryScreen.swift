@@ -20,6 +20,11 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         /// inside the menu frame between the help text and the items, so they
         /// stay visible even when a standalone menu owns the alternate screen.
         var header: [String] = []
+        /// First header row shown when the header is taller than its share of
+        /// the frame. Always clamped while rendering.
+        var headerScrollOffset: Int = 0
+        /// Whether the header table, not the item list, currently has control.
+        var headerFocused: Bool = false
     }
     private enum Presentation: Equatable, Sendable {
         case menu(Modal)
@@ -443,8 +448,17 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         return cup(chromeTop) + "\u{1B}[?25l"
     }
     private func surfaces() -> String { "\u{1B}[?7l" + footer + modalSequence() + "\u{1B}[0m\u{1B}[?7h" }
-    private func modalLines() -> [String] {
-        guard let presentation = modals.last?.value, case let .menu(modal) = presentation else { return [] }
+    /// Numbers shared by rendering and the scroll-limit query, so both always
+    /// agree on how many rows the header and the items get.
+    private struct MenuLayout {
+        let fixed: [String]
+        let items: [TerminalCheckboxMenu.RenderedMenuLine]
+        let focusedIndex: Int
+        let capacity: Int
+        let itemCapacity: Int
+        let header: TerminalCheckboxMenu.HeaderLayout
+    }
+    private func menuLayout(for modal: Modal) -> MenuLayout {
         let width = max(1, geometry.columns - 4)
         var items = modal.lines
         var focusedIndex = modal.focusedIndex
@@ -458,13 +472,36 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         let capacity = max(1, geometry.rows - footerRows - 4)
         let fixed = [modal.title] + modal.help + [""]
         let itemCapacity = max(1, capacity - fixed.count)
-        // Items keep priority; the header only uses rows they leave free.
-        let header = TerminalCheckboxMenu.visibleHeaderLines(
+        // A header that does not fit scrolls inside a share of the rows; the
+        // items keep the rest.
+        let header = TerminalCheckboxMenu.headerLayout(
             modal.header,
-            capacity: itemCapacity - min(items.count, itemCapacity)
+            offset: modal.headerScrollOffset,
+            itemLineCount: items.count,
+            itemCapacity: itemCapacity
         )
-        let selected = TerminalCheckboxMenu.visibleItemLines(items, focusedIndex: focusedIndex, capacity: max(1, itemCapacity - header.count))
-        return Array(fixed.prefix(max(0, capacity - selected.count - header.count))) + header + selected
+        return MenuLayout(
+            fixed: fixed, items: items, focusedIndex: focusedIndex,
+            capacity: capacity, itemCapacity: itemCapacity, header: header
+        )
+    }
+    /// Largest header scroll offset `modal` accepts with the current geometry
+    /// and footer; `0` when the header is not scrollable.
+    func menuHeaderScrollLimit(for modal: Modal) -> Int {
+        TerminalOutputSynchronization.withTransaction {
+            menuLayout(for: modal).header.scrollLimit
+        }
+    }
+    private func modalLines() -> [String] {
+        guard let presentation = modals.last?.value, case let .menu(modal) = presentation else { return [] }
+        let layout = menuLayout(for: modal)
+        let header = layout.header.lines
+        let selected = TerminalCheckboxMenu.visibleItemLines(
+            layout.items,
+            focusedIndex: layout.focusedIndex,
+            capacity: max(1, layout.itemCapacity - header.count)
+        )
+        return Array(layout.fixed.prefix(max(0, layout.capacity - selected.count - header.count))) + header + selected
     }
     private func dialogLines(_ dialog: TerminalDialogPresentation) -> [String] {
         dialog.visibleLines(columns: geometry.columns, capacity: max(0, geometry.rows - footerRows - 2))

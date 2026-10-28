@@ -38,8 +38,10 @@ public struct AgentMemoryEmbeddingSettingsManifest: Codable, Equatable, Sendable
     /// Canonical OpenRouter embeddings endpoint proposed by setup when a
     /// configured provider is OpenRouter.
     public static let openRouterEmbeddingsEndpoint = "https://openrouter.ai/api/v1/embeddings"
-    /// Embedding model precompiled with the OpenRouter proposal.
-    public static let openRouterEmbeddingsModel = "qwen/qwen3-embedding-8b"
+    /// Embedding model precompiled with the OpenRouter proposal. A different
+    /// model already saved in the settings (such as `qwen/qwen3-embedding-8b`,
+    /// the previous default) stays valid and is preselected by setup.
+    public static let openRouterEmbeddingsModel = "qwen/qwen3-embedding-4b"
 
     /// The normalized absolute HTTP(S) embedding endpoint, or `nil` when
     /// embeddings are explicitly disabled (BM25 only).

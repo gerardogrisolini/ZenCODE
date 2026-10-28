@@ -94,7 +94,16 @@ struct EngineMemoryEntry: Codable, Sendable, Identifiable, Equatable {
     public var active: Bool
     public var supersededBy: String?
     public var reinforcements: [Reinforcement]
-    public var embedding: [Float]?
+    /// The entry's vector, always held at the precision the vectors file
+    /// stores (`MemoryVectorFile.storedComponentType`): assigning rounds every
+    /// component, so a graph in memory is exactly what saving and reloading it
+    /// returns, and writing back an equal vector never looks like a change.
+    /// Rounding a vector that is already at that precision keeps its storage.
+    public var embedding: [Float]? {
+        get { storedEmbedding }
+        set { storedEmbedding = newValue.map(MemoryVectorFile.storedComponentType.rounded) }
+    }
+    private var storedEmbedding: [Float]?
     public var embeddingModel: String?
     public var confidence: Float
     public var scope: EngineMemoryScope
@@ -132,7 +141,7 @@ struct EngineMemoryEntry: Codable, Sendable, Identifiable, Equatable {
         self.active = true
         self.supersededBy = nil
         self.reinforcements = []
-        self.embedding = embedding
+        self.storedEmbedding = embedding.map(MemoryVectorFile.storedComponentType.rounded)
         self.embeddingModel = embeddingModel
         self.confidence = min(max(confidence, 0), 1)
         self.scope = scope
@@ -205,6 +214,17 @@ struct EngineMemoryEntry: Codable, Sendable, Identifiable, Equatable {
         embeddingModel = model
     }
 
+    /// Stores `values` exactly as given, without rounding them to the stored
+    /// precision. For callers that guarantee the values are already at that
+    /// precision (the vectors-file decoder, widening binary16 components), and
+    /// for the A/B harness, which compares full-precision vectors with stored
+    /// ones on a graph it never saves: a graph holding a vector that is not at
+    /// the stored precision is not what saving and reloading it would return.
+    mutating func setEmbeddingWithoutRounding(_ values: [Float]?, model: String?) {
+        storedEmbedding = values
+        embeddingModel = model
+    }
+
     public static func normalizeSearchText(content: String, tags: [String]) -> String {
         ([content] + tags)
             .joined(separator: " ")
@@ -237,8 +257,10 @@ struct EngineMemoryEntry: Codable, Sendable, Identifiable, Equatable {
         active = try c.decodeIfPresent(Bool.self, forKey: .active) ?? true
         supersededBy = try c.decodeIfPresent(String.self, forKey: .supersededBy)
         reinforcements = try c.decodeIfPresent([Reinforcement].self, forKey: .reinforcements) ?? []
-        // Graph version 3 spells the vector as a base64 string; earlier
-        // versions used a numeric array. Both load (see `EmbeddingWireCoding`).
+        // Up to graph version 3 the vector is inline: a base64 string from
+        // version 3, a numeric array before (see `EmbeddingWireCoding`). From
+        // version 4 it lives in the vectors file and the key is absent; the
+        // persistence attaches it after decoding.
         if let wire = try c.decodeIfPresent(EmbeddingWireValue.self, forKey: .embedding) {
             guard let values = wire.components else {
                 throw DecodingError.dataCorruptedError(
@@ -247,9 +269,9 @@ struct EngineMemoryEntry: Codable, Sendable, Identifiable, Equatable {
                     debugDescription: "Expected a base64 string of little-endian binary32 components."
                 )
             }
-            embedding = values
+            storedEmbedding = MemoryVectorFile.storedComponentType.rounded(values)
         } else {
-            embedding = nil
+            storedEmbedding = nil
         }
         embeddingModel = try c.decodeIfPresent(String.self, forKey: .embeddingModel)
         confidence = try c.decodeIfPresent(Float.self, forKey: .confidence) ?? 1
@@ -273,9 +295,8 @@ struct EngineMemoryEntry: Codable, Sendable, Identifiable, Equatable {
         try c.encode(active, forKey: .active)
         try c.encodeIfPresent(supersededBy, forKey: .supersededBy)
         if !reinforcements.isEmpty { try c.encode(reinforcements, forKey: .reinforcements) }
-        if let embedding {
-            try c.encode(EmbeddingWireCoding.string(from: embedding), forKey: .embedding)
-        }
+        // The vector is not part of the JSON from graph version 4 on: the
+        // persistence writes it to the vectors file (`MemoryVectorFile`).
         try c.encodeIfPresent(embeddingModel, forKey: .embeddingModel)
         try c.encode(confidence, forKey: .confidence)
         try c.encode(scope, forKey: .scope)

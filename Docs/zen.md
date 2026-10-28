@@ -83,7 +83,7 @@ Creates files under `~/.zencode/`:
 - `agents.json` — agent profiles, authorized model bindings, tools, and instructions.
 - `AGENTS.md` — global operating guidance shared across workspaces. This is
   separate from an optional project `AGENTS.md` in the working directory.
-- `memory/` — project memory graphs: one `memory.graph.json` per project, under the project key (see below), plus `global/` for the global graph used by `organizer` sessions.
+- `memory/` — project memory graphs: one `memory.graph.json` per project with its binary vectors file `memory.graph.json.vectors`, under the project key (see below), plus `global/` for the global graph used by `organizer` sessions.
 - `projects/` — per-project agent associations (`agents.json`, see `/agents`), under the project key.
 - `sessions/` — saved session snapshots grouped by project key.
 - `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans, grouped by project key.
@@ -149,18 +149,33 @@ directory between machines in one step:
   modification date), then lets you choose the rules to apply to one of them:
   remove archived entries unchanged for N days (default 30), archive entries
   that were never recalled and have not changed for N days (default 180, scaled
-  per category), and graph hygiene (superseded entries, dangling links, unused
-  tags and clusters, unusable embedding vectors). The days are asked each time
+  per category), and graph hygiene (superseded entries, dangling links, links
+  beyond 12 per entry, unused tags and clusters, unusable embedding vectors).
+  The days are asked each time
   and never saved. A preview shows the counts and the titles that would be
   affected; nothing changes until you confirm (default No). The current graph is
-  then copied to `memory.graph.json.bak` next to it, replacing any previous
-  copy, and the cleanup is applied as one atomic transaction. The copy is never
-  loaded by `zen`: to undo, close `zen` and copy it over `memory.graph.json`. See
+  then copied to `memory.graph.json.bak` and its vectors to
+  `memory.graph.json.vectors.bak` next to it, replacing any previous copy, and
+  the cleanup is applied as one atomic transaction. The copy is never loaded by
+  `zen`: to undo, close `zen` and copy the two files over `memory.graph.json`
+  and `memory.graph.json.vectors`. See
   [Docs/memory.md](memory.md#memory-cleanup).
 - **Delete project memory folder**, offered by **Clean memory** for the graph of
   another project only (not the current project and not the global graph),
   removes that project's whole memory directory after a confirmation that shows
   the exact path. No copy is kept: export a backup first if you may need it.
+- **Rebuild memory embeddings** gives a vector from the configured embedding
+  model to every active entry that lacks one, in every memory graph under
+  `~/.zencode/memory/`, and deletes the vectors of archived entries. It uses
+  the settings saved on disk; without an embedding endpoint it says so and
+  does nothing. A list shows, per graph, the entries to embed and the archived
+  vectors to delete, and the model; the content of each entry is sent to the
+  endpoint, so nothing starts until you confirm (default Yes). Vectors are
+  saved every 16 entries, busy endpoints (HTTP 429) are retried after a growing
+  wait, and Esc stops after the requests in flight, keeping what was saved:
+  run it again to resume. Setup offers the same run right after "save and
+  exit" when the embedding configuration changed. See
+  [Docs/memory.md](memory.md#memory-re-embedding).
 - **Reset remote configuration** is the same reset previously found in the
   main setup menu, now grouped here with the other data operations.
 - **Back** returns to the main setup menu. Cancelling any prompt leaves
@@ -1099,7 +1114,7 @@ Durable context is separated by responsibility:
   automatically.
 - Global `~/.zencode/AGENTS.md` — cross-workspace operating rules. This file is
   separate from the project file and applies across working directories.
-- Project memory — a per-workspace graph of durable project facts stored outside the working tree at `~/.zencode/memory/<project key>/memory.graph.json` (honouring `ZENCODE_SUPPORT_DIRECTORY`; see [Project key](#project-key)). Opening loads that JSON graph or starts empty when it is absent; a cold search/read never writes. Existing `MEMORY.md` files are completely ignored, even when malformed, and are never imported, embedded, rewritten or deleted. Facts already persisted in JSON remain available. A separate global graph at `~/.zencode/memory/global/memory.graph.json` (same format) is used only by sessions whose profile has the `organizer` role, for their `memory.*` tools and recall; project graphs are never aggregated into it, and automatic learning never writes to it.
+- Project memory — a per-workspace graph of durable project facts stored outside the working tree at `~/.zencode/memory/<project key>/memory.graph.json` (honouring `ZENCODE_SUPPORT_DIRECTORY`; see [Project key](#project-key)). Opening loads that JSON graph, with its `memory.graph.json.vectors` from graph version 4, or starts empty when it is absent; a cold search/read never writes. Existing `MEMORY.md` files are completely ignored, even when malformed, and are never imported, embedded, rewritten or deleted. Facts already persisted in JSON remain available. A separate global graph at `~/.zencode/memory/global/memory.graph.json` (same format) is used only by sessions whose profile has the `organizer` role, for their `memory.*` tools and recall; project graphs are never aggregated into it, and automatic learning never writes to it.
 
 The Memory tool group maintains project memory without accumulating avoidable duplicates:
 
@@ -1120,7 +1135,7 @@ A read-only agent can retrieve and verify journal context but cannot mutate it.
 - `memory.update` rewrites an entry in place: the id, creation date, and archive state are preserved, the original `Timestamp` is kept and `Updated` added when omitted.
 - `memory.archive` deactivates a stale entry by id so it stops influencing retrieval without being deleted.
 
-Before writing, search for an active entry about the same durable project fact. Update it when appropriate instead of appending a duplicate, and do not write when nothing materially changed. Embeddings are opt-in and off by default: without a provider, entries carry no vector and retrieval is pure BM25 keyword matching. The embedding configuration is an endpoint URL plus an optional model: configure it in `/setup` ("Memory embeddings": BM25 only / add / change / remove), where an OpenRouter choice is proposed immediately when OpenRouter is among the configured providers (canonical endpoint `https://openrouter.ai/api/v1/embeddings`, model `qwen/qwen3-embedding-8b`), or for compatibility export `ZENCODE_MEMORY_EMBEDDING_ENDPOINT` (endpoint only). Setup validates the URL locally and never connects to it. When a model is configured ZenCODE sends it in the request body; otherwise the endpoint identifies the embedding model itself and the request omits `model`, so an endpoint-only OpenAI-compatible `/v1/embeddings` server chooses. The OpenRouter preset reuses the configured provider's API key at runtime only when the referenced provider is a configured OpenRouter provider and the embedding endpoint is itself an OpenRouter endpoint — the key is never duplicated in the embedding settings, and manual endpoint edits reset to an endpoint-only configuration so an edited endpoint can never forward the key to another host; custom/legacy endpoint-only setups send no Authorization header. Entries record the model identity that embedded them, so changing the provider degrades retrieval to keyword matching instead of returning mismatched results. Mutations are serialized per workspace within one ZenCODE process, and each one commits only after the graph save succeeded: a failing save leaves the in-memory graph unchanged.
+Before writing, search for an active entry about the same durable project fact. Update it when appropriate instead of appending a duplicate, and do not write when nothing materially changed. Embeddings are opt-in and off by default: without a provider, entries carry no vector and retrieval is pure BM25 keyword matching. The embedding configuration is an endpoint URL plus an optional model: configure it in `/setup` ("Memory embeddings": BM25 only / add / change / remove), where an OpenRouter choice is proposed immediately when OpenRouter is among the configured providers (canonical endpoint `https://openrouter.ai/api/v1/embeddings`, model `qwen/qwen3-embedding-4b`; a model already saved, such as the earlier default `qwen/qwen3-embedding-8b`, stays valid), or for compatibility export `ZENCODE_MEMORY_EMBEDDING_ENDPOINT` (endpoint only). Setup validates the URL locally and never connects to it. When a model is configured ZenCODE sends it in the request body; otherwise the endpoint identifies the embedding model itself and the request omits `model`, so an endpoint-only OpenAI-compatible `/v1/embeddings` server chooses. The OpenRouter preset reuses the configured provider's API key at runtime only when the referenced provider is a configured OpenRouter provider and the embedding endpoint is itself an OpenRouter endpoint — the key is never duplicated in the embedding settings, and manual endpoint edits reset to an endpoint-only configuration so an edited endpoint can never forward the key to another host; custom/legacy endpoint-only setups send no Authorization header. Entries record the model identity that embedded them, so changing the provider degrades retrieval to keyword matching instead of returning mismatched results. Mutations are serialized per workspace within one ZenCODE process, and each one commits only after the graph save succeeded: a failing save leaves the in-memory graph unchanged.
 
 The vendored engine ships optional intelligence layers — a query analyzer (default `DirectMemoryQueryAnalyzer`, which uses the prompt as the query), a selector, an extractor (default `NoopMemoryExtractor`, which extracts nothing) and a context formatter — plus `context(for:)` (a ready-to-inject memory block) and `learn(from:)`; these remain unwired engine internals. Automatic recall is wired and on by default: before each turn ZenCODE retrieves relevant entries — BM25 plus graph expansion locally (or semantic similarity plus fusion when an endpoint is configured), never a second LLM call — and injects them as a labelled `<project-memory>` block into the outgoing copy of the last user message on every tool round. The embedding provider selected in setup is fixed and independent of the destination chat model/provider: operator and delegated turns using GLM, Claude, GPT, or another model query the same graph through that embedder and receive the selected memory as text, without per-model copies. Recall remains bounded by a deadline (`ZENCODE_MEMORY_RECALL_TIMEOUT_MS`, default 150 ms); with embeddings enabled, a maintenance-free local BM25 block is prepared alongside semantic retrieval, so a slow endpoint yields that lexical fallback instead of erasing memory context, while an unavailable graph or a fallback not ready by the deadline still degrades to no memory without delaying the turn. The block itself does add input tokens to the request, so it is capped by a character budget (`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`, default 4 000 characters ≈ about 1k tokens, clamped to [200, 32 000]); recalled content is escaped so it cannot close the container, and the payload is truncated on line boundaries with a notice when it does not fit. The block is a transient per-turn channel merged into the outgoing copy of the last user message only — exactly once per round, because it is never written back into the session — and it never enters conversation history, saved-session snapshots, or the session cache key, so saved sessions and prompt caching are unaffected. Delegated sub-agent turns receive the same recall. The main model reads and writes durable memory explicitly through the five `memory.*` tools above. `ZENCODE_MEMORY_AUTO_RECALL` (default on) switches recall off.
 

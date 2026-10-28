@@ -271,6 +271,140 @@ struct MemoryCleanupTests {
         #expect(cleaned.reverseEdges["tag:missing"] == nil)
     }
 
+    /// A hub linked both ways to `count` neighbours `n00…`, in that order.
+    private static func hubGraph(
+        neighbours count: Int,
+        tags: [String] = [],
+        weight: (Int) -> Float = { _ in 0.7 }
+    ) -> MemoryGraph {
+        var graph = Self.graph(
+            [Self.entry("hub", tags: tags, daysAgo: 1)]
+                + (0..<count).map { Self.entry(String(format: "n%02d", $0), daysAgo: 1) }
+        )
+        for index in 0..<count {
+            let id = String(format: "n%02d", index)
+            graph.addEdge(from: "hub", to: id, kind: .relatesTo(weight: weight(index)))
+            graph.addEdge(from: id, to: "hub", kind: .relatesTo(weight: weight(index)))
+        }
+        return graph
+    }
+
+    private static func relatesToTargets(_ graph: MemoryGraph, of id: String) -> [String] {
+        (graph.edges[id] ?? []).compactMap { edge in
+            if case .relatesTo = edge.kind { edge.target } else { nil }
+        }
+    }
+
+    @Test
+    func hygieneTrimsAnEntryToTwelveLinksAndRemovesTheMirrors() {
+        let original = Self.hubGraph(neighbours: 20, tags: ["topic"])
+        let policy = MemoryCleanupPolicy(graphHygiene: true)
+
+        let (cleaned, report) = MemoryCleanup.plan(original, policy: policy, now: Self.now, embeddingModel: nil)
+
+        // 8 links over the cap, each stored in both directions.
+        #expect(report.prunedRelations == 16)
+        #expect(!report.isEmpty)
+        #expect(report.removedDanglingEdges == 0)
+        // All weights are equal, so the 12 most recent links survive.
+        #expect(Self.relatesToTargets(cleaned, of: "hub") == (8..<20).map { String(format: "n%02d", $0) })
+        for index in 0..<8 {
+            let id = String(format: "n%02d", index)
+            #expect(Self.relatesToTargets(cleaned, of: id).isEmpty)
+            #expect(cleaned.reverseEdges[id] == nil)
+            #expect(cleaned.reverseEdges["hub"]?.contains(id) != true)
+        }
+        for index in 8..<20 {
+            #expect(Self.relatesToTargets(cleaned, of: String(format: "n%02d", index)) == ["hub"])
+        }
+        // Tag edges and counters are intact.
+        #expect(cleaned.edges["hub"]?.contains { $0.target == "tag:topic" && $0.kind == .hasTag } == true)
+        #expect(cleaned.tags["tag:topic"]?.count == 1)
+        #expect(cleaned.memories == original.memories)
+        #expect(Self.reverseEdgesAreConsistent(cleaned))
+
+        // A second plan over the result has nothing left to do.
+        let (again, againReport) = MemoryCleanup.plan(cleaned, policy: policy, now: Self.now, embeddingModel: nil)
+        #expect(againReport.isEmpty)
+        #expect(againReport.prunedRelations == 0)
+        #expect(again == cleaned)
+    }
+
+    @Test
+    func hygienePrunesTheWeakestLinksFirstAndIsDeterministic() {
+        let original = Self.hubGraph(neighbours: 16) { $0 < 6 ? 0.9 : 0.7 }
+        let policy = MemoryCleanupPolicy(graphHygiene: true)
+
+        let first = MemoryCleanup.plan(original, policy: policy, now: Self.now, embeddingModel: nil)
+        let second = MemoryCleanup.plan(original, policy: policy, now: Self.now, embeddingModel: nil)
+
+        // 4 over the cap: the 4 oldest of the weaker 0.7 links (n06…n09) go.
+        #expect(first.report.prunedRelations == 8)
+        #expect(Self.relatesToTargets(first.graph, of: "hub")
+            == (0..<6).map { String(format: "n%02d", $0) } + (10..<16).map { String(format: "n%02d", $0) })
+        #expect(first.graph == second.graph)
+        #expect(first.report == second.report)
+    }
+
+    @Test
+    func hygienePrunesOnlyAfterDanglingEdgesAreRemoved() {
+        var original = Self.hubGraph(neighbours: 12)
+        for index in 0..<3 {
+            original.addEdge(from: "hub", to: "ghost\(index)", kind: .relatesTo(weight: 0.7))
+        }
+        original.rebuildReverseEdges()
+
+        let (cleaned, report) = MemoryCleanup.plan(
+            original,
+            policy: MemoryCleanupPolicy(graphHygiene: true),
+            now: Self.now,
+            embeddingModel: nil
+        )
+
+        // Dangling links never compete with live ones for the 12 slots.
+        #expect(report.removedDanglingEdges == 3)
+        #expect(report.prunedRelations == 0)
+        #expect(Self.relatesToTargets(cleaned, of: "hub").count == 12)
+        #expect(Self.reverseEdgesAreConsistent(cleaned))
+    }
+
+    @Test
+    func hygieneLeavesEntriesAtTheCapAlone() {
+        let original = Self.hubGraph(neighbours: 12)
+        let (cleaned, report) = MemoryCleanup.plan(
+            original,
+            policy: MemoryCleanupPolicy(graphHygiene: true),
+            now: Self.now,
+            embeddingModel: nil
+        )
+
+        #expect(report.isEmpty)
+        #expect(cleaned == original)
+    }
+
+    @Test
+    func linksAreLeftAloneWhenHygieneIsOff() {
+        let original = Self.hubGraph(neighbours: 20)
+        let (cleaned, report) = MemoryCleanup.plan(
+            original,
+            policy: MemoryCleanupPolicy(archivedRetentionDays: 30, staleInactivityDays: 180),
+            now: Self.now,
+            embeddingModel: nil
+        )
+
+        #expect(report.isEmpty)
+        #expect(report.prunedRelations == 0)
+        #expect(cleaned == original)
+    }
+
+    @Test
+    func prunedLinksAloneMakeTheReportNonEmpty() {
+        var report = MemoryCleanupReport()
+        #expect(report.isEmpty)
+        report.prunedRelations = 1
+        #expect(!report.isEmpty)
+    }
+
     @Test
     func hygieneDropsEmptyTagsAndClustersAndRecountsTheRest() {
         var original = Self.graph([

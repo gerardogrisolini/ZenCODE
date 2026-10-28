@@ -30,6 +30,8 @@ extension ZenCODESetupRunner {
         let isGlobal: Bool
         /// The graph of the project this session was launched in.
         let isCurrent: Bool
+        /// Bytes of the graph JSON plus its vectors file when there is one;
+        /// `nil` when the JSON's size cannot be read.
         let fileSize: Int64?
         let modifiedAt: Date?
     }
@@ -45,8 +47,8 @@ extension ZenCODESetupRunner {
         case removeArchived
         /// Rule B: archive never-recalled entries unchanged for a long while.
         case archiveStale
-        /// Rule C: superseded entries, dangling links, empty tags and clusters,
-        /// vectors the store cannot use.
+        /// Rule C: superseded entries, dangling and excess links, empty tags and
+        /// clusters, vectors the store cannot use.
         case hygiene
     }
 
@@ -88,6 +90,11 @@ extension ZenCODESetupRunner {
                 continue
             }
             let attributes = try? fileManager.attributesOfItem(atPath: graphURL.path)
+            // A graph is its JSON plus, from graph version 4, the vectors file.
+            let vectorsSize = (try? fileManager.attributesOfItem(
+                atPath: JSONMemoryPersistence.vectorsURL(forGraphAt: graphURL).path
+            ))?[.size] as? NSNumber
+            let graphSize = (attributes?[.size] as? NSNumber)?.int64Value
             items.append(
                 MemoryGraphInventoryItem(
                     directoryURL: directoryURL,
@@ -95,7 +102,7 @@ extension ZenCODESetupRunner {
                     directoryName: name,
                     isGlobal: name == MemoryGraphLocation.globalDirectoryName,
                     isCurrent: name == currentKey,
-                    fileSize: (attributes?[.size] as? NSNumber)?.int64Value,
+                    fileSize: graphSize.map { $0 + (vectorsSize?.int64Value ?? 0) },
                     modifiedAt: attributes?[.modificationDate] as? Date
                 )
             )
@@ -183,7 +190,7 @@ extension ZenCODESetupRunner {
             TerminalCheckboxMenuItem(
                 value: .hygiene,
                 title: "Graph hygiene",
-                detail: "drop superseded entries, dangling links, unused tags and unusable embedding vectors"
+                detail: "drop superseded entries, dangling links, excess links (more than \(MemoryRelationPolicy.default.maximumLinksPerMemory) per entry), unused tags and unusable embedding vectors"
             )
         ]
     }
@@ -250,6 +257,7 @@ extension ZenCODESetupRunner {
                     + [
                         plural(report.removedSuperseded.count, "superseded entry", plural: "superseded entries"),
                         plural(report.removedDanglingEdges, "dangling edge"),
+                        plural(report.prunedRelations, "excess link"),
                         plural(report.removedTags, "unused tag"),
                         plural(report.removedClusters, "empty cluster"),
                         plural(report.clearedEmbeddings, "embedding vector")
@@ -257,7 +265,7 @@ extension ZenCODESetupRunner {
             )
             lines += entryLines(report.removedSuperseded)
             if report.clearedEmbeddings > 0 {
-                lines.append("A cleared vector is regenerated only when its entry is next written or updated.")
+                lines.append("A cleared vector is regenerated when its entry is next written, updated or restored, or by Data management › Rebuild memory embeddings.")
             }
         }
         return lines.joined(separator: "\n")
@@ -393,11 +401,12 @@ extension ZenCODESetupRunner {
             return
         }
 
-        let backupPath = item.graphURL.appendingPathExtension("bak").path
+        let backup = JSONMemoryPersistence.backupURLs(forGraphAt: item.graphURL)
+        let backupPath = backup.graph.path
         guard try promptYesNo(
             "Apply this cleanup to \(item.graphURL.path)?",
             defaultValue: false,
-            help: "The current graph is first copied to \(backupPath) (replacing any previous copy); the cleanup is one atomic transaction."
+            help: "The current graph is first copied to \(backupPath) and its vectors to \(backup.vectors.lastPathComponent) (replacing any previous copy); the cleanup is one atomic transaction."
         ) else {
             AgentOutput.standardError.writeString("Cleanup cancelled.\n\n")
             return
@@ -408,7 +417,7 @@ extension ZenCODESetupRunner {
             + renderMemoryCleanupReport(applied, graphURL: item.graphURL, policy: policy)
             + "\n"
         if !applied.isEmpty {
-            summary += "Backup: \(backupPath)\n"
+            summary += "Backup: \(backupPath) and \(backup.vectors.lastPathComponent)\n"
         }
         AgentOutput.standardError.writeString(summary + "\n")
     }

@@ -208,6 +208,8 @@ extension TerminalCheckboxMenu {
             switch byte {
             case 0x0A, 0x0D:
                 return .submit
+            case 0x09:
+                return .tab
             case 0x20:
                 return .toggle
             case 0x58, 0x78:

@@ -23,8 +23,9 @@ struct MemoryCleanupPolicy: Sendable, Equatable {
     /// (`accessCount == 0`) and have not changed for at least this many days
     /// (at least 1). The threshold is scaled per category, see ``MemoryCleanup``.
     var staleInactivityDays: Int?
-    /// Rule C: graph hygiene — superseded entries, dangling edges, tags and
-    /// clusters nobody belongs to, and embedding vectors the store cannot use.
+    /// Rule C: graph hygiene — superseded entries, dangling edges, co-relevance
+    /// links beyond the per-entry cap, tags and clusters nobody belongs to, and
+    /// embedding vectors the store cannot use.
     var graphHygiene: Bool
 
     init(
@@ -68,6 +69,10 @@ struct MemoryCleanupReport: Sendable, Equatable {
     /// Rule C: superseded entries removed.
     var removedSuperseded: [EntrySummary] = []
     var removedDanglingEdges = 0
+    /// Rule C: `relatesTo` edges dropped to bring every entry down to
+    /// ``MemoryRelationPolicy/maximumLinksPerMemory``, counting both directions
+    /// of each dropped link.
+    var prunedRelations = 0
     var removedTags = 0
     var removedClusters = 0
     var clearedEmbeddings = 0
@@ -78,6 +83,7 @@ struct MemoryCleanupReport: Sendable, Equatable {
             && archivedStale.isEmpty
             && removedSuperseded.isEmpty
             && removedDanglingEdges == 0
+            && prunedRelations == 0
             && removedTags == 0
             && removedClusters == 0
             && clearedEmbeddings == 0
@@ -100,10 +106,13 @@ enum MemoryCleanup {
     ///    live longer. An entry archived here is stamped `updatedAt = now` and is
     ///    never removed by rule A in the same run.
     /// 3. **C** (`graphHygiene`) removes superseded entries, recounts tags and
-    ///    cluster members and drops empty ones, drops dangling edges, and
-    ///    clears embedding vectors. A vector is kept only when it was produced
-    ///    by `embeddingModel`; with no model (`nil`: no provider configured)
-    ///    none is kept. Clearing a vector leaves `updatedAt` alone.
+    ///    cluster members and drops empty ones, drops dangling edges, trims every
+    ///    entry to ``MemoryRelationPolicy/maximumLinksPerMemory`` `relatesTo`
+    ///    links (weakest then oldest first, mirror links included, entries
+    ///    visited in id order) and clears embedding vectors. A vector is kept
+    ///    only when it was produced by `embeddingModel`; with no model (`nil`: no
+    ///    provider configured) none is kept. Clearing a vector leaves
+    ///    `updatedAt` alone.
     ///
     /// A plan that changes nothing returns the original graph untouched, so
     /// normalizations of an already consistent graph never make a no-op look
@@ -266,10 +275,19 @@ enum MemoryCleanup {
             report.removedDanglingEdges += outgoing.count - kept.count
             graph.edges[source] = kept.isEmpty ? nil : kept
         }
+
+        // Co-relevance links beyond the per-entry cap, weakest and oldest first,
+        // each dropped together with its mirror. Runs after the dangling edges
+        // are gone, so only live links compete, and before the reverse index is
+        // rebuilt from whatever remains.
+        report.prunedRelations = graph.pruneRelations(
+            maximumPerMemory: MemoryRelationPolicy.default.maximumLinksPerMemory
+        )
         graph.rebuildReverseEdges()
 
         // Vectors the store cannot compare against are dead weight: they are
-        // regenerated only when the entry is next written or updated.
+        // regenerated when the entry is next written, updated or restored, or
+        // by Data management › Rebuild memory embeddings.
         for (id, entry) in graph.memories where entry.embedding != nil {
             if let embeddingModel, entry.embeddingMatches(model: embeddingModel) { continue }
             var updated = entry

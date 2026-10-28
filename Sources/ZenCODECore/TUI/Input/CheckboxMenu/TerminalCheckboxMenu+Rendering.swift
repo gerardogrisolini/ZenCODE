@@ -153,20 +153,80 @@ extension TerminalCheckboxMenu {
         return visibleLines
     }
 
-    /// Fits non-selectable header lines into `capacity` rows, followed by a
-    /// blank separator. A header that does not fit is cut with an ellipsis
-    /// line; without room for at least one line plus markers it is omitted.
-    static func visibleHeaderLines(_ header: [String], capacity: Int) -> [String] {
-        guard !header.isEmpty, capacity >= 2 else {
-            return []
+    /// Rows a non-selectable header occupies in a menu frame, with the largest
+    /// scroll offset it accepts.
+    struct HeaderLayout: Equatable {
+        /// Header rows followed by a blank separator; empty when the header is
+        /// omitted.
+        let lines: [String]
+        /// Largest accepted scroll offset. `0` means the header is not
+        /// scrollable: it is whole, or too short on room to show anything.
+        let scrollLimit: Int
+    }
+
+    /// Lays a non-selectable header out in the rows shared with the items.
+    ///
+    /// A header that fits entirely beside the items is shown whole. Otherwise
+    /// it becomes a scrollable window that keeps at least half of the rows
+    /// (and every row the items leave free), so a long table stays reachable
+    /// instead of being cut. `offset` is clamped to the valid range, which
+    /// keeps a stale value safe after a resize.
+    /// - Parameters:
+    ///   - header: Header rows, already styled.
+    ///   - offset: First header row shown.
+    ///   - itemLineCount: Rows the items would occupy without a header.
+    ///   - itemCapacity: Rows available to the header and the items together.
+    static func headerLayout(
+        _ header: [String],
+        offset: Int,
+        itemLineCount: Int,
+        itemCapacity: Int
+    ) -> HeaderLayout {
+        guard !header.isEmpty else {
+            return HeaderLayout(lines: [], scrollLimit: 0)
         }
-        if header.count + 1 <= capacity {
-            return header + [""]
+        if header.count + 1 + itemLineCount <= itemCapacity {
+            return HeaderLayout(lines: header + [""], scrollLimit: 0)
         }
-        guard capacity >= 3 else {
-            return []
+        let reserved = min(
+            header.count + 1,
+            max(itemCapacity - min(itemLineCount, itemCapacity), itemCapacity / 2)
+        )
+        let viewport = reserved - 1
+        guard viewport >= 1 else {
+            return HeaderLayout(lines: [], scrollLimit: 0)
         }
-        return Array(header.prefix(capacity - 2)) + ["…", ""]
+        let limit = max(0, header.count - viewport)
+        let start = min(max(0, offset), limit)
+        let end = start + viewport
+        var visible = Array(header[start..<end])
+        if viewport >= 3 {
+            if start > 0 {
+                visible[0] = "↑ more"
+            }
+            if end < header.count {
+                visible[visible.count - 1] = "↓ more"
+            }
+        }
+        return HeaderLayout(lines: visible + [""], scrollLimit: limit)
+    }
+
+    /// Key-help lines for a menu whose header table can scroll. The line
+    /// count never changes, since it takes part in the frame layout: the first
+    /// line gains the Tab hint, and names the arrows' target while the table
+    /// has control.
+    static func scrollableHeaderHelpLines(_ help: [String], tableFocused: Bool) -> [String] {
+        guard var first = help.first else {
+            return help
+        }
+        let movePrefix = "↑/↓ move"
+        if first.hasPrefix(movePrefix) {
+            let rest = first.dropFirst(movePrefix.count)
+            first = (tableFocused ? "↑/↓ scroll table · Tab list" : "↑/↓ move · Tab table") + rest
+        } else {
+            first += tableFocused ? " · Tab list" : " · Tab table"
+        }
+        return [first] + help.dropFirst()
     }
 
     static func detailSuffix<Value: Hashable>(

@@ -140,9 +140,14 @@ struct MemoryGraph: Codable, Sendable, Equatable {
     /// (files without a `graph_version` key); 2 — versioned schema whose newer
     /// fields are optional with contract defaults; 3 — `embedding` carried as a
     /// base64 string of little-endian binary32 components instead of a numeric
-    /// array (see `EmbeddingWireCoding`). Every older version still loads; a
-    /// newer one is rejected without touching the file.
-    public static let currentGraphVersion: UInt32 = 3
+    /// array (see `EmbeddingWireCoding`); 4 — no `embedding` in the JSON: the
+    /// vectors live in the adjacent binary vectors file (`MemoryVectorFile`),
+    /// each bound to its entry by a content-and-model fingerprint. Every older
+    /// version still loads; a newer one is rejected without touching the file.
+    public static let currentGraphVersion: UInt32 = 4
+
+    /// First version whose vectors are in the vectors file rather than inline.
+    static let separateVectorsGraphVersion: UInt32 = 4
 
     /// Assumed `graph_version` for files written before the version key
     /// existed. Their schema matches the earliest versioned format; loading

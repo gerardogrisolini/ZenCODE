@@ -15,9 +15,13 @@ name — the trimmed, NFC-normalized name of the workspace folder, compared
 case-sensitively (`ProjectStorageKey`) — and `<supportDirectory>` honours
 `ZENCODE_SUPPORT_DIRECTORY` (default `~/.zencode`). The graph therefore follows
 a moved workspace folder, and two folders with the same name share one graph.
-The graph is written atomically as sorted-key
-pretty-printed JSON and is deliberately kept out of the workspace working tree
-because it may embed float vectors. A process-wide `MemoryGraphStoreRegistry`
+The graph is two files in that directory: `memory.graph.json`, written
+atomically as sorted-key pretty-printed JSON, and, from graph version 4,
+`memory.graph.json.vectors`, a binary file with the entries' embedding vectors
+(see the vectors file below). Both are owner-only (0600 in a
+0700 directory), sit next to the stable `memory.graph.json.lock` used for
+`flock`, and are deliberately kept out of the workspace working tree because
+the vectors are derived from the entries' content. A process-wide `MemoryGraphStoreRegistry`
 caches one open store per graph URL so parallel tool executions share a single
 engine instance.
 
@@ -36,9 +40,10 @@ never writes to it. A delegated sub-agent selects its graph from its own session
 in the same way: the workspace graph of its working directory, or the global
 graph when its profile has the `organizer` role.
 
-Opening loads only the JSON graph, or starts with an empty graph if no JSON
-file exists. `open` never persists: a cold `memory.search` / `memory.read`
-neither creates the graph file nor requires a writable support directory.
+Opening loads only the graph files — the JSON and, for a version 4 graph, its
+vectors file — or starts with an empty graph if no JSON file exists. `open`
+never persists: a cold `memory.search` / `memory.read`
+neither creates the graph files nor requires a writable support directory.
 The first mutation atomically persists the graph. An existing `MEMORY.md`,
 whether valid, malformed or unreadable, is completely ignored: it is not
 read, parsed, imported, embedded, rewritten or deleted. Its contents cannot
@@ -48,19 +53,27 @@ The file-specific template, filename constant and document errors are removed;
 the deprecated synchronous APIs that operate on the graph remain supported.
 
 The persistence layer keeps the last decoded graph together with the identity
-of the file it was read from: device, inode, size, and modification time in
+of the files it was read from — the JSON and, when it exists, the vectors
+file: device, inode, size, and modification time in
 nanoseconds, read through `FileManager.attributesOfItem` (naming `struct stat`
 is not portable under `MemberImportVisibility` on Linux). `load()`,
 `reloadReadOnly()`, and the reload inside `transaction` (under `flock`) decode
-again only when that identity has changed; a missing file clears the cache and
-yields an empty graph. An unlocked read takes the identity again after the
-bytes were read and keeps the pair only when the file did not change in
-between, so a concurrent publish can never pair one file's identity with
-another file's bytes — it simply costs one more decode. After a successful
-publish the cache is re-primed with the staging file's identity (preserved by
-`rename`) and the graph decoded from the bytes just written, so the next read,
-typically the recall of the following turn, pays no decode. The cache does not
-change semantics: a read returns exactly what decoding the current file would
+again only when either identity has changed; a missing JSON clears the cache and
+yields an empty graph. An unlocked read takes both identities again after the
+bytes were read and keeps the result only when neither file changed in between,
+so a concurrent publish can never pair one save's identities with another
+save's bytes; otherwise it reads again, up to three times, and then returns its
+last decode uncached, which the fingerprints keep safe (a mixed pair can only
+lack vectors, see the vectors file below). After a successful
+publish the cache is re-primed with the identities of the staging files
+(preserved by `rename`) and the graph decoded from the bytes just written, so
+the next read, typically the recall of the following turn, pays no decode. The
+persistence also keeps the exact bytes of the vectors file it last read or
+wrote, with that file's identity: a save rewrites the vectors file only when the
+bytes it would write differ or the file on disk is no longer the one recorded,
+so a save that changes no vector — an access count, a link, the text of an entry
+without a vector — republishes the JSON alone. The cache does not change
+semantics: a read returns exactly what decoding the current files would
 return, and cross-process freshness holds because every ZenCODE writer publishes
 via `rename`, which always creates a new inode.
 
@@ -75,27 +88,99 @@ touches disk. The transaction also serializes read-modify-write sequences that
 would otherwise interleave across actor suspension points, and it re-checks
 `Task.checkCancellation()` after the write lock is acquired and before the
 body/save: a task cancelled while parked at the lock neither commits nor
-strands the lock. The graph JSON carries `graph_version` (currently 3); a file
+strands the lock. The graph JSON carries `graph_version` (currently 4); a file
 written by a newer engine is rejected on load and left byte-identical, while
 older files decode through optional fields with contract defaults (`scope` →
 `.project`, `active` → `true`, …). A file with no `graph_version` key at all is
 the legacy v1 format (`MemoryGraph.legacyGraphVersion`): it is decoded with the
 same contract defaults and normalized to the current version in memory. Loading
-never rewrites the file — the on-disk graph stays byte-identical until an
+never rewrites the files — the on-disk graph stays byte-identical until an
 explicit save (a mutation) writes the current version.
 
-Graph version 3 stores each `embedding` as a base64 string of the little-endian
+Graph version 3 stored each `embedding` as a base64 string of the little-endian
 IEEE-754 binary32 components instead of a JSON number array, a lossless
-encoding that preserves the bit pattern of every component. The decoder accepts
-both forms, so v1 and v2 files load unchanged; the version is normalized to 3 in
-memory, and the file is rewritten in v3 only by the first save (an explicit
-mutation or a recall-maintenance checkpoint), never by loading. Earlier builds
-reject a v3 file with `unsupportedGraphVersion(3)` and leave it byte-identical,
-while malformed base64 or a payload that is not a multiple of four bytes fails
-decoding as corrupt data. The format exists because 4096-dimensional vectors
-made the pretty-printed JSON of a 239-entry graph about 21 MB, costing roughly
-175 ms to decode and 280 ms to encode on every save; base64 reduces the file to
-about 6 MB.
+encoding that preserves the bit pattern of every component. The decoder still
+accepts both forms, so v1, v2 and v3 files load unchanged; they are normalized to
+the current version in memory and rewritten only by the first save (an explicit
+mutation or a recall-maintenance checkpoint), never by loading. Builds before
+version 3 reject a v3 file with `unsupportedGraphVersion(3)` and leave it
+byte-identical, while malformed base64 or a payload that is not a multiple of
+four bytes fails decoding as corrupt data. That format existed because
+4096-dimensional vectors made the pretty-printed JSON of a 239-entry graph about
+21 MB, costing roughly 175 ms to decode and 280 ms to encode on every save;
+base64 reduced the file to about 6 MB.
+
+**The vectors file.** Graph version 4 takes the vectors out of the JSON.
+Entries keep `embedding_model` but no longer have an `embedding` key: their
+vectors are in `memory.graph.json.vectors` (`MemoryVectorFile`), one binary
+file next to the JSON, rewritten as a whole through an owner-only staging file
+and `rename` like the JSON, and only when the bytes it would hold change. Why:
+with base64 vectors the JSON of the ZenCODE graph (289 entries, 280 vectors of
+4096 dimensions) had grown to 8.7 MB, and the whole file was rewritten by every
+mutation and by every recall-maintenance checkpoint (every 4 recalls by
+default), that is many times a day for vectors that almost never change. Saved
+as version 4, the same graph is a 2.5 MB JSON plus a 2.3 MB vectors file, and
+only a change of a vector rewrites the latter. The components are IEEE-754
+binary16, which halves the vectors again; the choice was measured: on that
+graph re-embedded with `qwen/qwen3-embedding-4b` (240 active entries, 2560
+dimensions) the A/B harness (`ZENCODE_AB_COMPARE_FLOAT16=1`, same vectors and
+same query embeddings in one run) gave identical aggregates for binary32 and
+binary16 vectors, with no top-5 change in any of its 140 per-query rows and a
+largest component error of 3.1e-5. The component type is in the header, so a
+binary32 file stays readable. The harness copies the graph named by
+`ZENCODE_AB_GRAPH_PATH` together with its `memory.graph.json.vectors`, so a
+version 4 graph is measured with its vectors.
+
+Every integer is little-endian on every platform, and the bytes are a function
+of the graph alone (records sorted by the UTF-8 bytes of the id):
+
+```
+header   magic "ZMVF" (4 bytes) · format version UInt16 = 1
+         component type UInt16 (1 = binary16, 2 = binary32) · record count UInt32
+record   id length UInt16 · id (UTF-8) · fingerprint UInt64
+         content length UInt32 (UTF-8 bytes) · dimension UInt32
+         components (dimension × 2 or × 4 bytes)
+```
+
+Every entry with a vector has a record, archived ones included; a graph without
+vectors has a file with no records. The fingerprint is the 64-bit FNV-1a hash of
+the UTF-8 bytes of the entry's `embedding_model` (`unspecified` when absent),
+one 0x00 byte and the UTF-8 bytes of its `content`. On load a record's vector is
+given to an entry only when the JSON just decoded has an entry with that id, the
+same content length and the same fingerprint; any other record is ignored. The
+fingerprint detects accidental mismatches, not tampering: the files are
+owner-only, and it is not a cryptographic hash (the graph, BM25 path and
+persistence stay dependency-free). A save writes the vectors file first and the
+JSON second, both under the graph's `flock`. Whatever pair of files a reader
+meets — a crash between the two writes, an unlocked read during a publish, a
+backup copied without its vectors file — an entry can at most come back without
+a vector (for an entry whose text or model changed in between), never with the
+vector of another text or model; **Data management › Rebuild memory
+embeddings** gives those entries a vector again. An inline `embedding` in a
+version 4 JSON is ignored.
+
+A missing, unreadable, truncated or corrupt vectors file, or one with an unknown
+format version or component type, is not an error: the file is checked as a
+whole (every length against the bytes left, no trailing bytes, no duplicate id,
+valid UTF-8) and, if it fails, the graph loads without vectors, so recall uses
+BM25 for every entry until the next save rewrites the file and a re-embedding
+fills it. Loading still writes nothing. A corrupt JSON remains an error, as
+before.
+
+In memory every vector is held at the stored precision: assigning one — from
+the embedding provider, from an inline v1–v3 vector or from the vectors file —
+rounds each component to the nearest binary16 value (ties to even, subnormals
+and signed zeros kept, beyond ±65504 to an infinity; embedding components are
+far smaller). The conversion is written by hand (`HalfPrecision`), because
+Swift's `Float16` does not exist on macOS x86_64 and the bytes must be the same
+on every platform. Therefore the graph an engine adopts after a save, and the one
+the cache is re-primed with, are exactly what decoding the files just published
+returns; a v3 graph loads with the values its first save writes; and writing
+back the binary32 vector a provider returned is not a change, so it never
+republishes anything. Earlier builds reject a version 4 graph with
+`unsupportedGraphVersion(4)` and leave both files untouched; there is no
+export back to version 3. A version 3 JSON next to a vectors file (for instance
+an old copy put back by hand) uses its inline vectors and ignores the file.
 
 ZenCODECore exposes its own public DTOs (`MemoryEntry`, `MemoryScope`,
 `MemoryCategory`) declared under `Models`; the internal `ZenMemory`
@@ -228,7 +313,8 @@ name, price per million input tokens, and input-token limit. When the catalog
 cannot be loaded or is empty, setup says so and shows a built-in snapshot of
 that catalog instead. The submenu preselects the currently configured model
 when the existing endpoint is OpenRouter and the model is listed, otherwise
-`qwen/qwen3-embedding-8b`. This catalog request is the only network work setup
+`qwen/qwen3-embedding-4b`; a model already saved, such as the earlier default
+`qwen/qwen3-embedding-8b`, stays valid. This catalog request is the only network work setup
 performs for embeddings. The manual add/change-endpoint path stays endpoint-only by
 design: it never carries over the preset's model/provider reference, so an
 edited endpoint cannot silently reuse the provider's key. For that manual
@@ -238,6 +324,9 @@ When an endpoint is configured, setup shows a note stating that the full text of
 every prompt (operator and sub-agent turns, for automatic recall) and of every
 memory entry written or updated is sent to that endpoint; without an endpoint,
 retrieval stays local (BM25).
+When "save and exit" stores an embedding configuration that differs from the
+one setup started with and resolves to a provider, setup then offers to
+re-embed every memory graph; see [Memory re-embedding](#memory-re-embedding).
 The embedding request never duplicates the provider's API key: when
 `providerID` is set the resolver reads
 `remoteAPIKeysByProviderID[providerID.uuidString.lowercased()]` at runtime only
@@ -381,7 +470,9 @@ instead of duplicating, archive stale entries, prefer fresh evidence over
 memory). `memory.read` pages the journal newest-first (`offset`, `limit`,
 `hasMore`) and both reads and searches accept a `MemoryEntryFilter` (`tags`,
 all required and case-insensitive; `category`). `memory.get` returns one entry
-by id, archived or not; `memory.restore` reactivates an archived entry.
+by id, archived or not; `memory.restore` reactivates an archived entry and,
+with an embedding provider, gives it a vector when it has none from that model
+(see [Memory re-embedding](#memory-re-embedding)).
 `memory.write` never blocks on similarity: after creating an entry it reports
 up to three active entries whose words cover much of the new content —
 scored with the engine's BM25 using the new content as the query, relative to
@@ -431,28 +522,126 @@ change, `max(createdAt, updatedAt)`, like retrieval does:
   store cannot use: every vector when no embedding provider is configured,
   otherwise those whose `embedding_model` differs from the provider the store
   was opened with. A vector is not recomputed by the cleanup; it is regenerated
-  only by the next `memory.update` or `memory.write` of that entry (there is no
-  batch re-embedding).
+  by the next `memory.update`, `memory.write` or `memory.restore` of that
+  entry, or for every graph at once by Data management › **Rebuild memory
+  embeddings** (see [Memory re-embedding](#memory-re-embedding)). It also
+  trims the co-relevance links of graphs written
+  before the per-entry cap existed: every entry is reduced to at most 12
+  outgoing `relatesTo` edges with the same criterion recall applies when it
+  makes room (weakest first, the oldest among equals — on a graph whose links
+  all weigh 0.7, the 12 most recent survive), and each removal takes the mirror
+  link with it. It runs after the dangling edges are gone, visits entries in id
+  order, so the result is deterministic, and a second run over the result
+  changes nothing. Only `relatesTo` edges are touched: tag, cluster, supersedes,
+  contradicts and derived-from edges stay. The report counts every removed edge,
+  both directions, as "excess links". No format change: hygiene adds no field
+  to the graph.
 
 Applying a cleanup is one engine transaction under the graph's file lock. The
 plan is computed again on the graph reloaded under the lock, so it can differ
 from the preview if another process wrote in between, and the report shown
 afterwards is the one applied. Before the graph changes, the pre-cleanup graph
-is written in the persisted format to `memory.graph.json.bak` in the same
-directory, through the owner-only staging file and `rename` used by saves: a
-previous copy is replaced atomically, only the last pre-cleanup state is kept,
-and a failing backup aborts the transaction with nothing saved. A plan that
-changes nothing writes neither the graph nor the backup. The engine never loads
-the `.bak` file; restoring it is manual, with `zen` closed (copy it over
-`memory.graph.json`). It lives in the support directory, so a Data management
-export includes it. `graph_version`, the on-disk formats, the `memory.*` tools
-and the public `MemoryService` API are unchanged.
+is written in the persisted format to `memory.graph.json.bak` and its vectors
+to `memory.graph.json.vectors.bak` in the same directory (the vectors first),
+through the owner-only staging files and `rename` used by saves: a previous
+copy is replaced atomically, only the last pre-cleanup state is kept, and a
+failing backup aborts the transaction with nothing saved. A plan that changes
+nothing writes neither the graph nor the backup. The engine never loads the
+`.bak` files; restoring them is manual, with `zen` closed: copy
+`memory.graph.json.bak` over `memory.graph.json` and
+`memory.graph.json.vectors.bak` over `memory.graph.json.vectors`. Copying only
+the JSON is safe as well: thanks to the fingerprints, an entry whose text or
+model differs from what the live vectors file was written for just comes back
+without a vector, which **Rebuild memory embeddings** restores. The backup lives
+in the support directory, so a Data management export includes it. The graph
+list of **Clean memory** shows the size of the JSON and the vectors file
+together. The on-disk formats, the `memory.*` tools and the public
+`MemoryService` API are not changed by the cleanup.
 
 For the graph of another project (never the current project and never the
 global graph), the same menu can instead delete the whole
 `<supportDirectory>/memory/<project key>/` directory. The confirmation names the
 exact path, no copy is made, and the cached store for that graph is dropped so
 a stale engine cannot write it back.
+
+## Memory re-embedding
+
+Vectors from another model are never compared (see above), so after the
+embedding model changes every entry embedded with the previous one falls back
+to keyword matching until it is embedded again. Re-embedding does that for
+every graph under `<supportDirectory>/memory/` (the current project, the global
+graph and the other projects), with the provider each store opens with from
+the saved settings. It runs from two places only; there is no slash command,
+flag, `memory.*` tool or automatic run:
+
+- **After setup.** Right after "save and exit" has written `settings.json` and
+  reset the store registry, so the stores reopen with the new provider, setup
+  offers it when `memoryEmbedding` differs from the configuration setup started
+  with and the new one resolves to a provider. Switching to BM25 offers
+  nothing, and a cancelled setup never touches a graph.
+- **Data management › Rebuild memory embeddings.** The same flow on demand,
+  with the provider of the settings saved on disk (not changes staged in the
+  current setup run), for instance to resume a stopped run or to retry failed
+  entries. Without a configured endpoint it says so and does nothing.
+
+Before anything is sent, a list shows the model and, for each graph by folder
+name, the active entries to embed — those without a vector or with a vector
+from another model — and the archived entries whose vector is deleted, then
+the total. Building it makes no request. A graph with nothing to do is listed
+as "up to date"; when no graph has anything to do, nothing is asked (after
+setup, nothing is printed either). The list recalls that the content of each
+entry is sent to the embedding endpoint, and the confirmation defaults to Yes.
+Declining after setup points to Data management › Rebuild memory embeddings.
+
+The run, graph by graph:
+
+- **Archived entries** are not embedded, since they are never recalled: their
+  vectors are deleted first, without touching `updatedAt`. Archiving an entry
+  still keeps its vector.
+- **Text and order.** Each request embeds the stored `content`, exactly the
+  text `memory.write` and `memory.update` embed, so the vector is the one a
+  fresh write would produce. The newest entries go first.
+- **Vector length.** The first successful answer of the run fixes the
+  dimension. An active entry whose vector comes from the right model but has
+  another length, which recall skips, is embedded again too: the list cannot
+  see lengths, the summary counts these entries.
+- **Blocks.** At most 4 requests are in flight. Vectors are requested outside
+  any transaction and saved every 16 entries in one engine transaction, which
+  sets a vector only if the entry still exists, is still active, still has the
+  content that was embedded and has not meanwhile received a compatible vector:
+  a concurrent write, update, archive or delete, from this or another process,
+  always wins. A stop or a crash therefore leaves every entry either with its
+  new vector or as it was, without a vector or with one recall ignores.
+- **Retries.** HTTP 429 (OpenRouter answers "Model busy" under load), 408, 5xx
+  and transport failures are retried, up to 5 attempts per entry, after 1, 2, 4
+  and 8 seconds. An entry that exhausts its attempts, or fails in any other
+  way, keeps its previous state and is counted as failed; the run goes on.
+- **Aborts.** HTTP 401, 403 or 404 stops the whole run at once, and so does a
+  run whose first 8 entries all fail: no further request is sent. Messages
+  carry only a status or an error kind, never a key, a token, the endpoint URL,
+  a response body or entry text.
+
+While a graph runs, one line is rewritten in place, for example
+`ZenCODE-…: 120/238 (2 failed) · Esc to stop`. **Esc** stops cleanly: no new
+request is sent, not even a pending retry, the requests in flight finish and
+their vectors are saved, then the run stops and the summary says how to
+resume. Ctrl-C keeps its meaning and ends the process; the blocks already
+saved stay. The Esc watch is the one used while a turn generates
+(`TerminalEscapeStopMonitor`); it is torn down at the end of every run, so the
+terminal leaves raw mode before the summary. The summary lists, per graph and
+in total, the entries embedded, failed, skipped because they changed meanwhile
+and not reached, the archived vectors deleted, and the model with the observed
+dimension.
+
+`memory.restore` closes the remaining gap: when the store has an embedding
+provider and the restored entry has no vector from its model, the vector is
+computed after the restore transaction and saved in a second one, only if the
+entry is still active and its content is unchanged. An endpoint failure is
+reported like any other mutation fallback and leaves the entry on BM25; the
+restore itself never fails because of it.
+
+Re-embedding adds no field to the file format. The dimension of a vector is its
+length (the `dimension` of its record in the vectors file).
 
 ## Conservative project-memory consolidation
 
@@ -552,10 +741,28 @@ in place of the engine's default `TopScoreMemorySelector`. The default returns
 every candidate up to `maxResults`, which would defeat the engine's
 post-retrieval maintenance: every retrieved entry would be boosted (confidence
 flattens toward 1.0), and `selected.count >= 2` would nearly always hold, so
-every recall would link its results pairwise at weight 0.7, saturating the
+every recall would link its results pairwise, saturating the
 graph until cascade retrieval degenerates into noise. The threshold selector
 keeps only candidates scoring at least half of the top hit, limiting the boost
-and co-relevance linking to genuinely strong matches. Rejected candidates are
+and co-relevance linking to genuinely strong matches. Even then the links are
+bounded (`MemoryRelationPolicy`, carried by `MemoryEngineConfiguration`, so a
+replayed maintenance batch applies the policy it was recorded with): a pair
+selected together is linked in both directions at weight 0.7, and every further
+co-selection of the same pair adds 0.05 up to 0.9 — an existing weight is
+never lowered, so a legacy 1.0 stays 1.0, and a pair known in only one
+direction takes the heavier weight in both. Each entry keeps at most 12
+outgoing `relatesTo` links: before a new link is added to an entry that is at
+or over the cap, that entry's weakest links go — the oldest among equals, even
+when the weakest weighs as much as the newcomer — until it is back below 12,
+and every removed link takes its mirror with it. Reinforcing an existing link
+never evicts anything, so recall tidies the entries it touches while the
+cleanup's **Graph hygiene** trims the whole graph. The new weight is stored in
+place, so the position of a link — its age for eviction — is that of its
+creation; only `relatesTo` edges are ever added or removed this way, and the
+reverse index drops a source only when no edge of another kind still joins the
+two entries. The links add no field to the file format: the weight is the
+`weight` the `relates_to` edge already carried.
+Rejected candidates are
 left untouched: `decayRejectedBy` defaults to 0, so being retrieved near a
 prompt without being chosen costs an entry nothing, and the boost records the
 access without touching `updatedAt`. It makes no LLM call and no network

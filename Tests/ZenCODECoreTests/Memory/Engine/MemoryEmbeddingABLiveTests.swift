@@ -21,6 +21,8 @@
 //  Environment:
 //    ZENCODE_RUN_LIVE_MEMORY_AB=1        enables the test
 //    ZENCODE_AB_GRAPH_PATH               path of the memory.graph.json to copy
+//                                        (its memory.graph.json.vectors file,
+//                                        graph version 4, is copied with it)
 //    ZENCODE_AB_SETTINGS_PATH            settings.json with `memoryEmbedding`
 //    ZENCODE_AB_REPORT_PATH              markdown report destination (optional)
 //    ZENCODE_AB_EXCLUDE_IDS              comma-separated entry id prefixes to
@@ -30,6 +32,19 @@
 //                                        settings.json (in memory only; the
 //                                        endpoint and provider reference are
 //                                        kept and settings.json is never written)
+//    ZENCODE_AB_PRUNE_RELATIONS=1        applies ONLY `pruneRelations` (default
+//                                        relation policy: at most 12 relatesTo
+//                                        edges per entry) to the in-memory copy
+//                                        before re-embedding, and reports how many
+//                                        edges it removed; the source graph is
+//                                        never touched
+//    ZENCODE_AB_COMPARE_FLOAT16=1        after re-embedding, evaluates every
+//                                        variant twice in the same run: on the
+//                                        binary32 vectors and on a copy whose
+//                                        vectors are rounded to binary16 (same
+//                                        vectors, same query embeddings), and
+//                                        reports both aggregate tables and the
+//                                        per-query rows whose top-5 changed
 //
 
 import Foundation
@@ -253,6 +268,18 @@ struct MemoryEmbeddingABLiveTests {
         let milliseconds: Double
     }
 
+    /// Every variant, and A, evaluated over one graph.
+    private struct Evaluation {
+        var lexical = Aggregate()
+        var lexicalOutcomes: [QueryOutcome] = []
+        var variants: [(Variant, Aggregate, [QueryOutcome])] = []
+
+        /// Rows of the per-query section, in report order: A, then each variant.
+        var rows: [(name: String, outcomes: [QueryOutcome], aggregate: Aggregate)] {
+            [("A BM25 only", lexicalOutcomes, lexical)] + variants.map { ($0.0.name, $0.2, $0.1) }
+        }
+    }
+
     private struct Aggregate {
         var reciprocalRanks: [Double] = []
         var recallAt5: [Double] = []
@@ -302,6 +329,39 @@ struct MemoryEmbeddingABLiveTests {
 
     // MARK: - Test
 
+    /// Hermetic: the harness copies a version 4 graph with its vectors file,
+    /// so the copy loads with the same vectors as the source.
+    @Test func harnessCopiesTheVectorsFileWithTheGraph() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let sourceDirectory = root.appendingPathComponent("source", isDirectory: true)
+        let copyDirectory = root.appendingPathComponent("copy", isDirectory: true)
+        try fileManager.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: copyDirectory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let source = sourceDirectory.appendingPathComponent("memory.graph.json")
+        var graph = MemoryGraph()
+        graph.addMemory(EngineMemoryEntry(
+            id: "vec", category: .fact, content: "with a vector",
+            embedding: [0.5, -0.25, 1], embeddingModel: "m"
+        ))
+        try await JSONMemoryPersistence(url: source).save(graph)
+
+        let copy = try Self.copyGraphFiles(from: source, into: copyDirectory)
+
+        #expect(copy.lastPathComponent == "memory.graph.json")
+        #expect(try Data(contentsOf: JSONMemoryPersistence.vectorsURL(forGraphAt: copy))
+            == Data(contentsOf: JSONMemoryPersistence.vectorsURL(forGraphAt: source)))
+        #expect(try await JSONMemoryPersistence(url: copy).load().memories["vec"]?.embedding == [0.5, -0.25, 1])
+
+        // Without a vectors file (a version 3 graph) only the JSON is copied.
+        let legacyDirectory = root.appendingPathComponent("legacy", isDirectory: true)
+        try fileManager.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
+        try fileManager.removeItem(at: JSONMemoryPersistence.vectorsURL(forGraphAt: source))
+        let legacyCopy = try Self.copyGraphFiles(from: source, into: legacyDirectory)
+        #expect(try fileManager.contentsOfDirectory(atPath: legacyDirectory.path) == [legacyCopy.lastPathComponent])
+    }
+
     @Test func compareRetrievalConfigurationsOnRealGraph() async throws {
         let env = ProcessInfo.processInfo.environment
         guard env["ZENCODE_RUN_LIVE_MEMORY_AB"] == "1" else { return }
@@ -323,8 +383,7 @@ struct MemoryEmbeddingABLiveTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let graphURL = tempDir.appendingPathComponent("memory.graph.json")
-        try FileManager.default.copyItem(at: URL(fileURLWithPath: graphPath), to: graphURL)
+        let graphURL = try Self.copyGraphFiles(from: URL(fileURLWithPath: graphPath), into: tempDir)
         var loadedGraph = try await JSONMemoryPersistence(url: graphURL).load()
         for id in loadedGraph.memories.keys where excludedPrefixes.contains(Self.prefix8(id)) {
             _ = loadedGraph.removeMemory(id: id)
@@ -352,6 +411,17 @@ struct MemoryEmbeddingABLiveTests {
         let upstream = try #require(MemoryEmbedding.provider(manifest: manifest, environment: [:]))
         let modelID = upstream.modelID
 
+        // Optional lever measurement: the relation cap alone, on the copy, before
+        // anything is embedded. Nothing else of the cleanup runs.
+        var prunedRelationEdges: Int?
+        var relationEdgesBefore = 0
+        if env["ZENCODE_AB_PRUNE_RELATIONS"] == "1" {
+            relationEdgesBefore = loadedGraph.edges.values.joined().filter { $0.kind.relationWeight != nil }.count
+            prunedRelationEdges = loadedGraph.pruneRelations(
+                maximumPerMemory: MemoryRelationPolicy.default.maximumLinksPerMemory
+            )
+        }
+
         // Archived entries keep no vector (product decision); retrieval only reads
         // active entries, so clearing them on the copy changes nothing but fidelity.
         var archivedVectorsCleared = 0
@@ -368,12 +438,21 @@ struct MemoryEmbeddingABLiveTests {
             .sorted { $0.id < $1.id }
             .map { ReembedJob(id: $0.id, text: MemoryContent.normalized($0.content)) }
         let reembedResults = await Self.reembed(reembedJobs, with: upstream, maxConcurrent: 4)
+        // Production holds every vector at the stored precision. The binary16
+        // comparison needs the provider's binary32 values as its baseline, so
+        // only then are the new vectors kept at full precision (in memory only:
+        // the copy is never saved).
+        let keepsFullPrecision = env["ZENCODE_AB_COMPARE_FLOAT16"] == "1"
         var reembedLatencies: [Double] = []
         var reembedFailures: [String] = []
         var reembedRetried = 0
         for result in reembedResults {
             if let values = result.values {
-                loadedGraph.memories[result.id]?.setEmbedding(values, model: modelID)
+                if keepsFullPrecision {
+                    loadedGraph.memories[result.id]?.setEmbeddingWithoutRounding(values, model: modelID)
+                } else {
+                    loadedGraph.memories[result.id]?.setEmbedding(values, model: modelID)
+                }
                 reembedLatencies.append(result.milliseconds)
                 if result.attempts > 1 { reembedRetried += 1 }
             } else {
@@ -382,11 +461,14 @@ struct MemoryEmbeddingABLiveTests {
         }
         reembedFailures.sort()
         let graph = loadedGraph
+        let compareFloat16 = keepsFullPrecision
+        // Same vectors, each component rounded to the nearest binary16 value.
+        let float16Graph = compareFloat16 ? Self.roundedToFloat16(graph) : nil
 
         let embedder = MemoizingEmbeddingProvider(upstream: upstream)
         let recorder = FailureRecorder()
 
-        func makeEngine(_ configuration: MemoryEngineConfiguration) -> MemoryEngine {
+        func makeEngine(_ configuration: MemoryEngineConfiguration, graph: MemoryGraph) -> MemoryEngine {
             MemoryEngine(
                 graph: graph,
                 embedder: embedder,
@@ -409,6 +491,11 @@ struct MemoryEmbeddingABLiveTests {
 
         var report = "# Memory retrieval A/B v2\n\n"
         report += "- graph: \(entries.count) entries, \(activeCount) active, \(vectorCount) active with a vector from `\(embedder.modelID)`; excluded prefixes: \(excludedPrefixes.sorted().joined(separator: ", "))\n"
+        if let prunedRelationEdges {
+            report += "- relation pruning (ZENCODE_AB_PRUNE_RELATIONS=1): \(prunedRelationEdges) relatesTo edges removed from the copy (cap \(MemoryRelationPolicy.default.maximumLinksPerMemory) per entry; relatesTo edges \(relationEdgesBefore) → \(relationEdgesBefore - prunedRelationEdges)); the source graph is untouched\n"
+        } else {
+            report += "- relation pruning: off (set ZENCODE_AB_PRUNE_RELATIONS=1 to apply the 12-per-entry cap to the copy)\n"
+        }
         report += "- A = BM25 + graph cascade (no embedder); Bn = BM25 + semantic, see variants; automatic-recall configuration, scope .all, read-only `retrieveAndSelect`\n"
         report += "- metrics: MRR over the ranked candidates, recall@5 = |relevant ∩ top-5| / min(5, |relevant|), hit@1, misses = queries with no relevant entry in the top-5, exact-regressions = lexically exact queries whose relevant top-1 was displaced, Jaccard = top-5 overlap with A\n\n"
 
@@ -424,25 +511,57 @@ struct MemoryEmbeddingABLiveTests {
         report += reembedSection
         print(reembedSection)
 
-        // A: lexical only, once per query.
-        let baselineEngine = makeEngine(MemoryEngineConfiguration())
-        var lexicalTops: [[String]] = []
-        var lexicalAggregate = Aggregate()
-        var lexicalOutcomes: [QueryOutcome] = []
-        for query in Self.queries {
-            let start = clock.now
-            let result = try await baselineEngine.retrieveAndSelect(query.text, scope: .all, graph: graph, includeSemantic: false)
-            let outcome = QueryOutcome(
-                topIDs: result.candidates.map(\.memory.id),
-                selectedCount: result.selected.count,
-                candidateCount: result.candidates.count,
-                semanticHitCount: 0,
-                milliseconds: Self.milliseconds(clock.now - start)
-            )
-            lexicalOutcomes.append(outcome)
-            lexicalTops.append(outcome.topIDs)
-            Self.score(outcome, query: query, lexicalTop: outcome.topIDs, into: &lexicalAggregate)
+        // A and every variant over one graph, through the production pipeline.
+        // Query vectors come from the memoizing provider, so evaluating a second
+        // graph reuses exactly the same query embeddings and sends no request.
+        func evaluate(_ graph: MemoryGraph) async throws -> Evaluation {
+            var evaluation = Evaluation()
+            // A: lexical only, once per query.
+            let baselineEngine = makeEngine(MemoryEngineConfiguration(), graph: graph)
+            for query in Self.queries {
+                let start = clock.now
+                let result = try await baselineEngine.retrieveAndSelect(query.text, scope: .all, graph: graph, includeSemantic: false)
+                let outcome = QueryOutcome(
+                    topIDs: result.candidates.map(\.memory.id),
+                    selectedCount: result.selected.count,
+                    candidateCount: result.candidates.count,
+                    semanticHitCount: 0,
+                    milliseconds: Self.milliseconds(clock.now - start)
+                )
+                evaluation.lexicalOutcomes.append(outcome)
+                Self.score(outcome, query: query, lexicalTop: outcome.topIDs, into: &evaluation.lexical)
+            }
+
+            for variant in Self.variants {
+                let engine = makeEngine(variant.configuration, graph: graph)
+                var aggregate = Aggregate()
+                var outcomes: [QueryOutcome] = []
+                for (index, query) in Self.queries.enumerated() {
+                    let start = clock.now
+                    let result = try await engine.retrieveAndSelect(query.text, scope: .all, graph: graph, includeSemantic: true)
+                    let vector = try await embedder.embed(query.text)
+                    let semanticHits = MemorySearch.semantic(
+                        graph: graph, queryEmbedding: vector, modelID: embedder.modelID, scope: .all,
+                        threshold: variant.configuration.similarityThreshold,
+                        minimumZScore: variant.configuration.semanticMinimumZScore,
+                        limit: variant.configuration.maxSemanticHits * 4
+                    ).count
+                    let outcome = QueryOutcome(
+                        topIDs: result.candidates.map(\.memory.id),
+                        selectedCount: result.selected.count,
+                        candidateCount: result.candidates.count,
+                        semanticHitCount: semanticHits,
+                        milliseconds: Self.milliseconds(clock.now - start)
+                    )
+                    outcomes.append(outcome)
+                    Self.score(outcome, query: query, lexicalTop: evaluation.lexicalOutcomes[index].topIDs, into: &aggregate)
+                }
+                evaluation.variants.append((variant, aggregate, outcomes))
+            }
+            return evaluation
         }
+
+        let evaluation = try await evaluate(graph)
 
         // Pure semantic distribution analysis from the cached vectors.
         report += "## Pure semantic ranking (raw cosine)\n\n"
@@ -472,60 +591,32 @@ struct MemoryEmbeddingABLiveTests {
         }
         report += "\nSummary: best relevant rank median \(Self.fmt(Self.median(bestRelevantRanks.map(Double.init)))); queries with a relevant entry at pure-semantic #1: \(bestRelevantRanks.filter { $0 == 1 }.count)/\(Self.queries.count)\n\n"
 
-        // Variants through the production pipeline.
-        var variantAggregates: [(Variant, Aggregate, [QueryOutcome])] = []
-        for variant in Self.variants {
-            let engine = makeEngine(variant.configuration)
-            var aggregate = Aggregate()
-            var outcomes: [QueryOutcome] = []
-            for (index, query) in Self.queries.enumerated() {
-                let start = clock.now
-                let result = try await engine.retrieveAndSelect(query.text, scope: .all, graph: graph, includeSemantic: true)
-                let vector = try await embedder.embed(query.text)
-                let semanticHits = MemorySearch.semantic(
-                    graph: graph, queryEmbedding: vector, modelID: embedder.modelID, scope: .all,
-                    threshold: variant.configuration.similarityThreshold,
-                    minimumZScore: variant.configuration.semanticMinimumZScore,
-                    limit: variant.configuration.maxSemanticHits * 4
-                ).count
-                let outcome = QueryOutcome(
-                    topIDs: result.candidates.map(\.memory.id),
-                    selectedCount: result.selected.count,
-                    candidateCount: result.candidates.count,
-                    semanticHitCount: semanticHits,
-                    milliseconds: Self.milliseconds(clock.now - start)
-                )
-                outcomes.append(outcome)
-                Self.score(outcome, query: query, lexicalTop: lexicalTops[index], into: &aggregate)
-            }
-            variantAggregates.append((variant, aggregate, outcomes))
-        }
-
         report += "## Aggregate over \(Self.queries.count) queries\n\n"
-        report += "| variant | MRR | recall@5 | hit@1 | misses | exact-regr. | mean selected | Jaccard vs A |\n|---|---|---|---|---|---|---|---|\n"
-        report += "| A BM25 only | \(Self.fmt(lexicalAggregate.meanReciprocalRank)) | \(Self.fmt(lexicalAggregate.meanRecallAt5)) | \(lexicalAggregate.hitAt1) | \(lexicalAggregate.misses) | \(lexicalAggregate.exactRegressions.count) | \(Self.fmt(lexicalAggregate.meanSelected)) | 1.00 |\n"
-        for (variant, aggregate, _) in variantAggregates {
-            report += "| \(variant.name) | \(Self.fmt(aggregate.meanReciprocalRank)) | \(Self.fmt(aggregate.meanRecallAt5)) | \(aggregate.hitAt1) | \(aggregate.misses) | \(aggregate.exactRegressions.count) | \(Self.fmt(aggregate.meanSelected)) | \(Self.fmt(aggregate.meanJaccard)) |\n"
-        }
+        report += Self.aggregateTable(evaluation)
         report += "\n"
-        for (variant, aggregate, _) in variantAggregates where !aggregate.exactRegressions.isEmpty {
+        for (variant, aggregate, _) in evaluation.variants where !aggregate.exactRegressions.isEmpty {
             report += "- \(variant.name) displaced the exact lexical top-1 for: \(aggregate.exactRegressions.map { "“\($0)”" }.joined(separator: ", "))\n"
         }
 
         report += "\n## Per-query top-5 (✓ = relevant; `sel`=selected for injection, `sem`=semantic hits entering fusion)\n\n"
         for (index, query) in Self.queries.enumerated() {
             report += "### Q\(index + 1) [\(query.label)] “\(query.text)” — relevant: \(query.relevant.sorted().joined(separator: ", "))\n\n"
-            func row(_ name: String, _ outcome: QueryOutcome) -> String {
-                let ids = outcome.topIDs.prefix(5).map { id -> String in
-                    Self.isRelevant(id, for: query) ? "✓\(Self.prefix8(id))" : " \(Self.prefix8(id))"
-                }
-                return "- \(name.padding(toLength: 30, withPad: " ", startingAt: 0)) sel=\(outcome.selectedCount) sem=\(outcome.semanticHitCount) · \(ids.joined(separator: "  "))\n"
-            }
-            report += row("A BM25 only", lexicalOutcomes[index])
-            for (variant, _, outcomes) in variantAggregates {
-                report += row(variant.name, outcomes[index])
+            for row in evaluation.rows {
+                report += Self.row(row.name, row.outcomes[index], query: query)
             }
             report += "\n"
+        }
+
+        var float16Section = ""
+        if let float16Graph {
+            let float16 = try await evaluate(float16Graph)
+            float16Section = Self.float16Comparison(
+                float32: evaluation,
+                float16: float16,
+                float32Graph: graph,
+                float16Graph: float16Graph
+            )
+            report += float16Section
         }
 
         let durations = await embedder.requestDurations
@@ -539,6 +630,9 @@ struct MemoryEmbeddingABLiveTests {
         if let summaryStart = report.range(of: "## Aggregate over") {
             print(String(report[summaryStart.lowerBound...].prefix(4_000)))
         }
+        if !float16Section.isEmpty {
+            print(float16Section)
+        }
         #expect(failures.isEmpty)
         #expect(requestCount == Self.queries.count)
         // Retrieval silently skips vectors whose length differs from the query's.
@@ -546,6 +640,129 @@ struct MemoryEmbeddingABLiveTests {
     }
 
     // MARK: - Helpers
+
+    /// Copies the graph at `source` into `directory` under its own name, with
+    /// its vectors file (`<graph>.vectors`, graph version 4) when there is one,
+    /// and returns the copy's URL. Without the vectors file a version 4 copy
+    /// would load with no vector at all.
+    static func copyGraphFiles(from source: URL, into directory: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let copy = directory.appendingPathComponent(source.lastPathComponent)
+        try fileManager.copyItem(at: source, to: copy)
+        let sourceVectors = JSONMemoryPersistence.vectorsURL(forGraphAt: source)
+        if fileManager.fileExists(atPath: sourceVectors.path) {
+            try fileManager.copyItem(at: sourceVectors, to: JSONMemoryPersistence.vectorsURL(forGraphAt: copy))
+        }
+        return copy
+    }
+
+    private static func aggregateTable(_ evaluation: Evaluation) -> String {
+        var table = "| variant | MRR | recall@5 | hit@1 | misses | exact-regr. | mean selected | Jaccard vs A |\n|---|---|---|---|---|---|---|---|\n"
+        let lexical = evaluation.lexical
+        table += "| A BM25 only | \(fmt(lexical.meanReciprocalRank)) | \(fmt(lexical.meanRecallAt5)) | \(lexical.hitAt1) | \(lexical.misses) | \(lexical.exactRegressions.count) | \(fmt(lexical.meanSelected)) | 1.00 |\n"
+        for (variant, aggregate, _) in evaluation.variants {
+            table += "| \(variant.name) | \(fmt(aggregate.meanReciprocalRank)) | \(fmt(aggregate.meanRecallAt5)) | \(aggregate.hitAt1) | \(aggregate.misses) | \(aggregate.exactRegressions.count) | \(fmt(aggregate.meanSelected)) | \(fmt(aggregate.meanJaccard)) |\n"
+        }
+        return table
+    }
+
+    private static func top5(_ outcome: QueryOutcome, query: Query) -> String {
+        outcome.topIDs.prefix(5).map { id -> String in
+            isRelevant(id, for: query) ? "✓\(prefix8(id))" : " \(prefix8(id))"
+        }.joined(separator: "  ")
+    }
+
+    private static func row(_ name: String, _ outcome: QueryOutcome, query: Query) -> String {
+        "- \(name.padding(toLength: 30, withPad: " ", startingAt: 0)) sel=\(outcome.selectedCount) sem=\(outcome.semanticHitCount) · \(top5(outcome, query: query))\n"
+    }
+
+    /// `graph` with every vector component rounded to the nearest binary16
+    /// value, everything else unchanged.
+    private static func roundedToFloat16(_ graph: MemoryGraph) -> MemoryGraph {
+        var rounded = graph
+        for (id, entry) in graph.memories {
+            guard let embedding = entry.embedding else { continue }
+            rounded.memories[id]?.setEmbedding(HalfPrecision.rounded(embedding), model: entry.embeddingModel)
+        }
+        return rounded
+    }
+
+    /// Rows checked by the storage-precision acceptance criterion.
+    private static let float16CriterionRows = [
+        "A BM25 only", "R25 norm robust z2.5 (chosen)", "R3 norm robust z3", "D  engine defaults",
+    ]
+
+    /// Both aggregate tables, the per-query rows whose top-5 differs, the
+    /// acceptance criterion per checked row and the vector rounding error.
+    private static func float16Comparison(
+        float32: Evaluation,
+        float16: Evaluation,
+        float32Graph: MemoryGraph,
+        float16Graph: MemoryGraph
+    ) -> String {
+        var section = "## Float16 comparison (ZENCODE_AB_COMPARE_FLOAT16=1)\n\n"
+
+        var vectorCount = 0
+        var componentCount = 0
+        var changedComponents = 0
+        var fullPrecisionVectors = 0
+        var maximumError: Float = 0
+        var cosines: [Double] = []
+        for (id, entry) in float32Graph.memories {
+            guard let wide = entry.embedding, let narrow = float16Graph.memories[id]?.embedding else { continue }
+            vectorCount += 1
+            componentCount += wide.count
+            let changed = zip(wide, narrow).filter { $0.bitPattern != $1.bitPattern }.count
+            changedComponents += changed
+            if changed > 0 { fullPrecisionVectors += 1 }
+            maximumError = max(maximumError, zip(wide, narrow).map { abs($0 - $1) }.max() ?? 0)
+            var dot = 0.0, wideNorm = 0.0, narrowNorm = 0.0
+            for (a, b) in zip(wide, narrow) {
+                dot += Double(a) * Double(b)
+                wideNorm += Double(a) * Double(a)
+                narrowNorm += Double(b) * Double(b)
+            }
+            if wideNorm > 0, narrowNorm > 0 { cosines.append(dot / (wideNorm.squareRoot() * narrowNorm.squareRoot())) }
+        }
+        section += "- vectors: \(vectorCount) (\(fullPrecisionVectors) not already binary16-exact); components changed by rounding: \(changedComponents) of \(componentCount); max absolute error \(maximumError)\n"
+        section += "- 1 − cosine(binary32, binary16) per vector: max \(String(format: "%.3e", 1 - (cosines.min() ?? 1))), mean \(String(format: "%.3e", cosines.isEmpty ? 0 : 1 - cosines.reduce(0, +) / Double(cosines.count)))\n"
+        section += "- same query embeddings for both graphs (memoizing provider); only the stored vectors differ\n\n"
+
+        section += "### Aggregate, binary32 vectors\n\n" + aggregateTable(float32) + "\n"
+        section += "### Aggregate, binary16 vectors\n\n" + aggregateTable(float16) + "\n"
+
+        var changedRows: [String] = []
+        var totalRows = 0
+        for (wideRow, narrowRow) in zip(float32.rows, float16.rows) {
+            for (index, query) in queries.enumerated() {
+                totalRows += 1
+                let wide = Array(wideRow.outcomes[index].topIDs.prefix(5))
+                let narrow = Array(narrowRow.outcomes[index].topIDs.prefix(5))
+                guard wide != narrow else { continue }
+                changedRows.append("  - Q\(index + 1) \(wideRow.name): \(top5(wideRow.outcomes[index], query: query)) → \(top5(narrowRow.outcomes[index], query: query))")
+            }
+        }
+        section += "- per-query rows whose top-5 changed: \(changedRows.count) of \(totalRows)\n"
+        for row in changedRows { section += row + "\n" }
+        section += "\n### Criterion (no extra miss, no extra exact regression, MRR and recall@5 down by at most 0.01)\n\n"
+        var passes = true
+        for name in float16CriterionRows {
+            guard let wide = float32.rows.first(where: { $0.name == name })?.aggregate,
+                  let narrow = float16.rows.first(where: { $0.name == name })?.aggregate else {
+                section += "- \(name): row missing\n"
+                passes = false
+                continue
+            }
+            let rowPasses = narrow.misses <= wide.misses
+                && narrow.exactRegressions.count <= wide.exactRegressions.count
+                && narrow.meanReciprocalRank >= wide.meanReciprocalRank - 0.01
+                && narrow.meanRecallAt5 >= wide.meanRecallAt5 - 0.01
+            passes = passes && rowPasses
+            section += "- \(name): misses \(wide.misses) → \(narrow.misses), exact-regr. \(wide.exactRegressions.count) → \(narrow.exactRegressions.count), MRR \(String(format: "%.4f", wide.meanReciprocalRank)) → \(String(format: "%.4f", narrow.meanReciprocalRank)), recall@5 \(String(format: "%.4f", wide.meanRecallAt5)) → \(String(format: "%.4f", narrow.meanRecallAt5)): \(rowPasses ? "pass" : "FAIL")\n"
+        }
+        section += "\nResult: \(passes ? "binary16 PASSES" : "binary16 FAILS") the criterion\n"
+        return section
+    }
 
     fileprivate static func milliseconds(_ duration: Duration) -> Double {
         let components = duration.components

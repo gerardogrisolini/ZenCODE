@@ -147,6 +147,10 @@ private enum MemoryJSONDateCoding {
 actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
     public let url: URL
 
+    /// Highest `graph_version` this persistence accepts. Always the current
+    /// version in production; a test lowers it to play an older build.
+    private let supportedGraphVersion: UInt32
+
     /// Identity of the file an in-memory decode was taken from. The graph is
     /// only ever published by renaming a freshly written staging file, so a
     /// changed graph always changes the inode; size and modification time
@@ -158,19 +162,64 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         let modificationNanoseconds: Int64
     }
 
-    /// The last decoded graph and the identity of the file it came from.
-    /// Every read path reuses it while the file is unchanged, so a large graph
-    /// is decoded once per change instead of once per read, recall or
+    /// Identity of what a graph is decoded from: the JSON and, when it exists,
+    /// the vectors file next to it.
+    struct StoreIdentity: Equatable, Sendable {
+        let graph: FileIdentity
+        let vectors: FileIdentity?
+    }
+
+    /// The last decoded graph and the identity of the files it came from.
+    /// Every read path reuses it while both files are unchanged, so a large
+    /// graph is decoded once per change instead of once per read, recall or
     /// transaction; a publish re-primes it from the bytes it just wrote. The
     /// cache only ever shortcuts the decode: what a read returns is exactly
-    /// what decoding the current file would return.
-    private var cached: (identity: FileIdentity, graph: MemoryGraph)?
+    /// what decoding the current files would return.
+    private var cached: (identity: StoreIdentity, graph: MemoryGraph)?
+
+    /// The vectors file as this persistence last read or wrote it: its
+    /// identity and its exact bytes. A save rewrites the file only when the
+    /// bytes it would write differ, or when the file on disk is no longer the
+    /// one recorded here, so a save that changes no vector leaves it alone.
+    private var knownVectors: (identity: FileIdentity, data: Data)?
 
     /// Number of graphs decoded from disk. Test seam only.
     private(set) var diskDecodeCount = 0
 
+    /// Number of times the vectors file was published. Test seam only.
+    private(set) var vectorsPublishCount = 0
+
+    /// Runs after the vectors file is published and before the JSON is.
+    /// Test seam only: a throwing hook interrupts a save between the two.
+    private var afterVectorsPublish: (@Sendable () throws -> Void)?
+
     public init(url: URL) {
         self.url = url
+        self.supportedGraphVersion = MemoryGraph.currentGraphVersion
+    }
+
+    init(url: URL, supportedGraphVersion: UInt32) {
+        self.url = url
+        self.supportedGraphVersion = supportedGraphVersion
+    }
+
+    func setAfterVectorsPublishHook(_ hook: (@Sendable () throws -> Void)?) {
+        afterVectorsPublish = hook
+    }
+
+    /// `<graph>.vectors`, the binary vectors file of the graph at `url`.
+    static func vectorsURL(forGraphAt url: URL) -> URL {
+        url.appendingPathExtension("vectors")
+    }
+
+    /// The cleanup backup of the graph at `url`: `<graph>.bak` for the JSON and
+    /// `<graph>.vectors.bak` for the vectors file.
+    static func backupURLs(forGraphAt url: URL) -> (graph: URL, vectors: URL) {
+        (url.appendingPathExtension("bak"), vectorsURL(forGraphAt: url).appendingPathExtension("bak"))
+    }
+
+    nonisolated var vectorsURL: URL {
+        Self.vectorsURL(forGraphAt: url)
     }
 
     public func load() async throws -> MemoryGraph {
@@ -179,7 +228,7 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         // group/other-readable by an older build (or a permissive umask) is
         // tightened. Best effort on purpose: a read must not start failing
         // because the mode of a file owned by another user cannot be changed.
-        Self.hardenExistingItems(graphURL: url, lockURL: lockURL)
+        Self.hardenExistingItems(graphURL: url, lockURL: lockURL, vectorsURL: vectorsURL)
         return try loadSynchronously()
     }
 
@@ -223,8 +272,8 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
                 // in the meantime; publishing here would make an abandoned turn
                 // durable. Throwing *before* the write keeps the transaction
                 // all-or-nothing: nothing is written and the caller's in-memory
-                // state is left untouched. There is deliberately no failable
-                // step after the write.
+                // state is left untouched. Nothing failable follows the JSON
+                // publish, which is the commit point.
                 try Task.checkCancellation()
                 try saveSynchronously(graph)
             }
@@ -236,28 +285,64 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         url.appendingPathExtension("lock")
     }
 
+    /// Attempts of an unlocked read when a publish lands while it reads. Under
+    /// the lock nothing can publish, so the first attempt always holds.
+    private static let readAttempts = 3
+
     private func loadSynchronously() throws -> MemoryGraph {
-        guard let before = try Self.identity(ofFileAt: url.path) else {
-            // No file: nothing to decode and nothing worth keeping.
+        var attempt = 1
+        while true {
+            guard let graphIdentity = try Self.identity(ofFileAt: url.path) else {
+                // No file: nothing to decode and nothing worth keeping.
+                cached = nil
+                return MemoryGraph()
+            }
+            let before = StoreIdentity(
+                graph: graphIdentity,
+                vectors: Self.identityIfPresent(ofFileAt: vectorsURL.path)
+            )
+            if let cached, cached.identity == before {
+                return cached.graph
+            }
+            let data = try Data(contentsOf: url)
+            diskDecodeCount += 1
+            // The vectors file is read only for a graph that keeps its vectors
+            // there. A missing or unreadable one loads the graph without
+            // vectors: retrieval falls back to BM25 and the next save rewrites it.
+            var vectorsRead = false
+            var vectorsData: Data?
+            let vectorsURL = vectorsURL
+            let graph = try decodeGraph(data) {
+                vectorsRead = true
+                vectorsData = before.vectors == nil ? nil : try? Data(contentsOf: vectorsURL)
+                return vectorsData
+            }
+            // A publish between the identity check and the reads would pair
+            // one save's files with another's identities. Keep the result only
+            // when neither file changed across the reads; under the lock they
+            // never do, while an unlocked read tries again. Whatever pair it
+            // ends up with, the fingerprints only ever drop vectors.
+            let unchanged = Self.identityIfPresent(ofFileAt: url.path) == before.graph
+                && Self.identityIfPresent(ofFileAt: vectorsURL.path) == before.vectors
+            if unchanged {
+                cached = (before, graph)
+                if vectorsRead {
+                    if let vectorsIdentity = before.vectors, let vectorsData {
+                        knownVectors = (vectorsIdentity, vectorsData)
+                    } else if before.vectors == nil {
+                        knownVectors = nil
+                    }
+                }
+                return graph
+            }
             cached = nil
-            return MemoryGraph()
+            guard attempt < Self.readAttempts else { return graph }
+            attempt += 1
         }
-        if let cached, cached.identity == before {
-            return cached.graph
-        }
-        let data = try Data(contentsOf: url)
-        diskDecodeCount += 1
-        let graph = try decodeGraph(data)
-        // A publish between the identity check and the read would pair one
-        // file's identity with another file's bytes. Keep the pair only when
-        // the file did not change across the read; under the lock it never
-        // does, and an unlocked read simply decodes again next time.
-        if let after = try? Self.identity(ofFileAt: url.path), after == before {
-            cached = (before, graph)
-        } else {
-            cached = nil
-        }
-        return graph
+    }
+
+    private static func identityIfPresent(ofFileAt path: String) -> FileIdentity? {
+        (try? identity(ofFileAt: path)) ?? nil
     }
 
     /// `nil` when no file exists at `path`. Read through `attributesOfItem`,
@@ -279,8 +364,11 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
 
     /// Decodes a persisted graph without writing it. Both ordinary loads and
     /// locked transactions use this single path, preserving future-version
-    /// rejection and lazy in-memory normalization identically.
-    private func decodeGraph(_ data: Data) throws -> MemoryGraph {
+    /// rejection and lazy in-memory normalization identically. `vectors` is
+    /// called only for a graph whose vectors live in the vectors file (version
+    /// 4 and later) and returns that file's bytes, or `nil` when it is absent
+    /// or unreadable.
+    private func decodeGraph(_ data: Data, vectors: () -> Data?) throws -> MemoryGraph {
         // Reject future formats before attempting a full decode: the schema may
         // have changed in ways this build cannot interpret. This path never
         // writes, so rejecting here keeps the file byte-identical.
@@ -288,7 +376,7 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         envelopeDecoder.keyDecodingStrategy = .convertFromSnakeCase
         if let envelope = try? envelopeDecoder.decode(GraphVersionEnvelope.self, from: data),
            let version = envelope.graphVersion,
-           version > MemoryGraph.currentGraphVersion {
+           version > supportedGraphVersion {
             throw MemoryPersistenceError.unsupportedGraphVersion(version)
         }
         let decoder = JSONDecoder()
@@ -297,11 +385,25 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         var graph = try decoder.decode(MemoryGraph.self, from: data)
         graph.rebuildReverseEdges()
 
+        if graph.graphVersion >= MemoryGraph.separateVectorsGraphVersion {
+            // This JSON carries no vectors by contract; an inline one would not
+            // be covered by a fingerprint, so only the vectors file counts. A
+            // missing, corrupt or unknown-version file yields no vectors at all,
+            // a mismatching record no vector for its entry.
+            for (id, entry) in graph.memories where entry.embedding != nil {
+                graph.memories[id]?.embedding = nil
+            }
+            if let vectorsData = vectors(), let records = MemoryVectorFile.decode(vectorsData) {
+                MemoryVectorFile.attach(records, to: &graph)
+            }
+        }
+
         // Older versions (or files without an explicit version) are decoded by
         // the current schema: every newer field is optional with a contract
-        // default (`scope` -> `.project`, `active` -> `true`, ...). Normalize
+        // default (`scope` -> `.project`, `active` -> `true`, ...), and their
+        // inline vectors are already held at the stored precision. Normalize
         // the in-memory version to the current one so the next save writes the
-        // current format; the on-disk file is only rewritten by an explicit
+        // current format; the on-disk files are only rewritten by an explicit
         // save, never by loading.
         if graph.graphVersion < MemoryGraph.currentGraphVersion {
             graph.graphVersion = MemoryGraph.currentGraphVersion
@@ -309,9 +411,10 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         return graph
     }
 
-    /// The persisted wire form of a graph: ISO-8601 dates with a nanosecond
-    /// fraction, snake_case keys, sorted and pretty-printed. The single place
-    /// that configures the encoder, shared by saves and backups.
+    /// The persisted JSON of a graph: ISO-8601 dates with a nanosecond
+    /// fraction, snake_case keys, sorted and pretty-printed, and no vectors
+    /// (they go to the vectors file, `MemoryVectorFile.encode`). The single
+    /// place that configures the encoder, shared by saves and backups.
     static func encodeGraph(_ graph: MemoryGraph) throws -> Data {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = MemoryJSONDateCoding.encodingStrategy()
@@ -320,28 +423,61 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         return try encoder.encode(graph)
     }
 
-    /// Writes `graph` in the persisted format to `url` through the same owner-only
-    /// staging file and `rename` as a save: an existing copy is replaced
-    /// atomically and a partial copy is never visible. Touches neither the
-    /// store's reload cache nor its lock, so it is meant for a caller that
-    /// already holds the transaction (a copy taken before the graph is changed).
-    static func writeBackup(of graph: MemoryGraph, to url: URL) throws {
-        _ = try publishPrivately(encodeGraph(graph), to: url)
+    /// Writes `graph` in the persisted format to its backup pair
+    /// (`backupURLs(forGraphAt:)`) through the same owner-only staging files
+    /// and `rename` as a save, vectors first: an existing copy is replaced
+    /// atomically and a partial file is never visible. Restoring copies both
+    /// files over the live ones; copying only the JSON is safe as well, since a
+    /// stale vectors file can only leave entries without a vector. Touches
+    /// neither the store's reload cache nor its lock, so it is meant for a
+    /// caller that already holds the transaction (a copy taken before the
+    /// graph is changed).
+    static func writeBackup(of graph: MemoryGraph, forGraphAt url: URL) throws {
+        let backup = backupURLs(forGraphAt: url)
+        let vectorsData = try MemoryVectorFile.encode(graph)
+        let graphData = try encodeGraph(graph)
+        _ = try publishPrivately(vectorsData, to: backup.vectors)
+        _ = try publishPrivately(graphData, to: backup.graph, checkingCancellation: false)
     }
 
     private func saveSynchronously(_ graph: MemoryGraph) throws {
         let directory = url.deletingLastPathComponent()
         try Self.prepareOwnerOnlyDirectory(directory)
-        // Byte-identical payload to every previous version of this method; only
-        // the way it reaches the final path changed.
-        let data = try Self.encodeGraph(graph)
-        let identity = try Self.publishPrivately(data, to: url)
+        let vectorsData = try MemoryVectorFile.encode(graph)
+        let graphData = try Self.encodeGraph(graph)
+        // The vectors file first, then the JSON. Whatever a crash or an unlocked
+        // reader sees in between, an old JSON with new vectors or the reverse,
+        // a vector is only given to an entry whose content and model match its
+        // fingerprint, so at worst some entries lack a vector until the next
+        // save or a re-embedding. The vectors file is rewritten only when its
+        // bytes would change, so a save that changes no vector leaves it alone.
+        let vectorsIdentity: FileIdentity
+        let publishedVectors: Bool
+        if let known = knownVectors,
+           known.data == vectorsData,
+           Self.identityIfPresent(ofFileAt: vectorsURL.path) == known.identity {
+            vectorsIdentity = known.identity
+            publishedVectors = false
+        } else {
+            vectorsIdentity = try Self.publishPrivately(vectorsData, to: vectorsURL)
+            knownVectors = (vectorsIdentity, vectorsData)
+            vectorsPublishCount += 1
+            publishedVectors = true
+        }
+        try afterVectorsPublish?()
+        // Once new vectors are visible, finishing beats stopping halfway: a
+        // cancellation observed now no longer prevents the JSON from following.
+        let graphIdentity = try Self.publishPrivately(
+            graphData,
+            to: url,
+            checkingCancellation: !publishedVectors
+        )
         // Re-prime from the bytes just published, so the next read — typically
         // the next turn's recall — pays no decode. Decoding what this build has
         // just encoded cannot fail; should it ever, the cache is dropped rather
         // than reporting an error for an already-durable graph.
-        if let published = try? decodeGraph(data) {
-            cached = (identity, published)
+        if let published = try? decodeGraph(graphData, vectors: { vectorsData }) {
+            cached = (StoreIdentity(graph: graphIdentity, vectors: vectorsIdentity), published)
         } else {
             cached = nil
         }
@@ -360,8 +496,13 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
     /// it, so this never reports an error for an already-durable graph. The
     /// identity is taken from the private staging file before the rename,
     /// which preserves it: it is the published inode's identity whatever
-    /// another writer does afterwards.
-    static func publishPrivately(_ data: Data, to url: URL) throws -> FileIdentity {
+    /// another writer does afterwards. `checkingCancellation` is false only for
+    /// the second file of a pair whose first file is already published.
+    static func publishPrivately(
+        _ data: Data,
+        to url: URL,
+        checkingCancellation: Bool = true
+    ) throws -> FileIdentity {
         let directory = url.deletingLastPathComponent()
         let staging = directory.appendingPathComponent(
             ".\(url.lastPathComponent).\(UUID().uuidString).staging"
@@ -393,7 +534,9 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
         // `rename` publishes the completed private staging inode. Check as
         // close to that commit point as possible so a cancellation observed
         // after I/O never makes an abandoned operation visible.
-        try Task.checkCancellation()
+        if checkingCancellation {
+            try Task.checkCancellation()
+        }
         guard rename(staging.path, url.path) == 0 else { throw errnoError() }
         published = true
         return publishedIdentity
@@ -434,10 +577,11 @@ actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
     /// Used on the read paths (`load`) and when the lock is taken, so a store
     /// created by an older build stops being group/other-readable at the first
     /// touch instead of only at the first write.
-    private static func hardenExistingItems(graphURL: URL, lockURL: URL) {
+    private static func hardenExistingItems(graphURL: URL, lockURL: URL, vectorsURL: URL) {
         let directory = graphURL.deletingLastPathComponent()
         restrictIfPermissive(directory, to: 0o700)
         restrictIfPermissive(graphURL, to: 0o600)
+        restrictIfPermissive(vectorsURL, to: 0o600)
         restrictIfPermissive(lockURL, to: 0o600)
     }
 

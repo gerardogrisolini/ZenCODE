@@ -55,6 +55,10 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
     /// appear near a prompt without being chosen.
     public var decayRejectedBy: Float
     public var strengthenCoRelevantLinks: Bool
+    /// Birth weight, reinforcement and per-memory cap of the co-relevance links
+    /// that ``strengthenCoRelevantLinks`` maintains. Part of the configuration
+    /// so a replayed maintenance batch applies the policy it was recorded with.
+    public var relationPolicy: MemoryRelationPolicy
     public var includeOriginalQuery: Bool
     public var intelligenceFailurePolicy: MemoryIntelligenceFailurePolicy
     /// Age discount applied to retrieval scores (see ``MemoryAgePolicy``).
@@ -80,6 +84,7 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
         boostSelectedBy: Float = 0.02,
         decayRejectedBy: Float = 0,
         strengthenCoRelevantLinks: Bool = true,
+        relationPolicy: MemoryRelationPolicy = .default,
         includeOriginalQuery: Bool = true,
         intelligenceFailurePolicy: MemoryIntelligenceFailurePolicy = .fallback,
         agePolicy: MemoryAgePolicy = .default,
@@ -100,6 +105,7 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
         self.boostSelectedBy = boostSelectedBy
         self.decayRejectedBy = decayRejectedBy
         self.strengthenCoRelevantLinks = strengthenCoRelevantLinks
+        self.relationPolicy = relationPolicy
         self.includeOriginalQuery = includeOriginalQuery
         self.intelligenceFailurePolicy = intelligenceFailurePolicy
         self.agePolicy = agePolicy

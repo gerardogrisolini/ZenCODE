@@ -19,7 +19,9 @@ actor MemoryGraphStore {
     let engine: MemoryEngine
     /// Kept from `open`: `update`/`write` must embed with the provider the engine
     /// was opened with, or entries would carry vectors the engine refuses to compare.
-    private let embedder: (any EmbeddingProvider)?
+    /// Internal so the re-embedding run (`MemoryGraphStore+Reembedding.swift`)
+    /// embeds with the same provider.
+    let embedder: (any EmbeddingProvider)?
     /// Whether recall on this store includes a request to an embedding
     /// endpoint; the turn coordinator sizes its deadline accordingly.
     nonisolated let hasEmbedder: Bool
@@ -537,10 +539,21 @@ actor MemoryGraphStore {
         throw MemoryServiceError.entryNotFound(rawIdentifier)
     }
 
+    /// Archives or restores an entry. Only the archive flag and `updatedAt`
+    /// change; archiving keeps the vector.
+    ///
+    /// A restore also gives the entry a vector when the store has an embedder
+    /// and the entry has none from its model (the re-embedding run clears the
+    /// vectors of archived entries). The vector is computed after the restore
+    /// transaction, so an endpoint failure only degrades the entry to BM25 —
+    /// reported like any other mutation fallback — and never fails the
+    /// restore. It is saved in a second transaction, only if the entry is still
+    /// active, has the content that was embedded and still has no compatible
+    /// vector.
     func setArchived(_ isArchived: Bool, id rawIdentifier: String) async throws -> GraphEntry {
         let id = try MemoryIdentifier.validated(rawIdentifier)
         let updatedAt = Date()
-        return try await engine.transaction { graph in
+        let entry = try await engine.transaction { graph in
             guard var entry = graph.memories[id] else {
                 throw MemoryServiceError.entryNotFound(rawIdentifier)
             }
@@ -549,6 +562,58 @@ actor MemoryGraphStore {
             entry.active = !isArchived
             entry.updatedAt = updatedAt
             graph.addMemory(entry)
+            return entry
+        }
+        guard !isArchived else {
+            return entry
+        }
+        return await embeddedAfterRestore(entry)
+    }
+
+    /// The restored entry with a vector from the store's embedder when it
+    /// lacked a compatible one, or `entry` unchanged. Never throws: the restore
+    /// is already durable, so a failing endpoint, a failing save or a
+    /// cancellation only leaves the entry without a vector.
+    private func embeddedAfterRestore(_ entry: GraphEntry) async -> GraphEntry {
+        guard let embedder,
+              entry.active,
+              !entry.embeddingMatches(model: embedder.modelID) else {
+            return entry
+        }
+        do {
+            let embedded = try await MemoryEmbeddingFallback.embed(
+                entry.content,
+                with: embedder,
+                operation: "restore",
+                reporter: semanticFailureReporter
+            )
+            guard let values = embedded.values, let model = embedded.model else {
+                return entry
+            }
+            let id = entry.id
+            let content = entry.content
+            return try await engine.transaction { graph -> GraphEntry in
+                guard var current = graph.memories[id] else {
+                    return entry
+                }
+                guard current.active,
+                      current.content == content,
+                      !current.embeddingMatches(model: model) else {
+                    return current
+                }
+                current.setEmbedding(values, model: model)
+                graph.memories[id] = current
+                return current
+            }
+        } catch is CancellationError {
+            return entry
+        } catch {
+            semanticFailureReporter(
+                MemorySemanticFallbackDiagnostics.mutationFallbackMessage(
+                    operation: "restore",
+                    error: error
+                )
+            )
             return entry
         }
     }
@@ -562,11 +627,16 @@ actor MemoryGraphStore {
 
     // MARK: - Cleanup
 
-    /// The file the graph is copied to before a cleanup changes it, next to the
+    /// The JSON copy taken before a cleanup changes the graph, next to the
     /// graph so it stays on the same volume and under the same owner-only
     /// directory. The engine never loads it.
     nonisolated var backupURL: URL {
-        graphURL.appendingPathExtension("bak")
+        JSONMemoryPersistence.backupURLs(forGraphAt: graphURL).graph
+    }
+
+    /// The vectors-file copy taken with ``backupURL``.
+    nonisolated var vectorsBackupURL: URL {
+        JSONMemoryPersistence.backupURLs(forGraphAt: graphURL).vectors
     }
 
     /// What ``cleanup(_:now:)`` would change right now. Reads one coherent
@@ -591,15 +661,16 @@ actor MemoryGraphStore {
     /// file lock, so the report can differ from an earlier preview when another
     /// process wrote in between. A plan that changes nothing leaves the graph
     /// file and the backup alone. Otherwise the pre-cleanup graph is first
-    /// written to ``backupURL`` (replacing any previous copy) inside the same
-    /// transaction: a failing backup throws before anything is saved.
+    /// written to ``backupURL`` and ``vectorsBackupURL`` (replacing any
+    /// previous copy) inside the same transaction: a failing backup throws
+    /// before anything is saved.
     @discardableResult
     func cleanup(
         _ policy: MemoryCleanupPolicy,
         now: Date = Date()
     ) async throws -> MemoryCleanupReport {
         let embeddingModel = embedder?.modelID
-        let backupURL = backupURL
+        let graphURL = graphURL
         return try await engine.transaction { graph in
             let (cleaned, report) = MemoryCleanup.plan(
                 graph,
@@ -608,7 +679,7 @@ actor MemoryGraphStore {
                 embeddingModel: embeddingModel
             )
             guard !report.isEmpty else { return report }
-            try JSONMemoryPersistence.writeBackup(of: graph, to: backupURL)
+            try JSONMemoryPersistence.writeBackup(of: graph, forGraphAt: graphURL)
             graph = cleaned
             return report
         }

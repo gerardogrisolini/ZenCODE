@@ -56,6 +56,12 @@ final class TerminalModalSession {
         screen.updateModal(id, value: value)
     }
 
+    /// Largest header scroll offset `value` accepts with the screen's current
+    /// geometry and footer; `0` when its header is not scrollable.
+    func headerScrollLimit(for value: TerminalPrimaryScreen.Modal) -> Int {
+        screen.menuHeaderScrollLimit(for: value)
+    }
+
     func updateDialog(_ value: TerminalDialogPresentation) {
         guard prepareUpdate() else { return }
         screen.updateDialog(id, value: value)

@@ -82,12 +82,20 @@ final class PrimaryScreenCapture: Sendable {
         screen.endModal(menu)
     }
 
-    @Test func modalHeaderYieldsRowsToItemsWhenSpaceIsTight() {
-        #expect(TerminalCheckboxMenu.visibleHeaderLines(["a", "b"], capacity: 5) == ["a", "b", ""])
-        #expect(TerminalCheckboxMenu.visibleHeaderLines(["a", "b", "c", "d"], capacity: 4) == ["a", "b", "…", ""])
-        #expect(TerminalCheckboxMenu.visibleHeaderLines(["a", "b"], capacity: 2) == [])
-        #expect(TerminalCheckboxMenu.visibleHeaderLines(["a"], capacity: 2) == ["a", ""])
-        #expect(TerminalCheckboxMenu.visibleHeaderLines([], capacity: 10) == [])
+    @Test func modalHeaderKeepsHalfTheRowsAndScrollsWhenSpaceIsTight() {
+        func layout(_ header: [String], items: Int, capacity: Int) -> TerminalCheckboxMenu.HeaderLayout {
+            TerminalCheckboxMenu.headerLayout(header, offset: 0, itemLineCount: items, itemCapacity: capacity)
+        }
+        // A header that fits beside the items is shown whole and does not scroll.
+        #expect(layout(["a", "b"], items: 2, capacity: 5) == .init(lines: ["a", "b", ""], scrollLimit: 0))
+        #expect(layout(["a"], items: 0, capacity: 2) == .init(lines: ["a", ""], scrollLimit: 0))
+        #expect(layout([], items: 3, capacity: 10) == .init(lines: [], scrollLimit: 0))
+        // One that does not fit keeps at least half the rows and scrolls.
+        let tight = layout((0..<30).map { "HEADER_\($0)" }, items: 14, capacity: 14)
+        #expect(tight.lines.count == 7)
+        #expect(tight.lines.last == "")
+        #expect(tight.lines.contains("↓ more"))
+        #expect(tight.scrollLimit == 24)
 
         let capture = PrimaryScreenCapture()
         let screen = capture.screen()
@@ -96,12 +104,56 @@ final class PrimaryScreenCapture: Sendable {
         let items = (0..<14).map { (index: Int) in
             TerminalCheckboxMenu.RenderedMenuLine(text: "ITEM_\(index)", itemIndex: index)
         }
-        screen.updateModal(menu, value: .init(title: "BINDINGS", help: [],
+        let modal = TerminalPrimaryScreen.Modal(title: "BINDINGS", help: [],
             lines: items, focusedIndex: 0,
-            header: (0..<30).map { "HEADER_\($0)" }))
+            header: (0..<30).map { "HEADER_\($0)" })
+        screen.updateModal(menu, value: modal)
         let visible = capture.visible
-        for index in 0..<14 { #expect(visible.contains("ITEM_\(index)")) }
+        // The header owns half the rows and the items scroll in the rest.
+        for index in 0..<5 { #expect(visible.contains("HEADER_\(index)")) }
+        #expect(!visible.contains("HEADER_5"))
         #expect(!visible.contains("HEADER_29"))
+        for index in 0..<6 { #expect(visible.contains("ITEM_\(index)")) }
+        #expect(!visible.contains("ITEM_6"))
+        #expect(!visible.contains("ITEM_13"))
+        #expect(visible.components(separatedBy: "↓ more").count - 1 == 2)
+        #expect(screen.menuHeaderScrollLimit(for: modal) == 24)
+        screen.endModal(menu)
+    }
+
+    @Test func modalHeaderScrollOffsetShowsLaterRowsAndIsClamped() {
+        let capture = PrimaryScreenCapture()
+        let screen = capture.screen()
+        install(screen)
+        let menu = screen.beginModal()
+        let items = (0..<14).map { (index: Int) in
+            TerminalCheckboxMenu.RenderedMenuLine(text: "ITEM_\(index)", itemIndex: index)
+        }
+        var modal = TerminalPrimaryScreen.Modal(title: "BINDINGS", help: [],
+            lines: items, focusedIndex: 0,
+            header: (0..<30).map { "HEADER_\($0)" })
+        modal.headerScrollOffset = 10
+        screen.updateModal(menu, value: modal)
+        var visible = capture.visible
+        #expect(visible.contains("↑ more"))
+        for index in 11...14 { #expect(visible.contains("HEADER_\(index)")) }
+        #expect(!visible.contains("HEADER_0"))
+        #expect(!visible.contains("HEADER_10"))
+        #expect(!visible.contains("HEADER_15"))
+
+        // A stale offset, such as one kept across a resize, shows the last page.
+        modal.headerScrollOffset = 999
+        screen.updateModal(menu, value: modal)
+        visible = capture.visible
+        for index in 25...29 { #expect(visible.contains("HEADER_\(index)")) }
+        #expect(!visible.contains("HEADER_24"))
+        #expect(!visible.contains("HEADER_0"))
+
+        modal.headerScrollOffset = -4
+        screen.updateModal(menu, value: modal)
+        visible = capture.visible
+        #expect(visible.contains("HEADER_0"))
+        #expect(!visible.contains("↑ more"))
         screen.endModal(menu)
     }
 

@@ -338,7 +338,7 @@ struct MemoryEmbeddingSetupTests {
             )
         )
         #expect(proposal.endpoint == "https://openrouter.ai/api/v1/embeddings")
-        #expect(proposal.model == "qwen/qwen3-embedding-8b")
+        #expect(proposal.model == "qwen/qwen3-embedding-4b")
         #expect(proposal.providerID == openRouterID)
     }
 
@@ -754,9 +754,9 @@ extension MemoryEmbeddingSetupTests {
         let models: [ZenCODESetupRunner.MemoryEmbeddingModelOption] = [
             .init(id: "a/first", name: "First", contextLength: 512, promptPricePerToken: 0),
             .init(id: "openai/text-embedding-3-small", name: "Small", contextLength: 8192, promptPricePerToken: 0.00000002),
-            .init(id: "qwen/qwen3-embedding-8b", name: "Qwen", contextLength: 40960, promptPricePerToken: 0.00000001)
+            .init(id: "qwen/qwen3-embedding-4b", name: "Qwen", contextLength: 32768, promptPricePerToken: 0.00000002)
         ]
-        let defaultModel = "qwen/qwen3-embedding-8b"
+        let defaultModel = "qwen/qwen3-embedding-4b"
 
         // Nothing configured: the preset default is preselected.
         let fresh = ZenCODESetupRunner.openRouterEmbeddingModelMenu(

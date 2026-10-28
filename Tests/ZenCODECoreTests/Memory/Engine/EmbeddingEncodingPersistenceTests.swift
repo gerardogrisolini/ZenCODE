@@ -107,7 +107,7 @@ import Testing
         #expect(try Data(contentsOf: file) == before)
     }
 
-    @Test func saveWritesVersionThreeWithBase64Embedding() async throws {
+    @Test func saveWritesVersionFourWithTheVectorInTheVectorsFile() async throws {
         let directory = try Self.makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("graph.json")
@@ -119,20 +119,32 @@ import Testing
 
         let bytes = try Data(contentsOf: file)
         let text = String(decoding: bytes, as: UTF8.self)
-        #expect(text.contains("\"graph_version\" : 3"))
+        #expect(text.contains("\"graph_version\" : 4"))
 
         let root = try #require(try JSONSerialization.jsonObject(with: bytes) as? [String: Any])
         let memories = try #require(root["memories"] as? [String: Any])
         let entry = try #require(memories["mem_1"] as? [String: Any])
-        let embedding = try #require(entry["embedding"] as? String)
-        #expect(embedding == EmbeddingWireCoding.string(from: [1.0, -2.5, 0.0]))
+        #expect(entry["embedding"] == nil)
+        #expect(entry["embedding_model"] as? String == "example-embedding-v1")
+
+        let vectors = try Data(contentsOf: JSONMemoryPersistence.vectorsURL(forGraphAt: file))
+        let record = try #require(MemoryVectorFile.decode(vectors)?["mem_1"])
+        #expect(record.components == [1.0, -2.5, 0.0])
+        #expect(record.fingerprint == MemoryVectorFile.fingerprint(
+            model: "example-embedding-v1",
+            content: "Swift runs on Linux"
+        ))
 
         let reloaded = try await JSONMemoryPersistence(url: file).load()
         #expect(reloaded.memories["mem_1"]?.embedding == [1.0, -2.5, 0.0])
         #expect(reloaded.memories["mem_1"]?.embeddingModel == "example-embedding-v1")
+        #expect(reloaded == graph)
     }
 
-    @Test func roundTripPreservesLargeVectorExactly() async throws {
+    /// A large vector is held, saved and reloaded at the stored precision: the
+    /// in-memory value is the binary16 rounding of what was assigned, and the
+    /// round trip preserves it bit for bit.
+    @Test func roundTripPreservesLargeVectorAtTheStoredPrecision() async throws {
         let directory = try Self.makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("graph.json")
@@ -146,13 +158,16 @@ import Testing
             embedding: vector,
             embeddingModel: "test-model"
         ))
+        let held = try #require(graph.memories["vec"]?.embedding)
+        #expect(held.map(\.bitPattern) == vector.map { HalfPrecision.rounded($0).bitPattern })
         try await JSONMemoryPersistence(url: file).save(graph)
 
         let loaded = try await JSONMemoryPersistence(url: file).load()
         let restored = try #require(loaded.memories["vec"]?.embedding)
         #expect(restored.count == vector.count)
-        #expect(zip(vector, restored).allSatisfy { $0.bitPattern == $1.bitPattern })
+        #expect(zip(held, restored).allSatisfy { $0.bitPattern == $1.bitPattern })
         #expect(loaded.memories["vec"]?.embeddingModel == "test-model")
+        #expect(loaded == graph)
     }
 
     @Test func loadRejectsCorruptBase64Embedding() async throws {

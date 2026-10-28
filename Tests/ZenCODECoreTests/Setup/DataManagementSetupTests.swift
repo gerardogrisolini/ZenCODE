@@ -43,22 +43,26 @@ struct DataManagementSetupTests {
     }
 
     @Test
-    func dataManagementMenuItemsContainExportImportCleanMemoryResetAndBack() throws {
+    func dataManagementMenuItemsContainExportImportCleanMemoryRebuildResetAndBack() throws {
         let items = ZenCODESetupRunner.dataManagementMenuItems()
         let titles = items.map(\.title)
 
         #expect(titles.contains("Export backup"))
         #expect(titles.contains("Import backup"))
         #expect(titles.contains("Clean memory"))
+        #expect(titles.contains("Rebuild memory embeddings"))
         #expect(titles.contains("Reset remote configuration"))
         #expect(titles.contains("Back"))
         #expect(titles.last == "Back")
-        #expect(titles.count == 5)
-        // Clean memory sits between Import backup and Reset.
+        #expect(titles.count == 6)
+        // Clean memory and Rebuild memory embeddings sit between Import backup and Reset.
         let importIndex = try #require(titles.firstIndex(of: "Import backup"))
         #expect(titles[importIndex + 1] == "Clean memory")
-        #expect(titles[importIndex + 2] == "Reset remote configuration")
-        #expect(items.map(\.value) == [.export, .importBackup, .cleanMemory, .reset, .back])
+        #expect(titles[importIndex + 2] == "Rebuild memory embeddings")
+        #expect(titles[importIndex + 3] == "Reset remote configuration")
+        #expect(items.map(\.value) == [.export, .importBackup, .cleanMemory, .rebuildEmbeddings, .reset, .back])
+        #expect(items[importIndex + 2].detail
+            == "embed entries missing a vector from the configured model, in every memory graph")
     }
 
     @Test

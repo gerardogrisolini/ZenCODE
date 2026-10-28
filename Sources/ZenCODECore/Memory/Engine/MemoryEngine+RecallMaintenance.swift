@@ -64,20 +64,27 @@ extension MemoryEngine {
             graph.memories[memory.id] = memory
         }
 
+        // Every co-selected pair is born, reinforced or capped by the policy
+        // (see `MemoryGraph.reinforceRelation`). The batch replay calls this
+        // same method with the policy of the recorded configuration.
         guard configuration.strengthenCoRelevantLinks, selected.count >= 2 else { return }
         for i in 0..<(selected.count - 1) {
             for j in (i + 1)..<selected.count {
-                let lhs = selected[i].memory.id
-                let rhs = selected[j].memory.id
-                graph.linkMemories(from: lhs, to: rhs, weight: 0.7)
-                graph.linkMemories(from: rhs, to: lhs, weight: 0.7)
+                graph.reinforceRelation(
+                    between: selected[i].memory.id,
+                    and: selected[j].memory.id,
+                    policy: configuration.relationPolicy
+                )
             }
         }
     }
 
     struct PendingRecallMaintenance: Sendable {
         let candidateIDs: [String]
-        let selectedIDs: Set<String>
+        /// In the selector's order: with a capped relation policy the order in
+        /// which pairs are linked decides which link is evicted, so the replay
+        /// must visit them exactly as the direct path did.
+        let selectedIDs: [String]
         let scope: EngineMemoryScope
         let configuration: MemoryEngineConfiguration
     }
@@ -124,7 +131,7 @@ extension MemoryEngine {
         let proposal = proposedMaintenance(
             adding: PendingRecallMaintenance(
                 candidateIDs: valid.candidates.map(\.memory.id),
-                selectedIDs: Set(valid.selected.map(\.memory.id)),
+                selectedIDs: valid.selected.map(\.memory.id),
                 scope: scope,
                 configuration: settings
             )
@@ -159,7 +166,8 @@ extension MemoryEngine {
                       MemorySearch.scopeAllows(memory.scope, requested: record.scope) else { return nil }
                 return MemoryCandidate(memory: memory, score: 0)
             }
-            let selected = candidates.filter { record.selectedIDs.contains($0.memory.id) }
+            let byID = Dictionary(candidates.map { ($0.memory.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let selected = record.selectedIDs.compactMap { byID[$0] }
             maintainAfterRetrieval(&graph, all: candidates, selected: selected, configuration: record.configuration)
         }
     }

@@ -21,6 +21,7 @@ extension ZenCODESetupRunner {
         case export
         case importBackup
         case cleanMemory
+        case rebuildEmbeddings
         case reset
         case back
     }
@@ -55,6 +56,11 @@ extension ZenCODESetupRunner {
                 value: .cleanMemory,
                 title: "Clean memory",
                 detail: "preview and clean a memory graph, or delete an old project's memory"
+            ),
+            TerminalCheckboxMenuItem(
+                value: .rebuildEmbeddings,
+                title: "Rebuild memory embeddings",
+                detail: "embed entries missing a vector from the configured model, in every memory graph"
             ),
             TerminalCheckboxMenuItem(
                 value: .reset,
@@ -96,6 +102,9 @@ extension ZenCODESetupRunner {
                 }
             case .cleanMemory:
                 try await runMemoryCleanupMenu()
+                continue
+            case .rebuildEmbeddings:
+                await runMemoryReembeddingFromDataManagement()
                 continue
             case .reset:
                 guard try confirmRemoteConfigurationReset() else {

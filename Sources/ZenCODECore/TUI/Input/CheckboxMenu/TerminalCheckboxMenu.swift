@@ -82,6 +82,8 @@ public enum TerminalCheckboxMenu {
         case cancel
         case selectAll
         case selectNone
+        /// Moves control between the item list and a scrollable header table.
+        case tab
         case resize
         case unknown
     }
@@ -367,6 +369,10 @@ public enum TerminalCheckboxMenu {
     ) -> (state: SelectionState<Value>, focusedIndex: Int)? {
         var state = initialState
         var focusedIndex = initialFocusedIndex
+        // Which part owns the arrow keys, and the first table row shown. Both
+        // only matter while the header is taller than the room it gets.
+        var headerFocused = false
+        var headerOffset = 0
         let modal = TerminalModalSession(screen: screen)
         defer { modal.close() }
         let layoutCancelled = modal.cancellationCheck
@@ -376,22 +382,59 @@ public enum TerminalCheckboxMenu {
             while true {
                 if cancel() { return nil }
                 let resizeGeneration = TerminalResizeCoordinator.shared.currentGeneration()
-                let lines = groupedItemLines(items: items) { offset, item in
-                    let focus = offset == focusedIndex ? ">" : " "
-                    let marker: String
-                    switch state {
-                    case let .multiple(values): marker = values.contains(item.value) ? "[x]" : "[ ]"
-                    case let .single(value): marker = value == item.value ? "(x)" : "( )"
+                var headerScrollLimit = 0
+                func presentation() -> TerminalPrimaryScreen.Modal {
+                    let lines = groupedItemLines(items: items) { offset, item in
+                        // A line is dimmed and loses its cursor while the
+                        // table has control.
+                        let focus = offset == focusedIndex && !headerFocused ? ">" : " "
+                        let marker: String
+                        switch state {
+                        case let .multiple(values): marker = values.contains(item.value) ? "[x]" : "[ ]"
+                        case let .single(value): marker = value == item.value ? "(x)" : "( )"
+                        }
+                        let entry = "\(marker) \(item.title)\(detailSuffix(for: item))"
+                        // `fitLine` trims the blank cursor column of unfocused
+                        // rows; a dimmed row starts with an escape and would
+                        // keep it, so it drops the column to stay in place.
+                        return headerFocused
+                            ? TerminalStyle.Text.muted + entry + TerminalStyle.reset
+                            : "\(focus) \(entry)"
                     }
-                    return "\(focus) \(marker) \(item.title)\(detailSuffix(for: item))"
+                    let help = helpLinesOverride ?? state.helpLines
+                    return .init(
+                        title: title,
+                        help: headerScrollLimit > 0
+                            ? scrollableHeaderHelpLines(help, tableFocused: headerFocused)
+                            : help,
+                        lines: lines, focusedIndex: focusedIndex, header: header,
+                        headerScrollOffset: headerOffset, headerFocused: headerFocused
+                    )
                 }
-                modal.update(.init(title: title, help: helpLinesOverride ?? state.helpLines,
-                                   lines: lines, focusedIndex: focusedIndex, header: header))
+                if !header.isEmpty {
+                    headerScrollLimit = modal.headerScrollLimit(for: presentation())
+                    headerOffset = min(max(0, headerOffset), headerScrollLimit)
+                    if headerScrollLimit == 0 { headerFocused = false }
+                }
+                modal.update(presentation())
                 guard let key = readKey(
                     rawInput: rawInput,
                     shouldCancel: cancel,
                     resizeGeneration: resizeGeneration
                 ), !cancel() else { return nil }
+                switch key {
+                case .tab:
+                    if headerScrollLimit > 0 { headerFocused.toggle() }
+                    continue
+                case .up where headerFocused:
+                    headerOffset = max(0, headerOffset - 1)
+                    continue
+                case .down where headerFocused:
+                    headerOffset = min(headerScrollLimit, headerOffset + 1)
+                    continue
+                default:
+                    break
+                }
                 switch apply(key: key, items: items, state: &state, focusedIndex: &focusedIndex) {
                 case .continue: continue
                 case .submit: return modal.accepted((state: state, focusedIndex: focusedIndex))
@@ -435,6 +478,8 @@ public enum TerminalCheckboxMenu {
             return .submit
         case .cancel:
             return .cancel
+        case .tab:
+            break
         case .resize:
             break
         case .unknown:

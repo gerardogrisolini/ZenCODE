@@ -106,6 +106,25 @@ struct MemoryCleanupSetupTests {
     }
 
     @Test
+    func inventorySizeCountsTheVectorsFileWithTheGraph() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let withVectors = try fixture.makeProjectDirectory("vectors-0123456789abcdef01234567", graphBytes: 100)
+        try Data(repeating: 0, count: 2_048).write(
+            to: withVectors.appendingPathComponent("memory.graph.json.vectors")
+        )
+        // A backup pair is not part of the graph.
+        try Data(repeating: 0, count: 4_096).write(
+            to: withVectors.appendingPathComponent("memory.graph.json.vectors.bak")
+        )
+        try fixture.makeProjectDirectory("legacy-0123456789abcdef01234567", graphBytes: 300)
+
+        let sizes = Dictionary(uniqueKeysWithValues: fixture.inventory().map { ($0.directoryName, $0.fileSize) })
+        #expect(sizes["vectors-0123456789abcdef01234567"] == 2_148)
+        #expect(sizes["legacy-0123456789abcdef01234567"] == 300)
+    }
+
+    @Test
     func inventoryGraphURLMatchesTheOneTheRegistryKeysTheCurrentProjectBy() throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -193,6 +212,8 @@ struct MemoryCleanupSetupTests {
         #expect(items.map(\.value) == [.removeArchived, .archiveStale, .hygiene])
         #expect(items[0].detail?.contains("30") == true)
         #expect(items[1].detail?.contains("180") == true)
+        #expect(items[2].detail
+            == "drop superseded entries, dangling links, excess links (more than 12 per entry), unused tags and unusable embedding vectors")
         #expect(Runner.defaultMemoryCleanupRules == [.removeArchived, .hygiene])
     }
 
@@ -272,6 +293,7 @@ struct MemoryCleanupSetupTests {
         report.archivedStale = [Self.summary("s1", title: "Stale one"), Self.summary("s2", title: "Stale two")]
         report.removedSuperseded = [Self.summary("u1", title: "Superseded")]
         report.removedDanglingEdges = 3
+        report.prunedRelations = 16
         report.removedTags = 1
         report.removedClusters = 0
         report.clearedEmbeddings = 4
@@ -290,9 +312,26 @@ struct MemoryCleanupSetupTests {
         #expect(text.contains("Archive stale entries (never recalled, unchanged for at least 180 days, scaled by category): 2"))
         #expect(text.contains("- [s2] Stale two"))
         #expect(text.contains(
-            "Graph hygiene: 1 superseded entry, 3 dangling edges, 1 unused tag, 0 empty clusters, 4 embedding vectors"
+            "Graph hygiene: 1 superseded entry, 3 dangling edges, 16 excess links, 1 unused tag, 0 empty clusters, 4 embedding vectors"
         ))
         #expect(text.contains("- [u1] Superseded"))
+        #expect(!text.contains("Nothing to clean."))
+    }
+
+    @Test
+    func reportShowsPrunedLinksAloneAsAChange() {
+        var report = MemoryCleanupReport(totalEntries: 3, activeEntries: 3, archivedEntries: 0)
+        report.prunedRelations = 1
+        #expect(!report.isEmpty)
+        let text = Runner.renderMemoryCleanupReport(
+            report,
+            graphURL: URL(fileURLWithPath: "/tmp/memory.graph.json"),
+            policy: MemoryCleanupPolicy(graphHygiene: true)
+        )
+
+        #expect(text.contains(
+            "Graph hygiene: 0 superseded entries, 0 dangling edges, 1 excess link, 0 unused tags, 0 empty clusters, 0 embedding vectors"
+        ))
         #expect(!text.contains("Nothing to clean."))
     }
 }

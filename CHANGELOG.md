@@ -37,6 +37,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `web.search` and `web.fetch`, content types, macOS and Linux differences,
   limits, the public-network policy and the
   `ZENCODE_WEBTOOLS_ALLOW_PRIVATE_NETWORK` opt-in, and troubleshooting.
+- Memory re-embedding. When you save a different memory embedding model in
+  `/setup`, setup lists every memory graph with the entries to embed and the
+  archived vectors to delete, and offers to embed them again with the new
+  model (the content of each entry is sent to the endpoint). Until then recall
+  falls back to keywords for those entries. The run shows one progress line per
+  graph, saves every 16 entries, retries busy endpoints (HTTP 429) after 1, 2,
+  4 and 8 seconds, stops on HTTP 401, 403 or 404, and stops cleanly with Esc,
+  keeping what was saved. Re-embedding adds nothing to the memory file format.
+  See [Docs/memory.md](Docs/memory.md#memory-re-embedding).
+- **Data management › Rebuild memory embeddings** runs the same re-embedding on
+  demand with the saved settings, to resume a stopped run or retry failed
+  entries.
 
 ### Changed
 
@@ -107,6 +119,40 @@ Release tags follow the strict `vX.Y.Z` contract described in
   archive: features are built from source on demand, which needs a Swift
   toolchain and a ZenCODE source checkout. The installer sets up both: with
   `curl | bash` it keeps the source copy in `~/.zencode/source`.
+- Memory recall now links the notes it selects together with at most 12 links
+  per note. A pair selected together again and again gets a stronger link
+  (0.7 up to 0.9, never lower than before), and when a note is full the weakest,
+  oldest link makes room, together with its mirror link. In **Data management ›
+  Clean memory**, **Graph hygiene** trims existing graphs to the same 12 links
+  per note and reports them as "excess links". The links add nothing to the
+  memory file format. See [Docs/memory.md](Docs/memory.md).
+- The OpenRouter embedding model proposed by `/setup` › **Memory embeddings**
+  is now `qwen/qwen3-embedding-4b` instead of `qwen/qwen3-embedding-8b`. A model
+  you already saved, 8B included, keeps working.
+- `memory.restore` now gives the restored entry a vector from the configured
+  embedding model when it has none. If the endpoint fails, the entry is still
+  restored and found by keywords.
+- Memory graph version 4 moves the embedding vectors out of
+  `memory.graph.json` into a binary file next to it,
+  `memory.graph.json.vectors`, with IEEE-754 binary16 components. The vectors
+  file is rewritten only when a vector changes, instead of with every save of
+  the graph. Each record carries the entry's id and a fingerprint of its
+  content and embedding model, and a vector is used only by the entry it was
+  written for: a crash between the two writes or a backup copied without its
+  vectors file can leave some entries without a vector (found by keywords until
+  **Data management › Rebuild memory embeddings** embeds them again), never
+  with the vector of another text. A missing or damaged vectors file loads the
+  graph without vectors instead of failing. Versions 1 to 3 still load; the
+  graph is rewritten in v4 only by the first save. **Earlier versions of zen
+  cannot read a graph saved by this version**: they reject it with
+  `unsupportedGraphVersion(4)` and leave it untouched, and there is no export
+  to v3. Binary16 was measured on the ZenCODE graph with
+  `qwen/qwen3-embedding-4b`: no query's top-5 changed. On that graph (289
+  entries, 280 vectors of 4096 dimensions) the 8.7 MB v3 file becomes a 2.5 MB
+  JSON plus a 2.3 MB vectors file. The **Clean memory** backup is now two
+  files, `memory.graph.json.bak` and `memory.graph.json.vectors.bak`, and the
+  graph list shows the size of both graph files. See
+  [Docs/memory.md](Docs/memory.md).
 
 ### Fixed
 
@@ -116,6 +162,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   dispatches to. Every call hung until the feature invocation timeout. The
   callback is now an override of the conforming class, and a test exercises the
   dispatch path corelibs uses.
+- The bindings table in the **Agent model bindings** setup menu is no longer
+  cut short with `…` when it is taller than the room left by the agent list.
+  The table now scrolls: press Tab to move control from the list to the table,
+  use ↑/↓ (or j/k) to scroll it one row at a time, and press Tab again to go
+  back to the list. While the table is in control the list is dimmed and its
+  cursor is hidden, and the help line shows the keys. Menus without a header, or
+  whose header fits, look and behave as before.
 
 ### Removed
 
