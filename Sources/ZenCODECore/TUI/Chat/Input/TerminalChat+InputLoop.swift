@@ -763,6 +763,9 @@ extension TerminalChat {
                 await finishPromptResult(result)
                 var isReadingAnswer = false
                 if case let .success(success) = result {
+                    // Replaces a comment still being read: `speak` takes over
+                    // whatever is being read and the answer is not subject to
+                    // the "nothing else is being read" rule of comments.
                     isReadingAnswer = await speakVoiceResponse(success.finalAssistantContent)
                 }
                 if !isReadingAnswer {
@@ -949,6 +952,20 @@ extension TerminalChat {
                 case .none:
                     break
                 }
+            case let .voiceCommentary(commentary):
+                // A comment the root agent wrote before a tool call. It is read
+                // only while the turn runs (a late one is dropped), when
+                // nothing is being read (a new comment never queues behind or
+                // replaces a reading) and the live-chat dialogue is idle (a
+                // comment never answers, closes or delays a question). It
+                // leaves the dialogue untouched: no transition, no deadline.
+                guard isGenerating,
+                      voiceChatDialogue.phase == .idle,
+                      let controller = await availableVoiceController(),
+                      await !controller.isSpeaking else {
+                    continue
+                }
+                _ = await controller.speak(commentary, rendering: .answer)
             case let .voiceDialogueTimedOut(token):
                 // The question lapses in silence; its message stays unread.
                 if voiceChatDialogue.deadlineElapsed(token) {

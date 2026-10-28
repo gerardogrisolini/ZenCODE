@@ -212,6 +212,11 @@ enum TerminalChatRuntimeEvent: Sendable {
     /// The voice controller started (`true`) or stopped (`false`) reading
     /// aloud; the end of a spoken question starts waiting for its answer.
     case voiceSpeakingChanged(Bool)
+    /// A comment the root agent wrote before a tool call while voice mode is
+    /// on. The runtime loop reads it aloud only while the turn runs, nothing
+    /// else is being read and no live-chat question is in progress; otherwise
+    /// it is dropped and stays on screen only.
+    case voiceCommentary(String)
     /// A spoken live-chat question waited too long for its answer. The token
     /// identifies the question so a late timer cannot close a newer one.
     case voiceDialogueTimedOut(UUID)
@@ -250,6 +255,7 @@ enum TerminalChatRuntimeEvent: Sendable {
              .voicePromptCompleted,
              .voiceUtterance,
              .voiceSpeakingChanged,
+             .voiceCommentary,
              .voiceDialogueTimedOut,
              .sharedChatReaderCollapsed:
             nil

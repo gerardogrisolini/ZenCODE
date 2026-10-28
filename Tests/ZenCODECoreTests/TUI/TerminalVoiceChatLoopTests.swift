@@ -122,6 +122,19 @@ struct TerminalVoiceChatLoopTests {
             queue.send(.voiceSpeakingChanged(false))
         }
 
+        /// A comment the root agent wrote before a tool call; the harness
+        /// bypasses `generateResponse`, which would offer it.
+        func comment(_ text: String) {
+            queue.send(.voiceCommentary(text))
+        }
+
+        /// Starts a turn that stays in flight until the gate is released
+        /// (needs `holdGenerations`).
+        func startHeldTurn() async {
+            queue.send(.input(.submitted("fai qualcosa")))
+            await generationGate.waitUntilEntered()
+        }
+
         /// Everything spoken so far once at least `count` texts were spoken,
         /// or whatever was spoken by the timeout.
         func spoken(count: Int, timeout: Duration = .seconds(10)) async -> [Spoken] {
@@ -177,6 +190,13 @@ struct TerminalVoiceChatLoopTests {
     }
 
     private static let answer = Spoken(text: "Risposta.", rendering: .answer)
+
+    /// A comment is read like an answer: Markdown turned into plain speech.
+    private static func comment(_ text: String) -> Spoken {
+        Spoken(text: text, rendering: .answer)
+    }
+
+    private static let reviewerAnnouncement = Self.plain("Nuovo messaggio da Reviewer. Vuoi che lo legga?")
 
     @Test
     func onlyNewMessagesForTheOperatorAreAnnounced() async throws {
@@ -455,6 +475,178 @@ struct TerminalVoiceChatLoopTests {
         #expect(await harness.spoken(count: 3).last == Self.plain("Dopo la pausa. Vuoi rispondere?"))
         #expect(harness.prompts.isEmpty)
         try await harness.finish(loop)
+    }
+
+    // MARK: Commentary before a tool call
+
+    /// While the turn runs, a comment is read like an answer.
+    @Test
+    func aCommentDuringATurnIsReadLikeAnAnswer() async throws {
+        let harness = try Harness(holdGenerations: true)
+        let loop = await harness.run()
+        await harness.startHeldTurn()
+
+        harness.comment("Ora leggo il file.")
+        #expect(await harness.spoken(count: 1) == [Self.comment("Ora leggo il file.")])
+
+        await harness.generationGate.release()
+        #expect(await harness.spoken(count: 2).last == Self.answer)
+        try await harness.finish(loop)
+    }
+
+    /// A comment that arrives while something is being read is dropped: it
+    /// neither queues behind the reading nor replaces it.
+    @Test
+    func aCommentWhileSomethingIsBeingReadIsDroppedAndNeverReadLater() async throws {
+        let harness = try Harness(holdGenerations: true)
+        let loop = await harness.run()
+        await harness.startHeldTurn()
+
+        await harness.voice.setSpeaking(true)
+        harness.comment("Primo commento.")
+        #expect(await harness.spokenAfterSettling().isEmpty)
+
+        // Once the reading ends the dropped comment does not come back.
+        await harness.voice.setSpeaking(false)
+        harness.speechEnded()
+        #expect(await harness.spokenAfterSettling().isEmpty)
+
+        // Nothing is being read any more: the next comment is read.
+        harness.comment("Secondo commento.")
+        #expect(await harness.spoken(count: 1) == [Self.comment("Secondo commento.")])
+
+        await harness.generationGate.release()
+        try await harness.finish(loop)
+    }
+
+    /// While a live-chat question is pending, comments are dropped and the
+    /// dialogue goes on untouched.
+    @Test
+    func aCommentWhileALiveChatQuestionIsPendingIsDropped() async throws {
+        let harness = try Harness(holdGenerations: true)
+        let loop = await harness.run()
+        await harness.startHeldTurn()
+
+        harness.deliver([harness.message(from: harness.reviewer)])
+        #expect(await harness.spoken(count: 1) == [Self.reviewerAnnouncement])
+        // The announcement is over: the dialogue awaits a yes or a no.
+        harness.speechEnded()
+
+        harness.comment("Ora leggo il file.")
+        #expect(await harness.spokenAfterSettling().count == 1)
+
+        // The question is still open: a yes reads the message.
+        harness.say("sì")
+        #expect(await harness.spoken(count: 2).last == Self.plain("Ho finito. Vuoi rispondere?"))
+        #expect(harness.prompts == ["fai qualcosa"])
+
+        await harness.generationGate.release()
+        try await harness.finish(loop)
+    }
+
+    /// The final answer is not subject to the comment rules: it is read even
+    /// while a comment is still being read, and replaces it.
+    @Test
+    func theFinalAnswerIsReadOverACommentBeingRead() async throws {
+        let harness = try Harness(holdGenerations: true)
+        let loop = await harness.run()
+        await harness.startHeldTurn()
+
+        harness.comment("Ora leggo il file.")
+        #expect(await harness.spoken(count: 1) == [Self.comment("Ora leggo il file.")])
+        await harness.voice.setSpeaking(true)
+
+        await harness.generationGate.release()
+        #expect(await harness.spoken(count: 2) == [Self.comment("Ora leggo il file."), Self.answer])
+        try await harness.finish(loop)
+    }
+
+    /// A comment outside a turn is dropped: one that arrives before any turn
+    /// started, and a late one that arrives after the turn ended.
+    @Test
+    func aCommentWithNoTurnRunningIsDropped() async throws {
+        let harness = try Harness()
+        let loop = await harness.run()
+        harness.comment("Prima del turno.")
+        harness.queue.send(.input(.submitted("fai qualcosa")))
+        #expect(await harness.spoken(count: 1) == [Self.answer])
+
+        harness.comment("Dopo il turno.")
+        // The probe proves the FIFO read nothing in between.
+        harness.deliver([harness.message(from: harness.reviewer)])
+        #expect(await harness.spoken(count: 2) == [Self.answer, Self.reviewerAnnouncement])
+        try await harness.finish(loop)
+    }
+
+    /// An announcement for a message that arrives during a comment waits for
+    /// the end of the reading, like for any other reading.
+    @Test
+    func anAnnouncementWaitsForACommentBeingRead() async throws {
+        let harness = try Harness(holdGenerations: true)
+        let loop = await harness.run()
+        await harness.startHeldTurn()
+
+        harness.comment("Ora leggo il file.")
+        #expect(await harness.spoken(count: 1) == [Self.comment("Ora leggo il file.")])
+        await harness.voice.setSpeaking(true)
+
+        harness.deliver([harness.message(from: harness.reviewer)])
+        #expect(await harness.spokenAfterSettling().count == 1)
+
+        await harness.voice.setSpeaking(false)
+        harness.speechEnded()
+        #expect(await harness.spoken(count: 2).last == Self.reviewerAnnouncement)
+
+        await harness.generationGate.release()
+        try await harness.finish(loop)
+    }
+
+    // MARK: offerVoiceCommentary
+
+    /// Generation offers a comment without waiting: nothing is enqueued unless
+    /// voice mode runs inside the panel loop and the comment says something.
+    @Test
+    func offeringACommentEnqueuesOnlyWhatCanBeRead() async throws {
+        let harness = try Harness()
+        let terminal = harness.terminal
+        // The panel loop is not running: register its queue by hand.
+        terminal.voiceEventQueue = harness.queue
+
+        terminal.voiceController = nil
+        terminal.offerVoiceCommentary("Ora leggo il file.")
+        #expect(harness.queue.bufferedEventCount == 0)
+
+        terminal.voiceController = harness.voice
+        terminal.offerVoiceCommentary("")
+        terminal.offerVoiceCommentary(" \n\t ")
+        #expect(harness.queue.bufferedEventCount == 0)
+
+        terminal.voiceEventQueue = nil
+        terminal.offerVoiceCommentary("Ora leggo il file.")
+        #expect(harness.queue.bufferedEventCount == 0)
+
+        terminal.voiceEventQueue = harness.queue
+        terminal.offerVoiceCommentary("Ora leggo il file.")
+        #expect(harness.queue.bufferedEventCount == 1)
+        var iterator = harness.queue.events.makeAsyncIterator()
+        let event = try #require(await iterator.next())
+        if case .voiceCommentary("Ora leggo il file.") = event {} else {
+            Issue.record("Expected the comment to reach the queue unchanged")
+        }
+    }
+
+    /// A full queue drops the comment instead of making generation wait.
+    @Test
+    func aFullQueueDropsTheOfferedComment() throws {
+        let harness = try Harness()
+        let terminal = harness.terminal
+        let queue = TerminalChatEventQueue(capacity: 1)
+        terminal.voiceEventQueue = queue
+        queue.send(.voiceUtterance("sì"))
+
+        terminal.offerVoiceCommentary("Ora leggo il file.")
+        #expect(queue.bufferedEventCount == 1)
+        #expect(queue.rejectedEventCount == 1)
     }
 }
 

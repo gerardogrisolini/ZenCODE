@@ -21,7 +21,7 @@ The architecture and persistence contract behind this guide is in
 | --- | --- | --- |
 | Speech recognition | Apple speech recognition (SpeechAnalyzer), on the Mac | Parakeet TDT 0.6B v3 behind the Silero voice activity detector (sherpa-onnx), on the machine |
 | Spoken answers | A system voice: the one chosen in `/setup` > Voice mode, or the best installed one | The Piper voice downloaded in `/setup` > Voice mode |
-| Talking over an answer | Yes: echo cancellation keeps the microphone open, and speaking interrupts the reading | No: the microphone is off while an answer is read; `Esc` stops the reading |
+| Talking over an answer | Yes: echo cancellation keeps the microphone open, and speaking interrupts the reading | No: the microphone is off while an answer or a comment is read; `Esc` stops the reading |
 | Download | The language's speech model, the first time it is needed; nothing for installed languages | About 580 MB from `/setup` > Voice mode |
 | Language | The response language, else the system language, else English | Recognized automatically among 25 European languages; answers are read in the language of the installed voice |
 | Telegram voice messages | Apple speech recognition, on the Mac | The Voice mode files plus `opusdec` or `ffmpeg` |
@@ -77,8 +77,8 @@ command, and `zen -p`, `--jsonl` and ACP do not have it.
    their host name, table rows cell by cell, and every code block is replaced
    by a short notice such as "Code block omitted." (in English, Italian,
    Spanish, French, German or Portuguese, following the voice mode language).
-   A new answer replaces the one being read. The terminal always shows the
-   whole answer.
+   A new answer replaces the one being read, or a comment (see below). The
+   terminal always shows the whole answer.
 5. `Esc` stops the reading without clearing the draft. While a prompt is
    running, `Esc` stops both the generation and the reading.
 
@@ -87,12 +87,19 @@ while voice mode is paused are not read later.
 
 While voice mode listens, every prompt that runs in the terminal also carries a
 short instruction for the model: answer in short sentences, and briefly comment
-on what it is doing as it works. The comments appear in the terminal while the
-model works; they are not read aloud, only the final answer is. The instruction
-follows the state of voice mode when each request is made, so `/voice pause`,
-`/voice resume` and `/voice off` apply from the next prompt. It goes with the
-request only: it is not saved in the session history or in saved sessions, and
-it is not part of the system prompt. Delegated agents do not receive it.
+on what it is doing as it works. The comments the main agent writes before a
+tool call are read aloud as they appear, in the same way as answers, as long as
+nothing else is being read and voice mode is not asking you about a live-chat
+message; otherwise they are skipped and only shown in the terminal. The final
+answer interrupts a comment still being read, and `Esc` and `/voice pause` stop
+a comment like any other reading. The thinking of the model, the text of
+delegated agents and `/plan` turns are not read aloud.
+
+The instruction follows the state of voice mode when each request is made, so
+`/voice pause`, `/voice resume` and `/voice off` apply from the next prompt. It
+goes with the request only: it is not saved in the session history or in saved
+sessions, and it is not part of the system prompt. Delegated agents do not
+receive it.
 
 ### The prompt draft
 
@@ -214,7 +221,9 @@ is then asked again; a message already being read, or whose "Do you want to
 reply?" was not answered, is dropped (you can still write to its sender with a
 "message to …" phrase); after "Tell me your reply." or "Tell me the message."
 the text is still awaited once the answer is over. At most 32 messages wait to
-be announced; older ones are dropped.
+be announced; older ones are dropped. The comments the main agent writes before
+a tool call never interrupt the live chat: they are skipped while a question is
+pending or a message is being read, and they never change the dialogue.
 
 **Dock and keyboard.** Reading a message aloud marks it as read in the dock,
 exactly like opening it there; a declined or lapsed question leaves it unread.
@@ -352,8 +361,8 @@ on the other hand, is a setting: it is saved by **Finish setup** like on macOS.
 
 While voice mode runs, `sherpa-onnx-vad-alsa-offline-asr` listens and
 `sherpa-onnx-offline-tts-play-alsa` reads each answer, as separate processes.
-Without echo cancellation the microphone is off while an answer is read. It
-turns back on when the reading ends or `Esc` stops it.
+Without echo cancellation the microphone is off while an answer or a comment is
+read. It turns back on when the reading ends or `Esc` stops it.
 
 ## Language
 

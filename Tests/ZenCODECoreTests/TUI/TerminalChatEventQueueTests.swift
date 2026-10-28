@@ -242,6 +242,7 @@ struct TerminalChatEventQueueTests {
         // make them stale.
         #expect(TerminalChatRuntimeEvent.voiceUtterance("x").sharedChatRoomID == nil)
         #expect(TerminalChatRuntimeEvent.voiceSpeakingChanged(true).sharedChatRoomID == nil)
+        #expect(TerminalChatRuntimeEvent.voiceCommentary("x").sharedChatRoomID == nil)
         #expect(TerminalChatRuntimeEvent.voiceDialogueTimedOut(token).sharedChatRoomID == nil)
     }
 

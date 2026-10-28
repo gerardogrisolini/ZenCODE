@@ -151,9 +151,11 @@ extension TerminalChat {
 
     /// Reads a completed answer aloud while voice mode runs and is not paused.
     /// An answer that starts takes precedence over the live-chat dialogue (see
-    /// `TerminalVoiceChatDialogue.answerReadingStarted`); one that does not
-    /// start, because voice mode is paused or the answer has nothing to say,
-    /// leaves the dialogue as it is. Returns whether the reading started.
+    /// `TerminalVoiceChatDialogue.answerReadingStarted`) and replaces a comment
+    /// still being read (see ``offerVoiceCommentary(_:)``): it does not check
+    /// whether something is being read. One that does not start, because voice
+    /// mode is paused or the answer has nothing to say, leaves the dialogue as
+    /// it is. Returns whether the reading started.
     func speakVoiceResponse(_ response: String) async -> Bool {
         guard let voiceController else {
             return false
@@ -165,6 +167,25 @@ extension TerminalChat {
             await syncVoiceDialogueAnswerState()
         }
         return started
+    }
+
+    /// Offers the runtime loop a comment the root agent wrote before a tool
+    /// call, to be read aloud. The loop reads it only while the turn runs,
+    /// nothing else is being read and no live-chat question is in progress;
+    /// otherwise the comment is dropped and stays on screen only.
+    ///
+    /// Not `async` and non-blocking on purpose: generation must never wait on
+    /// the terminal FIFO. `offer` is used instead of a backpressure send, so a
+    /// full queue simply drops the comment, like any other comment that cannot
+    /// be read right away. Does nothing without a voice controller or an
+    /// interactive panel loop, or for a blank comment.
+    func offerVoiceCommentary(_ text: String) {
+        guard voiceController != nil,
+              let voiceEventQueue,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+        _ = voiceEventQueue.offer(.voiceCommentary(text))
     }
 
     /// Stops the answer being read aloud, e.g. after Esc. On Linux this also

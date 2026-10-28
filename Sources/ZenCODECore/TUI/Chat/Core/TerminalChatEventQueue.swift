@@ -281,6 +281,7 @@ private final class Storage: Sendable {
                  .voicePromptCompleted,
                  .voiceUtterance,
                  .voiceSpeakingChanged,
+                 .voiceCommentary,
                  .voiceDialogueTimedOut,
                  .sharedChatMessages,
                  .sharedChatObservationEnded,

@@ -153,6 +153,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   files, `memory.graph.json.bak` and `memory.graph.json.vectors.bak`, and the
   graph list shows the size of both graph files. See
   [Docs/memory.md](Docs/memory.md).
+- Voice: while voice mode listens, the short comments the main agent writes
+  before a tool call are now read aloud as they appear, if nothing else is being
+  read and voice mode is not asking you about a live-chat message; otherwise
+  they are skipped and only shown in the terminal. The final answer interrupts a
+  comment still being read. Thinking, the text of delegated agents and `/plan`
+  turns are still not read. `Esc` and `/voice pause` stop a comment like any
+  other reading. See [Docs/voice.md](Docs/voice.md).
 
 ### Fixed
 

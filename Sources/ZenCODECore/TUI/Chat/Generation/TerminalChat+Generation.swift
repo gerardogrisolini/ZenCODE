@@ -129,7 +129,12 @@ extension TerminalChat {
                         await assistantOutput.append(delta)
                         await self.appendTelegramRootResponseDelta(delta)
                     case let .toolCallStarted(toolCall):
-                        await self.writeAssistantContent(await assistantOutput.takePending())
+                        // The text written before a tool call is a comment on
+                        // what is about to happen: besides showing it, offer
+                        // it to voice mode, which reads it aloud when it can.
+                        let commentary = await assistantOutput.takePending()
+                        await self.writeAssistantContent(commentary)
+                        self.offerVoiceCommentary(commentary)
                         await transcriptTurn.appendToolCallStarted(toolCall)
                         await self.writeToolCallStarted(toolCall)
                         // The tool call closes the root response that preceded
