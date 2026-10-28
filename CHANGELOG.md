@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-28
+
 ### Added
 
 - `web.fetch` reads long pages in parts and returns only what you ask for. New
@@ -100,8 +102,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   tool selections, and in saved sessions. Nothing is rewritten when `zen`
   starts; the key becomes `search` the next time ZenCODE saves your profiles.
   No persisted file format changes.
-- **Breaking:** `search.` is now a reserved core tool prefix, like `local.` and
-  `text.`: an MCP bridge feature can no longer use it as its `toolPrefix`.
+- `search.` is now a reserved core tool prefix, like `local.` and `text.`: an
+  MCP bridge feature can no longer use it as its `toolPrefix`.
 - `web.fetch` now converts HTML to Markdown with a converter built into the
   `web-tools` feature, on macOS and Linux alike. Linux used to return the raw
   HTML cut at `maxBytes`, and macOS used a script that ran inside the WebKit
@@ -199,7 +201,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
   valid: `/cron list`, `/cron run`, and `/cron remove` handle them. On macOS they
   still ask for the permissions again after every update; to move one to ZenCRON,
   run `/cron remove <n>` and add it again.
-- **Breaking:** `/cron add` now needs ZenCRON, on macOS and Linux. Build it first
+- `/cron add` now needs ZenCRON, on macOS and Linux. Build it first
   from `/setup` › **Scheduled prompts (ZenCRON)**. When ZenCRON is missing or does
   not answer `--zencron-version`, `/cron add` refuses without reading or writing
   the crontab, with `ZenCRON is not installed at <path>. Build it from /setup ›
@@ -239,8 +241,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Removed
 
-- **Breaking:** The optional `search-tools` feature package
-  (`search-tools-feature`) is removed from the catalog of optional features.
+- The optional `search-tools` feature package (`search-tools-feature`) is
+  removed from the catalog of optional features.
   `zen --install-features search-tools` now fails with
   `Unknown optional Swift feature: search-tools.`, and the package no longer
   appears in the optional-feature picker. A copy already installed in
