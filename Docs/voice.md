@@ -19,12 +19,12 @@ The architecture and persistence contract behind this guide is in
 
 | | macOS | Linux |
 | --- | --- | --- |
-| Speech recognition | Apple speech recognition, on-device when the language supports it | Parakeet TDT 0.6B v3 behind the Silero voice activity detector (sherpa-onnx), on the machine |
+| Speech recognition | Apple speech recognition (SpeechAnalyzer), on the Mac | Parakeet TDT 0.6B v3 behind the Silero voice activity detector (sherpa-onnx), on the machine |
 | Spoken answers | A system voice: the one chosen in `/setup` > Voice mode, or the best installed one | The Piper voice downloaded in `/setup` > Voice mode |
 | Talking over an answer | Yes: echo cancellation keeps the microphone open, and speaking interrupts the reading | No: the microphone is off while an answer is read; `Esc` stops the reading |
-| Download | Nothing | About 580 MB from `/setup` > Voice mode |
+| Download | The language's speech model, the first time it is needed; nothing for installed languages | About 580 MB from `/setup` > Voice mode |
 | Language | The response language, else the system language, else English | Recognized automatically among 25 European languages; answers are read in the language of the installed voice |
-| Telegram voice messages | Apple speech recognition | The Voice mode files plus `opusdec` or `ffmpeg` |
+| Telegram voice messages | Apple speech recognition, on the Mac | The Voice mode files plus `opusdec` or `ffmpeg` |
 
 ## Voice mode in the terminal
 
@@ -99,7 +99,8 @@ it is not part of the system prompt. Delegated agents do not receive it.
 While voice mode listens, the text recognized but not yet sent appears live at
 the end of the prompt draft, the line you type in:
 
-- **macOS** updates it word by word as you speak, in both Send modes.
+- **macOS** updates it while you speak, about once a second, in both Send
+  modes.
   Dictation may correct earlier words while you keep speaking, so the draft can
   change slightly. When you pause briefly while speaking, the dictation
   continues on a new line and what you said before stays; it is all sent
@@ -258,9 +259,9 @@ can still be chosen.
     voice mode is asking you about a live-chat message a bare yes or no is sent
     at once, without the word. `Esc` at the word prompt keeps the current send
     mode; going back to "After a pause" keeps the word for later. On macOS the
-    word takes effect about half a second after it is recognized; on Linux at
-    the end of the current speech segment, about a second after you stop. This
-    mode asks for no pause.
+    word takes effect once recognition has finalized the phrase ending with it,
+    two or three seconds after you stop; on Linux at the end of the current speech
+    segment, about a second after you stop. This mode asks for no pause.
 The send mode is saved with the other settings when setup finishes
 (`voice.sendMode` as `pause` or `keyword`, `voice.sendKeyword` and
 `voice.utteranceSilenceSeconds` in `settings.json`) and applies the next time
@@ -278,9 +279,12 @@ when the settings are read and is removed the next time they are saved.
   the **Microphone** and **Speech Recognition**. If you denied them, allow the
   terminal app under *System Settings > Privacy & Security > Microphone* and
   *Speech Recognition*, then run `/voice on` again.
-- **Recognition.** Apple speech recognition runs on-device when the language
-  supports it, otherwise on Apple servers. The start message says which:
-  `on-device` or `Apple servers`.
+- **Recognition.** Apple speech recognition always runs on the Mac. It uses
+  Apple's SpeechTranscriber model, or DictationTranscriber for languages that
+  SpeechTranscriber does not support, such as Russian, Polish, Dutch, Swedish or
+  Turkish. The first time a language is used, macOS downloads its speech model
+  from Apple (`Voice: downloading the speech recognition model for …`); later
+  starts use the installed model at once.
 - **Echo cancellation.** Capture and playback share one audio engine with
   system echo cancellation, so the microphone stays open while an answer is
   read and speaking interrupts the reading. A residual-echo filter also discards
@@ -385,9 +389,10 @@ with *Too many voice messages are being transcribed. Try again shortly.* A
 voice note that replies to a live message card is refused, because answers to
 live cards must be typed. Voice mode does not need to be on.
 
-- **macOS** uses Apple speech recognition in the voice language and asks for
-  the Speech Recognition permission. The system may use Apple servers for better
-  accuracy.
+- **macOS** uses the same Apple speech recognition as voice mode, in the voice
+  language and on the Mac, and asks for the Speech Recognition permission. The
+  first voice note in a language without an installed model downloads it from
+  Apple.
 - **Linux** uses the files of `/setup` > Voice mode, with any voice installed.
   It also needs one of these decoders in `/usr/bin`, `/bin` or `/usr/local/bin`:
   - `opusdec` (package `opus-tools`), preferred for Telegram voice notes, which
@@ -419,8 +424,8 @@ open the Telegram section of `/setup` again; you can keep the current pairing.
   that is deleted after transcription. On Linux it is decoded into a private
   temporary directory (mode `0700`), deleted when the transcription ends,
   including after a failure or cancellation.
-- On macOS, speech recognition can use Apple servers: in voice mode only when
-  the language has no on-device recognition, as the start message reports.
+- On macOS, speech recognition runs on the Mac. The first use of a language
+  downloads its speech model from Apple.
 - `settings.json` keeps a `voice` object only while something is set: `enabled`
   turns on Telegram voice-message transcription, and `macOSVoiceIdentifier` is
   the macOS reading voice.
@@ -436,6 +441,7 @@ open the Telegram section of `/setup` again; you can keep the current pairing.
 | `microphone access is not granted` | macOS: allow the terminal app under *Privacy & Security > Microphone*, then `/voice on`. |
 | `speech recognition is not allowed` | macOS: allow the terminal app under *Privacy & Security > Speech Recognition*, then `/voice on`. |
 | `echo cancellation is unavailable with the current audio output (…)` | macOS: switch to a local output or use headphones, so the assistant does not hear itself. |
+| `The speech recognition model for … could not be downloaded` | macOS: check the network connection, then run `/voice on` again or resend the voice note. |
 | `speech recognition stopped repeatedly` | Run `/voice on` to retry. On Linux, check the audio device. |
 | `Voice mode files are not installed` | Linux: download them from `/setup` > Voice mode. |
 | `… does not contain the expected files` | Linux: choose the voice again in `/setup` > Voice mode, or remove the files and download them again. |

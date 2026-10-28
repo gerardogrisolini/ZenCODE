@@ -63,8 +63,16 @@ struct TerminalVoiceModeTests {
     @Test
     func listeningMessageNamesTheVoiceCommands() {
         #expect(
-            TerminalDictationVoiceController.listeningMessage(localeIdentifier: "it_IT", onDevice: true)
+            TerminalDictationVoiceController.listeningMessage(localeIdentifier: "it_IT")
                 == "Voice: listening (dictation, it_IT, on-device). Speak or type; answers are read aloud. /voice pauses or resumes, /voice off stops.\n"
+        )
+    }
+
+    @Test
+    func downloadingMessageNamesTheLanguage() {
+        #expect(
+            TerminalDictationVoiceController.downloadingMessage(localeIdentifier: "it_IT")
+                == "Voice: downloading the speech recognition model for it_IT; macOS does this only the first time.\n"
         )
     }
 

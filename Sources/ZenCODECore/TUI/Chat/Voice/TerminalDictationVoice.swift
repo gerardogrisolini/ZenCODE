@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 #if canImport(AVFoundation)
 import AVFoundation
 #endif
@@ -14,9 +15,10 @@ import Speech
 #endif
 
 enum TerminalDictationEvent: Sendable, Equatable {
-    /// A recognition result. `endsSegment` marks one that closes a speech
-    /// segment after a pause: the next results of the request hold only what
-    /// is said after it, so the earlier words must be kept by the receiver.
+    /// A recognition result. `endsSegment` marks a final one, which closes
+    /// the speech segment recognized since the previous final result: the
+    /// next results hold only what is said after it, so the earlier words
+    /// must be kept by the receiver.
     case partial(generation: UInt64, text: String, endsSegment: Bool)
     case ended(generation: UInt64)
 }
@@ -24,7 +26,9 @@ enum TerminalDictationEvent: Sendable, Equatable {
 enum TerminalDictationError: LocalizedError, Equatable {
     case unsupportedPlatform
     case unsupportedLanguage(String)
-    case recognizerUnavailable
+    /// The language's speech model could not be downloaded: the locale and
+    /// the reason.
+    case speechModelDownloadFailed(String, String)
 
     var errorDescription: String? {
         switch self {
@@ -32,25 +36,41 @@ enum TerminalDictationError: LocalizedError, Equatable {
             return "Voice mode requires macOS."
         case let .unsupportedLanguage(identifier):
             return "Speech recognition does not support \(identifier)."
-        case .recognizerUnavailable:
-            return "Speech recognition is currently unavailable."
+        case let .speechModelDownloadFailed(identifier, detail):
+            return "The speech recognition model for \(identifier) could not be downloaded (\(detail)). Check the network connection and run /voice on again."
         }
     }
 }
 
 #if canImport(Speech) && canImport(AVFoundation)
-/// Continuous speech recognition fed with the voice device's microphone
-/// samples. Each `restart()` opens a new request with a new generation, so
-/// events of a retired request are recognisable as stale.
+/// Continuous on-device speech recognition of the voice device's microphone
+/// samples with `SpeechAnalyzer`. Each `restart()` opens a new analysis
+/// session with a new generation, so events of a retired session are
+/// recognisable as stale. `append` runs on the audio thread; it and the
+/// controller's `restart` and `stop` touch the current session only under the
+/// lock.
 final class TerminalDictationRecognizer: @unchecked Sendable {
     static let isSupported = true
 
+    /// The input of one analyzer, fed with the samples received while its
+    /// generation is current.
+    private struct Session {
+        let generation: UInt64
+        let input: AsyncStream<AnalyzerInput>.Continuation
+        /// Finished when the session is retired: its analysis then ends.
+        let retirement: AsyncStream<Void>.Continuation
+        /// Converts the device's samples to the analyzer format, keeping its
+        /// resampling state across buffers; `nil` when the formats match.
+        let converter: AVAudioConverter?
+    }
+
     private let lock = NSLock()
-    private let recognizer: SFSpeechRecognizer
-    private var request: SFSpeechAudioBufferRecognitionRequest?
-    private var task: SFSpeechRecognitionTask?
+    private let model: AppleSpeechModel
+    private let analyzerFormat: AVAudioFormat
+    private var session: Session?
     private var generation: UInt64 = 0
     private var onEvent: (@Sendable (TerminalDictationEvent) -> Void)?
+    /// The recognized locale in ICU form, e.g. `it_IT`.
     let localeIdentifier: String
 
     static func requestAuthorization() async -> Bool {
@@ -69,82 +89,107 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
         }
     }
 
-    init(locale: Locale) throws {
-        guard let recognizer = SFSpeechRecognizer(locale: locale) else {
+    /// Resolves the model for `locale` and installs it when missing:
+    /// `onDownload` receives the recognized locale before a download starts.
+    static func make(
+        locale: Locale,
+        onDownload: @escaping @Sendable (_ localeIdentifier: String) async -> Void
+    ) async throws -> TerminalDictationRecognizer {
+        guard let model = await AppleSpeechModel.resolve(for: locale) else {
             throw TerminalDictationError.unsupportedLanguage(locale.identifier)
         }
-        guard recognizer.isAvailable else {
-            throw TerminalDictationError.recognizerUnavailable
+        let localeIdentifier = model.locale.identifier(.icu)
+        let module = model.makeModule(for: .live).module
+        do {
+            try await AppleSpeechModel.installAssets(for: [module]) {
+                await onDownload(localeIdentifier)
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw TerminalDictationError.speechModelDownloadFailed(localeIdentifier, error.localizedDescription)
         }
-        // Results are delivered off the main queue; the controller orders them.
-        let queue = OperationQueue()
-        queue.name = "ZenCODE.TUI.dictation-recognition"
-        queue.maxConcurrentOperationCount = 1
-        recognizer.queue = queue
-        self.recognizer = recognizer
-        localeIdentifier = recognizer.locale.identifier
+        let deviceFormat = TerminalVoiceAudioDevice.sampleFormat
+        let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
+            compatibleWith: [module],
+            considering: deviceFormat
+        ) ?? deviceFormat
+        return TerminalDictationRecognizer(
+            model: model,
+            analyzerFormat: analyzerFormat,
+            localeIdentifier: localeIdentifier
+        )
     }
 
-    /// On-device recognition keeps the continuous microphone stream local.
-    var usesOnDeviceRecognition: Bool {
-        recognizer.supportsOnDeviceRecognition
+    private init(model: AppleSpeechModel, analyzerFormat: AVAudioFormat, localeIdentifier: String) {
+        self.model = model
+        self.analyzerFormat = analyzerFormat
+        self.localeIdentifier = localeIdentifier
     }
 
     func setEventHandler(_ handler: @escaping @Sendable (TerminalDictationEvent) -> Void) {
         lock.withLock { onEvent = handler }
     }
 
-    /// Retires the current request and opens a new one.
+    /// Retires the current session and opens a new one. Samples appended
+    /// from now on go to the new analyzer, buffered until it starts. The
+    /// session's results become `.partial` events, followed by exactly one
+    /// `.ended`.
     @discardableResult
     func restart() -> UInt64 {
-        let previous = lock.withLock { () -> (SFSpeechAudioBufferRecognitionRequest?, SFSpeechRecognitionTask?, UInt64, (@Sendable (TerminalDictationEvent) -> Void)?) in
-            let previous = (request, task)
-            request = nil
-            task = nil
+        let module = model.makeModule(for: .live)
+        let analyzer = SpeechAnalyzer(modules: [module.module], options: AppleSpeechModel.analyzerOptions)
+        let (inputs, input) = AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .unbounded)
+        let (retirement, retirementContinuation) = AsyncStream.makeStream(of: Void.self)
+        let converter = Self.makeConverter(to: analyzerFormat)
+        let (retired, generation, handler) = lock.withLock {
+            () -> (Session?, UInt64, (@Sendable (TerminalDictationEvent) -> Void)?) in
+            let retired = session
             generation &+= 1
-            return (previous.0, previous.1, generation, onEvent)
+            session = Session(
+                generation: generation,
+                input: input,
+                retirement: retirementContinuation,
+                converter: converter
+            )
+            return (retired, generation, onEvent)
         }
-        previous.0?.endAudio()
-        previous.1?.cancel()
+        Self.retire(retired)
 
-        let generation = previous.2
-        let handler = previous.3
-        let newRequest = SFSpeechAudioBufferRecognitionRequest()
-        newRequest.shouldReportPartialResults = true
-        newRequest.taskHint = .dictation
-        newRequest.addsPunctuation = true
-        newRequest.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
-        let newTask = recognizer.recognitionTask(with: newRequest) { result, error in
-            if let result {
-                handler?(.partial(
-                    generation: generation,
-                    text: result.bestTranscription.formattedString,
-                    endsSegment: result.speechRecognitionMetadata != nil
-                ))
+        let events = TerminalDictationSessionEvents(generation: generation, handler: handler)
+        let results = module.results()
+        let consumer = Task(name: "ZenCODE.TUI.dictation-results") {
+            do {
+                for try await result in results {
+                    events.deliver(result)
+                }
+            } catch {
+                // The analysis was retired or failed: the session ends.
             }
-            if error != nil || result?.isFinal == true {
-                handler?(.ended(generation: generation))
-            }
+            events.end()
         }
-        let isCurrent = lock.withLock { () -> Bool in
-            guard self.generation == generation else {
-                return false
+        let format = analyzerFormat
+        Task(name: "ZenCODE.TUI.dictation-analyzer") {
+            do {
+                // Prepared even when already retired: only an analyzer that
+                // got ready ends its results when cancelled.
+                try await analyzer.prepareToAnalyze(in: format)
+                try await analyzer.start(inputSequence: inputs)
+                for await _ in retirement {}
+            } catch {
+                // Preparing or starting failed: the session ends now.
             }
-            request = newRequest
-            task = newTask
-            return true
-        }
-        if !isCurrent {
-            newRequest.endAudio()
-            newTask.cancel()
+            await analyzer.cancelAndFinishNow()
+            // Ends the results even of an analyzer that never got ready.
+            consumer.cancel()
         }
         return generation
     }
 
-    /// Appends mono 24 kHz Float32 microphone samples to the open request.
+    /// Appends mono 24 kHz Float32 microphone samples to the current session,
+    /// converted to the analyzer format. Called on the audio thread.
     func append(_ samples: [Float]) {
-        guard let request = lock.withLock({ request }),
-              !samples.isEmpty,
+        guard !samples.isEmpty,
               let buffer = AVAudioPCMBuffer(
                   pcmFormat: TerminalVoiceAudioDevice.sampleFormat,
                   frameCapacity: AVAudioFrameCount(samples.count)
@@ -158,20 +203,98 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
                 channel.update(from: base, count: samples.count)
             }
         }
-        request.append(buffer)
+        let format = analyzerFormat
+        lock.withLock {
+            guard let session else {
+                return
+            }
+            let input: AVAudioPCMBuffer?
+            if let converter = session.converter {
+                input = Self.convert(buffer, with: converter, to: format)
+            } else {
+                input = buffer
+            }
+            if let input {
+                session.input.yield(AnalyzerInput(buffer: input))
+            }
+        }
     }
 
     func stop() {
-        let previous = lock.withLock { () -> (SFSpeechAudioBufferRecognitionRequest?, SFSpeechRecognitionTask?) in
-            let previous = (request, task)
-            request = nil
-            task = nil
+        let retired = lock.withLock { () -> Session? in
+            let retired = session
+            session = nil
             onEvent = nil
             generation &+= 1
-            return previous
+            return retired
         }
-        previous.0?.endAudio()
-        previous.1?.cancel()
+        Self.retire(retired)
+    }
+
+    /// Ends a session's input and lets its analyzer task cancel the analysis,
+    /// which ends the session's results.
+    private static func retire(_ session: Session?) {
+        guard let session else {
+            return
+        }
+        session.input.finish()
+        session.retirement.finish()
+    }
+
+    private static func makeConverter(to format: AVAudioFormat) -> AVAudioConverter? {
+        let deviceFormat = TerminalVoiceAudioDevice.sampleFormat
+        guard format != deviceFormat else {
+            return nil
+        }
+        return AVAudioConverter(from: deviceFormat, to: format)
+    }
+
+    /// Converts one buffer with the session's converter, which keeps its
+    /// resampling state for the next buffer. `nil` when nothing came out.
+    private static func convert(
+        _ buffer: AVAudioPCMBuffer,
+        with converter: AVAudioConverter,
+        to format: AVAudioFormat
+    ) -> AVAudioPCMBuffer? {
+        let ratio = format.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 32
+        guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
+            return nil
+        }
+        let feed = TerminalVoiceConverterFeed(buffer)
+        var conversionError: NSError?
+        let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
+            feed.next(inputStatus)
+        }
+        guard status != .error, output.frameLength > 0 else {
+            return nil
+        }
+        return output
+    }
+}
+
+/// Delivers the events of one recognition session in order and ends it
+/// exactly once: nothing is delivered after `.ended`.
+private final class TerminalDictationSessionEvents: Sendable {
+    private let generation: UInt64
+    private let handler: Mutex<(@Sendable (TerminalDictationEvent) -> Void)?>
+
+    init(generation: UInt64, handler: (@Sendable (TerminalDictationEvent) -> Void)?) {
+        self.generation = generation
+        self.handler = Mutex(handler)
+    }
+
+    func deliver(_ result: AppleSpeechResult) {
+        handler.withLock { handler in
+            handler?(.partial(generation: generation, text: result.text, endsSegment: result.isFinal))
+        }
+    }
+
+    func end() {
+        handler.withLock { handler in
+            handler?(.ended(generation: generation))
+            handler = nil
+        }
     }
 }
 
@@ -281,12 +404,11 @@ final class TerminalDictationRecognizer: Sendable {
         false
     }
 
-    init(locale: Locale) throws {
+    static func make(
+        locale: Locale,
+        onDownload: @escaping @Sendable (_ localeIdentifier: String) async -> Void
+    ) async throws -> TerminalDictationRecognizer {
         throw TerminalDictationError.unsupportedPlatform
-    }
-
-    var usesOnDeviceRecognition: Bool {
-        false
     }
 
     func setEventHandler(_ handler: @escaping @Sendable (TerminalDictationEvent) -> Void) {}
@@ -347,18 +469,15 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
 
     static let speechRecognitionDeniedMessage = "ZenCODE: speech recognition is not allowed. Allow your terminal app under System Settings > Privacy & Security > Speech Recognition, then run /voice on.\n"
     static let maximumRapidEndings = 5
-    /// Requests are renewed while idle to stay under the recognizer's
-    /// per-request duration limit.
-    static let idleRequestLifetime = Duration.seconds(50)
     private static let silencePollInterval = Duration.milliseconds(200)
-    /// In keyword mode the recognized text must stay unchanged this long
-    /// before its trailing keyword counts, so a word still being recognized
-    /// ("vai" on the way to "vaiolo") does not send.
-    static let keywordConfirmationDelay = Duration.milliseconds(600)
 
-    static func listeningMessage(localeIdentifier: String, onDevice: Bool) -> String {
-        let place = onDevice ? "on-device" : "Apple servers"
-        return "Voice: listening (dictation, \(localeIdentifier), \(place)). Speak or type; answers are read aloud. /voice pauses or resumes, /voice off stops.\n"
+    static func listeningMessage(localeIdentifier: String) -> String {
+        "Voice: listening (dictation, \(localeIdentifier), on-device). Speak or type; answers are read aloud. /voice pauses or resumes, /voice off stops.\n"
+    }
+
+    /// Shown before macOS downloads the language's speech model.
+    static func downloadingMessage(localeIdentifier: String) -> String {
+        "Voice: downloading the speech recognition model for \(localeIdentifier); macOS does this only the first time.\n"
     }
 
     private let callbacks: Callbacks
@@ -435,9 +554,21 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
 
         let recognizer: TerminalDictationRecognizer
         do {
-            recognizer = try TerminalDictationRecognizer(locale: locale)
+            let callbacks = callbacks
+            recognizer = try await TerminalDictationRecognizer.make(locale: locale) { localeIdentifier in
+                await callbacks.systemMessage(Self.downloadingMessage(localeIdentifier: localeIdentifier))
+            }
         } catch {
+            guard phase == .starting else {
+                return
+            }
             await fail("ZenCODE: voice mode could not start: \(error.localizedDescription)\n")
+            return
+        }
+        // The model may have been downloaded meanwhile: `/voice off` may have
+        // stopped the controller.
+        guard phase == .starting else {
+            recognizer.stop()
             return
         }
         let (events, continuation) = AsyncStream.makeStream(
@@ -496,10 +627,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             }
         }
         phase = .listening
-        await callbacks.systemMessage(Self.listeningMessage(
-            localeIdentifier: localeIdentifier,
-            onDevice: recognizer.usesOnDeviceRecognition
-        ))
+        await callbacks.systemMessage(Self.listeningMessage(localeIdentifier: localeIdentifier))
         if !hasEchoCancellation {
             await callbacks.systemMessage(Self.echoCancellationUnavailableMessage(
                 outputDeviceName: device.outputDeviceName
@@ -612,7 +740,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         keywordCollector?.reset()
         dictationID = id &+ 1
         publishedDictation = ""
-        // A request keeps reporting the segment in progress: without a fresh
+        // A session keeps reporting the segment in progress: without a fresh
         // one the discarded words would come back with the next partial result.
         if phase == .listening, !isPaused {
             restartRecognition()
@@ -651,8 +779,8 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             let now = ContinuousClock.now
             if let utterance = segmenter.takeUtterance() {
                 if keywordCollector != nil {
-                    // The request ended on its own (duration limit): the text
-                    // waits for the keyword unless it already ends with it.
+                    // The session ended on its own: the text waits for the
+                    // keyword unless it already ends with it.
                     await receiveKeywordSpeech(utterance, at: now)
                 } else {
                     await sendPauseUtterance(utterance, at: now)
@@ -684,28 +812,24 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         }
         let now = ContinuousClock.now
         if let collector = keywordCollector {
-            // Keyword mode: silence never sends; a stable text ending with the
-            // keyword (or a bare yes/no while one is awaited) does. The
-            // keyword alone sends the typed draft.
-            if segmenter.hasStableText(for: Self.keywordConfirmationDelay, at: now),
+            // Keyword mode: silence never sends; a text ending with the
+            // keyword (or a bare yes/no while one is awaited) does, once the
+            // recognizer finalized the segment ending with it, so a word still
+            // being recognized ("vai" on the way to "vaiolo") does not send.
+            // The keyword alone sends the typed draft.
+            if segmenter.endsWithClosedSegment,
                collector.peek(segmenter.text, awaitingShortAnswer: isAwaitingShortAnswer).sends,
                let speech = segmenter.takeUtterance() {
                 restartRecognition()
                 await receiveKeywordSpeech(speech, at: now)
-            } else if !segmenter.hasPendingText,
-                      generationStartedAt.duration(to: now) >= Self.idleRequestLifetime {
-                restartRecognition()
             }
             return
         }
         if segmenter.isUtteranceComplete(at: now), let utterance = segmenter.takeUtterance() {
-            // The request still reports the segment in progress: start a fresh
-            // one before the next utterance.
+            // The session still reports the segment in progress: start a
+            // fresh one before the next utterance.
             restartRecognition()
             await sendPauseUtterance(utterance, at: now)
-        } else if !segmenter.hasPendingText,
-                  generationStartedAt.duration(to: now) >= Self.idleRequestLifetime {
-            restartRecognition()
         }
     }
 

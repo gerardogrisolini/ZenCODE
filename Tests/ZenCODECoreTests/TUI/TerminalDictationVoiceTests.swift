@@ -134,6 +134,26 @@ struct TerminalDictationVoiceTests {
     }
 
     @Test
+    func theTextEndsWithAClosedSegmentOnlyAfterAFinalResult() {
+        let start = ContinuousClock.now
+        var segmenter = TerminalDictationSegmenter()
+        #expect(!segmenter.endsWithClosedSegment)
+        segmenter.observe("Cerca il file vai", at: start)
+        #expect(!segmenter.endsWithClosedSegment)
+        segmenter.observe("Cerca il file vai", at: start + .seconds(2), endsSegment: true)
+        #expect(segmenter.endsWithClosedSegment)
+        // An empty result after the final one opens no segment.
+        segmenter.observe("", at: start + .seconds(3))
+        #expect(segmenter.endsWithClosedSegment)
+        segmenter.observe("Poi", at: start + .seconds(4))
+        #expect(!segmenter.endsWithClosedSegment)
+        segmenter.observe("Poi vai", at: start + .seconds(5), endsSegment: true)
+        #expect(segmenter.endsWithClosedSegment)
+        segmenter.reset()
+        #expect(!segmenter.endsWithClosedSegment)
+    }
+
+    @Test
     func emptyRecognitionNeverCompletesAnUtterance() {
         let start = ContinuousClock.now
         var segmenter = TerminalDictationSegmenter()

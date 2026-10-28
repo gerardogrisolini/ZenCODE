@@ -41,12 +41,11 @@ enum TerminalVoiceCommandAction: Sendable, Equatable {
 
 /// Splits continuous speech recognition into utterances on a silence gap.
 ///
-/// A request's transcript is not always cumulative. Since macOS 15, after a
-/// pause of about two seconds on-device recognition closes a speech segment
-/// (the result carries `speechRecognitionMetadata`) and the following results
-/// of the same request hold only the words said after it. The segmenter
-/// therefore keeps the segments already closed in the current request plus the
-/// one in progress, and its `text` is all of them, one per line.
+/// The recognizer reports the segment in progress with volatile results and
+/// closes it with a final result after a short pause; the following results
+/// hold only the words said after it. The segmenter therefore keeps the
+/// segments already closed in the current recognition session plus the one in
+/// progress, and its `text` is all of them, one per line.
 struct TerminalDictationSegmenter: Sendable {
     static let defaultSilence = Duration.milliseconds(5_000)
     /// Separates the speech segments of one utterance: what is said after a
@@ -54,7 +53,7 @@ struct TerminalDictationSegmenter: Sendable {
     static let segmentSeparator = "\n"
 
     let silence: Duration
-    /// Segments the recognizer closed in the current request, trimmed and not
+    /// Segments the recognizer closed in the current session, trimmed and not
     /// empty.
     private var finishedSegments: [String] = []
     /// The segment being recognized, trimmed.
@@ -77,6 +76,12 @@ struct TerminalDictationSegmenter: Sendable {
         !finishedSegments.isEmpty || !currentSegment.isEmpty
     }
 
+    /// `true` when there is text and its last segment is closed: nothing is
+    /// being recognized after the last final result.
+    var endsWithClosedSegment: Bool {
+        !finishedSegments.isEmpty && currentSegment.isEmpty
+    }
+
     /// Records the latest recognized text of the segment in progress; earlier
     /// segments stay. `endsSegment` marks a result that closes the segment:
     /// the recognition of the next one restarts from nothing.
@@ -85,9 +90,8 @@ struct TerminalDictationSegmenter: Sendable {
     /// changes, so closing a segment, or an empty result right after it, neither
     /// clears the text nor moves the gap. A closing result that arrives while
     /// no segment is in progress and repeats the words of the last finished
-    /// one (the request's final result, which repeats its last segment) is
-    /// ignored. A closing result without words closes the segment in progress
-    /// as it is.
+    /// one (a repeated final result) is ignored. A closing result without
+    /// words closes the segment in progress as it is.
     mutating func observe(_ recognized: String, at now: ContinuousClock.Instant, endsSegment: Bool = false) {
         let previous = text
         let normalized = recognized.trimmingCharacters(in: .whitespacesAndNewlines)

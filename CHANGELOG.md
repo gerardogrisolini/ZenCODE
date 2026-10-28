@@ -92,6 +92,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - The optional `web-tools` feature is now described as "Search the web and
   fetch pages, PDFs, and JSON as Markdown or text." in the feature picker (it
   was "Search the web and fetch URLs as text.").
+- On macOS, voice mode and Telegram voice messages now recognize speech with
+  Apple's SpeechAnalyzer: always on the Mac, and more accurately on long
+  speech. The first use of a language downloads its speech model (voice mode
+  shows `Voice: downloading the speech recognition model for …`). The draft
+  preview updates about once a second instead of word by word, and with the
+  Send mode "On a word" the word sends once the phrase ending with it is
+  finalized. See [Docs/voice.md](Docs/voice.md).
 
 ### Fixed
 
