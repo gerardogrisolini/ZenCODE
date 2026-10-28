@@ -285,10 +285,7 @@ jobs:
         run: swift test --no-parallel
 
       - name: Build release product
-        # The downloadable Linux artifacts must run without a Swift toolchain, so
-        # the Swift runtime and Foundation are linked statically; system
-        # libraries such as libcurl stay dynamic.
-        run: swift build -c release --product zen --static-swift-stdlib
+        run: swift build -c release --product zen
 
       - name: Strip release binary
         shell: bash

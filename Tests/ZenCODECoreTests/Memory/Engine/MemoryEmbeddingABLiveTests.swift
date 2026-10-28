@@ -11,6 +11,13 @@
 //  provider production would resolve, never mutates the source graph and never
 //  prints credentials.
 //
+//  Any active entry of the copy without a vector from the provider's model is
+//  re-embedded in memory (production text, at most 4 requests in flight, one
+//  retry) before measuring, so the harness can evaluate an embedding model
+//  other than the one that produced the stored vectors. Vectors of archived
+//  entries are cleared on the copy, mirroring the product decision (retrieval
+//  only reads active entries, so it is unaffected).
+//
 //  Environment:
 //    ZENCODE_RUN_LIVE_MEMORY_AB=1        enables the test
 //    ZENCODE_AB_GRAPH_PATH               path of the memory.graph.json to copy
@@ -19,6 +26,10 @@
 //    ZENCODE_AB_EXCLUDE_IDS              comma-separated entry id prefixes to
 //                                        drop from the copy (e.g. journal
 //                                        entries that quote the queries)
+//    ZENCODE_AB_EMBEDDING_MODEL          embedding model replacing the one in
+//                                        settings.json (in memory only; the
+//                                        endpoint and provider reference are
+//                                        kept and settings.json is never written)
 //
 
 import Foundation
@@ -69,6 +80,85 @@ struct MemoryEmbeddingABLiveTests {
             defer { lock.unlock() }
             return messages
         }
+    }
+
+    // MARK: - Re-embedding
+
+    private struct ReembedJob: Sendable {
+        let id: String
+        /// Exactly the text production embeds for an entry.
+        let text: String
+    }
+
+    private struct ReembedResult: Sendable {
+        let id: String
+        let values: [Float]?
+        /// Latency of the request that produced `values` (0 when it failed).
+        let milliseconds: Double
+        let attempts: Int
+        let error: String?
+    }
+
+    /// Embeds `jobs` with at most `maxConcurrent` requests in flight. A failing
+    /// job is retried once; if it fails again it is returned with its error and
+    /// no vector instead of aborting the run.
+    private static func reembed(
+        _ jobs: [ReembedJob],
+        with provider: any EmbeddingProvider,
+        maxConcurrent: Int
+    ) async -> [ReembedResult] {
+        await withTaskGroup(of: ReembedResult.self, returning: [ReembedResult].self) { group in
+            var results: [ReembedResult] = []
+            var next = 0
+            while next < min(maxConcurrent, jobs.count) {
+                let job = jobs[next]
+                next += 1
+                group.addTask { await Self.reembedOne(job, with: provider) }
+            }
+            while let result = await group.next() {
+                results.append(result)
+                if next < jobs.count {
+                    let job = jobs[next]
+                    next += 1
+                    group.addTask { await Self.reembedOne(job, with: provider) }
+                }
+            }
+            return results
+        }
+    }
+
+    private static func reembedOne(_ job: ReembedJob, with provider: any EmbeddingProvider) async -> ReembedResult {
+        let clock = ContinuousClock()
+        var lastError = ""
+        for attempt in 1...2 {
+            let start = clock.now
+            do {
+                let values = try await provider.embed(job.text)
+                return ReembedResult(
+                    id: job.id, values: values, milliseconds: milliseconds(clock.now - start),
+                    attempts: attempt, error: nil
+                )
+            } catch {
+                lastError = describe(error)
+            }
+        }
+        return ReembedResult(id: job.id, values: nil, milliseconds: 0, attempts: 2, error: lastError)
+    }
+
+    /// One-line, bounded error text for the report; credential-looking tokens
+    /// are redacted defensively.
+    private static func describe(_ error: Error) -> String {
+        let text: String
+        if case OpenAICompatibleEmbeddingError.httpStatus(let status, let body) = error {
+            text = "HTTP \(status): \(body)"
+        } else {
+            text = String(describing: error)
+        }
+        let redacted = text
+            .replacingOccurrences(of: #"(?i)bearer\s+\S+"#, with: "Bearer <redacted>", options: .regularExpression)
+            .replacingOccurrences(of: #"sk-[A-Za-z0-9_\-]{8,}"#, with: "<redacted>", options: .regularExpression)
+            .replacingOccurrences(of: "\n", with: " ")
+        return String(redacted.prefix(200))
     }
 
     // MARK: - Queries and relevance
@@ -239,14 +329,60 @@ struct MemoryEmbeddingABLiveTests {
         for id in loadedGraph.memories.keys where excludedPrefixes.contains(Self.prefix8(id)) {
             _ = loadedGraph.removeMemory(id: id)
         }
-        let graph = loadedGraph
 
         // The exact provider production would resolve (endpoint, model, key reuse).
-        let manifest = try JSONDecoder().decode(
+        // An optional model override replaces the model in memory only, keeping the
+        // endpoint and provider reference; settings.json is never written.
+        var manifest = try JSONDecoder().decode(
             AgentSettingsManifest.self,
             from: Data(contentsOf: URL(fileURLWithPath: settingsPath))
         )
+        let modelOverride = env["ZENCODE_AB_EMBEDDING_MODEL"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let modelOverride, !modelOverride.isEmpty {
+            let current = try #require(manifest.memoryEmbedding, "settings.json has no memoryEmbedding to override")
+            let endpoint = try #require(current.endpoint, "memoryEmbedding is disabled: no endpoint to keep")
+            manifest = try ZenCODESetupRunner.manifestByUpdatingMemoryEmbedding(
+                manifest,
+                endpoint: endpoint,
+                model: modelOverride,
+                providerID: current.providerID
+            )
+        }
         let upstream = try #require(MemoryEmbedding.provider(manifest: manifest, environment: [:]))
+        let modelID = upstream.modelID
+
+        // Archived entries keep no vector (product decision); retrieval only reads
+        // active entries, so clearing them on the copy changes nothing but fidelity.
+        var archivedVectorsCleared = 0
+        for id in loadedGraph.memories.keys where loadedGraph.memories[id]?.active == false {
+            if loadedGraph.memories[id]?.embedding != nil { archivedVectorsCleared += 1 }
+            loadedGraph.memories[id]?.setEmbedding(nil, model: nil)
+        }
+
+        // Active entries without a vector from this model are re-embedded on the
+        // in-memory copy with the production text, straight through the upstream
+        // provider so the memoizing query counter stays clean.
+        let reembedJobs = loadedGraph.memories.values
+            .filter { $0.active && !$0.embeddingMatches(model: modelID) }
+            .sorted { $0.id < $1.id }
+            .map { ReembedJob(id: $0.id, text: MemoryContent.normalized($0.content)) }
+        let reembedResults = await Self.reembed(reembedJobs, with: upstream, maxConcurrent: 4)
+        var reembedLatencies: [Double] = []
+        var reembedFailures: [String] = []
+        var reembedRetried = 0
+        for result in reembedResults {
+            if let values = result.values {
+                loadedGraph.memories[result.id]?.setEmbedding(values, model: modelID)
+                reembedLatencies.append(result.milliseconds)
+                if result.attempts > 1 { reembedRetried += 1 }
+            } else {
+                reembedFailures.append("\(Self.prefix8(result.id)): \(result.error ?? "unknown error")")
+            }
+        }
+        reembedFailures.sort()
+        let graph = loadedGraph
+
         let embedder = MemoizingEmbeddingProvider(upstream: upstream)
         let recorder = FailureRecorder()
 
@@ -263,12 +399,30 @@ struct MemoryEmbeddingABLiveTests {
         let entries = Array(graph.memories.values)
         let activeCount = entries.filter(\.active).count
         let vectorCount = entries.filter { $0.active && $0.embeddingMatches(model: embedder.modelID) }.count
+        let entryVectorLengths = Dictionary(
+            grouping: entries.filter { $0.active && $0.embeddingMatches(model: embedder.modelID) }.compactMap(\.embedding),
+            by: \.count
+        ).mapValues(\.count)
+        // The one query embedded here is cached: it is not requested again below.
+        let queryVectorLength = try await embedder.embed(Self.queries[0].text).count
         let clock = ContinuousClock()
 
         var report = "# Memory retrieval A/B v2\n\n"
         report += "- graph: \(entries.count) entries, \(activeCount) active, \(vectorCount) active with a vector from `\(embedder.modelID)`; excluded prefixes: \(excludedPrefixes.sorted().joined(separator: ", "))\n"
         report += "- A = BM25 + graph cascade (no embedder); Bn = BM25 + semantic, see variants; automatic-recall configuration, scope .all, read-only `retrieveAndSelect`\n"
         report += "- metrics: MRR over the ranked candidates, recall@5 = |relevant ∩ top-5| / min(5, |relevant|), hit@1, misses = queries with no relevant entry in the top-5, exact-regressions = lexically exact queries whose relevant top-1 was displaced, Jaccard = top-5 overlap with A\n\n"
+
+        var reembedSection = "## Embedding model and re-embedding\n\n"
+        let lengthText = entryVectorLengths.sorted { $0.key < $1.key }.map { "\($0.key) (\($0.value) entries)" }.joined(separator: ", ")
+        reembedSection += "- effective model: `\(modelID)`\(modelOverride?.isEmpty == false ? " (override via ZENCODE_AB_EMBEDDING_MODEL)" : " (from settings.json)")\n"
+        reembedSection += "- vector length observed: entries \(lengthText.isEmpty ? "none" : lengthText); queries \(queryVectorLength)\n"
+        reembedSection += "- re-embedded entries: \(reembedLatencies.count) of \(reembedJobs.count) needed (retried once: \(reembedRetried)); failed: \(reembedFailures.count)\n"
+        reembedSection += "- re-embedding latency ms: median \(Self.fmt(Self.median(reembedLatencies))), max \(Self.fmt(reembedLatencies.max() ?? 0)) (successful requests, up to 4 in flight)\n"
+        reembedSection += "- archived vectors cleared: \(archivedVectorsCleared)\n"
+        for failure in reembedFailures { reembedSection += "  - re-embedding failure \(failure)\n" }
+        reembedSection += "\n"
+        report += reembedSection
+        print(reembedSection)
 
         // A: lexical only, once per query.
         let baselineEngine = makeEngine(MemoryEngineConfiguration())
@@ -387,6 +541,8 @@ struct MemoryEmbeddingABLiveTests {
         }
         #expect(failures.isEmpty)
         #expect(requestCount == Self.queries.count)
+        // Retrieval silently skips vectors whose length differs from the query's.
+        #expect(entryVectorLengths.keys.allSatisfy { $0 == queryVectorLength })
     }
 
     // MARK: - Helpers

@@ -99,6 +99,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   preview updates about once a second instead of word by word, and with the
   Send mode "On a word" the word sends once the phrase ending with it is
   finalized. See [Docs/voice.md](Docs/voice.md).
+- The Linux release archives and the downloadable Linux CI builds no longer
+  link the Swift runtime and Foundation statically: `--static-swift-stdlib`,
+  introduced in 3.0.1, has been removed. The prebuilt Linux `zen` again needs
+  the Swift 6.4 runtime libraries on the system. To use optional features on
+  Linux, install ZenCODE with `Scripts/install-linux.sh` instead of the prebuilt
+  archive: features are built from source on demand, which needs a Swift
+  toolchain and a ZenCODE source checkout. The installer sets up both: with
+  `curl | bash` it keeps the source copy in `~/.zencode/source`.
 
 ### Fixed
 

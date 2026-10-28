@@ -98,6 +98,19 @@ Release exists. The archives preserve the executable bit and contain the single
 `zen` binary. Optional Swift features are still installed and compiled on demand
 rather than bundled beside it.
 
+Optional features are built from source: every feature package depends on the
+ZenCODE package, so a build needs a Swift 6.4 toolchain and a ZenCODE source
+checkout. A prebuilt archive contains neither, so if you want optional features
+do not use it: install with `Scripts/install.sh` on macOS or
+`Scripts/install-linux.sh` on Linux and WSL (see
+[Install an immutable release](#install-an-immutable-release)). The installer
+uses its local checkout or, with `curl | bash`, keeps a source copy in
+`~/.zencode/source`. `install.sh` needs Swift 6.4 already installed;
+`install-linux.sh` installs it with Swiftly when it is missing.
+
+The Linux archives link the Swift runtime dynamically, so they need the Swift
+6.4 runtime libraries on the system.
+
 Verify and extract a downloaded archive, for example:
 
 ```bash
