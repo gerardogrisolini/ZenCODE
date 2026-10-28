@@ -26,6 +26,13 @@ import ToolCore
 /// Delivery depends only on the environment cron gives the job. `/cron run`
 /// starts the job with `ZenCronEnvironment.minimal`, which has no `MAILTO`,
 /// so its output stays in the chat.
+///
+/// Mail.app takes only plain text as a message body. So for a text-mode run
+/// (not `--jsonl`) the body is the plain text of the Markdown answer
+/// (`ZenCronMailPlainText`) and the Markdown answer itself, as it is, goes
+/// along as a `.md` attachment. A `--jsonl` run is sent as is, without
+/// attachment. If the attachment cannot be made or sent the message goes
+/// without it, with a line saying so.
 enum ZenCronMailDelivery {
     /// The crontab variable that cron passes to every job and that names
     /// where its output is mailed.
@@ -35,6 +42,22 @@ enum ZenCronMailDelivery {
     /// Maximum length of an inline prompt used as subject label, ellipsis
     /// included.
     nonisolated static let labelCharacterLimit = 60
+    /// The directory, inside the temporary directory, that holds the Markdown
+    /// attachments, one subdirectory per delivery.
+    nonisolated static let attachmentsDirectoryName = "zencode-cron-mail"
+    /// How long the subdirectory of a delivery is kept: Mail may read an
+    /// attachment after the delivery returned, so a delivery only removes the
+    /// directories of earlier ones that are older than this.
+    nonisolated static let attachmentRetention: TimeInterval = 60 * 60
+    /// The attachment name base used when the job gives none that survives
+    /// `sanitizedFileNameBase`.
+    nonisolated static let fallbackAttachmentBaseName = "zencode-cron"
+
+    /// Where production deliveries put their attachments.
+    nonisolated static var defaultAttachmentsDirectory: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent(attachmentsDirectoryName, isDirectory: true)
+    }
 
     // MARK: - Activation
 
@@ -120,30 +143,78 @@ enum ZenCronMailDelivery {
         text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
+    /// The file name of the Markdown attachment, for example
+    /// `report-2025-10-25.md`: the name of the prompt file without its
+    /// extension, or else the label of the inline prompt, then the day of the
+    /// run as in the subject.
+    nonisolated static func attachmentFileName(
+        promptFile: String?,
+        prompt: String?,
+        date: Date,
+        timeZone: TimeZone
+    ) -> String {
+        let base: String
+        if let promptFile {
+            base = URL(fileURLWithPath: promptFile).deletingPathExtension().lastPathComponent
+        } else {
+            base = label(promptFile: nil, prompt: prompt)
+        }
+        return "\(sanitizedFileNameBase(base))-\(day(of: date, in: timeZone)).md"
+    }
+
+    /// `name` fit to be part of a file name: path separators, `:` and control
+    /// characters become `-`, and spaces and dots are trimmed from both ends.
+    /// A name with nothing left is `fallbackAttachmentBaseName`.
+    nonisolated static func sanitizedFileNameBase(_ name: String) -> String {
+        let forbidden: Set<Unicode.Scalar> = ["/", "\\", ":"]
+        var replaced = String.UnicodeScalarView()
+        for scalar in name.unicodeScalars {
+            if forbidden.contains(scalar) || scalar.properties.generalCategory == .control {
+                replaced.append("-")
+            } else {
+                replaced.append(scalar)
+            }
+        }
+        let trimmed = String(replaced).trimmingCharacters(in: CharacterSet(charactersIn: " ."))
+        return trimmed.isEmpty ? fallbackAttachmentBaseName : trimmed
+    }
+
     /// The arguments of `macos.mail` `send`. `confirm` is the explicit
     /// approval the tool requires for outbound mail: the user gave it once,
     /// by scheduling the job with a `MAILTO`. `from` is omitted so that Mail
-    /// sends from its default account.
+    /// sends from its default account. `attachments`, the paths of the files
+    /// to attach, is present only when there is at least one.
     nonisolated static func sendArguments(
         recipient: String,
         subject: String,
-        body: String
+        body: String,
+        attachments: [URL] = []
     ) -> [String: JSONValue] {
-        [
+        var arguments: [String: JSONValue] = [
             "action": .string("send"),
             "confirm": .bool(true),
             "to": .array([.string(recipient)]),
             "subject": .string(subject),
             "body": .string(body)
         ]
+        if !attachments.isEmpty {
+            arguments["attachments"] = .array(attachments.map { .string($0.path) })
+        }
+        return arguments
     }
 
     nonisolated static func sendToolCall(
         recipient: String,
         subject: String,
-        body: String
+        body: String,
+        attachments: [URL] = []
     ) -> DirectAgentToolCall {
-        let arguments = sendArguments(recipient: recipient, subject: subject, body: body)
+        let arguments = sendArguments(
+            recipient: recipient,
+            subject: subject,
+            body: body,
+            attachments: attachments
+        )
         return DirectAgentToolCall(
             id: "zen-cron-mail-\(UUID().uuidString)",
             name: mailToolName,
@@ -157,9 +228,24 @@ enum ZenCronMailDelivery {
     /// Sends `output` to `recipient`, or, when Mail.app cannot, writes it as
     /// the run would have printed it.
     ///
+    /// A text-mode `output` is sent as plain text converted from its Markdown
+    /// (consecutive standard output chunks are one document; standard error is
+    /// kept verbatim, in order) and, when it has standard output text, with the
+    /// Markdown answer, as it is, attached as the `.md` file `attachmentName`
+    /// in a new subdirectory of `attachmentsDirectory` (owner-only
+    /// permissions). The file is left in
+    /// place after the send, because Mail may read it later; each delivery
+    /// removes the subdirectories older than `attachmentRetention` first. A
+    /// JSONL `output` is sent unchanged and without attachment.
+    ///
+    /// If the attachment cannot be written, or the message with it is not
+    /// sent, the message is sent again without it, with a final line telling
+    /// the recipient why the Markdown file is missing.
+    ///
     /// On success nothing is written: any output would make cron send a second
-    /// message, which would only sit in the local mail queue. On failure every
-    /// captured chunk goes to the stream it was meant for, followed by one
+    /// message, which would only sit in the local mail queue. When the last
+    /// attempt fails, every captured chunk, as captured and not converted, goes
+    /// to the stream it was meant for, followed by one
     /// `ZenCODE: Mail.app delivery to <address> failed: <reason>` line on
     /// standard error, so the message cron sends explains why it came that way.
     ///
@@ -167,18 +253,56 @@ enum ZenCronMailDelivery {
     @discardableResult
     static func deliver(
         _ output: [ZenCronCapturedOutput.Chunk],
+        format: ZenCronJobCommand.OutputFormat,
         to recipient: String,
         subject: String,
+        attachmentName: String,
+        attachmentsDirectory: URL,
         sender: any ZenCronMailSending,
         writeStandardOutput: (Data) -> Void,
         writeStandardError: (Data) -> Void
     ) async -> Bool {
+        removeStaleAttachmentDirectories(in: attachmentsDirectory)
+
+        let message = Message(output, format: format)
+        var attachments: [URL] = []
+        var attachmentFailure: String?
+        if let markdown = message.attachableMarkdown {
+            do {
+                attachments = [
+                    try writeAttachment(
+                        markdown,
+                        named: attachmentName,
+                        in: attachmentsDirectory
+                    )
+                ]
+            } catch {
+                attachmentFailure = error.localizedDescription
+            }
+        }
+
+        if !attachments.isEmpty {
+            do {
+                try await sender.send(
+                    to: recipient,
+                    subject: subject,
+                    body: message.body,
+                    attachments: attachments
+                )
+                return true
+            } catch {
+                attachmentFailure = error.localizedDescription
+            }
+        }
+
+        let body: String
+        if let attachmentFailure {
+            body = appendingAttachmentFailureLine(attachmentFailure, to: message.body)
+        } else {
+            body = message.body
+        }
         do {
-            try await sender.send(
-                to: recipient,
-                subject: subject,
-                body: ZenCronCapturedOutput.body(of: output)
-            )
+            try await sender.send(to: recipient, subject: subject, body: body, attachments: [])
             return true
         } catch {
             for chunk in output {
@@ -191,6 +315,116 @@ enum ZenCronMailDelivery {
             }
             writeStandardError(Data(deliveryFailureLine(recipient: recipient, error: error).utf8))
             return false
+        }
+    }
+
+    /// What a delivery sends, built from the captured output.
+    struct Message: Equatable {
+        /// The plain-text body.
+        let body: String
+        /// The standard output text, which the Markdown attachment contains as
+        /// it is, or nil when the message has no attachment: a JSONL run, or a
+        /// text run with nothing but whitespace on standard output.
+        let attachableMarkdown: String?
+
+        init(_ output: [ZenCronCapturedOutput.Chunk], format: ZenCronJobCommand.OutputFormat) {
+            switch format {
+            case .jsonl:
+                body = ZenCronCapturedOutput.body(of: output)
+                attachableMarkdown = nil
+            case .text:
+                // Consecutive chunks of a stream are decoded together, so that
+                // a character split between two of them survives.
+                var runs: [(stream: ZenCronCapturedOutput.Stream, data: Data)] = []
+                for chunk in output {
+                    if let last = runs.last, last.stream == chunk.stream {
+                        runs[runs.count - 1].data.append(chunk.data)
+                    } else {
+                        runs.append((chunk.stream, chunk.data))
+                    }
+                }
+                var body = ""
+                var standardOutput = ""
+                for run in runs {
+                    let text = String(decoding: run.data, as: UTF8.self)
+                    switch run.stream {
+                    case .standardOutput:
+                        standardOutput += text
+                        body += ZenCronMailPlainText.render(markdown: text)
+                    case .standardError:
+                        body += text
+                    }
+                }
+                self.body = body
+                attachableMarkdown = standardOutput.contains { !$0.isWhitespace } ? standardOutput : nil
+            }
+        }
+    }
+
+    /// `body` followed, after a blank line, by one line saying that the
+    /// Markdown file is missing and why.
+    nonisolated static func appendingAttachmentFailureLine(_ reason: String, to body: String) -> String {
+        var text = body
+        if !text.isEmpty {
+            if !text.hasSuffix("\n") {
+                text += "\n"
+            }
+            text += "\n"
+        }
+        let reason = singleLine(reason)
+        return text + "ZenCODE: the Markdown file could not be attached: \(reason.isEmpty ? "unknown error" : reason)\n"
+    }
+
+    /// Writes `contents` as `name` in a subdirectory of `directory` created for
+    /// this delivery, readable by the owner only.
+    private static func writeAttachment(
+        _ contents: String,
+        named name: String,
+        in directory: URL
+    ) throws -> URL {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let deliveryDirectory = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(
+            at: deliveryDirectory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let file = deliveryDirectory.appendingPathComponent(name, isDirectory: false)
+        try Data(contents.utf8).write(to: file, options: .atomic)
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        return file
+    }
+
+    /// Removes the subdirectories of `directory` last modified before `now`
+    /// minus `age`: the leftovers of earlier deliveries. Errors are ignored:
+    /// the cleanup never stands in the way of a delivery.
+    static func removeStaleAttachmentDirectories(
+        in directory: URL,
+        olderThan age: TimeInterval = attachmentRetention,
+        now: Date = Date()
+    ) {
+        let fileManager = FileManager.default
+        let keys: [URLResourceKey] = [.isDirectoryKey, .contentModificationDateKey]
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: keys
+        ) else {
+            return
+        }
+        let cutoff = now.addingTimeInterval(-age)
+        for entry in entries {
+            guard let values = try? entry.resourceValues(forKeys: Set(keys)),
+                  values.isDirectory == true,
+                  let modified = values.contentModificationDate,
+                  modified < cutoff else {
+                continue
+            }
+            try? fileManager.removeItem(at: entry)
         }
     }
 
@@ -272,11 +506,13 @@ struct ZenCronFallbackOutput {
 
 // MARK: - Sending
 
-/// Sends one plain-text message. Production uses Mail.app through
-/// `ZenCronFeatureMailSender`; tests supply a fake so no mail is ever sent.
+/// Sends one message: a plain-text body and, optionally, files attached to
+/// it. Production uses Mail.app through `ZenCronFeatureMailSender`; tests
+/// supply a fake so no mail is ever sent.
 protocol ZenCronMailSending: Sendable {
-    /// Throws when the message was not sent, for whatever reason.
-    func send(to recipient: String, subject: String, body: String) async throws
+    /// Throws when the message was not sent, for whatever reason, an
+    /// attachment Mail cannot read included.
+    func send(to recipient: String, subject: String, body: String, attachments: [URL]) async throws
 }
 
 /// Sends through the `macos.mail` tool of the macOS feature, invoked directly
@@ -289,7 +525,7 @@ struct ZenCronFeatureMailSender: ZenCronMailSending {
     /// without features, so they can never reach Mail.app.
     var makeRuntime: @Sendable () -> SwiftFeatureRuntime = { SwiftFeatureRuntime() }
 
-    func send(to recipient: String, subject: String, body: String) async throws {
+    func send(to recipient: String, subject: String, body: String, attachments: [URL]) async throws {
         let runtime = makeRuntime()
         let result: SwiftFeatureInvocationResult?
         do {
@@ -299,7 +535,8 @@ struct ZenCronFeatureMailSender: ZenCronMailSending {
                 toolCall: ZenCronMailDelivery.sendToolCall(
                     recipient: recipient,
                     subject: subject,
-                    body: body
+                    body: body,
+                    attachments: attachments
                 ),
                 workingDirectory: workingDirectory
             )

@@ -442,7 +442,7 @@ Commands start with `/`:
 
 **Scheduling:**
 - `/cron` / `/cron list` — show the `MAILTO` recipient and the scheduled prompts, each with its number, schedule, agent, working directory, output kind (`text` or `JSONL`), and prompt. See [Scheduled Prompts (crontab)](#scheduled-prompts-crontab).
-- `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>` — schedule a prompt for the working directory of the session. With `-agent <name>`, the job runs with that agent profile; without it, with the default developer of the project (normally `Developer`), whatever agent is selected in the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default cron mails the final answer text; with the `-json` option right after `add`, the job runs with `--jsonl` and cron mails the JSONL records of the run. The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
+- `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>` — schedule a prompt for the working directory of the session. With `-agent <name>`, the job runs with that agent profile; without it, with the default developer of the project (normally `Developer`), whatever agent is selected in the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default the mail holds the final answer text; with the `-json` option right after `add`, the job runs with `--jsonl` and the mail holds the JSONL records of the run (see [Results and mail](#results-and-mail)). The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
 - `/cron remove <n>` — remove scheduled prompt `<n>`; the entries after it are renumbered.
 - `/cron run <n>` — run scheduled prompt `<n>` now, the way cron runs it, in the background, and show the result in the terminal instead of mailing it.
 - `/cron mailto [address|none|default]` — without an argument, show the address that receives scheduled-prompt results; with one, set it. `none` sends no mail; `default` removes the override and uses the local mailbox of the crontab owner.
@@ -621,8 +621,9 @@ Delegated sub-agents ask for the same approvals as the coordinator. Their reques
 `/cron` runs prompts at set times, even when no ZenCODE session is open. Each
 scheduled prompt is an entry in the crontab of the system user who runs
 ZenCODE: when the entry is due, cron starts a headless `zen -p` or `zen -f`
-turn and mails its output; with the `-json` option the turn also gets
-`--jsonl`, and the mail holds the JSONL records of the run. There is no daemon,
+turn and its output is mailed (see [Results and mail](#results-and-mail));
+with the `-json` option the turn also gets `--jsonl`, and the mail holds the
+JSONL records of the run. There is no daemon,
 no launchd or systemd unit, and no lock against overlapping runs: cron starts
 each entry when it is due, so if one run is still going when the next one is
 due, the next run starts anyway, as with any cron job.
@@ -648,7 +649,8 @@ and the model has no tool to create or change scheduled prompts.
 `/cron add` needs `crontab` and a `zen` that cron can find, normally the one
 that `Scripts/install.sh` and `Scripts/install-linux.sh` install in
 `/usr/local/bin` (see [The `zen` that cron runs](#the-zen-that-cron-runs)).
-Results arrive by mail, which needs `sendmail` (see
+Results arrive by mail: through `sendmail`, or through Mail.app on macOS when
+`/cron mailto` holds an email address (see
 [Results and mail](#results-and-mail)). `zen --doctor` reports a missing
 `crontab` or `sendmail`.
 
@@ -874,8 +876,11 @@ entry is removed, is deleted whole, customized `PATH=` included.
 ### Results and mail
 
 Cron mails what each run prints, through the system `sendmail`, in the body of
-the mail; it never attaches files. By default (`/cron add <schedule> <prompt>`)
-standard output holds only the final answer text, which is the mail body. When
+the mail; cron itself never attaches files. On macOS, `zen` can deliver the mail
+through Mail.app instead, and then it attaches the answer as a Markdown file
+(see [Delivery through Mail.app (macOS)](#delivery-through-mailapp-macos)). By
+default (`/cron add <schedule> <prompt>`) standard output holds only the final
+answer text, which is the mail body. When
 the run fails, `zen` writes `ZenCODE: <message>` and a troubleshooting hint to
 standard error and exits with status 1, and cron mails that too.
 
@@ -902,11 +907,72 @@ or double quotes; ZenCODE does not check it further. `/cron mailto none` writes
 `MAILTO` line and restores the local mailbox, or the `MAILTO=` set earlier in
 your crontab.
 
-To send mail to an external address such as a Gmail account, the system MTA must
-relay through an SMTP server. Configure Postfix with `relayhost` and SASL
-credentials in `/etc/postfix/main.cf`; ZenCODE does not configure this. On Linux,
-install an MTA that provides `sendmail`, such as postfix, exim, or msmtp;
-otherwise cron's output is discarded.
+To send mail through `sendmail` to an external address such as a Gmail account,
+the system MTA must relay through an SMTP server. Configure Postfix with
+`relayhost` and SASL credentials in `/etc/postfix/main.cf`; ZenCODE does not
+configure this. On Linux, install an MTA that provides `sendmail`, such as
+postfix, exim, or msmtp; otherwise cron's output is discarded.
+
+#### Delivery through Mail.app (macOS)
+
+Many networks block outbound port 25, so a message that cron hands to the local
+`sendmail` never leaves the Mac. On macOS, when `zen` runs headless with
+standard output not connected to a terminal and `MAILTO` holds an address with
+`@` (which is how cron starts a job of the ZenCODE block after
+`/cron mailto <address>`), `zen` does not leave the mail to cron. It captures
+what it would have printed and sends it as one message from the default account
+of Mail.app, through the `macos.mail` tool of the `macOS` feature, which must be
+installed (`zen --install-features macOS`) and enabled (`/tools`). Then it
+prints nothing, so cron sends no second message. The exit status stays that of
+the run. Without `MAILTO`, with a bare user name, or after `/cron mailto none`,
+nothing changes and cron handles the output as described above.
+
+The subject is `ZenCODE cron: <label> – <yyyy-MM-dd>`, or
+`ZenCODE cron failed: <label> – <yyyy-MM-dd>` when the run failed. The label is
+the name of the prompt file or, without one, the inline prompt on one line,
+shortened to 60 characters with `…`; with no label, `: <label>` is left out.
+
+For a text job, the body is the final answer converted from Markdown to plain
+text, because Mail.app driven by a script sends only plain text:
+
+- Headings lose their `#` and stand on a line of their own. Bold, italic,
+  strikethrough, and inline code lose their symbols.
+- Lists use `•` (nested levels are indented and use `◦`) and `1.`; task items
+  show `[x]` and `[ ]`.
+- Links become `text (url)`, or only the URL when both are the same. Images
+  become `alt (url)`.
+- Code blocks are indented by four spaces, without the backticks.
+- Quotes start with `│ ` instead of `>`, which mail clients hide as quoted
+  text.
+- Horizontal rules become a line of `─`.
+- Every row of a table becomes a block of `Header: value` lines.
+
+The answer, as written, is attached as `<name>-<yyyy-MM-dd>.md`, where `<name>`
+is the prompt file name without its extension or, without one, the inline
+prompt; for example `report-2026-10-28.md`. There is no attachment when the
+answer is empty. The file is written to the `zencode-cron-mail` folder of the
+per-user temporary directory, and a later delivery removes it once it is at
+least one hour old.
+
+If the attachment cannot be written, or Mail.app cannot send the message with
+it, `zen` sends the message again without the attachment, ending with the line
+`ZenCODE: the Markdown file could not be attached: <reason>`. Only if that send
+fails too does the fallback below apply.
+
+If Mail.app cannot send the message at all, for example because the `macOS`
+feature is not installed or enabled, `zen` prints exactly what it would have
+printed without Mail.app, with the Markdown of the answer as written, plus one
+line on standard error:
+`ZenCODE: Mail.app delivery to <address> failed: <reason>`. Cron then mails that
+output through its own `sendmail`, which on many networks does not leave the
+Mac.
+
+`-json` jobs are not converted and have no attachment: the body holds the
+JSONL records as they are. Error messages on standard error are mailed as they
+are. `/cron run` never uses this delivery, because its minimal environment has
+no `MAILTO`, so its result stays in the chat. Runs from a terminal are not
+mailed either. On Linux there is no delivery through Mail.app: the mail always
+goes through cron's `sendmail`.
 
 ### Running an entry now
 

@@ -246,7 +246,10 @@ public enum ZenCODECommandLineRunner {
     ///
     /// The run is the ordinary one: only what it would print is captured
     /// instead, failures included, with the same bytes the ordinary path
-    /// prints. That is what the fallback prints when Mail.app cannot send.
+    /// prints. That is what the fallback prints when Mail.app cannot send. The
+    /// message itself is built from the capture by `ZenCronMailDelivery`: a
+    /// text-mode run becomes a plain-text body with the Markdown answer
+    /// attached as a `.md` file.
     ///
     /// - Returns: Whether the run succeeded; the delivery outcome never
     ///   changes the exit status.
@@ -295,16 +298,27 @@ public enum ZenCODECommandLineRunner {
             }
         }
 
+        let deliveredAt = Date()
+        let timeZone = TimeZone.current
         await ZenCronMailDelivery.deliver(
             output.chunks,
+            // What the run wrote decides it: a JSONL run is never converted.
+            format: configuration.jsonl || requestedJSONL ? .jsonl : .text,
             to: recipient,
             subject: ZenCronMailDelivery.subject(
                 succeeded: succeeded,
                 promptFile: configuration.headlessPromptFile,
                 prompt: configuration.headlessPrompt,
-                date: Date(),
-                timeZone: .current
+                date: deliveredAt,
+                timeZone: timeZone
             ),
+            attachmentName: ZenCronMailDelivery.attachmentFileName(
+                promptFile: configuration.headlessPromptFile,
+                prompt: configuration.headlessPrompt,
+                date: deliveredAt,
+                timeZone: timeZone
+            ),
+            attachmentsDirectory: ZenCronMailDelivery.defaultAttachmentsDirectory,
             sender: ZenCronFeatureMailSender(workingDirectory: configuration.workingDirectory),
             writeStandardOutput: { data in fallbackOutput.standardOutput.write(data) },
             writeStandardError: { data in fallbackOutput.standardError.write(data) }

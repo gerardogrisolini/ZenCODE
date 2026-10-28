@@ -160,6 +160,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   comment still being read. Thinking, the text of delegated agents and `/plan`
   turns are still not read. `Esc` and `/voice pause` stop a comment like any
   other reading. See [Docs/voice.md](Docs/voice.md).
+- Mail that `zen` sends through Mail.app for a text-format `/cron` job on macOS
+  now has the answer as plain text instead of raw Markdown, plus the original
+  Markdown as an attached `<name>-<yyyy-MM-dd>.md` file. If the attachment
+  fails, the message is sent again without it. `-json` jobs are unchanged. See
+  [Docs/zen.md](Docs/zen.md#delivery-through-mailapp-macos).
 
 ### Fixed
 
