@@ -239,10 +239,17 @@ public final class TerminalChat {
     /// Runs a scheduled prompt immediately for `/cron run`. Tests install a
     /// stand-in so no command ever launches a real job.
     var cronJobRunner: any CronJobRunning = SystemCronJobRunner()
-    /// Finds the `zen` that cron will run, given the `PATH` of the ZenCODE
+    /// Finds the `zen` that ZenCRON will start, given the `PATH` of the ZenCODE
     /// block, for `/cron add`. Tests install a stand-in so no command depends
     /// on what is installed on the machine.
     var cronZenLocator: @Sendable (String) -> String? = { ZenCronJobCommand.locateZen(onPath: $0) }
+    /// Checks the ZenCRON host that the lines written by `/cron add` run: it
+    /// must be installed by `/setup` and answer `--zencron-version`. Throws a
+    /// `ZenCrontabError` otherwise. Tests install a stand-in so no command
+    /// depends on what is installed on the machine nor starts a real process.
+    var cronZenCRONLocator: @Sendable () async throws -> ZenCRONInstallation.InstalledExecutable = {
+        try await ZenCRONInstallation.checkedInstalledExecutable()
+    }
     /// The `/cron run` in flight; at most one runs at a time. Only its own task
     /// clears it, once the report is written. Chat teardown cancels the task
     /// (which terminates the child) without clearing it.

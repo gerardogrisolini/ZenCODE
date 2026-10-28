@@ -49,6 +49,33 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - **Data management › Rebuild memory embeddings** runs the same re-embedding on
   demand with the saved settings, to resume a stopped run or retry failed
   entries.
+- ZenCRON, a small program that cron now runs for scheduled prompts instead of
+  `zen`, and that starts `zen`. On macOS, the privacy permissions of a cron job go
+  to the first program cron starts and stay with it for the programs it starts in
+  turn, such as the features that `zen` launches. `zen` is signed only ad hoc, so
+  its identity changes with every installation. ZenCRON does not change from one
+  ZenCODE update to the next, so macOS asks once, for ZenCRON. It is a standalone
+  SwiftPM package without dependencies, `Sources/ZenCRON`. It looks for `zen` on
+  the `PATH=` line of the ZenCODE crontab block, with the rule `/cron add` uses
+  to check that line, starts it as a child with the same arguments, environment,
+  and standard streams, forwards SIGTERM, SIGINT, SIGHUP, and SIGQUIT, and ends
+  with the exit status or the signal of `zen`. When it finds no `zen`, it prints
+  `ZenCRON: no executable zen in PATH=<value>` and exits with 127.
+  `ZenCRON --zencron-version` prints `ZenCRON 1`. See
+  [Docs/zen.md](Docs/zen.md#zencron-the-host-that-cron-runs).
+- The **Scheduled prompts (ZenCRON)** section of `/setup` builds ZenCRON and
+  installs it at `~/.zencode/bin/ZenCRON` (under `ZENCODE_SUPPORT_DIRECTORY`
+  when that is set), without sudo. The installers and the release archives do not
+  build or contain it. The section uses the ZenCODE source checkout of the
+  optional features and a Swift toolchain, builds in a working copy at
+  `~/.zencode/zencron/package`, so later builds are incremental, and ends with a
+  message such as `Installed ZenCRON 1 at <path>.`. On macOS an installed ZenCRON
+  of the same version is kept, so the permissions granted to it stay valid; on
+  Linux it is always replaced, and after a change of the Swift toolchain it must
+  be built again from `/setup`. The CI job `zencron-package` tests and builds the
+  package on macOS and Linux; run its tests with
+  `swift test --package-path Sources/ZenCRON`. See
+  [Docs/zen.md](Docs/zen.md#build-zencron-from-setup).
 
 ### Changed
 
@@ -165,6 +192,23 @@ Release tags follow the strict `vX.Y.Z` contract described in
   Markdown as an attached `<name>-<yyyy-MM-dd>.md` file. If the attachment
   fails, the message is sent again without it. `-json` jobs are unchanged. See
   [Docs/zen.md](Docs/zen.md#delivery-through-mailapp-macos).
+- `/cron add` now writes lines that run ZenCRON, by its absolute path in single
+  quotes, instead of a bare `zen`; the rest of the line is as before, and ZenCRON
+  starts `zen`. The confirmation has a new line, `  ZenCRON: <path> (ZenCRON 1)`,
+  before the `  zen: …` line. Lines written earlier keep a bare `zen` and stay
+  valid: `/cron list`, `/cron run`, and `/cron remove` handle them. On macOS they
+  still ask for the permissions again after every update; to move one to ZenCRON,
+  run `/cron remove <n>` and add it again.
+- **Breaking:** `/cron add` now needs ZenCRON, on macOS and Linux. Build it first
+  from `/setup` › **Scheduled prompts (ZenCRON)**. When ZenCRON is missing or does
+  not answer `--zencron-version`, `/cron add` refuses without reading or writing
+  the crontab, with `ZenCRON is not installed at <path>. Build it from /setup ›
+  Scheduled prompts (ZenCRON), then retry.` or `ZenCRON at <path> does not start
+  (<reason>). Rebuild it from /setup › Scheduled prompts (ZenCRON), then retry.`
+- The error of `/cron add` when no `zen` is on the `PATH=` line of the block now
+  starts with ``ZenCRON runs `zen` with PATH=…`` instead of ``cron runs `zen`
+  with PATH=…``, because ZenCRON is the program that looks for `zen`. The rest of
+  the message is unchanged, and nothing is written.
 
 ### Fixed
 
@@ -181,6 +225,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
   back to the list. While the table is in control the list is dimmed and its
   cursor is hidden, and the help line shows the keys. Menus without a header, or
   whose header fits, look and behave as before.
+- On macOS, the permission prompts of scheduled prompts (Desktop, Calendar,
+  Reminders, Contacts, and others) came back after every update of `zen` or of
+  the features, because macOS gave the permissions to `zen`, whose ad-hoc
+  signature changes with each installation. Jobs added with ZenCRON no longer
+  ask again after an update. Entries added before ZenCRON keep running `zen`: run
+  `/cron remove <n>` and `/cron add` again for each of them.
+- The documentation told macOS users to grant Full Disk Access to
+  `/usr/sbin/cron` for a working directory or prompt file in Documents, Desktop,
+  or Downloads. macOS checks the program that cron starts, not cron itself. The
+  permission now goes to ZenCRON, `~/.zencode/bin/ZenCRON`, and macOS asks for the
+  protected folders once.
 
 ### Removed
 

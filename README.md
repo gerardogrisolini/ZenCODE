@@ -218,7 +218,10 @@ JSONL records instead). `/cron add <schedule> -f <path>` reads the prompt from a
 file, checked when you add it and read again at every run. `/cron list` shows
 the numbered entries, `/cron run <n>` runs one now and reports in the terminal,
 and `/cron mailto` sets the recipient.
-Cron looks for `zen` in `/usr/local/bin`, where the installers put it. The
+Cron runs ZenCRON, a small program that starts `zen`, so that macOS asks for the
+privacy permissions of a job once and not after every update. Build ZenCRON once
+from `/setup` > **Scheduled prompts (ZenCRON)** before the first `/cron add`; it
+looks for `zen` in `/usr/local/bin`, where the installers put it. The
 [scheduled prompts guide](Docs/zen.md#scheduled-prompts-crontab) covers
 schedules, mail, and troubleshooting.
 
@@ -231,6 +234,7 @@ schedules, mail, and troubleshooting.
 - `Sources/ZenPackageMetadata`: internal bundled-feature distribution metadata and catalog parity support.
 - `Sources/ZenCODECore`: reusable agent runtime, interactive setup, TUI, tools, skills, ACP, config, memory, sessions, and feature management.
 - `Sources/zen`: the `zen` composition root and command-line dispatch.
+- `Sources/ZenCRON`: the standalone SwiftPM package of ZenCRON, the program that cron runs for scheduled prompts. It has no dependencies, is outside the root graph, and is built by `/setup`, not by the installers.
 - `Sources/Features`: self-contained optional SwiftPM feature packages. They own their implementations and package-local tests, are excluded from the root graph, and are installed on demand into `~/.zencode/features/<id>/` as local Builder-compatible features. The macOS-only Xcode integration lives entirely in `Sources/Features/XcodeTools`.
 - `Tests`: SwiftPM test targets.
 - `Docs`: detailed guides and feature documentation.

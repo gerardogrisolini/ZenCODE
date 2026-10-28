@@ -9,17 +9,19 @@ import Foundation
 
 extension ZenCODESetupRunner {
     static func promptSetupSection(
-        currentManifest manifest: AgentSettingsManifest?
+        currentManifest manifest: AgentSettingsManifest?,
+        zenCRON: ZenCRONSetupStatus = .fileCheck()
     ) throws -> SetupSection {
         let modelsConfigured = manifest?.models.isEmpty == false
         while true {
-            let options = setupSectionOptions(currentManifest: manifest)
+            let options = setupSectionOptions(currentManifest: manifest, zenCRON: zenCRON)
             let defaultSection: SetupSection = modelsConfigured ? .finish : .providersAndModels
             let defaultIndex = options.firstIndex { $0.section == defaultSection } ?? 0
 
             let items = setupSectionMenuItems(
                 options: options,
-                currentManifest: manifest
+                currentManifest: manifest,
+                zenCRON: zenCRON
             )
             guard let selectedIndex = TerminalCheckboxMenu.selectOne(
                 title: "ZenCODE setup",
@@ -45,13 +47,14 @@ extension ZenCODESetupRunner {
     /// the progress overview is visible inline.
     static func setupSectionMenuItems(
         options: [SetupSectionOption],
-        currentManifest manifest: AgentSettingsManifest?
+        currentManifest manifest: AgentSettingsManifest?,
+        zenCRON: ZenCRONSetupStatus = .fileCheck()
     ) -> [TerminalCheckboxMenuItem<Int>] {
         options.enumerated().map { index, option in
             TerminalCheckboxMenuItem(
                 value: index,
                 title: option.section.title,
-                detail: menuItemDetail(for: option, currentManifest: manifest),
+                detail: menuItemDetail(for: option, currentManifest: manifest, zenCRON: zenCRON),
                 groupTitle: setupSectionGroupTitle(option.section.category)
             )
         }
@@ -72,11 +75,13 @@ extension ZenCODESetupRunner {
 
     static func menuItemDetail(
         for option: SetupSectionOption,
-        currentManifest manifest: AgentSettingsManifest?
+        currentManifest manifest: AgentSettingsManifest?,
+        zenCRON: ZenCRONSetupStatus = .fileCheck()
     ) -> String? {
         guard let marker = setupSectionReadinessMarker(
             for: option.section,
-            currentManifest: manifest
+            currentManifest: manifest,
+            zenCRON: zenCRON
         ) else {
             return option.detail
         }
@@ -88,7 +93,8 @@ extension ZenCODESetupRunner {
 
     static func setupSectionReadinessMarker(
         for section: SetupSection,
-        currentManifest manifest: AgentSettingsManifest?
+        currentManifest manifest: AgentSettingsManifest?,
+        zenCRON: ZenCRONSetupStatus = .fileCheck()
     ) -> String? {
         switch section {
         case .providersAndModels:
@@ -112,13 +118,16 @@ extension ZenCODESetupRunner {
             #else
             return setupStatusMarker(voiceModeIsReady(), optional: true)
             #endif
+        case .scheduledPrompts:
+            return setupStatusMarker(zenCRON.isReady, optional: true)
         case .dataManagement, .resetRemoteConfiguration, .finish, .cancel, .responseLanguage:
             return nil
         }
     }
 
     static func setupSectionOptions(
-        currentManifest manifest: AgentSettingsManifest?
+        currentManifest manifest: AgentSettingsManifest?,
+        zenCRON: ZenCRONSetupStatus = .fileCheck()
     ) -> [SetupSectionOption] {
         var options: [SetupSectionOption] = [
             SetupSectionOption(
@@ -152,6 +161,10 @@ extension ZenCODESetupRunner {
             SetupSectionOption(
                 section: .telegram,
                 detail: manifest?.telegram?.isEnabled == true ? "enabled" : "disabled"
+            ),
+            SetupSectionOption(
+                section: .scheduledPrompts,
+                detail: zenCRON.detail
             ),
             SetupSectionOption(
                 section: .dataManagement,

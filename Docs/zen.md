@@ -89,6 +89,8 @@ Creates files under `~/.zencode/`:
 - `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans, grouped by project key.
 - `features/` — generated Builder packages and installed optional feature packages.
 - `source/` — persistent ZenCODE checkout retained by the platform installer for later optional-feature builds.
+- `bin/` — `ZenCRON`, the program that cron runs for scheduled prompts, built and installed from `/setup` > **Scheduled prompts (ZenCRON)**. See [ZenCRON](#zencron-the-host-that-cron-runs).
+- `zencron/` — the working copy of the ZenCRON package that `/setup` builds, kept so that later builds are incremental.
 - `voice/` — Linux only: the speech programs and models downloaded from `/setup` > **Voice mode** for voice mode and Telegram voice messages. They can be downloaded again at any time and are not part of backups. See [voice.md](voice.md).
 
 ## Project Key
@@ -442,7 +444,7 @@ Commands start with `/`:
 
 **Scheduling:**
 - `/cron` / `/cron list` — show the `MAILTO` recipient and the scheduled prompts, each with its number, schedule, agent, working directory, output kind (`text` or `JSONL`), and prompt. See [Scheduled Prompts (crontab)](#scheduled-prompts-crontab).
-- `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>` — schedule a prompt for the working directory of the session. With `-agent <name>`, the job runs with that agent profile; without it, with the default developer of the project (normally `Developer`), whatever agent is selected in the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default the mail holds the final answer text; with the `-json` option right after `add`, the job runs with `--jsonl` and the mail holds the JSONL records of the run (see [Results and mail](#results-and-mail)). The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block, or the command is refused.
+- `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>` — schedule a prompt for the working directory of the session. With `-agent <name>`, the job runs with that agent profile; without it, with the default developer of the project (normally `Developer`), whatever agent is selected in the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default the mail holds the final answer text; with the `-json` option right after `add`, the job runs with `--jsonl` and the mail holds the JSONL records of the run (see [Results and mail](#results-and-mail)). The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. ZenCRON must be built first from `/setup` > **Scheduled prompts (ZenCRON)**, and `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block; otherwise the command is refused and nothing is written (see [ZenCRON](#zencron-the-host-that-cron-runs)).
 - `/cron remove <n>` — remove scheduled prompt `<n>`; the entries after it are renumbered.
 - `/cron run <n>` — run scheduled prompt `<n>` now, the way cron runs it, in the background, and show the result in the terminal instead of mailing it.
 - `/cron mailto [address|none|default]` — without an argument, show the address that receives scheduled-prompt results; with one, set it. `none` sends no mail; `default` removes the override and uses the local mailbox of the crontab owner.
@@ -620,8 +622,9 @@ Delegated sub-agents ask for the same approvals as the coordinator. Their reques
 
 `/cron` runs prompts at set times, even when no ZenCODE session is open. Each
 scheduled prompt is an entry in the crontab of the system user who runs
-ZenCODE: when the entry is due, cron starts a headless `zen -p` or `zen -f`
-turn and its output is mailed (see [Results and mail](#results-and-mail));
+ZenCODE: when the entry is due, cron starts ZenCRON, which starts a headless
+`zen -p` or `zen -f` turn (see [ZenCRON](#zencron-the-host-that-cron-runs)), and
+its output is mailed (see [Results and mail](#results-and-mail));
 with the `-json` option the turn also gets `--jsonl`, and the mail holds the
 JSONL records of the run. There is no daemon,
 no launchd or systemd unit, and no lock against overlapping runs: cron starts
@@ -635,6 +638,11 @@ and the model has no tool to create or change scheduled prompts.
 
 ### Quick start
 
+Build ZenCRON once, before the first `/cron add`: run `/setup`, choose
+**Scheduled prompts (ZenCRON)**, and choose **Build and install ZenCRON**. It
+needs a ZenCODE source checkout and a Swift toolchain, as the optional features
+do (see [ZenCRON](#zencron-the-host-that-cron-runs)). Then:
+
 ```text
 /cron add 0 9 * * 1-5 Summarize the open pull requests
 /cron add -agent Organizer 30 7 * * 1-5 Prepare my daily briefing
@@ -646,22 +654,24 @@ and the model has no tool to create or change scheduled prompts.
 /cron remove 1
 ```
 
-`/cron add` needs `crontab` and a `zen` that cron can find, normally the one
-that `Scripts/install.sh` and `Scripts/install-linux.sh` install in
-`/usr/local/bin` (see [The `zen` that cron runs](#the-zen-that-cron-runs)).
-Results arrive by mail: through `sendmail`, or through Mail.app on macOS when
-`/cron mailto` holds an email address (see
+`/cron add` needs `crontab`, the ZenCRON that `/setup` built, and a `zen` that
+ZenCRON can find, normally the one that `Scripts/install.sh` and
+`Scripts/install-linux.sh` install in `/usr/local/bin` (see
+[The `zen` that cron runs](#the-zen-that-cron-runs)). Without ZenCRON it refuses
+and sends you to `/setup`. Results arrive by mail: through `sendmail`, or through
+Mail.app on macOS when `/cron mailto` holds an email address (see
 [Results and mail](#results-and-mail)). `zen --doctor` reports a missing
 `crontab` or `sendmail`.
 
 `/cron add` replies with the line it wrote, the working directory the job runs
-in (always the one of the session where you typed the command), and the `zen`
-that cron will run:
+in (always the one of the session where you typed the command), the ZenCRON that
+cron will run, and the `zen` that ZenCRON will start:
 
 ```text
 Scheduled prompt #1 added:
-  0 9 * * 1-5 zen --working-directory '/Users/me/Projects/app' -p 'Summarize the open pull requests'
+  0 9 * * 1-5 '/Users/me/.zencode/bin/ZenCRON' --working-directory '/Users/me/Projects/app' -p 'Summarize the open pull requests'
   dir: /Users/me/Projects/app (working directory of this session)
+  ZenCRON: /Users/me/.zencode/bin/ZenCRON (ZenCRON 1)
   zen: /usr/local/bin/zen (PATH=/usr/local/bin:/usr/bin:/bin)
 ```
 
@@ -762,11 +772,16 @@ checked before the crontab is read, so a rejected `/cron add` changes nothing.
 
 ### What a scheduled run does
 
-Each entry runs ZenCODE in headless mode:
+Each entry runs ZenCODE in headless mode, through ZenCRON:
 
 ```text
-[ZENCODE_SUPPORT_DIRECTORY='<value>' ]zen [--agent '<name>'] --working-directory '<TUI session working directory>' [--jsonl] [-f '<path>'] [-p '<prompt>']
+[ZENCODE_SUPPORT_DIRECTORY='<value>' ]'<support directory>/bin/ZenCRON' [--agent '<name>'] --working-directory '<TUI session working directory>' [--jsonl] [-f '<path>'] [-p '<prompt>']
 ```
+
+ZenCRON runs `zen` with everything after its own path, as in
+`zen [--agent '<name>'] --working-directory '<…>' …`. Entries written before
+ZenCRON existed start with a bare `zen` in place of the quoted ZenCRON path; they
+still work (see [Entries written before ZenCRON](#entries-written-before-zencron)).
 
 At least one of `-f` and `-p` is present, and `-f` comes first when both are.
 `--jsonl` is present for entries added with `-json` and for entries written by
@@ -819,8 +834,8 @@ scheduled prompt is two lines after them: a marker line,
 PATH=/usr/local/bin:/usr/bin:/bin
 MAILTO=me@example.com
 # zencode-cron id=3F2C9A7E-5B1D-4C8E-9A61-0D2E7B4F8C15 created=2026-10-25T07:30:00Z
-30 7 * * 1-5 zen --agent 'Organizer' --working-directory '/Users/me/Projects/app' -p 'Summarize the open issues and unread mail'
-@daily zen --working-directory '/Users/me/Projects/app' --jsonl -p 'Summarize the open pull requests'
+30 7 * * 1-5 '/Users/me/.zencode/bin/ZenCRON' --agent 'Organizer' --working-directory '/Users/me/Projects/app' -p 'Summarize the open issues and unread mail'
+@daily '/Users/me/.zencode/bin/ZenCRON' --working-directory '/Users/me/Projects/app' --jsonl -p 'Summarize the open pull requests'
 # <<< ZenCODE cron <<<
 ```
 
@@ -837,7 +852,7 @@ The crontab can also be edited by hand:
   a command that ZenCODE did not write, `/cron list` shows it as
   `command: …`, and it can still be run and removed. A line edited to run
   `zen` by a quoted absolute path, such as `'/opt/zen/bin/zen'`, is still read
-  as a ZenCODE entry.
+  as a ZenCODE entry, like the lines that run ZenCRON by its quoted path.
 - Any other line inside the block is listed as `(unrecognized)`. It has a
   number and can be removed, but not run.
 - A begin marker without its end marker, or a second block, makes every `/cron`
@@ -847,21 +862,124 @@ The crontab can also be edited by hand:
 - A crontab that is not valid UTF-8 is never rewritten; convert it to UTF-8
   with `crontab -e` first.
 
+### ZenCRON: the host that cron runs
+
+Every cron line that `/cron add` writes starts `ZenCRON`, a small program
+installed at `~/.zencode/bin/ZenCRON` (at `$ZENCODE_SUPPORT_DIRECTORY/bin/ZenCRON`
+when that variable is set). ZenCRON starts `zen` with the arguments of the line
+and ends the way `zen` ended. `/cron add` needs it on macOS and Linux alike.
+
+On macOS, the privacy permissions of a cron job (Desktop, Documents, Downloads,
+Calendar, Reminders, Contacts, and so on) go to the first program that cron
+starts, and they stay with it for every program it starts in turn, such as the
+features that `zen` launches. `zen` is signed only ad hoc, so its identity
+changes with every installation, and macOS asks for the same permissions again
+after each update. ZenCRON does not change from one ZenCODE update to the next,
+so macOS asks once, for ZenCRON.
+
+What ZenCRON does:
+
+- cron runs it by absolute path, with the arguments of the line.
+- It looks for `zen` on the `PATH` it receives, which under cron is the `PATH=`
+  line of the ZenCODE block, with the same rule as `/cron add` (see
+  [The `zen` that cron runs](#the-zen-that-cron-runs)).
+- It starts `zen` as a child and never replaces itself with `zen`: after that,
+  macOS would attribute the permissions to `zen` again. The child gets the same
+  arguments, environment, and standard streams. ZenCRON waits for it and ends
+  with its exit status, or by the same signal. SIGTERM, SIGINT, SIGHUP, and
+  SIGQUIT are forwarded to `zen`.
+- When it finds no `zen`, it writes `ZenCRON: no executable zen in PATH=<value>`
+  to standard error and exits with status 127. Cron mails that message.
+- `ZenCRON --zencron-version` prints `ZenCRON 1`. The number changes only when
+  the behaviour of ZenCRON changes.
+
+#### Build ZenCRON from `/setup`
+
+The installers and the release archives do not contain ZenCRON. Open `/setup`
+and choose **Scheduled prompts (ZenCRON)**; no model has to be configured. The
+section shows one of these lines:
+
+```text
+ZenCRON: not installed (expected at /Users/me/.zencode/bin/ZenCRON)
+ZenCRON: ZenCRON 1 installed at /Users/me/.zencode/bin/ZenCRON
+ZenCRON: installed at /Users/me/.zencode/bin/ZenCRON, but it does not start (it exited with status 1)
+```
+
+Then choose **Build and install ZenCRON** (**Rebuild and update ZenCRON** when it
+is installed) or **Back**. The build:
+
+- uses the ZenCODE source checkout of the optional features (the checkout
+  `zen` was built from, the installer copy in `~/.zencode/source`, or the current
+  directory), which must contain `Sources/ZenCRON/Package.swift`, and needs a
+  Swift toolchain;
+- works on a copy of the package in `~/.zencode/zencron/package`, whose `.build`
+  directory is kept, so builds after the first are incremental;
+- runs `swift build -c release --product ZenCRON` with a timeout of 900 seconds,
+  printing progress lines that start with `•`, and `Still building ZenCRON…` with
+  the elapsed seconds every 15 seconds;
+- installs the binary as it was built, without sudo, at `~/.zencode/bin/ZenCRON`.
+
+What happens to a ZenCRON that is already installed depends on the platform:
+
+- On macOS, an installed ZenCRON that reports the same version as the new build
+  is kept, because replacing the binary makes macOS ask for the permissions
+  again. A different version, or one that does not report its version, is
+  replaced.
+- On Linux, an installed ZenCRON is always replaced. The Swift runtime it uses is
+  linked dynamically to the toolchain, so after a change of the Swift toolchain
+  an earlier ZenCRON may no longer start: build it again from `/setup`.
+
+The section ends with one of these messages. `<path>` is the path of the
+installed file and `<reason>` the cause that the system reports:
+
+| Message | Meaning |
+| --- | --- |
+| `Installed ZenCRON 1 at <path>.` | First installation. |
+| `Replaced ZenCRON at <path> with ZenCRON 1.` | An installed ZenCRON was replaced. |
+| `ZenCRON 1 is already installed at <path>; it was kept so that macOS keeps the privacy permissions of scheduled prompts.` | macOS: the installed version equals the new build. Nothing changed. |
+| `ZenCRON cannot be built: no ZenCODE source checkout was found. Building it needs a ZenCODE source checkout and a Swift toolchain, as for the optional features.` | No checkout. Start `zen` from a ZenCODE checkout, or keep the installer copy in `~/.zencode/source`. |
+| `ZenCRON cannot be built: <checkout>/Sources/ZenCRON/Package.swift does not exist. Building it needs a ZenCODE source checkout and a Swift toolchain, as for the optional features.` | The checkout is older than ZenCRON. Update it. |
+| `ZenCRON could not be built: swift build exited with status <n>.` | The last lines of the build output (at most 40 lines or 4,000 characters) follow. |
+| `ZenCRON could not be built: swift build did not finish within 900 seconds.` | Run the section again; the working copy keeps what was already built. |
+| `ZenCRON could not be built: swift could not be run: <reason>` | No usable Swift toolchain. |
+| `ZenCRON could not be built: the package could not be copied to <path>: <reason>` | The working copy in `~/.zencode/zencron/package` cannot be written. |
+| `ZenCRON could not be built: swift build succeeded, but the executable <path> was not produced.` | The build did not leave the expected file. |
+| `The ZenCRON built at <path> does not report its version (<reason>); nothing was installed.` | The new binary does not answer `--zencron-version` as `ZenCRON <number>`. The installed one is untouched. |
+| `Could not install ZenCRON at <path>: <reason>` | The file or its directory cannot be written. |
+
+`/cron add` checks the installed file every time. It must exist, be executable,
+and answer `--zencron-version` with a single `ZenCRON <number>` line within 10
+seconds. Otherwise it refuses without reading or writing the crontab (see
+[Errors and fixes](#errors-and-fixes)).
+
+#### Entries written before ZenCRON
+
+Earlier versions of `/cron add` wrote lines that start with a bare `zen`. They
+stay valid: `/cron list` shows them, `/cron run` and `/cron remove` handle them,
+and cron still runs them with the `PATH=` line of the block. ZenCODE does not
+rewrite them. On macOS, though, the permissions of such a line belong to `zen`,
+so the prompts come back after every update. To move an entry to ZenCRON, build
+ZenCRON, then run `/cron remove <n>` and `/cron add` again with the same
+schedule and prompt.
+
 ### The `zen` that cron runs
 
-Each cron line starts `zen`, without a path. Cron gives its jobs only
-`PATH=/usr/bin:/bin`, which does not include `/usr/local/bin`, where
-`Scripts/install.sh` and `Scripts/install-linux.sh` install `zen` by default. So
-the block starts with `PATH=/usr/local/bin:/usr/bin:/bin`. The block is always the
-last part of the crontab and cron applies a variable assignment only to the lines
-after it, so this `PATH` affects the ZenCODE entries and nothing else. The
-commands that the agent runs during a scheduled prompt see `/usr/local/bin` in
-their `PATH` as well.
+ZenCRON looks for `zen` on the `PATH` that cron gives it: the `PATH=` line of the
+ZenCODE block. Cron gives its jobs only `PATH=/usr/bin:/bin`, which does not
+include `/usr/local/bin`, where `Scripts/install.sh` and
+`Scripts/install-linux.sh` install `zen` by default. So the block starts with
+`PATH=/usr/local/bin:/usr/bin:/bin`. The block is always the last part of the
+crontab and cron applies a variable assignment only to the lines after it, so
+this `PATH` affects the ZenCODE entries and nothing else. The commands that the
+agent runs during a scheduled prompt see `/usr/local/bin` in their `PATH` as
+well.
 
 `zen` must therefore be installed in `/usr/local/bin` or in another directory of
-the block's `PATH`. `/cron add` looks for an executable `zen` in that `PATH` and,
-when there is none, refuses to schedule and writes nothing to the crontab. When it
-succeeds, its confirmation names the binary cron will run, for example
+the block's `PATH`. ZenCRON runs the first executable `zen` it finds there; it
+reads the directories in order and ignores empty and relative ones. `/cron add`
+applies the same rule and, when there is no `zen`, refuses to schedule and writes
+nothing to the crontab. When it succeeds, its confirmation names both programs,
+for example `ZenCRON: /Users/me/.zencode/bin/ZenCRON (ZenCRON 1)` and
 `zen: /usr/local/bin/zen (PATH=/usr/local/bin:/usr/bin:/bin)`.
 
 The `PATH=` line can be edited by hand, for example to add `/opt/homebrew/bin` or
@@ -869,7 +987,8 @@ the directory where you keep a private build; use absolute directories, because
 cron does not expand `~` or `$HOME`. ZenCODE keeps a customized `PATH=` line when
 it rewrites the block, and `/cron add` and `/cron run` use it. A block without a
 `PATH=` line, such as one written by hand, gets the default line the next time
-ZenCODE writes the crontab; entries that run `zen` by an absolute path keep
+ZenCODE writes the crontab; until then ZenCRON receives the `PATH` of cron, which
+does not include `/usr/local/bin`. Entries that run `zen` by an absolute path keep
 working. A block with no entry and no `MAILTO=` line, for example after the last
 entry is removed, is deleted whole, customized `PATH=` included.
 
@@ -889,7 +1008,8 @@ holds the [JSONL records](jsonl.md) of the run: `run.started`, the tool
 records, the final answer in `message.completed`, and `run.completed`, or an
 `error` record when the run fails. They land in the mail body as they are. In
 JSONL mode `zen` writes nothing to standard error, so standard error only
-carries messages from the shell, for example when it cannot find `zen`. Entries
+carries messages from ZenCRON or the shell, for example when ZenCRON cannot find
+`zen`. Entries
 written earlier, with `--jsonl` in their line, keep their JSONL output.
 
 Cron sends a mail whenever a run prints anything, which is every run in
@@ -979,8 +1099,9 @@ goes through cron's `sendmail`.
 `/cron run <n>` runs entry `<n>` at once, the way cron would: with `/bin/sh -c`,
 a minimal environment (`HOME`, `LOGNAME`, `USER`, `SHELL=/bin/sh`, and `PATH`),
 the working directory set to `HOME`, and empty stdin. `PATH` is the one of the
-ZenCODE block (`/usr/local/bin:/usr/bin:/bin` unless you edited it), so `zen` is
-found exactly as under cron. Other variable assignments elsewhere in the crontab
+ZenCODE block (`/usr/local/bin:/usr/bin:/bin` unless you edited it), so ZenCRON
+finds `zen` exactly as under cron (and the shell finds the bare `zen` of an older
+line). Other variable assignments elsewhere in the crontab
 are not applied. The run happens in the background, so the TUI stays responsive.
 At most one `/cron run` can be in progress per session; a second request is
 refused until the first one finishes.
@@ -999,15 +1120,17 @@ Two pull requests are open; both pass CI.
 ```
 
 The first line gives the duration and the exit status: `0` for success, `1`
-when the run failed, `127` when the shell found no `zen`, and 128 plus the
+when the run failed, `127` when ZenCRON found no `zen` (or, for an older line,
+the shell found none), and 128 plus the
 signal number when a signal stopped it. Then comes the result. For a text entry
 it is the text that the run printed on standard output, trimmed, or
 `No output on stdout.` when there is none. For a JSONL entry, and for an entry
 with a command that ZenCODE did not write, it is the text of the last
 `message.completed` record; without one, `Error (<category>): <message>` from
 the last `error` record, or `No JSONL result on stdout.`. The last 20 lines of
-standard error follow, when there are any. Use it to check that `zen` is found
-and that the working directory and the approvals work in the cron environment.
+standard error follow, when there are any. Use it to check that ZenCRON finds
+`zen` and that the working directory and the approvals work in the cron
+environment.
 The report is shown only in the terminal; it is not forwarded to Telegram.
 
 Leaving the chat with `/exit`, `/setup`, or the end of input stops a run in
@@ -1017,9 +1140,17 @@ report.
 ### Platform notes
 
 - macOS and Linux are fully supported.
-- macOS protects Documents, Desktop, and Downloads. When the working directory,
-  or a prompt file added with `-f`, is in one of them, grant Full Disk Access to
-  `/usr/sbin/cron` in System Settings > Privacy & Security > Full Disk Access.
+- macOS attributes the privacy permissions of a scheduled prompt to ZenCRON, so
+  they survive updates of `zen` and of the features as long as ZenCRON is not
+  replaced (see [ZenCRON](#zencron-the-host-that-cron-runs)). macOS protects
+  Documents, Desktop, and Downloads. When the working directory, or a prompt
+  file added with `-f`, is in one of them, macOS asks once to allow ZenCRON, or
+  you can grant Full Disk Access to ZenCRON (`~/.zencode/bin/ZenCRON`) in System
+  Settings > Privacy & Security > Full Disk Access. Grant it to ZenCRON, not to
+  `/usr/sbin/cron`. Entries written before ZenCRON still belong to `zen` (see
+  [Entries written before ZenCRON](#entries-written-before-zencron)).
+- Linux replaces ZenCRON at every build from `/setup`. After a change of the
+  Swift toolchain, build it again there.
 - WSL does not start the cron service by itself. Start it with
   `sudo service cron start`, or enable systemd in `/etc/wsl.conf`.
 
@@ -1028,8 +1159,9 @@ reports a missing `crontab`, looked for in `/usr/bin` and `/bin`, or a missing
 `sendmail`, looked for in `/usr/sbin` and `/usr/lib`; `/cron` uses the same
 locations and does not search `PATH`. On WSL it always reminds you to start
 the cron service. These are warnings only; the exit code stays 0. See
-[Diagnostics](#diagnostics). The doctor does not check that `zen` is on the
-block's `PATH`, which `/cron add` does, or Full Disk Access on macOS.
+[Diagnostics](#diagnostics). The doctor does not check that ZenCRON is installed
+or that `zen` is on the block's `PATH`, which `/cron add` does, nor Full Disk
+Access on macOS.
 
 ### Errors and fixes
 
@@ -1038,7 +1170,11 @@ block's `PATH`, which `/cron add` does, or Full Disk Access on macOS.
 | `crontab is not installed; see zen --doctor` | No executable `crontab` in `/usr/bin` or `/bin`. Install cron. |
 | `crontab failed with exit status …` | `crontab` refused the operation; the rest of the message is its error. A common cause is a user who is not allowed to use cron (`cron.allow`, `cron.deny`). |
 | `The ZenCODE block in your crontab is malformed: …` | The block has no end marker, or there are two blocks. Fix it with `crontab -e`. |
-| ``cron runs `zen` with PATH=…, but no executable zen was found there. …`` | Install `zen` in `/usr/local/bin`, or add its directory to the block's `PATH=` line. Nothing was written. |
+| ``ZenCRON runs `zen` with PATH=…, but no executable zen was found there. …`` | Install `zen` in `/usr/local/bin`, or add its directory to the block's `PATH=` line. Nothing was written. |
+| `ZenCRON is not installed at <path>. Build it from /setup › Scheduled prompts (ZenCRON), then retry.` | There is no ZenCRON at that path. Build it as described in [Build ZenCRON from `/setup`](#build-zencron-from-setup). The crontab was neither read nor written. |
+| `ZenCRON at <path> does not start (<reason>). Rebuild it from /setup › Scheduled prompts (ZenCRON), then retry.` | The file exists but did not answer `--zencron-version` with a single `ZenCRON <number>` line. `<reason>` is `it is not executable`; `it could not be launched: …`; `it did not answer --zencron-version within 10 seconds`; `it exited with status <n>`, followed by `: ` and its error output when it printed any; `it printed no version`; `it printed more than one line instead of a single version line`; or `it printed '…' instead of 'ZenCRON <number>'`. Rebuild it from `/setup`, for example after a change of the Swift toolchain on Linux. The crontab was neither read nor written. |
+| `ZenCRON: no executable zen in PATH=…` | Printed by ZenCRON when a scheduled prompt runs, with exit status 127: cron mails it, and `/cron run` shows it in the report. No `zen` was found in the block's `PATH=` line; install `zen` there or fix the line. |
+| `ZenCRON: cannot run <path>: …` | Printed by ZenCRON with exit status 127, like the previous one: it found `zen` at `<path>` but the system could not start it; the rest is the reason it reports. |
 | `Invalid cron schedule (<field>): …` | See [Schedules](#schedules). Nothing was written. |
 | `The prompt cannot be scheduled: …` | The prompt is empty or has a line break. Nothing was written. |
 | `Invalid MAILTO value '…'. …` | The address has a space or a double quote. To disable mail, use `/cron mailto none`, as the message says. |
@@ -1055,8 +1191,12 @@ When a scheduled prompt seems never to run, or its mail never arrives:
 - on Linux, check that an MTA provides `sendmail`; without one, cron discards
   the output;
 - on WSL, check that the cron service is running;
-- on macOS, a working directory in Documents, Desktop, or Downloads needs Full
-  Disk Access for `/usr/sbin/cron`.
+- on macOS, a working directory in Documents, Desktop, or Downloads needs the
+  permission for ZenCRON: allow it when macOS asks, or grant Full Disk Access to
+  `~/.zencode/bin/ZenCRON`;
+- on macOS, permission prompts that come back after every update belong to an
+  entry written before ZenCRON: remove it and add it again (see
+  [Entries written before ZenCRON](#entries-written-before-zencron)).
 
 ## Tool Selection
 

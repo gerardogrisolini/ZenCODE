@@ -74,6 +74,23 @@ struct ZenCronJobCommandTests {
     }
 
     @Test
+    func aZenCRONLineKeepsTheSupportDirectoryPrefixAndRoundTrips() {
+        // The line `/cron add` writes: ZenCRON by quoted absolute path, with the
+        // support directory prefix exactly as for a bare `zen`.
+        let job = makeJob(
+            executable: "/Users/me/.zencode/bin/ZenCRON",
+            supportDirectory: "/Users/me/.zencode",
+            agentName: "reviewer",
+            outputFormat: .text,
+            prompt: "hello"
+        )
+        let command = "ZENCODE_SUPPORT_DIRECTORY='/Users/me/.zencode' '/Users/me/.zencode/bin/ZenCRON' "
+            + "--agent 'reviewer' --working-directory '/Users/me/project' -p 'hello'"
+        #expect(job.encode() == command)
+        #expect(ZenCronJobCommand.decode(command) == job)
+    }
+
+    @Test
     func encodesAllOptionalPartsInFixedOrder() {
         let job = makeJob(
             supportDirectory: "/Users/me/.zencode",

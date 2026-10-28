@@ -12,7 +12,14 @@ import Foundation
 /// `zen` executable (cron finds it through the `PATH=` line of the ZenCODE
 /// block, see `ZenCrontabDocument.defaultPath`):
 ///
-///     [ZENCODE_SUPPORT_DIRECTORY='<dir>' ]zen [--agent '<name>'] --working-directory '<dir>' [--jsonl] [-f '<path>'] [-p '<prompt>']
+///     [ZENCODE_SUPPORT_DIRECTORY='<dir>' ]<exe> [--agent '<name>'] --working-directory '<dir>' [--jsonl] [-f '<path>'] [-p '<prompt>']
+///
+/// The lines `/cron add` writes now run ZenCRON, the stable host that starts
+/// `zen`, so `<exe>` is the absolute path of ZenCRON written single-quoted
+/// (`'/…/bin/ZenCRON'`); ZenCRON finds `zen` through the `PATH=` line of the
+/// ZenCODE block, see `ZenCrontabDocument.defaultPath`. The bare `zen` belongs
+/// to the lines written before ZenCRON existed: cron finds it through that same
+/// `PATH=` line, and they stay valid.
 ///
 /// Without `--jsonl` the run prints only the final answer text on standard
 /// output, which cron mails as is; with it, standard output holds the JSONL
@@ -24,19 +31,21 @@ import Foundation
 /// required, `-f` first: a line with neither is not a ZenCODE job. Lines
 /// without `-f` are encoded exactly as before it existed.
 ///
-/// An executable other than `zen` (a line written by an older ZenCODE, or
-/// hand-edited to a full path) is a single-quoted word: `'<exe>'`.
+/// An executable other than `zen` (a ZenCRON path written by `/cron add`, or a
+/// line hand-edited to a full path) is a single-quoted word: `'<exe>'`.
 ///
 /// `decode(_:)` accepts only that grammar, so anything a user hand-edited into
 /// another shape is reported as "not a ZenCODE job" instead of being guessed.
 /// All scanning is done on Unicode scalars so that combining marks following a
 /// quote never merge with it.
 struct ZenCronJobCommand: Sendable, Equatable {
-    /// The executable name written for new entries; it is searched on the
-    /// `PATH` of the ZenCODE block.
+    /// The bare executable name of the lines written before ZenCRON existed;
+    /// cron searches it on the `PATH` of the ZenCODE block. New lines run the
+    /// absolute path of ZenCRON instead (see `ZenCRONInstallation`).
     static let zenExecutable = "zen"
 
-    /// `zen` (written bare) or a path (written single-quoted).
+    /// `zen` (written bare, by lines that predate ZenCRON) or a path (written
+    /// single-quoted, the ZenCRON host of new lines).
     var executable: String
     var supportDirectory: String?
     var agentName: String?

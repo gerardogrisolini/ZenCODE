@@ -12,6 +12,11 @@ import ToolCore
 /// every other line is preserved verbatim. Results are never collected by
 /// ZenCODE: cron mails each job's output, so the only delivery setting is the
 /// block's `MAILTO`.
+///
+/// A line written by `/cron add` runs ZenCRON, the stable host built by
+/// `/setup`, by absolute path; ZenCRON starts `zen`, searched on the block's
+/// `PATH=`. Lines written before ZenCRON existed run a bare `zen` and stay
+/// valid: `/cron list`, `remove` and `run` handle both kinds.
 extension TerminalChat {
     nonisolated static let cronUsageMessage =
         "Usage: /cron [list] | add [-json] [-agent <name>] <schedule> [-f <path>] <prompt> | remove <n> | run <n> | mailto [address|none|default]\n"
@@ -85,8 +90,13 @@ extension TerminalChat {
         } else {
             agentName = nil
         }
+        // The line runs ZenCRON, the stable host that starts `zen` (see
+        // `ZenCRONInstallation`), by absolute path. It must be installed and
+        // answer `--zencron-version`; refuse otherwise, before the crontab is
+        // read or written.
+        let zenCRON = try await cronZenCRONLocator()
         let job = ZenCronJobCommand(
-            executable: ZenCronJobCommand.zenExecutable,
+            executable: zenCRON.path,
             supportDirectory: ProcessInfo.processInfo
                 .environment[AppStorageDirectory.supportDirectoryEnvironmentKey]?.nilIfBlank,
             agentName: agentName,
@@ -97,8 +107,8 @@ extension TerminalChat {
         )
 
         var document = try await readCronDocument()
-        // The line runs a bare `zen`, found through the block's `PATH=`; refuse
-        // to schedule a job that cron could not start, before writing anything.
+        // ZenCRON finds `zen` through the block's `PATH=`; refuse to schedule
+        // a job whose `zen` it could not start, before writing anything.
         let path = document.effectivePath
         guard let zenPath = cronZenLocator(path) else {
             throw ZenCrontabError.zenNotOnPath(path: path)
@@ -114,6 +124,7 @@ extension TerminalChat {
         // Spelled out: the directory is not an option of `/cron add`, so it
         // is easy to miss that the job inherits the session's.
         message += "  dir: \(job.workingDirectory) (working directory of this session)\n"
+        message += "  ZenCRON: \(zenCRON.path) (\(zenCRON.version))\n"
         message += "  zen: \(zenPath) (PATH=\(path))\n"
         await writeSystemMessage(message)
     }

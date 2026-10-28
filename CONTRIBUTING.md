@@ -29,11 +29,12 @@ This is the single definition of the validation gate; the README and
 Run the same gate CI runs before opening a pull request:
 
 ```bash
-swift build --target ZenCODECore     # fast shared-runtime compile
-swift test --no-parallel             # full non-live suite and release/CI gate
-swift build -c release --product zen # release product
-bash -n Scripts/*.sh                 # shell syntax
-git diff --check                     # whitespace hygiene
+swift build --target ZenCODECore          # fast shared-runtime compile
+swift test --no-parallel                  # full non-live suite and release/CI gate
+swift build -c release --product zen      # release product
+swift test --package-path Sources/ZenCRON # ZenCRON package; only when ZenCRON changes
+bash -n Scripts/*.sh                      # shell syntax
+git diff --check                          # whitespace hygiene
 ```
 
 For focused work, `swift test --filter <SuiteOrTestName>` is usually enough
@@ -42,6 +43,10 @@ during development, but the full suite must pass before review.
 When bundled features, manifest wiring, or installer catalogs change, run
 `BundledFeatureCatalogParityTests` and check the affected feature's
 `--list-tools` output.
+
+ZenCRON (`Sources/ZenCRON`) is a standalone package outside the root graph, so
+`swift test` at the root does not run its tests. The CI job `zencron-package`
+runs them, and builds ZenCRON, on macOS and Linux.
 
 Live provider checks are opt-in through `ZENCODE_RUN_LIVE_*` environment
 variables. Leave them unset for ordinary verification; CI never runs them.

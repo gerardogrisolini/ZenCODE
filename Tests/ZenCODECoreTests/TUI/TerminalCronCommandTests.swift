@@ -154,10 +154,38 @@ private final class FakeZenLocator: Sendable {
     }
 }
 
+/// Stand-in for the ZenCRON check of `/cron add`: counts the calls and answers
+/// with a fixed result. No test depends on a ZenCRON built on the machine, and
+/// no test starts a real process.
+private final class FakeZenCRONLocator: Sendable {
+    static let path = "/fake/support/bin/ZenCRON"
+    static let version = "ZenCRON 1"
+
+    private let outcome: Result<ZenCRONInstallation.InstalledExecutable, ZenCrontabError>
+    private let calls = Mutex(0)
+
+    init(
+        outcome: Result<ZenCRONInstallation.InstalledExecutable, ZenCrontabError> = .success(
+            ZenCRONInstallation.InstalledExecutable(path: FakeZenCRONLocator.path, version: FakeZenCRONLocator.version)
+        )
+    ) {
+        self.outcome = outcome
+    }
+
+    var callCount: Int { calls.withLock { $0 } }
+
+    func locate() throws -> ZenCRONInstallation.InstalledExecutable {
+        calls.withLock { $0 += 1 }
+        return try outcome.get()
+    }
+}
+
 @TerminalChatActor
 @Suite(.serialized)
 struct TerminalCronCommandTests {
     private static let defaultPathLine = "PATH=\(ZenCrontabDocument.defaultPath)"
+    /// How the lines written by `/cron add` start: ZenCRON by quoted absolute path.
+    private static let zenCRON = ZenCronJobCommand.shellQuote(FakeZenCRONLocator.path)
     private static let userLines = [
         "# m h dom mon dow command",
         "MAILTO=root",
@@ -195,7 +223,7 @@ struct TerminalCronCommandTests {
         #expect(directory.contains("/ZenCODE-cron-"))
         #expect(entry.schedule == "0 9 * * 1-5")
         // cron finds `zen` through the PATH line at the head of the block.
-        #expect(entry.cronLine.hasPrefix("0 9 * * 1-5 zen --working-directory "))
+        #expect(entry.cronLine.hasPrefix("0 9 * * 1-5 \(Self.zenCRON) --working-directory "))
         // Plain text by default: no `--jsonl`, so cron mails only the answer.
         #expect(
             entry.cronLine.hasSuffix(
@@ -203,7 +231,7 @@ struct TerminalCronCommandTests {
             )
         )
         #expect(!entry.cronLine.contains("--jsonl"))
-        #expect(entry.job?.executable == "zen")
+        #expect(entry.job?.executable == FakeZenCRONLocator.path)
         #expect(entry.job?.outputFormat == .text)
         #expect(entry.job?.prompt == "Summarize open PRs")
         #expect(entry.job?.workingDirectory == directory)
@@ -214,6 +242,7 @@ struct TerminalCronCommandTests {
         #expect(
             output == "Scheduled prompt #1 added:\n  \(entry.cronLine)\n"
                 + "  dir: \(directory) (working directory of this session)\n"
+                + "  ZenCRON: /fake/support/bin/ZenCRON (ZenCRON 1)\n"
                 + "  zen: /fake/bin/zen (PATH=/usr/local/bin:/usr/bin:/bin)\n"
         )
     }
@@ -243,14 +272,15 @@ struct TerminalCronCommandTests {
         let output = await run("/cron add @daily Hello", in: terminal)
 
         let lines = output.components(separatedBy: "\n")
-        #expect(lines.count == 5)
+        #expect(lines.count == 6)
         #expect(lines[0] == "Scheduled prompt #1 added:")
-        #expect(lines[1].hasPrefix("  @daily zen --working-directory "))
+        #expect(lines[1].hasPrefix("  @daily \(Self.zenCRON) --working-directory "))
         #expect(
             lines[2] == "  dir: \(terminal.configuration.workingDirectory.path) (working directory of this session)"
         )
-        #expect(lines[3] == "  zen: /opt/homebrew/bin/zen (PATH=/usr/local/bin:/usr/bin:/bin)")
-        #expect(lines[4] == "")
+        #expect(lines[3] == "  ZenCRON: /fake/support/bin/ZenCRON (ZenCRON 1)")
+        #expect(lines[4] == "  zen: /opt/homebrew/bin/zen (PATH=/usr/local/bin:/usr/bin:/bin)")
+        #expect(lines[5] == "")
     }
 
     @Test
@@ -261,7 +291,7 @@ struct TerminalCronCommandTests {
         let output = await run("/cron add 0 9 * * 1-5 Summarize open PRs", in: terminal)
 
         #expect(
-            output == "ZenCODE: cron runs `zen` with PATH=/usr/local/bin:/usr/bin:/bin, "
+            output == "ZenCODE: ZenCRON runs `zen` with PATH=/usr/local/bin:/usr/bin:/bin, "
                 + "but no executable zen was found there. "
                 + "Install ZenCODE in /usr/local/bin (Scripts/install.sh) before scheduling prompts.\n"
         )
@@ -270,6 +300,154 @@ struct TerminalCronCommandTests {
         #expect(client.writes.isEmpty)
         #expect(client.readCount == 1)
         #expect(locator.requestedPaths == [ZenCrontabDocument.defaultPath])
+    }
+
+    // MARK: - add: the ZenCRON host
+
+    @Test
+    func addRefusesWhenZenCRONIsNotInstalledAndNeitherReadsNorWritesTheCrontab() async throws {
+        let missing = FakeZenCRONLocator(
+            outcome: .failure(.zenCRONNotInstalled(path: "/Users/me/.zencode/bin/ZenCRON"))
+        )
+        let locator = FakeZenLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator, zenCRON: missing)
+
+        let output = await run("/cron add 0 9 * * 1-5 Summarize open PRs", in: terminal)
+
+        #expect(
+            output == "ZenCODE: ZenCRON is not installed at /Users/me/.zencode/bin/ZenCRON. "
+                + "Build it from /setup \u{203A} Scheduled prompts (ZenCRON), then retry.\n"
+        )
+        #expect(missing.callCount == 1)
+        #expect(client.readCount == 0)
+        #expect(client.writes.isEmpty)
+        #expect(locator.requestedPaths.isEmpty)
+    }
+
+    @Test
+    func addRefusesWhenZenCRONDoesNotStartAndWritesNothing() async throws {
+        let broken = FakeZenCRONLocator(
+            outcome: .failure(
+                .zenCRONDoesNotStart(path: "/Users/me/.zencode/bin/ZenCRON", reason: "it exited with status 1")
+            )
+        )
+        let locator = FakeZenLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator, zenCRON: broken)
+
+        let output = await run("/cron add @daily Hello", in: terminal)
+
+        #expect(
+            output == "ZenCODE: ZenCRON at /Users/me/.zencode/bin/ZenCRON does not start (it exited with status 1). "
+                + "Rebuild it from /setup \u{203A} Scheduled prompts (ZenCRON), then retry.\n"
+        )
+        #expect(client.readCount == 0)
+        #expect(client.writes.isEmpty)
+        #expect(locator.requestedPaths.isEmpty)
+    }
+
+    @Test
+    func addChecksZenCRONBeforeSearchingZenOnThePath() async throws {
+        // Both are missing: ZenCRON is reported first, and `zen` is not searched.
+        let missing = FakeZenCRONLocator(outcome: .failure(.zenCRONNotInstalled(path: "/fake/ZenCRON")))
+        let locator = FakeZenLocator(result: nil)
+        let (terminal, client) = try makeTerminal(crontab: "", zen: locator, zenCRON: missing)
+
+        let output = await run("/cron add @daily Hello", in: terminal)
+
+        #expect(output.hasPrefix("ZenCODE: ZenCRON is not installed at /fake/ZenCRON."))
+        #expect(locator.requestedPaths.isEmpty)
+        #expect(client.writes.isEmpty)
+    }
+
+    @Test
+    func addChecksZenOnThePathAfterZenCRONAndStillWritesNothingWithoutIt() async throws {
+        let zenCRON = FakeZenCRONLocator()
+        let locator = FakeZenLocator(result: nil)
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator, zenCRON: zenCRON)
+
+        let output = await run("/cron add @daily Hello", in: terminal)
+
+        #expect(output.hasPrefix("ZenCODE: ZenCRON runs `zen` with PATH="))
+        #expect(zenCRON.callCount == 1)
+        #expect(locator.requestedPaths == [ZenCrontabDocument.defaultPath])
+        #expect(client.writes.isEmpty)
+    }
+
+    @Test
+    func addWritesTheQuotedZenCRONPathAndConfirmsBothExecutables() async throws {
+        let zenCRON = FakeZenCRONLocator(
+            outcome: .success(
+                ZenCRONInstallation.InstalledExecutable(
+                    path: "/Users/me/my support/bin/ZenCRON",
+                    version: "ZenCRON 7"
+                )
+            )
+        )
+        let locator = FakeZenLocator(result: "/usr/local/bin/zen")
+        let (terminal, client) = try makeTerminal(crontab: "", zen: locator, zenCRON: zenCRON)
+
+        let output = await run("/cron add @daily Hello", in: terminal)
+
+        let written = try #require(client.writes.first)
+        let items = try #require(ZenCrontabDocument.parse(written).block?.items)
+        guard case let .entry(entry) = try #require(items.first) else {
+            Issue.record("expected a scheduled entry")
+            return
+        }
+        let directory = terminal.configuration.workingDirectory.path
+        #expect(
+            entry.cronLine
+                == "@daily '/Users/me/my support/bin/ZenCRON' --working-directory "
+                + "\(ZenCronJobCommand.shellQuote(directory)) -p 'Hello'"
+        )
+        #expect(entry.job?.executable == "/Users/me/my support/bin/ZenCRON")
+        #expect(
+            output == "Scheduled prompt #1 added:\n  \(entry.cronLine)\n"
+                + "  dir: \(directory) (working directory of this session)\n"
+                + "  ZenCRON: /Users/me/my support/bin/ZenCRON (ZenCRON 7)\n"
+                + "  zen: /usr/local/bin/zen (PATH=/usr/local/bin:/usr/bin:/bin)\n"
+        )
+    }
+
+    @Test
+    func existingBareZenLinesStayValidNextToTheNewZenCRONLines() async throws {
+        let existing = try makeCrontab(foreign: ["# keep"], prompts: ["Old job"])
+        let runner = FakeCronJobRunner(isReleased: true)
+        let (terminal, client) = try makeTerminal(crontab: existing)
+        terminal.cronJobRunner = runner
+
+        _ = await run("/cron add @daily New job", in: terminal)
+
+        // The old bare `zen` line is untouched and still decodes as a job.
+        let afterAdd = try #require(client.writes.last)
+        let items = try #require(ZenCrontabDocument.parse(afterAdd).block?.items)
+        #expect(items.count == 2)
+        guard case let .entry(previous) = items[0], case let .entry(added) = items[1] else {
+            Issue.record("expected two scheduled entries")
+            return
+        }
+        #expect(previous.job?.executable == "zen")
+        #expect(previous.job?.prompt == "Old job")
+        #expect(added.job?.executable == FakeZenCRONLocator.path)
+        #expect(added.job?.prompt == "New job")
+
+        // Both kinds are listed.
+        let list = await run("/cron list", in: terminal)
+        #expect(list.contains("prompt: Old job"))
+        #expect(list.contains("prompt: New job"))
+
+        // The old line still runs as it always did.
+        _ = await run("/cron run 1", in: terminal)
+        await terminal.activeCronRun?.task.value
+        #expect(runner.calls.first?.cronCommand == previous.cronCommand)
+        #expect(runner.calls.first?.cronCommand.hasPrefix("zen --working-directory ") == true)
+
+        // Removing the old line leaves the ZenCRON line byte for byte.
+        let removal = await run("/cron remove 1", in: terminal)
+        #expect(removal == "Scheduled prompt #1 removed.\n")
+        let afterRemove = try #require(client.writes.last)
+        let remaining = try #require(ZenCrontabDocument.parse(afterRemove).block?.items)
+        #expect(remaining == [items[1]])
     }
 
     @Test
@@ -378,7 +556,7 @@ struct TerminalCronCommandTests {
         let directory = terminal.configuration.workingDirectory.path
         #expect(
             entry.cronCommand
-                == "zen --agent \(ZenCronJobCommand.shellQuote(agentName))"
+                == "\(Self.zenCRON) --agent \(ZenCronJobCommand.shellQuote(agentName))"
                 + " --working-directory \(ZenCronJobCommand.shellQuote(directory))"
                 + (isJSONL ? " --jsonl" : "") + " -p 'Hello'"
         )
@@ -405,7 +583,8 @@ struct TerminalCronCommandTests {
     @Test
     func addRefusesAnUnknownAgentAndListsTheAvailableOnes() async throws {
         let locator = FakeZenLocator()
-        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator)
+        let zenCRON = FakeZenCRONLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator, zenCRON: zenCRON)
 
         let output = await run("/cron add -agent Nobody @daily Hello", in: terminal)
 
@@ -416,6 +595,7 @@ struct TerminalCronCommandTests {
         #expect(client.writes.isEmpty)
         #expect(client.readCount == 0)
         #expect(locator.requestedPaths.isEmpty)
+        #expect(zenCRON.callCount == 0)
     }
 
     @Test
@@ -454,7 +634,7 @@ struct TerminalCronCommandTests {
         #expect(entry.schedule == "@daily")
         #expect(
             entry.cronLine
-                == "@daily zen --working-directory \(ZenCronJobCommand.shellQuote(directory))"
+                == "@daily \(Self.zenCRON) --working-directory \(ZenCronJobCommand.shellQuote(directory))"
                 + " --jsonl -p 'Summarize open PRs'"
         )
         #expect(entry.job?.outputFormat == .jsonl)
@@ -803,7 +983,8 @@ struct TerminalCronCommandTests {
     ])
     func rejectedAddNeverTouchesTheCrontab(command: String, expected: String) async throws {
         let locator = FakeZenLocator()
-        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator)
+        let zenCRON = FakeZenCRONLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator, zenCRON: zenCRON)
 
         let output = await run(command, in: terminal)
 
@@ -811,6 +992,7 @@ struct TerminalCronCommandTests {
         #expect(client.writes.isEmpty)
         #expect(client.readCount == 0)
         #expect(locator.requestedPaths.isEmpty)
+        #expect(zenCRON.callCount == 0)
     }
 
     // MARK: - add with a prompt file
@@ -835,7 +1017,7 @@ struct TerminalCronCommandTests {
         let directory = terminal.configuration.workingDirectory.path
         #expect(
             entry.cronLine
-                == "@daily zen --working-directory \(ZenCronJobCommand.shellQuote(directory))"
+                == "@daily \(Self.zenCRON) --working-directory \(ZenCronJobCommand.shellQuote(directory))"
                 + " -f \(ZenCronJobCommand.shellQuote(file))"
         )
         #expect(!entry.cronLine.contains(" -p "))
@@ -866,7 +1048,7 @@ struct TerminalCronCommandTests {
             return
         }
         let directory = terminal.configuration.workingDirectory.path
-        let command = "zen --working-directory \(ZenCronJobCommand.shellQuote(directory)) --jsonl"
+        let command = "\(Self.zenCRON) --working-directory \(ZenCronJobCommand.shellQuote(directory)) --jsonl"
             + " -f \(ZenCronJobCommand.shellQuote(file)) -p 'Summarize  it'"
         #expect(entry.schedule == "0 9 * * 1-5")
         #expect(entry.cronLine == "0 9 * * 1-5 \(ZenCronJobCommand.cronEscape(command))")
@@ -909,7 +1091,8 @@ struct TerminalCronCommandTests {
         let binary = try writePromptFile(Data([0xFF, 0xFE, 0xFD]), named: "binary.md", in: root)
         let missing = root + "/missing.md"
         let locator = FakeZenLocator()
-        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator)
+        let zenCRON = FakeZenCRONLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator, zenCRON: zenCRON)
 
         let cases: [(command: String, expected: String)] = [
             (
@@ -952,12 +1135,14 @@ struct TerminalCronCommandTests {
         #expect(client.writes.isEmpty)
         #expect(client.readCount == 0)
         #expect(locator.requestedPaths.isEmpty)
+        #expect(zenCRON.callCount == 0)
     }
 
     @Test(arguments: ["\n", "\r", "\r\n"])
     func addRefusesAPromptFilePathWithALineBreak(lineBreak: String) async throws {
         let locator = FakeZenLocator()
-        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator)
+        let zenCRON = FakeZenCRONLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator, zenCRON: zenCRON)
 
         let output = await run("/cron add @daily -f '/tmp/a\(lineBreak)b.md' Summarize", in: terminal)
 
@@ -970,6 +1155,7 @@ struct TerminalCronCommandTests {
         #expect(client.writes.isEmpty)
         #expect(client.readCount == 0)
         #expect(locator.requestedPaths.isEmpty)
+        #expect(zenCRON.callCount == 0)
     }
 
     @Test
@@ -995,7 +1181,8 @@ struct TerminalCronCommandTests {
     ])
     func addValidatesTheScheduleThenThePromptThenTheFile(command: String, expected: String) async throws {
         let locator = FakeZenLocator()
-        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator)
+        let zenCRON = FakeZenCRONLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator, zenCRON: zenCRON)
 
         let output = await run(command, in: terminal)
 
@@ -1003,6 +1190,7 @@ struct TerminalCronCommandTests {
         #expect(client.writes.isEmpty)
         #expect(client.readCount == 0)
         #expect(locator.requestedPaths.isEmpty)
+        #expect(zenCRON.callCount == 0)
     }
 
     @Test(arguments: [
@@ -1017,7 +1205,8 @@ struct TerminalCronCommandTests {
     ])
     func aMalformedFileOptionShowsTheUsageWithoutTouchingTheCrontab(command: String) async throws {
         let locator = FakeZenLocator()
-        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator)
+        let zenCRON = FakeZenCRONLocator()
+        let (terminal, client) = try makeTerminal(crontab: Self.userCrontab, zen: locator, zenCRON: zenCRON)
 
         let output = await run(command, in: terminal)
 
@@ -1025,6 +1214,7 @@ struct TerminalCronCommandTests {
         #expect(client.writes.isEmpty)
         #expect(client.readCount == 0)
         #expect(locator.requestedPaths.isEmpty)
+        #expect(zenCRON.callCount == 0)
     }
 
     @Test
@@ -2463,9 +2653,10 @@ struct TerminalCronCommandTests {
 
     private func makeTerminal(
         crontab: String,
-        zen: FakeZenLocator = FakeZenLocator()
+        zen: FakeZenLocator = FakeZenLocator(),
+        zenCRON: FakeZenCRONLocator = FakeZenCRONLocator()
     ) throws -> (TerminalChat, FakeCrontabClient) {
-        try makeTerminal(client: FakeCrontabClient(text: crontab), zen: zen)
+        try makeTerminal(client: FakeCrontabClient(text: crontab), zen: zen, zenCRON: zenCRON)
     }
 
     /// A coordinator that records what it writes instead of touching the real
@@ -2487,6 +2678,7 @@ struct TerminalCronCommandTests {
     private func makeTerminal(
         client: FakeCrontabClient,
         zen: FakeZenLocator = FakeZenLocator(),
+        zenCRON: FakeZenCRONLocator = FakeZenCRONLocator(),
         renderCoordinator: TerminalChatRenderCoordinator? = nil,
         agents: [AgentProfile] = AgentProfileStore.defaultProfiles()
     ) throws -> (TerminalChat, FakeCrontabClient) {
@@ -2510,6 +2702,8 @@ struct TerminalCronCommandTests {
         terminal.cronJobRunner = FakeCronJobRunner(isReleased: true)
         // Never the machine's PATH search: `/cron add` must not depend on a `zen` being installed.
         terminal.cronZenLocator = { zen.locate(onPath: $0) }
+        // Never the installed ZenCRON, nor a real process: no test depends on `/setup`.
+        terminal.cronZenCRONLocator = { try zenCRON.locate() }
         terminal.selectedAgent = nil
         return (terminal, client)
     }

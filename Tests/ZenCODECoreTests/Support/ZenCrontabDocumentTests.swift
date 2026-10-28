@@ -1041,8 +1041,21 @@ struct ZenCrontabDocumentTests {
         #expect(ZenCrontabError.malformedBlock(reason: "missing end").errorDescription?.contains("missing end") == true)
         #expect(
             ZenCrontabError.zenNotOnPath(path: "/opt/bin:/usr/bin").errorDescription
-                == "cron runs `zen` with PATH=/opt/bin:/usr/bin, but no executable zen was found there. "
+                == "ZenCRON runs `zen` with PATH=/opt/bin:/usr/bin, but no executable zen was found there. "
                 + "Install ZenCODE in /usr/local/bin (Scripts/install.sh) before scheduling prompts."
+        )
+        #expect(
+            ZenCrontabError.zenCRONNotInstalled(path: "/Users/me/.zencode/bin/ZenCRON").errorDescription
+                == "ZenCRON is not installed at /Users/me/.zencode/bin/ZenCRON. "
+                + "Build it from /setup \u{203A} Scheduled prompts (ZenCRON), then retry."
+        )
+        #expect(
+            ZenCrontabError.zenCRONDoesNotStart(
+                path: "/Users/me/.zencode/bin/ZenCRON",
+                reason: "it printed no version"
+            ).errorDescription
+                == "ZenCRON at /Users/me/.zencode/bin/ZenCRON does not start (it printed no version). "
+                + "Rebuild it from /setup \u{203A} Scheduled prompts (ZenCRON), then retry."
         )
         #expect(ZenCrontabError.invalidPrompt(reason: "contains a line break").errorDescription?.contains("contains a line break") == true)
         #expect(

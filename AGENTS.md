@@ -3,7 +3,7 @@
 ## Project
 
 - ZenCODE is a Swift 6.4 package whose main executable is `zen`; it runs on macOS, Linux, and WSL with remote model providers.
-- `Package.swift` is authoritative for the root products, target dependencies, platforms, and build settings. The packages under `Sources/Features` have their own manifests and are outside the root graph.
+- `Package.swift` is authoritative for the root products, target dependencies, platforms, and build settings. The packages under `Sources/Features` and `Sources/ZenCRON` have their own manifests and are outside the root graph.
 - `Docs/architecture.md` is the compatibility and dependency-direction contract. Preserve public modules, executable names, wire formats, persisted formats, feature identities, and task-graph ownership unless an explicit migration changes them.
 - Update `CHANGELOG.md` whenever a change is user-visible or otherwise warrants a release note.
 - Composition starts at `Sources/zen/CLI/ZenCODEMain.swift`; shared session coordination is centered on `AgentCoreSessionRunner`, backend state is behind `AgentCoreBackend`, and direct-tool dispatch is behind `DirectToolExecutor`.
@@ -13,6 +13,7 @@
 - `zen` is the only executable composition root and the only layer that selects and injects a remote model backend. `ZenCODECore` owns the shared runtime; terminal UI, Telegram, and ACP adapt that runtime without moving transport-specific types into neutral Agent or Remote domains.
 - The reusable target flow is `ToolCore` → `FeatureKit` → `LocalToolsSupport`, with `FeatureMCPBridgeKit` depending only on `FeatureKit` and `ToolCore`. `ZenCODECore` consumes these support targets and `ZenPackageMetadata`; keep dependency-light contracts in the lowest viable layer and never introduce a dependency on `zen`.
 - `Sources/Features/<Feature>` contains standalone Swift packages, not root targets. Each optional feature owns its product, implementation, policy, tests, and thin executable; generic feature-process and MCP machinery belongs in `FeatureKit` or `FeatureMCPBridgeKit`, never feature-specific behavior.
+- `Sources/ZenCRON` is the standalone, dependency-free package of `ZenCRON`, the host that cron runs for scheduled prompts and that spawns `zen`; `/setup` builds it into `<support>/bin/ZenCRON`. It is neither a feature nor a composition root. Its binary must stay stable (macOS ties the permissions of cron jobs to it): raise its host version only when its behaviour changes, and keep its `PATH` search identical to `ZenCronJobCommand.locateZen(onPath:)`.
 - `AgentCoreSessionRunner` is the session-level coordinator and injects one `SessionTaskOrchestrator` into every backend. The orchestrator is the sole mutable owner of task DAGs and checkpoints; backend recreation must not replace or discard that state.
 - `DirectToolExecutor` is the authorization and dispatch boundary for direct tools. Delegated-agent tool grants normally come from configured profiles, not model-authored arguments or task metadata; a child resolved to the coordinator's same profile inherits the coordinator's effective session allowlist.
 - Provider generation is remote-only and provider-agnostic runtime state stays local. Shared HTTP/SSE/WebSocket behavior belongs under `Remote/Generation`; authentication remains separate from generation transport.
@@ -27,6 +28,7 @@
 - For memory-engine changes, run `swift test --filter MemoryEngineTests`; memory-facade changes additionally exercise `swift test --filter MemoryServiceTests` and `swift test --filter MemoryEnhancementTests` in `ZenCODECoreTests`.
 - Main release product: `swift build -c release --product zen`.
 - Root commands intentionally do not build optional feature executables. For an optional-feature change, run `swift test --filter BundledFeatureCatalogParityTests`, validate the package from its own directory according to its `Package.swift`, and check its installed executable's `--list-tools` output.
+- Root commands do not build or test `ZenCRON` either. For a ZenCRON change, run `swift test --package-path Sources/ZenCRON` on macOS and in the Linux container machine.
 - For sensitive-manifest changes, run `swift test --filter SensitiveManifestPermissionsTests`; add the affected provider or setup suites when their persistence flows change.
 - `Package.resolved` is tracked and pins CI/release dependencies. Do not update it incidentally; for an intentional dependency change, run `swift package resolve`, review the exact pins, and include the lockfile.
 - Finish source changes with `git diff --check`. Validate script edits with `bash -n Scripts/*.sh`; network, provider, and installer executions are dedicated checks rather than routine validation.

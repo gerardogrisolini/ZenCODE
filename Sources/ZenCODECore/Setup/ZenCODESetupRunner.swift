@@ -64,8 +64,11 @@ public enum ZenCODESetupRunner {
         }
 
         while shouldOpenSetupMenu {
+            // Read before the menu opens: the menu itself is synchronous.
+            let zenCRON = await ZenCRONSetupStatus.load()
             let section = try promptSetupSection(
-                currentManifest: session.manifest
+                currentManifest: session.manifest,
+                zenCRON: zenCRON
             )
             if section == .finish {
                 break
@@ -226,6 +229,9 @@ public enum ZenCODESetupRunner {
             )
         case .features:
             try await configureFeatures()
+            return SetupSectionConfigurationResult(manifest: manifest)
+        case .scheduledPrompts:
+            await configureScheduledPrompts()
             return SetupSectionConfigurationResult(manifest: manifest)
         case .agents:
             let agentProfiles = try ZenCODEAgentProfileSetupRunner.configureInteractively(

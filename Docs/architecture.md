@@ -14,6 +14,10 @@ migration says otherwise:
 - library products and imports `ZenCODECore`, `FeatureKit`, `ToolCore`,
   `FeatureMCPBridgeKit`, and `LocalToolsSupport`;
 - executable `zen` and its ACP entry point;
+- executable `ZenCRON`, the host that cron runs for scheduled prompts (see
+  [ZenCRON Host](#zencron-host)): its installed path
+  `<support directory>/bin/ZenCRON`, the single line `ZenCRON <number>` that
+  `--zencron-version` prints, and the exit status or signal it replicates;
 - optional feature IDs, executable product names, tool names, selection
   prefixes, source-relative paths,
   and the `--list-tools` / `--invoke` JSON envelopes;
@@ -21,9 +25,12 @@ migration says otherwise:
   feature manifests, per-workspace memory graphs, and cache key formats;
 - the ZenCODE crontab block markers (`# >>> ZenCODE cron >>>` /
   `# <<< ZenCODE cron <<<`), the `PATH=/usr/local/bin:/usr/bin:/bin` line that
-  starts the block (it is how cron finds `zen`), the
-  `# zencode-cron id=… created=…` entry marker, and the generated cron command
-  layout decoded by `/cron list`, which runs a bare `zen` and carries `--jsonl`
+  starts the block (it is how ZenCRON finds `zen`, and how cron finds the bare
+  `zen` of older lines), the `# zencode-cron id=… created=…` entry marker, and
+  the generated cron command layout decoded by `/cron list`. New lines run the
+  single-quoted absolute path of ZenCRON, `'<support directory>/bin/ZenCRON'`;
+  lines written before ZenCRON existed run a bare `zen` and are still decoded,
+  listed, run, and removed. Both kinds take the same arguments, with `--jsonl`
   only for JSONL entries (lines written earlier always have it), then
   `-f '<path>'` and/or `-p '<prompt>'`, at least one, in that order;
 - public installer entry points under `Scripts/install*.sh`.
@@ -259,6 +266,81 @@ topics. Stop is an awaited barrier for poll subscription, presence, rate state,
 consents and temporary files. Outbound consent captures SHA-256 at offer time
 and the multipart encoder verifies the hash while reading the exact bytes that
 will be sent.
+
+## ZenCRON Host
+
+`ZenCRON` is the program that cron runs for every scheduled prompt that
+`/cron add` writes; it then starts `zen`. On macOS the privacy (TCC)
+permissions of a cron job are attributed to the first program cron starts, and
+they stay with it for all its descendants, the features that `zen` launches
+included. `zen` is signed only ad hoc, so its identity changes with every
+installation and the permission prompts would come back after each update.
+ZenCRON is the stable identity that receives them.
+
+ZenCRON is not an optional feature and not a composition root: it selects no
+backend, reads no settings, and `zen` stays the only composition root. The
+contract is written at the head of `Sources/ZenCRON/Sources/ZenCRON/main.swift`
+and is summarized here:
+
+- **Package.** A standalone SwiftPM package at `Sources/ZenCRON`, with the
+  product and executable target `ZenCRON`, no dependencies, and a package-local
+  test target. Its source imports only the C library (`Darwin`, `Glibc`, or
+  `Musl`). It does not depend on `zen`, on `ZenCODECore`, or on any other
+  ZenCODE target, and none of them depends on it: `ZenCODECore` knows only its
+  installed path, its name, and the output of `--zencron-version`.
+- **Invocation.** cron runs it by absolute path. Every argument is passed to
+  `zen` verbatim, an empty list included. The one exception is
+  `--zencron-version` as the only argument: ZenCRON prints the line
+  `ZenCRON <number>` (today `ZenCRON 1`) and exits without looking for `zen`.
+  `/setup` and `/cron add` use it to compare versions and to check that the file
+  starts.
+- **Finding `zen`.** On the `PATH` of its environment, which under cron is the
+  `PATH=` line of the ZenCODE block; an unset `PATH` counts as empty. Entries are
+  separated by `:`. Empty and relative entries are ignored, because they would
+  depend on the working directory of the job. Trailing slashes are removed (the
+  entry `/` gives `/zen`). The first `<entry>/zen` accepted by `access(X_OK)`
+  wins and is passed to `zen` as its `argv[0]`. This is deliberately the rule of
+  `ZenCronJobCommand.locateZen(onPath:)`, which `/cron add` uses to check the
+  block's `PATH`: the `zen` accepted when the job is scheduled is the one
+  ZenCRON runs. Change both together, or neither.
+- **No `zen`.** ZenCRON writes `ZenCRON: no executable zen in PATH=<value>` to
+  standard error and exits with 127.
+- **Spawn, never exec.** ZenCRON starts `zen` as a child with the same
+  arguments, environment, standard descriptors, and process group, waits for it,
+  and ends the same way: with its exit code, or by dying from the same signal.
+  After an `exec`, TCC would evaluate `zen` again and the host would be
+  pointless. SIGTERM, SIGINT, SIGHUP, and SIGQUIT are forwarded to the child.
+  ZenCRON never changes session or process group.
+- **Host version.** The version of the host's behaviour is the number printed by
+  `--zencron-version`. It is raised only when that behaviour changes: on macOS
+  every new version is a new binary, for which macOS asks for each permission
+  again.
+
+ZenCRON is built by `/setup` (the **Scheduled prompts (ZenCRON)** section), not
+by the installers, and it is not in the release archives. The setup flow uses
+the ZenCODE source checkout of the optional features, syncs `Sources/ZenCRON`
+to `<support directory>/zencron/package` (keeping the `.build` directory there,
+so builds are incremental), runs `swift build -c release --product ZenCRON`,
+and installs the binary as it was built, without sudo, at
+`<support directory>/bin/ZenCRON`. The replacement rule depends on the platform:
+
+| Platform | Installed ZenCRON has the same version as the build | Installed ZenCRON is missing, unreadable, or of another version |
+| --- | --- | --- |
+| macOS | kept, so the permissions granted to it stay valid | installed |
+| Linux | replaced | installed |
+
+On Linux the Swift runtime is linked dynamically to the toolchain, so a ZenCRON
+built with a previous toolchain may stop starting after a toolchain change; it
+is built again from `/setup`. The section stores nothing in `settings.json`, and
+no persisted format changes.
+
+`/cron add` requires an installed ZenCRON that answers `--zencron-version`
+with a single `ZenCRON <number>` line, on every platform, and refuses before it
+reads or writes the crontab otherwise. Lines written before ZenCRON existed keep
+a bare `zen`; they remain valid, but on macOS their permissions still belong to
+`zen`. The CI job `zencron-package` tests and builds the package on macOS and
+Linux and checks its `--zencron-version` output. The installers and the release
+archives are unchanged.
 
 ## Provider Boundary
 
@@ -608,9 +690,10 @@ lookup, and persisted bindings are unchanged.
 | `Sources/ZenCODECore/Memory/Engine` | Internal memory implementation area within the `ZenCODECore` target; it is not a separate Foundation-only module or public product. It is an MIT-licensed independent Swift implementation of the memory architecture of `1jehuang/jcode`, attributed in `THIRD_PARTY_NOTICES.md`. It owns the memory graph, typed edges, lexical retrieval through a pluggable `MemoryIndex` protocol (default `BM25MemoryIndex`), optional semantic retrieval through a pluggable `EmbeddingProvider` (reciprocal-rank fusion only when one is present), a breadth-first cascade with depth decay, the confidence lifecycle, persistence (the graph JSON plus, from graph version 4, a binary vectors file with binary16 components bound to their entries by an FNV-1a fingerprint), and embedding provider protocols. The graph, BM25 path, default selectors, and persistence — including the hand-written binary16 conversion and the fingerprint — remain dependency-free; opt-in OpenAI-compatible transport adapters and ZenCODE diagnostic seams live in the same implementation-private target and are not installed when a store opens. Retrieval is also pluggable end to end through a `MemoryQueryAnalyzer` (default `DirectMemoryQueryAnalyzer`, which uses the prompt verbatim as the query), a `MemorySelector` (default `TopScoreMemorySelector`), a `MemoryExtractor` (default `NoopMemoryExtractor`, which extracts nothing) and a `MemoryContextFormatter` (default `BulletMemoryContextFormatter`); every default is dependency-free and makes no network call. The engine additionally exposes `context(for:)` (a ready-to-inject memory block) and `learn(from:)` (automatic extraction), and ships LLM-backed analyzer/selector/extractor implementations over the `MemoryLanguageModel` / `OpenAICompatibleChatModel` contracts; all of these stay unwired engine internals — opening a product store never installs a network-backed extractor or makes a generation request. ZenCODECore wires automatic recall through its `MemoryTurnCoordinator`: it calls the store's `context(for:scope:)` inline before every turn and is on by default over the dependency-free BM25 path (no second LLM call — the formatted block rides the turn's own outgoing request). Durable entries are read and written explicitly by the main model through the five `memory.*` tools (`memory.read` / `memory.search` / `memory.write` / `memory.update` / `memory.archive`), guided by `MemoryService.toolUsagePromptSection()`. The `MemoryVerifier` protocol is deprecated in favour of `MemorySelector`. This source area is implementation-private within `ZenCODECore`, not a separate SwiftPM target or public library product. |
 | `Sources/ZenPackageMetadata` | Internal bundled-feature distribution metadata used for catalog parity; it is not a public product. |
 | `Sources/Features/<Feature>` | A self-contained optional SwiftPM package with its own `Package.swift`, `Sources/<product-name>/`, and package-local `Tests/`. It is outside the root graph; keep the entry point thin and place implementation in feature-owned support or library targets. The marker `// zencode:package-path` must immediately precede the root `.package(name: "ZenCODE", path: "../../..")` dependency so installation can rewrite only that path. |
+| `Sources/ZenCRON` | The standalone SwiftPM package of the `ZenCRON` executable, the host that cron runs for scheduled prompts (see [ZenCRON Host](#zencron-host)): `Package.swift`, the `ZenCRON` executable target with a single `main.swift`, and the package-local `ZenCRONTests` target. It sits outside the root graph, which declares none of its products or targets, and it is not an optional feature: it has no catalog entry and no manifest, and it is not a composition root. It has no dependencies, and it depends on none of `zen`, `ZenCODECore`, and the other targets, nor do they depend on it. `ZenCODECore` knows it only through its installed path, its name, and its `--zencron-version` output (`Support/Scheduling/ZenCRONInstallation*.swift`); the one thing the two share is the `PATH` search rule of `ZenCronJobCommand.locateZen(onPath:)`, which ZenCRON repeats and which changes together with it. |
 | `Sources/ZenCODECore` | Runtime domains: `Agent`, `Remote`, `Tools`, `Features`, `Context`, `Memory`, `FileChanges`, `Runtime`, `Setup`, `Telegram`, and `Support`; `TUI` and ACP remain source areas within this target. The `Memory` domain is an async facade over the internal `Memory/Engine` implementation: `MemoryGraphLocation`, `MemoryGraphStore`, `MemoryService`, `MemoryLegacyCompatibility` (the deprecated 1.1.x synchronous surface), and the automatic-recall pipeline (`MemoryTurnCoordinator`, `MemoryTurnContext`, `MemoryAutomationSettings`). `MemoryService+Documents.swift` is removed. ZenCODECore exposes its own public DTOs (`MemoryEntry`, `MemoryScope`, `MemoryCategory` under `Models`) that preserve the 1.1.x contract (`id: UUID`, `Hashable`, journal-shaped scope); the internal engine implementation keeps its graph types hidden behind the facade. |
 | `Sources/ZenCODECore/Tools/Direct/SubAgents` | Delegated-agent lifecycle and dispatch. `agent.create` requires an explicit configured profile or a `profileRole` that the runtime resolves to one, and normally derives the child tool grant from that profile; model-authored creation arguments and task metadata cannot add, remove, or replace profile tools. An optional `workingDirectory` (an existing directory equal to or inside the coordinator's) sets the directory the child works in; files, shell, git, project memory, and project-agent association follow it. When the resolved child profile is the same as the coordinator profile, the child inherits the coordinator's effective session allowlist so session-local additions and removals are preserved; only child-intrinsic skills, collaboration, and applicable task-reporting tools are added, with the profile's `readOnly` core-tool policy reapplied. Different profiles (including Reviewer, Planner, and Minimal) retain their own grant boundaries. Model bindings are optional: a profile without bindings inherits the main session's selected model and provider when `model` is omitted; profiles with bindings still require an explicitly authorized model reference, except `profileRole` items, whose binding the runtime selects from `complexity`. |
-| `Sources/ZenCODECore/Setup` | Interactive first-run and in-process configuration for providers, models, agents, feature packages, Telegram, voice, response language, and optional memory embeddings. Setup remains invoked by the executable composition root even though its implementation and contracts belong to Core. |
+| `Sources/ZenCODECore/Setup` | Interactive first-run and in-process configuration for providers, models, agents, feature packages, Telegram, voice, response language, optional memory embeddings, and the build-and-install of ZenCRON (`Integrations/ZenCODESetupRunner+ScheduledPrompts.swift`). Setup remains invoked by the executable composition root even though its implementation and contracts belong to Core. |
 | `Sources/ZenCODECore/Runtime/Sessions` | Neutral session state and persistence, including the authoritative task DAG, attempt fencing, execution scopes, atomic task-graph checkpoints, startup enumeration/recovery, and the session checkpoint tree (`SessionCheckpointTree`). Workflow-sourced graphs require sub-agent execution attempts, while coordinator tool grants remain independent of that lifecycle constraint. Startup recovery is graph-specific: the orchestrator restores the owning session, interrupts persisted active attempts, activates exactly the operator-selected graph, archives superseded active graphs, and persists `currentGraphID` before backend creation. A negative validation persists `failed`; `tasks.retry` returns the task to `pending`, and retrying a failed attempt always claims a fresh workflow attempt through a new `agent.create(taskID:)` rather than resuming the prior agent. Separately, once a task-bound attempt completes, the agent may optionally remain in a runtime-only, non-persisted `.standby` state for conversational follow-up turns over direct messages that do not mutate the task graph; standby is bounded by a turn budget and an idle timeout, and is released when the graph becomes terminal, when a newer attempt supersedes it, or when the budget/timeout is exhausted. Standby turns are never task attempts, never reopen the completed attempt, and never change `task.activeAttemptID`. `AgentCoreSessionRunner` owns one orchestrator and injects it into every backend; its internal `AgentCoreBackendManager`, `AgentCoreSessionSnapshotStore`, and `AgentCoreAuthorizationRouter` isolate backend generations, session snapshot incarnations, and authorization lifecycle without changing the runner facade. The runner declaration itself keeps only actor state, initializers, local-exec access mode, session creation/options, and skill selection, with domain companions (`+PromptTurn`, `+SessionLifecycle`, `+SharedChat`, `+SnapshotAuthorization`, `+MCP`, `+Tasks`, `+SavedSessions`) implementing prompt-turn execution, session/backend lifecycle, shared-chat turns, snapshot/authorization routing, MCP wiring, task-graph projection, and saved-session persistence for the same actor. Direct task tools are stateless adapters and TUI/ACP code only projects or requests orchestrator-owned snapshot restoration. |
 | `Sources/ZenCODECore/Telegram` | Telegram remote-control runtime: Bot API transport, long-polling, pairing, channel state, voice-attachment download, tool-call permission brokering, safe tool-call presentation, and the ordered per-turn progress reporter. `TerminalTelegramControlService` retains lifecycle and ingress coordination; pairing, wire effects, attachments, and the command registry are separated into dedicated runtime files. It depends only on `Foundation`/`FoundationNetworking`, `ToolCore`, and neutral runtime contracts (`Agent` settings, `Agent` tool-authorization requests, `ToolCallPresentation`, voice input); it must not depend on terminal presentation types. The `TerminalChat+Telegram*.swift` extensions under `TUI/Chat/Telegram` are the only adapter that binds this runtime to input, rendering, and prompt-queue surfaces. |
 | `Sources/ZenCODECore/ACP` | ACP protocol adaptation only: JSON-RPC routing, parsing, lifecycle, and event encoding. Tool-call updates are wire-normalized here: the richer internal presentation kinds are mapped onto the closed ACP set (`read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other`), and `locations` are absolute paths resolved against the session workspace rather than the agent process directory. |
@@ -705,7 +788,8 @@ and is composed only by its package-local `xcode-tools-feature` executable;
 contracts, but Agent, Remote, and ACP code must not depend on terminal
 presentation types. Remote providers receive backend factories through runtime
 contracts rather than constructing Agent coordinators directly. `zen` is the
-only composition root for backend selection.
+only composition root for backend selection. `Sources/ZenCRON` is outside this
+graph: it depends on none of these modules and none of them depends on it.
 
 ## Memory Ownership and Persistence
 
@@ -828,7 +912,9 @@ the complete non-live root test suite with `swift test --no-parallel`, and build
 the release `zen` product. An
 optional feature change additionally runs `swift test` from its own
 `Sources/Features/<Feature>` package (with an isolated scratch directory) and
-checks its `--list-tools` output after installation. Validate shell syntax with
+checks its `--list-tools` output after installation. A ZenCRON change
+additionally runs `swift test --package-path Sources/ZenCRON`, which the CI job
+`zencron-package` also runs. Validate shell syntax with
 `bash -n Scripts/*.sh`, and finish with `git diff --check`.
 
 The version/release contract is documented in [release.md](release.md): a

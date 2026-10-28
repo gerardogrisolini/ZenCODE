@@ -334,3 +334,51 @@ jobs:
           retention-days: 30
           compression-level: 0
           overwrite: true
+
+  zencron-package:
+    name: ZenCRON package (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: xcode-27
+          - name: Linux
+            os: ubuntu-24.04
+            container: swift:6.4-noble
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container || null }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Mark workspace as a safe Git directory
+        if: matrix.container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # ZenCRON is a standalone package without dependencies: there is no
+      # Package.resolved to restore or check, and nothing worth caching.
+      - name: Test ZenCRON package
+        run: swift test --package-path Sources/ZenCRON
+
+      - name: Build ZenCRON
+        run: swift build -c release --package-path Sources/ZenCRON --product ZenCRON
+
+      - name: Verify ZenCRON version output
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_path="$(swift build -c release --package-path Sources/ZenCRON --show-bin-path)"
+          output="$("$bin_path/ZenCRON" --zencron-version)"
+          printf '%s\n' "$output"
+          # The pattern lives in a variable so that Bash treats it as a regex,
+          # and `^`/`$` anchor the whole string: more than one line fails.
+          pattern='^ZenCRON [0-9]+$'
+          if [[ ! "$output" =~ $pattern ]]; then
+            echo "::error::ZenCRON --zencron-version must print exactly one line matching $pattern."
+            exit 1
+          fi

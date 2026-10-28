@@ -19,8 +19,15 @@ enum ZenCrontabError: LocalizedError, Equatable {
     case malformedBlock(reason: String)
     /// A 1-based scheduled-prompt number that does not exist.
     case noSuchEntry(Int)
-    /// No executable `zen` exists in the `PATH` cron gives to the ZenCODE
-    /// block, so a scheduled prompt could not start.
+    /// ZenCRON, the host that new scheduled prompts run, is not installed at
+    /// its fixed location. `/cron add` refuses before touching the crontab.
+    case zenCRONNotInstalled(path: String)
+    /// ZenCRON exists but does not report its version, so it cannot start.
+    /// `reason` completes "does not start (…)".
+    case zenCRONDoesNotStart(path: String, reason: String)
+    /// No executable `zen` exists in the `PATH` of the ZenCODE block, which
+    /// ZenCRON passes on to the `zen` it starts, so a scheduled prompt could
+    /// not run.
     case zenNotOnPath(path: String)
     /// The prompt cannot be stored on a single crontab line.
     case invalidPrompt(reason: String)
@@ -46,8 +53,14 @@ enum ZenCrontabError: LocalizedError, Equatable {
                 + "Fix it with `crontab -e` (keep a single '# >>> ZenCODE cron >>>' / '# <<< ZenCODE cron <<<' pair) and retry."
         case let .noSuchEntry(number):
             return "No scheduled prompt #\(number). Use /cron list."
+        case let .zenCRONNotInstalled(path):
+            return "ZenCRON is not installed at \(path). "
+                + "Build it from /setup › Scheduled prompts (ZenCRON), then retry."
+        case let .zenCRONDoesNotStart(path, reason):
+            return "ZenCRON at \(path) does not start (\(reason)). "
+                + "Rebuild it from /setup › Scheduled prompts (ZenCRON), then retry."
         case let .zenNotOnPath(path):
-            return "cron runs `zen` with PATH=\(path), but no executable zen was found there. "
+            return "ZenCRON runs `zen` with PATH=\(path), but no executable zen was found there. "
                 + "Install ZenCODE in /usr/local/bin (Scripts/install.sh) before scheduling prompts."
         case let .invalidPrompt(reason):
             return "The prompt cannot be scheduled: \(reason). Rewrite it as a single non-empty line and retry."
