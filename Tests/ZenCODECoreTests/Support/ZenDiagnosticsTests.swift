@@ -487,25 +487,25 @@ struct ZenDiagnosticsTests {
         }
 
         let duplicateFirstProvider = AgentRemoteProvider(
-            id: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000001001")),
+            id: "modal",
             name: "Duplicate provider",
             baseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
             modelID: "duplicate-first"
         )
         let duplicateSecondProvider = AgentRemoteProvider(
-            id: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000001002")),
+            id: "nvidia",
             name: "Duplicate provider",
             baseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
             modelID: "duplicate-second"
         )
         let missingKeyProvider = AgentRemoteProvider(
-            id: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000001003")),
+            id: "openrouter",
             name: "OpenRouter",
             baseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
             modelID: "missing-key"
         )
         let storedKeyProvider = AgentRemoteProvider(
-            id: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000001004")),
+            id: "openai",
             name: "Stored key",
             baseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
             modelID: "stored-key"
@@ -517,7 +517,7 @@ struct ZenDiagnosticsTests {
             modelID: "subscription-model"
         )
         let customKeylessProvider = AgentRemoteProvider(
-            id: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000001005")),
+            id: "custom",
             name: "Custom keyless",
             baseURL: "https://custom.example.test/v1",
             modelID: "custom-keyless-model"
@@ -562,7 +562,7 @@ struct ZenDiagnosticsTests {
         let manifest = AgentSettingsManifest(
             models: models,
             remoteAPIKeysByProviderID: [
-                storedKeyProvider.id.uuidString.lowercased(): "stored-key-value"
+                storedKeyProvider.id: "stored-key-value"
             ]
         )
         try JSONEncoder()

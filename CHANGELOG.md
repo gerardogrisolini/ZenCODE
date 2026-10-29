@@ -12,10 +12,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
-- Binding presets: an optional, hand-edited `binding-presets.json` next to
-  `agents.json` keeps model bindings per provider. `/setup` > Agent model
-  bindings > **Apply binding presets** replaces every agent's bindings from it,
-  and a first setup offers it (default No). See [Docs/bindings.md](Docs/bindings.md#binding-presets).
+- Binding presets: a hand-edited `binding-presets.json`, shipped with the
+  sources in `Sources/ZenPackageMetadata`, keeps model bindings per provider.
+  `/setup` reads it from the ZenCODE source checkout: in `/setup` > Agent model
+  bindings, **Apply binding presets** first lets you choose, in a menu, which
+  configured providers in the file to use (all selected by default), then
+  replaces every agent's bindings with theirs; **Reset** removes every
+  agent's bindings. Nothing applies on its own. See
+  [Docs/bindings.md](Docs/bindings.md#binding-presets).
 
 ### Changed
 
@@ -23,6 +27,30 @@ Release tags follow the strict `vX.Y.Z` contract described in
   ideas: talking to sub-agents while they work, capability-based routing with
   model bindings and binding presets, and tools built on request with the
   Builder.
+- Command menus now draw their orange frame dimmed, like the prompt frame,
+  instead of at full intensity; the menu content is unchanged.
+- **Breaking:** providers are identified by stable, readable keys instead of
+  generated UUIDs: `openrouter`, `openai`, `anthropic`, `zai`,
+  `zai-coding-plan`, `google.gemini`, `deepseek`, `moonshot`, `nvidia`,
+  `modal`, `custom`, `ds4`, `chatgpt`, and `claude`. Remote API model ids
+  become `<provider>:<model>` (for example
+  `openrouter:moonshotai/kimi-k3.1-pro`) instead of
+  `remoteapi:<uuid>:<model>`; ChatGPT and Claude subscription and DS4 model ids
+  are unchanged. Scripts and scheduled prompts that pass an old
+  `remoteapi:<uuid>:<model>` id to `--model` or `ZENCODE_AGENT_MODEL` must use
+  the new id; `zen --help` documents the new form.
+- Existing settings migrate automatically (settings version 15): at the first
+  start, `zen` rewrites `settings.json` (providers, models, selected model, API
+  keys, and the memory-embedding provider) and the model bindings in
+  `agents.json` to the new keys and ids in one transaction, and an imported
+  backup is migrated right after the import. When two configured providers map
+  to the same key (for example two OpenRouter entries), the first is kept and
+  the other is removed with its models and API key, with a warning that names
+  it. Saved sessions that reference an old id still restore.
+- A provider can be configured only once: `/setup` marks the providers that are
+  already configured and, when you pick one, asks you to reconfigure it instead
+  of adding a second copy. This also applies to Custom, the subscriptions, and
+  DS4.
 
 ## [3.1.0] - 2026-10-28
 

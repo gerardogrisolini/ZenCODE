@@ -116,7 +116,7 @@ struct ZenCODESetupProviderPresetTests {
         // Selecting Custom is an explicit identity decision even if the user
         // enters a URL that resembles a hosted preset.
         let input = SetupProviderInput(
-            id: UUID(), name: "Custom NVIDIA-shaped endpoint",
+            id: preset.providerID, name: "Custom NVIDIA-shaped endpoint",
             baseURL: SetupProviderPreset.nvidiaAPI.baseURL,
             chatEndpoint: .chatCompletions,
             providerProfileID: preset.providerProfileID,
@@ -130,9 +130,8 @@ struct ZenCODESetupProviderPresetTests {
 
     @Test
     func openAIAPIAndChatGPTSubscriptionRemainSeparateProviders() {
-        let apiID = UUID()
         let api = SetupProviderInput(
-            id: apiID,
+            id: SetupProviderPreset.openAIAPI.providerID,
             name: SetupProviderPreset.openAIAPI.title,
             baseURL: SetupProviderPreset.openAIAPI.baseURL,
             chatEndpoint: .responses,
@@ -170,7 +169,7 @@ struct ZenCODESetupProviderPresetTests {
     @Test
     func setupProviderConversionPreservesExplicitProfiles() {
         let input = SetupProviderInput(
-            id: UUID(),
+            id: SetupProviderPreset.kimi.providerID,
             name: SetupProviderPreset.kimi.title,
             baseURL: SetupProviderPreset.kimi.baseURL,
             chatEndpoint: .chatCompletions,
@@ -194,6 +193,107 @@ struct ZenCODESetupProviderPresetTests {
         #expect(preserved.authPolicy == .apiKeyRequired)
         #expect(preserved.baseURL == "https://api.moonshot.ai/v1")
         #expect(preserved.apiKey == "moonshot-key")
+    }
+
+    // MARK: - Stable provider keys
+
+    @Test
+    func everyPresetHasItsStableProviderKey() {
+        let expected: [SetupProviderPreset: String] = [
+            .openRouter: "openrouter",
+            .openAIAPI: "openai",
+            .anthropicAPI: "anthropic",
+            .zaiAPI: "zai",
+            .zaiCodingPlan: "zai-coding-plan",
+            .gemini: "google.gemini",
+            .deepSeek: "deepseek",
+            .kimi: "moonshot",
+            .nvidiaAPI: "nvidia",
+            .modal: "modal",
+            .custom: "custom"
+        ]
+        #expect(Set(expected.keys) == Set(SetupProviderPreset.allCases))
+        for preset in SetupProviderPreset.allCases {
+            #expect(preset.providerID == expected[preset])
+            #expect(SetupProviderKind.remoteAPI(preset).providerID == expected[preset])
+            #expect(AgentRemoteProvider.knownProviderIDs.contains(preset.providerID))
+        }
+        #expect(SetupProviderKind.chatGPTSubscription.providerID == "chatgpt")
+        #expect(SetupProviderKind.anthropicSubscription.providerID == "claude")
+        #expect(ZenCODESetupRunner.ds4SetupProviderID == "ds4")
+        // Every key is unique and lowercase.
+        let keys = SetupProviderPreset.allCases.map(\.providerID) + ["chatgpt", "claude", "ds4"]
+        #expect(Set(keys).count == keys.count)
+        #expect(keys.allSatisfy { $0 == $0.lowercased() })
+        #expect(Set(keys) == AgentRemoteProvider.knownProviderIDs)
+    }
+
+    @Test
+    func providerKeyDerivationIsTheSingleKeyTable() {
+        #expect(AgentRemoteProvider.providerKey(providerProfileID: .openAI, protocolProfileID: .openAIChatGPTSubscription) == "chatgpt")
+        #expect(AgentRemoteProvider.providerKey(providerProfileID: .anthropic, protocolProfileID: .anthropicClaudeSubscription) == "claude")
+        #expect(AgentRemoteProvider.providerKey(providerProfileID: .zAI, protocolProfileID: .zaiCodingPlan) == "zai-coding-plan")
+        #expect(AgentRemoteProvider.providerKey(providerProfileID: .zAI, protocolProfileID: .openAIChatCompletions) == "zai")
+        #expect(AgentRemoteProvider.providerKey(providerProfileID: .ds4, protocolProfileID: .openAIChatCompletions) == "ds4")
+        #expect(AgentRemoteProvider.providerKey(providerProfileID: .custom, protocolProfileID: .openAIResponses) == "custom")
+
+        // A provider without an explicit id receives the derived key, never a
+        // generated one; an explicit id is trimmed and lowercased.
+        #expect(AgentRemoteProvider().id == "openrouter")
+        #expect(AgentRemoteProvider(baseURL: "https://api.openai.com/v1").id == "openai")
+        #expect(AgentRemoteProvider(baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL).id == "chatgpt")
+        #expect(AgentRemoteProvider(baseURL: "https://api.z.ai/api/coding/paas/v4").id == "zai-coding-plan")
+        #expect(AgentRemoteProvider(baseURL: "http://127.0.0.1:9/v1").id == "custom")
+        #expect(AgentRemoteProvider(id: "  OpenRouter ", baseURL: "https://example.test").id == "openrouter")
+        #expect(AgentRemoteProvider(id: " ", baseURL: "https://api.deepseek.com/v1").id == "deepseek")
+    }
+
+    @Test
+    func remoteAPIModelIDsUseTheProviderKey() {
+        let model = AgentSettingsModelManifestFactory.remoteAPIModel(
+            title: nil,
+            modelID: "deepseek/deepseek-r1:free",
+            providerID: "openrouter",
+            providerName: "OpenRouter",
+            baseURL: SetupProviderPreset.openRouter.baseURL,
+            chatEndpoint: .chatCompletions,
+            configuredContextWindowLimit: nil,
+            generationParameterOverrides: nil,
+            thinkingSupport: nil
+        )
+        #expect(model.id == "openrouter:deepseek/deepseek-r1:free")
+        #expect(model.llmID == model.id)
+        #expect(model.providerID == "openrouter")
+        #expect(model.provider?.id == "openrouter")
+        let scoped = AgentRemoteProvider.providerScopedModelID(model.id)
+        #expect(scoped?.providerID == "openrouter")
+        #expect(scoped?.modelID == "deepseek/deepseek-r1:free")
+        #expect(AgentSettingsStore.isRemoteLLMIDSyntax(model.id))
+        #expect(!AgentSettingsStore.isRemoteLLMIDSyntax("chatgpt:gpt-5"))
+        #expect(!AgentSettingsStore.isRemoteLLMIDSyntax("ds4:deepseek-v4-flash"))
+        #expect(!AgentSettingsStore.isRemoteLLMIDSyntax("deepseek-r1:free"))
+    }
+
+    @Test
+    func alreadyConfiguredProvidersCannotBeAddedAgain() throws {
+        let configured: Set<String> = ["openrouter", "chatgpt", "custom"]
+
+        #expect(ZenCODESetupRunner.alreadyConfiguredProviderMessage(for: .remoteAPI(.openAIAPI), configuredProviderIDs: configured) == nil)
+        #expect(ZenCODESetupRunner.alreadyConfiguredProviderMessage(for: .anthropicSubscription, configuredProviderIDs: configured) == nil)
+        #expect(ZenCODESetupRunner.alreadyConfiguredProviderMessage(for: .remoteAPI(.zaiCodingPlan), configuredProviderIDs: ["zai"]) == nil)
+
+        let openRouter = try #require(
+            ZenCODESetupRunner.alreadyConfiguredProviderMessage(for: .remoteAPI(.openRouter), configuredProviderIDs: configured)
+        )
+        #expect(openRouter.contains("OpenRouter is already configured"))
+        #expect(openRouter.contains("'openrouter'"))
+        #expect(openRouter.contains("reconfigure it"))
+        // Custom exists at most once, and so do the subscriptions.
+        #expect(ZenCODESetupRunner.alreadyConfiguredProviderMessage(for: .remoteAPI(.custom), configuredProviderIDs: configured) != nil)
+        let subscription = try #require(
+            ZenCODESetupRunner.alreadyConfiguredProviderMessage(for: .chatGPTSubscription, configuredProviderIDs: configured)
+        )
+        #expect(subscription.contains("ChatGPT Subscription is already configured"))
     }
 
     @Test
@@ -290,7 +390,7 @@ struct ZenCODESetupProviderPresetTests {
     @Test
     func anthropicReconfigurationRoundTripPreservesMessagesProfile() throws {
         let provider = AgentSettingsProviderManifest(
-            id: UUID(), name: "Anthropic API", baseURL: "https://api.anthropic.com/v1",
+            id: "anthropic", name: "Anthropic API", baseURL: "https://api.anthropic.com/v1",
             chatEndpoint: .chatCompletions, providerProfileID: .anthropic,
             protocolProfileID: .anthropicMessages, authPolicy: .apiKeyRequired
         )

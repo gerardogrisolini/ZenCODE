@@ -16,8 +16,8 @@ struct AgentProfileBindingReconcilerTests {
     @Test
     func reconciliationRemovesOnlyStaleOrAmbiguousBindingsAndRecalculatesDefault() {
         let alpha = Self.model(providerName: "Alpha", modelID: "alpha-model")
-        let beta = Self.model(providerName: "Beta", modelID: "shared-model")
-        let gamma = Self.model(providerName: "Gamma", modelID: "shared-model")
+        let beta = Self.model(providerName: "Beta", modelID: "shared-model", providerID: "openrouter")
+        let gamma = Self.model(providerName: "Gamma", modelID: "shared-model", providerID: "deepseek")
         let skill = AgentProfileSkill(id: "swift-review", canonicalName: "swift-review")
         let original = AgentProfile(
             id: "custom-agent",
@@ -57,9 +57,10 @@ struct AgentProfileBindingReconcilerTests {
     }
 
     @Test
-    func reconciliationTreatsProviderUUIDReplacementAsAnOrphanedCanonicalBinding() {
+    func reconciliationTreatsProviderReplacementAsAnOrphanedCanonicalBinding() {
         let replacement = Self.model(providerName: "Replacement", modelID: "same-model")
-        let oldCanonicalID = "remoteapi:\(UUID().uuidString.lowercased()):same-model"
+        // The canonical id of a provider that is no longer configured.
+        let oldCanonicalID = "openai:same-model"
         let original = AgentProfile(
             id: "custom-agent",
             name: "Custom",
@@ -570,16 +571,16 @@ struct AgentProfileBindingReconcilerTests {
 
     private static func model(
         providerName: String,
-        modelID: String
+        modelID: String,
+        providerID: String = "custom"
     ) -> AgentSettingsModelManifest {
-        let providerID = UUID()
         let provider = AgentRemoteProvider(
             id: providerID,
             name: providerName,
             baseURL: "https://\(providerName.lowercased()).example.invalid/v1",
             modelID: modelID
         )
-        let id = "remoteapi:\(providerID.uuidString.lowercased()):\(modelID)"
+        let id = AgentRemoteProvider.modelManifestID(providerID: providerID, modelID: modelID)
         return AgentSettingsModelManifest(
             id: id,
             kind: .remoteAPI,

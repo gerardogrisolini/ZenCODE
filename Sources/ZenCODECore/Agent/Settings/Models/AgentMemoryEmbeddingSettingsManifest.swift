@@ -25,9 +25,10 @@ import ToolCore
 /// `model` and `providerID` are optional: legacy endpoint-only configurations
 /// (and custom endpoints typed by hand in setup) keep them nil. When `model` is
 /// present, ZenCODE sends it in the `/v1/embeddings` request body; when
-/// `providerID` is present, the resolver derives the Authorization key from the
-/// configured provider's `remoteAPIKeysByProviderID` entry instead of duplicating
-/// the secret in the embeddings manifest.
+/// `providerID` (a stable provider key such as `openrouter`) is present, the
+/// resolver derives the Authorization key from that provider's
+/// `remoteAPIKeysByProviderID` entry instead of duplicating the secret in the
+/// embeddings manifest.
 public struct AgentMemoryEmbeddingSettingsManifest: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case endpoint
@@ -49,10 +50,10 @@ public struct AgentMemoryEmbeddingSettingsManifest: Codable, Equatable, Sendable
     /// Optional OpenAI-compatible model identifier sent in the request body.
     /// Nil keeps the endpoint-only behavior: the server chooses the model.
     public let model: String?
-    /// Optional non-secret reference to a configured provider whose API key is
-    /// reused for this embedding endpoint. Present only for provider presets
+    /// Optional non-secret provider key of a configured provider whose API key
+    /// is reused for this embedding endpoint. Present only for provider presets
     /// (OpenRouter); nil for custom/legacy endpoint-only configurations.
-    public let providerID: UUID?
+    public let providerID: String?
 
     /// The explicitly-disabled marker: endpoint is absent, semantic retrieval
     /// is off, and the legacy environment fallback is suppressed.
@@ -63,12 +64,12 @@ public struct AgentMemoryEmbeddingSettingsManifest: Codable, Equatable, Sendable
     /// can surface their own validation error; `AgentSettingsManifest` drops
     /// them and decoding rejects them. A nil endpoint forces `model` and
     /// `providerID` to nil so the disabled state stays canonical.
-    public init(endpoint: String?, model: String? = nil, providerID: UUID? = nil) {
+    public init(endpoint: String?, model: String? = nil, providerID: String? = nil) {
         if let endpoint {
             let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
             self.endpoint = Self.normalizedEndpoint(trimmed) ?? trimmed
             self.model = model?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
-            self.providerID = providerID
+            self.providerID = AgentRemoteProvider.normalizedProviderID(providerID)
         } else {
             self.endpoint = nil
             self.model = nil
@@ -96,7 +97,9 @@ public struct AgentMemoryEmbeddingSettingsManifest: Codable, Equatable, Sendable
         self.model = try container.decodeIfPresent(String.self, forKey: .model)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfBlank
-        self.providerID = try container.decodeIfPresent(UUID.self, forKey: .providerID)
+        self.providerID = AgentRemoteProvider.normalizedProviderID(
+            try container.decodeIfPresent(String.self, forKey: .providerID)
+        )
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -160,7 +163,7 @@ public struct AgentMemoryEmbeddingSettingsManifest: Codable, Equatable, Sendable
     public static func validated(
         endpoint rawEndpoint: String,
         model: String? = nil,
-        providerID: UUID? = nil
+        providerID: String? = nil
     ) -> Self? {
         guard let endpoint = normalizedEndpoint(rawEndpoint) else {
             return nil

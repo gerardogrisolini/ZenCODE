@@ -2882,8 +2882,8 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func subAgentOverviewStripsRemoteAPIUUIDPrefixForUnresolvableModel() {
-        let rawModelID = "remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5:glm-5.2"
+    func subAgentOverviewStripsRemoteAPIProviderKeyForUnresolvableModel() {
+        let rawModelID = "zai:glm-5.2"
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_remote",
             name: "worker",
@@ -2905,16 +2905,15 @@ struct TerminalChatRenderingTests {
         )
 
         #expect(rendered.contains("model: glm-5.2"))
-        #expect(!rendered.contains("remoteapi:"))
-        #expect(!rendered.contains("d3eea8e9"))
+        #expect(!rendered.contains("zai:"))
     }
 
     @Test
-    func resolvedSubAgentModelTitleStripsRemoteAPIInternalID() {
+    func resolvedSubAgentModelTitleStripsRemoteAPIProviderKey() {
+        #expect(TerminalChat.resolvedSubAgentModelTitle(for: "zai:glm-5.2") == "glm-5.2")
         #expect(
-            TerminalChat.resolvedSubAgentModelTitle(
-                for: "remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5:glm-5.2"
-            ) == "glm-5.2"
+            TerminalChat.resolvedSubAgentModelTitle(for: "openrouter:deepseek/deepseek-r1:free")
+                == "deepseek/deepseek-r1:free"
         )
     }
 
@@ -2922,33 +2921,23 @@ struct TerminalChatRenderingTests {
     func resolvedSubAgentModelTitleLeavesUnrelatedIDsUnchanged() {
         #expect(TerminalChat.resolvedSubAgentModelTitle(for: "gpt-5") == "gpt-5")
         #expect(
-            TerminalChat.resolvedSubAgentModelTitle(for: "remoteapi:provider:remote-community/model")
-                == "remoteapi:provider:remote-community/model"
+            TerminalChat.resolvedSubAgentModelTitle(for: "provider:remote-community/model")
+                == "provider:remote-community/model"
         )
+        #expect(TerminalChat.resolvedSubAgentModelTitle(for: "chatgpt:gpt-5") == "chatgpt:gpt-5")
     }
 
     @Test
     func subAgentModelNameStrippingRemoteAPIPrefixHandlesEdgeCases() {
+        #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("zai:glm-5.2") == "glm-5.2")
+        #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("gpt-5") == nil)
+        // An unknown provider key must not be stripped.
         #expect(
-            TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix(
-                "remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5:glm-5.2"
-            ) == "glm-5.2"
-        )
-        #expect(
-            TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("gpt-5") == nil
-        )
-        // Non-UUID provider segment must not be stripped.
-        #expect(
-            TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix(
-                "remoteapi:openrouter:anthropic/claude"
-            ) == nil
+            TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("remoteapi:openrouter:anthropic/claude")
+                == nil
         )
         // Missing model name segment.
-        #expect(
-            TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix(
-                "remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5"
-            ) == nil
-        )
+        #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("openrouter:") == nil)
     }
 
     @Test

@@ -306,7 +306,7 @@ struct MemoryEmbeddingSetupTests {
 
         // Only a non-OpenRouter provider: no proposal.
         let localProvider = AgentSettingsProviderManifest(
-            id: UUID(),
+            id: "custom",
             name: "Local",
             baseURL: "http://127.0.0.1:8080/v1",
             chatEndpoint: .chatCompletions
@@ -322,7 +322,7 @@ struct MemoryEmbeddingSetupTests {
 
         // OpenRouter provider configured: proposal precompiles endpoint+model
         // and pins the provider ID.
-        let openRouterID = UUID()
+        let openRouterID = "openrouter"
         let openRouterProvider = AgentSettingsProviderManifest(
             id: openRouterID,
             name: "OpenRouter",
@@ -347,7 +347,7 @@ struct MemoryEmbeddingSetupTests {
         let proposal = ZenCODESetupRunner.MemoryEmbeddingOpenRouterProposal(
             endpoint: "https://openrouter.ai/api/v1/embeddings",
             model: "qwen/qwen3-embedding-8b",
-            providerID: UUID()
+            providerID: "openrouter"
         )
 
         // Without a proposal the menu is the classic endpoint-only set and the
@@ -396,7 +396,7 @@ struct MemoryEmbeddingSetupTests {
 
     @Test
     func setupPersistsOpenRouterProposalEndpointModelAndProviderID() throws {
-        let providerID = UUID()
+        let providerID = "openrouter"
         let initial = AgentSettingsManifest(
             providers: [
                 AgentSettingsProviderManifest(
@@ -464,7 +464,7 @@ struct MemoryEmbeddingSetupTests {
 
     @Test
     func providerResolverPassesModelAndReusesReferencedProviderAPIKey() throws {
-        let providerID = UUID()
+        let providerID = "openrouter"
         let manifest = AgentSettingsManifest(
             providers: [
                 AgentSettingsProviderManifest(
@@ -476,7 +476,7 @@ struct MemoryEmbeddingSetupTests {
             ],
             models: [],
             remoteAPIKeysByProviderID: [
-                providerID.uuidString.lowercased(): "sk-openrouter-test"
+                providerID: "sk-openrouter-test"
             ],
             memoryEmbedding: AgentMemoryEmbeddingSettingsManifest(
                 endpoint: "https://openrouter.ai/api/v1/embeddings",
@@ -542,14 +542,14 @@ struct MemoryEmbeddingSetupTests {
 
     @Test
     func providerAPIKeyRequiresMatchingOpenRouterProviderAndEndpoint() throws {
-        let providerID = UUID()
+        let providerID = "openrouter"
         let openRouterProvider = AgentSettingsProviderManifest(
             id: providerID,
             name: "OpenRouter",
             baseURL: "https://openrouter.ai/api/v1",
             chatEndpoint: .chatCompletions
         )
-        let apiKeys = [providerID.uuidString.lowercased(): "sk-openrouter-test"]
+        let apiKeys = [providerID: "sk-openrouter-test"]
 
         func resolved(
             providers: [AgentSettingsProviderManifest],
@@ -618,7 +618,7 @@ struct MemoryEmbeddingSetupTests {
 extension MemoryEmbeddingSetupTests {
     @Test
     func noAuthenticationSuppressesReferencedEmbeddingBearerWithoutMutatingStoredKey() throws {
-        let providerID = UUID()
+        let providerID = "openrouter"
         let persistedKey = "residual-secret"
         let manifest = AgentSettingsManifest(
             providers: [
@@ -633,7 +633,7 @@ extension MemoryEmbeddingSetupTests {
                 )
             ],
             models: [],
-            remoteAPIKeysByProviderID: [providerID.uuidString.lowercased(): persistedKey],
+            remoteAPIKeysByProviderID: [providerID: persistedKey],
             memoryEmbedding: AgentMemoryEmbeddingSettingsManifest(
                 endpoint: "https://openrouter.ai/api/v1/embeddings",
                 providerID: providerID
@@ -646,12 +646,12 @@ extension MemoryEmbeddingSetupTests {
         let request = try provider.streamingRequest(for: "hello")
 
         #expect(RemoteHTTPHeaders(request.headers).firstValue(for: "Authorization") == nil)
-        #expect(manifest.remoteAPIKeysByProviderID[providerID.uuidString.lowercased()] == persistedKey)
+        #expect(manifest.remoteAPIKeysByProviderID[providerID] == persistedKey)
     }
 
     @Test
     func keyedAuthenticationPoliciesStillSendEmbeddingBearer() throws {
-        let providerID = UUID()
+        let providerID = "openrouter"
         for policy in [AgentProviderAuthPolicy.apiKeyOptional, .apiKeyRequired] {
             let manifest = AgentSettingsManifest(
                 providers: [
@@ -666,7 +666,7 @@ extension MemoryEmbeddingSetupTests {
                     )
                 ],
                 models: [],
-                remoteAPIKeysByProviderID: [providerID.uuidString.lowercased(): "embedding-secret"],
+                remoteAPIKeysByProviderID: [providerID: "embedding-secret"],
                 memoryEmbedding: AgentMemoryEmbeddingSettingsManifest(
                     endpoint: "https://openrouter.ai/api/v1/embeddings",
                     providerID: providerID
@@ -775,7 +775,7 @@ extension MemoryEmbeddingSetupTests {
             existingSettings: AgentMemoryEmbeddingSettingsManifest(
                 endpoint: "https://openrouter.ai/api/v1/embeddings",
                 model: "openai/text-embedding-3-small",
-                providerID: UUID()
+                providerID: "openrouter"
             ),
             defaultModel: defaultModel
         )

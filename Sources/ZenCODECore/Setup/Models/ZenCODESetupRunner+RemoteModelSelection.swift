@@ -22,7 +22,7 @@ extension ZenCODESetupRunner {
     }
 
     static func reconfigureModels(
-        providerID: UUID,
+        providerID: String,
         providerName: String,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint,
@@ -188,7 +188,7 @@ extension ZenCODESetupRunner {
     }
 
     static func readAdditionalModelsFromCatalog(
-        providerID: UUID,
+        providerID: String,
         providerName: String,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint,
@@ -365,7 +365,7 @@ extension ZenCODESetupRunner {
 
     static func modelWithProvider(
         _ model: AgentSettingsModelManifest,
-        providerID: UUID,
+        providerID: String,
         providerName: String,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint,
@@ -557,7 +557,7 @@ extension ZenCODESetupRunner {
     }
 
     static func readModels(
-        providerID: UUID,
+        providerID: String,
         providerName: String,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint,

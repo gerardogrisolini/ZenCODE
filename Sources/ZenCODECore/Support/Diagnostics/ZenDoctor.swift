@@ -406,8 +406,7 @@ public enum ZenDoctor {
                   provider.requiresAPIKey else {
                 return nil
             }
-            let providerKey = provider.id.uuidString.lowercased()
-            guard manifest.remoteAPIKeysByProviderID[providerKey]?.nilIfBlank == nil,
+            guard manifest.apiKey(providerID: provider.id) == nil,
                   model.apiKey?.nilIfBlank == nil else {
                 return nil
             }
@@ -428,7 +427,7 @@ public enum ZenDoctor {
             let modelsByProviderID = Dictionary(grouping: remoteProvidersWithoutKey) { provider in
                 provider.id
             }
-            let providers: [(id: UUID, title: String, modelCount: Int)] = modelsByProviderID.map { entry in
+            let providers: [(id: String, title: String, modelCount: Int)] = modelsByProviderID.map { entry in
                 let provider = entry.value[0]
                 return (
                     id: entry.key,
@@ -442,7 +441,7 @@ public enum ZenDoctor {
                     locale: Locale(identifier: "en_US_POSIX")
                 )
                 if titleComparison == .orderedSame {
-                    return lhs.id.uuidString < rhs.id.uuidString
+                    return lhs.id < rhs.id
                 }
                 return titleComparison == .orderedAscending
             }

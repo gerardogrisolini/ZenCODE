@@ -82,7 +82,7 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
     public let title: String?
     public let llmID: String?
     public let modelID: String
-    public let providerID: UUID?
+    public let providerID: String?
     public let provider: AgentRemoteProvider?
     public let configuredContextWindowLimit: Int?
     public let generationParameterOverrides: AgentGenerationParameterOverrides?
@@ -100,7 +100,7 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
         title: String? = nil,
         llmID: String? = nil,
         modelID: String,
-        providerID: UUID? = nil,
+        providerID: String? = nil,
         provider: AgentRemoteProvider? = nil,
         configuredContextWindowLimit: Int? = nil,
         generationParameterOverrides: AgentGenerationParameterOverrides? = nil,
@@ -127,7 +127,9 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
         self.title = title?.nilIfBlank
         self.llmID = normalizedLLMID
         self.modelID = normalizedModelID
-        self.providerID = kind == .remoteAPI ? (provider?.id ?? providerID) : nil
+        self.providerID = kind == .remoteAPI
+            ? (provider?.id ?? AgentRemoteProvider.normalizedProviderID(providerID))
+            : nil
         self.provider = provider
         self.configuredContextWindowLimit = configuredContextWindowLimit.map {
             min(max($0, 1), 1_048_576)
@@ -148,7 +150,7 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
         )
         let thinking = try container.decodeIfPresent(ThinkingManifest.self, forKey: .thinking)
         let provider = try container.decodeIfPresent(AgentRemoteProvider.self, forKey: .provider)
-        let providerID = try container.decodeIfPresent(UUID.self, forKey: .providerID)
+        let providerID = try container.decodeIfPresent(String.self, forKey: .providerID)
 
         self.init(
             id: try container.decodeIfPresent(String.self, forKey: .id),
@@ -265,7 +267,7 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
     }
 
     public func normalized(
-        providersByID: [UUID: AgentSettingsProviderManifest] = [:]
+        providersByID: [String: AgentSettingsProviderManifest] = [:]
     ) -> AgentSettingsModelManifest? {
         guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -273,7 +275,7 @@ public struct AgentSettingsModelManifest: Codable, Hashable, Sendable {
         }
         var resolvedProvider = provider
             ?? providerID.flatMap { providersByID[$0]?.remoteProvider(modelID: modelID) }
-        let providerIDForRuntime: UUID? = resolvedProvider?.id ?? providerID
+        let providerIDForRuntime: String? = resolvedProvider?.id ?? providerID
         // A model-level runtime is authoritative: one DS4 provider may serve
         // several GGUFs, each recorded on its own model manifest. The provider
         // runtime is only the fallback for models that carry none.

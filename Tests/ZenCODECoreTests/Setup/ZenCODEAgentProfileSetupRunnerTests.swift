@@ -19,7 +19,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
                     id: modelID, name: modelID, contextLength: nil, pricing: nil,
                     thinkingSupport: .effort(levels: [.medium, .xhigh], defaultSelection: .medium)
                 ),
-                providerID: UUID(), providerName: "DeepSeek",
+                providerID: "deepseek", providerName: "DeepSeek",
                 baseURL: "https://api.deepseek.com/v1", chatEndpoint: .chatCompletions
             )
             #expect(manifest.modelID == modelID)
@@ -50,7 +50,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
                     id: "deepseek-flash", name: "Flash", contextLength: nil,
                     pricing: nil, thinkingSupport: support
                 ),
-                providerID: UUID(), providerName: "Other", baseURL: baseURL,
+                providerID: "custom", providerName: "Other", baseURL: baseURL,
                 chatEndpoint: .chatCompletions
             )
             #expect(manifest.thinkingOptions == [.off, .medium, .xhigh])
@@ -157,7 +157,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
         options: [AgentThinkingSelection]? = nil,
         defaultSelection: AgentThinkingSelection? = nil
     ) -> AgentSettingsModelManifest {
-        let providerID = UUID()
+        let providerID = "deepseek"
         return AgentSettingsModelManifest(
             id: "saved-model", kind: .remoteAPI, modelID: modelID,
             providerID: providerID,
@@ -170,18 +170,19 @@ struct ZenCODEAgentProfileSetupRunnerTests {
 
     @Test
     func bindingDisplayTitlePreservesModelNameFormatting() {
-        let uuid = "d3eea8e9-eccf-499e-9697-298ede7af8d5"
         let cases: [(modelID: String, provider: String?, expected: String)] = [
-            ("remoteapi:\(uuid):vendor:model", nil, "vendor:model"),
-            ("REMOTEAPI:\(uuid):vendor:model:", "Remote", "Remote / vendor:model:"),
-            (" \tremoteapi:\(uuid): model \n", "Remote", "Remote /  model"),
-            ("remoteapi:invalid:vendor:model", nil, "remoteapi:invalid:vendor:model"),
-            ("remoteapi:invalid:vendor:model", "Remote", "Remote / model"),
+            ("openrouter:vendor:model", nil, "vendor:model"),
+            ("OPENROUTER:vendor:model:", "Remote", "Remote / vendor:model:"),
+            ("openrouter:deepseek/deepseek-r1:free", "OpenRouter", "OpenRouter / deepseek/deepseek-r1:free"),
+            (" \topenai: model \n", "Remote", "Remote /  model"),
+            ("chatgpt:gpt-5", "ChatGPT Subscription", "ChatGPT Subscription / gpt-5"),
+            ("notakey:vendor:model", nil, "notakey:vendor:model"),
+            ("notakey:vendor:model", "Remote", "Remote / model"),
             ("provider:vendor:model", "Provider", "Provider / model"),
             ("provider:vendor:model", nil, "provider:vendor:model"),
             ("provider:vendor:model:", "Provider", "Provider / provider:vendor:model:"),
-            ("remoteapi:\(uuid):", "Remote", "Remote / remoteapi:\(uuid):"),
-            ("remoteapi:\(uuid): \n", "Remote", "Remote / remoteapi:\(uuid):"),
+            ("openai:", "Remote", "Remote / openai:"),
+            ("openai: \n", "Remote", "Remote / openai:"),
             ("provider: model \n", "Provider", "Provider /  model"),
             (" model ", nil, "model"),
             ("", nil, ""),
@@ -331,7 +332,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
             id: "plain",
             kind: .remoteAPI,
             modelID: "plain-model",
-            providerID: UUID(),
+            providerID: "openrouter",
             provider: AgentRemoteProvider(modelID: "plain-model")
         )
 
@@ -376,7 +377,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
             id: "remote",
             kind: .remoteAPI,
             modelID: "remote-model",
-            providerID: UUID(),
+            providerID: "openrouter",
             provider: AgentRemoteProvider(modelID: "remote-model")
         )
 
@@ -448,14 +449,14 @@ struct ZenCODEAgentProfileSetupRunnerTests {
             id: "missing-metadata",
             kind: .remoteAPI,
             modelID: "missing-metadata",
-            providerID: UUID(),
+            providerID: "openrouter",
             provider: AgentRemoteProvider(modelID: "missing-metadata")
         )
         let contextOnly = AgentSettingsModelManifest(
             id: "context-only",
             kind: .remoteAPI,
             modelID: "context-only",
-            providerID: UUID(),
+            providerID: "openrouter",
             provider: AgentRemoteProvider(modelID: "context-only"),
             configuredContextWindowLimit: 131_072
         )
@@ -463,7 +464,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
             id: "thinking-only",
             kind: .remoteAPI,
             modelID: "thinking-only",
-            providerID: UUID(),
+            providerID: "openrouter",
             provider: AgentRemoteProvider(modelID: "thinking-only"),
             thinkingOptions: [.off, .low, .medium, .high],
             defaultThinkingSelection: .medium
@@ -480,7 +481,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
 
     @Test
     func setupModelWithMetadataPreservesIdentityAndProvider() {
-        let providerID = UUID()
+        let providerID = "deepseek"
         let provider = AgentRemoteProvider(
             id: providerID,
             name: "DeepSeek",
@@ -489,10 +490,10 @@ struct ZenCODEAgentProfileSetupRunnerTests {
             chatEndpoint: .chatCompletions
         )
         let model = AgentSettingsModelManifest(
-            id: "remoteapi:test:deepseek-reasoner",
+            id: "deepseek:deepseek-reasoner",
             kind: .remoteAPI,
             title: "DeepSeek Reasoner",
-            llmID: "remoteapi:test:deepseek-reasoner",
+            llmID: "deepseek:deepseek-reasoner",
             modelID: "deepseek-reasoner",
             providerID: providerID,
             provider: provider
@@ -543,7 +544,7 @@ struct ZenCODEAgentProfileSetupRunnerTests {
             id: "thinking",
             kind: .remoteAPI,
             modelID: "thinking-model",
-            providerID: UUID(),
+            providerID: "openrouter",
             provider: AgentRemoteProvider(modelID: "thinking-model"),
             thinkingOptions: [.off, .low, .medium, .high],
             defaultThinkingSelection: .medium

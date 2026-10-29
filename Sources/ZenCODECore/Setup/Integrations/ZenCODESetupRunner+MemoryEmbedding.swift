@@ -18,12 +18,12 @@ extension ZenCODESetupRunner {
     /// The precompiled OpenRouter embedding proposal produced only when at least
     /// one configured provider in `settings.json` is OpenRouter. `model` is the
     /// default preselected in the model submenu. `providerID` pins the provider
-    /// whose API key the resolver reuses at runtime; it is a non-secret UUID
+    /// whose API key the resolver reuses at runtime; it is a non-secret provider key
     /// reference, never a duplicated credential.
     struct MemoryEmbeddingOpenRouterProposal: Equatable, Sendable {
         let endpoint: String
         let model: String
-        let providerID: UUID
+        let providerID: String
     }
 
     /// The endpoint/model/provider reference chosen by setup. `nil` endpoint
@@ -31,9 +31,9 @@ extension ZenCODESetupRunner {
     struct MemoryEmbeddingSetupSelection: Equatable, Sendable {
         var endpoint: String?
         var model: String?
-        var providerID: UUID?
+        var providerID: String?
 
-        init(endpoint: String?, model: String? = nil, providerID: UUID? = nil) {
+        init(endpoint: String?, model: String? = nil, providerID: String? = nil) {
             self.endpoint = endpoint
             self.model = model
             self.providerID = providerID
@@ -224,7 +224,7 @@ extension ZenCODESetupRunner {
         _ manifest: AgentSettingsManifest?,
         endpoint: String?,
         model: String? = nil,
-        providerID: UUID? = nil
+        providerID: String? = nil
     ) throws -> AgentSettingsManifest {
         let memoryEmbedding: AgentMemoryEmbeddingSettingsManifest
         if let endpoint {

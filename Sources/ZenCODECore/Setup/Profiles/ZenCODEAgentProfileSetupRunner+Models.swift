@@ -23,9 +23,10 @@ extension ZenCODEAgentProfileSetupRunner {
         case remove
     }
 
-    /// Menu value of "Apply binding presets". The bulk menu uses 0 for "Done"
-    /// and `index + 1` for agents, so a negative value cannot collide.
+    /// Menu values of "Apply binding presets" and "Reset". The bulk menu uses 0
+    /// for "Done" and `index + 1` for agents, so a negative value cannot collide.
     private static let applyBindingPresetsChoice = -1
+    private static let resetBindingsChoice = -2
 
     /// Interactive bulk setup for assigning one or more explicitly authorized
     /// model bindings to each agent. Capability and thinking belong to each
@@ -90,7 +91,12 @@ extension ZenCODEAgentProfileSetupRunner {
                 TerminalCheckboxMenuItem(
                     value: Self.applyBindingPresetsChoice,
                     title: "Apply binding presets",
-                    detail: "replace all bindings with \(AgentBindingPresets.filename)"
+                    detail: "replaces all bindings with \(AgentBindingPresets.filename)"
+                ),
+                TerminalCheckboxMenuItem(
+                    value: Self.resetBindingsChoice,
+                    title: "Reset",
+                    detail: "remove every agent's bindings"
                 )
             ]
             items.append(contentsOf: agents.enumerated().map { index, agent in
@@ -128,8 +134,11 @@ extension ZenCODEAgentProfileSetupRunner {
             case Self.applyBindingPresetsChoice?:
                 agents = applyBindingPresets(
                     to: agents,
-                    configuredProviderNames: currentManifest.providers.map(\.displayTitle)
+                    configuredProviderNames: currentManifest.providers.map(\.displayTitle),
+                    selectProviders: Self.selectBindingPresetProviders
                 )
+            case Self.resetBindingsChoice?:
+                agents = resetBindings(of: agents)
             case let choice?:
                 let index = choice - 1
                 guard agents.indices.contains(index) else { continue }
@@ -140,15 +149,35 @@ extension ZenCODEAgentProfileSetupRunner {
 
     // MARK: - Binding presets
 
-    /// The "Apply binding presets" action: replaces the bindings of the in-memory
-    /// agents with those of the presets file. Nothing is written to disk here;
-    /// "Done" stages or saves the result and Esc discards it. A missing or
-    /// invalid file is reported and leaves the agents unchanged.
-    private static func applyBindingPresets(
+    /// The "Apply binding presets" action: replaces the bindings of the
+    /// in-memory agents with the presets of the providers the operator picks
+    /// from the configured providers that have a block in the presets file.
+    /// Nothing is written to disk here; "Done" stages or saves the result and
+    /// Esc discards it.
+    ///
+    /// The agents are returned unchanged, and a message says why, when no
+    /// ZenCODE source checkout is found, when the file is missing or invalid,
+    /// or when no configured provider has a block in it; the provider menu is
+    /// not shown in those cases.
+    ///
+    /// Otherwise `selectProviders` receives the configured providers that have
+    /// a block, in file order, and returns the ones to use. `nil` (the operator
+    /// cancelled) or an empty set leaves the agents unchanged, with a message.
+    /// The selected providers apply in file order, not in selection order, so
+    /// the file keeps deciding the priority. It has no default so that callers
+    /// must choose explicitly and tests never open a real terminal menu.
+    static func applyBindingPresets(
         to agents: [AgentProfile],
         configuredProviderNames: [String],
-        url: URL = AgentBindingPresets.defaultURL()
+        url: URL? = AgentBindingPresets.defaultURL(),
+        selectProviders: ([String]) -> Set<String>?
     ) -> [AgentProfile] {
+        guard let url else {
+            AgentOutput.standardError.writeString(
+                "\nBinding presets unavailable: no ZenCODE source checkout found.\n\n"
+            )
+            return agents
+        }
         let presets: AgentBindingPresets
         do {
             guard let loaded = try AgentBindingPresets.load(from: url) else {
@@ -165,13 +194,64 @@ extension ZenCODEAgentProfileSetupRunner {
             return agents
         }
 
+        let providerNames = presets.applicableProviderNames(for: configuredProviderNames)
+        guard !providerNames.isEmpty else {
+            AgentOutput.standardError.writeString(
+                "\nNo configured provider has a block in \(url.path); bindings unchanged.\n\n"
+            )
+            return agents
+        }
+
+        guard let selected = selectProviders(providerNames) else {
+            AgentOutput.standardError.writeString(
+                "\nBinding presets not applied.\n\n"
+            )
+            return agents
+        }
+        // File order decides the priority, whatever the order of the selection.
+        let selectedNames = providerNames.filter(selected.contains)
+        guard !selectedNames.isEmpty else {
+            AgentOutput.standardError.writeString(
+                "\nNo provider selected; bindings unchanged.\n\n"
+            )
+            return agents
+        }
+
         let updated = presets.applying(
             to: agents,
-            configuredProviderNames: configuredProviderNames
+            configuredProviderNames: selectedNames
         )
         AgentOutput.standardError.writeString(
-            "\nApplied binding presets from \(url.path): "
+            "\nApplied binding presets from \(url.path) "
+                + "(\(selectedNames.joined(separator: ", "))): "
                 + "\(AgentBindingPresets.outcomeDescription(for: updated)).\n\n"
+        )
+        return updated
+    }
+
+    /// The provider menu of "Apply binding presets": a multi-selection checkbox
+    /// menu of the given provider names, all checked at first, so Enter alone
+    /// uses every one of them. Returns the checked names, or `nil` when the
+    /// operator cancels with Esc.
+    private static func selectBindingPresetProviders(_ names: [String]) -> Set<String>? {
+        TerminalCheckboxMenu.select(
+            title: "Binding presets providers",
+            items: names.map { TerminalCheckboxMenuItem(value: $0, title: $0, detail: nil) },
+            selected: Set(names)
+        )
+    }
+
+    /// The "Reset" action: removes every binding and every default binding from
+    /// the in-memory agents, whatever their source; everything else in the
+    /// profiles is untouched. It acts at once, with no confirmation, and writes
+    /// nothing to disk: "Done" stages or saves the result and Esc discards it.
+    static func resetBindings(of agents: [AgentProfile]) -> [AgentProfile] {
+        let removed = AgentBindingPresets.outcomeDescription(for: agents)
+        let updated = agents.map {
+            profile(basedOn: $0, modelBindings: [], defaultModelBindingID: nil)
+        }
+        AgentOutput.standardError.writeString(
+            "\nReset model bindings: removed \(removed).\n\n"
         )
         return updated
     }

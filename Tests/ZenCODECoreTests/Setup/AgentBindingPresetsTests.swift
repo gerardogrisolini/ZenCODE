@@ -79,42 +79,6 @@ struct AgentBindingPresetsTests {
         )
     }
 
-    private static func providerManifest(_ name: String) -> AgentSettingsProviderManifest {
-        AgentSettingsProviderManifest(
-            id: UUID(),
-            name: name,
-            baseURL: "https://\(UUID().uuidString.lowercased()).example.invalid/v1",
-            chatEndpoint: .chatCompletions
-        )
-    }
-
-    private static func manifest(providers names: [String]) -> AgentSettingsManifest {
-        AgentSettingsManifest(
-            providers: names.map(providerManifest),
-            models: []
-        )
-    }
-
-    /// A manifest with one remote model, so a setup session built on it has a
-    /// writable outcome.
-    private static func manifestWithModel(providerName: String) -> AgentSettingsManifest {
-        let providerID = UUID()
-        let provider = AgentRemoteProvider(
-            id: providerID,
-            name: providerName,
-            baseURL: "https://example.invalid/v1",
-            modelID: "test-model"
-        )
-        let model = AgentSettingsModelManifest(
-            id: "remote:test-model",
-            kind: .remoteAPI,
-            modelID: "test-model",
-            providerID: providerID,
-            provider: provider
-        )
-        return AgentSettingsManifest(models: [model])
-    }
-
     private static func withTemporaryDirectory<T>(
         _ body: (URL) throws -> T
     ) throws -> T {
@@ -305,13 +269,32 @@ struct AgentBindingPresetsTests {
     }
 
     @Test
-    func hasProviderRequiresAConfiguredProviderWithABlock() throws {
-        let presets = try Self.presets(Self.documentedFile)
+    func applicableProviderNamesAreTheConfiguredOnesWithABlockInFileOrder() throws {
+        let presets = try Self.presets(
+            Self.document(providers: [
+                (name: "Zeta", bindingID: "z", defaultID: nil),
+                (name: "Alpha", bindingID: "a", defaultID: nil),
+                (name: "Mid", bindingID: "m", defaultID: nil)
+            ])
+        )
 
-        #expect(presets.hasProvider(in: ["claude subscription"]))
-        #expect(presets.hasProvider(in: ["Other", "OpenRouter"]))
-        #expect(!presets.hasProvider(in: ["Other", ""]))
-        #expect(!presets.hasProvider(in: []))
+        // File order and file spelling, whatever the order and case of the
+        // configured names; unrelated and empty names never count.
+        #expect(
+            presets.applicableProviderNames(
+                for: [" alpha ", "ZETA", "Unrelated", "", "  "]
+            ) == ["Zeta", "Alpha"]
+        )
+        #expect(
+            presets.applicableProviderNames(for: ["Mid", "Alpha", "Zeta"])
+                == ["Zeta", "Alpha", "Mid"]
+        )
+        #expect(presets.applicableProviderNames(for: ["Other", ""]).isEmpty)
+        #expect(presets.applicableProviderNames(for: []).isEmpty)
+
+        let documented = try Self.presets(Self.documentedFile)
+        #expect(documented.applicableProviderNames(for: ["claude subscription"]) == ["Claude Subscription"])
+        #expect(documented.applicableProviderNames(for: ["Other", "OpenRouter"]) == ["OpenRouter"])
     }
 
     @Test
@@ -599,196 +582,393 @@ struct AgentBindingPresetsTests {
     }
 
     @Test
-    func defaultURLSitsNextToSettingsInTheSupportDirectory() throws {
-        try Self.withTemporaryDirectory { directory in
-            AppStorageDirectory.withSupportDirectoryURL(directory) {
-                let url = AgentBindingPresets.defaultURL()
+    func defaultURLIsTheFileShippedWithTheSourceCheckout() throws {
+        let checkoutURL = try SwiftFeatureRuntime.zenCODESourceCheckoutURL()
+        let url = try #require(AgentBindingPresets.defaultURL())
 
-                #expect(url.lastPathComponent == "binding-presets.json")
-                #expect(
-                    url.deletingLastPathComponent()
-                        == AgentSettingsManifestStore.settingsURL().deletingLastPathComponent()
-                )
-                #expect(
-                    url.deletingLastPathComponent().standardizedFileURL
-                        == directory.standardizedFileURL
-                )
-                #expect(
-                    url.deletingLastPathComponent()
-                        == AgentProfileStore.agentsManifestURL().deletingLastPathComponent()
-                )
+        #expect(
+            url == checkoutURL
+                .appendingPathComponent("Sources/ZenPackageMetadata/binding-presets.json")
+                .standardizedFileURL
+        )
+        let presets = try #require(try AgentBindingPresets.load(from: url))
+        #expect(!presets.providers.isEmpty)
+    }
+
+    // MARK: - Apply binding presets action
+
+    /// Runs the "Apply binding presets" action against a presets file written to
+    /// a temporary directory (`nil` leaves it missing). `selectProviders`
+    /// stands in for the provider menu; by default it checks every provider,
+    /// like confirming the menu with Enter.
+    private static func applyBindingPresets(
+        to agents: [AgentProfile],
+        configuredProviderNames: [String],
+        file: String?,
+        selectProviders: ([String]) -> Set<String>? = { Set($0) }
+    ) throws -> [AgentProfile] {
+        try withTemporaryDirectory { directory in
+            let url = directory.appendingPathComponent(AgentBindingPresets.filename)
+            if let file {
+                try Data(file.utf8).write(to: url)
             }
+            return ZenCODEAgentProfileSetupRunner.applyBindingPresets(
+                to: agents,
+                configuredProviderNames: configuredProviderNames,
+                url: url,
+                selectProviders: selectProviders
+            )
         }
     }
 
-    // MARK: - Setup session staging
+    /// Records what the provider menu is offered, and answers with `answer`.
+    private final class ProviderMenuSpy {
+        private(set) var offers: [[String]] = []
+        private let answer: ([String]) -> Set<String>?
 
-    @Test
-    func stagingProfilesLeavesTheSettingsBookkeepingUntouched() {
-        let configured = Self.manifestWithModel(providerName: "Claude Subscription")
-        var session = SetupSession(originalManifest: configured)
-        let staged = [Self.profile(id: "developer", bindings: [Self.binding("dev")])]
+        init(answer: @escaping ([String]) -> Set<String>? = { Set($0) }) {
+            self.answer = answer
+        }
 
-        session.stageAgentProfiles(staged)
-
-        #expect(session.agentProfiles == staged)
-        #expect(session.manifest == configured)
-        #expect(session.shouldWriteSettings == false)
-        #expect(session.outcome == .write(manifest: configured, settingsWillBeWritten: false))
-
-        // Quick setup after staging still replaces the staged profiles.
-        let replacement = [Self.profile(id: "developer")]
-        session.applyQuickSetup(configured, agentProfiles: replacement)
-        #expect(session.agentProfiles == replacement)
+        func select(_ names: [String]) -> Set<String>? {
+            offers.append(names)
+            return answer(names)
+        }
     }
 
-    // MARK: - First setup offer
+    /// Zeta is listed before Alpha. Zeta has entries for the developer and the
+    /// reviewer; Alpha only for the developer.
+    private static let twoProviderFile = #"""
+    { "version": 1, "providers": {
+      "Zeta": {
+        "developer": { "defaultModelBindingID": "z-dev", "modelBindings": [ { "id": "z-dev", "modelID": "z-dev", "capability": 8 } ] },
+        "reviewer": { "modelBindings": [ { "id": "z-rev", "modelID": "z-rev" } ] }
+      },
+      "Alpha": {
+        "developer": { "defaultModelBindingID": "a-dev", "modelBindings": [ { "id": "a-dev", "modelID": "a-dev", "capability": 3 } ] }
+      }
+    } }
+    """#
 
-    private static let firstSetupFile = Self.document(providers: [
-        (name: "Claude Subscription", bindingID: "claude-binding", defaultID: "claude-binding")
-    ])
+    private static var previouslyBoundAgents: [AgentProfile] {
+        [
+            Self.profile(
+                id: "developer",
+                bindings: [Self.binding("old-dev-1"), Self.binding("old-dev-2")],
+                defaultBindingID: "old-dev-2"
+            ),
+            Self.profile(
+                id: "reviewer",
+                role: .reviewer,
+                name: "Reviewer",
+                bindings: [Self.binding("old-rev")],
+                defaultBindingID: "old-rev"
+            ),
+            Self.profile(id: "builder", role: .builder, name: "Builder")
+        ]
+    }
 
     @Test
-    func firstSetupOfferRequiresEveryCondition() throws {
-        let presets = try Self.presets(Self.firstSetupFile)
-        let configured = Self.manifest(providers: ["Claude Subscription", "Other"])
-        let unrelated = Self.manifest(providers: ["Other"])
-        let bound = [Self.profile(id: "developer", bindings: [Self.binding("dev")])]
-        let unbound = [Self.profile(id: "developer")]
-
-        // Every condition holds: the defaults are the profiles to apply to.
-        let defaults = ZenCODESetupRunner.profilesEligibleForBindingPresets(
-            presets: presets,
-            agentsFileExisted: false,
-            finalManifest: configured,
-            stagedProfiles: nil
+    func applyUsesEveryConfiguredProviderWithABlockInFileOrder() throws {
+        let agents = try Self.applyBindingPresets(
+            to: Self.previouslyBoundAgents,
+            configuredProviderNames: ["Alpha", " zeta ", "Unrelated", ""],
+            file: Self.twoProviderFile
         )
-        #expect(defaults?.map(\.id) == AgentProfileStore.defaultProfiles().map(\.id))
 
-        // Staged profiles without bindings are the ones used.
+        // Both configured providers apply (the profile normalizes the bindings
+        // by id); the default is the first provider's in file order, Zeta's,
+        // not the first in the configured order.
+        #expect(Set(agents[0].modelBindings.map(\.id)) == ["z-dev", "a-dev"])
+        #expect(agents[0].defaultModelBindingID == "z-dev")
+        #expect(agents[1].modelBindings.map(\.id) == ["z-rev"])
+        #expect(agents[2].modelBindings.isEmpty)
+    }
+
+    @Test
+    func applyReplacesEverythingWithOnlyTheConfiguredProvidersBindings() throws {
+        let previous = Self.previouslyBoundAgents
+
+        let alphaOnly = try Self.applyBindingPresets(
+            to: previous,
+            configuredProviderNames: ["Alpha", "NoBlockInTheFile"],
+            file: Self.twoProviderFile
+        )
+
+        // The developer gets Alpha's binding and default. The reviewer has no
+        // Alpha entry, so the replacement leaves it without bindings or default;
+        // so does the builder.
+        #expect(alphaOnly[0].modelBindings.map(\.id) == ["a-dev"])
+        #expect(alphaOnly[0].modelBindings.first?.capability == 3)
+        #expect(alphaOnly[0].defaultModelBindingID == "a-dev")
+        #expect(alphaOnly[1].modelBindings.isEmpty)
+        #expect(alphaOnly[1].defaultModelBindingID == nil)
+        #expect(alphaOnly[2].modelBindings.isEmpty)
+        #expect(alphaOnly[2].defaultModelBindingID == nil)
+
+        let zetaOnly = try Self.applyBindingPresets(
+            to: previous,
+            configuredProviderNames: ["Zeta"],
+            file: Self.twoProviderFile
+        )
+        #expect(zetaOnly[0].modelBindings.map(\.id) == ["z-dev"])
+        #expect(zetaOnly[0].defaultModelBindingID == "z-dev")
+        #expect(zetaOnly[1].modelBindings.map(\.id) == ["z-rev"])
+        // No default declared: the usual profile rule picks the only binding.
+        #expect(zetaOnly[1].defaultModelBindingID == "z-rev")
+        #expect(zetaOnly[2].modelBindings.isEmpty)
+
+        // Everything but the bindings is preserved.
+        for (original, result) in zip(previous, alphaOnly) {
+            #expect(result.id == original.id)
+            #expect(result.name == original.name)
+            #expect(result.instructions == original.instructions)
+            #expect(result.role == original.role)
+            #expect(result.tools == original.tools)
+            #expect(result.skills == original.skills)
+        }
+    }
+
+    @Test
+    func aMissingCheckoutOrAnUnusableFileLeavesTheAgentsUnchanged() throws {
+        let previous = Self.previouslyBoundAgents
+
         #expect(
-            ZenCODESetupRunner.profilesEligibleForBindingPresets(
-                presets: presets,
-                agentsFileExisted: false,
-                finalManifest: configured,
-                stagedProfiles: unbound
-            ) == unbound
+            ZenCODEAgentProfileSetupRunner.applyBindingPresets(
+                to: previous,
+                configuredProviderNames: ["Zeta", "Alpha"],
+                url: nil,
+                selectProviders: { Set($0) }
+            ) == previous
         )
 
-        // agents.json already existed.
-        #expect(
-            ZenCODESetupRunner.profilesEligibleForBindingPresets(
-                presets: presets,
-                agentsFileExisted: true,
-                finalManifest: configured,
-                stagedProfiles: nil
-            ) == nil
+        let files: [String?] = [
+            nil,
+            "{ not json",
+            #"{ "version": 2, "providers": {} }"#,
+            #"{ "version": 1 }"#
+        ]
+        for file in files {
+            let agents = try Self.applyBindingPresets(
+                to: previous,
+                configuredProviderNames: ["Zeta", "Alpha"],
+                file: file
+            )
+
+            #expect(agents == previous, "file: \(file ?? "<missing>")")
+        }
+    }
+
+    @Test
+    func noConfiguredProviderWithABlockLeavesTheAgentsUnchanged() throws {
+        let previous = Self.previouslyBoundAgents
+
+        for configured in [["Unrelated"], ["", "  "], []] {
+            let agents = try Self.applyBindingPresets(
+                to: previous,
+                configuredProviderNames: configured,
+                file: Self.twoProviderFile
+            )
+
+            #expect(agents == previous, "configured: \(configured)")
+        }
+    }
+
+    // MARK: - Provider selection menu
+
+    @Test
+    func theProviderMenuOffersTheConfiguredProvidersWithABlockInFileOrder() throws {
+        let menu = ProviderMenuSpy()
+
+        _ = try Self.applyBindingPresets(
+            to: Self.previouslyBoundAgents,
+            configuredProviderNames: ["Alpha", " zeta ", "Unrelated", ""],
+            file: Self.twoProviderFile,
+            selectProviders: menu.select
         )
+
+        // Exactly the configured providers that have a block, in the file's
+        // spelling and order; unrelated and empty names are never offered.
+        #expect(menu.offers == [["Zeta", "Alpha"]])
+    }
+
+    @Test
+    func selectingASubsetAppliesOnlyThatSubsetWithTotalReplacement() throws {
+        let previous = Self.previouslyBoundAgents
+
+        let alphaOnly = try Self.applyBindingPresets(
+            to: previous,
+            configuredProviderNames: ["Zeta", "Alpha"],
+            file: Self.twoProviderFile,
+            selectProviders: { _ in ["Alpha"] }
+        )
+
+        // Zeta is configured and has a block but was not checked: the developer
+        // gets only Alpha's binding and default, and the reviewer, which only
+        // Zeta has an entry for, and the builder end up without bindings.
+        #expect(alphaOnly[0].modelBindings.map(\.id) == ["a-dev"])
+        #expect(alphaOnly[0].defaultModelBindingID == "a-dev")
+        #expect(alphaOnly[1].modelBindings.isEmpty)
+        #expect(alphaOnly[1].defaultModelBindingID == nil)
+        #expect(alphaOnly[2].modelBindings.isEmpty)
+        #expect(alphaOnly[2].defaultModelBindingID == nil)
+
+        // An unchecked provider never contributes its default, even when it is
+        // first in the file.
+        let file = Self.document(providers: [
+            (name: "Zeta", bindingID: "z", defaultID: "z"),
+            (name: "Alpha", bindingID: "a", defaultID: "a"),
+            (name: "Mid", bindingID: "m", defaultID: "m")
+        ])
+        let subset = try Self.applyBindingPresets(
+            to: [Self.profile(id: "developer")],
+            configuredProviderNames: ["Zeta", "Alpha", "Mid"],
+            file: file,
+            selectProviders: { _ in ["Mid", "Alpha"] }
+        )
+        #expect(Set(subset[0].modelBindings.map(\.id)) == ["a", "m"])
+        #expect(subset[0].defaultModelBindingID == "a")
+    }
+
+    @Test
+    func selectionOrderDoesNotMatterBecausePriorityIsFileOrder() throws {
+        // Configured and selected in an order that differs from the file's.
+        let selectedBoth = try Self.applyBindingPresets(
+            to: Self.previouslyBoundAgents,
+            configuredProviderNames: ["Alpha", "Zeta"],
+            file: Self.twoProviderFile,
+            selectProviders: { _ in ["Alpha", "Zeta"] }
+        )
+        let reversed = try Self.applyBindingPresets(
+            to: Self.previouslyBoundAgents,
+            configuredProviderNames: ["Zeta", "Alpha"],
+            file: Self.twoProviderFile,
+            selectProviders: { _ in ["Zeta", "Alpha"] }
+        )
+
+        // Zeta comes first in the file, so its default wins in both cases.
+        #expect(selectedBoth[0].defaultModelBindingID == "z-dev")
+        #expect(Set(selectedBoth[0].modelBindings.map(\.id)) == ["z-dev", "a-dev"])
+        #expect(selectedBoth == reversed)
+    }
+
+    @Test
+    func anEmptySelectionLeavesTheAgentsUnchanged() throws {
+        let previous = Self.previouslyBoundAgents
+        let menu = ProviderMenuSpy { _ in [] }
+
+        let agents = try Self.applyBindingPresets(
+            to: previous,
+            configuredProviderNames: ["Zeta", "Alpha"],
+            file: Self.twoProviderFile,
+            selectProviders: menu.select
+        )
+
+        // Unlike Reset, confirming with nothing checked removes nothing.
+        #expect(menu.offers.count == 1)
+        #expect(agents == previous)
+    }
+
+    @Test
+    func cancellingTheProviderMenuLeavesTheAgentsUnchanged() throws {
+        let previous = Self.previouslyBoundAgents
+        let menu = ProviderMenuSpy { _ in nil }
+
+        let agents = try Self.applyBindingPresets(
+            to: previous,
+            configuredProviderNames: ["Zeta", "Alpha"],
+            file: Self.twoProviderFile,
+            selectProviders: menu.select
+        )
+
+        #expect(menu.offers.count == 1)
+        #expect(agents == previous)
+    }
+
+    @Test
+    func theProviderMenuIsShownEvenForASingleApplicableProvider() throws {
+        let menu = ProviderMenuSpy()
+
+        let agents = try Self.applyBindingPresets(
+            to: Self.previouslyBoundAgents,
+            configuredProviderNames: ["alpha", "Unrelated"],
+            file: Self.twoProviderFile,
+            selectProviders: menu.select
+        )
+
+        #expect(menu.offers == [["Alpha"]])
+        #expect(agents[0].modelBindings.map(\.id) == ["a-dev"])
+    }
+
+    @Test
+    func theProviderMenuIsNeverShownWhenThereIsNothingToApply() throws {
+        let previous = Self.previouslyBoundAgents
+        let menu = ProviderMenuSpy()
+
+        // No source checkout.
+        #expect(
+            ZenCODEAgentProfileSetupRunner.applyBindingPresets(
+                to: previous,
+                configuredProviderNames: ["Zeta", "Alpha"],
+                url: nil,
+                selectProviders: menu.select
+            ) == previous
+        )
+
+        // Missing or invalid file.
+        let files: [String?] = [
+            nil,
+            "{ not json",
+            #"{ "version": 2, "providers": {} }"#,
+            #"{ "version": 1 }"#
+        ]
+        for file in files {
+            let agents = try Self.applyBindingPresets(
+                to: previous,
+                configuredProviderNames: ["Zeta", "Alpha"],
+                file: file,
+                selectProviders: menu.select
+            )
+            #expect(agents == previous, "file: \(file ?? "<missing>")")
+        }
 
         // No configured provider has a block in the file.
-        #expect(
-            ZenCODESetupRunner.profilesEligibleForBindingPresets(
-                presets: presets,
-                agentsFileExisted: false,
-                finalManifest: unrelated,
-                stagedProfiles: nil
-            ) == nil
-        )
+        for configured in [["Unrelated"], ["", "  "], []] {
+            let agents = try Self.applyBindingPresets(
+                to: previous,
+                configuredProviderNames: configured,
+                file: Self.twoProviderFile,
+                selectProviders: menu.select
+            )
+            #expect(agents == previous, "configured: \(configured)")
+        }
 
-        // Work already done in the same session is never overwritten.
-        #expect(
-            ZenCODESetupRunner.profilesEligibleForBindingPresets(
-                presets: presets,
-                agentsFileExisted: false,
-                finalManifest: configured,
-                stagedProfiles: bound
-            ) == nil
-        )
+        #expect(menu.offers.isEmpty)
     }
 
-    @Test
-    func firstSetupOfferStagesPresetsOnlyOnAnExplicitYes() throws {
-        try Self.withTemporaryDirectory { directory in
-            let url = directory.appendingPathComponent(AgentBindingPresets.filename)
-            try Data(Self.firstSetupFile.utf8).write(to: url)
-            let configured = Self.manifest(providers: ["Claude Subscription"])
-
-            var accepted = SetupSession(originalManifest: nil)
-            accepted.applyQuickSetup(configured)
-            var asked: [(label: String, defaultValue: Bool, help: String?)] = []
-            try ZenCODESetupRunner.offerBindingPresetsAtFirstSetup(
-                session: &accepted,
-                finalManifest: configured,
-                agentsFileExisted: false,
-                presetsURL: url,
-                prompt: { label, defaultValue, help in
-                    asked.append((label, defaultValue, help))
-                    return true
-                }
-            )
-
-            #expect(asked.count == 1)
-            #expect(asked.first?.label == "Apply binding presets from binding-presets.json?")
-            #expect(asked.first?.defaultValue == false)
-            #expect(asked.first?.help != nil)
-            let staged = try #require(accepted.agentProfiles)
-            let developer = try #require(staged.first { $0.id == "developer" })
-            #expect(developer.modelBindings.map(\.id) == ["claude-binding"])
-            #expect(developer.defaultModelBindingID == "claude-binding")
-            // The other system profiles have no entry and stay empty.
-            #expect(staged.filter { $0.id != "developer" }.allSatisfy { $0.modelBindings.isEmpty })
-
-            var declined = SetupSession(originalManifest: nil)
-            declined.applyQuickSetup(configured)
-            try ZenCODESetupRunner.offerBindingPresetsAtFirstSetup(
-                session: &declined,
-                finalManifest: configured,
-                agentsFileExisted: false,
-                presetsURL: url,
-                prompt: { _, _, _ in false }
-            )
-            #expect(declined.agentProfiles == nil)
-        }
-    }
+    // MARK: - Reset
 
     @Test
-    func firstSetupOfferStaysSilentWithoutAUsableFileOrOnASecondSetup() throws {
-        try Self.withTemporaryDirectory { directory in
-            let missing = directory.appendingPathComponent("missing.json")
-            let invalid = directory.appendingPathComponent("invalid.json")
-            try Data("{ not json".utf8).write(to: invalid)
-            let valid = directory.appendingPathComponent(AgentBindingPresets.filename)
-            try Data(Self.firstSetupFile.utf8).write(to: valid)
-            let configured = Self.manifest(providers: ["Claude Subscription"])
+    func resetRemovesEveryBindingAndDefaultAndKeepsTheOtherFields() {
+        let previous = Self.previouslyBoundAgents
 
-            func offer(url: URL, agentsFileExisted: Bool) throws -> (asked: Int, staged: Bool) {
-                var session = SetupSession(originalManifest: nil)
-                session.applyQuickSetup(configured)
-                var asked = 0
-                try ZenCODESetupRunner.offerBindingPresetsAtFirstSetup(
-                    session: &session,
-                    finalManifest: configured,
-                    agentsFileExisted: agentsFileExisted,
-                    presetsURL: url,
-                    prompt: { _, _, _ in
-                        asked += 1
-                        return true
-                    }
-                )
-                return (asked, session.agentProfiles != nil)
-            }
+        let reset = ZenCODEAgentProfileSetupRunner.resetBindings(of: previous)
 
-            let missingResult = try offer(url: missing, agentsFileExisted: false)
-            #expect(missingResult.asked == 0 && !missingResult.staged)
-
-            let invalidResult = try offer(url: invalid, agentsFileExisted: false)
-            #expect(invalidResult.asked == 0 && !invalidResult.staged)
-
-            let existingResult = try offer(url: valid, agentsFileExisted: true)
-            #expect(existingResult.asked == 0 && !existingResult.staged)
-
-            let eligibleResult = try offer(url: valid, agentsFileExisted: false)
-            #expect(eligibleResult.asked == 1 && eligibleResult.staged)
+        #expect(reset.map(\.id) == previous.map(\.id))
+        #expect(reset.allSatisfy { $0.modelBindings.isEmpty })
+        #expect(reset.allSatisfy { $0.defaultModelBindingID == nil })
+        for (original, result) in zip(previous, reset) {
+            #expect(result.name == original.name)
+            #expect(result.instructions == original.instructions)
+            #expect(result.symbolName == original.symbolName)
+            #expect(result.readOnly == original.readOnly)
+            #expect(result.role == original.role)
+            #expect(result.tools == original.tools)
+            #expect(result.skills == original.skills)
         }
+
+        // Resetting again, or agents that never had bindings, changes nothing.
+        #expect(ZenCODEAgentProfileSetupRunner.resetBindings(of: reset) == reset)
+        #expect(ZenCODEAgentProfileSetupRunner.resetBindings(of: []).isEmpty)
     }
 }

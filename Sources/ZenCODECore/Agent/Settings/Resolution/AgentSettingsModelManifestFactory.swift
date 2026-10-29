@@ -13,7 +13,7 @@ public enum AgentSettingsModelManifestFactory {
         manifestID: String? = nil,
         title: String?,
         modelID: String,
-        providerID: UUID,
+        providerID: String,
         providerName: String,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint,
@@ -31,14 +31,14 @@ public enum AgentSettingsModelManifestFactory {
             ds4Runtime: ds4Runtime
         )
         let resolvedManifestID = manifestID?.nilIfBlank
-            ?? "remoteapi:\(providerID.uuidString.lowercased()):\(modelID)"
+            ?? AgentRemoteProvider.modelManifestID(providerID: provider.id, modelID: modelID)
         return AgentSettingsModelManifest(
             id: resolvedManifestID,
             kind: .remoteAPI,
             title: title,
             llmID: resolvedManifestID,
             modelID: modelID,
-            providerID: providerID,
+            providerID: provider.id,
             provider: provider,
             configuredContextWindowLimit: configuredContextWindowLimit,
             generationParameterOverrides: generationParameterOverrides,

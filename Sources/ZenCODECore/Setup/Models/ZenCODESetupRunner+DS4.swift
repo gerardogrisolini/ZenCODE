@@ -76,13 +76,11 @@ struct DS4SetupEngineOptions {
 }
 
 extension ZenCODESetupRunner {
-    /// Stable identity for the optional local DS4 provider created by setup.
-    /// The provider remains an ordinary OpenAI-compatible provider entry;
-    /// runtime metadata is what lets the backend open the in-process DS4
-    /// engine lazily later.
-    static let ds4SetupProviderID = UUID(
-        uuidString: "00000000-0000-0000-0000-000000000005"
-    )!
+    /// Stable provider key of the optional local DS4 provider created by setup.
+    /// The provider remains an OpenAI-compatible provider entry with the `ds4`
+    /// provider profile; runtime metadata is what lets the backend open the
+    /// in-process DS4 engine lazily later.
+    static let ds4SetupProviderID = AgentRemoteProvider.ds4ProviderID
 
     /// Compatibility placeholder: the engine runs in-process, so this URL is
     /// never contacted. It only keeps the provider an ordinary OpenAI-compatible
@@ -305,7 +303,7 @@ extension ZenCODESetupRunner {
             name: existingProvider?.name ?? ds4SetupProviderName,
             baseURL: existingProvider?.baseURL ?? ds4SetupProviderBaseURL,
             chatEndpoint: existingProvider?.chatEndpoint ?? .chatCompletions,
-            providerProfileID: existingProvider?.providerProfileID ?? .custom,
+            providerProfileID: .ds4,
             protocolProfileID: existingProvider?.protocolProfileID ?? .openAIChatCompletions,
             authPolicy: .noAuthentication
         )
@@ -609,10 +607,10 @@ extension ZenCODESetupRunner {
     static func manifestByApplyingDS4(
         _ existingManifest: AgentSettingsManifest?,
         input: SetupProviderInput,
-        replacingProviderID: UUID
+        replacingProviderID: String
     ) -> AgentSettingsManifest {
         let provider = providerManifest(from: input)
-        let providerIDs: Set<UUID> = [replacingProviderID, input.id]
+        let providerIDs: Set<String> = [replacingProviderID, input.id]
 
         let providersWithoutDS4 = existingManifest?.providers.filter {
             !providerIDs.contains($0.id) && $0.ds4Runtime == nil

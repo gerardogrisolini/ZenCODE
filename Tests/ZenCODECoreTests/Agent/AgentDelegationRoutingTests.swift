@@ -17,8 +17,8 @@ import ToolCore
 struct AgentDelegationRoutingTests {
     // MARK: - Fixtures
 
-    static let alphaProviderID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
-    static let betaProviderID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+    static let alphaProviderID = "openrouter"
+    static let betaProviderID = "deepseek"
     static let sharedSlug = "glm-4.6"
 
     static var alphaModel: AgentSettingsModelManifest {
@@ -30,15 +30,15 @@ struct AgentDelegationRoutingTests {
     }
 
     static var alphaModelID: String {
-        "remoteapi:\(alphaProviderID.uuidString.lowercased()):\(sharedSlug)"
+        "\(alphaProviderID):\(sharedSlug)"
     }
 
     static var betaModelID: String {
-        "remoteapi:\(betaProviderID.uuidString.lowercased()):\(sharedSlug)"
+        "\(betaProviderID):\(sharedSlug)"
     }
 
     static func remoteModel(
-        providerID: UUID,
+        providerID: String,
         providerName: String,
         modelID: String
     ) -> AgentSettingsModelManifest {
@@ -77,7 +77,7 @@ struct AgentDelegationRoutingTests {
                 AgentModelBinding(id: "live", modelID: Self.betaModelID, capability: 6),
                 AgentModelBinding(
                     id: "ghost",
-                    modelID: "remoteapi:99999999-9999-9999-9999-999999999999:removed-model",
+                    modelID: "nvidia:removed-model",
                     capability: 9
                 )
             ],
@@ -102,7 +102,7 @@ struct AgentDelegationRoutingTests {
         let profile = Self.profile(
             bindings: [
                 AgentModelBinding(id: "live", modelID: Self.betaModelID, capability: 6),
-                AgentModelBinding(id: "ghost", modelID: "remoteapi:dead:removed-model", capability: 9)
+                AgentModelBinding(id: "ghost", modelID: "modal:removed-model", capability: 9)
             ],
             defaultBindingID: "ghost"
         )
@@ -259,7 +259,7 @@ struct AgentDelegationRoutingTests {
 
     @Test
     func staleBindingIsRejectedBeforeTaskClaimAndBackendCreation() async throws {
-        let staleModelID = "remoteapi:99999999-9999-9999-9999-999999999999:removed-model"
+        let staleModelID = "nvidia:removed-model"
         let profile = Self.profile(
             bindings: [AgentModelBinding(id: "ghost", modelID: staleModelID, capability: 9)]
         )
@@ -770,8 +770,8 @@ struct AgentDelegationRoutingTests {
         let manifest = AgentSettingsManifest(
             models: [Self.alphaModel, Self.betaModel],
             remoteAPIKeysByProviderID: [
-                Self.alphaProviderID.uuidString.lowercased(): "alpha-key",
-                Self.betaProviderID.uuidString.lowercased(): "beta-key",
+                Self.alphaProviderID: "alpha-key",
+                Self.betaProviderID: "beta-key",
             ]
         )
         let snapshot = AgentDelegationCatalogSnapshot.available(manifest)

@@ -46,7 +46,7 @@ public struct AgentConfiguration: Sendable {
 
     Agent runtime:
       --agent NAME           Agent profile from ~/.zencode/agents.json. Default is used when omitted.
-      --model MODEL_ID        Model id, remoteapimodel:<uuid>, or remoteapi:<uuid>. Overrides the agent-selected model for this run.
+      --model MODEL_ID        Configured model id <provider>:<model> (for example openrouter:openrouter/auto or chatgpt:gpt-5) or its model name. Overrides the agent-selected model for this run.
       --working-directory PATH
                               Working directory for local tools. Default: current directory, or home when launched from the executable directory.
       --skills LIST           Initial chat skill selection by name/number, all, or none. In chat mode use /skills to change or install skills.
@@ -68,7 +68,7 @@ public struct AgentConfiguration: Sendable {
     Environment:
       ZENCODE_AGENT_MODE           chat, acp, headless, or auto. Auto resolves to chat.
       ZENCODE_AGENT_NAME           Agent profile from ~/.zencode/agents.json. Default is used when omitted.
-      ZENCODE_AGENT_MODEL          Model id, remoteapimodel:<uuid>, or remoteapi:<uuid>. Overrides the agent-selected model for this run.
+      ZENCODE_AGENT_MODEL          Configured model id <provider>:<model> or its model name. Overrides the agent-selected model for this run.
       ZENCODE_AGENT_CWD            Working directory for local tools.
       ZENCODE_AGENT_SKILLS         Initial chat skill selection by name/number, all, or none.
 

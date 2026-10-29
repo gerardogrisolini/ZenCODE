@@ -575,7 +575,8 @@ extension TerminalChat {
 
     /// Resolves a sub-agent model identifier into a human-readable title: the
     /// hosted manifest title if known, else the model name of an unresolved
-    /// `remoteapi:<uuid>:<modelID>` identifier, else the identifier unchanged.
+    /// remote API `<providerKey>:<modelID>` identifier, else the identifier
+    /// unchanged.
     public nonisolated static func resolvedSubAgentModelTitle(
         for modelID: String,
         hostedModel: AgentSettingsModelManifest? = nil
@@ -586,8 +587,9 @@ extension TerminalChat {
         return ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix(modelID) ?? modelID
     }
 
-    /// Returns the significant model name when `modelID` is an internal
-    /// `remoteapi:<uuid>:<modelName>` identifier, otherwise `nil`.
+    /// Returns the significant model name when `modelID` is a remote API
+    /// `<providerKey>:<modelName>` identifier (split on the first colon),
+    /// otherwise `nil`.
     public nonisolated static func subAgentModelNameStrippingRemoteAPIPrefix(
         _ modelID: String
     ) -> String? {
@@ -595,9 +597,10 @@ extension TerminalChat {
     }
 
     /// Returns the bare model name from a binding identifier when the provider
-    /// is already shown separately. Reuses the remote-API UUID stripping and
-    /// adds a fallback for provider-scoped identifiers such as
-    /// `chatgpt:gpt-5.6-terra`, taking only the segment after the last colon.
+    /// is already shown separately. Reuses the remote API provider-key
+    /// stripping and, when a provider is shown, also strips the other
+    /// provider-scoped identifiers such as `chatgpt:gpt-5.6-terra` on their
+    /// first colon (unrecognised prefixes fall back to the last colon).
     public nonisolated static func strippedModelNameForBinding(
         _ modelID: String,
         modelProvider: String?

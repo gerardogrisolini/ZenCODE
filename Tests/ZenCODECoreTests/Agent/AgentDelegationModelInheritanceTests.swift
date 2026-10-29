@@ -43,7 +43,7 @@ extension AgentDelegationRoutingTests {
             ? .available(AgentSettingsManifest(
                 models: [Self.alphaModel],
                 remoteAPIKeysByProviderID: [
-                    Self.alphaProviderID.uuidString.lowercased(): "alpha-key"
+                    Self.alphaProviderID: "alpha-key"
                 ]
             ))
             : .unavailable("the live catalog is no longer available")

@@ -24,7 +24,7 @@ struct ZenCODESetupSessionTests {
     }
 
     private static func remoteManifest(commands: [String] = []) -> AgentSettingsManifest {
-        let providerID = UUID()
+        let providerID = "custom"
         let modelID = "test-model"
         let provider = AgentRemoteProvider(
             id: providerID,

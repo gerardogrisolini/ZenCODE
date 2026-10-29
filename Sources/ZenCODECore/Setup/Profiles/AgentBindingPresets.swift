@@ -12,8 +12,8 @@ import ToolCore
 
 /// Operator-authored model binding presets, grouped by provider.
 ///
-/// ZenCODE only reads `binding-presets.json`, which sits next to `agents.json`
-/// in the support directory: it never creates or writes it. The top-level
+/// ZenCODE only reads `binding-presets.json`, which ships with the sources in
+/// `Sources/ZenPackageMetadata`: it never creates or writes it. The top-level
 /// `providers` object is keyed by provider name (the `modelProvider` string of
 /// `agents.json`); each provider maps a profile id or role to a block with
 /// `modelBindings` and an optional `defaultModelBindingID`. The order of the
@@ -104,12 +104,22 @@ struct AgentBindingPresets: Equatable, Sendable {
 
     // MARK: - Loading
 
-    /// `binding-presets.json` next to `agents.json` and `settings.json`, so it
-    /// follows `ZENCODE_SUPPORT_DIRECTORY` and the scoped support directory.
-    static func defaultURL(fileManager: FileManager = .default) -> URL {
-        AgentSettingsManifestStore.settingsURL(fileManager: fileManager)
-            .deletingLastPathComponent()
-            .appendingPathComponent(filename)
+    /// Where the presets file sits inside a ZenCODE source checkout.
+    static let sourceRelativePath = "Sources/ZenPackageMetadata/" + filename
+
+    /// `binding-presets.json` in the ZenCODE source checkout that `/setup` also
+    /// builds ZenCRON and optional features from
+    /// (`SwiftFeatureRuntime.zenCODESourceCheckoutURL`: the checkout this binary
+    /// was built from, the installer copy under the support directory, then the
+    /// working directory). `nil` when no checkout can be located.
+    static func defaultURL(fileManager: FileManager = .default) -> URL? {
+        guard let checkoutURL = try? SwiftFeatureRuntime.zenCODESourceCheckoutURL(
+            fileManager: fileManager
+        ) else {
+            return nil
+        }
+        return checkoutURL
+            .appendingPathComponent(sourceRelativePath)
             .standardizedFileURL
     }
 
@@ -142,9 +152,11 @@ struct AgentBindingPresets: Equatable, Sendable {
 
     // MARK: - Application
 
-    /// Whether the file has a block for at least one of `providerNames`.
-    func hasProvider(in providerNames: [String]) -> Bool {
-        !applicableProviders(for: providerNames).isEmpty
+    /// The names, exactly as written in the file and in file order, of the
+    /// providers that have a block and are among `providerNames` (compared with
+    /// `AgentProfileStore.profileReferenceKey`; empty names are ignored).
+    func applicableProviderNames(for providerNames: [String]) -> [String] {
+        applicableProviders(for: providerNames).map(\.name)
     }
 
     /// A short report of what `profiles` end up with, such as
@@ -157,11 +169,11 @@ struct AgentBindingPresets: Equatable, Sendable {
     }
 
     /// Replaces the model bindings of every profile with the presets of the
-    /// configured providers; everything else in the profile is untouched.
+    /// given providers; everything else in the profile is untouched.
     ///
-    /// - Only provider blocks whose key matches a configured provider name count
+    /// - Only provider blocks whose key matches one of `providerNames` count
     ///   (compared with `AgentProfileStore.profileReferenceKey`; empty keys are
-    ///   ignored).
+    ///   ignored). Callers pass the configured providers.
     /// - In each provider block, in file order, the entry written under the
     ///   profile id wins; the entry written under the profile role is the
     ///   fallback.

@@ -335,7 +335,7 @@ struct MemoryReembeddingSetupTests {
             existingSettings: AgentMemoryEmbeddingSettingsManifest(
                 endpoint: AgentMemoryEmbeddingSettingsManifest.openRouterEmbeddingsEndpoint,
                 model: "qwen/qwen3-embedding-8b",
-                providerID: UUID()
+                providerID: "openrouter"
             ),
             defaultModel: AgentMemoryEmbeddingSettingsManifest.openRouterEmbeddingsModel
         )

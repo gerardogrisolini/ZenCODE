@@ -20,7 +20,9 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
         case ds4Runtime
     }
 
-    public let id: UUID
+    /// Stable lowercase provider key (see
+    /// ``AgentRemoteProvider/providerKey(providerProfileID:protocolProfileID:)``).
+    public let id: String
     public let name: String
     public let baseURL: String
     public let chatEndpoint: AgentRemoteChatEndpoint
@@ -29,8 +31,10 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
     public let authPolicy: AgentProviderAuthPolicy
     public let ds4Runtime: AgentDS4RuntimeConfiguration?
 
+    /// Creates a provider manifest. When `id` is nil or blank the provider
+    /// receives the stable key derived from its resolved profiles.
     public init(
-        id: UUID,
+        id: String? = nil,
         name: String,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint,
@@ -39,19 +43,24 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
         authPolicy: AgentProviderAuthPolicy? = nil,
         ds4Runtime: AgentDS4RuntimeConfiguration? = nil
     ) {
-        self.id = id
-        self.name = AgentRemoteProvider.normalizedName(name)
-        self.baseURL = AgentRemoteProvider.normalizedBaseURL(baseURL)
-        let legacyProfiles = AgentRemoteProvider.legacyProfiles(
+        // The provider value owns the key derivation and profile inference.
+        let provider = AgentRemoteProvider(
             id: id,
+            name: name,
             baseURL: baseURL,
-            chatEndpoint: chatEndpoint
+            chatEndpoint: chatEndpoint,
+            providerProfileID: providerProfileID,
+            protocolProfileID: protocolProfileID,
+            authPolicy: authPolicy,
+            ds4Runtime: ds4Runtime
         )
-        self.providerProfileID = providerProfileID ?? legacyProfiles.provider
-        let resolvedProtocolProfileID = protocolProfileID ?? legacyProfiles.protocolProfile
-        self.protocolProfileID = resolvedProtocolProfileID
-        self.authPolicy = authPolicy ?? legacyProfiles.auth
-        self.chatEndpoint = resolvedProtocolProfileID.chatEndpoint ?? chatEndpoint
+        self.id = provider.id
+        self.name = provider.name
+        self.baseURL = provider.baseURL
+        self.providerProfileID = provider.providerProfileID
+        self.protocolProfileID = provider.protocolProfileID
+        self.authPolicy = provider.authPolicy
+        self.chatEndpoint = provider.chatEndpoint
         self.ds4Runtime = ds4Runtime
     }
 
@@ -71,7 +80,7 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
-            id: try container.decode(UUID.self, forKey: .id),
+            id: try container.decodeIfPresent(String.self, forKey: .id),
             name: try container.decodeIfPresent(String.self, forKey: .name)
                 ?? AgentRemoteProvider.defaultOpenRouterName,
             baseURL: try container.decodeIfPresent(String.self, forKey: .baseURL)

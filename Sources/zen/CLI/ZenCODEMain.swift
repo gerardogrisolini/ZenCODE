@@ -55,6 +55,13 @@ struct ZenCODEMain {
             Foundation.exit(1)
         }
 
+        // Settings v15 identify providers by stable keys. Migrate older
+        // settings.json/agents.json pairs here, once, before the setup gate
+        // and every mode (chat, headless, JSONL, ACP) load or save them. The
+        // meta-commands above stay read-only. A failure is reported and the
+        // legacy files keep loading; the migration is retried at next start.
+        AgentProviderKeyMigration.migrateIfNeededReportingFailures()
+
         // ACP is exempt too: `--acp` must answer `initialize` even without a
         // configuration, so the client can offer the terminal setup method. The
         // setup then runs in its own terminal, never inside the ACP stream.

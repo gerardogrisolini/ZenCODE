@@ -298,13 +298,16 @@ settings manifest (`AgentMemoryEmbeddingSettingsManifest`, manifest version 12,
 `settings.json` `memoryEmbedding`) stores a normalized absolute HTTP(S)
 endpoint — plus, optionally, an OpenAI-compatible `model` identifier and a
 non-secret `providerID` reference to a configured provider whose API key the
-resolver reuses at runtime. Legacy v11 endpoint-only values decode unchanged
+resolver reuses at runtime. Since settings v15 `providerID` is the provider's
+stable key (`openrouter`), no longer a UUID; the v15 migration rewrites a
+UUID reference to the key, or drops it when it names no configured provider.
+Legacy v11 endpoint-only values decode unchanged
 (`model`/`providerID` nil) and re-encode byte-identically. Setup configures it
 interactively ("Memory embeddings": BM25 only / add / change / remove endpoint,
 detail line "BM25 only" or the stored endpoint, with the model appended when
 present). When at least one configured provider is OpenRouter, setup proposes an
 OpenRouter choice immediately, precompiled to the canonical endpoint
-`https://openrouter.ai/api/v1/embeddings` and the referenced provider's ID;
+`https://openrouter.ai/api/v1/embeddings` and the referenced provider's key;
 without an OpenRouter provider no such proposal appears. Choosing it opens an
 "OpenRouter embedding model" submenu listing the models of the public
 OpenRouter catalog `GET https://openrouter.ai/api/v1/embeddings/models`
@@ -329,7 +332,8 @@ one setup started with and resolves to a provider, setup then offers to
 re-embed every memory graph; see [Memory re-embedding](#memory-re-embedding).
 The embedding request never duplicates the provider's API key: when
 `providerID` is set the resolver reads
-`remoteAPIKeysByProviderID[providerID.uuidString.lowercased()]` at runtime only
+`remoteAPIKeysByProviderID[providerID]` (the API-key map is keyed by provider
+key) at runtime only
 if the reference resolves to a configured OpenRouter provider **and** the
 embedding endpoint is itself an OpenRouter endpoint; any mismatch (custom or
 legacy endpoint-only setups, a stale `providerID`, an endpoint on a different

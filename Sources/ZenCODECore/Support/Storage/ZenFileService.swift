@@ -261,7 +261,9 @@ public enum ZenFileService {
             .standardizedFileURL
     }
 
-    private struct CoordinatedManifestWrite {
+    /// One coordinated manifest write. Internal so other coordinated
+    /// migrations (``AgentProviderKeyMigration``) reuse the journaled commit.
+    struct CoordinatedManifestWrite {
         let url: URL
         let data: Data
     }
@@ -270,7 +272,9 @@ public enum ZenFileService {
         let data: Data?
     }
 
-    private static func commitManifests(
+    /// Commits `writes` with a rollback-first recovery journal. The caller must
+    /// hold `SensitiveManifestCoordination.withExclusiveLock`.
+    static func commitManifests(
         _ writes: [CoordinatedManifestWrite],
         fileManager: FileManager,
         checkpoint: ((Int) throws -> Void)?,

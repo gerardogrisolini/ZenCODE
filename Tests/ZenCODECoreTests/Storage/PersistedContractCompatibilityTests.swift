@@ -173,11 +173,14 @@ struct PersistedContractCompatibilityTests {
 
     @Test
     func legacySubscriptionIdentityAndDispatchProfilesArePreserved() throws {
+        // The stable `chatgpt` key alone selects the subscription profiles, as
+        // the former fixed UUID did (`AgentProviderKeyMigration` rewrites that
+        // UUID to the key before decoding).
         let chatGPT = try decode(
             AgentSettingsProviderManifest.self,
             from: #"""
             {
-              "id": "00000000-0000-0000-0000-000000000003",
+              "id": "chatgpt",
               "name": "Renamed connection",
               "baseURL": "https://irrelevant.example/v1",
               "chatEndpoint": "chat_completions"
@@ -201,7 +204,8 @@ struct PersistedContractCompatibilityTests {
         #expect(chatGPT.protocolProfileID == .openAIChatGPTSubscription)
         #expect(chatGPT.authPolicy == .chatGPTSubscription)
         #expect(chatGPT.remoteProvider(modelID: "chatgpt:test").isChatGPTSubscriptionProvider)
-        #expect(claude.id.uuidString == "44444444-4444-4444-4444-444444444444")
+        // A non-key id is kept as is (lowercased); the base URL selects the profile.
+        #expect(claude.id == "44444444-4444-4444-4444-444444444444")
         #expect(claude.baseURL == AgentRemoteProvider.anthropicSubscriptionBaseURL)
         #expect(claude.protocolProfileID == .anthropicClaudeSubscription)
         #expect(claude.authPolicy == .anthropicSubscription)
@@ -211,7 +215,7 @@ struct PersistedContractCompatibilityTests {
     @Test
     func providerProfilesRoundTripInCurrentManifestVersionAndInvalidCombinationsFailClosed() throws {
         let provider = AgentSettingsProviderManifest(
-            id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            id: "custom",
             name: "Local responses",
             baseURL: "http://127.0.0.1:8080/v1",
             chatEndpoint: .responses,

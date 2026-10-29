@@ -11,7 +11,7 @@ import ToolCore
 extension ZenCODESetupRunner {
     static func remoteModelManifest(
         from model: OpenRouterModelInfo,
-        providerID: UUID,
+        providerID: String,
         providerName: String,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint
@@ -49,7 +49,7 @@ extension ZenCODESetupRunner {
 
     static func subscriptionModelManifest(
         candidate: SubscriptionModelCandidate,
-        providerID: UUID,
+        providerID: String,
         providerName: String,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint
@@ -201,7 +201,7 @@ extension ZenCODESetupRunner {
     }
 
     static func readModel(
-        providerID: UUID,
+        providerID: String,
         providerName: String,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint,
@@ -231,7 +231,7 @@ extension ZenCODESetupRunner {
                 from: knownThinkingSupport?.defaultSelection
             )
         )
-        let manifestID = "remoteapi:\(providerID.uuidString.lowercased()):\(modelID)"
+        let manifestID = AgentRemoteProvider.modelManifestID(providerID: providerID, modelID: modelID)
         return AgentSettingsModelManifest(
             id: manifestID,
             kind: .remoteAPI,
@@ -408,7 +408,21 @@ extension ZenCODESetupRunner {
         return choice == 0 ? .chatCompletions : .responses
     }
 
-    static func promptProviderKind() throws -> SetupProviderKind {
+    /// Asks for the kind of provider to add. Choices whose provider key is in
+    /// `configuredProviderIDs` stay visible but are marked as already
+    /// configured; the caller refuses them (see `readProvider`).
+    static func promptProviderKind(
+        configuredProviderIDs: Set<String> = []
+    ) throws -> SetupProviderKind {
+        func detail(_ kind: SetupProviderKind, _ text: String) -> String {
+            configuredProviderIDs.contains(kind.providerID)
+                ? alreadyConfiguredProviderDetail
+                : text
+        }
+        func preferred(_ kinds: [SetupProviderKind]) -> SetupProviderKind {
+            kinds.first { !configuredProviderIDs.contains($0.providerID) } ?? kinds[0]
+        }
+
         let family = try promptMenuChoice(
             title: "Provider family",
             items: [
@@ -433,21 +447,22 @@ extension ZenCODESetupRunner {
 
         switch family {
         case .openAI:
+            let kinds: [SetupProviderKind] = [.remoteAPI(.openAIAPI), .chatGPTSubscription]
             return try promptMenuChoice(
                 title: "OpenAI",
                 items: [
                     TerminalCheckboxMenuItem(
                         value: SetupProviderKind.remoteAPI(.openAIAPI),
                         title: SetupProviderPreset.openAIAPI.title,
-                        detail: "API key; OpenAI Responses protocol"
+                        detail: detail(.remoteAPI(.openAIAPI), "API key; OpenAI Responses protocol")
                     ),
                     TerminalCheckboxMenuItem(
                         value: SetupProviderKind.chatGPTSubscription,
                         title: "ChatGPT Subscription",
-                        detail: "browser sign-in; separate credentials and provider UUID"
+                        detail: detail(.chatGPTSubscription, "browser sign-in; separate credentials and provider key")
                     )
                 ],
-                selected: .remoteAPI(.openAIAPI)
+                selected: preferred(kinds)
             )
         case .anthropic:
             let option = try promptMenuChoice(
@@ -456,15 +471,17 @@ extension ZenCODESetupRunner {
                     TerminalCheckboxMenuItem(
                         value: SetupAnthropicProviderOption.api,
                         title: "Anthropic API",
-                        detail: "API key; native Messages protocol"
+                        detail: detail(.remoteAPI(.anthropicAPI), "API key; native Messages protocol")
                     ),
                     TerminalCheckboxMenuItem(
                         value: SetupAnthropicProviderOption.subscription,
                         title: "Claude Subscription",
-                        detail: "browser sign-in; separate credentials and provider UUID"
+                        detail: detail(.anthropicSubscription, "browser sign-in; separate credentials and provider key")
                     )
                 ],
-                selected: .api
+                selected: preferred([.remoteAPI(.anthropicAPI), .anthropicSubscription]) == .anthropicSubscription
+                    ? .subscription
+                    : .api
             )
             return option == .api ? .remoteAPI(.anthropicAPI) : .anthropicSubscription
         case .otherAPI:
@@ -475,15 +492,18 @@ extension ZenCODESetupRunner {
                 TerminalCheckboxMenuItem(
                     value: preset,
                     title: preset.title,
-                    detail: preset.isAdvanced
-                        ? "advanced OpenAI-compatible setup; optional auth, fail-closed protocol selection"
-                        : "hosted API preset; API key required"
+                    detail: detail(
+                        .remoteAPI(preset),
+                        preset.isAdvanced
+                            ? "advanced OpenAI-compatible setup; optional auth, fail-closed protocol selection"
+                            : "hosted API preset; API key required"
+                    )
                 )
             }
             let preset = try promptMenuChoice(
                 title: "API provider preset",
                 items: items,
-                selected: .openRouter
+                selected: presets.first { !configuredProviderIDs.contains($0.providerID) } ?? .openRouter
             )
             return .remoteAPI(preset)
         }

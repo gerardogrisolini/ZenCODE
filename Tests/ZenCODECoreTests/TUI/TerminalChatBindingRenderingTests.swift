@@ -11,20 +11,29 @@ import Testing
 struct TerminalChatBindingRenderingTests {
     @Test
     func remoteAPIModelNameCharacterization() {
-        let uuid = "d3eea8e9-eccf-499e-9697-298ede7af8d5"
         let cases: [(input: String, expected: String?)] = [
-            ("remoteapi:\(uuid):model", "model"),
-            ("REMOTEAPI:\(uuid.uppercased()):vendor:model:v2", "vendor:model:v2"),
-            (" \tremoteapi:\(uuid): model:v2 \n", " model:v2"),
-            ("remoteapi:\(uuid):model:", "model:"),
-            ("remoteapi:\(uuid)::", ":"),
-            ("remoteapi:\(uuid):", nil),
-            ("remoteapi:\(uuid): \n", nil),
-            ("remoteapi:\(uuid)", nil),
-            ("remoteapi:not-a-uuid:model", nil),
-            ("remoteapi::model", nil),
-            ("remoteapi:", nil),
+            ("openrouter:model", "model"),
+            ("OPENROUTER:vendor:model:v2", "vendor:model:v2"),
+            // OpenRouter model names may contain ':' themselves: split on the
+            // first colon only.
+            ("openrouter:deepseek/deepseek-r1:free", "deepseek/deepseek-r1:free"),
+            ("google.gemini:gemini-2.5-pro", "gemini-2.5-pro"),
+            ("zai-coding-plan:glm-5.2", "glm-5.2"),
+            ("custom:local-model", "local-model"),
+            (" \topenai: model:v2 \n", " model:v2"),
+            ("openai:model:", "model:"),
+            ("openai::", ":"),
+            ("openai:", nil),
+            ("openai: \n", nil),
+            ("openai", nil),
+            ("not-a-provider:model", nil),
+            (":model", nil),
+            // Subscription and DS4 ids keep their own presentation.
             ("chatgpt:model", nil),
+            ("claude:model", nil),
+            ("ds4:model", nil),
+            // Pre-v15 ids are no longer recognised.
+            ("remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5:model", nil),
             (" model ", nil),
             ("", nil),
             (" \n", nil),
@@ -39,20 +48,24 @@ struct TerminalChatBindingRenderingTests {
 
     @Test
     func bindingModelNameCharacterization() {
-        let uuid = "d3eea8e9-eccf-499e-9697-298ede7af8d5"
         let cases: [(input: String, provider: String?, expected: String)] = [
-            ("remoteapi:\(uuid):vendor:model", nil, "vendor:model"),
-            ("REMOTEAPI:\(uuid):vendor:model:", "Remote", "vendor:model:"),
-            (" \tremoteapi:\(uuid): model \n", nil, " model"),
-            ("remoteapi:not-a-uuid:vendor:model", nil, "remoteapi:not-a-uuid:vendor:model"),
-            ("remoteapi:not-a-uuid:vendor:model", "Remote", "model"),
+            ("openrouter:vendor:model", nil, "vendor:model"),
+            ("OPENROUTER:vendor:model:", "Remote", "vendor:model:"),
+            ("openrouter:deepseek/deepseek-r1:free", "OpenRouter", "deepseek/deepseek-r1:free"),
+            ("openrouter:deepseek/deepseek-r1:free", nil, "deepseek/deepseek-r1:free"),
+            (" \topenai: model \n", nil, " model"),
+            // Known non-remote-API keys are stripped on the first colon, and
+            // only when the provider is shown separately.
+            ("chatgpt:gpt-5.6-terra", "ChatGPT Subscription", "gpt-5.6-terra"),
+            ("chatgpt:gpt-5.6-terra", nil, "chatgpt:gpt-5.6-terra"),
+            ("ds4:vendor:model", "DS4 (local)", "vendor:model"),
             ("provider:vendor:model", nil, "provider:vendor:model"),
             ("provider:vendor:model", "Provider", "model"),
             ("provider:vendor:model", "", "model"),
             ("provider:vendor:model:", "Provider", "provider:vendor:model:"),
             ("provider:vendor:model:", nil, "provider:vendor:model:"),
-            ("remoteapi:\(uuid):", "Remote", "remoteapi:\(uuid):"),
-            ("remoteapi:\(uuid): \n", "Remote", " \n"),
+            ("openai:", "Remote", "openai:"),
+            ("openai: \n", "Remote", " \n"),
             ("provider: model \n", "Provider", " model \n"),
             ("provider: model \n", nil, "provider: model \n"),
             (" model ", "Provider", " model "),
@@ -77,7 +90,7 @@ struct TerminalChatBindingRenderingTests {
             name: "Developer",
             role: .developer,
             modelBindings: [
-                AgentModelBinding(id: "remote", modelID: "REMOTEAPI:d3eea8e9-eccf-499e-9697-298ede7af8d5:vendor:model:", modelProvider: "Remote"),
+                AgentModelBinding(id: "remote", modelID: "OPENROUTER:vendor:model:", modelProvider: "Remote"),
                 AgentModelBinding(id: "scoped", modelID: "provider:vendor:last", modelProvider: "Provider"),
                 AgentModelBinding(id: "unscoped", modelID: "unscoped:vendor:whole", modelProvider: nil),
                 AgentModelBinding(id: "trailing", modelID: "provider:trailing:", modelProvider: "Provider"),
@@ -90,7 +103,7 @@ struct TerminalChatBindingRenderingTests {
         #expect(rendered.contains("last"))
         #expect(rendered.contains("unscoped:vendor:whole"))
         #expect(rendered.contains("provider:trailing:"))
-        #expect(!rendered.contains("REMOTEAPI:"))
+        #expect(!rendered.contains("OPENROUTER:"))
         #expect(!rendered.contains("provider:vendor:last"))
     }
 
@@ -146,7 +159,7 @@ struct TerminalChatBindingRenderingTests {
     }
 
     /// The provider is shown separately, so the model name must be stripped of
-    /// any provider prefix (`remoteapi:<uuid>:name` or `provider:name`).
+    /// any provider prefix (`<providerKey>:name` or `provider:name`).
     @Test
     func bindingRenderingShowsBareModelNameWithoutProviderPrefix() {
         let developer = AgentProfile(
@@ -155,8 +168,8 @@ struct TerminalChatBindingRenderingTests {
             role: .developer,
             modelBindings: [
                 AgentModelBinding(
-                    id: "remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5:glm-5.2",
-                    modelID: "remoteapi:d3eea8e9-eccf-499e-9697-298ede7af8d5:glm-5.2",
+                    id: "zai:glm-5.2",
+                    modelID: "zai:glm-5.2",
                     modelProvider: "Z.ai",
                     capability: 6
                 ),
@@ -181,7 +194,7 @@ struct TerminalChatBindingRenderingTests {
         #expect(rendered.contains("ChatGPT"))
         #expect(rendered.contains("gpt-5.6-terra"))
         // The provider prefix must not leak into the model field.
-        #expect(!rendered.contains("remoteapi:"))
+        #expect(!rendered.contains("zai:glm"))
         #expect(!rendered.contains("chatgpt:gpt"))
     }
 

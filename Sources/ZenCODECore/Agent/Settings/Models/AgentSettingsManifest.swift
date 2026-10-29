@@ -24,7 +24,11 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         case memoryEmbedding
     }
 
-    public static let currentVersion = 14
+    /// v15: providers are identified by stable string keys (`openrouter`,
+    /// `chatgpt`, `ds4`, ...) instead of UUIDs; remote API model ids are
+    /// `<providerKey>:<modelID>` and API keys are keyed by provider key.
+    /// ``AgentProviderKeyMigration`` rewrites older files at startup.
+    public static let currentVersion = 15
     public static let minimumSupportedVersion = 4
 
     public let version: Int
@@ -34,6 +38,7 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
     public let selectedThinkingSelection: AgentThinkingSelection?
     public let telegram: AgentTelegramSettingsManifest?
     public let voice: AgentVoiceSettingsManifest?
+    /// API keys by stable provider key (the JSON field name is unchanged).
     public let remoteAPIKeysByProviderID: [String: String]
     public let localExecAllowedCommands: [String]
     public let chatGPTSubscriptionCredentials: CodexAgentCredentials?
@@ -67,7 +72,10 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
             providers,
             models: models
         )
-        let providersByID = Dictionary(uniqueKeysWithValues: normalizedProviders.map { ($0.id, $0) })
+        let providersByID = Dictionary(
+            normalizedProviders.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let normalizedModels = Self.normalizedModels(models, providersByID: providersByID)
 
         self.version = version
@@ -210,6 +218,14 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
             && memoryEmbedding == nil
     }
 
+    /// The API key stored for `providerID` (a stable provider key), or `nil`.
+    public func apiKey(providerID: String) -> String? {
+        guard let key = AgentRemoteProvider.normalizedProviderID(providerID) else {
+            return nil
+        }
+        return remoteAPIKeysByProviderID[key]?.nilIfBlank
+    }
+
     private static func normalizedLocalExecAllowedCommands(_ commands: [String]) -> [String] {
         var seen = Set<String>()
         return commands.compactMap { command in
@@ -227,7 +243,7 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
 
     private static func normalizedModels(
         _ models: [AgentSettingsModelManifest],
-        providersByID: [UUID: AgentSettingsProviderManifest]
+        providersByID: [String: AgentSettingsProviderManifest]
     ) -> [AgentSettingsModelManifest] {
         var seen = Set<String>()
         return models.compactMap { model in
@@ -243,7 +259,7 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         _ providers: [AgentSettingsProviderManifest],
         models: [AgentSettingsModelManifest]
     ) -> [AgentSettingsProviderManifest] {
-        var providersByID: [UUID: AgentSettingsProviderManifest] = [:]
+        var providersByID: [String: AgentSettingsProviderManifest] = [:]
         for model in models {
             if let provider = model.provider {
                 let runtime = provider.ds4Runtime ?? model.ds4Runtime
@@ -261,7 +277,7 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         return providersByID.values.sorted {
             let comparison = $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle)
             if comparison == .orderedSame {
-                return $0.id.uuidString < $1.id.uuidString
+                return $0.id < $1.id
             }
             return comparison == .orderedAscending
         }
@@ -299,14 +315,14 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
                   let apiKey = model.apiKey?.nilIfBlank else {
                 continue
             }
-            normalized[providerID.uuidString.lowercased()] = apiKey
+            normalized[providerID] = apiKey
         }
         for (providerID, apiKey) in values {
-            guard let providerUUID = UUID(uuidString: providerID),
+            guard let providerKey = AgentRemoteProvider.normalizedProviderID(providerID),
                   let normalizedAPIKey = apiKey.nilIfBlank else {
                 continue
             }
-            normalized[providerUUID.uuidString.lowercased()] = normalizedAPIKey
+            normalized[providerKey] = normalizedAPIKey
         }
         return normalized
     }

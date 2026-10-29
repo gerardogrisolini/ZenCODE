@@ -97,6 +97,9 @@ extension ZenCODESetupRunner {
                 try runDataExport()
             case .importBackup:
                 if try runDataImport() {
+                    // An imported backup may predate settings v15: migrate it
+                    // to provider keys before setup reads it again.
+                    AgentProviderKeyMigration.migrateIfNeededReportingFailures()
                     await MemoryGraphStoreRegistry.shared.reset()
                     return .dataReplaced
                 }

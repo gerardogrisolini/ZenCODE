@@ -70,11 +70,12 @@ struct AgentDS4RuntimeManifestTests {
             baseURL: "http://127.0.0.1:8080/v1",
             modelID: "deepseek-v4",
             chatEndpoint: .chatCompletions,
-            providerProfileID: .custom,
+            providerProfileID: .ds4,
             protocolProfileID: .openAIChatCompletions,
             authPolicy: .noAuthentication,
             ds4Runtime: runtime
         )
+        #expect(provider.id == "ds4")
         let model = AgentSettingsModelManifest(
             id: "ds4-model",
             kind: .remoteAPI,
@@ -90,7 +91,8 @@ struct AgentDS4RuntimeManifestTests {
 
         let encoded = try JSONEncoder().encode(manifest)
         let json = try #require(String(data: encoded, encoding: .utf8))
-        #expect(json.contains("\"version\":14"))
+        #expect(json.contains("\"version\":\(AgentSettingsManifest.currentVersion)"))
+        #expect(AgentSettingsManifest.currentVersion == 15)
         #expect(json.contains("\"ds4Runtime\""))
         #expect(json.contains("\"mtp\":true"))
         #expect(json.contains("\"power\":37"))

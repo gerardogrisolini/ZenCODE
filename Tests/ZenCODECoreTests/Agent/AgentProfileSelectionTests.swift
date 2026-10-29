@@ -460,14 +460,14 @@ extension AgentConfigurationTests {
             id: "allowed",
             kind: .remoteAPI,
             modelID: "allowed-model",
-            providerID: UUID(),
+            providerID: "openrouter",
             provider: AgentRemoteProvider(modelID: "allowed-model")
         )
         let blocked = AgentSettingsModelManifest(
             id: "blocked",
             kind: .remoteAPI,
             modelID: "blocked-model",
-            providerID: UUID(),
+            providerID: "openrouter",
             provider: AgentRemoteProvider(modelID: "blocked-model")
         )
         let manifest = AgentSettingsManifest(
@@ -496,10 +496,10 @@ extension AgentConfigurationTests {
     @TerminalChatActor
     func manualModelOverridePrefersExactProviderBindingOverSharedModelID() {
         let modelID = "deepseek-v4-flash"
-        let remoteProviderID = UUID()
-        let localProviderID = UUID()
+        let remoteProviderID = "deepseek"
+        let localProviderID = "ds4"
         let remote = AgentSettingsModelManifest(
-            id: "remoteapi:\(remoteProviderID.uuidString.lowercased()):\(modelID)",
+            id: "\(remoteProviderID):\(modelID)",
             kind: .remoteAPI,
             modelID: modelID,
             providerID: remoteProviderID,
@@ -511,7 +511,7 @@ extension AgentConfigurationTests {
             )
         )
         let local = AgentSettingsModelManifest(
-            id: "remoteapi:\(localProviderID.uuidString.lowercased()):\(modelID)",
+            id: "\(localProviderID):\(modelID)",
             kind: .remoteAPI,
             modelID: modelID,
             providerID: localProviderID,
@@ -543,14 +543,14 @@ extension AgentConfigurationTests {
             id: "allowed",
             kind: .remoteAPI,
             modelID: "allowed-model",
-            providerID: UUID(),
+            providerID: "openrouter",
             provider: AgentRemoteProvider(modelID: "allowed-model")
         )
         let other = AgentSettingsModelManifest(
             id: "other",
             kind: .remoteAPI,
             modelID: "other-model",
-            providerID: UUID(),
+            providerID: "openrouter",
             provider: AgentRemoteProvider(modelID: "other-model")
         )
         let agent = AgentProfile(
@@ -581,14 +581,14 @@ extension AgentConfigurationTests {
             id: "allowed",
             kind: .remoteAPI,
             modelID: "allowed-model",
-            providerID: UUID(),
+            providerID: "openrouter",
             provider: AgentRemoteProvider(modelID: "allowed-model")
         )
         let blocked = AgentSettingsModelManifest(
             id: "other",
             kind: .remoteAPI,
             modelID: "other-model",
-            providerID: UUID(),
+            providerID: "openrouter",
             provider: AgentRemoteProvider(modelID: "other-model")
         )
         let manifest = AgentSettingsManifest(
@@ -956,9 +956,7 @@ struct AgentProfileCapabilityTests {
 
 @Suite
 struct DelegatableAgentsSectionTests {
-    private static let providerID = UUID(
-        uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-    )!
+    private static let providerID = "custom"
 
     private static func model(_ modelID: String) -> AgentSettingsModelManifest {
         AgentSettingsModelManifestFactory.remoteAPIModel(

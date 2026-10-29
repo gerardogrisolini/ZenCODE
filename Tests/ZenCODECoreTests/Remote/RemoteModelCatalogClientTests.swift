@@ -245,7 +245,7 @@ struct RemoteModelCatalogClientTests {
             #expect(enriched.allSatisfy { $0.thinkingSupport == nil })
             let manifests = enriched.map {
                 ZenCODESetupRunner.remoteModelManifest(
-                    from: $0, providerID: UUID(), providerName: "DeepSeek",
+                    from: $0, providerID: "deepseek", providerName: "DeepSeek",
                     baseURL: baseURL, chatEndpoint: .chatCompletions
                 )
             }
@@ -399,7 +399,7 @@ struct RemoteModelCatalogClientTests {
         let manifest = AgentSettingsModelManifestFactory.remoteAPIModel(
             title: "Qwen3 Test",
             modelID: "remote-community/qwen3-test",
-            providerID: UUID(uuidString: "00000000-0000-0000-0000-000000000111")!,
+            providerID: "modal",
             providerName: "Modal",
             baseURL: "https://api.us-west-2.modal.direct/v1",
             chatEndpoint: .chatCompletions,

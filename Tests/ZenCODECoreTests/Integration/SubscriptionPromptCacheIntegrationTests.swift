@@ -223,7 +223,7 @@ struct SubscriptionPromptCacheIntegrationTests {
     }
 
     private static func subscriptionSelection(
-        providerID: UUID,
+        providerID: String,
         requestedModelEnv: String,
         preferredModelID: String
     ) throws -> AgentModelSelection {

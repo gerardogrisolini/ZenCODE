@@ -458,9 +458,12 @@ public final class TerminalChat {
         )
     }
 
-    /// Returns the direct identifier plus the model component of an internal
-    /// remote API identifier. The latter intentionally does not require a UUID
-    /// provider segment because hosted transports can use opaque provider IDs.
+    /// Returns the direct identifier plus the model component of a pre-v15
+    /// remote API identifier (`remoteapi:<provider>:<modelID>`), which saved
+    /// sessions may still contain. The model component resolves the session
+    /// against the migrated `<providerKey>:<modelID>` model by its model id.
+    /// The provider segment is deliberately not parsed (hosted transports may
+    /// also use opaque provider segments).
     static func modelReferences(for rawModelID: String) -> [String] {
         let modelID = rawModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !modelID.isEmpty else {

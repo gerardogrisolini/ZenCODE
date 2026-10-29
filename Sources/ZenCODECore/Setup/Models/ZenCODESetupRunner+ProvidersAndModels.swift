@@ -15,7 +15,11 @@ extension ZenCODESetupRunner {
         var providerInputs = try await reconfigureExistingProviders(existingManifest)
         if providerInputs.isEmpty {
             repeat {
-                providerInputs.append(try await readProvider())
+                if let input = try await readProvider(
+                    configuredProviderIDs: Set(providerInputs.map(\.id))
+                ) {
+                    providerInputs.append(input)
+                }
             } while try promptYesNo("Add another provider?", defaultValue: false)
         }
 
@@ -46,12 +50,13 @@ extension ZenCODESetupRunner {
             existingSelection: existingManifest?.selectedThinkingSelection
         )
         let apiKeysByProviderID: [String: String] = Dictionary(
-            uniqueKeysWithValues: providerInputs.compactMap { input -> (String, String)? in
+            providerInputs.compactMap { input -> (String, String)? in
                 guard let apiKey = input.apiKey else {
                     return nil
                 }
-                return (input.id.uuidString.lowercased(), apiKey)
-            }
+                return (input.id, apiKey)
+            },
+            uniquingKeysWith: { first, _ in first }
         )
         let latestCredentials = latestSubscriptionCredentials(fallback: existingManifest)
         let subscriptionCredentials = subscriptionCredentials(
@@ -136,9 +141,7 @@ extension ZenCODESetupRunner {
             preserveProviderInput(
                 provider: provider,
                 models: models(for: provider, in: manifest.models),
-                apiKey: manifest.remoteAPIKeysByProviderID[
-                    provider.id.uuidString.lowercased()
-                ],
+                apiKey: manifest.apiKey(providerID: provider.id),
                 chatGPTSubscriptionCredentials: isChatGPTSubscriptionProvider(provider)
                     ? manifest.chatGPTSubscriptionCredentials
                     : nil,
@@ -149,7 +152,11 @@ extension ZenCODESetupRunner {
         }
 
         while try promptYesNo("Add another provider?", defaultValue: false) {
-            providerInputs.append(try await readProvider())
+            if let input = try await readProvider(
+                configuredProviderIDs: Set(providerInputs.map(\.id))
+            ) {
+                providerInputs.append(input)
+            }
         }
 
         let selectedProviderIndexes = promptProviderInputIndexes(
@@ -294,14 +301,56 @@ extension ZenCODESetupRunner {
     }
 
 
-    static func readProvider() async throws -> SetupProviderInput {
-        switch try promptProviderKind() {
+    /// Reads one new provider. A provider is identified by its stable key and
+    /// configured at most once: choosing a provider whose key is already in
+    /// `configuredProviderIDs` adds nothing, prints how to reconfigure it and
+    /// returns `nil`.
+    static func readProvider(
+        configuredProviderIDs: Set<String> = []
+    ) async throws -> SetupProviderInput? {
+        let kind = try promptProviderKind(configuredProviderIDs: configuredProviderIDs)
+        if let message = alreadyConfiguredProviderMessage(
+            for: kind,
+            configuredProviderIDs: configuredProviderIDs
+        ) {
+            AgentOutput.standardError.writeString("\n\(message)\n")
+            return nil
+        }
+        switch kind {
         case let .remoteAPI(preset):
             return try await readRemoteAPIProvider(preset: preset)
         case .chatGPTSubscription:
             return try await readChatGPTSubscriptionProvider()
         case .anthropicSubscription:
             return try await readAnthropicSubscriptionProvider()
+        }
+    }
+
+    /// Menu detail of a provider choice that is already configured.
+    static let alreadyConfiguredProviderDetail =
+        "already configured: reconfigure it instead"
+
+    /// The message shown when the operator picks a provider that is already
+    /// configured, or `nil` when `kind` may be added.
+    static func alreadyConfiguredProviderMessage(
+        for kind: SetupProviderKind,
+        configuredProviderIDs: Set<String>
+    ) -> String? {
+        guard configuredProviderIDs.contains(kind.providerID) else {
+            return nil
+        }
+        return "\(providerKindTitle(kind)) is already configured (provider '\(kind.providerID)'). "
+            + "A provider cannot be added twice: reconfigure it from \"Reconfigure providers\" instead."
+    }
+
+    static func providerKindTitle(_ kind: SetupProviderKind) -> String {
+        switch kind {
+        case let .remoteAPI(preset):
+            return preset.title
+        case .chatGPTSubscription:
+            return AgentRemoteProvider.chatGPTSubscriptionDisplayTitle
+        case .anthropicSubscription:
+            return AgentRemoteProvider.anthropicSubscriptionDisplayTitle
         }
     }
 
@@ -312,7 +361,9 @@ extension ZenCODESetupRunner {
         existingAPIKey: String? = nil
     ) async throws -> SetupProviderInput {
         AgentOutput.standardError.writeString("\n\(preset.title)\(preset.isAdvanced ? " (advanced)" : "")\n")
-        let id = existingProvider?.id ?? UUID()
+        // The key is stable: a reconfigured provider keeps its own, a new one
+        // receives its preset key. An id is never generated.
+        let id = existingProvider?.id ?? preset.providerID
         let name: String
         let baseURL: String
         let chatEndpoint: AgentRemoteChatEndpoint

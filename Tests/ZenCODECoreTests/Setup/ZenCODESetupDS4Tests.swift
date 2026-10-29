@@ -129,6 +129,9 @@ struct ZenCODESetupDS4Tests {
         #expect(manifest.models.count == 2)
         let provider = try #require(manifest.providers.first)
         #expect(provider.id == ZenCODESetupRunner.ds4SetupProviderID)
+        #expect(provider.id == "ds4")
+        #expect(provider.providerProfileID == .ds4)
+        #expect(manifest.models.allSatisfy { $0.providerID == "ds4" && $0.id.hasPrefix("ds4:") })
         #expect(provider.baseURL == ZenCODESetupRunner.ds4SetupProviderBaseURL)
         #expect(provider.authPolicy == .noAuthentication)
         #expect(provider.ds4Runtime != nil)
@@ -292,14 +295,14 @@ struct ZenCODESetupDS4Tests {
             mtp: true,
             power: 73
         )
-        let providerID = UUID()
+        let providerID = ZenCODESetupRunner.ds4SetupProviderID
         let provider = AgentRemoteProvider(
             id: providerID,
             name: "Existing DS4",
             baseURL: "http://127.0.0.1:9000/v1",
             modelID: "qwen3.8-flash-next",
             chatEndpoint: .chatCompletions,
-            providerProfileID: .custom,
+            providerProfileID: .ds4,
             protocolProfileID: .openAIChatCompletions,
             authPolicy: .noAuthentication,
             ds4Runtime: previousRuntime
@@ -558,7 +561,7 @@ struct ZenCODESetupDS4Tests {
             modelRelativePath: Self.qwenPath,
             backend: .metal
         )
-        let providerID = UUID()
+        let providerID = ZenCODESetupRunner.ds4SetupProviderID
         // Port-less loopback URL: the generic path would call `/models` here.
         let provider = AgentRemoteProvider(
             id: providerID,
@@ -566,7 +569,7 @@ struct ZenCODESetupDS4Tests {
             baseURL: "http://127.0.0.1/v1",
             modelID: "qwen3.8-flash-next",
             chatEndpoint: .chatCompletions,
-            providerProfileID: .custom,
+            providerProfileID: .ds4,
             protocolProfileID: .openAIChatCompletions,
             authPolicy: .noAuthentication,
             ds4Runtime: runtime
@@ -686,7 +689,7 @@ struct ZenCODESetupDS4Tests {
             name: ZenCODESetupRunner.ds4SetupProviderName,
             baseURL: ZenCODESetupRunner.ds4SetupProviderBaseURL,
             chatEndpoint: .chatCompletions,
-            providerProfileID: .custom,
+            providerProfileID: .ds4,
             protocolProfileID: .openAIChatCompletions,
             authPolicy: .noAuthentication,
             ds4Runtime: builtRuntime
@@ -837,7 +840,7 @@ struct ZenCODESetupDS4Tests {
             name: ZenCODESetupRunner.ds4SetupProviderName,
             baseURL: ZenCODESetupRunner.ds4SetupProviderBaseURL,
             chatEndpoint: .chatCompletions,
-            providerProfileID: .custom,
+            providerProfileID: .ds4,
             protocolProfileID: .openAIChatCompletions,
             authPolicy: .noAuthentication,
             ds4Runtime: saved
@@ -914,7 +917,7 @@ struct ZenCODESetupDS4Tests {
             name: ZenCODESetupRunner.ds4SetupProviderName,
             baseURL: ZenCODESetupRunner.ds4SetupProviderBaseURL,
             chatEndpoint: .chatCompletions,
-            providerProfileID: .custom,
+            providerProfileID: .ds4,
             protocolProfileID: .openAIChatCompletions,
             authPolicy: .noAuthentication,
             ds4Runtime: saved
@@ -1213,7 +1216,7 @@ struct ZenCODESetupDS4Tests {
     }
 
     private static func remoteManifest() -> AgentSettingsManifest {
-        let providerID = UUID()
+        let providerID = "custom"
         let provider = AgentRemoteProvider(
             id: providerID,
             name: "Existing remote",
@@ -1235,7 +1238,7 @@ struct ZenCODESetupDS4Tests {
             providers: [AgentSettingsProviderManifest(provider: provider)],
             models: [model],
             selectedModelID: model.id,
-            remoteAPIKeysByProviderID: [providerID.uuidString.lowercased(): "keep-me"]
+            remoteAPIKeysByProviderID: [providerID: "keep-me"]
         )
     }
 

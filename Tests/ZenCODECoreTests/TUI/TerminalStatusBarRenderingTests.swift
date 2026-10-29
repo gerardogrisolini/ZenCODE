@@ -141,8 +141,9 @@ struct TerminalStatusBarRenderingTests {
     }
 
     @Test
-    func promptBorderDoesNotChangeMenuOrSummaryStyles() {
-        #expect(TerminalStyle.Chrome.border == "\u{1B}[22;38;5;208m")
+    func menuBorderSharesTheDimmedPromptFrameWithoutChangingSummaryStyles() {
+        #expect(TerminalStyle.Chrome.border == "\u{1B}[22;2;38;5;208m")
+        #expect(TerminalStyle.Chrome.border == TerminalStyle.Chrome.promptBorder)
         #expect(TerminalStyle.FileChange.summaryHeader == "\u{1B}[38;5;208m")
     }
 

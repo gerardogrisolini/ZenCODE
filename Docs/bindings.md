@@ -259,9 +259,12 @@ a resolved profile is still limited to that profile's authorized bindings.
 ## Binding Presets
 
 `binding-presets.json` keeps the bindings of each provider in one hand-edited
-file and applies them to every profile in a single step. It lives in the support
-directory next to `agents.json` (so it follows `ZENCODE_SUPPORT_DIRECTORY`).
-ZenCODE only reads it: it never creates it, writes it, or generates an example.
+file and applies them to every profile in a single step. It ships with the
+ZenCODE sources at `Sources/ZenPackageMetadata/binding-presets.json`; `/setup`
+reads it from the same source checkout it builds ZenCRON and optional features
+from: the checkout `zen` was built from, otherwise the installer copy under
+`<support>/source`, otherwise the current directory. ZenCODE only reads it: it
+never creates it, writes it, or generates an example.
 
 ```json
 {
@@ -285,32 +288,41 @@ ZenCODE only reads it: it never creates it, writes it, or generates an example.
 A binding has the same fields as in `agents.json`. `version` must be `1`; any
 other version is an error, as is invalid JSON.
 
-Rules, applied to every profile:
+Rules, applied to every profile when you apply the presets (see below):
 
 - **Providers.** The keys of `providers` are provider names, as in the
-  `modelProvider` of `agents.json`. Only providers configured in `settings.json`
-  count; names are compared ignoring case, accents, and surrounding spaces, and
-  empty keys are ignored.
+  `modelProvider` of `agents.json`. Only the providers configured in
+  `settings.json` that have a block in the file can be used, and you choose which
+  ones in a menu when you apply the presets (see below); names are compared
+  ignoring case, accents, and surrounding spaces, and empty keys are ignored.
 - **Order.** The order of the provider keys in the file is the priority order,
-  not the order of `settings.json`.
+  not the order of `settings.json` and not the order of the selection.
 - **Profiles.** Inside a provider, a key is a profile id or a role. The entry
   written under the profile's id wins; the entry written under its role is the
   fallback, so a custom profile can use its role's preset.
-- **Result.** The bindings of every matching provider are concatenated. The
+- **Result.** The bindings of every applicable provider are concatenated. The
   default is the first non-empty `defaultModelBindingID` in file order (if it
   names no resulting binding, the usual profile default rule applies).
 - **Replacement is total.** A profile with no applicable entry ends up with no
   bindings. Its other fields are untouched. Bindings whose model is not in
   `settings.json` are dropped on save, exactly as for bindings edited by hand.
 
-Two places apply a preset, and neither runs on its own:
+Presets are never applied on their own. There is one place to apply them, and one
+to clear bindings, both in `/setup` > Agent model bindings:
 
-- `/setup` > Agent model bindings > **Apply binding presets** (right after
-  **Done**) replaces the bindings of all agents in the setup session with the
-  file's. Nothing is written until **Done**; `Esc` discards. A missing or invalid
-  file is reported with its path and leaves the agents unchanged.
-- At the end of a **first setup** (no `agents.json` yet), setup asks
-  `Apply binding presets from binding-presets.json?` (default No). It asks only
-  when the file loads, at least one configured provider has a block in it, and
-  the profiles about to be written have no bindings yet, so work done in the same
-  session is never overwritten. A missing or invalid file skips the question.
+- **Apply binding presets** (right after **Done**) first opens a menu to choose
+  the providers to use. It lists only the configured providers that have a block
+  in the file, in file order, all pre-checked (so **Enter** alone uses them all),
+  and it appears even when there is a single one. It then replaces the bindings
+  of all agents in the setup session with the presets of the checked providers
+  (the replacement is total, as above). Confirming with no provider checked, or
+  pressing `Esc`, returns to the Agent model bindings menu with the agents
+  unchanged. A missing source checkout is reported, a missing or invalid file is
+  reported with its path, and so is a file with no block for any configured
+  provider; in all these cases the agents stay unchanged and the menu is not
+  shown.
+- **Reset** (right below it) removes every agent's bindings and default binding
+  at once, with no confirmation, whatever their source.
+
+Neither writes anything until **Done**; `Esc` on the Agent model bindings menu
+discards the unsaved changes.

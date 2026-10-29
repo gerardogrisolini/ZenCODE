@@ -68,9 +68,7 @@ public enum AgentDelegationCatalogSnapshot: Sendable {
 
         let resolvedProvider = provider.withModelID(rawModelID)
         let apiKey = provider.authPolicy.effectiveAPIKey(
-            manifest.remoteAPIKeysByProviderID[
-                provider.id.uuidString.lowercased()
-            ]
+            manifest.apiKey(providerID: provider.id)
         )
         let configuredContextWindowLimit = model.configuredContextWindowLimit
 
@@ -108,9 +106,7 @@ public enum AgentDelegationCatalogSnapshot: Sendable {
         }
 
         let apiKey = provider.authPolicy.effectiveAPIKey(
-            manifest.remoteAPIKeysByProviderID[
-                provider.id.uuidString.lowercased()
-            ]
+            manifest.apiKey(providerID: provider.id)
         )
         if provider.requiresAPIKey, apiKey == nil {
             return "the configured provider has no API key"
@@ -192,7 +188,7 @@ public struct ResolvedAgentModelBinding: Sendable, Hashable {
         model.modelID
     }
 
-    public var providerID: UUID? {
+    public var providerID: String? {
         model.provider?.id ?? model.providerID
     }
 
@@ -590,8 +586,8 @@ public enum AgentDelegationCatalog {
             candidates = candidates.filter { model in
                 lookupKey(AgentModelCatalogPresentation.providerGroupTitle(for: model)) == hintKey
                     || lookupKey(model.provider?.displayTitle ?? "") == hintKey
-                    || lookupKey(model.provider?.id.uuidString ?? "") == hintKey
-                    || lookupKey(model.providerID?.uuidString ?? "") == hintKey
+                    || lookupKey(model.provider?.id ?? "") == hintKey
+                    || lookupKey(model.providerID ?? "") == hintKey
             }
             if candidates.count == 1, let model = candidates.first {
                 return .success(model)

@@ -74,6 +74,59 @@ kept by `readOnly` profiles such as Reviewer and Planner.
   be the `toolPrefix` of an MCP bridge.
 - No persisted format changes.
 
+**Migration: stable provider keys (settings v15).** Providers are no longer
+identified by UUIDs. Every provider has one stable lowercase key, derived by
+`AgentRemoteProvider.providerKey(providerProfileID:protocolProfileID:)` (the
+single key table; setup presets use it): `openrouter`, `openai`, `anthropic`,
+`zai`, `zai-coding-plan`, `google.gemini`, `deepseek`, `moonshot`, `nvidia`,
+`modal`, `custom`, `ds4`, `chatgpt`, and `claude`. The key is the provider
+profile raw value, except the subscriptions (`chatgpt`, `claude`, the prefixes
+their model ids already used) and the Z.ai Coding Plan. The DS4 provider has
+its own `ds4` provider profile (formerly `custom`), with unchanged runtime
+behaviour. An id is never generated: a provider is configured at most once, and
+setup refuses to add a provider whose key is already configured (it must be
+reconfigured instead), so Custom exists at most once.
+
+- `settings.json` v15: provider `id`, model `providerID`,
+  `memoryEmbedding.providerID`, and the keys of `remoteAPIKeysByProviderID`
+  (field name unchanged) hold provider keys. Remote API model ids are
+  `<providerKey>:<modelID>` (for example `openrouter:moonshotai/kimi-k3.1-pro`);
+  the model component may contain `:`, so ids are split on the first colon.
+  Subscription (`chatgpt:<model>`, `claude:<model>`) and DS4
+  (`ds4:<catalog-id|file-stem>`) model ids are unchanged. The `remote:<uuid>`
+  provider group id becomes `remote:<key>`.
+- `AgentProviderKeyMigration` migrates older files automatically and persists
+  the result. It runs at composition start in `zen` (after argument validation,
+  before the setup gate, for chat, headless, JSONL, and ACP alike; `--help`,
+  `--version`, `--doctor`, and `--install-features` stay read-only) and again
+  right after a backup import. It is not part of the settings load path, so
+  reads never mutate files and setup's compare-and-swap baseline stays valid.
+  It owns the legacy-UUID-to-key map and commits `settings.json` and
+  `agents.json` together under the shared manifest lock with the
+  rollback-first journal of `ZenFileService` (atomic `0600` writes). The
+  fixed UUIDs `…0003`/`…0004` and the subscription protocols map to
+  `chatgpt`/`claude`; `…0005` or a DS4 runtime maps to `ds4`; every other
+  provider gets the key of its profiles. Model ids and `llmID`s of the form
+  `remoteapi:<uuid>:<model>`, the selected model, the API-key map, and
+  `memoryEmbedding.providerID` (dropped when it names no provider) follow. In
+  `agents.json`, binding `id`/`modelID`, `defaultModelBindingID`, and the legacy
+  profile `modelID`/`defaultModelID` are rewritten at JSON level, so profiles
+  that fail strict decoding are kept too; references to a UUID that names no
+  legacy provider are left for the next profile save, and an `agents.json` that
+  is not a JSON object is left untouched. When two legacy providers map to one
+  key, the first in persisted order is kept and the later one is dropped with
+  its models and API key, with a warning on standard error naming it.
+- The migration runs when the version is below 15 or a provider id is not a
+  known key (so a legacy manifest re-saved as v15 after a failed migration is
+  still healed); current files, and their `agents.json`, are never touched. A
+  failure is reported on standard error and is not fatal: legacy files still
+  decode (their UUIDs become lowercase string ids, consistent with the
+  UUID-keyed API-key map) and the migration is retried at the next start.
+- Saved sessions are not migrated: a `remoteapi:<uuid>:<model>` reference still
+  restores through the model-component fallback of `TerminalChat.modelReferences`.
+  The `remoteapimodel:<uuid>` and `remoteapi:<uuid>` spellings are no longer
+  documented for `--model` / `ZENCODE_AGENT_MODEL`; use `<provider>:<model>`.
+
 `Package.swift` remains the authoritative declaration of the SwiftPM graph,
 platform conditions, products, and build flags. Every local Swift target enables
 `MemberImportVisibility`: each source file must import the module that defines

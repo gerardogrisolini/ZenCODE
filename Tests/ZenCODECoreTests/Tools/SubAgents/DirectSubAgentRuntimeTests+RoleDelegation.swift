@@ -4,9 +4,7 @@ import ToolCore
 @testable import ZenCODECore
 
 extension DirectSubAgentRuntimeTests {
-    private static let roleProviderID = UUID(
-        uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-    )!
+    private static let roleProviderID = "custom"
 
     private static func roleCatalogSnapshot(
         _ modelIDs: [String]

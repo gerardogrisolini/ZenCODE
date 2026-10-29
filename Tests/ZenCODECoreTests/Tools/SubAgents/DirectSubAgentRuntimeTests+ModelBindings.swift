@@ -4,9 +4,7 @@ import ToolCore
 @testable import ZenCODECore
 
 extension DirectSubAgentRuntimeTests {
-    private static let catalogProviderID = UUID(
-        uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    )!
+    private static let catalogProviderID = "custom"
 
     private static func catalogSnapshot(
         _ modelIDs: [String]

@@ -112,7 +112,7 @@ enum MemoryEmbedding {
     /// forward an OpenRouter key to an arbitrary host.
     private static func providerAPIKey(
         manifest: AgentSettingsManifest?,
-        providerID: UUID?,
+        providerID: String?,
         endpoint: URL
     ) -> String? {
         guard let providerID,
@@ -123,9 +123,7 @@ enum MemoryEmbedding {
             return nil
         }
         return provider.authPolicy.effectiveAPIKey(
-            manifest.remoteAPIKeysByProviderID[
-                providerID.uuidString.lowercased()
-            ]
+            manifest.apiKey(providerID: providerID)
         )
     }
 

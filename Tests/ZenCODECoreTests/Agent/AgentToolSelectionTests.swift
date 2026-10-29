@@ -393,7 +393,7 @@ extension AgentConfigurationTests {
 
     @Test
     func groupedModelTitlesOmitRedundantProviderFallback() throws {
-        let providerID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+        let providerID = "custom"
         let fallbackTitleModel = AgentSettingsModelManifestFactory.remoteAPIModel(
             title: nil,
             modelID: "remote-community/qwen3",

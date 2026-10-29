@@ -69,7 +69,7 @@ public enum AgentRemoteChatEndpoint: String, Codable, Sendable {
     }
 }
 
-public enum AgentProviderProfileID: String, Codable, Hashable, Sendable {
+public enum AgentProviderProfileID: String, CaseIterable, Codable, Hashable, Sendable {
     case openAI = "openai"
     case anthropic = "anthropic"
     case openRouter = "openrouter"
@@ -80,6 +80,9 @@ public enum AgentProviderProfileID: String, Codable, Hashable, Sendable {
     case nvidia = "nvidia"
     case modal = "modal"
     case custom = "custom"
+    /// The local in-process DS4 runtime. It speaks the OpenAI-compatible Chat
+    /// Completions dialect like `custom`, but has its own stable provider key.
+    case ds4 = "ds4"
 }
 
 public enum AgentProtocolProfileID: String, Codable, Hashable, Sendable {
@@ -138,14 +141,106 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
     public static let defaultOpenRouterName = "OpenRouter"
     public static let defaultOpenRouterBaseURL = "https://openrouter.ai/api/v1"
     public static let defaultOpenRouterModelID = "openrouter/auto"
-    public static let chatGPTSubscriptionProviderID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+    /// Stable provider key of the ChatGPT subscription. It equals the prefix of
+    /// the subscription model ids (`chatgpt:<model>`).
+    public static let chatGPTSubscriptionProviderID = "chatgpt"
     public static let chatGPTSubscriptionDisplayTitle = "ChatGPT Subscription"
     public static let anthropicSubscriptionDisplayTitle = "Claude Subscription"
     public static let chatGPTSubscriptionBaseURL = "chatgpt://subscription"
-    public static let anthropicSubscriptionProviderID = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
+    /// Stable provider key of the Claude subscription. It equals the prefix of
+    /// the subscription model ids (`claude:<model>`).
+    public static let anthropicSubscriptionProviderID = "claude"
     public static let anthropicSubscriptionBaseURL = "anthropic://subscription"
+    /// Stable provider key of the Z.ai Coding Plan, which shares the `zai`
+    /// provider profile with the standard Z.ai API.
+    public static let zaiCodingPlanProviderID = "zai-coding-plan"
+    /// Stable provider key of the local DS4 runtime.
+    public static let ds4ProviderID = AgentProviderProfileID.ds4.rawValue
 
-    public let id: UUID
+    /// Every stable provider key. A provider is identified by exactly one of
+    /// these lowercase keys, so a provider cannot be configured twice.
+    public static let knownProviderIDs: Set<String> = Set(
+        AgentProviderProfileID.allCases.map(\.rawValue)
+    ).union([
+        chatGPTSubscriptionProviderID,
+        anthropicSubscriptionProviderID,
+        zaiCodingPlanProviderID
+    ])
+
+    /// The single source of truth of the provider key table: the provider
+    /// profile raw value, except the subscriptions (`chatgpt`, `claude`, the
+    /// prefixes of their model ids) and the Z.ai Coding Plan
+    /// (`zai-coding-plan`), which share a provider profile with an API preset.
+    public static func providerKey(
+        providerProfileID: AgentProviderProfileID,
+        protocolProfileID: AgentProtocolProfileID
+    ) -> String {
+        switch protocolProfileID {
+        case .openAIChatGPTSubscription:
+            return chatGPTSubscriptionProviderID
+        case .anthropicClaudeSubscription:
+            return anthropicSubscriptionProviderID
+        case .zaiCodingPlan where providerProfileID == .zAI:
+            return zaiCodingPlanProviderID
+        default:
+            return providerProfileID.rawValue
+        }
+    }
+
+    /// Normalizes a provider key: trimmed and lowercased. A blank value yields
+    /// `nil`, so callers fall back to the derived key.
+    public static func normalizedProviderID(_ value: String?) -> String? {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().nilIfBlank
+    }
+
+    /// Builds the configured-model identifier of a remote API model:
+    /// `<providerKey>:<modelID>`. The model component may itself contain `:`
+    /// (for example `deepseek/deepseek-r1:free`), so parsers split on the
+    /// first colon only.
+    public static func modelManifestID(providerID: String, modelID: String) -> String {
+        "\(normalizedProviderID(providerID) ?? providerID):\(modelID)"
+    }
+
+    /// Splits `<providerKey>:<modelID>` on the first colon when the prefix is
+    /// a known provider key, otherwise returns `nil`.
+    public static func providerScopedModelID(
+        _ value: String
+    ) -> (providerID: String, modelID: String)? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let separator = trimmed.firstIndex(of: ":") else {
+            return nil
+        }
+        let providerID = trimmed[..<separator].lowercased()
+        let modelID = String(trimmed[trimmed.index(after: separator)...])
+        guard knownProviderIDs.contains(providerID), !modelID.isEmpty else {
+            return nil
+        }
+        return (providerID, modelID)
+    }
+
+    /// Provider keys whose model ids keep a dedicated format and resolution:
+    /// the subscriptions (`chatgpt:`, `claude:`) and the local DS4 runtime.
+    public static let nonRemoteAPIProviderIDs: Set<String> = [
+        chatGPTSubscriptionProviderID,
+        anthropicSubscriptionProviderID,
+        ds4ProviderID
+    ]
+
+    /// Like ``providerScopedModelID(_:)`` but only for remote API provider keys
+    /// (every key except ``nonRemoteAPIProviderIDs``): these are the ids that
+    /// replaced the pre-v15 `remoteapi:<uuid>:<modelID>` identifiers.
+    public static func remoteAPIScopedModelID(
+        _ value: String
+    ) -> (providerID: String, modelID: String)? {
+        guard let scoped = providerScopedModelID(value),
+              !nonRemoteAPIProviderIDs.contains(scoped.providerID) else {
+            return nil
+        }
+        return scoped
+    }
+
+    /// Stable lowercase provider key (see ``providerKey(providerProfileID:protocolProfileID:)``).
+    public let id: String
     public let name: String
     public let baseURL: String
     public let modelID: String
@@ -157,8 +252,10 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
     /// OpenAI-compatible base URL remains unchanged and is still persisted.
     public let ds4Runtime: AgentDS4RuntimeConfiguration?
 
+    /// Creates a provider. When `id` is nil or blank the provider receives the
+    /// stable key derived from its resolved profiles; an id is never generated.
     public init(
-        id: UUID = UUID(),
+        id: String? = nil,
         name: String = Self.defaultOpenRouterName,
         baseURL: String = Self.defaultOpenRouterBaseURL,
         modelID: String = Self.defaultOpenRouterModelID,
@@ -168,23 +265,34 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
         authPolicy: AgentProviderAuthPolicy? = nil,
         ds4Runtime: AgentDS4RuntimeConfiguration? = nil
     ) {
-        self.id = id
+        let normalizedID = Self.normalizedProviderID(id)
         self.name = Self.normalizedName(name)
         self.baseURL = Self.normalizedBaseURL(baseURL)
         self.modelID = Self.normalizedModelID(modelID)
-        let legacyProfiles = Self.legacyProfiles(id: id, baseURL: baseURL, chatEndpoint: chatEndpoint)
-        self.providerProfileID = providerProfileID ?? legacyProfiles.provider
+        let legacyProfiles = Self.legacyProfiles(id: normalizedID, baseURL: baseURL, chatEndpoint: chatEndpoint)
+        // A DS4 runtime (or the `ds4` key) identifies the local DS4 provider,
+        // which would otherwise be inferred as a custom OpenAI-compatible one.
+        let inferredProviderProfileID: AgentProviderProfileID =
+            legacyProfiles.provider == .custom && (ds4Runtime != nil || normalizedID == Self.ds4ProviderID)
+                ? .ds4
+                : legacyProfiles.provider
+        let resolvedProviderProfileID = providerProfileID ?? inferredProviderProfileID
+        self.providerProfileID = resolvedProviderProfileID
         let resolvedProtocolProfileID = protocolProfileID ?? legacyProfiles.protocolProfile
         self.protocolProfileID = resolvedProtocolProfileID
         self.authPolicy = authPolicy ?? legacyProfiles.auth
         self.chatEndpoint = resolvedProtocolProfileID.chatEndpoint ?? chatEndpoint
         self.ds4Runtime = ds4Runtime
+        self.id = normalizedID ?? Self.providerKey(
+            providerProfileID: resolvedProviderProfileID,
+            protocolProfileID: resolvedProtocolProfileID
+        )
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
-            id: try container.decode(UUID.self, forKey: .id),
+            id: try container.decodeIfPresent(String.self, forKey: .id),
             name: try container.decode(String.self, forKey: .name),
             baseURL: try container.decode(String.self, forKey: .baseURL),
             modelID: try container.decode(String.self, forKey: .modelID),
@@ -294,15 +402,18 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
         }
     }
 
+    /// Infers the profiles of a provider persisted without them: the
+    /// subscription keys and base URLs, then the hosted API hosts.
     public static func legacyProfiles(
-        id: UUID,
+        id: String?,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint
     ) -> (provider: AgentProviderProfileID, protocolProfile: AgentProtocolProfileID, auth: AgentProviderAuthPolicy) {
-        if id == chatGPTSubscriptionProviderID || isChatGPTSubscriptionBaseURL(baseURL) {
+        let normalizedID = normalizedProviderID(id)
+        if normalizedID == chatGPTSubscriptionProviderID || isChatGPTSubscriptionBaseURL(baseURL) {
             return (.openAI, .openAIChatGPTSubscription, .chatGPTSubscription)
         }
-        if id == anthropicSubscriptionProviderID || isAnthropicSubscriptionBaseURL(baseURL) {
+        if normalizedID == anthropicSubscriptionProviderID || isAnthropicSubscriptionBaseURL(baseURL) {
             return (.anthropic, .anthropicClaudeSubscription, .anthropicSubscription)
         }
 
@@ -601,7 +712,7 @@ public enum AgentModelCatalogPresentation {
         for model: AgentSettingsModelManifest
     ) -> String {
         if let providerID = model.provider?.id ?? model.providerID {
-            return "remote:\(providerID.uuidString.lowercased())"
+            return "remote:\(providerID)"
         }
 
         return "remote:\(providerGroupTitle(for: model).foldedProviderGroupKey)"
@@ -752,16 +863,12 @@ public enum AgentSettingsStore {
             .nilIfEmpty
     }
 
-    public static func apiKey(providerID: UUID) -> String? {
+    /// The API key stored for a provider, looked up by its stable provider key.
+    public static func apiKey(providerID: String) -> String? {
         guard let manifest = AgentSettingsManifestStore.load() else {
             return nil
         }
-        if let apiKey = manifest.remoteAPIKeysByProviderID[
-            providerID.uuidString.lowercased()
-        ]?.nilIfBlank {
-            return apiKey
-        }
-        return nil
+        return manifest.apiKey(providerID: providerID)
     }
 
     public static func modelSelection(forLLMID llmID: String) -> AgentModelSelection? {
@@ -810,10 +917,17 @@ public enum AgentSettingsStore {
         }
     }
 
+    /// Whether `llmID` names a remote API model by its provider-scoped id
+    /// (`<providerKey>:<modelID>`). Subscription (`chatgpt:`, `claude:`) and
+    /// DS4 (`ds4:`) ids keep their own resolution and are not matched. The
+    /// pre-v15 `remoteapi:` spellings are still recognised so an unresolved
+    /// legacy reference fails closed instead of reaching a fallback provider.
     public static func isRemoteLLMIDSyntax(_ llmID: String) -> Bool {
         let trimmed = llmID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return trimmed.hasPrefix("remoteapi:")
-            || trimmed.hasPrefix("remoteapimodel:")
+        if trimmed.hasPrefix("remoteapi:") || trimmed.hasPrefix("remoteapimodel:") {
+            return true
+        }
+        return AgentRemoteProvider.remoteAPIScopedModelID(trimmed) != nil
     }
 
 }

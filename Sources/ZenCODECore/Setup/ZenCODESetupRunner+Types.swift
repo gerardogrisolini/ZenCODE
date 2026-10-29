@@ -148,15 +148,6 @@ struct SetupSession {
         }
     }
 
-    /// Stages agent profiles on their own: the settings manifest and the
-    /// settings-write bookkeeping stay untouched. `ensureRequiredFiles` writes
-    /// the staged profiles, so this is how a change that belongs to the
-    /// profiles alone (the binding presets accepted at the end of a first
-    /// setup) reaches agents.json.
-    mutating func stageAgentProfiles(_ agentProfiles: [AgentProfile]) {
-        self.agentProfiles = agentProfiles
-    }
-
     /// Whether settings.json must be (re)written for the current manifest.
     var shouldWriteSettings: Bool {
         guard let manifest else {
@@ -220,7 +211,8 @@ enum SetupSection: Equatable, Hashable {
 }
 
 struct SetupProviderInput {
-    let id: UUID
+    /// Stable provider key (see `SetupProviderPreset.providerID`).
+    let id: String
     let name: String
     let baseURL: String
     let chatEndpoint: AgentRemoteChatEndpoint
@@ -234,7 +226,7 @@ struct SetupProviderInput {
     let anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials?
 
     init(
-        id: UUID,
+        id: String,
         name: String,
         baseURL: String,
         chatEndpoint: AgentRemoteChatEndpoint,
@@ -247,7 +239,7 @@ struct SetupProviderInput {
         chatGPTSubscriptionCredentials: CodexAgentCredentials? = nil,
         anthropicSubscriptionCredentials: AnthropicSubscriptionCredentials? = nil
     ) {
-        self.id = id
+        self.id = AgentRemoteProvider.normalizedProviderID(id) ?? id
         self.name = name
         self.baseURL = baseURL
         self.chatEndpoint = chatEndpoint
@@ -271,6 +263,20 @@ enum SetupProviderKind: Hashable {
     case remoteAPI(SetupProviderPreset)
     case chatGPTSubscription
     case anthropicSubscription
+
+    /// The stable key of the provider this choice configures. A provider is
+    /// configured at most once, so a choice whose key is already configured
+    /// must be reconfigured instead of added.
+    var providerID: String {
+        switch self {
+        case let .remoteAPI(preset):
+            return preset.providerID
+        case .chatGPTSubscription:
+            return AgentRemoteProvider.chatGPTSubscriptionProviderID
+        case .anthropicSubscription:
+            return AgentRemoteProvider.anthropicSubscriptionProviderID
+        }
+    }
 }
 
 enum SetupProviderFamily: Hashable {
@@ -284,9 +290,9 @@ enum SetupAnthropicProviderOption: Hashable {
     case subscription
 }
 
-/// Hosted API defaults exposed by setup. These are intentionally configuration
-/// presets, not provider identities: every configured provider still receives a
-/// fresh UUID, its own key and its own model records.
+/// Hosted API defaults exposed by setup. Each preset configures exactly one
+/// provider identified by its stable key (`providerID`); a provider that is
+/// already configured cannot be added again and must be reconfigured.
 enum SetupProviderPreset: String, CaseIterable, Hashable {
     case openRouter
     case openAIAPI
@@ -359,6 +365,16 @@ enum SetupProviderPreset: String, CaseIterable, Hashable {
 
     var authPolicy: AgentProviderAuthPolicy {
         self == .custom ? .apiKeyOptional : .apiKeyRequired
+    }
+
+    /// Stable provider key, derived from the preset profiles through the single
+    /// key table: `openrouter`, `openai`, `anthropic`, `zai`, `zai-coding-plan`,
+    /// `google.gemini`, `deepseek`, `moonshot`, `nvidia`, `modal`, `custom`.
+    var providerID: String {
+        AgentRemoteProvider.providerKey(
+            providerProfileID: providerProfileID,
+            protocolProfileID: protocolProfileID
+        )
     }
 
     var isAdvanced: Bool { self == .custom }
