@@ -118,6 +118,13 @@ public enum ZenCODESetupRunner {
         case .noModels:
             throw ZenCODESetupError.noModelsConfigured
         case let .write(finalManifest, shouldWriteSettings):
+            // Only on a first setup, and only on an explicit yes: the presets
+            // never apply on their own.
+            try offerBindingPresetsAtFirstSetup(
+                session: &session,
+                finalManifest: finalManifest,
+                agentsFileExisted: manifestBaseline.agentsData != nil
+            )
             printSetupSummary(
                 manifest: finalManifest,
                 settingsWillBeWritten: shouldWriteSettings

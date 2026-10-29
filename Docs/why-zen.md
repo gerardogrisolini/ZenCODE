@@ -2,6 +2,17 @@
 
 Why this project exists and where it differs from other coding agents.
 
+## Agentic workflow
+
+- Agent profiles (`Developer`, `Builder`, `Minimal`, `Planner`, `Reviewer`, `Reporter`) with dedicated tools, skills, model bindings, and instructions — see [agents.md](agents.md).
+- `/plan` authored by one read-only `Planner`, with `/plan save` and `/plan load` for reviewable handoffs between sessions of the same project; `/review` delegated to read-only `Reviewer` sub-agents.
+- `/goal` works until completion or a genuine blocker on a persistent dependency-aware task graph, executing directly or delegating when useful, with validation and retry. Delegated results still require independent validation.
+- Capability-based delegation: each profile's model bindings carry a capability score (1–10) and every task a complexity (1–10), so the coordinator steers each unit of work to the lowest-capability sub-agent that still meets it — matching effort to task instead of picking by seniority. See [bindings.md](bindings.md). A whole provider's bindings can be applied to every profile in one step from `binding-presets.json` — see [bindings.md](bindings.md#binding-presets).
+- Dynamic Swift Features: the Builder generates reusable Swift packages as durable tools.
+- Change tracking and `/undo` as a safety net.
+- Saved sessions with checkpoint trees: per-project snapshots with branching, checkpoints, and in-place restore from any point; per-project graph-backed memory with automatic recall — BM25 keyword retrieval plus graph expansion (no second LLM call), injected into every round of the turn as a character-budgeted block (about 1k tokens by default) — optional semantic search via an embeddings configuration (endpoint, optional model; set up in `/setup`, with an OpenRouter proposal when OpenRouter is a configured provider; pure BM25 when unset), and explicit model-managed durable memory through the five `memory.*` tools; plus optional project `AGENTS.md` guidance read into the agent context when present.
+- Modular skills selectable per session, installable from GitHub or a local folder.
+
 ## Run anywhere
 
 - Drive ZenCODE with any OpenAI-compatible API endpoint (OpenRouter, local servers, any `/v1` provider), or sign in with your existing **ChatGPT** or **Claude subscription** through the browser — no API key needed.
@@ -30,17 +41,6 @@ Why this project exists and where it differs from other coding agents.
 
 - ACP agent over stdio: connects to compatible clients including **Xcode 27** as a native coding agent.
 - Xcode and Figma tools exposed via MCP when available.
-
-## Agentic workflow
-
-- Agent profiles (`Developer`, `Builder`, `Minimal`, `Planner`, `Reviewer`, `Reporter`) with dedicated tools, skills, model bindings, and instructions — see [agents.md](agents.md).
-- `/plan` authored by one read-only `Planner`, with `/plan save` and `/plan load` for reviewable handoffs between sessions of the same project; `/review` delegated to read-only `Reviewer` sub-agents.
-- `/goal` works until completion or a genuine blocker on a persistent dependency-aware task graph, executing directly or delegating when useful, with validation and retry. Delegated results still require independent validation.
-- Capability-based delegation: each profile's model bindings carry a capability score (1–10) and every task a complexity (1–10), so the coordinator steers each unit of work to the lowest-capability sub-agent that still meets it — matching effort to task instead of picking by seniority. See [bindings.md](bindings.md).
-- Dynamic Swift Features: the Builder generates reusable Swift packages as durable tools.
-- Change tracking and `/undo` as a safety net.
-- Saved sessions with checkpoint trees: per-project snapshots with branching, checkpoints, and in-place restore from any point; per-project graph-backed memory with automatic recall — BM25 keyword retrieval plus graph expansion (no second LLM call), injected into every round of the turn as a character-budgeted block (about 1k tokens by default) — optional semantic search via an embeddings configuration (endpoint, optional model; set up in `/setup`, with an OpenRouter proposal when OpenRouter is a configured provider; pure BM25 when unset), and explicit model-managed durable memory through the five `memory.*` tools; plus optional project `AGENTS.md` guidance read into the agent context when present.
-- Modular skills selectable per session, installable from GitHub or a local folder.
 
 ## Extras
 

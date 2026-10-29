@@ -23,6 +23,10 @@ extension ZenCODEAgentProfileSetupRunner {
         case remove
     }
 
+    /// Menu value of "Apply binding presets". The bulk menu uses 0 for "Done"
+    /// and `index + 1` for agents, so a negative value cannot collide.
+    private static let applyBindingPresetsChoice = -1
+
     /// Interactive bulk setup for assigning one or more explicitly authorized
     /// model bindings to each agent. Capability and thinking belong to each
     /// binding, not to the profile as a whole.
@@ -82,6 +86,11 @@ extension ZenCODEAgentProfileSetupRunner {
                     value: 0,
                     title: "Done",
                     detail: "save and exit"
+                ),
+                TerminalCheckboxMenuItem(
+                    value: Self.applyBindingPresetsChoice,
+                    title: "Apply binding presets",
+                    detail: "replace all bindings with \(AgentBindingPresets.filename)"
                 )
             ]
             items.append(contentsOf: agents.enumerated().map { index, agent in
@@ -116,12 +125,55 @@ extension ZenCODEAgentProfileSetupRunner {
                         : "\nStaged: agents.json (\(normalized.count) agents)\n\n"
                 )
                 return normalized
+            case Self.applyBindingPresetsChoice?:
+                agents = applyBindingPresets(
+                    to: agents,
+                    configuredProviderNames: currentManifest.providers.map(\.displayTitle)
+                )
             case let choice?:
                 let index = choice - 1
                 guard agents.indices.contains(index) else { continue }
                 agents[index] = try configureModelBindingsForAgent(agents[index], models: models)
             }
         }
+    }
+
+    // MARK: - Binding presets
+
+    /// The "Apply binding presets" action: replaces the bindings of the in-memory
+    /// agents with those of the presets file. Nothing is written to disk here;
+    /// "Done" stages or saves the result and Esc discards it. A missing or
+    /// invalid file is reported and leaves the agents unchanged.
+    private static func applyBindingPresets(
+        to agents: [AgentProfile],
+        configuredProviderNames: [String],
+        url: URL = AgentBindingPresets.defaultURL()
+    ) -> [AgentProfile] {
+        let presets: AgentBindingPresets
+        do {
+            guard let loaded = try AgentBindingPresets.load(from: url) else {
+                AgentOutput.standardError.writeString(
+                    "\nBinding presets file not found: \(url.path)\n\n"
+                )
+                return agents
+            }
+            presets = loaded
+        } catch {
+            AgentOutput.standardError.writeString(
+                "\n\(error.localizedDescription)\n\n"
+            )
+            return agents
+        }
+
+        let updated = presets.applying(
+            to: agents,
+            configuredProviderNames: configuredProviderNames
+        )
+        AgentOutput.standardError.writeString(
+            "\nApplied binding presets from \(url.path): "
+                + "\(AgentBindingPresets.outcomeDescription(for: updated)).\n\n"
+        )
+        return updated
     }
 
     // MARK: - Per-agent binding configuration

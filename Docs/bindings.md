@@ -255,3 +255,62 @@ a resolved profile is still limited to that profile's authorized bindings.
 > **Configure at least one binding for every profile that should receive
 > delegated work.** Without it, the profile is invisible to capability routing,
 > exactly like `Builder` in the screenshot.
+
+## Binding Presets
+
+`binding-presets.json` keeps the bindings of each provider in one hand-edited
+file and applies them to every profile in a single step. It lives in the support
+directory next to `agents.json` (so it follows `ZENCODE_SUPPORT_DIRECTORY`).
+ZenCODE only reads it: it never creates it, writes it, or generates an example.
+
+```json
+{
+  "version": 1,
+  "providers": {
+    "Claude Subscription": {
+      "developer": {
+        "defaultModelBindingID": "claude:claude-opus-5-5",
+        "modelBindings": [
+          { "id": "claude:claude-haiku-5-5", "modelID": "claude:claude-haiku-5-5", "modelProvider": "Claude Subscription", "capability": 2, "thinkingSelection": "low" },
+          { "id": "claude:claude-opus-5-5", "modelID": "claude:claude-opus-5-5", "modelProvider": "Claude Subscription", "capability": 8, "thinkingSelection": "high" }
+        ]
+      },
+      "reviewer": { "modelBindings": [] }
+    },
+    "OpenRouter": { "developer": { "modelBindings": [] } }
+  }
+}
+```
+
+A binding has the same fields as in `agents.json`. `version` must be `1`; any
+other version is an error, as is invalid JSON.
+
+Rules, applied to every profile:
+
+- **Providers.** The keys of `providers` are provider names, as in the
+  `modelProvider` of `agents.json`. Only providers configured in `settings.json`
+  count; names are compared ignoring case, accents, and surrounding spaces, and
+  empty keys are ignored.
+- **Order.** The order of the provider keys in the file is the priority order,
+  not the order of `settings.json`.
+- **Profiles.** Inside a provider, a key is a profile id or a role. The entry
+  written under the profile's id wins; the entry written under its role is the
+  fallback, so a custom profile can use its role's preset.
+- **Result.** The bindings of every matching provider are concatenated. The
+  default is the first non-empty `defaultModelBindingID` in file order (if it
+  names no resulting binding, the usual profile default rule applies).
+- **Replacement is total.** A profile with no applicable entry ends up with no
+  bindings. Its other fields are untouched. Bindings whose model is not in
+  `settings.json` are dropped on save, exactly as for bindings edited by hand.
+
+Two places apply a preset, and neither runs on its own:
+
+- `/setup` > Agent model bindings > **Apply binding presets** (right after
+  **Done**) replaces the bindings of all agents in the setup session with the
+  file's. Nothing is written until **Done**; `Esc` discards. A missing or invalid
+  file is reported with its path and leaves the agents unchanged.
+- At the end of a **first setup** (no `agents.json` yet), setup asks
+  `Apply binding presets from binding-presets.json?` (default No). It asks only
+  when the file loads, at least one configured provider has a block in it, and
+  the profiles about to be written have no bindings yet, so work done in the same
+  session is never overwritten. A missing or invalid file skips the question.

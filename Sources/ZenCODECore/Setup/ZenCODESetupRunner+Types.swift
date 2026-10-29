@@ -148,6 +148,15 @@ struct SetupSession {
         }
     }
 
+    /// Stages agent profiles on their own: the settings manifest and the
+    /// settings-write bookkeeping stay untouched. `ensureRequiredFiles` writes
+    /// the staged profiles, so this is how a change that belongs to the
+    /// profiles alone (the binding presets accepted at the end of a first
+    /// setup) reaches agents.json.
+    mutating func stageAgentProfiles(_ agentProfiles: [AgentProfile]) {
+        self.agentProfiles = agentProfiles
+    }
+
     /// Whether settings.json must be (re)written for the current manifest.
     var shouldWriteSettings: Bool {
         guard let manifest else {

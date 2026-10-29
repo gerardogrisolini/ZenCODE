@@ -10,6 +10,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- Binding presets: an optional, hand-edited `binding-presets.json` next to
+  `agents.json` keeps model bindings per provider. `/setup` > Agent model
+  bindings > **Apply binding presets** replaces every agent's bindings from it,
+  and a first setup offers it (default No). See [Docs/bindings.md](Docs/bindings.md#binding-presets).
+
+### Changed
+
+- The README and [Why ZenCODE](Docs/why-zen.md) are reorganized around three
+  ideas: talking to sub-agents while they work, capability-based routing with
+  model bindings and binding presets, and tools built on request with the
+  Builder.
+
 ## [3.1.0] - 2026-10-28
 
 ### Added

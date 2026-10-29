@@ -4,13 +4,14 @@
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20WSL-blue)](#install)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**ZenCODE** is a fast, native-Swift coding agent for the terminal and ACP. Bring any
-OpenAI-compatible API key, run a local [DS4](https://github.com/antirez/ds4) model in-process from an existing
-checkout, or sign in with your existing ChatGPT or Claude
-subscription.
-ZenCODE itself is one compiled binary with no
-Node runtime, running on macOS, Linux, and Windows (via WSL), all the way down to a
-Raspberry Pi.
+**ZenCODE** is a native-Swift coding agent built around three ideas: sub-agents you
+can talk to while they work, routing each task to the cheapest model strong enough
+for it, and tools built on request as compiled Swift packages. It is one native
+binary with no Node runtime, for the terminal and for ACP clients, including
+Xcode 27, and it runs on macOS, Linux, and Windows (via WSL), all the way down to a
+Raspberry Pi. Bring any OpenAI-compatible API key, run a local
+[DS4](https://github.com/antirez/ds4) model in-process from an existing checkout,
+or sign in with your existing ChatGPT or Claude subscription.
 
 ![ZenCODE coordinating two sub-agents that edit Swift files and talk in the live shared chat](Docs/Images/zencode-subagents.gif)
 
@@ -18,18 +19,17 @@ Raspberry Pi.
 
 ## Highlights
 
-- **Provider-agnostic** — any OpenAI-compatible endpoint (OpenRouter, local servers, any `/v1` API), or a browser sign-in with your ChatGPT or Claude subscription.
-- **Native Swift, small footprint** — a single compiled binary with no interpreter or Node event loop, suitable for constrained ARM boards.
-- **Runs everywhere** — the agent runs on macOS, Linux, and Windows (via WSL); inference always stays on the configured provider, whether cloud, subscription, or local.
-- **Automation-friendly** — run a one-shot prompt as plain text or consume the versioned `--jsonl` lifecycle stream from scripts and CI.
-- **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, as a native coding agent.
-- **Agentic workflows** — dependency-aware task graph with `/plan`, `/goal`, and `/review`; `/plan save` and `/plan load` hand plans between sessions of the same project, plus [capability-based delegation](Docs/bindings.md) to specialized sub-agents.
-- **Live agent chat** — while sub-agents run, the operator, coordinator, and agent instances share a transient chat room: message the coordinator or broadcast to all agents from the terminal with `@coordinator` / `@all`, or reach a specific agent by its handle. See [agents.md](Docs/agents.md).
-- **Voice** — `/voice on` lets you speak prompts to any agent and hear the answers, and Telegram voice notes become prompts. Speech is recognized and synthesized on your machine (Apple speech frameworks on macOS, sherpa-onnx on Linux); the provider only receives text. See [voice.md](Docs/voice.md).
-- **Task recovery at startup** — incomplete task graphs are detected per project and presented in a scrollable picker, so you can resume the exact graph you selected or remove obsolete work before starting a new session.
+- **Sub-agents you can talk to** — while sub-agents run, the operator, coordinator, and agents share a transient chat room: from the terminal, message the coordinator or broadcast to all agents with `@coordinator` / `@all`, or reach a specific agent by its handle. An agent that is already working answers right away through the chat and then resumes its current work. See [agents.md](Docs/agents.md).
+- **Capability-based routing** — each profile's model bindings carry a capability (1–10) and every task a complexity (1–10); the coordinator steers each task to the lowest-capability binding that still meets it. A sub-agent can only run on its profile's authorized bindings, and a session `/models` override never widens that. `binding-presets.json` applies a provider's bindings to every profile in one step. See [bindings.md](Docs/bindings.md).
+- **Tools built on request** — the Builder generates a real Swift package (a Dynamic Swift Feature) as a durable tool; it runs out of process and uses the same contracts as bundled tools. Skills are selectable per session and installable from GitHub or a local folder. See [builder.md](Docs/builder.md).
+- **Full control over what the model can do** — granular `/tools` selection (filesystem, shell, Git, search, memory, sub-agents, Xcode, Figma, features), with change tracking and `/undo` as a safety net.
+- **Agentic workflows** — dependency-aware task graph with `/plan`, `/goal`, and `/review`; `/plan save` and `/plan load` hand plans between sessions of the same project. Incomplete task graphs are detected per project at startup and shown in a scrollable picker, so you can resume the selected graph or remove obsolete work.
 - **Durable project memory** — workspace-scoped facts are recalled automatically without bloating conversation history; default retrieval stays local with BM25, and optional embeddings add semantic ranking.
-- **Full control over tools** — granular `/tools` selection (filesystem, shell, Git, search, memory, sub-agents, Xcode, Figma, features), with change tracking and `/undo` as a safety net. Successful file edits return compact path-and-count confirmations instead of post-edit context or diffs.
-- **Extensible** — the Builder generates reusable Dynamic Swift Features as durable tools; skills are selectable per session and installable from GitHub or a local folder.
+- **ACP native** — connects over stdio to compatible clients, including **Xcode 27**, as a native coding agent.
+- **Provider-agnostic** — any OpenAI-compatible endpoint (OpenRouter, local servers, any `/v1` API), or a browser sign-in with your ChatGPT or Claude subscription.
+- **One native binary** — a single compiled binary with no interpreter or Node event loop, suitable for constrained ARM boards. It runs on macOS, Linux, and Windows (via WSL); inference always stays on the configured provider, whether cloud, subscription, or local.
+- **Automation-friendly** — run a one-shot prompt as plain text or consume the versioned `--jsonl` lifecycle stream from scripts and CI.
+- **Voice and remote control** — `/voice on` lets you speak prompts to any agent and hear the answers. Speech is recognized and synthesized on your machine (Apple speech frameworks on macOS, sherpa-onnx on Linux); the provider only receives text. You can also drive ZenCODE remotely via Telegram, where voice notes become prompts. See [voice.md](Docs/voice.md).
 
 See [Why ZenCODE](Docs/why-zen.md) for the full rationale.
 
