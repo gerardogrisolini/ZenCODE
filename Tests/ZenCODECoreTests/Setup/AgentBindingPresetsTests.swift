@@ -160,7 +160,7 @@ struct AgentBindingPresetsTests {
         {
           "meta" : { "providers" : { "decoy" : 1 } , "list":[1, 2.5e3, true, null, "x\"}", {"providers":{}}] },
           "version" : 1 ,
-        	"providers" :
+        \#t"providers" :
           {
              "Zeta"  :  { "a" : [ { "b" : "}{ ] [ \" , " } ] , "c" : null } ,
              "Al\"pha\\" : 3,
