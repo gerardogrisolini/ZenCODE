@@ -618,7 +618,7 @@ struct BrowserDialogTool: FeatureTool {
 
 extension BrowserActTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Browser action", action: "Perform", kind: .execute, targetKeyPaths: ["action", "ref", "pageId", "page_id"])
+        .standard(title: "Browser action", action: "Perform", kind: .other, targetKeyPaths: ["action", "ref", "pageId", "page_id"])
     }
 }
 

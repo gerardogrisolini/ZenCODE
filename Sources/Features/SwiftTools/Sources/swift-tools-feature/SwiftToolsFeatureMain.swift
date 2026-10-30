@@ -221,19 +221,19 @@ struct SwiftToolsFeatureMain {
 
 extension SwiftBuildTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Swift package", action: "Build", kind: .execute, targetKeyPaths: ["target", "product", "path", "workingDirectory"])
+        .standard(title: "Swift package", action: "Build", kind: .other, targetKeyPaths: ["target", "product", "path", "workingDirectory"])
     }
 }
 
 extension SwiftTestTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Swift tests", action: "Test", kind: .execute, targetKeyPaths: ["filter", "target", "path", "workingDirectory"])
+        .standard(title: "Swift tests", action: "Test", kind: .other, targetKeyPaths: ["filter", "target", "path", "workingDirectory"])
     }
 }
 
 extension SwiftRunTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Swift executable", action: "Run", kind: .execute, targetKeyPaths: ["executable", "product", "path", "workingDirectory"])
+        .standard(title: "Swift executable", action: "Run", kind: .other, targetKeyPaths: ["executable", "product", "path", "workingDirectory"])
     }
 }
 

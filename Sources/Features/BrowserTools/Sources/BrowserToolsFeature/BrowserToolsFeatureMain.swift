@@ -550,7 +550,7 @@ extension BrowserPagesTool {
 
 extension BrowserGotoTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Browser page", action: "Navigate", kind: .execute, targetKeyPaths: ["url", "pageId", "page_id"], targetFormat: .url)
+        .standard(title: "Browser page", action: "Navigate", kind: .other, targetKeyPaths: ["url", "pageId", "page_id"], targetFormat: .url)
     }
 }
 
@@ -568,6 +568,6 @@ extension BrowserClosePageTool {
 
 extension BrowserLoginTool {
     static var presentation: ToolPresentationDefinition {
-        .standard(title: "Browser login", action: "Open", kind: .execute, targetKeyPaths: ["url"], targetFormat: .url)
+        .standard(title: "Browser login", action: "Open", kind: .other, targetKeyPaths: ["url"], targetFormat: .url)
     }
 }

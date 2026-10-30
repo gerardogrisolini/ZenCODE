@@ -81,25 +81,25 @@ extension GitRestoreTool {
 
 extension GitCommitTool {
     static var presentation: ToolPresentationDefinition {
-        gitPresentation(title: "Git commit", action: "Commit", kind: .execute, targetKeys: ["message"])
+        gitPresentation(title: "Git commit", action: "Commit", kind: .other, targetKeys: ["message"])
     }
 }
 
 extension GitPushTool {
     static var presentation: ToolPresentationDefinition {
-        gitPresentation(title: "Git remote", action: "Push", kind: .execute, targetKeys: ["branch", "refspec", "remote"])
+        gitPresentation(title: "Git remote", action: "Push", kind: .other, targetKeys: ["branch", "refspec", "remote"])
     }
 }
 
 extension GitFetchTool {
     static var presentation: ToolPresentationDefinition {
-        gitPresentation(title: "Git remote", action: "Fetch", kind: .execute, targetKeys: ["branch", "refspec", "remote"])
+        gitPresentation(title: "Git remote", action: "Fetch", kind: .other, targetKeys: ["branch", "refspec", "remote"])
     }
 }
 
 extension GitPullTool {
     static var presentation: ToolPresentationDefinition {
-        gitPresentation(title: "Git remote", action: "Pull", kind: .execute, targetKeys: ["branch", "refspec", "remote"])
+        gitPresentation(title: "Git remote", action: "Pull", kind: .other, targetKeys: ["branch", "refspec", "remote"])
     }
 }
 
@@ -111,6 +111,6 @@ extension GitStashTool {
 
 extension GitSwitchTool {
     static var presentation: ToolPresentationDefinition {
-        gitPresentation(title: "Git branch", action: "Switch", kind: .execute, targetKeys: ["branch"])
+        gitPresentation(title: "Git branch", action: "Switch", kind: .other, targetKeys: ["branch"])
     }
 }

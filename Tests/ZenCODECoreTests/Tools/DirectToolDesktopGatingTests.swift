@@ -46,7 +46,7 @@ struct DirectToolDesktopGatingTests {
     func openOfDocumentsAndNonWebURLsIsGated() {
         let file = request(["action": "open", "target": "run.command"])
         #expect(file?.command == "open /tmp/workspace/run.command")
-        #expect(file?.kind == "execute")
+        #expect(file?.kind == "other")
         #expect(file?.toolName == "desktop.run")
 
         #expect(request(["action": "open", "target": "file:///tmp/a%20b.terminal"])?.command
@@ -68,6 +68,9 @@ struct DirectToolDesktopGatingTests {
         #expect(request([
             "action": "activate_app", "launch_if_needed": true, "app_path": "/tmp/x.app",
         ]) != nil)
+        // desktop.run presents as `other`; only local.exec may be `execute`.
+        #expect(request(["action": "launch_app", "app_path": "Tools/My App.app"])?.kind == "other")
+        #expect(request(["action": "launch_app", "app_name": "~/Evil.app"])?.kind == "other")
     }
 
     @Test

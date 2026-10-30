@@ -59,7 +59,7 @@ extension DirectTodoRuntime {
             name: "tasks.retry",
             description: "Retries a failed or blocked task while preserving all prior attempts and outputs. Start a new direct attempt with tasks.update status in_progress, or a new delegated attempt through a canonical agent.create agents item containing `taskID`; use agent.message to clarify or query a completed agent, but new implementation work needs this new attempt.",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"graphID":{"type":"string"},"graph_id":{"type":"string"},"expectedRevision":{"type":"integer"},"expected_revision":{"type":"integer"}},"required":["id"]}"#,
-            presentation: .standard(title: "Task", action: "Retry", kind: .execute, targetKeyPaths: ["id", "taskID", "task_id"])
+            presentation: .standard(title: "Task", action: "Retry", kind: .other, targetKeyPaths: ["id", "taskID", "task_id"])
         )
 
     private static let taskCancelDescriptor = DirectToolDescriptor(

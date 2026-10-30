@@ -148,16 +148,25 @@ public nonisolated enum XcodeToolIntegration {
         return "\(priorityDescriptionPrefix)\(toolDescription)"
     }
 
+    /// Builds, tests, snippets, and previews run inside Xcode, not in a shell.
+    /// ACP clients present the `execute` kind as a terminal command, so these
+    /// tools publish the generic `other` kind while keeping the `Run` action.
+    private static let xcodeRunToolNames: Set<String> = [
+        "BuildProject", "RunAllTests", "RunSomeTests", "ExecuteSnippet", "RenderPreview"
+    ]
+
     public static func presentationKind(for toolName: String) -> String {
-        switch rawToolName(fromPublicName: toolName) {
+        let rawName = rawToolName(fromPublicName: toolName)
+        if xcodeRunToolNames.contains(rawName) {
+            return "other"
+        }
+        switch rawName {
         case "XcodeUpdate", "XcodeWrite", "XcodeMakeDir":
             return "edit"
         case "XcodeRM":
             return "delete"
         case "XcodeMV":
             return "move"
-        case "BuildProject", "RunAllTests", "RunSomeTests", "ExecuteSnippet", "RenderPreview":
-            return "execute"
         case "XcodeGrep", "XcodeGlob", "DocumentationSearch":
             return "search"
         default:
@@ -240,7 +249,9 @@ public nonisolated enum XcodeToolIntegration {
         }
         return .standard(
             title: tool.title ?? rawName,
-            action: presentationAction(for: kind),
+            action: xcodeRunToolNames.contains(rawName)
+                ? "Run"
+                : presentationAction(for: kind),
             kind: kind,
             targetKeyPaths: pathKeys + [
                 "scheme", "target", "workspacePath", "projectPath",

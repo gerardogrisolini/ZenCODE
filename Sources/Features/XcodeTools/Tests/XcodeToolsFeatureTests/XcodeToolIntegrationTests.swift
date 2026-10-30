@@ -152,6 +152,22 @@ struct XcodeToolIntegrationTests {
     }
 
     @Test
+    func runToolsAreNotPresentedAsShellCommands() {
+        for rawName in ["BuildProject", "RunAllTests", "RunSomeTests", "ExecuteSnippet", "RenderPreview"] {
+            let publicName = "xcode.\(rawName)"
+            let presentation = XcodeToolIntegration.presentation(for: ToolDescriptor(
+                name: publicName,
+                description: rawName,
+                inputSchema: "{}"
+            ))
+
+            #expect(XcodeToolIntegration.presentationKind(for: publicName) == "other")
+            #expect(presentation.kind == .other)
+            #expect(presentation.action == "Run")
+        }
+    }
+
+    @Test
     func listWindowsResultsWithoutWorkspacesAreIgnoredSafely() {
         #expect(XcodeWorkspaceContext.contexts(fromListWindowsResult: .string("oops")).isEmpty)
         #expect(XcodeWorkspaceContext.contexts(fromListWindowsResult: .object([

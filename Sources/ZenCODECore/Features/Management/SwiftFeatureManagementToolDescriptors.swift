@@ -46,7 +46,7 @@ extension SwiftFeatureRuntime {
             name: "feature.reload",
             description: "Reloads Swift feature bundles from bundled executables and generated feature manifests.",
             inputSchema: #"{"type":"object","properties":{"includeTools":{"type":"boolean"},"include_tools":{"type":"boolean"},"includeDisabled":{"type":"boolean"},"include_disabled":{"type":"boolean"},"discoverRuntimeTools":{"type":"boolean"},"discover_runtime_tools":{"type":"boolean"}}}"#,
-            presentation: .standard(title: "Features", action: "Reload", kind: .execute, targetKeyPaths: ["includeTools", "include_tools", "discoverRuntimeTools", "discover_runtime_tools"])
+            presentation: .standard(title: "Features", action: "Reload", kind: .other, targetKeyPaths: ["includeTools", "include_tools", "discoverRuntimeTools", "discover_runtime_tools"])
         ),
         DirectToolDescriptor(
             name: "feature.validate",
@@ -58,7 +58,7 @@ extension SwiftFeatureRuntime {
             name: "feature.build",
             description: "Builds a generated Swift feature package with SwiftPM and reloads the feature runtime when the executable is produced.",
             inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"featureID":{"type":"string"},"feature_id":{"type":"string"},"name":{"type":"string"},"path":{"type":"string"},"manifestPath":{"type":"string"},"manifest_path":{"type":"string"},"timeoutSeconds":{"type":"number"},"timeout":{"type":"number"}}}"#,
-            presentation: .standard(title: "Feature", action: "Build", kind: .execute, targetKeyPaths: ["id", "featureID", "feature_id", "name", "path"])
+            presentation: .standard(title: "Feature", action: "Build", kind: .other, targetKeyPaths: ["id", "featureID", "feature_id", "name", "path"])
         ),
         DirectToolDescriptor(
             name: "feature.scaffold",

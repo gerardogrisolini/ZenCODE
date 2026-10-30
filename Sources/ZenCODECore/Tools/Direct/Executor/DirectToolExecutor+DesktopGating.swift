@@ -76,14 +76,14 @@ extension DirectToolExecutor {
                 let rendered = context.resolvePath(appPath).path
                 return makeRequest(
                     title: "Launch \(rendered)",
-                    kind: "execute",
+                    kind: "other",
                     command: "open \(shellQuoted(rendered))"
                 )
             }
             if let name = pathLikeAppName {
                 return makeRequest(
                     title: "Launch \(name)",
-                    kind: "execute",
+                    kind: "other",
                     command: "open -a \(shellQuoted(name))"
                 )
             }
@@ -107,7 +107,7 @@ extension DirectToolExecutor {
                 rendered = context.resolvePath(raw).path
             }
             let command = (["open"] + selector + [shellQuoted(rendered)]).joined(separator: " ")
-            return makeRequest(title: "Open \(rendered)", kind: "execute", command: command)
+            return makeRequest(title: "Open \(rendered)", kind: "other", command: command)
         case "launch_app":
             return launchRequest()
         case "activate_app":

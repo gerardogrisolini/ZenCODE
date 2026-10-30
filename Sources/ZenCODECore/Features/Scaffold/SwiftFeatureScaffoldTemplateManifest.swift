@@ -23,7 +23,7 @@ extension SwiftFeatureRuntime {
                 "name": toolName,
                 "description": "Echoes the provided text. Replace this implementation with the generated feature logic.",
                 "inputSchema": ["type": "object", "properties": ["text": ["type": "string"]], "required": ["text"]],
-                "presentation": ["title": "Echo", "action": "Echo", "kind": "execute", "target": ["source": "arguments", "keyPaths": ["text"], "format": "text"], "metadata": [], "sections": []]
+                "presentation": ["title": "Echo", "action": "Echo", "kind": "other", "target": ["source": "arguments", "keyPaths": ["text"], "format": "text"], "metadata": [], "sections": []]
             ]],
             promotionReady: true
         )

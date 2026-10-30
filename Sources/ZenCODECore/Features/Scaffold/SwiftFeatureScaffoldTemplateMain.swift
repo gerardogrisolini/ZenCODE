@@ -30,7 +30,7 @@ extension SwiftFeatureRuntime {
             static let presentation = ToolPresentationDefinition(
                 title: "Echo",
                 action: "Echo",
-                kind: .execute,
+                kind: .other,
                 target: .argument(["text"], format: .text),
                 sections: [.parameters()]
             )

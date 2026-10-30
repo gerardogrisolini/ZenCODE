@@ -10,6 +10,23 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- In ACP clients such as Xcode, only `local.exec` is shown as a "Terminal
+  Command". Every other tool that used to report the ACP tool kind `execute`
+  now reports the generic `other`, because it does not run a shell command:
+  the Xcode build, test, snippet, and preview tools (`xcode.BuildProject`,
+  `xcode.RunAllTests`, `xcode.RunSomeTests`, `xcode.ExecuteSnippet`,
+  `xcode.RenderPreview`), `swift.build`, `swift.test`, `swift.run`,
+  `git.commit`, `git.push`, `git.fetch`, `git.pull`, `git.switch`,
+  `browser.goto`, `browser.login`, `browser.act`, `tasks.retry`,
+  `feature.reload`, `feature.build`, the permission requests of `desktop.run`
+  that open documents or launch applications, and the tool of newly
+  scaffolded features.
+  The terminal UI keeps their actions (`Run`, `Build`, `Commit`, …). Rebuild
+  the installed Xcode, Swift, Git, and Browser features to apply the change to
+  their tools.
+
 ## [3.2.0] - 2026-10-30
 
 ### Added
