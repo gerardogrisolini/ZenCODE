@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-10-30
+
 ### Added
 
 - Binding presets: a hand-edited `binding-presets.json`, shipped with the
@@ -40,7 +42,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
   Builder.
 - Command menus now draw their orange frame dimmed, like the prompt frame,
   instead of at full intensity; the menu content is unchanged.
-- **Breaking:** providers are identified by stable, readable keys instead of
+- Providers are identified by stable, readable keys instead of
   generated UUIDs: `openrouter`, `openai`, `anthropic`, `zai`,
   `zai-coding-plan`, `google.gemini`, `deepseek`, `moonshot`, `nvidia`,
   `modal`, `custom`, `ds4`, `chatgpt`, and `claude`. Remote API model ids
