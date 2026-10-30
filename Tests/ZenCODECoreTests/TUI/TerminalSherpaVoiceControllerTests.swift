@@ -400,7 +400,10 @@ private struct Fixture {
             echo " 1: a configuration line before startup is not a result" >&2
             if [ -f "$0.fail" ]; then echo "Cannot open device default" >&2; exit 1; fi
             echo "Started. Please speak" >&2
-            if [ -f "$0.utterance" ]; then while IFS= read -r line; do echo " 0: $line" >&2; done < "$0.utterance"; rm -f "$0.utterance"; fi
+            # Take the queue before printing it: the test queues the next
+            # launch's speech as soon as it sees this one's, and a late removal
+            # would delete it.
+            if [ -f "$0.utterance" ]; then mv -f "$0.utterance" "$0.heard"; while IFS= read -r line; do echo " 0: $line" >&2; done < "$0.heard"; fi
             exec sleep 30
             """,
             to: recognizer
