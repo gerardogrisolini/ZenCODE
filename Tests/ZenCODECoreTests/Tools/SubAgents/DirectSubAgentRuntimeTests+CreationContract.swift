@@ -413,7 +413,7 @@ extension DirectSubAgentRuntimeTests {
         } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
             #expect(
                 message == "agent.create profileRole must be one of: "
-                    + "developer, builder, minimal, planner, reviewer, reporter, organizer, promoter"
+                    + "developer, builder, minimal, planner, reviewer, reporter, organizer, promoter, tester"
             )
         }
     }

@@ -37,7 +37,7 @@ migration says otherwise:
 
 **Announced migration: agent profile format.** Every profile in `agents.json`
 now requires a `role` (`developer`, `builder`, `minimal`, `planner`,
-`reviewer`, `reporter`, `organizer`, or `promoter`), and `AgentProfile`
+`reviewer`, `reporter`, `organizer`, `promoter`, or `tester`), and `AgentProfile`
 decodes it strictly: a missing, non-string, or unknown value makes the whole
 manifest invalid (`AgentProfileStoreError.invalidFile`, with a message naming
 the profile and the valid roles), so setup is required and `/setup` offers to

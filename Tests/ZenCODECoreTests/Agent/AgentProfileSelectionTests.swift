@@ -44,14 +44,15 @@ extension AgentConfigurationTests {
         let builderProfile = try #require(profiles["Builder"])
         let reviewerProfile = try #require(profiles["Reviewer"])
         let reporterProfile = try #require(profiles["Reporter"])
+        let testerProfile = try #require(profiles["Tester"])
         let plannerProfile = try #require(profiles["Planner"])
         let promoterProfile = try #require(profiles["Promoter"])
         #if os(macOS)
         let organizerProfile = try #require(profiles["Organizer"])
-        #expect(profiles.count == 8)
+        #expect(profiles.count == 9)
         #else
         #expect(profiles["Organizer"] == nil)
-        #expect(profiles.count == 7)
+        #expect(profiles.count == 8)
         #endif
         #expect(profiles["Xcode"] == nil)
         #expect(reviewerProfile.tools == AgentProfileStore.reviewerToolNames)
@@ -86,6 +87,31 @@ extension AgentConfigurationTests {
         #expect(!reporterAllowedToolNames.contains("memory.read"))
         #expect(!reporterAllowedToolNames.contains("web.fetch"))
         #expect(!reporterAllowedToolNames.contains("agent.create"))
+        #expect(testerProfile.id == AgentProfileRole.tester.rawValue)
+        #expect(testerProfile.name == AgentProfileStore.testerAgentName)
+        #expect(testerProfile.role == .tester)
+        #expect(testerProfile.isSystemProfile)
+        // The tester runs builds and tests through the shell, so it must not
+        // be read-only: that would strip `local.exec`.
+        #expect(!testerProfile.readOnly)
+        #expect(testerProfile.modelBindings.isEmpty)
+        #expect(testerProfile.defaultModelBindingID == nil)
+        #expect(testerProfile.tools == AgentProfileStore.testerToolNames)
+        #expect(testerProfile.tools == ["shell", "files", "search", "text", gitKey])
+        #expect(testerProfile.tools.contains("shell"))
+        #expect(testerProfile.tools.contains(gitKey))
+        #expect(!testerProfile.tools.contains("memory"))
+        #expect(!testerProfile.tools.contains("sub-agents"))
+        #expect(!testerProfile.tools.contains(webKey))
+        #expect(testerProfile.instructions?.contains("Tester agent") == true)
+        #expect(testerProfile.instructions?.contains("Do not edit, create, or delete files") == true)
+        #expect(testerProfile.instructions?.contains("Do not fix failures") == true)
+        let testerAllowedToolNames = testerProfile.allowedToolNames(
+            featureStatuses: unavailableOptionalFeatureStatuses
+        )
+        #expect(testerAllowedToolNames.contains("local.exec"))
+        #expect(!testerAllowedToolNames.contains("memory.write"))
+        #expect(!testerAllowedToolNames.contains("agent.create"))
         #expect(plannerProfile.tools == AgentProfileStore.plannerToolNames)
         #expect(plannerProfile.tools == ["files", "search", "text", gitKey, "memory", webKey])
         #expect(plannerProfile.instructions?.contains("Planner agent") == true)
@@ -129,7 +155,7 @@ extension AgentConfigurationTests {
 
         #expect(developerProfile.tools.contains(webKey))
         let legacySearchKey = TerminalToolSelectionCatalog.featurePackageKey(id: "search-tools")
-        for name in ["Developer", "Builder", "Reviewer", "Reporter", "Planner"] {
+        for name in ["Developer", "Builder", "Reviewer", "Reporter", "Tester", "Planner"] {
             let profile = try #require(profiles[name])
             #expect(profile.tools.contains("search"))
             #expect(!profile.tools.contains(legacySearchKey))
@@ -224,13 +250,14 @@ extension AgentConfigurationTests {
         #expect(profiles["Xcode"] == nil)
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reviewer"])).contains("/review delegates to it"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reporter"])).contains("code analysis reports"))
+        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Tester"])).contains("Runs builds, tests, and checks"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Planner"])).contains("/plan delegates to it"))
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Promoter"])).contains("project promotion"))
         #if os(macOS)
         #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Organizer"])).contains("Personal assistant"))
-        #expect(profiles.count == 8)
+        #expect(profiles.count == 9)
         #else
-        #expect(profiles.count == 7)
+        #expect(profiles.count == 8)
         #endif
 
         let customAgent = AgentProfile(

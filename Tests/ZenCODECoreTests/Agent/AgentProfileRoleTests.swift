@@ -77,11 +77,11 @@ struct AgentProfileRoleTests {
     func theRoleListIsFixed() {
         #expect(AgentProfileRole.allCases.map(\.rawValue) == [
             "developer", "builder", "minimal", "planner",
-            "reviewer", "reporter", "organizer", "promoter",
+            "reviewer", "reporter", "organizer", "promoter", "tester",
         ])
         #expect(AgentProfileRole.allCases.map(\.title) == [
             "Developer", "Builder", "Minimal", "Planner",
-            "Reviewer", "Reporter", "Organizer", "Promoter",
+            "Reviewer", "Reporter", "Organizer", "Promoter", "Tester",
         ])
         #expect(AgentProfileRole.allCases.allSatisfy { !$0.summary.isEmpty })
         #expect(Set(AgentProfileRole.allCases.map(\.summary)).count == AgentProfileRole.allCases.count)
@@ -133,7 +133,7 @@ struct AgentProfileRoleTests {
             let message = try #require(error.errorDescription)
             #expect(message.contains(
                 "profile 'No Role' is missing the required \"role\" field (one of: "
-                    + "developer, builder, minimal, planner, reviewer, reporter, organizer, promoter)."
+                    + "developer, builder, minimal, planner, reviewer, reporter, organizer, promoter, tester)."
             ))
         }
     }
@@ -222,7 +222,8 @@ struct AgentProfileRoleTests {
         #expect(defaults.allSatisfy { !$0.id.hasPrefix("00000000-") })
         #if os(macOS)
         #expect(defaults.map(\.role) == [
-            .developer, .builder, .minimal, .reviewer, .reporter, .planner, .organizer, .promoter,
+            .developer, .builder, .minimal, .reviewer, .reporter, .tester, .planner, .organizer,
+            .promoter,
         ])
         #else
         #expect(!defaults.contains { $0.role == .organizer })

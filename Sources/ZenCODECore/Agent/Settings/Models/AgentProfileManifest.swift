@@ -448,6 +448,7 @@ public enum AgentProfileStore {
     public static let plannerAgentName = "Planner"
     public static let organizerAgentName = "Organizer"
     public static let promoterAgentName = "Promoter"
+    public static let testerAgentName = "Tester"
     public static let manifestFilename = "agents.json"
     public static let minimalToolNames: [String] = [
         "shell",
@@ -471,6 +472,7 @@ public enum AgentProfileStore {
         TerminalToolSelectionCatalog.featurePackageKey(id: "web-tools")
     ]
     public static let reviewerToolNames: [String] = codingToolNames.filter { $0 != "shell" }
+    public static let testerToolNames: [String] = codingToolNames.filter { $0 != "memory" }
     public static let reporterToolNames: [String] = [
         "files",
         "search",

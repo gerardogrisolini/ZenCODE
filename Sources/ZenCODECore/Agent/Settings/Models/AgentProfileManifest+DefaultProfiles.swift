@@ -76,6 +76,18 @@ extension AgentProfileStore {
                 tools: reporterToolNames
             ),
             AgentProfile(
+                id: AgentProfileRole.tester.rawValue,
+                name: testerAgentName,
+                instructions: """
+                Tester agent. Run the builds, tests, and checks that validate the requested change, then report the results with evidence. Do not edit, create, or delete files, and do not commit, stash, or otherwise change Git state.
+
+                Choose the checks from the project's documented validation rules and the changed surface, running focused checks before broader ones. For each check report the exact command, pass or fail, and the relevant failing output. Reproduce a failure before reporting it, and separate failures caused by the change from pre-existing or environmental ones. Do not fix failures; when the cause is evident, describe it with file:line references.
+                """,
+                symbolName: "checkmark.seal",
+                role: .tester,
+                tools: testerToolNames
+            ),
+            AgentProfile(
                 id: AgentProfileRole.planner.rawValue,
                 name: plannerAgentName,
                 instructions: """

@@ -1054,6 +1054,7 @@ struct MemoryServiceTests {
             "Minimal",
             "Reviewer",
             "Reporter",
+            "Tester",
             "Planner",
             "Promoter"
         ]

@@ -13,8 +13,8 @@ import Foundation
 ///
 /// - `developer`: the default agent when none is selected.
 /// - `builder`: owns `/feature` and the feature-management tools.
-/// - `minimal`, `reporter`, `organizer`, `promoter`: no runtime semantics
-///   beyond their profile's own configuration.
+/// - `minimal`, `reporter`, `organizer`, `promoter`, `tester`: no runtime
+///   semantics beyond their profile's own configuration.
 /// - `planner`: `/plan` delegates to it and its core tools are forced
 ///   read-only.
 /// - `reviewer`: `/review` delegates to it.
@@ -30,6 +30,7 @@ public enum AgentProfileRole: String, Codable, Sendable, CaseIterable, Hashable 
     case reporter
     case organizer
     case promoter
+    case tester
 
     /// Human-readable title.
     public var title: String {
@@ -42,6 +43,7 @@ public enum AgentProfileRole: String, Codable, Sendable, CaseIterable, Hashable 
         case .reporter: "Reporter"
         case .organizer: "Organizer"
         case .promoter: "Promoter"
+        case .tester: "Tester"
         }
     }
 
@@ -56,6 +58,7 @@ public enum AgentProfileRole: String, Codable, Sendable, CaseIterable, Hashable 
         case .reporter: "Evidence-based code analysis reports"
         case .organizer: "Personal assistant with macOS apps, memory, and delegation"
         case .promoter: "Daily project promotion with browser drafts and memory"
+        case .tester: "Runs builds, tests, and checks and reports the results without editing files"
         }
     }
 

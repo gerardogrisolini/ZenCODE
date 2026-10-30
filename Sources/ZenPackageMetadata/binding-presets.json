@@ -1,239 +1,389 @@
 {
-  "version": 1,
-  "providers": {
-    "Claude Subscription": {
-      "developer": {
-        "modelBindings": [
-            {
-              "capability" : 10,
-              "id" : "claude:claude-fable-5-1",
-              "modelID" : "claude:claude-fable-5-1",
-              "modelProvider" : "Claude Subscription",
-              "thinkingSelection" : "xhigh"
+    "version": 1,
+    "providers": {
+        "Claude Subscription": {
+            "developer": {
+                "modelBindings": [
+                    {
+                        "capability" : 10,
+                        "id" : "claude:claude-fable-5-1",
+                        "modelID" : "claude-fable-5-1",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 8,
+                        "id" : "claude:claude-opus-5-5",
+                        "modelID" : "claude-opus-5-5",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 6,
+                        "id" : "claude:claude-sonnet-5-5",
+                        "modelID" : "claude-sonnet-5-5",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 2,
+                        "id" : "claude:claude-haiku-5-5",
+                        "modelID" : "claude-haiku-5-5",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "xhigh"
+                    }
+                ],
+                "defaultModelBindingID": "claude:claude-opus-5-5"
             },
-            {
-              "capability" : 8,
-              "id" : "claude:claude-opus-5-5",
-              "modelID" : "claude:claude-opus-5-5",
-              "modelProvider" : "Claude Subscription",
-              "thinkingSelection" : "xhigh"
+            "planner": {
+                "modelBindings": [
+                    {
+                        "capability" : 10,
+                        "id" : "claude:claude-fable-5-1",
+                        "modelID" : "claude-fable-5-1",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "max"
+                    },
+                    {
+                        "capability" : 6,
+                        "id" : "claude:claude-opus-5-5",
+                        "modelID" : "claude-opus-5-5",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "max"
+                    }
+                ],
+                "defaultModelBindingID": "claude:claude-fable-5-1"
             },
-            {
-              "capability" : 6,
-              "id" : "claude:claude-sonnet-5-5",
-              "modelID" : "claude:claude-sonnet-5-5",
-              "modelProvider" : "Claude Subscription",
-              "thinkingSelection" : "xhigh"
+            "reviewer": {
+                "modelBindings": [
+                    {
+                        "capability" : 10,
+                        "id" : "claude:claude-fable-5-1",
+                        "modelID" : "claude-fable-5-1",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 6,
+                        "id" : "claude:claude-opus-5-5",
+                        "modelID" : "claude-opus-5-5",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "xhigh"
+                    }
+                ],
+                "defaultModelBindingID": "claude:claude-fable-5-1"
             },
-            {
-              "capability" : 2,
-              "id" : "claude:claude-haiku-5-5",
-              "modelID" : "claude:claude-haiku-5-5",
-              "modelProvider" : "Claude Subscription",
-              "thinkingSelection" : "xhigh"
-            }
-        ],
-        "defaultModelBindingID": "claude:claude-opus-5-5"
-      },
-      "planner": {
-        "modelBindings": [
-            {
-              "capability" : 10,
-              "id" : "claude:claude-fable-5-1",
-              "modelID" : "claude:claude-fable-5-1",
-              "modelProvider" : "Claude Subscription",
-              "thinkingSelection" : "max"
-            }
-        ],
-        "defaultModelBindingID": "claude:claude-fable-5-1"
-      },
-      "reviewer": {
-        "modelBindings": [
-            {
-              "capability" : 10,
-              "id" : "claude:claude-fable-5-1",
-              "modelID" : "claude:claude-fable-5-1",
-              "modelProvider" : "Claude Subscription",
-              "thinkingSelection" : "xhigh"
-            }
-        ],
-        "defaultModelBindingID": "claude:claude-fable-5-1"
-      },
-      "reporter": {
-        "modelBindings": [
-            {
-              "capability" : 2,
-              "id" : "claude:claude-haiku-5-5",
-              "modelID" : "claude:claude-haiku-5-5",
-              "modelProvider" : "Claude Subscription",
-              "thinkingSelection" : "medium"
+            "reporter": {
+                "modelBindings": [
+                    {
+                        "capability" : 2,
+                        "id" : "claude:claude-haiku-5-5",
+                        "modelID" : "claude-haiku-5-5",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "medium"
+                    },
+                    {
+                        "capability" : 6,
+                        "id" : "claude:claude-sonnet-5-5",
+                        "modelID" : "claude-sonnet-5-5",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "medium"
+                    }
+                ],
+                "defaultModelBindingID": "claude:claude-sonnet-5-5"
             },
-            {
-              "capability" : 6,
-              "id" : "claude:claude-sonnet-5-5",
-              "modelID" : "claude:claude-sonnet-5-5",
-              "modelProvider" : "Claude Subscription",
-              "thinkingSelection" : "medium"
-            }
-        ],
-        "defaultModelBindingID": "claude:claude-sonnet-5-5"
-      }
-    },
-    "ChatGPT Subscription": {
-      "developer": {
-        "modelBindings": [
-            {
-              "capability" : 10,
-              "id" : "gpt-6-astra",
-              "modelID" : "chatgpt:gpt-6-astra",
-              "modelProvider" : "ChatGPT Subscription",
-              "thinkingSelection" : "xhigh"
+            "tester": {
+                "modelBindings": [
+                    {
+                        "capability" : 6,
+                        "id" : "claude:claude-sonnet-5-5",
+                        "modelID" : "claude-sonnet-5-5",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "medium"
+                    }
+                ],
+                "defaultModelBindingID": "claude:claude-sonnet-5-5"
             },
-            {
-              "capability" : 8,
-              "id" : "gpt-6.1-sol",
-              "modelID" : "chatgpt:gpt-6.1-sol",
-              "modelProvider" : "ChatGPT Subscription",
-              "thinkingSelection" : "xhigh"
+            "organizer": {
+                "modelBindings": [
+                    {
+                        "capability" : 8,
+                        "id" : "claude:claude-opus-5-5",
+                        "modelID" : "claude-opus-5-5",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "medium"
+                    }
+                ],
+                "defaultModelBindingID": "claude:claude-opus-5-5"
             },
-            {
-              "capability" : 6,
-              "id" : "gpt-6.1-terra",
-              "modelID" : "chatgpt:gpt-6.1-terra",
-              "modelProvider" : "ChatGPT Subscription",
-              "thinkingSelection" : "xhigh"
+            "promoter": {
+                "modelBindings": [
+                    {
+                        "capability" : 8,
+                        "id" : "claude:claude-opus-5-5",
+                        "modelID" : "claude-opus-5-5",
+                        "modelProvider" : "Claude Subscription",
+                        "thinkingSelection" : "medium"
+                    }
+                ],
+                "defaultModelBindingID": "claude:claude-opus-5-5"
+            }
+        },
+        "ChatGPT Subscription": {
+            "developer": {
+                "modelBindings": [
+                    {
+                        "capability" : 10,
+                        "id" : "chatgpt:gpt-6-astra",
+                        "modelID" : "gpt-6-astra",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 8,
+                        "id" : "chatgpt:gpt-6.1-sol",
+                        "modelID" : "gpt-6.1-sol",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 6,
+                        "id" : "chatgpt:gpt-6.1-terra",
+                        "modelID" : "gpt-6.1-terra",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 3,
+                        "id" : "chatgpt:gpt-6.1-luna",
+                        "modelID" : "gpt-6.1-luna",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "xhigh"
+                    }
+                ],
+                "defaultModelBindingID": "chatgpt:gpt-6.1-sol"
             },
-            {
-              "capability" : 2,
-              "id" : "gpt-6.1-luna",
-              "modelID" : "chatgpt:gpt-6.1-luna",
-              "modelProvider" : "ChatGPT Subscription",
-              "thinkingSelection" : "xhigh"
-            }
-        ],
-        "defaultModelBindingID": "chatgpt:gpt-6.1-sol"
-      },
-      "planner": {
-        "modelBindings": [
-            {
-              "capability" : 10,
-              "id" : "gpt-6-astra",
-              "modelID" : "chatgpt:gpt-6-astra",
-              "modelProvider" : "ChatGPT Subscription",
-              "thinkingSelection" : "max"
-            }
-        ],
-        "defaultModelBindingID": "chatgpt:gpt-6-astra"
-      },
-      "reviewer": {
-        "modelBindings": [
-            {
-              "capability" : 10,
-              "id" : "gpt-6-astra",
-              "modelID" : "chatgpt:gpt-6-astra",
-              "modelProvider" : "ChatGPT Subscription",
-              "thinkingSelection" : "xhigh"
-            }
-        ],
-        "defaultModelBindingID": "chatgpt:gpt-6-astra"
-      },
-      "reporter": {
-        "modelBindings": [
-            {
-              "capability" : 6,
-              "id" : "gpt-6.1-terra",
-              "modelID" : "chatgpt:gpt-6.1-terra",
-              "modelProvider" : "ChatGPT Subscription",
-              "thinkingSelection" : "xhigh"
+            "planner": {
+                "modelBindings": [
+                    {
+                        "capability" : 10,
+                        "id" : "chatgpt:gpt-6-astra",
+                        "modelID" : "gpt-6-astra",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "max"
+                    },
+                    {
+                        "capability" : 6,
+                        "id" : "chatgpt:gpt-6.1-sol",
+                        "modelID" : "gpt-6.1-sol",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "max"
+                    }
+                ],
+                "defaultModelBindingID": "chatgpt:gpt-6-astra"
             },
-            {
-              "capability" : 2,
-              "id" : "gpt-6.1-luna",
-              "modelID" : "chatgpt:gpt-6.1-luna",
-              "modelProvider" : "ChatGPT Subscription",
-              "thinkingSelection" : "xhigh"
-            }
-        ],
-        "defaultModelBindingID": "chatgpt:gpt-6.1-terra"
-      }
-    },
-    "OpenRouter": {
-      "developer": {
-        "modelBindings": [
-            {
-              "capability" : 9,
-              "id" : "moonshotai\/kimi-k3.1-pro",
-              "modelID" : "openrouter:moonshotai\/kimi-k3.1-pro",
-              "modelProvider" : "OpenRouter",
-              "thinkingSelection" : "xhigh"
+            "reviewer": {
+                "modelBindings": [
+                    {
+                        "capability" : 10,
+                        "id" : "chatgpt:gpt-6-astra",
+                        "modelID" : "gpt-6-astra",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 6,
+                        "id" : "chatgpt:gpt-6.1-sol",
+                        "modelID" : "gpt-6.1-sol",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "xhigh"
+                    }
+                ],
+                "defaultModelBindingID": "chatgpt:gpt-6-astra"
             },
-            {
-              "capability" : 7,
-              "id" : "z-ai/glm-5.3",
-              "modelID" : "openrouter:z-ai\/glm-5.3",
-              "modelProvider" : "OpenRouter",
-              "thinkingSelection" : "xhigh"
+            "reporter": {
+                "modelBindings": [
+                    {
+                        "capability" : 6,
+                        "id" : "chatgpt:gpt-6.1-terra",
+                        "modelID" : "gpt-6.1-terra",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 4,
+                        "id" : "chatgpt:gpt-6.1-luna",
+                        "modelID" : "gpt-6.1-luna",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "xhigh"
+                    }
+                ],
+                "defaultModelBindingID": "chatgpt:gpt-6.1-terra"
             },
-            {
-              "capability" : 6,
-              "id" : "deepseek\/deepseek-v4.1-flash-1017",
-              "modelID" : "openrouter:deepseek\/deepseek-v4.1-flash-1017",
-              "modelProvider" : "OpenRouter",
-              "thinkingSelection" : "xhigh"
+            "tester": {
+                "modelBindings": [
+                    {
+                        "capability" : 6,
+                        "id" : "chatgpt:gpt-6.1-terra",
+                        "modelID" : "gpt-6.1-terra",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "medium"
+                    }
+                ],
+                "defaultModelBindingID": "chatgpt:gpt-6.1-terra"
             },
-            {
-              "capability" : 5,
-              "id" : "z-ai/glm-5.3-flash",
-              "modelID" : "openrouter:z-ai\/glm-5.3-flash",
-              "modelProvider" : "OpenRouter",
-              "thinkingSelection" : "xhigh"
-            }
-        ],
-        "defaultModelBindingID": "openrouter:z-ai\/glm-5.3-flash"
-      },
-      "planner": {
-        "modelBindings": [
-            {
-              "capability" : 9,
-              "id" : "moonshotai\/kimi-k3.1-pro",
-              "modelID" : "openrouter:moonshotai\/kimi-k3.1-pro",
-              "modelProvider" : "OpenRouter",
-              "thinkingSelection" : "max"
-            }
-        ],
-        "defaultModelBindingID": "openrouter:moonshotai\/kimi-k3.1-pro"
-      },
-      "reviewer": {
-        "modelBindings": [
-            {
-              "capability" : 9,
-              "id" : "moonshotai\/kimi-k3.1-pro",
-              "modelID" : "openrouter:moonshotai\/kimi-k3.1-pro",
-              "modelProvider" : "OpenRouter",
-              "thinkingSelection" : "xhigh"
-            }
-        ],
-        "defaultModelBindingID": "openrouter:moonshotai\/kimi-k3.1-pro"
-      },
-      "reporter": {
-        "modelBindings": [
-            {
-              "capability" : 6,
-              "id" : "z-ai\/glm-5.3-flash",
-              "modelID" : "openrouter:z-ai\/glm-5.3-flash",
-              "modelProvider" : "OpenRouter",
-              "thinkingSelection" : "xhigh"
+            "organizer": {
+                "modelBindings": [
+                    {
+                        "capability" : 8,
+                        "id" : "chatgpt:gpt-6.1-sol",
+                        "modelID" : "gpt-6.1-sol",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "medium"
+                    }
+                ],
+                "defaultModelBindingID": "chatgpt:gpt-6.1-sol"
             },
-            {
-              "capability" : 2,
-              "id" : "openrouter\/free",
-              "modelID" : "openrouter:openrouter\/free",
-              "modelProvider" : "OpenRouter",
-              "thinkingSelection" : "xhigh"
+            "promoter": {
+                "modelBindings": [
+                    {
+                        "capability" : 8,
+                        "id" : "chatgpt:gpt-6.1-sol",
+                        "modelID" : "gpt-6.1-sol",
+                        "modelProvider" : "ChatGPT Subscription",
+                        "thinkingSelection" : "medium"
+                    }
+                ],
+                "defaultModelBindingID": "chatgpt:gpt-6.1-sol"
             }
-        ],
-        "defaultModelBindingID": "openrouter:z-ai\/glm-5.3-flash"
-      }
+        },
+        "OpenRouter": {
+            "developer": {
+                "modelBindings": [
+                    {
+                        "capability" : 9,
+                        "id" : "openrouter:moonshotai/kimi-k3.1-pro",
+                        "modelID" : "moonshotai/kimi-k3.1-pro",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 7,
+                        "id" : "openrouter:z-ai/glm-5.3",
+                        "modelID" : "z-ai/glm-5.3",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 6,
+                        "id" : "openrouter:deepseek/deepseek-v4.1-flash-1017",
+                        "modelID" : "deepseek/deepseek-v4.1-flash-1017",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 5,
+                        "id" : "openrouter:z-ai/glm-5.3-flash",
+                        "modelID" : "z-ai/glm-5.3-flash",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "xhigh"
+                    }
+                ],
+                "defaultModelBindingID": "openrouter:z-ai/glm-5.3-flash"
+            },
+            "planner": {
+                "modelBindings": [
+                    {
+                        "capability" : 9,
+                        "id" : "openrouter:moonshotai/kimi-k3.1-pro",
+                        "modelID" : "moonshotai/kimi-k3.1-pro",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "max"
+                    },
+                    {
+                        "capability" : 6,
+                        "id" : "openrouter:z-ai/glm-5.3",
+                        "modelID" : "z-ai/glm-5.3",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "max"
+                    }
+                ],
+                "defaultModelBindingID": "openrouter:moonshotai/kimi-k3.1-pro"
+            },
+            "reviewer": {
+                "modelBindings": [
+                    {
+                        "capability" : 9,
+                        "id" : "openrouter:moonshotai/kimi-k3.1-pro",
+                        "modelID" : "moonshotai/kimi-k3.1-pro",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 6,
+                        "id" : "openrouter:z-ai/glm-5.3",
+                        "modelID" : "z-ai/glm-5.3",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "xhigh"
+                    }
+                ],
+                "defaultModelBindingID": "openrouter:moonshotai/kimi-k3.1-pro"
+            },
+            "reporter": {
+                "modelBindings": [
+                    {
+                        "capability" : 6,
+                        "id" : "openrouter:z-ai/glm-5.3-flash",
+                        "modelID" : "z-ai/glm-5.3-flash",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "xhigh"
+                    },
+                    {
+                        "capability" : 4,
+                        "id" : "openrouter:openrouter/free",
+                        "modelID" : "openrouter/free",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "xhigh"
+                    }
+                ],
+                "defaultModelBindingID": "openrouter:z-ai/glm-5.3-flash"
+            },
+            "tester": {
+                "modelBindings": [
+                    {
+                        "capability" : 6,
+                        "id" : "openrouter:z-ai/glm-5.3-flash",
+                        "modelID" : "z-ai/glm-5.3-flash",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "medium"
+                    }
+                ],
+                "defaultModelBindingID": "openrouter:z-ai/glm-5.3-flash"
+            },
+            "organizer": {
+                "modelBindings": [
+                    {
+                        "capability" : 6,
+                        "id" : "openrouter:deepseek/deepseek-v4.1-flash-1017",
+                        "modelID" : "deepseek/deepseek-v4.1-flash-1017",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "medium"
+                    }
+                ],
+                "defaultModelBindingID": "openrouter:deepseek/deepseek-v4.1-flash-1017"
+            },
+            "promoter": {
+                "modelBindings": [
+                    {
+                        "capability" : 6,
+                        "id" : "openrouter:deepseek/deepseek-v4.1-flash-1017",
+                        "modelID" : "deepseek/deepseek-v4.1-flash-1017",
+                        "modelProvider" : "OpenRouter",
+                        "thinkingSelection" : "medium"
+                    }
+                ],
+                "defaultModelBindingID": "openrouter:deepseek/deepseek-v4.1-flash-1017"
+            }
+        }
     }
-  }
 }

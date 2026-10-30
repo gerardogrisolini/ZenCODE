@@ -20,6 +20,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
   replaces every agent's bindings with theirs; **Reset** removes every
   agent's bindings. Nothing applies on its own. See
   [Docs/bindings.md](Docs/bindings.md#binding-presets).
+- Tester agent role: the new `tester` profile role and the recommended
+  `Tester` profile run the builds, tests, and checks that validate a change
+  and report the results with evidence, without ever editing files or changing
+  Git state. It has shell, files, search, text, and git tools, no memory or
+  sub-agents, and is not `readOnly` because the shell needs `local.exec`; the
+  role has no runtime effect beyond the profile's own configuration. It is not
+  added to an existing `agents.json` automatically: create it with `/setup`
+  ("Regenerate the recommended agents" replaces every profile). An
+  `agents.json` that contains a `tester` profile is rejected as invalid by
+  earlier ZenCODE versions, including an older installed `zen` started by
+  scheduled prompts. See [Docs/agents.md](Docs/agents.md#profile-roles).
 
 ### Changed
 

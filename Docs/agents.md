@@ -15,7 +15,7 @@ start by `AgentProfileStore`.
 | --- | --- |
 | `id` | Stable identity. A system profile has its role as ID (`developer`, `planner`, …); custom profiles have any other ID (setup generates a UUID). It has no other meaning |
 | `name` | Human- and model-visible label; any text, with no meaning |
-| `role` | **Required.** One of `developer`, `builder`, `minimal`, `planner`, `reviewer`, `reporter`, `organizer`, `promoter`: the only field that determines the kind of agent (see [Profile Roles](#profile-roles)) |
+| `role` | **Required.** One of `developer`, `builder`, `minimal`, `planner`, `reviewer`, `reporter`, `organizer`, `promoter`, `tester`: the only field that determines the kind of agent (see [Profile Roles](#profile-roles)) |
 | `instructions` | System-prompt fragment defining the role and constraints |
 | `tools` | Allowed tool groups and feature packages |
 | `readOnly` | Enforces only non-mutating catalog-owned core tools (`false` by default) |
@@ -63,6 +63,7 @@ and a profile can have any name in any role.
 | `reporter` | No runtime effect beyond the profile's own configuration |
 | `organizer` | Its sessions use the global memory graph and delegate by role (see [memory.md](memory.md)), and their context lists the first-level folders of the working directory as `Projects in the launch folder`, read once when the agent is selected (see [organizer.md](organizer.md#selecting-organizer)); otherwise no runtime effect beyond the profile's own configuration |
 | `promoter` | No runtime effect beyond the profile's own configuration |
+| `tester` | No runtime effect beyond the profile's own configuration |
 
 ```json
 {
@@ -83,11 +84,11 @@ ID equals its role (case-insensitive); custom profiles have a different ID, and
 system profiles alone.
 
 **Strict format.** `role` must be present and spelled exactly as one of the
-eight values above. The role is never deduced from the ID or the name, and
+nine values above. The role is never deduced from the ID or the name, and
 there is no automatic migration: an `agents.json` with a profile without
 `role`, or with any other value, is invalid. ZenCODE then requires setup and
 reports the profile, for example
-`profile 'Developer' is missing the required "role" field (one of: developer, builder, minimal, planner, reviewer, reporter, organizer, promoter).`;
+`profile 'Developer' is missing the required "role" field (one of: developer, builder, minimal, planner, reviewer, reporter, organizer, promoter, tester).`;
 `/setup` asks `agents.json exists but is invalid. Rewrite it?` and, when
 confirmed, starts over and offers to create the recommended profiles.
 
@@ -203,6 +204,7 @@ without a file does not create one.
 | `Minimal` | `minimal` | Essential tools, brief replies | shell, files, text |
 | `Reviewer` | `reviewer` | Read-only code review | coding without shell; `readOnly` enforced |
 | `Reporter` | `reporter` | Code analysis and evidence-based reports | files, search, text, git; `readOnly` enforced |
+| `Tester` | `tester` | Runs builds, tests, and checks and reports the results without editing files | shell, files, search, text, git; not `readOnly` (the shell needs `local.exec`), no edits by instruction |
 | `Planner` | `planner` | Read-only planning | files, search, text, git, memory, web; `readOnly` enforced |
 | `Organizer` | `organizer` | Personal assistant: macOS apps, project state, delegation (macOS only) | macOS feature + memory + sub-agents |
 | `Promoter` | `promoter` | Daily project promotion step with Browser drafts | memory + browser-tools |

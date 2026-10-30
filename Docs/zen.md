@@ -315,14 +315,15 @@ to open the native system log viewer (Console.app on macOS). See
 Agent profiles live in `~/.zencode/agents.json` and are managed in setup. The
 recommended profiles are `Developer`, `Builder`, `Minimal`, `Planner`,
 `Reviewer`, and `Reporter`. Each defines a required `role` (`developer`,
-`builder`, `minimal`, `planner`, `reviewer`, `reporter`, `organizer`, or
-`promoter`), tools, an optional enforced `readOnly` core-tool policy, skills,
-instructions, and model bindings. The role alone determines the kind of agent:
-it decides the default agent and which profiles `/plan`, `/review`, and
-`/feature` use, while the ID and the name carry no meaning. The recommended
-profiles are the system profiles and have their role as ID (`developer`,
-`planner`, …). An `agents.json` with a profile without `role` is invalid and
-`/setup` offers to rewrite it. See [agents.md](agents.md#profile-roles).
+`builder`, `minimal`, `planner`, `reviewer`, `reporter`, `organizer`,
+`promoter`, or `tester`), tools, an optional enforced `readOnly` core-tool
+policy, skills, instructions, and model bindings. The role alone determines
+the kind of agent: it decides the default agent and which profiles `/plan`,
+`/review`, and `/feature` use, while the ID and the name carry no meaning. The
+recommended profiles are the system profiles and have their role as ID
+(`developer`, `planner`, …). An `agents.json` with a profile without `role` is
+invalid and `/setup` offers to rewrite it. See
+[agents.md](agents.md#profile-roles).
 
 Switch profiles in the TUI without restarting:
 
