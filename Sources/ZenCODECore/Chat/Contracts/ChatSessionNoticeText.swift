@@ -13,7 +13,14 @@ import Foundation
 /// The terminal's model, thinking, agent, tool, skill, workspace, and
 /// `/sessions` helpers delegate here, so each wording lives in one place.
 /// Lists are built from the same neutral catalog helpers
-/// (``AgentModelCatalogPresentation``) the terminal uses.
+/// (``AgentModelCatalogPresentation``) the terminal uses. The wording of the
+/// shared slash commands is in `ChatSessionNoticeText+Commands.swift`.
+///
+/// Two notices carry what the terminal renders with renderers of its own and
+/// have a plain fallback instead of a byte-for-byte text:
+/// ``ChatSessionNotice/fileChangeSummary(_:includesDiff:)`` (no patches) and
+/// ``ChatSessionNotice/fileArtifacts(_:)`` (no diffs). The terminal draws
+/// them with its renderers and never writes the fallback.
 enum ChatSessionNoticeText {
     /// The text of `notice`, to be written on ``ChatSessionNotice/channel``.
     static func text(for notice: ChatSessionNotice) -> String {
@@ -30,6 +37,8 @@ enum ChatSessionNoticeText {
             return "\(modelTitle(model)) does not support configurable thinking.\n"
         case .thinkingUnchanged:
             return "Thinking unchanged.\n"
+        case .thinkingTakesNoArguments:
+            return failureText("/think does not accept arguments. Use /think to choose a level.")
         case let .selectedAgent(agent):
             return selectedAgentText(agent)
         case let .availableAgents(agents, selected, manifestPath):
@@ -104,6 +113,151 @@ enum ChatSessionNoticeText {
             return "Restored from checkpoint \(entryID) (\(messageCount) messages on this branch).\n"
         case let .engineCheckpoint(checkpoint):
             return engineCheckpointText(checkpoint)
+        case let .help(commandHelp):
+            return helpText(commandHelp: commandHelp)
+        case let .unknownCommand(line):
+            return ChatCommandRegistry.unknownCommandMessage(for: line)
+        case let .commandUnavailable(message):
+            return message
+        case let .subAgentToolsRequired(command):
+            return subAgentToolsRequiredText(command: command)
+        case let .agentRoleUnavailable(role):
+            return AgentProfileStore.roleUnavailableForProjectMessage(role) + "\n"
+        case .planMissingGoal:
+            return planMissingGoalMessage
+        case .planDiscussionBlocksMutation:
+            return planDiscussionBlocksMutationMessage
+        case .planUnavailableForSaving:
+            return planUnavailableForSavingMessage
+        case let .planSaved(planID):
+            return "Saved plan: \(planID). Use /plan load in a new session to review or revise it.\n"
+        case .activePlanAlreadyExists:
+            return failureText(
+                "an active plan already exists. Use /plan clear before loading a saved plan."
+            )
+        case .savedPlanUnavailable, .noSavedPlans:
+            return savedPlanUnavailableMessage
+        case .savedPlansAllCompleted:
+            return savedPlansAllTerminalMessage
+        case .savedPlanContextNotAdded:
+            return failureText("the saved plan could not be added to the current session context.")
+        case let .savedPlanLoaded(plan):
+            return "Loaded saved plan `\(plan.id)` as an unapproved active plan.\n\n"
+                + plan.consolidatedText
+                + "\n\nUse /plan approve when it is ready to implement."
+        case let .savedPlans(plans):
+            return PlanningCommandKernel.savedPlansListMessage(for: plans)
+        case .planDeleteUsage:
+            return planDeleteUsageMessage
+        case let .savedPlanNotFound(availablePlanIDs):
+            return PlanningCommandKernel.planDeleteNotFoundMessage(availablePlanIDs: availablePlanIDs)
+        case let .savedPlanAmbiguous(matches):
+            return PlanningCommandKernel.planDeleteAmbiguousMessage(matches: matches)
+        case let .savedPlansDeleted(planIDs, activePlanAffected):
+            return PlanningCommandKernel.planDeleteSuccessMessage(
+                deletedPlanIDs: planIDs,
+                activePlanAffected: activePlanAffected
+            )
+        case let .planClarificationActive(goal):
+            return "Planner clarification is active for: \(goal)\n"
+        case .planAwaitingApprovalGoal:
+            return "A descriptive Goal is required before plan approval can continue.\n"
+        case .noActivePlan:
+            return "No active plan.\n"
+        case let .planStatus(plan, graph):
+            return PlanningCommandKernel.planStatusTable(for: plan, graph: graph)
+        case .planUnavailableForApproval:
+            return planUnavailableForApprovalMessage
+        case .noPendingPlanApproval:
+            return failureText("no pending plan approval is available.")
+        case .runtimeSessionUnavailable:
+            return failureText("the session changed before the command completed.")
+        case .planApprovalGoalPrompt:
+            return "Before approving this plan, enter a descriptive Goal for the work it represents.\n"
+        case .planApproved:
+            return "Approved the active plan and activated its task graph. "
+                + "Starting implementation now; /review will verify task claims against real files.\n\n"
+        case .planDiscussionCleared:
+            return "Cleared the unfinished planning discussion.\n"
+        case .noPlanToClear:
+            return "No active plan or planning discussion to clear.\n"
+        case .activePlanCleared:
+            return "Cleared the active plan and archived its task graph in this session. "
+                + "Saved-plan library copies are unaffected; use /plan delete to remove those.\n"
+        case .workflowMissingGoal:
+            return workflowMissingGoalMessage
+        case .workflowBlockedByPlan:
+            return workflowActivePlanMessage
+        case let .workflowAlreadyActive(graphID, pendingTaskCount):
+            return workflowAlreadyActiveMessage(graphID: graphID, pendingTaskCount: pendingTaskCount)
+        case .noChangesToReview:
+            return "No tracked session file changes to review.\n"
+        case let .taskIDRequired(action):
+            return failureText("/tasks \(action) requires a task id.")
+        case let .unknownTasksAction(action):
+            return failureText(
+                "Unknown /tasks action '\(action)'. Use status, show, retry, cancel, or clear."
+            )
+        case .noTaskGraph:
+            return "No task graph for this session.\n"
+        case let .taskDetail(view):
+            return taskDetailMarkdown(view)
+        case let .taskRetried(taskID):
+            return "Retried task \(taskID).\n"
+        case let .taskCancelled(taskID):
+            return "Cancelled task \(taskID).\n"
+        case .taskGraphsCleared:
+            return "Cleared the session task graphs.\n"
+        case .noTrackedFileChanges:
+            return "No tracked file changes.\n"
+        case let .fileChangeSummary(summary, _):
+            return TurnFileChangeSummaryPresentation.text(summary, includesCommandHint: true)
+        case .fileChangesReverted:
+            return "File changes reverted.\n"
+        case let .fileChangesNotUndone(description):
+            return "\(description)\n"
+        case let .fileChangesUndoFailed(description):
+            return failureText("unable to undo file changes: \(description)")
+        case .noFileArtifacts:
+            return "No file artifacts in the current session.\n"
+        case let .fileArtifacts(turns):
+            return fileArtifactsFallbackText(turns)
+        case .artifactsTakeNoArguments:
+            return failureText("/artifacts does not accept arguments.")
+        case let .openTargetNotFound(argument):
+            return failureText("file not found: \(argument)")
+        case .noOpenCandidates:
+            return "No files or URLs found in this conversation.\n"
+        case .nothingOpened:
+            return "Nothing opened.\n"
+        case let .opening(target):
+            return "Opening \(target.target)\n"
+        case .attachmentUsage:
+            return attachmentUsage
+        case .attachmentDeleteUsage:
+            return attachmentDeleteUsage
+        case .attachmentSelectionCancelled:
+            return "Attachment selection cancelled.\n"
+        case let .attachmentsAdded(addedCount, pendingCount):
+            let noun = addedCount == 1 ? "attachment" : "attachments"
+            return "Added \(addedCount) \(noun). \(pendingCount) pending.\n"
+        case .noPendingAttachments:
+            return noPendingAttachmentsText
+        case let .pendingAttachments(attachments):
+            return pendingAttachmentsText(attachments)
+        case .pendingAttachmentsRemoved:
+            return "Removed all pending attachments.\n"
+        case let .attachmentRemoved(filename):
+            return "Removed attachment: \(filename)\n"
+        case let .invalidAttachmentSelection(argument):
+            return failureText("Invalid attachment selection: \(argument).")
+        case .unterminatedAttachmentQuote:
+            return failureText("Unterminated quoted attachment path.")
+        case let .attachmentDirectoryUnreadable(path):
+            return "Unable to read attachment directory: \(path).\n"
+                + "Grant ZenCODE access in System Settings > Privacy & Security > Files and Folders.\n"
+        case let .noAttachableFiles(directoryPath):
+            return "No image or video files found in \(directoryPath).\n"
         }
     }
 
@@ -130,6 +284,12 @@ enum ChatSessionNoticeText {
         case let .savedSessionSelection(sessions, activeName),
              let .savedSessionDeletion(sessions, activeName):
             return savedSessionListText(sessions, activeName: activeName) + sessionSelectionUsage
+        case let .openSelection(candidates):
+            return openCandidateListText(candidates)
+                + "Selecting an item to open requires an interactive terminal.\n"
+        case .attachmentSelection:
+            return failureText("/attach without a path requires an interactive terminal.")
+                + attachmentUsage
         }
     }
 

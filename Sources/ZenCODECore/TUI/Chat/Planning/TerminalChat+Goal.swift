@@ -9,57 +9,10 @@ import Foundation
 import ToolCore
 
 extension TerminalChat {
+    /// `/goal <goal>`, run by the shared controller (see
+    /// ``ChatSessionController/runGoalCommand(line:)``).
     func handleWorkflowCommand(_ command: String) async -> TerminalSubmittedLineAction {
-        guard case let .goal(argument) = CoordinatorCommandParser.parse(command) else {
-            await writeFailureMessage(Self.workflowMissingGoalMessage)
-            return .continueChat
-        }
-
-        guard !argument.isEmpty else {
-            await writeFailureMessage(Self.workflowMissingGoalMessage)
-            return .continueChat
-        }
-
-        guard activePlan == nil, planBrainstorming == nil else {
-            await writeFailureMessage(Self.workflowActivePlanMessage)
-            return .continueChat
-        }
-
-        // The orchestrator refuses to create a graph while the current one is an
-        // unfinished workflow graph. Answer that with a user-facing explanation
-        // instead of leaking `graphNotMutable` from the runtime.
-        if let existing = await currentWorkflowGraph() {
-            await writeFailureMessage(
-                Self.workflowAlreadyActiveMessage(
-                    graphID: existing.id,
-                    pendingTaskCount: Self.openTaskCount(in: existing)
-                )
-            )
-            return .continueChat
-        }
-
-        let graphID = "workflow_\(UUID().uuidString.lowercased())"
-        do {
-            _ = try await sessionRunner.taskOrchestrator.createGraph(
-                sessionID: sessionID,
-                id: graphID,
-                source: .workflow,
-                state: .active,
-                tasks: [],
-                originalGoal: argument
-            )
-        } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            return .continueChat
-        }
-
-        await writeSubmittedPrompt(command)
-        activeWorkflow = WorkflowCommandRuntimeState(goal: argument, graphID: graphID)
-
-        return .runHiddenPrompt(
-            Self.workflowPrompt(goal: argument, graphID: graphID),
-            purpose: .workflow(originalGoal: argument, graphID: graphID)
-        )
+        await terminalAction(presenting: await chatSession.runGoalCommand(line: command))
     }
 
     /// Routes plain text typed while a workflow graph is still open and the
@@ -69,42 +22,10 @@ extension TerminalChat {
     func handleWorkflowContinuationReply(
         _ reply: String
     ) async -> TerminalSubmittedLineAction? {
-        guard var workflow = activeWorkflow, workflow.isAwaitingReply else { return nil }
-        // The graph may have been cleared, archived, completed or replaced since
-        // the workflow turn ended. Never resume a graph that is no longer the
-        // session's open workflow graph.
-        guard let graph = await currentWorkflowGraph(), graph.id == workflow.graphID else {
-            activeWorkflow = nil
+        guard let outcome = await chatSession.workflowContinuationReplyAction(for: reply) else {
             return nil
         }
-        guard workflow.recordReply(reply) else { return nil }
-        let continuationSessionID = sessionID
-        let previousWorkflow = activeWorkflow
-        do {
-            let resumedGraph = try await sessionRunner.taskOrchestrator.resumeWorkflow(
-                sessionID: continuationSessionID, expectedGraph: graph
-            )
-            guard !Task.isCancelled, sessionID == continuationSessionID,
-                  activeWorkflow == previousWorkflow else {
-                try? await sessionRunner.taskOrchestrator.rollbackWorkflowResume(
-                    sessionID: continuationSessionID, previousGraph: graph, resumedGraph: resumedGraph
-                )
-                return .continueChat
-            }
-        } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            return .continueChat
-        }
-        activeWorkflow = workflow
-
-        return .runHiddenPrompt(
-            PlanningCommandKernel.workflowContinuationPrompt(
-                state: workflow,
-                pendingTaskCount: Self.openTaskCount(in: graph),
-                totalTaskCount: graph.tasks.count
-            ),
-            purpose: .workflow(originalGoal: workflow.goal, graphID: workflow.graphID)
-        )
+        return await terminalAction(presenting: outcome)
     }
 
     /// Projects the authoritative workflow pause and explains how to resume it.
@@ -129,11 +50,6 @@ extension TerminalChat {
         await chatSession.handleFailedWorkflowTurn(graphID: graphID, reason: reason)
     }
 
-    /// The session's current task graph when it is an unfinished workflow graph.
-    private func currentWorkflowGraph() async -> TaskGraphSnapshot? {
-        await chatSession.currentWorkflowGraph(sessionID: sessionID)
-    }
-
     nonisolated static func openTaskCount(in graph: TaskGraphSnapshot) -> Int {
         graph.tasks.filter { $0.status != .completed && $0.status != .cancelled }.count
     }
@@ -145,33 +61,28 @@ extension TerminalChat {
         PlanningCommandKernel.workflowResumeSignalMessage
     }
 
-    nonisolated static let workflowMissingGoalMessage =
-        "ZenCODE: /goal requires a goal. "
-        + "Use /goal <goal> to describe the outcome to achieve.\n"
+    nonisolated static let workflowMissingGoalMessage = ChatSessionNoticeText.workflowMissingGoalMessage
 
-    nonisolated static let workflowActivePlanMessage =
-        "ZenCODE: /goal cannot start while an active plan or planning discussion exists. "
-        + "Finish it or use /plan clear before starting a workflow.\n"
+    nonisolated static let workflowActivePlanMessage = ChatSessionNoticeText.workflowActivePlanMessage
 
     nonisolated static func workflowAlreadyActiveMessage(
         graphID: String,
         pendingTaskCount: Int
     ) -> String {
-        "ZenCODE: a goal workflow is already running (\(graphID), "
-            + "\(pendingTaskCount) task\(pendingTaskCount == 1 ? "" : "s") still open). "
-            + "Reply in chat to continue it while it is waiting for you, "
-            + "review it with /tasks, "
-            + "or run /tasks clear before starting another /goal.\n"
+        ChatSessionNoticeText.workflowAlreadyActiveMessage(
+            graphID: graphID,
+            pendingTaskCount: pendingTaskCount
+        )
     }
 
     nonisolated static func workflowStillOpenMessage(
         graphID: String,
         pendingTaskCount: Int
     ) -> String {
-        "Workflow \"\(graphID)\" asked a question and is still open "
-            + "(\(pendingTaskCount) task\(pendingTaskCount == 1 ? "" : "s") open). "
-            + "Your next message answers it on the same task graph; "
-            + "use /tasks to review or /tasks clear to stop it.\n"
+        ChatSessionNoticeText.workflowStillOpenMessage(
+            graphID: graphID,
+            pendingTaskCount: pendingTaskCount
+        )
     }
 
     /// Notice for a workflow turn that ended without the explicit clarification
@@ -180,10 +91,10 @@ extension TerminalChat {
         graphID: String,
         pendingTaskCount: Int
     ) -> String {
-        "Workflow \"\(graphID)\" is still open "
-            + "(\(pendingTaskCount) task\(pendingTaskCount == 1 ? "" : "s") open) "
-            + "but it is not waiting for an answer, so your next message is an ordinary "
-            + "message. Use /tasks to review it or /tasks clear to stop it.\n"
+        ChatSessionNoticeText.workflowOpenWithoutQuestionMessage(
+            graphID: graphID,
+            pendingTaskCount: pendingTaskCount
+        )
     }
 
     /// Notice for a failed or cancelled workflow turn whose graph was preserved.
@@ -191,10 +102,10 @@ extension TerminalChat {
         graphID: String,
         pendingTaskCount: Int
     ) -> String {
-        "Workflow \"\(graphID)\" was interrupted and its task graph was kept "
-            + "(\(pendingTaskCount) task\(pendingTaskCount == 1 ? "" : "s") open). "
-            + "Your next message resumes it on the same task graph; "
-            + "use /tasks to review or /tasks clear to stop it.\n"
+        ChatSessionNoticeText.workflowRecoverableFailureMessage(
+            graphID: graphID,
+            pendingTaskCount: pendingTaskCount
+        )
     }
 
     nonisolated static func workflowPrompt(goal: String, graphID: String) -> String {

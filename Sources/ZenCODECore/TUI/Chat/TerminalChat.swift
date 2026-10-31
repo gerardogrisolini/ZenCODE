@@ -121,7 +121,12 @@ public final class TerminalChat {
         get { chatSession.selection.skillIDs }
         set { chatSession.selection.skillIDs = newValue }
     }
-    public var pendingAttachments: [AgentRuntimeAttachment] = []
+    /// The attachments `/attach` staged for the next prompt (see
+    /// ``ChatSessionController/pendingAttachments``).
+    public var pendingAttachments: [AgentRuntimeAttachment] {
+        get { chatSession.pendingAttachments }
+        set { chatSession.pendingAttachments = newValue }
+    }
     public var lastFileChangeSummary: TurnFileChangeSummary? {
         get { chatSession.lastFileChangeSummary }
         set { chatSession.lastFileChangeSummary = newValue }
@@ -179,21 +184,29 @@ public final class TerminalChat {
     /// How long a spoken question waits for its answer. Mutable so tests can
     /// shorten it.
     var voiceDialogueAnswerTimeout: Duration = .seconds(60)
-    public var taskGraphObserverTask: Task<Void, Never>?
-    /// In-flight debounced task-graph render scheduled by the observer task.
-    /// Tracked on the chat so a turn boundary can quiesce the debounce before
-    /// retiring its Telegram reporter.
-    var taskGraphDebouncedRender: Task<Void, Never>?
+    /// The task that consumes the task-graph events of the shared observer
+    /// (see ``ChatSessionController/taskGraphObserverTask``); `nil` while it
+    /// is stopped.
+    public var taskGraphObserverTask: Task<Void, Never>? {
+        chatSession.taskGraphObserverTask
+    }
     /// Periodically republishes the sub-agent overview while a blocking
-    /// `agent.*` tool call (e.g. `agent.wait`) is executing. Started from
+    /// `agent.*` tool call (e.g. `agent.wait`) is executing (see
+    /// ``ChatSessionController/subAgentOverviewRefreshTask``). Started from
     /// `.toolCallStarted` and stopped from `.toolCallCompleted` / end-of-turn.
-    var subAgentOverviewRefreshTask: Task<Void, Never>?
+    var subAgentOverviewRefreshTask: Task<Void, Never>? {
+        chatSession.subAgentOverviewRefreshTask
+    }
     /// The runner retains this handler across backend rebuilds. Install once
     /// per artifact-history lifetime so a reset fences callbacks from old sessions.
     var didInstallSubAgentToolEventHandler = false
-    /// Interval between automatic sub-agent overview refreshes. Exposed as a
-    /// mutable instance property so tests can shorten it.
-    var subAgentOverviewRefreshInterval = Duration.seconds(2)
+    /// Interval between automatic sub-agent overview refreshes, the one of the
+    /// controller's refresher (see ``ChatSubAgentOverviewRefresher/interval``).
+    /// Mutable so tests can shorten it.
+    var subAgentOverviewRefreshInterval: Duration {
+        get { chatSession.subAgentOverviewRefresher.interval }
+        set { chatSession.subAgentOverviewRefresher.interval = newValue }
+    }
     /// Keys of sub-agent completions already reflected in the statusbar git
     /// summary (agent ID + status + output revision). A sub-agent re-run via
     /// `agent.message` produces a new revision and triggers a fresh refresh.
@@ -209,10 +222,15 @@ public final class TerminalChat {
         reflectedSubAgentCompletionKeys.insert(key).inserted
     }
 
-    /// Test hook invoked at the start of each refresh tick. When set, the tick
-    /// awaits this closure before rendering, allowing tests to deterministically
-    /// gate tick timing. Captured at `start` time; `nil` in production.
-    var onSubAgentOverviewTick: (@Sendable () async -> Void)?
+    /// Test hook invoked at the start of each refresh tick, the one of the
+    /// controller's refresher (see ``ChatSubAgentOverviewRefresher/onTick``).
+    /// When set, the tick awaits this closure before rendering, allowing tests
+    /// to deterministically gate tick timing. Captured at `start` time; `nil`
+    /// in production.
+    var onSubAgentOverviewTick: (@Sendable () async -> Void)? {
+        get { chatSession.subAgentOverviewRefresher.onTick }
+        set { chatSession.subAgentOverviewRefresher.onTick = newValue }
+    }
     public var availableSkillsCache: [PromptSkill]? {
         get { chatSession.availableSkillsCache }
         set { chatSession.availableSkillsCache = newValue }
@@ -455,7 +473,8 @@ public final class TerminalChat {
             managementRuntime: self.sessionRunner,
             environment: ChatSessionEnvironment(
                 configuration: configuration,
-                featureRuntime: self.sessionRunner.swiftFeatureRuntime
+                featureRuntime: self.sessionRunner.swiftFeatureRuntime,
+                userHomeDirectoryURL: UserHomeDirectory.current()
             ),
             workingDirectory: configuration.workingDirectory,
             presenter: chatSessionPresenter,
@@ -465,11 +484,7 @@ public final class TerminalChat {
         chatSessionPresenter.chat = self
         interactionHost.chat = self
         chatSession.channelHooks = self
-    }
-
-    deinit {
-        taskGraphObserverTask?.cancel()
-        subAgentOverviewRefreshTask?.cancel()
+        chatSession.commandRegistry = Self.commandRegistry
     }
 
     public static func supportsInteractiveStatusBar() -> Bool {

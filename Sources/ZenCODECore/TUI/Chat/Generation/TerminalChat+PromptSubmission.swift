@@ -26,17 +26,9 @@ private struct TerminalPromptExecutionTasks {
 
 extension TerminalChat {
     func renderHelpTextForCurrentAgent() -> String {
-        var lines = [
-            "Type a prompt and press return."
-        ]
-        lines.append(contentsOf: visibleCommandDescriptorsForCurrentAgent().map(\.help))
-        lines.append(contentsOf: [
-            "Live chat: @coordinator <message>, @all <message>, or an @agent-name handle.",
-            "Ctrl+G toggles default/full access for local.exec approvals in the interactive panel.",
-            "Editing: Ctrl+A/Ctrl+E line start/end, Alt+</Alt+> draft start/end, "
-                + "Alt+←/→ (or ESC b / ESC f) word motion.",
-        ])
-        return lines.joined(separator: "\n") + "\n\n"
+        ChatSessionNoticeText.text(
+            for: .help(commandHelp: Self.commandRegistry.helpLines(in: currentCommandContext()))
+        )
     }
 
     func commandSuggestionsForCurrentAgent() -> [TerminalCommandSuggestion] {
@@ -84,45 +76,35 @@ extension TerminalChat {
             break
         }
 
-        // A plain message supplies the Goal requested by `/plan approve` and is
-        // consumed as transient control input before planner/workflow routing.
+        // A plain message answers the conversation that explicitly waits for
+        // the operator (the Goal of `/plan approve`, a Planner question, a
+        // `/goal` workflow question). It sits after live mention routing and
+        // before slash processing, so neither is ever absorbed as a reply.
         if Self.commandToken(from: prompt) == nil,
-           let action = await handlePlanApprovalGoalReply(prompt) {
-            return action
+           let outcome = await chatSession.pendingReplyAction(for: prompt) {
+            return await terminalAction(presenting: outcome)
         }
 
-        // A plain message is a clarification reply only while a Planner
-        // explicitly has an unfinished question block.  This sits after live
-        // mention routing and before slash processing so neither is absorbed.
-        if Self.commandToken(from: prompt) == nil,
-           let action = await handlePlanBrainstormingReply(prompt) {
-            return action
+        guard case .slashCommand = Self.submittedLineRole(for: prompt) else {
+            return .runPrompt(prompt)
         }
-
-        // Same rule for `/goal`: a plain message continues the open workflow
-        // graph only while the coordinator is waiting for the user.
-        if Self.commandToken(from: prompt) == nil,
-           let action = await handleWorkflowContinuationReply(prompt) {
-            return action
+        let outcome = await chatSession.handleCommandLine(
+            prompt,
+            context: currentCommandContext()
+        )
+        guard case .channelCommand = outcome.action else {
+            return await terminalAction(presenting: outcome)
         }
+        return await channelCommandAction(prompt)
+    }
 
-        if case .slashCommand = Self.submittedLineRole(for: prompt) {
-            if let unavailableMessage = unavailableLocalSlashCommandMessage(for: prompt) {
-                await writeFailureMessage(unavailableMessage)
-                return .continueChat
-            }
-            guard Self.isKnownSlashCommand(prompt) else {
-                await writeFailureMessage(Self.unknownCommandMessage(for: prompt))
-                return .continueChat
-            }
-        }
-
-        switch prompt {
+    /// The commands only the terminal runs (`/exit`, `/setup`, `/feature`,
+    /// `/tools logs`, `/telegram`, `/cron`, `/voice`, `/ds4`), once the
+    /// shared dispatcher resolved them as visible channel commands.
+    private func channelCommandAction(_ command: String) async -> TerminalSubmittedLineAction {
+        switch command {
         case "/exit":
             return .exitChat
-        case "/help":
-            await writeSystemMessage(renderHelpTextForCurrentAgent())
-            return .continueChat
         case "/setup":
             guard stdinIsTerminal else {
                 await writeFailureMessage("ZenCODE: /setup requires an interactive terminal.\n")
@@ -132,38 +114,10 @@ extension TerminalChat {
         case let command where command.hasPrefix("/setup "):
             await writeFailureMessage("ZenCODE: /setup does not accept arguments.\n")
             return .continueChat
-        case "/models":
-            do {
-                try await selectModelInteractively()
-            } catch {
-                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            }
-            return .continueChat
-        case "/think":
-            do {
-                try await selectThinkingInteractively()
-            } catch {
-                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            }
-            return .continueChat
-        case let command where command.hasPrefix("/think "):
-            await writeFailureMessage("ZenCODE: /think does not accept arguments. Use /think to choose a level.\n")
-            return .continueChat
-        case let command where command == "/agents" || command.hasPrefix("/agents "):
-            do {
-                try await handleAgentsCommand(command)
-            } catch {
-                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            }
-            return .continueChat
         case let command where command == "/tools" || command.hasPrefix("/tools "):
             await handleToolsCommand(command)
             return .continueChat
         case let command where command == "/feature" || command.hasPrefix("/feature "):
-            guard AgentProfileStore.isBuilderAgent(selectedAgent) else {
-                await writeFailureMessage(Self.renderFeatureCommandUnavailableForAgent())
-                return .continueChat
-            }
             switch await handleFeatureCommand(command) {
             case .none:
                 return .continueChat
@@ -172,49 +126,6 @@ extension TerminalChat {
             case let .prefillPrompt(prompt):
                 return .prefillPrompt(prompt)
             }
-        case let command where command == "/skills" || command.hasPrefix("/skills "):
-            await handleSkillsCommand(command)
-            return .continueChat
-        case let command where command == "/sessions" || command.hasPrefix("/sessions ")
-            || command == "/session" || command.hasPrefix("/session "):
-            await handleSessionsCommand(command)
-            return .continueChat
-        case let command where command == "/attach" || command.hasPrefix("/attach "):
-            do {
-                try await handleAttachCommand(command)
-            } catch {
-                await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            }
-            return .continueChat
-                case let command where command == "/open" || command.hasPrefix("/open "):
-            await handleOpenCommand(command)
-            return .continueChat
-        case let command where command == "/artifacts" || command.hasPrefix("/artifacts "):
-            let arguments = Self.slashCommandArguments(
-                from: command,
-                commandPrefix: "/artifacts"
-            )
-            if arguments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                await handleArtifactsCommand()
-            } else {
-                await writeFailureMessage("ZenCODE: /artifacts does not accept arguments.\n")
-            }
-            return .continueChat
-        case let command where command == "/changes" || command.hasPrefix("/changes "):
-            await handleChangesCommand(command)
-            return .continueChat
-        case "/undo":
-            await handleUndoFileChangesCommand()
-            return .continueChat
-        case let command where command == "/tasks" || command.hasPrefix("/tasks "):
-            await handleTasksCommand(command)
-            return .continueChat
-        case let command where command == "/plan" || command.hasPrefix("/plan "):
-            return await handlePlanCommand(command)
-        case let command where command == "/goal" || command.hasPrefix("/goal "):
-            return await handleWorkflowCommand(command)
-        case let command where command == "/review" || command.hasPrefix("/review "):
-            return await handleReviewCommand(command)
         case let command where command == "/telegram" || command.hasPrefix("/telegram "):
             await handleTelegramCommand(command)
             return .continueChat
@@ -228,11 +139,8 @@ extension TerminalChat {
             await handleDS4Command(command)
             return .continueChat
         default:
-            if case .slashCommand = Self.submittedLineRole(for: prompt) {
-                await writeFailureMessage(Self.unknownCommandMessage(for: prompt))
-                return .continueChat
-            }
-            return .runPrompt(prompt)
+            await writeFailureMessage(Self.unknownCommandMessage(for: command))
+            return .continueChat
         }
     }
 

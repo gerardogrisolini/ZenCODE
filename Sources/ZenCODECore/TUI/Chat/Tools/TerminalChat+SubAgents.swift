@@ -57,15 +57,16 @@ extension TerminalChat {
         }
     }
 
+    /// Publishes the sub-agent overview through the shared controller (see
+    /// ``ChatSessionController/publishSubAgentOverviewIfChanged(relatedToolName:presenter:)``):
+    /// nothing for a tool that is not a sub-agent tool, and without a tool
+    /// name always.
     public func publishSubAgentOverviewIfChanged(
         relatedToolName: String? = nil
     ) async {
-        if let relatedToolName,
-           !DirectSubAgentRuntime.isSubAgentToolName(relatedToolName) {
-            return
-        }
-
-        await renderSubAgentOverview(force: false)
+        await chatSession.publishSubAgentOverviewIfChanged(
+            relatedToolName: relatedToolName
+        )
     }
 
     func installSubAgentToolEventHandlerIfNeeded() async {
@@ -84,77 +85,66 @@ extension TerminalChat {
 
     // MARK: - Live refresh during agent.* tool calls
 
-    /// Starts a periodic overview refresh so sub-agent status stays visible while
-    /// a blocking `agent.*` tool call such as `agent.wait` is executing. Each
-    /// tick reuses the signature-deduped `renderSubAgentOverview(force:)`, so an
-    /// unchanged snapshot writes nothing. Idempotent.
-    ///
-    /// - Note: ``subAgentOverviewRefreshTask`` is touched only from the serial
-    ///   event-delivery context (``AgentCoreSessionRunner`` delivers callbacks
-    ///   sequentially), so start and stop never race; the task never reads it.
+    /// Starts the periodic overview refresh of the shared controller (see
+    /// ``ChatSessionController/startSubAgentOverviewRefreshIfNeeded(presenter:)``),
+    /// so sub-agent status stays visible while a blocking `agent.*` tool call
+    /// such as `agent.wait` is executing. Each tick reaches the signature-deduped
+    /// ``renderSubAgentOverview(_:origin:publication:force:)``, so an unchanged
+    /// snapshot writes nothing. Idempotent.
     func startSubAgentOverviewRefreshIfNeeded() {
-        guard subAgentOverviewRefreshTask == nil else { return }
-        let interval = subAgentOverviewRefreshInterval
-        let tickHook = onSubAgentOverviewTick
-        subAgentOverviewRefreshTask = Task(name: "ZenCODE.TUI.sub-agent-overview-refresh") { [weak self] in
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: interval)
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled else { return }
-                if let tickHook {
-                    await tickHook()
-                }
-                guard !Task.isCancelled, let self else { return }
-                await self.renderSubAgentOverview(force: false)
-            }
-        }
+        chatSession.startSubAgentOverviewRefreshIfNeeded()
     }
 
-    /// Stops the periodic refresh and **drains** the task before the final render,
-    /// so no in-flight tick can publish a stale overview afterwards (the
-    /// publish-A-after-B race a bare `cancel()` would leave open). Idempotent.
+    /// Stops the periodic refresh and **drains** the tick in flight before the
+    /// final publication (see
+    /// ``ChatSessionController/stopSubAgentOverviewRefresh(presenter:)``), so
+    /// no in-flight tick can publish a stale overview afterwards. Idempotent.
     func stopSubAgentOverviewRefresh() async {
-        let task = subAgentOverviewRefreshTask
-        subAgentOverviewRefreshTask = nil
-        task?.cancel()
-        await task?.value
-        await renderSubAgentOverview(force: false)
+        await chatSession.stopSubAgentOverviewRefresh()
     }
 
-    public func renderSubAgentOverview(
-        force: Bool,
-        rememberSignature: Bool = true,
-        isAutomatic: Bool = true
+    // MARK: - Sub-agent section
+
+    /// Reserves the next publication of the sub-agent section: its revision
+    /// fences every publication reserved before it and drops the section
+    /// deferred so far.
+    func reserveSubAgentOverviewPublication() async -> ChatOverviewPublication {
+        ChatOverviewPublication(
+            revision: await renderCoordinator.beginOverviewPublication(.subAgents)
+        )
+    }
+
+    /// Renders an overview the controller presented, with the revision of its
+    /// reservation, adding what only the terminal knows: the delegated tool
+    /// rows the render coordinator tracks (part of the signature), the rows the
+    /// scrolling region has for an in-place rewrite, and the status-bar git
+    /// summary refresh for sub-agents that completed. No snapshot clears the
+    /// section unless `force` writes the empty section anyway.
+    func renderSubAgentOverview(
+        _ overview: ChatSubAgentOverview,
+        origin: ChatOverviewOrigin,
+        publication: ChatOverviewPublication?,
+        force: Bool = false
     ) async {
-        // Reserve before awaiting the runtime snapshot: a later callback must
-        // fence this publication if this snapshot returns after it.
-        let publicationRevision = await renderCoordinator.beginOverviewPublication(.subAgents)
-        let snapshots = await sessionRunner.subAgentSnapshots()
+        let publicationRevision = publication?.revision
+        let snapshots = overview.snapshots
         let toolPresentations = await renderCoordinator.subAgentToolPresentationSnapshot()
         await refreshStatusBarGitStatusSummaryForCompletedSubAgents(snapshots)
         let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
+        let renderOrigin: TerminalChatRenderCoordinator.OverviewPublicationOrigin =
+            origin == .automatic ? .automatic : .explicit
         guard force || !snapshots.isEmpty else {
             await renderCoordinator.clearSubAgentOverview(
                 revision: publicationRevision,
                 maximumInPlaceRows: maximumInPlaceRows,
-                origin: isAutomatic ? .automatic : .explicit
+                origin: renderOrigin
             )
             return
         }
-        let signature = Self.subAgentOverviewSignature(snapshots)
+        let signature = overview.signature
             + "\u{1C}tools:\(toolPresentations.revision)"
-        // The runtime marks the current wave while producing this snapshot.
-        // The overview can also contain older standby/reused agents (or agents
-        // active through shared chat), so array order is not a valid authority.
-        let overviewBatchID = snapshots
-            .first(where: \.isInCurrentOverviewWave)?
-            .overviewBatchID?
-            .uuidString
         let resolver = subAgentModelTitleResolver()
-        let overview = Self.renderSubAgentOverview(
+        let text = Self.renderSubAgentOverview(
             snapshots,
             modelTitleResolver: resolver,
             includesFinalResponses: false,
@@ -167,14 +157,16 @@ extension TerminalChat {
         let responses = Self.subAgentMarkdownResponses(snapshots)
         _ = await renderCoordinator.renderSubAgentOverview(
             signature: signature,
-            text: overview,
+            text: text,
             partialResponses: partialResponses,
             responses: responses,
             revision: publicationRevision,
             force: force,
-            rememberSignature: rememberSignature,
-            origin: isAutomatic ? .automatic : .explicit,
-            overviewBatchID: overviewBatchID,
+            rememberSignature: true,
+            origin: renderOrigin,
+            // The runtime marks the current wave while producing the
+            // snapshots (see ``ChatSubAgentOverview/currentBatchID``).
+            overviewBatchID: overview.currentBatchID,
             maximumInPlaceRows: maximumInPlaceRows
         )
     }

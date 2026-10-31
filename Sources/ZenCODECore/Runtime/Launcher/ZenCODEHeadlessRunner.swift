@@ -162,7 +162,8 @@ public enum ZenCODEHeadlessRunner {
             managementRuntime: sessionRunner,
             environment: ChatSessionEnvironment(
                 configuration: configuration,
-                featureRuntime: sessionRunner.swiftFeatureRuntime
+                featureRuntime: sessionRunner.swiftFeatureRuntime,
+                userHomeDirectoryURL: UserHomeDirectory.current()
             ),
             workingDirectory: configuration.workingDirectory,
             presenter: HeadlessSilentPresenter(),
@@ -230,7 +231,8 @@ public enum ZenCODEHeadlessRunner {
             // composes nothing, so it needs no feature runtime.
             environment: ChatSessionEnvironment(
                 configuration: configuration,
-                featureRuntime: nil
+                featureRuntime: nil,
+                userHomeDirectoryURL: UserHomeDirectory.current()
             ),
             workingDirectory: configuration.workingDirectory,
             presenter: presenter,

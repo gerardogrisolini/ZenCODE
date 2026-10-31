@@ -546,48 +546,6 @@ extension TerminalChat {
     nonisolated static func subAgentOverviewSignature(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
     ) -> String {
-        snapshots.map { snapshot in
-            let hasResponse = snapshot.latestContentPreview?.nilIfBlank != nil
-                || snapshot.latestOutput?.nilIfBlank != nil
-            return [
-                snapshot.id,
-                snapshot.name,
-                snapshot.role,
-                snapshot.profileName?.nilIfBlank ?? "",
-                snapshot.status.rawValue,
-                snapshot.pending ? "pending" : "idle",
-                snapshot.configuredModelID?.nilIfBlank ?? "",
-                snapshot.modelID?.nilIfBlank ?? "",
-                // The kind participates in the signature: the same text can be
-                // rendered as reasoning or as a message, and a phase change
-                // with no visible activity still changes the placeholder row.
-                snapshot.currentActivityKind?.rawValue ?? "",
-                snapshot.currentActivity?.nilIfBlank ?? "",
-                snapshot.currentToolName?.nilIfBlank ?? "",
-                snapshot.currentToolTarget?.nilIfBlank ?? "",
-                // The counters share the model row, so a metrics update alone
-                // changes the rendered overview and must invalidate it.
-                subAgentMetricsSignature(snapshot),
-                hasResponse ? "response" : "",
-                snapshot.latestError?.nilIfBlank ?? ""
-            ].joined(separator: "\u{1F}")
-        }
-        .joined(separator: "\u{1E}")
-    }
-
-    /// Identity of the counters rendered on the model row, built from the raw
-    /// values so any reported change is detected even when the abbreviated
-    /// text happens to stay the same.
-    private nonisolated static func subAgentMetricsSignature(
-        _ snapshot: DirectSubAgentRuntime.AgentSnapshot
-    ) -> String {
-        guard let metrics = snapshot.latestMetrics else {
-            return ""
-        }
-        return [
-            metrics.cachedPromptTokenCount.map(String.init) ?? "",
-            metrics.promptTokenCount.map(String.init) ?? "",
-            metrics.completionTokenCount.map(String.init) ?? ""
-        ].joined(separator: "/")
+        ChatSubAgentOverview.signature(for: snapshots)
     }
 }

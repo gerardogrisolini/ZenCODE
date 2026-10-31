@@ -4,6 +4,12 @@ import Testing
 import ToolCore
 @testable import ZenCODECore
 
+/// The ACP projection reads only the graph of the shared overview, so the
+/// overview a test hands it carries no task views.
+private func taskOverview(_ graph: TaskGraphSnapshot?) -> ChatTaskGraphOverview? {
+    graph.map { ChatTaskGraphOverview(graph: $0, tasks: []) }
+}
+
 @Suite(.timeLimit(.minutes(1)))
 struct ACPPresentationLifecycleIntegrationTests {
     @Test func textOnlySecondPromptReattachesPersistentTasklessAgent() async throws {
@@ -306,7 +312,7 @@ extension ACPPresentationLifecycleIntegrationTests {
         func publishNext(_ events: inout AsyncStream<TaskGraphEvent>.Iterator) async throws {
             _ = try #require(await events.next())
             let graph = try await orchestrator.graphSnapshot(sessionID: "root")
-            for update in await projection.updates(for: graph) {
+            for update in await projection.updates(for: taskOverview(graph)) {
                 await pipeline.enqueue(.init(kind: .consume(update)), onAccepted: {
                     await projection.acknowledge(update)
                 }).value

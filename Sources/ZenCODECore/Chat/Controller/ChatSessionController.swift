@@ -66,9 +66,25 @@ final class ChatSessionController {
     /// the channel under one lock.
     nonisolated let stateStore = ChatSessionStateStore()
     var lastFileChangeSummary: TurnFileChangeSummary?
+    /// The attachments `/attach` staged for the next prompt the operator
+    /// sends (see ``consumePendingAttachments()``). Transient: never saved
+    /// with the session.
+    var pendingAttachments: [AgentRuntimeAttachment] = []
     /// Runtime-only artifact history. It is never serialized with a session.
     var fileArtifactHistory = SessionFileArtifactHistory()
     var activeFileArtifactTurn: ChatFileArtifactTurn?
+    /// Publishes the task-graph overview while the graph changes, from the
+    /// moment the channel starts it (see ``startTaskGraphObserver()``).
+    let taskGraphObserver = ChatTaskGraphObserver()
+    /// Publishes the sub-agent overview while a blocking `agent.*` tool call
+    /// executes, from the moment the channel starts it (see
+    /// ``startSubAgentOverviewRefreshIfNeeded(presenter:)``).
+    let subAgentOverviewRefresher = ChatSubAgentOverviewRefresher()
+    /// The slash commands ``handleCommandLine(_:context:)`` resolves: the
+    /// shared ones, with the channel's own commands among them. The channel
+    /// sets it when it has commands of its own; until then only the shared
+    /// commands are known.
+    var commandRegistry = ChatCommandRegistry(shared: ChatCommandRegistry.sharedDescriptors)
 
     /// The agent, model, thinking, tool, and skill choices of the session. A
     /// new controller starts from the launch agent and the launch's explicit

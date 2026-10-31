@@ -14,7 +14,8 @@ import Foundation
 /// menus and line input run off the actor like every other blocking read.
 /// Menus and line input need an interactive terminal: without one the host
 /// does not offer them, so the selection commands print their
-/// non-interactive output instead.
+/// non-interactive output instead. The same holds for the attachment picker
+/// and for opening files and URLs with the platform's launcher.
 @TerminalChatActor
 final class TerminalInteractionHost: ChatInteractionHost {
     weak var chat: TerminalChat?
@@ -40,6 +41,8 @@ final class TerminalInteractionHost: ChatInteractionHost {
                 .multipleChoice,
                 .focusedMultipleChoice,
                 .textInput,
+                .externalOpen,
+                .attachmentPicker,
             ])
         }
         return capabilities
@@ -126,6 +129,20 @@ final class TerminalInteractionHost: ChatInteractionHost {
         #else
         return true
         #endif
+    }
+
+    /// Opens the target with the system launcher (`open`, `xdg-open`,
+    /// `wslview`, or `start`).
+    func openExternal(_ target: ChatOpenTarget) async throws {
+        try await SystemFileLauncher.open(target.target)
+    }
+
+    /// The terminal attachment picker (see
+    /// `TerminalChat.selectAttachmentURLInteractively(startingAt:)`), which
+    /// says itself why a folder cannot be shown.
+    func pickAttachment(startingAt directory: URL) async -> URL? {
+        guard let chat else { return nil }
+        return await chat.selectAttachmentURLInteractively(startingAt: directory)
     }
 
     /// The key-help line of a focused multiple-choice menu.

@@ -21,25 +21,17 @@ extension TerminalChat {
         }
     }
 
-    /// `/models`: adapter of ``ChatSessionController/chooseModel()``. A model
-    /// applied in place refreshes the status bar; a new model's session steps
-    /// run through the channel hooks.
+    /// `/models`: adapter of ``ChatSessionController/runModelsCommand(line:)``.
+    /// A model applied in place refreshes the status bar
+    /// (``selectionDidApply(_:command:)``); a new model's session steps run
+    /// through the channel hooks. A failure is written as a notice.
     public func selectModelInteractively() async throws {
-        let outcome = try await chatSession.chooseModel()
-        if outcome.change == .sessionUpdated {
-            await statusBar.reset()
-            await refreshInitialStatusBarContextWindow()
-        }
-        await writeSessionNotices(outcome.notices)
+        await writeSessionNotices(await chatSession.runModelsCommand().notices)
     }
 
-    /// `/think`: adapter of ``ChatSessionController/chooseThinking()``.
+    /// `/think`: adapter of ``ChatSessionController/runThinkCommand(line:)``.
     public func selectThinkingInteractively() async throws {
-        let outcome = try await chatSession.chooseThinking()
-        if outcome.change != nil {
-            await refreshStatusBarThinkingSelection()
-        }
-        await writeSessionNotices(outcome.notices)
+        await writeSessionNotices(await chatSession.runThinkCommand().notices)
     }
 
     public func availableModelManifests() -> [AgentSettingsModelManifest] {

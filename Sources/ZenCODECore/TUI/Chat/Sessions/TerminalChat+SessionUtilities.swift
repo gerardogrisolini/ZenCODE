@@ -9,39 +9,11 @@ import Foundation
 import ToolCore
 
 extension TerminalChat {
+    /// See ``ChatSessionController/savedSessionCommandAction(rawArguments:)``.
     nonisolated static func savedSessionCommandAction(
         rawArguments: String
     ) -> TerminalSavedSessionCommandAction {
-        let trimmedArguments = rawArguments.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Split into subcommand + remainder for keyword-based actions.
-        let firstSpace = trimmedArguments.firstIndex(of: " ")
-        let subcommand: String
-        let remainder: String
-        if let firstSpace {
-            subcommand = String(trimmedArguments[..<firstSpace]).lowercased()
-            remainder = String(trimmedArguments[trimmedArguments.index(after: firstSpace)...])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        } else {
-            subcommand = trimmedArguments.lowercased()
-            remainder = ""
-        }
-
-        switch subcommand {
-        case "":
-            return .list
-        case "delete":
-            return .delete
-        case "new":
-            return .newSession
-        case "save":
-            return .saveActive
-        case "compact":
-            return .compact
-        case "restore":
-            return .restore(entryID: remainder)
-        default:
-            return .saveNamed(trimmedArguments)
-        }
+        ChatSessionController.savedSessionCommandAction(rawArguments: rawArguments)
     }
 
     /// See ``ChatSessionController/derivedSessionName(fromFirstPromptIn:)``.

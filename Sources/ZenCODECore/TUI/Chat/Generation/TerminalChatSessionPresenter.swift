@@ -163,18 +163,65 @@ final class TerminalChatSessionPresenter: ChatSessionPresenter {
     func presentSessionNotice(_ notice: ChatSessionNotice) async {
         await chat?.writeSessionNotice(notice)
     }
+
+    func presentSubmittedCommand(_ line: String) async {
+        await chat?.writeSubmittedPrompt(line)
+    }
+
+    func reserveTaskGraphOverviewPublication() async -> ChatOverviewPublication? {
+        await chat?.reserveTaskGraphOverviewPublication()
+    }
+
+    func presentTaskGraphOverview(
+        _ overview: ChatTaskGraphOverview?,
+        origin: ChatOverviewOrigin,
+        publication: ChatOverviewPublication?
+    ) async {
+        await chat?.renderTaskGraphOverview(overview, origin: origin, publication: publication)
+    }
+
+    func reserveSubAgentOverviewPublication() async -> ChatOverviewPublication? {
+        await chat?.reserveSubAgentOverviewPublication()
+    }
+
+    func presentSubAgentOverview(
+        _ overview: ChatSubAgentOverview,
+        origin: ChatOverviewOrigin,
+        publication: ChatOverviewPublication?
+    ) async {
+        await chat?.renderSubAgentOverview(overview, origin: origin, publication: publication)
+    }
 }
 
 extension TerminalChat {
     /// Writes `notice` with ``ChatSessionNoticeText`` on the channel the
     /// notice names, as the terminal wrote it before it presented notices.
+    /// The file-change summary and the file artifacts are drawn with the
+    /// terminal's own renderers instead (`/changes` with its patches,
+    /// `/artifacts` with its diffs), exactly as the commands drew them. The
+    /// active tools of a new agent's session precede the agent switch, as
+    /// `/agents` printed them.
     func writeSessionNotice(_ notice: ChatSessionNotice) async {
+        switch notice {
+        case let .fileChangeSummary(summary, includesDiff):
+            await writeFileChangeSummary(summary, includeDiff: includesDiff)
+            return
+        case let .fileArtifacts(turns):
+            await writeFileArtifacts(turns, includeHistoryHeadings: true)
+            return
+        case .agentSwitched:
+            await printActiveToolsIfNeeded()
+        default:
+            break
+        }
         let text = ChatSessionNoticeText.text(for: notice)
         switch notice.channel {
         case .system:
             await writeSystemMessage(text)
         case .failure:
             await writeFailureMessage(text)
+        case .markdown:
+            await writeMarkdownMessage(text)
         }
     }
 
@@ -182,6 +229,27 @@ extension TerminalChat {
     func writeSessionNotices(_ notices: [ChatSessionNotice]) async {
         for notice in notices {
             await writeSessionNotice(notice)
+        }
+    }
+
+    /// Writes the closing notices of a shared command and returns what the
+    /// terminal does next, as the command's former handler returned it: the
+    /// one adapter from ``ChatCommandOutcome`` to
+    /// ``TerminalSubmittedLineAction``.
+    ///
+    /// A turn with a prompt the command built is a hidden prompt, which
+    /// neither echoes it nor takes the staged attachments; a prompt the
+    /// operator typed runs as one. A channel-only command is run by
+    /// `submittedLineAction` before it gets here.
+    func terminalAction(presenting outcome: ChatCommandOutcome) async -> TerminalSubmittedLineAction {
+        await writeSessionNotices(outcome.notices)
+        switch outcome.action {
+        case .none, .channelCommand:
+            return .continueChat
+        case let .startTurn(prompt, purpose, locksResponseLanguage):
+            return locksResponseLanguage
+                ? .runPrompt(prompt)
+                : .runHiddenPrompt(prompt, purpose: purpose)
         }
     }
 }

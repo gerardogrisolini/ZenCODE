@@ -21,122 +21,32 @@ struct TerminalAttachmentPickerEntry: Hashable, Sendable {
 }
 
 extension TerminalChat {
+    /// `/attach`, run by the shared controller (see
+    /// ``ChatSessionController/runAttachCommand(line:)``). The controller
+    /// reports its failures as notices, so this adapter does not throw.
     public func handleAttachCommand(_ command: String) async throws {
-        let rawArguments = Self.slashCommandArguments(
-            from: command,
-            commandPrefix: "/attach"
-        )
-
-        let urls: [URL]
-        if rawArguments.isEmpty {
-            guard stdinIsTerminal else {
-                await writeSystemMessage(
-                    "ZenCODE: /attach without a path requires an interactive terminal.\n"
-                        + Self.renderAttachmentUsage()
-                )
-                return
-            }
-
-            guard let selectedURL = await selectAttachmentURLInteractively() else {
-                await writeSystemMessage("Attachment selection cancelled.\n")
-                return
-            }
-            urls = [selectedURL]
-        } else {
-            let paths = try Self.splitAttachmentCommandArguments(rawArguments)
-            guard let first = paths.first else {
-                await writeSystemMessage(Self.renderAttachmentUsage())
-                return
-            }
-
-            switch first.lowercased() {
-            case "list":
-                await writePendingAttachments()
-                return
-            case "delete":
-                let deleteArgument = paths.dropFirst().joined(separator: " ")
-                try await deletePendingAttachments(argument: deleteArgument)
-                return
-            default:
-                break
-            }
-
-            urls = paths.map { resolvedAttachmentURL(from: $0) }
-        }
-
-        let attachments = try AgentRuntimeAttachmentStore.importRuntimeAttachments(from: urls)
-        pendingAttachments.append(contentsOf: attachments)
-
-        let noun = attachments.count == 1 ? "attachment" : "attachments"
-        await writeSystemMessage(
-            "Added \(attachments.count) \(noun). \(pendingAttachments.count) pending.\n"
-        )
-        await writePendingAttachments()
+        await writeSessionNotices(await chatSession.runAttachCommand(line: command).notices)
     }
 
+    /// `/attach delete`: see ``ChatSessionController/deletePendingAttachments(argument:)``,
+    /// whose ``ChatAttachmentCommandError`` this rethrows.
     public func deletePendingAttachments(argument: String) async throws {
-        let rawArgument = argument.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !pendingAttachments.isEmpty else {
-            await writeSystemMessage("No pending attachments.\n")
-            return
-        }
-
-        guard !rawArgument.isEmpty else {
-            await writeSystemMessage(Self.renderAttachmentDeleteUsage())
-            return
-        }
-
-        if rawArgument.lowercased() == "all" {
-            pendingAttachments.removeAll()
-            await writeSystemMessage("Removed all pending attachments.\n")
-            return
-        }
-
-        guard let index = Int(rawArgument), index > 0, index <= pendingAttachments.count else {
-            throw TerminalAttachmentCommandError.invalidDetachArgument(rawArgument)
-        }
-
-        let removedAttachment = pendingAttachments.remove(at: index - 1)
-        await writeSystemMessage(
-            "Removed attachment: \(removedAttachment.originalFilename)\n"
-        )
-        await writePendingAttachments()
+        await writeSessionNotices(try chatSession.deletePendingAttachments(argument: argument))
     }
 
+    /// `/attach list`: the attachments staged for the next prompt.
     public func writePendingAttachments() async {
-        guard !pendingAttachments.isEmpty else {
-            await writeSystemMessage("No pending attachments.\n")
-            return
-        }
-
-        let lines = pendingAttachments.enumerated().map { index, attachment in
-            Self.renderAttachmentLine(number: index + 1, attachment: attachment)
-        }
-        await writeSystemMessage(
-            """
-            Pending attachments:
-            \(lines.joined(separator: "\n"))
-            Send a prompt to include them, or press return on an empty prompt.
-
-            """
-        )
+        await writeSessionNotice(.pendingAttachments(pendingAttachments))
     }
 
+    /// See ``ChatSessionController/consumePendingAttachments()``.
     public func consumePendingAttachmentsForPrompt() -> [AgentRuntimeAttachment] {
-        let attachments = pendingAttachments
-        pendingAttachments.removeAll()
-        return attachments
+        chatSession.consumePendingAttachments()
     }
 
+    /// See ``ChatSessionNoticeText/attachmentUsage``.
     public nonisolated static func renderAttachmentUsage() -> String {
-        """
-        Usage: /attach                    Open the terminal attachment picker
-               /attach <image-or-video-file> [file ...]
-               /attach list
-               /attach delete [all|attachment-number]
-
-        """
+        ChatSessionNoticeText.attachmentUsage
     }
 
     nonisolated static func attachmentPickerEntries(
@@ -215,99 +125,36 @@ extension TerminalChat {
         FileManager.default.isReadableFile(atPath: directory.path)
     }
 
+    /// See ``ChatSessionNoticeText/attachmentDeleteUsage``.
     public nonisolated static func renderAttachmentDeleteUsage() -> String {
-        "Usage: /attach delete [all|attachment-number]\n"
+        ChatSessionNoticeText.attachmentDeleteUsage
     }
 
+    /// See ``ChatSessionNoticeText/attachmentLine(number:attachment:)``.
     public nonisolated static func renderAttachmentLine(
         number: Int,
         attachment: AgentRuntimeAttachment
     ) -> String {
-        var details = [
-            attachment.kind.rawValue,
-            attachment.contentType?.nilIfBlank
-        ].compactMap { $0 }
-
-        if let byteCount = AgentRuntimeAttachmentStore.byteCount(for: attachment) {
-            details.append(Self.renderByteCount(byteCount))
-        }
-
-        let suffix = details.isEmpty ? "" : " (\(details.joined(separator: ", ")))"
-        return "  \(number). \(attachment.originalFilename)\(suffix)"
+        ChatSessionNoticeText.attachmentLine(number: number, attachment: attachment)
     }
 
+    /// See ``ChatSessionController/splitAttachmentCommandArguments(_:)``,
+    /// whose ``ChatAttachmentCommandError`` this rethrows.
     public nonisolated static func splitAttachmentCommandArguments(_ rawArguments: String) throws -> [String] {
-        var arguments: [String] = []
-        var current = ""
-        var activeQuote: Character?
-        var isEscaping = false
-
-        for character in rawArguments {
-            if isEscaping {
-                current.append(character)
-                isEscaping = false
-                continue
-            }
-
-                        if character == "\\" {
-                isEscaping = true
-                continue
-            }
-
-            if let quote = activeQuote {
-                if character == quote {
-                    activeQuote = nil
-                } else {
-                    current.append(character)
-                }
-                continue
-            }
-
-            if character == "\"" || character == "'" {
-                activeQuote = character
-                continue
-            }
-
-            if character.isShellWhitespace {
-                if !current.isEmpty {
-                    arguments.append(current)
-                    current.removeAll(keepingCapacity: true)
-                }
-                continue
-            }
-
-            current.append(character)
-        }
-
-        if isEscaping {
-            current.append("\\")
-        }
-        if activeQuote != nil {
-            throw TerminalAttachmentCommandError.unterminatedQuote
-        }
-        if !current.isEmpty {
-            arguments.append(current)
-        }
-        return arguments
+        try ChatSessionController.splitAttachmentCommandArguments(rawArguments)
     }
 
-    private func resolvedAttachmentURL(from rawPath: String) -> URL {
-        Self.resolvedWorkspaceFileURL(
-            from: rawPath,
-            workingDirectory: configuration.workingDirectory,
-            recognizingFileURLs: true
-        )
-    }
-
-    private func selectAttachmentURLInteractively() async -> URL? {
-        var directory = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+    /// The terminal attachment picker behind
+    /// ``TerminalInteractionHost/pickAttachment(startingAt:)``: it browses
+    /// from `startingDirectory` and returns the chosen image or video file,
+    /// or `nil` when the operator cancelled or the folder cannot be shown
+    /// (after saying why).
+    func selectAttachmentURLInteractively(startingAt startingDirectory: URL) async -> URL? {
+        var directory = startingDirectory.standardizedFileURL
 
         while true {
             guard Self.attachmentPickerCanReadDirectory(at: directory) else {
-                await writeSystemMessage(
-                    "Unable to read attachment directory: \(directory.path).\n"
-                        + "Grant ZenCODE access in System Settings > Privacy & Security > Files and Folders.\n"
-                )
+                await writeSessionNotice(.attachmentDirectoryUnreadable(path: directory.path))
                 return nil
             }
 
@@ -334,9 +181,7 @@ extension TerminalChat {
             })
 
             guard !items.isEmpty else {
-                await writeSystemMessage(
-                    "No image or video files found in \(directory.path).\n"
-                )
+                await writeSessionNotice(.noAttachableFiles(directoryPath: directory.path))
                 return nil
             }
 
@@ -362,35 +207,6 @@ extension TerminalChat {
                 continue
             }
             return URL(fileURLWithPath: selectedEntry.path).standardizedFileURL
-        }
-    }
-
-    private nonisolated static func renderByteCount(_ byteCount: Int) -> String {
-        ByteCountFormatter.string(
-            fromByteCount: Int64(byteCount),
-            countStyle: .file
-        )
-    }
-}
-
-private enum TerminalAttachmentCommandError: LocalizedError {
-    case invalidDetachArgument(String)
-    case unterminatedQuote
-
-    var errorDescription: String? {
-        switch self {
-        case let .invalidDetachArgument(argument):
-            return "Invalid attachment selection: \(argument)."
-        case .unterminatedQuote:
-            return "Unterminated quoted attachment path."
-        }
-    }
-}
-
-private extension Character {
-    var isShellWhitespace: Bool {
-        unicodeScalars.allSatisfy {
-            CharacterSet.whitespacesAndNewlines.contains($0)
         }
     }
 }

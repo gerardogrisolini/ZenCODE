@@ -83,6 +83,46 @@ protocol ChatSessionManagementRuntime: ChatSessionRuntime {
 
     func clearTaskGraphs(sessionID: String) async throws
 
+    /// The plans in the project's saved-plan library.
+    func savedTaskPlans(
+        workingDirectory: URL
+    ) async -> [SavedTaskPlan]
+
+    /// Removes the plans from the project's saved-plan library and returns the
+    /// IDs that were found and removed.
+    @discardableResult
+    func deleteSavedTaskPlans(
+        planIDs: [String],
+        workingDirectory: URL
+    ) async throws -> [String]
+
+    @discardableResult
+    func activateTaskGraph(
+        id graphID: String,
+        sessionID: String
+    ) async throws -> TaskGraphSnapshot
+
+    @discardableResult
+    func archiveTaskGraph(
+        id graphID: String,
+        sessionID: String
+    ) async throws -> TaskGraphSnapshot
+
+    @discardableResult
+    func retryTask(
+        id taskID: String,
+        sessionID: String,
+        expectedRevision: Int?
+    ) async throws -> TaskRecordView
+
+    /// Cancels the task and closes the sub-agent that was working on it.
+    @discardableResult
+    func cancelTask(
+        id taskID: String,
+        sessionID: String,
+        reason: String?
+    ) async throws -> TaskCancellation
+
     // MARK: Tools
 
     func activeToolDescriptors(

@@ -98,7 +98,7 @@ extension TerminalChat {
         if Self.shouldRefreshGitStatus(for: event) {
             await refreshStatusBarGitStatusSummaryForFileMutation()
         }
-        await renderSubAgentOverview(force: false)
+        await publishSubAgentOverviewIfChanged()
     }
 
     func writeAccessModeChangeMessage(_ accessMode: AgentLocalExecAccessMode) async {

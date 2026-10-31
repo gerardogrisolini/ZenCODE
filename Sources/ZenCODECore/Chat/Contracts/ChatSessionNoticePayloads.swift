@@ -97,3 +97,24 @@ struct ChatSavedSessionSummary: Sendable, Equatable {
         )
     }
 }
+
+/// A file or URL the conversation mentions that `/open` can hand to the
+/// platform, with the label the selection list shows for it.
+struct ChatOpenCandidate: Sendable, Equatable {
+    /// The value the platform opens: an absolute file path or a URL string.
+    let target: String
+    /// The human-readable label of the selection list.
+    let display: String
+    let kind: ChatOpenTarget.Kind
+
+    init(target: String, display: String, kind: ChatOpenTarget.Kind) {
+        self.target = target
+        self.display = display
+        self.kind = kind
+    }
+
+    /// What an interaction host is asked to open for this candidate.
+    var openTarget: ChatOpenTarget {
+        ChatOpenTarget(target: target, kind: kind)
+    }
+}

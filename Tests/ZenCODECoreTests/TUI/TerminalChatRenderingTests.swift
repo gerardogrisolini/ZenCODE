@@ -791,7 +791,12 @@ struct TerminalChatRenderingTests {
         )
         await terminal.writeToolCallStarted(toolCall)
 
-        await terminal.renderSubAgentOverview(force: true)
+        await terminal.renderSubAgentOverview(
+            ChatSubAgentOverview(snapshots: []),
+            origin: .automatic,
+            publication: await terminal.reserveSubAgentOverviewPublication(),
+            force: true
+        )
         let deferredSnapshot = await terminal.renderCoordinator.snapshot()
 
         // The overview stays deferred because a non-agent tool block must not
@@ -805,7 +810,12 @@ struct TerminalChatRenderingTests {
             toolCall,
             result: DirectAgentToolResult(output: "Done", summary: "Done")
         )
-        await terminal.renderSubAgentOverview(force: true)
+        await terminal.renderSubAgentOverview(
+            ChatSubAgentOverview(snapshots: []),
+            origin: .automatic,
+            publication: await terminal.reserveSubAgentOverviewPublication(),
+            force: true
+        )
         let renderedSnapshot = await terminal.renderCoordinator.snapshot()
 
         #expect(renderedSnapshot.activeToolCallID == nil)
@@ -826,7 +836,12 @@ struct TerminalChatRenderingTests {
         )
         await terminal.writeToolCallStarted(toolCall)
 
-        await terminal.renderSubAgentOverview(force: true)
+        await terminal.renderSubAgentOverview(
+            ChatSubAgentOverview(snapshots: []),
+            origin: .automatic,
+            publication: await terminal.reserveSubAgentOverviewPublication(),
+            force: true
+        )
         let renderedSnapshot = await terminal.renderCoordinator.snapshot()
 
         // The overview is rendered immediately (not deferred) because the
@@ -863,7 +878,12 @@ struct TerminalChatRenderingTests {
         // The single standard tool presentation is active by default.
         await terminal.writeToolCallStarted(toolCall)
 
-        await terminal.renderSubAgentOverview(force: true)
+        await terminal.renderSubAgentOverview(
+            ChatSubAgentOverview(snapshots: []),
+            origin: .automatic,
+            publication: await terminal.reserveSubAgentOverviewPublication(),
+            force: true
+        )
         let renderedSnapshot = await terminal.renderCoordinator.snapshot()
 
         #expect(renderedSnapshot.lastRenderedSubAgentOverviewSignature != nil)

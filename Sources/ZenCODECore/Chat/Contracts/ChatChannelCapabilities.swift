@@ -34,4 +34,9 @@ public struct ChatChannelCapabilities: OptionSet, Sendable, Hashable {
     /// The host can present a multiple-choice menu whose cursor rests on one
     /// item, returning the ticked items together with the focused one.
     public static let focusedMultipleChoice = ChatChannelCapabilities(rawValue: 1 << 6)
+    /// The host can open a file or URL with the platform's default application.
+    public static let externalOpen = ChatChannelCapabilities(rawValue: 1 << 7)
+    /// The host can let the operator browse for an image or video file and
+    /// choose it as an attachment.
+    public static let attachmentPicker = ChatChannelCapabilities(rawValue: 1 << 8)
 }

@@ -401,7 +401,7 @@ extension ZenCODEACPBridge {
             // stopped before reaching it can only have been cancelled; keep
             // the Planner discussion bound to this live incarnation.
             if !(error is ChatTurnFailure),
-               case let .planning(collectionID, _) = commandPurpose {
+               case let .planning(collectionID) = commandPurpose {
                 await clearACPPlanBrainstorming(sessionID: sessionID, epoch: epoch, expectedCollectionID: collectionID)
             }
             let underlying = (error as? ChatTurnFailure)?.underlying ?? error

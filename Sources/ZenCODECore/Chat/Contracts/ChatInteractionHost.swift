@@ -91,6 +91,32 @@ public struct ChatWorkspaceAccessRequest: Sendable, Equatable {
     }
 }
 
+/// A file or URL the operator asked to open outside the chat.
+public struct ChatOpenTarget: Sendable, Equatable {
+    public enum Kind: Sendable, Equatable {
+        case file
+        case url
+    }
+
+    /// The value the platform opens and the chat names in `Opening <target>`: an
+    /// absolute file path or a URL string.
+    public let target: String
+    public let kind: Kind
+
+    public init(target: String, kind: Kind) {
+        self.target = target
+        self.kind = kind
+    }
+}
+
+/// The default ``ChatInteractionHost/openExternal(_:)`` of a host that cannot
+/// open files. It is internal: callers see the message, not the type.
+struct ChatOpenExternalUnsupportedError: LocalizedError {
+    var errorDescription: String? {
+        "Opening files is not supported by this channel."
+    }
+}
+
 /// Operator interactions a chat channel provides to the shared runtime.
 ///
 /// Hosts are transport adapters: the terminal reads raw keys, ACP sends
@@ -140,6 +166,17 @@ public protocol ChatInteractionHost: Sendable {
     /// folder. Returns `false` when access is refused, which disables the
     /// tools that need it; a host without a folder gate grants it.
     func requestWorkspaceAccess(_ request: ChatWorkspaceAccessRequest) async -> Bool
+
+    /// Opens a file or URL with the platform's default application. Throws
+    /// when the platform refuses or the host cannot open anything; a host
+    /// advertises ``ChatChannelCapabilities/externalOpen`` when it can.
+    func openExternal(_ target: ChatOpenTarget) async throws
+
+    /// Lets the operator browse from `directory` and choose one image or video
+    /// file to attach. Returns `nil` when the host has no picker or the
+    /// operator cancelled; a host advertises
+    /// ``ChatChannelCapabilities/attachmentPicker`` when it has one.
+    func pickAttachment(startingAt directory: URL) async -> URL?
 }
 
 extension ChatInteractionHost {
@@ -176,5 +213,13 @@ extension ChatInteractionHost {
 
     public func requestWorkspaceAccess(_ request: ChatWorkspaceAccessRequest) async -> Bool {
         true
+    }
+
+    public func openExternal(_ target: ChatOpenTarget) async throws {
+        throw ChatOpenExternalUnsupportedError()
+    }
+
+    public func pickAttachment(startingAt directory: URL) async -> URL? {
+        nil
     }
 }

@@ -1,0 +1,334 @@
+//
+//  ReviewPrompts.swift
+//  ZenCODE
+//
+//  Created by Gerardo Grisolini on 07/06/26.
+//
+//  The hidden `/review` delegation prompt of the terminal chat and the shared
+//  controller. ACP builds its own `/review` prompt (`acpReviewPrompt`).
+//
+
+import Foundation
+import ToolCore
+
+extension PlanningCommandKernel {
+    static func reviewDelegationPrompt(
+        scope: String,
+        reviewer: AgentProfile,
+        changeSummary: TurnFileChangeSummary?,
+        approvedPlan: TerminalSessionPlan? = nil,
+        taskGraph: TaskGraphSnapshot? = nil
+    ) -> String {
+        reviewDelegationPrompt(
+            scope: scope,
+            reviewers: [reviewer],
+            changeSummary: changeSummary,
+            approvedPlan: approvedPlan,
+            taskGraph: taskGraph
+        )
+    }
+
+    /// With several Reviewer candidates the model may delegate to any of them.
+    static func reviewDelegationPrompt(
+        scope: String,
+        reviewers: [AgentProfile],
+        changeSummary: TurnFileChangeSummary?,
+        approvedPlan: TerminalSessionPlan? = nil,
+        taskGraph: TaskGraphSnapshot? = nil
+    ) -> String {
+        let approvedPlan = approvedPlan.flatMap {
+            $0.isApproved && !$0.consolidatedText.isEmpty ? $0 : nil
+        }
+        if approvedPlan == nil, taskGraph == nil, let changeSummary {
+            return legacyReviewDelegationPrompt(
+                scope: scope,
+                reviewers: reviewers,
+                changeSummary: changeSummary
+            )
+        }
+        guard approvedPlan != nil || taskGraph != nil else {
+            return ""
+        }
+
+        let taskGraphBlock = taskGraph.map { graph in
+            """
+                Authoritative task graph snapshot (claims to verify, not trusted proof):
+                \(taskGraphReviewSection(graph))
+                """
+        } ?? "No task graph snapshot is available; classify plan coverage from files and mark unverifiable claims unverified."
+
+        let scopeSection: String
+        if scope.isEmpty, approvedPlan != nil {
+            scopeSection = """
+                Verify the approved plan and task graph against the current state of the files they \
+                implicate. When tracked session changes are also provided, review those changes for \
+                code quality and correctness. Do not broaden scope to unrelated repository concerns.
+                """
+        } else if scope.isEmpty {
+            scopeSection = """
+                Verify the task graph against the current state of the files implicated by its tasks. \
+                When tracked session changes are also provided, review those changes for code quality \
+                and correctness. Do not broaden scope to unrelated repository concerns.
+                """
+        } else {
+            let coverageScope = approvedPlan == nil ? "task graph" : "approved plan and task graph"
+            scopeSection = """
+                Review focus requested by the user: \(scope)
+                Apply this focus only within the \(coverageScope) and any tracked session changes. \
+                Do not broaden the review to unrelated files, history, journal context, or other \
+                workspace concerns.
+                """
+        }
+
+        let coverageTarget = approvedPlan == nil ? "task graph" : "approved plan and task graph"
+        let changeSummaryBlock: String
+        let codeReviewDelegationRules: String
+        if let changeSummary {
+            changeSummaryBlock = """
+                Session change surface:
+                \(reviewChangeSummarySection(changeSummary))
+                """
+            codeReviewDelegationRules = """
+                - Create one or more separate code-quality/correctness Reviewers for the tracked \
+                change surface. If a task graph is active, first add one independent review task per \
+                Reviewer to that graph, including a single Reviewer, then call tasks.list with \
+                runnableOnly=true and put each task ID in the corresponding canonical agent.create \
+                `agents` item's `taskID` field. Without an active graph, do \
+                this before using more than one Reviewer. Partition independent files or concerns when \
+                useful; a single taskless code Reviewer is sufficient only for a small self-contained \
+                change.
+                - Code-quality Reviewers must read the current content of the listed files, since no \
+                diffs are included, and base findings on those files only. Ask them to report \
+                correctness bugs, regressions, security/concurrency issues, missing tests, and \
+                convention violations with file:line references and severity.
+                """
+        } else {
+            changeSummaryBlock = """
+                No tracked file-change summary is available. Perform coverage verification against the \
+                current files implicated by the \(coverageTarget).
+                """
+            codeReviewDelegationRules = """
+                - This is coverage-only mode. Do not assign a generic code-quality review, report \
+                unrelated findings, or characterize current code as a new change or regression \
+                without a tracked change summary.
+                """
+        }
+
+        let approvedPlanBlock = approvedPlan.map { plan in
+            """
+                Approved plan under verification:
+                Original goal: \(plan.originalGoal)
+
+                \(plan.consolidatedText)
+                """
+        } ?? "No approved plan is attached; use the authoritative task graph as the coverage contract."
+
+        return """
+            You are the director of this review. Stay on your current agent profile: do \
+            not switch profiles. Delegate the actual review to Reviewer sub-agents via the \
+            sub-agent tools, then read their reviews and produce a correction plan.
+
+            \(scopeSection)
+
+            \(changeSummaryBlock)
+
+            \(approvedPlanBlock)
+
+            \(taskGraphBlock)
+
+            Critical evidence rule:
+            - A task marked completed is an assertion to verify, not proof that the code is correct.
+            - Attempt output and recorded evidence are leads only; verify them against current files \
+            and, where available, real validation results.
+            - A task in awaiting_validation is not completed and must never be reported as validated.
+
+            Delegation rules:
+            - Create the sub-agents with agent.create using role "Reviewer" and \
+            \(AgentProfileStore.delegationProfileClause(reviewers)); Reviewers must not edit files.
+            - If a task graph is active, append one independent review task per Reviewer to that \
+            graph, including a single Reviewer; call tasks.list with runnableOnly=true and put each \
+            runnable task ID in the corresponding canonical agent.create `agents` item's `taskID` \
+            field. Without an active graph, define that workflow before \
+            using multiple Reviewers. If a taskless Reviewer is already active, wait for it to finish \
+            and close it before activating a graph; it cannot be retroactively bound to a task.
+            - Create at least one dedicated Reviewer for plan coverage or task-graph coverage.
+            - The coverage Reviewer must verify the current state of the files implicated by the plan \
+            or task graph, not merely the latest diff. It may inspect files needed to verify tasks and \
+            plan items, but must not perform a generic review of the whole repository.
+            - Require the plan-coverage Reviewer to classify every task as exactly one of: \
+            implemented, validated, unverified, failed, deviated, cancelled, or blocked. \
+            "Validated" requires independent evidence in current files or actual validation output; \
+            use "implemented" when code exists but validation is absent, and "unverified" when a \
+            completion claim cannot be established. Use deviated when implementation differs from \
+            the plan and explain whether the deviation is acceptable.
+            \(codeReviewDelegationRules)
+
+            After delegating:
+            \(reviewerChatWaitInstructions)
+            - Read and consolidate their reviews into a single prioritized summary grouped \
+            by severity, removing duplicates.
+            - Include a distinct task/plan coverage report with one classification per task, concrete \
+            file:line references whenever available, and explicit discrepancies between the plan, \
+            task status, attempts, evidence, and real files.
+            - If the findings warrant changes, compile a concrete correction plan: the \
+            files or areas to change, the intended fix for each, and the suggested order. \
+            Do not edit any files yourself in this turn; present the plan and let the user \
+            decide whether to proceed.
+            - The final review summary and correction plan must follow the session response \
+            language from the system prompt. Do not answer in English just because this \
+            internal review prompt is written in English.
+            """
+    }
+
+    /// Shared "After delegating" chat guidance for both review prompts.
+    static let reviewerChatWaitInstructions = """
+        - Wait for the Reviewers to finish with agent.wait. It returns early when a Reviewer asks \
+        you a question in chat: answer immediately with agent.message, then call agent.wait again.
+        - Before consolidating, you may ask a Reviewer (even one in standby) in chat to clarify a finding.
+        """
+
+    static func taskGraphReviewSection(_ graph: TaskGraphSnapshot) -> String {
+        var lines = [
+            "graph=\(graph.id) state=\(graph.state.rawValue) revision=\(graph.revision)",
+        ]
+        for task in graph.tasks.sorted(by: { lhs, rhs in
+            if lhs.order != rhs.order { return lhs.order < rhs.order }
+            return lhs.id < rhs.id
+        }) {
+            let dependencies = task.dependsOn.isEmpty
+                ? "none"
+                : task.dependsOn.joined(separator: ",")
+            lines.append(
+                "- task=\(task.id) status=\(task.status.rawValue) revision=\(task.revision) depends_on=\(dependencies) title=\(reviewInline(task.title))"
+            )
+            if !task.acceptanceCriteria.isEmpty {
+                lines.append("  acceptance criteria:")
+                lines.append(contentsOf: task.acceptanceCriteria.map { "  - \(reviewInline($0))" })
+            }
+            for attempt in task.attempts {
+                var attemptLine = "  attempt #\(attempt.ordinal) id=\(attempt.id) status=\(attempt.status.rawValue) executor=\(attempt.executor.rawValue)"
+                if let agentID = attempt.agentID { attemptLine += " agent=\(agentID)" }
+                lines.append(attemptLine)
+                if let output = attempt.output?.nilIfBlank {
+                    lines.append("    output: \(reviewInline(String(output.prefix(2_000))))")
+                }
+                if let error = attempt.error?.nilIfBlank {
+                    lines.append("    error: \(reviewInline(String(error.prefix(2_000))))")
+                }
+            }
+            if let result = task.result {
+                if let output = result.output?.nilIfBlank,
+                      output != task.attempts.last?.output {
+                    lines.append("  result_output: \(reviewInline(String(output.prefix(2_000))))")
+                }
+                if let error = result.error?.nilIfBlank,
+                      error != task.attempts.last?.error {
+                    lines.append("  result_error: \(reviewInline(String(error.prefix(2_000))))")
+                }
+                if let validatedAt = result.validatedAt {
+                    lines.append("  validated_at: \(validatedAt.ISO8601Format())")
+                }
+                for evidence in result.evidence {
+                    let location = evidence.location.map { " location=\($0)" } ?? ""
+                    lines.append("  evidence kind=\(evidence.kind)\(location): \(reviewInline(evidence.summary))")
+                }
+            }
+            if let reason = task.statusReason?.nilIfBlank {
+                lines.append("  status_reason: \(reviewInline(reason))")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func reviewInline(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+    }
+
+    private static func legacyReviewDelegationPrompt(
+        scope: String,
+        reviewers: [AgentProfile],
+        changeSummary: TurnFileChangeSummary
+    ) -> String {
+        let scopeSection: String
+        if scope.isEmpty {
+            scopeSection = """
+                Review only the tracked file changes made during the current session. Do \
+                not derive extra scope from unrelated workspace, history, or journal \
+                context.
+                """
+        } else {
+            scopeSection = """
+                Review focus requested by the user: \(scope)
+                Apply this focus only within the tracked file changes made during the \
+                current session. Do not broaden the review to unrelated files, history, \
+                journal context, or other workspace changes.
+                """
+        }
+
+        return """
+            You are the director of this review. Stay on your current agent profile: do \
+            not switch profiles. Delegate the actual review to Reviewer sub-agents via the \
+            sub-agent tools, then read their reviews and produce a correction plan.
+
+            \(scopeSection)
+
+            Session change surface:
+            \(reviewChangeSummarySection(changeSummary))
+
+            Delegation rules:
+            - Create the sub-agents with agent.create using role "Reviewer" and \
+            \(AgentProfileStore.delegationProfileClause(reviewers)); Reviewers must not edit files.
+            - When the review surface can be partitioned into independent areas (for \
+            example distinct files, modules, or concerns), first call tasks.create once \
+            with one independent review task per area, then call tasks.list with \
+            runnableOnly=true and spawn multiple Reviewers in one canonical agent.create `agents` \
+            array, putting each task ID in its corresponding item's `taskID` field. If a task graph \
+            is already active, add a task and use `agents[].taskID` even for a single Reviewer. If a \
+            taskless Reviewer is already \
+            active, wait for it to finish and close it before activating a graph. If the change \
+            is small or cannot be partitioned cleanly, a single self-contained Reviewer is fine.
+            - Give each Reviewer a focused prompt describing its assigned subset of the \
+            session change surface above. Reviewers must read the current content of the files \
+            listed above, since no diffs are included, and base findings on those files only.
+            - Ask Reviewers to report concrete findings: correctness bugs, regressions, \
+            security/concurrency issues, missing tests, and style/convention violations, \
+            each with file:line references and a severity.
+
+            After delegating:
+            \(reviewerChatWaitInstructions)
+            - Read and consolidate their reviews into a single prioritized summary grouped \
+            by severity, removing duplicates.
+            - If the findings warrant changes, compile a concrete correction plan: the \
+            files or areas to change, the intended fix for each, and the suggested order. \
+            Do not edit any files yourself in this turn; present the plan and let the user \
+            decide whether to proceed.
+            - The final review summary and correction plan must follow the session response \
+            language from the system prompt. Do not answer in English just because this \
+            internal review prompt is written in English.
+            """
+    }
+
+    static func reviewChangeSummarySection(_ summary: TurnFileChangeSummary) -> String {
+        var lines = [
+            "Files: \(summary.fileCount)  +\(summary.totalAdditions) -\(summary.totalDeletions)"
+        ]
+
+        for entry in summary.entries {
+            if entry.isBinary {
+                lines.append("- \(entry.status.rawValue) \(entry.path) (binary)")
+            } else {
+                lines.append(
+                    "- \(entry.status.rawValue) \(entry.path)  +\(entry.additions) -\(entry.deletions)"
+                )
+            }
+        }
+
+        lines.append(
+            "No diffs are included. Read the current content of each listed file; a deleted file no longer exists."
+        )
+
+        return lines.joined(separator: "\n")
+    }
+}

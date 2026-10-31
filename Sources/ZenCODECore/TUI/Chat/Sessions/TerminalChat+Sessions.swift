@@ -8,116 +8,55 @@
 import Foundation
 import ToolCore
 
-enum TerminalSavedSessionCommandAction: Equatable, Sendable {
-    case list
-    case delete
-    case newSession
-    case saveActive
-    case compact
-    case restore(entryID: String)
-    case saveNamed(String)
-}
+/// What `/sessions` does: the shared action.
+typealias TerminalSavedSessionCommandAction = ChatSavedSessionCommandAction
 
 extension TerminalChat {
+    /// `/sessions`: adapter of ``ChatSessionController/runSessionsCommand(line:)``.
     public func handleSessionsCommand(_ command: String) async {
-        let rawArguments = Self.slashCommandArguments(
-            from: command,
-            commandPrefix: "/sessions"
-        )
-
-        switch Self.savedSessionCommandAction(rawArguments: rawArguments) {
-        case .list:
-            await handleSavedSessionList()
-        case .delete:
-            await handleSavedSessionDelete()
-        case .newSession:
-            await startNewSession()
-        case .saveActive:
-            await saveActiveSession()
-        case .compact:
-            await compactCurrentSession()
-        case let .restore(entryID):
-            await handleRestoreCommand(entryID)
-        case let .saveNamed(name):
-            await saveCurrentSession(named: name)
-        }
+        await writeSessionNotices(await chatSession.runSessionsCommand(line: command).notices)
     }
 
     /// Resets the runtime conversation and starts a fresh, unsaved session.
     /// Replaces the former `/clear` command. Adapter of
-    /// ``ChatSessionController/startNewSession(newSessionID:)``.
+    /// ``ChatSessionController/newSessionCommand()``; the terminal's steps
+    /// around the new session run in ``sessionWillStartNew()`` and
+    /// ``sessionDidStartNew()``.
     public func startNewSession() async {
-        do {
-            await stopTaskGraphObserver()
-            resetResponseLanguageLock()
-            let outcome = try await chatSession.startNewSession(
-                newSessionID: Self.newTerminalSessionID()
-            )
-            await startTaskGraphObserver()
-            await statusBar.reset()
-            await refreshInitialStatusBarContextWindow()
-            pendingAttachments.removeAll()
-            await renderCoordinator.resetOverview(.subAgents)
-            await writeSessionNotices(outcome.notices)
-        } catch {
-            await writeSessionNotice(.operationFailed(description: error.localizedDescription))
-        }
+        await writeSessionNotices(await chatSession.newSessionCommand().notices)
     }
 
-    /// `/sessions`: adapter of ``ChatSessionController/chooseSavedSession()``.
+    /// `/sessions`: adapter of ``ChatSessionController/savedSessionListCommand()``.
     public func handleSavedSessionList() async {
-        do {
-            await writeSessionNotices(try await chatSession.chooseSavedSession().notices)
-        } catch {
-            await writeSessionNotice(.operationFailed(description: error.localizedDescription))
-        }
+        await writeSessionNotices(await chatSession.savedSessionListCommand().notices)
     }
 
     /// `/sessions delete`: adapter of
-    /// ``ChatSessionController/chooseSavedSessionsToDelete()``.
+    /// ``ChatSessionController/savedSessionDeleteCommand()``.
     public func handleSavedSessionDelete() async {
-        do {
-            await writeSessionNotices(try await chatSession.chooseSavedSessionsToDelete().notices)
-        } catch {
-            await writeSessionNotice(.operationFailed(description: error.localizedDescription))
-        }
+        await writeSessionNotices(await chatSession.savedSessionDeleteCommand().notices)
     }
 
     /// `/sessions save`: adapter of
-    /// ``ChatSessionController/saveActiveSession(contextWindow:)``.
+    /// ``ChatSessionController/saveActiveSessionCommand()``, with the context
+    /// window of the status bar (``commandContextWindow()``).
     public func saveActiveSession() async {
-        let outcome = await chatSession.saveActiveSession(
-            contextWindow: await statusBar.currentContextWindowStatus()
-        )
-        await writeSessionNotices(outcome.notices)
+        await writeSessionNotices(await chatSession.saveActiveSessionCommand().notices)
     }
 
     /// `/sessions <name>`: adapter of
-    /// ``ChatSessionController/saveSession(named:contextWindow:)``.
+    /// ``ChatSessionController/saveSessionCommand(named:)``, with the context
+    /// window of the status bar (``commandContextWindow()``).
     public func saveCurrentSession(named rawName: String) async {
-        let outcome = await chatSession.saveSession(
-            named: rawName,
-            contextWindow: await statusBar.currentContextWindowStatus()
-        )
-        await writeSessionNotices(outcome.notices)
+        await writeSessionNotices(await chatSession.saveSessionCommand(named: rawName).notices)
     }
 
     /// `/sessions compact`: adapter of
-    /// ``ChatSessionController/compactSession(maxTokensOverride:)``.
+    /// ``ChatSessionController/compactSessionCommand()``; the status bar
+    /// bounds the compaction and shows its result
+    /// (``sessionDidCompact(contextWindow:)``).
     public func compactCurrentSession() async {
-        do {
-            let runtimeMaxTokens = await statusBar.currentContextWindowStatus()?.maxTokens
-                .flatMap { $0 > 0 ? $0 : nil }
-            let outcome = try await chatSession.compactSession(
-                maxTokensOverride: runtimeMaxTokens
-            )
-            if let contextWindow = outcome.contextWindow {
-                _ = await statusBar.update(contextWindow: contextWindow)
-            }
-            await writeSessionNotice(outcome.notice)
-        } catch {
-            await writeSessionNotice(.operationFailed(description: error.localizedDescription))
-        }
+        await writeSessionNotices(await chatSession.compactSessionCommand().notices)
     }
 
     /// See ``ChatSessionController/recordSavedSessionIndex(_:)``.
@@ -162,7 +101,7 @@ extension TerminalChat {
     func savedSessionWillRestore() async {
         pendingAttachments.removeAll()
         await renderCoordinator.resetOverview(.subAgents)
-        await renderSubAgentOverview(force: false)
+        await publishSubAgentOverviewIfChanged()
         didPrintActiveTools = false
         printedModelID = nil
         await statusBar.reset()

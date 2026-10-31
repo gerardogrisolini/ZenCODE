@@ -5,6 +5,8 @@
 //  Created by Gerardo Grisolini on 30/05/26.
 //
 
+import Foundation
+
 /// What a channel launched the process with, as the session layer needs it.
 ///
 /// Every channel hands the controller the same immutable launch facts, read
@@ -33,6 +35,13 @@ struct ChatSessionEnvironment: Sendable {
     let initialSkillSelection: String?
     /// The session-scoped feature runtime the tool catalog is read from.
     let featureRuntime: SwiftFeatureRuntime?
+    /// The user's home folder: where the attachment picker starts and what a
+    /// leading `~` of a workspace path (`/attach`, `/open`) stands for. The
+    /// channel that owns a terminal or an account reads it and passes it in;
+    /// Chat never reads it from the process. `nil` when the channel has no
+    /// home to offer: `~` is then not expanded (the path resolves like any
+    /// relative path) and `/attach` offers no picker.
+    let userHomeDirectoryURL: URL?
 
     /// Whether model and thinking choices become the persisted defaults.
     /// A host that supplies its own models owns that choice, so nothing is
@@ -43,7 +52,8 @@ struct ChatSessionEnvironment: Sendable {
 
     init(
         configuration: AgentConfiguration,
-        featureRuntime: SwiftFeatureRuntime?
+        featureRuntime: SwiftFeatureRuntime?,
+        userHomeDirectoryURL: URL? = nil
     ) {
         self.hostedModels = configuration.hostedModels
         self.hostedAgentProfiles = configuration.hostedAgentProfiles
@@ -55,5 +65,6 @@ struct ChatSessionEnvironment: Sendable {
         self.appMode = configuration.appMode
         self.initialSkillSelection = configuration.initialSkillSelection
         self.featureRuntime = featureRuntime
+        self.userHomeDirectoryURL = userHomeDirectoryURL
     }
 }

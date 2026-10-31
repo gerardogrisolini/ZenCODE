@@ -1066,7 +1066,8 @@ struct ACPCommandRoutingTests {
         #expect(resumed.workflow?.originalGoal == graph.workflow?.originalGoal)
         #expect(resumed.workflow?.state == .awaitingUser)
         #expect(await fixture.bridge.commandNamesForGoalTesting(sessionID: fixture.sessionID) == ["goal"])
-        let expectedGrant = ACPCommandPromptPurpose.workflow(graphID: graph.id).additionalToolNames
+        let expectedGrant = ChatTurnPurpose.workflow(originalGoal: "", graphID: graph.id)
+            .additionalToolNames(activePlan: nil)
             .union(["local.readFile"])
         let grants = await fixture.backend.recordedToolGrants()
         #expect(grants.contains(expectedGrant))

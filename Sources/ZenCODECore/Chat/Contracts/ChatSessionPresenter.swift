@@ -43,14 +43,65 @@ protocol ChatSessionPresenter: Sendable {
     /// A `/goal` workflow changed state at the end of a turn.
     func presentWorkflowNotice(_ notice: ChatWorkflowNotice) async
     func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async
-    /// The outcome of a session operation or selection command (`/sessions`,
-    /// `/models`, `/think`, `/agents`, `/tools`, `/skills`). A text channel
-    /// writes ``ChatSessionNoticeText/text(for:)`` on the channel named by
+    /// The outcome of a session operation, selection command, or shared slash
+    /// command (`/sessions`, `/models`, `/think`, `/agents`, `/tools`,
+    /// `/skills`, `/help`, `/plan`, `/goal`, `/review`, `/tasks`, `/changes`,
+    /// `/undo`, `/artifacts`, `/open`, `/attach`). A text channel writes
+    /// ``ChatSessionNoticeText/text(for:)`` on the channel named by
     /// ``ChatSessionNotice/channel``.
     func presentSessionNotice(_ notice: ChatSessionNotice) async
     /// The selection or the saved-session link of the active session changed;
     /// `state` is the complete new state, for channels that mirror it.
     func presentSessionStateChanged(_ state: ChatSessionState) async
+    /// The operator submitted a slash command line that the shared commands
+    /// run (`/plan`, `/goal`, `/review`, `/tasks`, and the other commands that
+    /// echo their line); a channel that echoes submitted lines writes it now,
+    /// before the command's output.
+    func presentSubmittedCommand(_ line: String) async
+    /// Reserves the next publication of the task-graph overview. The
+    /// controller calls it where a publication starts, before it reads the
+    /// graph: for the observer as soon as the graph changes (before the
+    /// debounce), for `/tasks` and every other publication when its read
+    /// begins. It passes the reservation back to
+    /// ``presentTaskGraphOverview(_:origin:publication:)``, so a channel can
+    /// drop a publication that a later one overtook and can drop at once a
+    /// section it was holding back (see ``ChatOverviewPublication``). A channel
+    /// that does not order its publications returns `nil` (the default).
+    func reserveTaskGraphOverviewPublication() async -> ChatOverviewPublication?
+    /// The session's task graph changed, or the operator asked for it with
+    /// `/tasks`. `nil` means the session has no task graph. An
+    /// ``ChatOverviewOrigin/automatic`` overview may be below the threshold
+    /// (``ChatTaskGraphOverview/isSignificant``), which a channel does not
+    /// show; an ``ChatOverviewOrigin/explicit`` one is always shown.
+    /// `publication` is the reservation this publication started with, `nil`
+    /// when the channel reserved nothing: then the overview is presented as it
+    /// comes, without ordering it against other publications.
+    func presentTaskGraphOverview(
+        _ overview: ChatTaskGraphOverview?,
+        origin: ChatOverviewOrigin,
+        publication: ChatOverviewPublication?
+    ) async
+    /// Reserves the next publication of the sub-agent overview. The
+    /// controller calls it where a publication starts, before it reads the
+    /// sub-agent snapshots, and passes the reservation back to
+    /// ``presentSubAgentOverview(_:origin:publication:)``, so a channel can
+    /// drop a publication that a later one overtook and can drop at once a
+    /// section it was holding back (see ``ChatOverviewPublication``). A channel
+    /// that does not order its publications returns `nil` (the default).
+    func reserveSubAgentOverviewPublication() async -> ChatOverviewPublication?
+    /// The session's sub-agents, read when the channel asked the controller
+    /// to publish them (see
+    /// ``ChatSessionController/publishSubAgentOverviewIfChanged(relatedToolName:presenter:)``
+    /// and the refresh that runs while a blocking `agent.*` tool call
+    /// executes). An overview without snapshots means there is no sub-agent
+    /// to show. `publication` is the reservation this publication started
+    /// with, `nil` when the channel reserved nothing: then the overview is
+    /// presented as it comes, without ordering it against other publications.
+    func presentSubAgentOverview(
+        _ overview: ChatSubAgentOverview,
+        origin: ChatOverviewOrigin,
+        publication: ChatOverviewPublication?
+    ) async
 }
 
 extension ChatSessionPresenter {
@@ -76,4 +127,21 @@ extension ChatSessionPresenter {
     func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async {}
     func presentSessionNotice(_ notice: ChatSessionNotice) async {}
     func presentSessionStateChanged(_ state: ChatSessionState) async {}
+    func presentSubmittedCommand(_ line: String) async {}
+    func reserveTaskGraphOverviewPublication() async -> ChatOverviewPublication? {
+        nil
+    }
+    func presentTaskGraphOverview(
+        _ overview: ChatTaskGraphOverview?,
+        origin: ChatOverviewOrigin,
+        publication: ChatOverviewPublication?
+    ) async {}
+    func reserveSubAgentOverviewPublication() async -> ChatOverviewPublication? {
+        nil
+    }
+    func presentSubAgentOverview(
+        _ overview: ChatSubAgentOverview,
+        origin: ChatOverviewOrigin,
+        publication: ChatOverviewPublication?
+    ) async {}
 }

@@ -4,12 +4,15 @@ import Foundation
 import ToolCore
 
 /// Runtime projection only; the session owns one instance per incarnation and
-/// the orchestrator remains the sole DAG owner.
+/// the orchestrator remains the sole DAG owner. The projection reads the graph
+/// of the shared ``ChatTaskGraphOverview``: the `plan` lists its tasks and
+/// every delegated attempt is a `tool_call`.
 actor ACPTaskPresentation {
     private var lastPlan: JSONValue?
     private var attempts: [String: JSONValue] = [:]
 
-    func updates(for graph: TaskGraphSnapshot?) -> [JSONValue] {
+    func updates(for overview: ChatTaskGraphOverview?) -> [JSONValue] {
+        let graph = overview?.graph
         let tasks = (graph?.tasks ?? []).sorted {
             $0.order == $1.order ? $0.id < $1.id : $0.order < $1.order
         }
@@ -103,12 +106,12 @@ extension ZenCODEACPBridge {
         presentation: ACPTaskPresentation, pipeline: ACPPromptUpdatePipeline
     ) async {
         guard isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
-        let graph: TaskGraphSnapshot?
-        do { graph = try await sessionRunner.taskGraphSnapshot(sessionID: sessionID) }
+        let overview: ChatTaskGraphOverview?
+        do { overview = try await ChatTaskGraphOverview.current(in: sessionRunner, sessionID: sessionID) }
         catch { return } // An unavailable snapshot is not an authoritative clear.
         guard !Task.isCancelled,
               isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
-        let updates = await presentation.updates(for: graph)
+        let updates = await presentation.updates(for: overview)
         for update in updates {
             guard !Task.isCancelled,
                   isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }

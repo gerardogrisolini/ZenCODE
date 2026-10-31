@@ -177,7 +177,8 @@ extension ZenCODEACPBridge {
             managementRuntime: sessionRunner,
             environment: ChatSessionEnvironment(
                 configuration: self.configuration,
-                featureRuntime: sessionRunner.swiftFeatureRuntime
+                featureRuntime: sessionRunner.swiftFeatureRuntime,
+                userHomeDirectoryURL: UserHomeDirectory.current()
             ),
             workingDirectory: configuration.workingDirectory,
             presenter: ACPSilentPresenter(),

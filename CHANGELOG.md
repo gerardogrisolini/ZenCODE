@@ -26,6 +26,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `/think`, `/agents`, `/tools`, and `/skills` keep their output, apart from
   the `/agents` message listed under Fixed, and headless runs now compose
   their session from the controller instead of the terminal chat.
+- The shared chat-session controller now also runs `/help`, `/plan`, `/goal`,
+  `/review`, `/tasks`, `/changes`, `/undo`, `/artifacts`, `/open`, and
+  `/attach`, and one command registry decides which commands the terminal UI
+  shows, in its command menu and in `/help`, and which run while a prompt is
+  running. ACP clients run `/plan`, `/goal`, and `/review` on the same
+  operations, and their ACP replies and the ACP wire stay the same. The output
+  stays the same, apart from the `/open` and `/tasks` entries under Changed and
+  Fixed.
 
 ### Changed
 
@@ -48,6 +56,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   sent by the client and `--model` still take precedence. A host app that
   supplies its own models never has a choice saved and keeps its model. ACP
   requests, replies, and notifications are unchanged.
+- Terminal: when the chat has no interactive terminal (neither stdin nor
+  `/dev/tty` is a terminal), `/open <file-or-url>` no longer opens the file or
+  URL and answers `ZenCODE: Opening files is not supported by this channel.`
+  A missing file is still reported as not found.
 
 ### Fixed
 
@@ -72,6 +84,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Terminal `/agents` now says `Switched to agent: <name>. Plan and task graph
   reset; conversation kept.` instead of `… Session reset.`: the conversation
   was already kept, and only the plan and the task graph are reset.
+- Terminal: `/tasks`, `/tasks status`, `/tasks list`, and `/tasks ls` typed
+  with leading spaces while a prompt is running now show the task graph
+  instead of answering `ZenCODE: command '/tasks' is unavailable while a
+  prompt is running.`: the action was read from the line before its leading
+  spaces were removed.
 
 ## [3.2.0] - 2026-10-30
 

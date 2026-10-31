@@ -15,57 +15,20 @@ import Foundation
 import ToolCore
 
 extension TerminalChat {
-    /// `/agents`: interprets the arguments and runs the matching controller
-    /// operation (see ``ChatSessionController/chooseProjectAgents()`` and
-    /// ``ChatSessionController/selectAgent(rawSelection:)``).
+    /// `/agents`: adapter of ``ChatSessionController/runAgentsCommand(line:)``,
+    /// which interprets the arguments and runs the matching operation (see
+    /// ``ChatSessionController/chooseProjectAgents()`` and
+    /// ``ChatSessionController/selectAgent(rawSelection:)``). A failure is
+    /// written as a notice.
     public func handleAgentsCommand(_ command: String) async throws {
-        let rawArguments = Self.slashCommandArguments(
-            from: command,
-            commandPrefix: "/agents"
-        )
-
-        if rawArguments.isEmpty {
-            try await presentProjectAgentMenu()
-            return
-        }
-
-        switch rawArguments.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "list", "ls", "status":
-            await printAgentSelectionStatus()
-            await renderAgentList(agents: try availableAgents())
-            return
-        default:
-            break
-        }
-
-        await writeAgentSelectionOutcome(
-            try await chatSession.selectAgent(rawSelection: rawArguments)
-        )
+        await writeSessionNotices(await chatSession.runAgentsCommand(line: command).notices)
     }
 
-    /// Interactive `/agents`: adapter of
-    /// ``ChatSessionController/chooseProjectAgents()``, the menu that
-    /// associates profiles with the current project and picks the active
-    /// agent. Without an interactive terminal it prints the status and the
-    /// list instead.
-    private func presentProjectAgentMenu() async throws {
-        await writeAgentSelectionOutcome(try await chatSession.chooseProjectAgents())
-    }
-
-    /// Adapter of ``ChatSessionController/selectAgent(_:)``.
+    /// Adapter of ``ChatSessionController/selectAgent(_:)``. The active tools
+    /// of the new session precede the agent switch
+    /// (``writeSessionNotice(_:)``).
     public func applyAgentSelection(_ agent: AgentProfile) async throws {
-        await writeAgentSelectionOutcome(try await chatSession.selectAgent(agent))
-    }
-
-    /// Writes the closing notices of an agent operation; the active tools of
-    /// the new session precede the agent switch.
-    private func writeAgentSelectionOutcome(_ outcome: ChatSelectionOutcome) async {
-        for notice in outcome.notices {
-            if case .agentSwitched = notice {
-                await printActiveToolsIfNeeded()
-            }
-            await writeSessionNotice(notice)
-        }
+        await writeSessionNotices(try await chatSession.selectAgent(agent).notices)
     }
 
     public func applyAgentProfile(_ agent: AgentProfile) async {

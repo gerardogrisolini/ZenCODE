@@ -153,26 +153,11 @@ enum TerminalPromptOrigin: Sendable, Equatable {
     }
 }
 
-struct TerminalQueuedPrompt: Sendable, Equatable {
-    let text: String
-    let origin: TerminalPromptOrigin
-    let mode: TerminalQueuedPromptMode
-
-    init(
-        text: String,
-        origin: TerminalPromptOrigin,
-        mode: TerminalQueuedPromptMode = .submittedLine
-    ) {
-        self.text = text
-        self.origin = origin
-        self.mode = mode
-    }
-}
-
-enum TerminalQueuedPromptMode: Sendable, Equatable {
-    case submittedLine
-    case directPrompt
-}
+/// Compatibility names used by the terminal frontend for the queue types of the
+/// Chat layer. The origin stays a terminal type (``TerminalPromptOrigin``) and
+/// is supplied here, so the Chat layer never depends on it.
+typealias TerminalQueuedPrompt = ChatQueuedPrompt<TerminalPromptOrigin>
+typealias TerminalQueuedPromptMode = ChatQueuedPromptMode
 
 struct TerminalVoicePromptResult: Sendable {
     let origin: TerminalPromptOrigin

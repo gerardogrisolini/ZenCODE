@@ -8,6 +8,8 @@
 import Foundation
 
 extension TerminalChat {
+    /// `/tools`: `/tools logs` opens the system log viewer; everything else
+    /// is an adapter of ``ChatSessionController/runToolsCommand(line:)``.
     public func handleToolsCommand(_ command: String) async {
         let rawArguments = Self.slashCommandArguments(
             from: command,
@@ -19,17 +21,11 @@ extension TerminalChat {
             return
         }
 
-        if rawArguments.isEmpty {
-            await writeToolSelectionOutcome(await chatSession.chooseTools())
-            return
-        }
-
-        await applyToolSelection(rawArguments)
+        await writeSessionNotices(await chatSession.runToolsCommand(line: command).notices)
     }
 
     nonisolated static func isToolLogsRequest(_ rawArguments: String) -> Bool {
-        let tokens = rawArguments.split(whereSeparator: \.isWhitespace)
-        return tokens.count == 1 && tokens[0].lowercased() == "logs"
+        ChatSessionController.isToolLogsRequest(rawArguments)
     }
 
     private func openToolExecutionLog() async {
@@ -47,32 +43,21 @@ extension TerminalChat {
         }
     }
 
-    /// Adapter of ``ChatSessionController/selectTools(rawSelection:)``.
+    /// Adapter of
+    /// ``ChatSessionController/applyToolSelectionCommand(rawSelection:)``.
     public func applyToolSelection(_ rawSelection: String) async {
-        do {
-            await writeToolSelectionOutcome(
-                try await chatSession.selectTools(rawSelection: rawSelection)
-            )
-        } catch {
-            await writeSessionNotices([
-                .operationFailed(description: error.localizedDescription),
-                .toolSelectionUsage,
-            ])
-        }
+        await writeSessionNotices(
+            await chatSession.applyToolSelectionCommand(rawSelection: rawSelection).notices
+        )
     }
 
-    /// Adapter of ``ChatSessionController/selectTools(keys:)``.
+    /// Adapter of ``ChatSessionController/applyToolSelectionCommand(keys:)``;
+    /// an applied selection has printed the active tools
+    /// (``selectionDidApply(_:command:)``).
     public func applyToolSelection(_ selectedKeys: Set<String>) async {
-        await writeToolSelectionOutcome(await chatSession.selectTools(keys: selectedKeys))
-    }
-
-    /// Writes the closing notices of a tool operation; an applied selection
-    /// has printed the active tools.
-    private func writeToolSelectionOutcome(_ outcome: ChatSelectionOutcome) async {
-        await writeSessionNotices(outcome.notices)
-        if outcome.change != nil {
-            didPrintActiveTools = true
-        }
+        await writeSessionNotices(
+            await chatSession.applyToolSelectionCommand(keys: selectedKeys).notices
+        )
     }
 
     public func printToolSelectionStatus() async {
@@ -151,77 +136,40 @@ extension TerminalChat {
         try chatSession.applyInitialSkillSelectionIfNeeded()
     }
 
-    /// `/skills`: interprets the arguments and runs the matching controller
-    /// operation: uninstall, install from a GitHub URL or a local path, the
-    /// menu, or a selection.
+    /// `/skills`: adapter of ``ChatSessionController/runSkillsCommand(line:)``,
+    /// which interprets the arguments and runs the matching operation:
+    /// uninstall, install from a GitHub URL or a local path, the menu, or a
+    /// selection. A changed selection refreshes the status bar
+    /// (``selectionDidApply(_:command:)``).
     public func handleSkillsCommand(_ command: String) async {
-        let rawArguments = Self.slashCommandArguments(
-            from: command,
-            commandPrefix: "/skills"
-        )
-
-        if Self.isSkillUninstallRequest(rawArguments) {
-            await writeSkillSelectionOutcome(await chatSession.chooseSkillsToUninstall())
-            return
-        }
-
-        let installValue = Self.skillInstallValue(from: rawArguments)
-        if Self.isSkillInstallRequest(rawArguments)
-            || installValue.flatMap({
-                ChatSessionController.skillInstallSource(
-                    $0,
-                    workingDirectory: chatSession.workingDirectory
-                )
-            }) != nil {
-            await writeSkillSelectionOutcome(
-                await chatSession.installSkill(source: installValue ?? "")
-            )
-            return
-        }
-
-        if rawArguments.isEmpty {
-            await writeSkillSelectionOutcome(await chatSession.chooseSkills())
-            return
-        }
-
-        await applySkillSelection(rawArguments)
+        await writeSessionNotices(await chatSession.runSkillsCommand(line: command).notices)
     }
 
     public func installSkill(fromGitHubURL url: URL) async {
-        await writeSkillSelectionOutcome(await chatSession.installSkill(from: .gitHub(url)))
+        await writeSessionNotices(
+            await chatSession.installSkillCommand(from: .gitHub(url)).notices
+        )
     }
 
     public func installSkill(fromLocalURL url: URL) async {
-        await writeSkillSelectionOutcome(await chatSession.installSkill(from: .local(url)))
+        await writeSessionNotices(
+            await chatSession.installSkillCommand(from: .local(url)).notices
+        )
     }
 
-    /// Adapter of ``ChatSessionController/selectSkills(rawSelection:)``.
+    /// Adapter of
+    /// ``ChatSessionController/applySkillSelectionCommand(rawSelection:)``.
     public func applySkillSelection(_ rawSelection: String) async {
-        do {
-            await writeSkillSelectionOutcome(
-                try await chatSession.selectSkills(rawSelection: rawSelection)
-            )
-        } catch {
-            await writeSessionNotices([
-                .operationFailed(description: error.localizedDescription),
-                .skillSelectionUsage,
-            ])
-        }
+        await writeSessionNotices(
+            await chatSession.applySkillSelectionCommand(rawSelection: rawSelection).notices
+        )
     }
 
-    /// Adapter of ``ChatSessionController/selectSkills(ids:)``.
+    /// Adapter of ``ChatSessionController/applySkillSelectionCommand(ids:)``.
     public func applySkillSelection(_ selectedSkillIDs: Set<String>) async {
-        await writeSkillSelectionOutcome(await chatSession.selectSkills(ids: selectedSkillIDs))
-    }
-
-    /// Writes the closing notices of a skill operation, after refreshing the
-    /// status bar when the selection changed.
-    private func writeSkillSelectionOutcome(_ outcome: ChatSelectionOutcome) async {
-        if outcome.change != nil {
-            await statusBar.reset()
-            await refreshInitialStatusBarContextWindow()
-        }
-        await writeSessionNotices(outcome.notices)
+        await writeSessionNotices(
+            await chatSession.applySkillSelectionCommand(ids: selectedSkillIDs).notices
+        )
     }
 
     public func printSkillSelectionStatus() async {

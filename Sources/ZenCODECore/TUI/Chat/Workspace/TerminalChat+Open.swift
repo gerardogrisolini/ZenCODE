@@ -8,302 +8,39 @@
 import Foundation
 
 /// A file path or URL referenced somewhere in the conversation that the
-/// `/open` command can hand off to the system `open` utility.
-struct TerminalOpenCandidate: Equatable {
-    enum Kind: Equatable {
-        case file
-        case url
-    }
-
-    /// The value passed to `open` (an absolute file path or a URL string).
-    let target: String
-    /// The label shown in the selection menu (kept human readable).
-    let display: String
-    let kind: Kind
-}
+/// `/open` command can hand off to the system `open` utility. Compatibility
+/// name of the shared ``ChatOpenCandidate``.
+typealias TerminalOpenCandidate = ChatOpenCandidate
 
 extension TerminalChat {
+    /// `/open`, run by the shared controller (see
+    /// ``ChatSessionController/runOpenCommand(line:)``).
     public func handleOpenCommand(_ command: String) async {
-        let argument = Self.slashCommandArguments(
-            from: command,
-            commandPrefix: "/open"
-        )
-
-        // Direct form: `/open <file-or-url>` opens the argument without a menu.
-        if !argument.isEmpty {
-            await openDirectArgument(argument)
-            return
-        }
-
-        let candidates = collectOpenCandidates()
-        guard !candidates.isEmpty else {
-            await writeSystemMessage("No files or URLs found in this conversation.\n")
-            return
-        }
-
-        guard stdinIsTerminal else {
-            await writeSystemMessage(Self.renderOpenCandidateList(candidates))
-            await writeSystemMessage("Selecting an item to open requires an interactive terminal.\n")
-            return
-        }
-
-        let items = candidates.enumerated().map { index, candidate in
-            TerminalCheckboxMenuItem(
-                value: index,
-                title: candidate.display,
-                detail: candidate.kind == .url ? "url" : "file"
-            )
-        }
-
-        guard let selectedIndex = await TerminalCheckboxMenu.selectOneOffActor(
-            title: "Open file or URL",
-            items: items,
-            selected: 0,
-            reservedBottomRows: await statusBar.reservedRowsForOverlay()
-        ) else {
-            await writeSystemMessage("Nothing opened.\n")
-            return
-        }
-
-        await openTarget(candidates[selectedIndex].target)
+        await writeSessionNotices(await chatSession.runOpenCommand(line: command).notices)
     }
 
-        private func openDirectArgument(_ argument: String) async {
-        if Self.urlCandidate(from: argument) != nil {
-            await openTarget(argument)
-            return
-        }
-
-        let resolved = resolvedOpenURL(from: argument)
-        guard FileManager.default.fileExists(atPath: resolved.path) else {
-            await writeFailureMessage("ZenCODE: file not found: \(argument)\n")
-            return
-        }
-        await openTarget(resolved.path)
-    }
-
-    private func openTarget(_ target: String) async {
-        do {
-            try await Self.runOpen(target: target)
-            await writeSystemMessage("Opening \(target)\n")
-        } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-        }
-    }
-
-    /// Scans the current conversation transcript (newest turns first) and
-    /// returns the referenced files and URLs ordered from most to least recent,
-    /// removing duplicates while keeping the most recent occurrence.
-        func collectOpenCandidates() -> [TerminalOpenCandidate] {
-        var seen = Set<String>()
-        var ordered: [TerminalOpenCandidate] = []
-
-        func append(_ candidate: TerminalOpenCandidate) {
-            guard seen.insert(candidate.target).inserted else {
-                return
-            }
-            ordered.append(candidate)
-        }
-
-        // Pending attachments are the most recent references the user staged.
-        for attachment in pendingAttachments.reversed() {
-            if let candidate = Self.attachmentCandidate(from: attachment) {
-                append(candidate)
-            }
-        }
-
-        for message in activeSessionTranscript.reversed() {
-            guard message.role == .user || message.role == .assistant else {
-                continue
-            }
-            for attachment in message.attachments {
-                if let candidate = Self.attachmentCandidate(from: attachment) {
-                    append(candidate)
-                }
-            }
-            for candidate in Self.extractOpenCandidates(
-                from: message.content,
-                workingDirectory: configuration.workingDirectory
-            ) {
-                append(candidate)
-            }
-        }
-
-        return ordered
-    }
-
-    /// Builds an open candidate for an attachment that is backed by a file on
-    /// disk. Attachments held only as in-memory data are skipped because `open`
-    /// needs a real path.
+    /// See ``ChatSessionController/attachmentCandidate(from:)``.
     nonisolated static func attachmentCandidate(
         from attachment: AgentRuntimeAttachment
     ) -> TerminalOpenCandidate? {
-        guard let fileURL = attachment.fileURL else {
-            return nil
-        }
-        let resolved = fileURL.standardizedFileURL
-        guard FileManager.default.fileExists(atPath: resolved.path) else {
-            return nil
-        }
-        return TerminalOpenCandidate(
-            target: resolved.path,
-            display: attachment.originalFilename,
-            kind: .file
-        )
+        ChatSessionController.attachmentCandidate(from: attachment)
     }
 
-    /// Extracts file paths and http(s) URLs from a single message body, keeping
-    /// the order in which they appear in the text.
+    /// See ``ChatSessionController/extractOpenCandidates(from:workingDirectory:userHomeDirectoryURL:)``;
+    /// `~` stands for the user's home, as in the terminal chat's environment.
     nonisolated static func extractOpenCandidates(
         from text: String,
         workingDirectory: URL
     ) -> [TerminalOpenCandidate] {
-        var candidates: [TerminalOpenCandidate] = []
-        var seen = Set<String>()
-
-        for rawToken in tokenize(text) {
-            let token = trimToken(rawToken)
-            guard !token.isEmpty else {
-                continue
-            }
-
-            if let url = urlCandidate(from: token) {
-                if seen.insert(url.target).inserted {
-                    candidates.append(url)
-                }
-                continue
-            }
-
-            if let file = fileCandidate(from: token, workingDirectory: workingDirectory) {
-                if seen.insert(file.target).inserted {
-                    candidates.append(file)
-                }
-            }
-        }
-
-        return candidates
-    }
-
-    private nonisolated static func tokenize(_ text: String) -> [Substring] {
-        text.split { character in
-            character == " "
-                || character == "\n"
-                || character == "\t"
-                || character == "\r"
-                || character == "`"
-                || character == "\""
-                || character == "'"
-                || character == "<"
-                || character == ">"
-                || character == "|"
-        }
-    }
-
-    /// Strips Markdown and punctuation noise that commonly surrounds inline
-    /// references, such as trailing commas, parentheses, or list markers.
-    private nonisolated static func trimToken(_ token: Substring) -> String {
-        let leading = CharacterSet(charactersIn: "([{*_~#-")
-        let trailing = CharacterSet(charactersIn: ".,;:!?)]}*_~")
-        var result = String(token)
-        while let first = result.unicodeScalars.first, leading.contains(first) {
-            result.removeFirst()
-        }
-        while let last = result.unicodeScalars.last, trailing.contains(last) {
-            result.removeLast()
-        }
-        return result
-    }
-
-        /// Schemes that use an authority component (`scheme://host/...`) and so
-    /// require a host to be considered a valid open candidate.
-    private nonisolated static let authoritySchemes: Set<String> = [
-        "http", "https", "ftp", "ftps", "sftp", "ssh", "file", "smb", "vnc"
-    ]
-
-    /// Schemes that address a resource without an authority component, such as
-    /// `mailto:user@example.com` or `tel:+123456789`.
-    private nonisolated static let schemelessOpaqueSchemes: Set<String> = [
-        "mailto", "tel", "sms", "facetime", "facetime-audio"
-    ]
-
-    private nonisolated static func urlCandidate(from token: String) -> TerminalOpenCandidate? {
-        guard let schemeRange = token.range(of: ":") else {
-            return nil
-        }
-        let scheme = token[token.startIndex..<schemeRange.lowerBound].lowercased()
-        guard !scheme.isEmpty else {
-            return nil
-        }
-
-        if authoritySchemes.contains(scheme) {
-            let prefix = "\(scheme)://"
-            guard token.lowercased().hasPrefix(prefix) else {
-                return nil
-            }
-            guard let url = URL(string: token), url.host != nil else {
-                return nil
-            }
-            return TerminalOpenCandidate(target: token, display: token, kind: .url)
-        }
-
-        if schemelessOpaqueSchemes.contains(scheme) {
-            let body = token[schemeRange.upperBound...]
-            guard !body.isEmpty, URL(string: token) != nil else {
-                return nil
-            }
-            return TerminalOpenCandidate(target: token, display: token, kind: .url)
-        }
-
-        return nil
-    }
-
-    private nonisolated static func fileCandidate(
-        from token: String,
-        workingDirectory: URL
-    ) -> TerminalOpenCandidate? {
-        // Only treat tokens that look like paths to avoid matching plain words.
-        let looksLikePath = token.hasPrefix("/")
-            || token.hasPrefix("~/")
-            || token.hasPrefix("./")
-            || token.contains("/")
-        guard looksLikePath else {
-            return nil
-        }
-
-        let resolved = resolvedWorkspaceFileURL(
-            from: token,
-            workingDirectory: workingDirectory
-        )
-        guard FileManager.default.fileExists(atPath: resolved.path) else {
-            return nil
-        }
-        return TerminalOpenCandidate(
-            target: resolved.path,
-            display: token,
-            kind: .file
+        ChatSessionController.extractOpenCandidates(
+            from: text,
+            workingDirectory: workingDirectory,
+            userHomeDirectoryURL: UserHomeDirectory.current()
         )
     }
 
-    private func resolvedOpenURL(from rawPath: String) -> URL {
-        Self.resolvedWorkspaceFileURL(
-            from: rawPath,
-            workingDirectory: configuration.workingDirectory
-        )
-    }
-
+    /// See ``ChatSessionNoticeText/openCandidateListText(_:)``.
     nonisolated static func renderOpenCandidateList(_ candidates: [TerminalOpenCandidate]) -> String {
-        let lines = candidates.enumerated().map { index, candidate -> String in
-            let kind = candidate.kind == .url ? "url" : "file"
-            return "  \(index + 1). \(candidate.display) (\(kind))"
-        }
-        return """
-        Files and URLs in this conversation:
-        \(lines.joined(separator: "\n"))
-
-        """
-    }
-
-    private static func runOpen(target: String) async throws {
-        try await SystemFileLauncher.open(target)
+        ChatSessionNoticeText.openCandidateListText(candidates)
     }
 }
