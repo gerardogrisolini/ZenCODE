@@ -14,183 +14,36 @@ import Glibc
 import Foundation
 
 extension TerminalChat {
+    /// Adapter of ``ChatSessionController/resolveInitialModel()``.
     public func handleMissingInitialModelSelectionIfNeeded() async throws {
-        guard currentEffectiveModelID() == nil else {
-            return
+        if let notice = try await chatSession.resolveInitialModel() {
+            await writeSessionNotice(notice)
         }
-
-        let models = AgentModelCatalogPresentation.sorted(
-            selectableModelManifests()
-        )
-        guard !models.isEmpty else {
-            throw TerminalChatError.noConfiguredModels
-        }
-
-        if models.count == 1,
-           let model = models.first {
-            let thinkingSelection = model.thinkingSelection(
-                for: selectedAgentModelBinding(for: model)?.thinkingSelection
-            )
-            manualModelIDOverride = model.id
-            manualThinkingSelectionOverride = thinkingSelection
-            await writeSystemMessage(
-                "Selected model: \(modelDisplayTitle(model))\(thinkingSuffix(thinkingSelection))\n"
-            )
-            return
-        }
-
-        guard stdinIsTerminal,
-              let model = await promptForModelSelection(
-                  models: models,
-                  message: "No model selected for ZenCODE."
-              ) else {
-            throw TerminalChatError.modelSelectionRequired
-        }
-
-        let thinkingSelection = await promptForThinkingSelection(model: model)
-        manualModelIDOverride = model.id
-        manualThinkingSelectionOverride = thinkingSelection
-        await writeSystemMessage(
-            "Selected model: \(modelDisplayTitle(model))\(thinkingSuffix(thinkingSelection))\n"
-        )
     }
 
+    /// `/models`: adapter of ``ChatSessionController/chooseModel()``. A model
+    /// applied in place refreshes the status bar; a new model's session steps
+    /// run through the channel hooks.
     public func selectModelInteractively() async throws {
-        let models = AgentModelCatalogPresentation.sorted(
-            selectableModelManifests()
-        )
-        guard !models.isEmpty else {
-            throw TerminalChatError.noConfiguredModels
-        }
-        guard stdinIsTerminal else {
-            await renderModelList(models: models, message: nil)
-            await writeSystemMessage("Model selection requires an interactive terminal.\n")
-            return
-        }
-
-        let previousEffectiveModelID = currentEffectiveModelID()
-        let previousThinkingSelection = currentAgentThinkingSelection()
-        guard let selectedModel = await promptForModelSelection(
-            models: models,
-            message: nil
-        ) else {
-            await writeSystemMessage("Model unchanged.\n")
-            return
-        }
-
-        let selectedThinkingSelection = selectedModel.thinkingSelection(
-            for: selectedAgentModelBinding(for: selectedModel)?.thinkingSelection
-                ?? (previousEffectiveModelID.map(selectedModel.matches) == true
-                    ? previousThinkingSelection
-                    : nil)
-        )
-        if configuration.hostedModels == nil {
-            try AgentSettingsManifestStore.saveSelectedModel(
-                modelID: selectedModel.id,
-                thinkingSelection: selectedThinkingSelection
-            )
-        }
-        activeSessionSystemPromptOverride = nil
-        manualModelIDOverride = selectedModel.id
-        manualThinkingSelectionOverride = selectedThinkingSelection
-
-        if previousEffectiveModelID.map(selectedModel.matches) == true {
-            let allowedToolNames = await selectedAllowedToolNames()
-            try await sessionRunner.updateSessionOptions(
-                configuration: currentSessionConfiguration(
-                    allowedToolNames: allowedToolNames
-                )
-            )
+        let outcome = try await chatSession.chooseModel()
+        if outcome.change == .sessionUpdated {
             await statusBar.reset()
             await refreshInitialStatusBarContextWindow()
-            if previousThinkingSelection == selectedThinkingSelection {
-                return
-            }
-            return
         }
-
-        await sessionRunner.shutdownBackendKeepingExternalTools()
-        printedModelID = nil
-        await statusBar.reset()
-        try await createCurrentSession()
-        await refreshInitialStatusBarContextWindow()
-        _ = try await preloadCurrentModel(emitStatus: configuration.hostedModels != nil)
+        await writeSessionNotices(outcome.notices)
     }
 
+    /// `/think`: adapter of ``ChatSessionController/chooseThinking()``.
     public func selectThinkingInteractively() async throws {
-        let models = AgentModelCatalogPresentation.sorted(
-            selectableModelManifests()
-        )
-        guard !models.isEmpty else {
-            throw TerminalChatError.noConfiguredModels
+        let outcome = try await chatSession.chooseThinking()
+        if outcome.change != nil {
+            await refreshStatusBarThinkingSelection()
         }
-
-        let effectiveModelID = currentEffectiveModelID()
-            ?? AgentSettingsStore.selectedModelID()
-        guard let currentModel = effectiveModelID.flatMap({ modelID in
-            models.first { $0.matches(modelID) }
-        }) else {
-            await writeSystemMessage("No current model selected. Use /models to choose a model first.\n")
-            return
-        }
-
-        let options = currentModel.availableThinkingSelections
-        guard !options.isEmpty else {
-            await writeSystemMessage(
-                "\(modelDisplayTitle(currentModel)) does not support configurable thinking.\n"
-            )
-            return
-        }
-
-        let previousThinkingSelection = currentAgentThinkingSelection()
-        let currentSelection = currentModel.thinkingSelection(
-            for: configuration.hostedModels == nil
-                ? AgentSettingsStore.selectedThinkingSelection()
-                : manualThinkingSelectionOverride
-        )
-        let defaultSelection = currentSelection ?? currentModel.resolvedDefaultThinkingSelection
-        guard stdinIsTerminal else {
-            await renderThinkingList(
-                model: currentModel,
-                options: options,
-                selected: defaultSelection
-            )
-            await writeSystemMessage("Thinking selection requires an interactive terminal.\n")
-            return
-        }
-
-        guard let selectedThinkingSelection = await TerminalCheckboxMenu.selectOneOffActor(
-            title: "Thinking / effort for \(modelDisplayTitle(currentModel))",
-            items: thinkingSelectionItems(options),
-            selected: defaultSelection,
-            reservedBottomRows: await statusBar.reservedRowsForOverlay()
-        ) else {
-            await writeSystemMessage("Thinking unchanged.\n")
-            return
-        }
-
-        if configuration.hostedModels == nil {
-            try AgentSettingsManifestStore.saveSelectedThinkingSelection(
-                selectedThinkingSelection
-            )
-        }
-        manualThinkingSelectionOverride = selectedThinkingSelection
-
-        let allowedToolNames = await selectedAllowedToolNames()
-        try await sessionRunner.updateSessionOptions(
-            configuration: currentSessionConfiguration(
-                allowedToolNames: allowedToolNames
-            )
-        )
-        await refreshStatusBarThinkingSelection()
-
-        if previousThinkingSelection == selectedThinkingSelection {
-            return
-        }
+        await writeSessionNotices(outcome.notices)
     }
 
     public func availableModelManifests() -> [AgentSettingsModelManifest] {
-        configuration.hostedModels ?? AgentSettingsStore.availableModels()
+        chatSession.modelCatalog.availableModels()
     }
 
     /// Returns every configured model. Profile bindings provide a default for
@@ -203,17 +56,7 @@ extension TerminalChat {
     public func selectedAgentModelBinding(
         for model: AgentSettingsModelManifest
     ) -> AgentModelBinding? {
-        guard let selectedAgent else {
-            return nil
-        }
-        return selectedAgent.modelBindings.first { binding in
-            let bindingReferences = [
-                binding.id,
-            ] + Self.modelReferences(for: binding.modelID)
-            return bindingReferences.contains { reference in
-                model.matches(reference)
-            }
-        }
+        chatSession.selectedAgentModelBinding(for: model)
     }
 
 
@@ -221,16 +64,15 @@ extension TerminalChat {
         models: [AgentSettingsModelManifest],
         message: String?
     ) async -> AgentSettingsModelManifest? {
-        let selectedModelID = currentEffectiveModelID() ?? AgentSettingsStore.selectedModelID()
-        let selectedModel = selectedModelID.flatMap { modelID in
-            models.first { $0.matches(modelID) }
+        let choices = chatSession.modelChoices(models, title: message ?? "Available models")
+        guard let modelID = await interactionHost.chooseOne(
+            title: choices.title,
+            items: choices.items,
+            selectedID: choices.selectedIDs.first
+        ) else {
+            return nil
         }
-        return await TerminalCheckboxMenu.selectOneOffActor(
-            title: message ?? "Available models",
-            items: modelSelectionItems(models),
-            selected: selectedModel,
-            reservedBottomRows: await statusBar.reservedRowsForOverlay()
-        )
+        return models.first { $0.id == modelID }
     }
 
     public func renderModelList(
@@ -241,20 +83,9 @@ extension TerminalChat {
         if let message {
             await writeSystemMessage("\(message)\n")
         }
-        await writeSystemMessage("\nAvailable models:\n")
-        var offset = 1
-        for group in AgentModelCatalogPresentation.groupedByProvider(models) {
-            await writeSystemMessage("  \(group.title):\n")
-            for model in group.models {
-                let marker = selectedModelID.map(model.matches) == true ? " *" : ""
-                let title = AgentModelCatalogPresentation.modelTitle(for: model, in: group)
-                await writeSystemMessage(
-                    "    \(offset). \(title)\(marker)\n"
-                )
-                offset += 1
-            }
-        }
-        await writeSystemMessage("\n")
+        await writeSystemMessage(
+            ChatSessionNoticeText.modelListText(models, selectedModelID: selectedModelID)
+        )
     }
 
     public func renderThinkingList(
@@ -262,50 +93,31 @@ extension TerminalChat {
         options: [AgentThinkingSelection],
         selected: AgentThinkingSelection?
     ) async {
-        await writeSystemMessage("\nThinking levels for \(modelDisplayTitle(model)):\n")
-        for (offset, option) in options.enumerated() {
-            let marker = option == selected ? " *" : ""
-            await writeSystemMessage(
-                "  \(offset + 1). \(option.menuTitle)\(marker)\n"
+        await writeSystemMessage(
+            ChatSessionNoticeText.thinkingListText(
+                model: model,
+                options: options,
+                selected: selected
             )
-        }
-        await writeSystemMessage("\n")
+        )
     }
 
     public func promptForThinkingSelection(
         model: AgentSettingsModelManifest
     ) async -> AgentThinkingSelection? {
-        let options = model.availableThinkingSelections
-        guard !options.isEmpty else {
-            return nil
-        }
-
-        let currentSelection = model.thinkingSelection(
-            for: configuration.hostedModels == nil
-                ? AgentSettingsStore.selectedThinkingSelection()
-                : manualThinkingSelectionOverride
-        )
-        let defaultSelection = currentSelection ?? model.resolvedDefaultThinkingSelection
-        return await TerminalCheckboxMenu.selectOneOffActor(
-            title: "Thinking / effort for \(modelDisplayTitle(model))",
-            items: thinkingSelectionItems(options),
-            selected: defaultSelection,
-            reservedBottomRows: await statusBar.reservedRowsForOverlay()
-        ) ?? defaultSelection
+        await chatSession.chooseInitialThinking(for: model)
     }
 
     public func modelSelectionItems(
         _ models: [AgentSettingsModelManifest]
     ) -> [TerminalCheckboxMenuItem<AgentSettingsModelManifest>] {
-        AgentModelCatalogPresentation.groupedByProvider(models).flatMap { group in
-            group.models.map { model in
-                TerminalCheckboxMenuItem(
-                    value: model,
-                    title: AgentModelCatalogPresentation.modelTitle(for: model, in: group),
-                    detail: nil,
-                    groupTitle: group.title
-                )
-            }
+        ChatSessionController.modelChoiceEntries(models).map { entry in
+            TerminalCheckboxMenuItem(
+                value: entry.model,
+                title: entry.item.title,
+                detail: entry.item.detail,
+                groupTitle: entry.item.group
+            )
         }
     }
 
@@ -348,10 +160,7 @@ extension TerminalChat {
     public func thinkingSuffix(
         _ selection: AgentThinkingSelection?
     ) -> String {
-        guard let selection else {
-            return ""
-        }
-        return " (thinking: \(selection.displayTitle))"
+        ChatSessionNoticeText.thinkingSuffix(selection)
     }
 
     public func preloadCurrentModel(emitStatus: Bool = true) async throws -> String {
@@ -359,29 +168,41 @@ extension TerminalChat {
         let loadedModelID = try await sessionRunner.preloadModel(
             configuration: await currentSessionConfiguration()
         ) { @TerminalChatActor event in
-            switch event {
-            case let .modelLoaded(modelID):
-                _ = await self.statusBar.update(modelID: modelID)
-                self.printedModelID = self.loadedModelDisplayTitle(modelID)
-            case .status,
-                 .diagnostic,
-                 .thought,
-                 .metrics,
-                 .contextWindow,
-                 .subscriptionUsage,
-                 .content,
-                 .toolCallStarted,
-                 .toolCallCompleted,
-                 .sessionSnapshot,
-                 .turnEnded:
-                break
-            }
+            await self.handleModelPreloadEvent(event)
         }
+        await finishModelPreload(loadedModelID, emitStatus: emitStatus)
+        return loadedModelID
+    }
+
+    /// A preload event: the loaded model updates the status bar and is
+    /// recorded as printed, so no `loaded model` line follows.
+    func handleModelPreloadEvent(_ event: DirectAgentEvent) async {
+        switch event {
+        case let .modelLoaded(modelID):
+            _ = await statusBar.update(modelID: modelID)
+            printedModelID = loadedModelDisplayTitle(modelID)
+        case .status,
+             .diagnostic,
+             .thought,
+             .metrics,
+             .contextWindow,
+             .subscriptionUsage,
+             .content,
+             .toolCallStarted,
+             .toolCallCompleted,
+             .sessionSnapshot,
+             .turnEnded:
+            break
+        }
+    }
+
+    /// The last step of a preload. Without `emitStatus` the loaded model is
+    /// recorded as printed even when the backend sent no load event.
+    func finishModelPreload(_ loadedModelID: String, emitStatus: Bool) async {
         _ = await statusBar.update(modelID: loadedModelID)
         if !emitStatus {
             printedModelID = loadedModelDisplayTitle(loadedModelID)
         }
-        return loadedModelID
     }
 
     public func printModelIfNeeded(_ modelID: String) async {

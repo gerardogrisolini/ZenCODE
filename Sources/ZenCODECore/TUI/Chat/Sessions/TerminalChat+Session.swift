@@ -18,14 +18,8 @@ extension TerminalChat {
     public func createCurrentSession(
         discoverExternalTools: Bool = true
     ) async throws {
-        try await sessionRunner.createSession(
-            configuration: await currentSessionConfiguration(
-                discoverExternalTools: discoverExternalTools
-            )
-        )
-        await sessionRunner.updatePromptSkillSelection(
-            selectedPromptSkills(),
-            sessionID: sessionID
+        try await chatSession.createSessionWithSelectedSkills(
+            discoverExternalTools: discoverExternalTools
         )
         await startTaskGraphObserver()
     }
@@ -43,130 +37,36 @@ extension TerminalChat {
         allowedToolNames: Set<String>,
         includesActivePlanProgress: Bool = true
     ) -> AgentCoreSessionConfiguration {
-        let effectiveAllowedToolNames = allowedToolNamesIncludingSelectedPromptSkills(
-            allowedToolNames
+        chatSession.currentSessionConfiguration(
+            allowedToolNames: allowedToolNames,
+            includesActivePlanProgress: includesActivePlanProgress,
+            responseLanguageSection: responseLanguageSystemPromptSection()
         )
-        let promptSections: SystemPromptSections
-        if let restoredSystemPrompt = activeSessionSystemPromptOverride?.nilIfBlank {
-            // Older saved sessions contain one combined prompt. Keep that
-            // legacy representation intact, while new snapshots carry the
-            // dynamic part explicitly and can retain a stable system prefix.
-            promptSections = SystemPromptSections(
-                systemPrompt: SystemPromptBuilder.replacingSelectedSkillSection(
-                    in: restoredSystemPrompt
-                ),
-                dynamicContext: activeSessionDynamicContextOverride ?? ""
-            )
-        } else {
-            promptSections = currentPromptSections(
-                allowedToolNames: effectiveAllowedToolNames
-            )
-        }
-        let dynamicContext = includesActivePlanProgress
-            ? systemPromptWithActivePlanProgress(promptSections.dynamicContext)
-            : promptSections.dynamicContext
-        return AgentCoreSessionConfigurationBuilder(
-            sessionID: sessionID,
-            modelID: currentEffectiveModelID(),
-            agentID: selectedAgent?.id,
-            agentName: selectedAgent?.name,
-            agentRole: selectedAgent?.role,
-            workingDirectory: configuration.workingDirectory,
-            systemPrompt: promptSections.systemPrompt,
-            dynamicContext: dynamicContext,
-            cacheKey: activeSessionCacheKey ?? sessionID,
-            sessionRevision: 0,
-            history: activeSessionHistory,
-            allowedToolNames: effectiveAllowedToolNames,
-            maxToolRounds: configuration.maxToolRounds,
-            maxOutputTokens: configuration.maxOutputTokens,
-            appMode: configuration.appMode,
-            thinkingSelection: currentAgentThinkingSelection(),
-            preserveThinking: false
-        )
-        .makeConfiguration()
-    }
-
-    private func allowedToolNamesIncludingSelectedPromptSkills(
-        _ allowedToolNames: Set<String>
-    ) -> Set<String> {
-        let allowedToolNames = AgentSessionComposition.allowedToolNamesIncludingIntrinsicSkillTools(
-            allowedToolNames
-        )
-        return selectedAgent?.resolvedAllowedToolNames(allowedToolNames)
-            ?? allowedToolNames
     }
 
     public func currentSystemPrompt(allowedToolNames: Set<String>) -> String {
-        currentPromptSections(allowedToolNames: allowedToolNames).combinedPrompt
+        chatSession.currentSystemPrompt(
+            allowedToolNames: allowedToolNames,
+            responseLanguageSection: responseLanguageSystemPromptSection()
+        )
     }
 
     public func currentPromptSections(
         allowedToolNames: Set<String>
     ) -> SystemPromptSections {
-        AgentSessionComposition.standardPromptSections(
-            cwd: configuration.workingDirectory.path,
+        chatSession.currentPromptSections(
             allowedToolNames: allowedToolNames,
-            selectedAgent: selectedAgent,
-            locksModelToSession: configuration.hostedAgentProfiles != nil,
-            responseLanguageSection: responseLanguageSystemPromptSection(),
-            launchFolderProjects: launchFolderProjectsForSelectedAgent()
+            responseLanguageSection: responseLanguageSystemPromptSection()
         )
     }
 
-    /// The launch-folder listing for the selected agent, or `nil` when there is
-    /// no selected agent or its role does not delegate by role.
-    ///
-    /// The folder is read once per selection: the cache is cleared whenever
-    /// the agent is selected (again) or a session is loaded, so a prompt
-    /// recomposed on a later send, a `/tools` change, or an unchanged `/agents`
-    /// menu choice reuses the same listing and never rescans the disk.
+    /// See ``ChatSessionController/launchFolderProjectsForSelectedAgent()``.
     func launchFolderProjectsForSelectedAgent() -> LaunchFolderProjects? {
-        guard let agent = selectedAgent, agent.role.delegatesByRole else {
-            return nil
-        }
-        let agentKey = ProjectAgentSelectionStore.selectionKey(for: agent)
-        if let cache = launchFolderProjectsCache, cache.agentKey == agentKey {
-            return cache.projects
-        }
-        let projects = LaunchFolderProjects.scan(
-            workingDirectory: configuration.workingDirectory
-        )
-        launchFolderProjectsCache = LaunchFolderProjectsCache(
-            agentKey: agentKey,
-            projects: projects
-        )
-        return projects
+        chatSession.launchFolderProjectsForSelectedAgent()
     }
 
     func systemPromptWithActivePlanProgress(_ baseSystemPrompt: String?) -> String? {
-        guard let plan = activePlan,
-              plan.isApproved,
-              !plan.isCompleted,
-              !plan.points.isEmpty else {
-            return baseSystemPrompt
-        }
-        let pointList = plan.points.map { point in
-            "- \(point.id) [\(point.status.rawValue)]: \(point.text)"
-        }.joined(separator: "\n")
-        let progressSection = """
-
-            Active approved plan progress:
-            Goal: \(plan.originalGoal)
-            \(pointList)
-
-            The task graph is the authoritative control plane for this approved plan. Use this
-            progress snapshot to choose and report the current plan work; the common task workflow
-            policy in the session context governs graph operations and delegation.
-            """
-        guard let baseSystemPrompt = baseSystemPrompt?.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        ), !baseSystemPrompt.isEmpty else {
-            return progressSection.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return baseSystemPrompt + "\n\n" + progressSection.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
+        chatSession.systemPromptWithActivePlanProgress(baseSystemPrompt)
     }
 
     public func refreshInitialStatusBarContextWindow() async {
@@ -218,30 +118,7 @@ extension TerminalChat {
     }
 
     public func currentAgentThinkingSelection() -> AgentThinkingSelection? {
-        let effectiveModelID = currentEffectiveModelID()
-        let selectedBinding: AgentModelBinding?
-        if let model = effectiveModelID.flatMap({ modelID in
-            availableModelManifests().first { $0.matches(modelID) }
-        }) {
-            selectedBinding = selectedAgentModelBinding(for: model)
-        } else {
-            selectedBinding = selectedAgent?.modelBinding(matching: effectiveModelID)
-        }
-
-        // The default binding informs a profile only when the user did not
-        // explicitly choose another model. Its thinking setting must not leak
-        // onto an independent `/models` choice.
-        let effectiveBinding = selectedBinding
-            ?? (manualModelIDOverride == nil
-                ? selectedAgent?.defaultModelBinding
-                : nil)
-        return Self.effectiveThinkingSelection(
-            manualThinkingSelectionOverride: manualThinkingSelectionOverride,
-            hostedModel: hostedModelManifest(for: effectiveModelID),
-            explicitModelID: manualModelIDOverride,
-            agentModelID: effectiveBinding?.modelID,
-            agentThinkingSelection: effectiveBinding?.thinkingSelection
-        )
+        chatSession.currentAgentThinkingSelection()
     }
 
     public nonisolated static func effectiveThinkingSelection(
@@ -252,14 +129,9 @@ extension TerminalChat {
         agentThinkingSelection: AgentThinkingSelection? = nil,
         manifest: AgentSettingsManifest? = AgentSettingsManifestStore.load()
     ) -> AgentThinkingSelection? {
-        if let manualThinkingSelectionOverride {
-            return manualThinkingSelectionOverride
-        }
-        if let hostedModel {
-            return hostedModel.thinkingSelection(for: agentThinkingSelection)
-        }
-        return AgentSettingsStore.thinkingSelection(
-            requestedSelection: nil,
+        ChatSessionController.effectiveThinkingSelection(
+            manualThinkingSelectionOverride: manualThinkingSelectionOverride,
+            hostedModel: hostedModel,
             explicitModelID: explicitModelID,
             agentModelID: agentModelID,
             agentThinkingSelection: agentThinkingSelection,
@@ -270,144 +142,42 @@ extension TerminalChat {
     public func hostedModelManifest(
         for modelID: String?
     ) -> AgentSettingsModelManifest? {
-        guard let modelID,
-              let hostedModels = configuration.hostedModels else {
-            return nil
-        }
-        return hostedModels.first { $0.matches(modelID) }
+        chatSession.hostedModelManifest(for: modelID)
     }
 
     public func selectedAllowedToolNames(
         discoverExternalTools: Bool = true
     ) async -> Set<String> {
-        let intrinsicToolNames = intrinsicAllowedToolNamesForSelectedAgent()
-        let baseItems = await toolSelectionItems()
-        guard !selectedToolKeys.isEmpty else {
-            return allowedToolNamesIncludingSelectedPromptSkills(
-                intrinsicToolNames
-            )
-        }
-
-        selectedToolKeys = TerminalToolSelectionCatalog.normalizedSelectionKeys(
-            selectedToolKeys,
-            items: baseItems
+        await chatSession.selectedAllowedToolNames(
+            discoverExternalTools: discoverExternalTools
         )
-        _ = discoverExternalTools
-        let items = baseItems
-        var allowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
-            for: selectedToolKeys,
-            items: items
-        )
-        allowedToolNames.formUnion(intrinsicToolNames)
-        return allowedToolNamesIncludingSelectedPromptSkills(allowedToolNames)
     }
 
+    /// Adapter of ``ChatSessionController/updateSessionToolOptions(discoverExternalTools:)``;
+    /// the active tools are printed again after the change.
     @discardableResult
     public func updateCurrentSessionToolOptions(
         discoverExternalTools: Bool = true
     ) async -> Set<String> {
-        let previousSnapshot = await sessionRunner.snapshotSession(id: sessionID)
-        let previousAllowedToolNames = previousSnapshot?.allowedToolNames
-        let allowedToolNames = await selectedAllowedToolNames(
+        let allowedToolNames = await chatSession.updateSessionToolOptions(
             discoverExternalTools: discoverExternalTools
         )
-        do {
-            if previousSnapshot != nil, previousAllowedToolNames != .some(allowedToolNames) {
-                activeSessionCacheKey = previousSnapshot?.cacheKey ?? activeSessionCacheKey
-                activeSessionHistory = previousSnapshot?.history ?? activeSessionHistory
-                if !activeSessionHistory.isEmpty {
-                    activeSessionHistory.append(
-                        Self.toolSelectionChangedMessage(
-                            previousAllowedToolNames: previousAllowedToolNames ?? [],
-                            currentAllowedToolNames: allowedToolNames
-                        )
-                    )
-                }
-                await sessionRunner.rebuildSession(id: sessionID)
-                try await sessionRunner.createSession(
-                    configuration: currentSessionConfiguration(
-                        allowedToolNames: allowedToolNames
-                    )
-                )
-            } else {
-                try await sessionRunner.updateSessionOptions(
-                    configuration: currentSessionConfiguration(
-                        allowedToolNames: allowedToolNames
-                    )
-                )
-            }
-        } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-        }
         didPrintActiveTools = false
         return allowedToolNames
     }
 
+    /// Adapter of ``ChatSessionController/ensureWorkspaceAccess()``.
     public func ensureWorkspaceAccessIfNeeded() async {
-        let items = await toolSelectionItems()
-        let workspaceSelectionKeys = TerminalToolSelectionCatalog.workspaceAccessSelectionKeys(
-            for: selectedToolKeys,
-            items: items
-        )
-        guard stdinIsTerminal,
-              !configuration.appMode,
-              !workspaceSelectionKeys.isEmpty else {
-            return
-        }
-
-        #if os(macOS)
-        let granted = await TerminalWorkspaceToolAccessStore.shared.ensureAccess(
-            for: configuration.workingDirectory
-        )
-        guard !granted else {
-            return
-        }
-
-        selectedToolKeys.subtract(workspaceSelectionKeys)
-        let disabledToolNames = items
-            .filter { workspaceSelectionKeys.contains($0.key) }
-            .map(\.title)
-            .joined(separator: ", ")
-        await writeSystemMessage(
-            """
-            Workspace access was not granted for \(configuration.workingDirectory.path).
-            Disabled tools: \(disabledToolNames).
-
-            """
-        )
-        #endif
+        await chatSession.ensureWorkspaceAccess()
     }
 
     public nonisolated static func toolSelectionChangedMessage(
         previousAllowedToolNames: Set<String>,
         currentAllowedToolNames: Set<String>
     ) -> AgentRuntimeMessage {
-        let addedToolNames = currentAllowedToolNames.subtracting(previousAllowedToolNames)
-        let removedToolNames = previousAllowedToolNames.subtracting(currentAllowedToolNames)
-        let currentTools = toolSelectionChangedToolList(currentAllowedToolNames)
-        let addedTools = toolSelectionChangedToolList(addedToolNames)
-        let removedTools = toolSelectionChangedToolList(removedToolNames)
-
-        return AgentRuntimeMessage(
-            role: .system,
-            content: """
-            Tool selection changed during this session.
-            Current available tool names: \(currentTools).
-            Added tool names: \(addedTools).
-            Removed tool names: \(removedTools).
-            Only call tools currently exposed by the native tool interface. Treat earlier calls or results for removed tools as historical context, not as available capabilities.
-            """
+        ChatSessionController.toolSelectionChangedMessage(
+            previousAllowedToolNames: previousAllowedToolNames,
+            currentAllowedToolNames: currentAllowedToolNames
         )
-    }
-
-    private nonisolated static func toolSelectionChangedToolList(_ toolNames: Set<String>) -> String {
-        let names = toolNames
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .sorted()
-        guard !names.isEmpty else {
-            return "none"
-        }
-        return names.joined(separator: ", ")
     }
 }

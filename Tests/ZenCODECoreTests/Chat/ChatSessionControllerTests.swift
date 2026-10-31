@@ -965,7 +965,7 @@ private func withHarness(
     defer { try? FileManager.default.removeItem(at: root) }
 
     try await AppStorageDirectory.withSupportDirectoryURL(support) { @Sendable @ChatSessionActor in
-        let harness = ChatControllerHarness(
+        let harness = try ChatControllerHarness(
             workspace: workspace,
             hostCapabilities: hostCapabilities,
             hostDecisions: hostDecisions,
@@ -991,7 +991,7 @@ private struct ChatControllerHarness: Sendable {
         hostCapabilities: ChatChannelCapabilities,
         hostDecisions: [ChatConsentDecision?],
         retainsTranscript: Bool
-    ) {
+    ) throws {
         let sessionID = "chat-session-\(UUID().uuidString.lowercased())"
         let host = ScriptedChatInteractionHost(capabilities: hostCapabilities, decisions: hostDecisions)
         let authorizer = ChatToolConsentAuthorizer(host: host)
@@ -1008,6 +1008,15 @@ private struct ChatControllerHarness: Sendable {
         self.controller = ChatSessionController(
             sessionID: sessionID,
             runtime: runtime,
+            // Hosted models: the controller never persists a selection.
+            environment: ChatSessionEnvironment(
+                configuration: try AgentConfiguration(
+                    hostedModelID: "scripted-model",
+                    availableModels: [],
+                    workingDirectory: workspace
+                ),
+                featureRuntime: nil
+            ),
             workingDirectory: workspace,
             presenter: presenter,
             host: host,
@@ -1081,217 +1090,5 @@ private struct TurnGate: Sendable {
 
     func release() {
         releasedSignal.yield()
-    }
-}
-
-private actor RecordingChatPresenter: ChatSessionPresenter {
-    enum Event: Equatable, Sendable {
-        case turnWillStart(prompt: String)
-        case status(String)
-        case thought(String)
-        case content(String)
-        case toolStarted(String)
-        case toolCompleted(String)
-        case toolSettled(String)
-        case liveArtifacts(agentID: String?, paths: [String])
-        case sealedArtifacts(paths: [String])
-        case fileChangeSummary(fileCount: Int)
-        case modelTurnDidReturn
-        case continueAutomatically
-        case turnWillFinish
-        case workflowNotice(ChatWorkflowNotice)
-        case turnEnded(DirectAgentTurnOutcome.Status)
-    }
-
-    private(set) var events: [Event] = []
-
-    func turnWillStart(_ request: ChatTurnRequest) async {
-        events.append(.turnWillStart(prompt: request.prompt))
-    }
-
-    func presentStatus(_ status: String) async {
-        events.append(.status(status))
-    }
-
-    func presentThought(_ thought: String) async {
-        events.append(.thought(thought))
-    }
-
-    func presentAssistantContent(_ content: String) async {
-        events.append(.content(content))
-    }
-
-    func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {
-        events.append(.toolStarted(toolCall.id))
-    }
-
-    func presentToolCallCompleted(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {
-        events.append(.toolCompleted(toolCall.id))
-    }
-
-    func presentToolCallSettled(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {
-        events.append(.toolSettled(toolCall.id))
-    }
-
-    func presentLiveFileArtifacts(_ turns: [SessionFileArtifactHistory.Turn], agentID: String?) async {
-        events.append(.liveArtifacts(
-            agentID: agentID,
-            paths: turns.flatMap { $0.artifacts.map(\.displayPath) }
-        ))
-    }
-
-    func presentSealedFileArtifacts(_ turn: SessionFileArtifactHistory.Turn) async {
-        events.append(.sealedArtifacts(paths: turn.artifacts.map(\.displayPath)))
-    }
-
-    func presentFileChangeSummary(_ summary: TurnFileChangeSummary) async {
-        events.append(.fileChangeSummary(fileCount: summary.fileCount))
-    }
-
-    func modelTurnDidReturn() async {
-        events.append(.modelTurnDidReturn)
-    }
-
-    func turnWillContinueAutomatically() async {
-        events.append(.continueAutomatically)
-    }
-
-    func turnWillFinish() async {
-        events.append(.turnWillFinish)
-    }
-
-    func presentWorkflowNotice(_ notice: ChatWorkflowNotice) async {
-        events.append(.workflowNotice(notice))
-    }
-
-    func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async {
-        events.append(.turnEnded(outcome.status))
-    }
-}
-
-private actor ScriptedChatInteractionHost: ChatInteractionHost {
-    nonisolated let capabilities: ChatChannelCapabilities
-    private var decisions: [ChatConsentDecision?]
-    private(set) var requests: [AgentToolAuthorizationRequest] = []
-
-    init(capabilities: ChatChannelCapabilities, decisions: [ChatConsentDecision?]) {
-        self.capabilities = capabilities
-        self.decisions = decisions
-    }
-
-    var requestCount: Int { requests.count }
-
-    func requestToolConsent(_ request: AgentToolAuthorizationRequest) async -> ChatConsentDecision? {
-        requests.append(request)
-        return decisions.isEmpty ? nil : decisions.removeFirst()
-    }
-}
-
-/// A `ChatSessionRuntime` whose model requests are scripted. Each call to
-/// `sendPrompt` runs the next appended script, which drives the event stream
-/// and the `onToolWillExecute` hook exactly like the real runner would.
-private actor ScriptedChatRuntime: ChatSessionRuntime {
-    struct Call: Sendable {
-        let index: Int
-        let authorizeTool: AgentToolAuthorizationHandler?
-        let onToolWillExecute: (@Sendable (DirectAgentToolCall) async -> Void)?
-        let onEvent: @Sendable (DirectAgentEvent) async -> Void
-        let runtime: ScriptedChatRuntime
-    }
-
-    typealias Script = @Sendable (Call) async throws -> DirectAgentResponse
-
-    enum ScriptError: Error {
-        case missingScript(index: Int)
-    }
-
-    nonisolated let taskOrchestrator = SessionTaskOrchestrator()
-
-    private let defaultToolAuthorization: AgentToolAuthorizationHandler?
-    private var scripts: [Script] = []
-    private var plannerSnapshots: [DirectSubAgentRuntime.AgentSnapshot] = []
-    private(set) var prompts: [String] = []
-    private(set) var attachmentCounts: [Int] = []
-    private(set) var turnInstructions: [String?] = []
-    private(set) var authorizationResults: [Bool] = []
-    private(set) var replacedHistories: [[AgentRuntimeMessage]] = []
-
-    /// `defaultToolAuthorization` plays the role of the runner's
-    /// `defaultToolAuthorizationHandler`: it answers calls whose turn request
-    /// did not bring its own handler.
-    init(defaultToolAuthorization: AgentToolAuthorizationHandler? = nil) {
-        self.defaultToolAuthorization = defaultToolAuthorization
-    }
-
-    func append(_ script: @escaping Script) {
-        scripts.append(script)
-    }
-
-    func setPlannerSnapshots(_ snapshots: [DirectSubAgentRuntime.AgentSnapshot]) {
-        plannerSnapshots = snapshots
-    }
-
-    func recordAuthorization(_ approved: Bool) {
-        authorizationResults.append(approved)
-    }
-
-    func sendPrompt(
-        configuration: AgentCoreSessionConfiguration,
-        prompt: String,
-        attachments: [AgentRuntimeAttachment],
-        authorizeTool: AgentToolAuthorizationHandler?,
-        onToolWillExecute: (@Sendable (DirectAgentToolCall) async -> Void)?,
-        toolProviders: [AgentToolProvider],
-        turnInstruction: String?,
-        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
-    ) async throws -> DirectAgentResponse {
-        let index = prompts.count
-        prompts.append(prompt)
-        attachmentCounts.append(attachments.count)
-        turnInstructions.append(turnInstruction)
-        guard index < scripts.count else {
-            throw ScriptError.missingScript(index: index)
-        }
-        let script = scripts[index]
-        return try await script(Call(
-            index: index,
-            authorizeTool: authorizeTool ?? defaultToolAuthorization,
-            onToolWillExecute: onToolWillExecute,
-            onEvent: onEvent,
-            runtime: self
-        ))
-    }
-
-    func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
-        plannerSnapshots
-    }
-
-    func closeSubAgent(id: String) async -> Bool {
-        true
-    }
-
-    func taskGraphSnapshot(sessionID: String, graphID: String?) async throws -> TaskGraphSnapshot? {
-        try await taskOrchestrator.graphSnapshot(sessionID: sessionID, graphID: graphID)
-    }
-
-    func removeTaskGraph(id: String, sessionID: String) async throws -> TaskGraphSnapshot {
-        try await taskOrchestrator.removeGraph(id: id, sessionID: sessionID)
-    }
-
-    func snapshotSession(id sessionID: String) async -> AgentRuntimeSessionSnapshot? {
-        nil
-    }
-
-    func currentSessionGeneration(for sessionID: String) -> AgentCoreSessionRunner.SessionGeneration? {
-        AgentCoreSessionRunner.SessionGeneration(rawValue: 1)
-    }
-
-    func replaceSessionHistory(
-        id sessionID: String,
-        history: [AgentRuntimeMessage],
-        expectedSessionGeneration: AgentCoreSessionRunner.SessionGeneration
-    ) async -> Bool {
-        replacedHistories.append(history)
-        return true
     }
 }

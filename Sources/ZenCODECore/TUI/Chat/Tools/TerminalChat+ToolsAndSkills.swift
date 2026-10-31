@@ -20,27 +20,7 @@ extension TerminalChat {
         }
 
         if rawArguments.isEmpty {
-            guard stdinIsTerminal else {
-                await printToolSelectionStatus()
-                await writeSystemMessage(Self.renderToolSelectionUsage())
-                return
-            }
-
-            let items = await toolSelectionItems()
-            let selectedKeys = await TerminalCheckboxMenu.selectOffActor(
-                title: "Tools",
-                items: Self.toolCheckboxItems(items: items),
-                selected: TerminalToolSelectionCatalog.normalizedSelectionKeys(
-                    selectedToolKeys,
-                    items: items
-                ),
-                reservedBottomRows: await statusBar.reservedRowsForOverlay()
-            )
-            if let selectedKeys {
-                await applyToolSelection(selectedKeys)
-            } else {
-                await printToolSelectionStatus()
-            }
+            await writeToolSelectionOutcome(await chatSession.chooseTools())
             return
         }
 
@@ -67,66 +47,36 @@ extension TerminalChat {
         }
     }
 
+    /// Adapter of ``ChatSessionController/selectTools(rawSelection:)``.
     public func applyToolSelection(_ rawSelection: String) async {
         do {
-            let items = await toolSelectionItems()
-            let selectedKeys = try Self.parseToolSelection(
-                rawSelection,
-                items: items
+            await writeToolSelectionOutcome(
+                try await chatSession.selectTools(rawSelection: rawSelection)
             )
-            await applyToolSelection(selectedKeys)
         } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            await writeSystemMessage(Self.renderToolSelectionUsage())
+            await writeSessionNotices([
+                .operationFailed(description: error.localizedDescription),
+                .toolSelectionUsage,
+            ])
         }
     }
 
+    /// Adapter of ``ChatSessionController/selectTools(keys:)``.
     public func applyToolSelection(_ selectedKeys: Set<String>) async {
-        let previousKeys = selectedToolKeys
-        let items = await toolSelectionItems()
-        selectedToolKeys = TerminalToolSelectionCatalog.normalizedSelectionKeys(
-            selectedKeys,
-            items: items
-        )
-        activeSessionSystemPromptOverride = nil
-        await ensureWorkspaceAccessIfNeeded()
-        let shouldDiscoverExternalTools = Self.shouldDiscoverExternalTools(
-            previousKeys: previousKeys,
-            selectedKeys: selectedToolKeys,
-            items: items
-        )
-        let allowedToolNames = await updateCurrentSessionToolOptions(
-            discoverExternalTools: shouldDiscoverExternalTools
-        )
-        let activeToolNames = await resolvedActiveToolNames(
-            fallbackAllowedToolNames: allowedToolNames
-        )
-        let renderItems = await toolSelectionItems()
-        await writeSystemMessage(
-            Self.renderActiveTools(
-                activeToolNames,
-                items: renderItems,
-                selectedKeys: selectedToolKeys
-            )
-        )
-        didPrintActiveTools = true
+        await writeToolSelectionOutcome(await chatSession.selectTools(keys: selectedKeys))
+    }
+
+    /// Writes the closing notices of a tool operation; an applied selection
+    /// has printed the active tools.
+    private func writeToolSelectionOutcome(_ outcome: ChatSelectionOutcome) async {
+        await writeSessionNotices(outcome.notices)
+        if outcome.change != nil {
+            didPrintActiveTools = true
+        }
     }
 
     public func printToolSelectionStatus() async {
-        let allowedToolNames = await selectedAllowedToolNames(
-            discoverExternalTools: false
-        )
-        let activeToolNames = await resolvedActiveToolNames(
-            fallbackAllowedToolNames: allowedToolNames
-        )
-        let items = await toolSelectionItems()
-        await writeSystemMessage(
-            Self.renderActiveTools(
-                activeToolNames,
-                items: items,
-                selectedKeys: selectedToolKeys
-            )
-        )
+        await writeSessionNotice(.activeTools(await chatSession.activeToolsSummary()))
     }
 
     public nonisolated static func shouldDiscoverExternalTools(
@@ -134,15 +84,11 @@ extension TerminalChat {
         selectedKeys: Set<String>,
         items: [TerminalToolSelectionItem]
     ) -> Bool {
-        let previousPrefixes = TerminalToolSelectionCatalog.externalDiscoveryPrefixes(
-            for: previousKeys,
+        ChatSessionController.shouldDiscoverExternalTools(
+            previousKeys: previousKeys,
+            selectedKeys: selectedKeys,
             items: items
         )
-        let selectedPrefixes = TerminalToolSelectionCatalog.externalDiscoveryPrefixes(
-            for: selectedKeys,
-            items: items
-        )
-        return !selectedPrefixes.subtracting(previousPrefixes).isEmpty
     }
 
     public nonisolated static func toolCheckboxItems(
@@ -171,18 +117,8 @@ extension TerminalChat {
     public func toolSelectionItems(
         additionalDescriptors: [DirectToolDescriptor] = []
     ) async -> [TerminalToolSelectionItem] {
-        let knownMCPDescriptors = await sessionRunner.knownMCPToolDescriptors(
-            preferredWorkspaceRootURL: configuration.workingDirectory
-        )
-        let featureStatuses = await featureRuntime.featureStatuses(
-            includeTools: true,
-            includeDisabled: true
-        )
-        return Self.toolSelectionItems(
-            featureStatuses: featureStatuses,
-            additionalDescriptors: DirectToolExecutor.canonicalized(
-                knownMCPDescriptors + additionalDescriptors
-            )
+        await chatSession.toolSelectionItems(
+            additionalDescriptors: additionalDescriptors
         )
     }
 
@@ -190,52 +126,34 @@ extension TerminalChat {
         featureStatuses: [SwiftFeatureStatus],
         additionalDescriptors: [DirectToolDescriptor] = []
     ) -> [TerminalToolSelectionItem] {
-        TerminalToolSelectionCatalog.items(
+        ChatSessionController.toolSelectionItems(
             featureStatuses: featureStatuses,
             additionalDescriptors: additionalDescriptors
         )
     }
 
     public func intrinsicAllowedToolNamesForSelectedAgent() -> Set<String> {
-        AgentProfileStore.isBuilderAgent(selectedAgent)
-            ? AgentProfileStore.featureManagementToolNames
-            : []
+        chatSession.intrinsicAllowedToolNamesForSelectedAgent()
     }
 
     public nonisolated static func toolSelectionKeys(
         from rawValues: [String],
         items: [TerminalToolSelectionItem]
     ) -> Set<String> {
-        var selectedKeys = Set<String>()
-        for rawValue in rawValues {
-            selectedKeys.formUnion(
-                TerminalToolSelectionCatalog.selectionKeys(
-                    for: rawValue,
-                    items: items
-                )
-            )
-        }
-        return selectedKeys
+        ChatSessionController.toolSelectionKeys(from: rawValues, items: items)
     }
 
     public func applyInitialAgentSelectionIfNeeded() async {
-        guard let selectedAgent else {
-            return
-        }
-        await applyAgentProfile(selectedAgent)
+        await chatSession.applyInitialAgentSelectionIfNeeded()
     }
 
     public func applyInitialSkillSelectionIfNeeded() throws {
-        guard let initialSkillSelection = configuration.initialSkillSelection else {
-            return
-        }
-
-        selectedSkillIDs = try Self.parseSkillSelection(
-            initialSkillSelection,
-            availableSkills: availableSkills()
-        )
+        try chatSession.applyInitialSkillSelectionIfNeeded()
     }
 
+    /// `/skills`: interprets the arguments and runs the matching controller
+    /// operation: uninstall, install from a GitHub URL or a local path, the
+    /// menu, or a selection.
     public func handleSkillsCommand(_ command: String) async {
         let rawArguments = Self.slashCommandArguments(
             from: command,
@@ -243,338 +161,132 @@ extension TerminalChat {
         )
 
         if Self.isSkillUninstallRequest(rawArguments) {
-            await uninstallSkillsInteractively()
+            await writeSkillSelectionOutcome(await chatSession.chooseSkillsToUninstall())
             return
         }
 
-        if Self.isSkillInstallRequest(rawArguments),
-           Self.githubSkillInstallURL(from: rawArguments) == nil,
-           Self.localSkillInstallURL(
-               from: rawArguments,
-               baseDirectory: configuration.workingDirectory
-           ) == nil {
-            await writeFailureMessage("ZenCODE: /skills install requires a GitHub URL or local path.\n")
-            await writeSystemMessage(Self.renderSkillSelectionUsage())
-            return
-        }
-
-        if let installURL = Self.githubSkillInstallURL(from: rawArguments) {
-            await installSkill(fromGitHubURL: installURL)
-            return
-        }
-
-        if let localURL = Self.localSkillInstallURL(
-            from: rawArguments,
-            baseDirectory: configuration.workingDirectory
-        ) {
-            await installSkill(fromLocalURL: localURL)
+        let installValue = Self.skillInstallValue(from: rawArguments)
+        if Self.isSkillInstallRequest(rawArguments)
+            || installValue.flatMap({
+                ChatSessionController.skillInstallSource(
+                    $0,
+                    workingDirectory: chatSession.workingDirectory
+                )
+            }) != nil {
+            await writeSkillSelectionOutcome(
+                await chatSession.installSkill(source: installValue ?? "")
+            )
             return
         }
 
         if rawArguments.isEmpty {
-            guard stdinIsTerminal else {
-                await printSkillSelectionStatus()
-                await writeSystemMessage(Self.renderSkillSelectionUsage())
-                return
-            }
-
-            let skillItems = skillCheckboxItems()
-            guard !skillItems.isEmpty else {
-                await writeSystemMessage("No prompt skills installed by the app.\n")
-                await printSkillSelectionStatus()
-                return
-            }
-            let selectedSkillIDs = await TerminalCheckboxMenu.selectOffActor(
-                title: "Prompt skills",
-                items: skillItems,
-                selected: selectedSkillIDs,
-                reservedBottomRows: await statusBar.reservedRowsForOverlay()
-            )
-            if let selectedSkillIDs {
-                await applySkillSelection(selectedSkillIDs)
-            } else {
-                await printSkillSelectionStatus()
-            }
+            await writeSkillSelectionOutcome(await chatSession.chooseSkills())
             return
         }
 
         await applySkillSelection(rawArguments)
     }
 
-    private func uninstallSkillsInteractively() async {
-        guard stdinIsTerminal else {
-            await writeFailureMessage(
-                "ZenCODE: /skills uninstall requires an interactive terminal.\n"
-            )
-            await writeSystemMessage(Self.renderSkillSelectionUsage())
-            return
-        }
-
-        let installedSkills = availableSkills()
-        guard !installedSkills.isEmpty else {
-            await writeSystemMessage("No prompt skills installed by the app.\n")
-            return
-        }
-
-        let selectedSkillIDs = await TerminalCheckboxMenu.selectOffActor(
-            title: "Uninstall prompt skills",
-            items: skillCheckboxItems(),
-            selected: [],
-            reservedBottomRows: await statusBar.reservedRowsForOverlay()
-        )
-        guard let selectedSkillIDs else {
-            return
-        }
-
-        let selectedSkills = installedSkills.filter {
-            selectedSkillIDs.contains($0.id)
-        }
-        guard !selectedSkills.isEmpty else {
-            await writeSystemMessage("No skills selected for uninstall.\n")
-            return
-        }
-
-        do {
-            try PromptSkillInstaller.uninstall(skills: selectedSkills)
-            availableSkillsCache = nil
-            self.selectedSkillIDs.subtract(selectedSkillIDs)
-            await applySkillSelection(
-                self.selectedSkillIDs,
-                reportsSelection: false
-            )
-
-            let titles = selectedSkills.map(\.title).joined(separator: ", ")
-            let label = selectedSkills.count == 1 ? "skill" : "skills"
-            await writeSystemMessage(
-                "Uninstalled \(label): \(titles)\n"
-            )
-        } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            await writeSystemMessage(Self.renderSkillSelectionUsage())
-        }
-    }
-
     public func installSkill(fromGitHubURL url: URL) async {
-        await writeSystemMessage("Installing skill from \(url.absoluteString)...\n")
-        do {
-            let result = try await PromptSkillInstaller.install(fromGitHubURL: url)
-            await finishInstalledSkill(result)
-        } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            await writeSystemMessage(Self.renderSkillSelectionUsage())
-        }
+        await writeSkillSelectionOutcome(await chatSession.installSkill(from: .gitHub(url)))
     }
 
     public func installSkill(fromLocalURL url: URL) async {
-        await writeSystemMessage("Installing skill from \(url.path)...\n")
-        do {
-            let result = try PromptSkillInstaller.install(fromLocalURL: url)
-            await finishInstalledSkill(result)
-        } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            await writeSystemMessage(Self.renderSkillSelectionUsage())
-        }
+        await writeSkillSelectionOutcome(await chatSession.installSkill(from: .local(url)))
     }
 
-    private func finishInstalledSkill(_ result: PromptSkillInstallResult) async {
-        availableSkillsCache = nil
-        selectedSkillIDs.insert(result.skill.id)
-        await applySkillSelection(selectedSkillIDs, reportsSelection: false)
-        await writeSystemMessage(
-            "Installed and selected skill: \(result.skill.title)\n"
-        )
-    }
-
+    /// Adapter of ``ChatSessionController/selectSkills(rawSelection:)``.
     public func applySkillSelection(_ rawSelection: String) async {
         do {
-            let selectedSkillIDs = try Self.parseSkillSelection(
-                rawSelection,
-                availableSkills: availableSkills()
+            await writeSkillSelectionOutcome(
+                try await chatSession.selectSkills(rawSelection: rawSelection)
             )
-            await applySkillSelection(selectedSkillIDs)
         } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            await writeSystemMessage(Self.renderSkillSelectionUsage())
+            await writeSessionNotices([
+                .operationFailed(description: error.localizedDescription),
+                .skillSelectionUsage,
+            ])
         }
     }
 
+    /// Adapter of ``ChatSessionController/selectSkills(ids:)``.
     public func applySkillSelection(_ selectedSkillIDs: Set<String>) async {
-        await applySkillSelection(selectedSkillIDs, reportsSelection: true)
+        await writeSkillSelectionOutcome(await chatSession.selectSkills(ids: selectedSkillIDs))
     }
 
-    private func applySkillSelection(
-        _ selectedSkillIDs: Set<String>,
-        reportsSelection: Bool
-    ) async {
-        self.selectedSkillIDs = selectedSkillIDs
-        // Selection is session-scoped, mutable state. Updating it must not
-        // touch the system prompt, allowlist, cache key, or history, so the
-        // remote continuation and KV-cache prefix stay valid.
-        await sessionRunner.updatePromptSkillSelection(
-            selectedPromptSkills(),
-            sessionID: sessionID
-        )
-        await statusBar.reset()
-        await refreshInitialStatusBarContextWindow()
-        if reportsSelection {
-            await printSkillSelectionStatus()
+    /// Writes the closing notices of a skill operation, after refreshing the
+    /// status bar when the selection changed.
+    private func writeSkillSelectionOutcome(_ outcome: ChatSelectionOutcome) async {
+        if outcome.change != nil {
+            await statusBar.reset()
+            await refreshInitialStatusBarContextWindow()
         }
+        await writeSessionNotices(outcome.notices)
     }
 
     public func printSkillSelectionStatus() async {
-        await writeSystemMessage(Self.renderSelectedSkills(selectedPromptSkills()))
+        await writeSessionNotice(.selectedSkills(selectedPromptSkills()))
     }
 
     public func skillCheckboxItems() -> [TerminalCheckboxMenuItem<String>] {
-        availableSkills().map { skill in
-            let canonicalName = skill.canonicalName == skill.title
-                ? ""
-                : " (\(skill.canonicalName))"
-            return TerminalCheckboxMenuItem(
-                value: skill.id,
-                title: "\(skill.title)\(canonicalName)",
-                detail: Self.truncatedInline(skill.summary, limit: 96)
-            )
+        chatSession.skillChoiceItems().map { item in
+            TerminalCheckboxMenuItem(value: item.id, title: item.title, detail: item.detail)
         }
     }
 
     public func availableSkills() -> [PromptSkill] {
-        if let availableSkillsCache {
-            return availableSkillsCache
-        }
-
-        let skills = PromptSkillCatalog.discoverSkills(
-            searchRoots: PromptSkillCatalog.appCatalogSearchRoots()
-        )
-        availableSkillsCache = skills
-        return skills
+        chatSession.availableSkills()
     }
 
     public func selectedPromptSkills() -> [PromptSkill] {
-        let skills = availableSkills()
-        guard !selectedSkillIDs.isEmpty else {
-            return []
-        }
-
-        return skills.filter { selectedSkillIDs.contains($0.id) }
+        chatSession.selectedPromptSkills()
     }
 
     public nonisolated static func githubSkillInstallURL(from rawArguments: String) -> URL? {
-        guard let rawValue = skillInstallValue(from: rawArguments),
-              let urlToken = rawValue.split(whereSeparator: \.isWhitespace).first.map(String.init) else {
-            return nil
+        skillInstallValue(from: rawArguments).flatMap {
+            ChatSessionController.gitHubSkillInstallURL(value: $0)
         }
-
-        guard let url = URL(string: urlToken),
-              let host = url.host?.lowercased(),
-              host == "github.com" || host == "www.github.com" else {
-            return nil
-        }
-        return url
     }
 
     public nonisolated static func localSkillInstallURL(
         from rawArguments: String,
         baseDirectory: URL
     ) -> URL? {
-        guard let rawValue = skillInstallValue(from: rawArguments) else {
-            return nil
+        skillInstallValue(from: rawArguments).flatMap {
+            ChatSessionController.localSkillInstallURL(value: $0, baseDirectory: baseDirectory)
         }
-
-        if rawValue.lowercased().hasPrefix("file://"),
-           let url = URL(string: rawValue),
-           url.isFileURL {
-            return url.standardizedFileURL
-        }
-
-        if rawValue.hasPrefix("~/") {
-            let expandedPath = NSString(string: rawValue).expandingTildeInPath
-            return URL(fileURLWithPath: expandedPath, isDirectory: true)
-                .standardizedFileURL
-        }
-
-        if rawValue.hasPrefix("/") {
-            return URL(fileURLWithPath: rawValue, isDirectory: true)
-                .standardizedFileURL
-        }
-
-        if rawValue == "."
-            || rawValue == ".."
-            || rawValue.hasPrefix("./")
-            || rawValue.hasPrefix("../") {
-            return baseDirectory
-                .appendingPathComponent(rawValue, isDirectory: true)
-                .standardizedFileURL
-        }
-
-        return nil
     }
 
     public nonisolated static func isSkillInstallRequest(_ rawArguments: String) -> Bool {
-        let tokens = rawArguments
-            .split { $0.isWhitespace }
-        guard let command = tokens.first?.lowercased() else {
-            return false
-        }
-        return ["install", "add"].contains(command)
+        ChatSessionController.isSkillInstallRequest(rawArguments)
     }
 
     public nonisolated static func isSkillUninstallRequest(_ rawArguments: String) -> Bool {
-        let tokens = rawArguments
-            .split { $0.isWhitespace }
-        return tokens.count == 1 && tokens[0].lowercased() == "uninstall"
+        ChatSessionController.isSkillUninstallRequest(rawArguments)
     }
 
     public nonisolated static func skillInstallValue(from rawArguments: String) -> String? {
-        let trimmedArguments = rawArguments.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedArguments.isEmpty else {
-            return nil
-        }
-
-        guard let commandEndIndex = trimmedArguments.firstIndex(where: \.isWhitespace) else {
-            return isSkillInstallRequest(trimmedArguments) ? nil : trimmedArguments
-        }
-
-        let command = trimmedArguments[..<commandEndIndex].lowercased()
-        guard ["install", "add"].contains(command) else {
-            return trimmedArguments
-        }
-
-        let value = trimmedArguments[commandEndIndex...]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
+        ChatSessionController.skillInstallValue(from: rawArguments)
     }
 
     public nonisolated static func parseSkillSelection(
         _ rawSelection: String,
         availableSkills: [PromptSkill]
     ) throws -> Set<String> {
-        try TerminalSelection.parse(rawSelection, keys: availableSkills.map(\.id)) { token in
-            guard let skill = skill(matching: token, in: availableSkills) else {
-                throw TerminalSkillSelectionError.unknownToken(token)
-            }
-            return skill.id
-        }
+        try ChatSessionController.parseSkillSelection(
+            rawSelection,
+            availableSkills: availableSkills
+        )
     }
 
     public nonisolated static func skill(
         matching rawToken: String,
         in availableSkills: [PromptSkill]
     ) -> PromptSkill? {
-        let token = selectionKey(rawToken)
-        guard !token.isEmpty else {
-            return nil
-        }
-
-        return availableSkills.first { skill in
-            token == selectionKey(skill.canonicalName)
-                || token == selectionKey(skill.title)
-                || skill.sourceHash.hasPrefix(token)
-                || skill.id.hasPrefix(token)
-        }
+        ChatSessionController.skill(matching: rawToken, in: availableSkills)
     }
 
     public nonisolated static func selectionKey(_ value: String) -> String {
-        TerminalSelection.lookupKey(value)
+        ChatSessionController.selectionKey(value)
     }
 }

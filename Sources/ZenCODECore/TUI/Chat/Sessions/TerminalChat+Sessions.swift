@@ -44,331 +44,85 @@ extension TerminalChat {
     }
 
     /// Resets the runtime conversation and starts a fresh, unsaved session.
-    /// Replaces the former `/clear` command.
+    /// Replaces the former `/clear` command. Adapter of
+    /// ``ChatSessionController/startNewSession(newSessionID:)``.
     public func startNewSession() async {
         do {
             await stopTaskGraphObserver()
-            await abandonPlanBrainstorming()
-            await sessionRunner.resetSession(id: sessionID)
-            sessionID = Self.newTerminalSessionID()
-            resetFileArtifactState()
-            activeSessionCacheKey = nil
-            activeSessionHistory = []
-            replaceActiveSessionTranscript(with: [])
-            activeSessionSystemPromptOverride = nil
-            activeSessionDynamicContextOverride = nil
             resetResponseLanguageLock()
-            activeSavedSessionName = nil
-            activeCheckpointTree = nil
-            activePlan = nil
-            pendingPlanApprovalPlanID = nil
-            try await createCurrentSession()
+            let outcome = try await chatSession.startNewSession(
+                newSessionID: Self.newTerminalSessionID()
+            )
+            await startTaskGraphObserver()
             await statusBar.reset()
             await refreshInitialStatusBarContextWindow()
             pendingAttachments.removeAll()
             await renderCoordinator.resetOverview(.subAgents)
-            await writeSystemMessage("Started a new session.\n")
+            await writeSessionNotices(outcome.notices)
         } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeSessionNotice(.operationFailed(description: error.localizedDescription))
         }
     }
 
+    /// `/sessions`: adapter of ``ChatSessionController/chooseSavedSession()``.
     public func handleSavedSessionList() async {
         do {
-            let sessions = try TerminalSessionStore.savedSessions(
-                for: configuration.workingDirectory
-            )
-            guard !sessions.isEmpty else {
-                await writeSystemMessage("No saved sessions for this project.\n")
-                await writeSystemMessage(Self.renderSessionSelectionUsage())
-                return
-            }
-
-            guard stdinIsTerminal else {
-                await renderSavedSessionList(sessions)
-                await writeSystemMessage(Self.renderSessionSelectionUsage())
-                return
-            }
-
-            let items = savedSessionSelectionItems(sessions)
-            guard let selectedName = await TerminalCheckboxMenu.selectOneOffActor(
-                title: "Saved sessions",
-                items: items,
-                selected: activeSavedSessionName,
-                reservedBottomRows: await statusBar.reservedRowsForOverlay()
-            ),
-                  let selectedSession = sessions.first(where: { $0.name == selectedName }) else {
-                await renderSavedSessionList(sessions)
-                return
-            }
-
-            try await loadSavedSession(selectedSession)
+            await writeSessionNotices(try await chatSession.chooseSavedSession().notices)
         } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeSessionNotice(.operationFailed(description: error.localizedDescription))
         }
     }
 
+    /// `/sessions delete`: adapter of
+    /// ``ChatSessionController/chooseSavedSessionsToDelete()``.
     public func handleSavedSessionDelete() async {
         do {
-            let sessions = try TerminalSessionStore.savedSessions(
-                for: configuration.workingDirectory
-            )
-            guard !sessions.isEmpty else {
-                await writeSystemMessage("No saved sessions for this project.\n")
-                return
-            }
-
-            guard stdinIsTerminal else {
-                await renderSavedSessionList(sessions)
-                await writeSystemMessage(Self.renderSessionSelectionUsage())
-                return
-            }
-
-            let items = savedSessionSelectionItems(sessions)
-            guard let selectedNames = await TerminalCheckboxMenu.selectOffActor(
-                title: "Delete saved sessions",
-                items: items,
-                selected: [],
-                reservedBottomRows: await statusBar.reservedRowsForOverlay()
-            ),
-                  !selectedNames.isEmpty else {
-                return
-            }
-
-            let selectedSessions = sessions.filter { selectedNames.contains($0.name) }
-            for selectedSession in selectedSessions {
-                let didDelete = try TerminalSessionStore.delete(
-                    name: selectedSession.name,
-                    workingDirectory: configuration.workingDirectory
-                )
-                if activeSavedSessionName == selectedSession.name {
-                    activeSavedSessionName = nil
-                }
-                if didDelete {
-                    await writeSystemMessage("Deleted session: \(selectedSession.name).\n")
-                } else {
-                    await writeFailureMessage("ZenCODE: saved session not found: \(selectedSession.name).\n")
-                }
-            }
+            await writeSessionNotices(try await chatSession.chooseSavedSessionsToDelete().notices)
         } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeSessionNotice(.operationFailed(description: error.localizedDescription))
         }
     }
 
-        public func saveActiveSession() async {
-        if let name = activeSavedSessionName?.nilIfBlank {
-            await saveCurrentSession(named: name)
-            return
-        }
-
-        guard let derivedName = Self.derivedSessionName(
-            fromFirstPromptIn: activeSessionTranscript.isEmpty
-                ? activeSessionHistory
-                : activeSessionTranscript
-        ) else {
-            await writeFailureMessage(
-                "ZenCODE: nothing to save yet. Send a prompt first, or use /sessions <session name>.\n"
-            )
-            return
-        }
-
-        await saveCurrentSession(named: derivedName)
+    /// `/sessions save`: adapter of
+    /// ``ChatSessionController/saveActiveSession(contextWindow:)``.
+    public func saveActiveSession() async {
+        let outcome = await chatSession.saveActiveSession(
+            contextWindow: await statusBar.currentContextWindowStatus()
+        )
+        await writeSessionNotices(outcome.notices)
     }
 
+    /// `/sessions <name>`: adapter of
+    /// ``ChatSessionController/saveSession(named:contextWindow:)``.
     public func saveCurrentSession(named rawName: String) async {
-        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else {
-            await writeSystemMessage(Self.renderSessionSelectionUsage())
-            return
-        }
-
-        guard let snapshot = await sessionRunner.snapshotSession(id: sessionID) else {
-            await writeFailureMessage("ZenCODE: current session is not available to save.\n")
-            return
-        }
-
-        let existingSession = try? TerminalSessionStore.load(
-            name: name,
-            workingDirectory: configuration.workingDirectory
+        let outcome = await chatSession.saveSession(
+            named: rawName,
+            contextWindow: await statusBar.currentContextWindowStatus()
         )
-        let taskGraph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID)
-        let now = Date()
-        let savedSession = TerminalSavedSession(
-            name: name,
-            sessionID: snapshot.sessionID,
-            cacheKey: snapshot.cacheKey
-                ?? activeSessionCacheKey
-                ?? Self.savedSessionCacheKey(
-                    name: name,
-                    workingDirectory: configuration.workingDirectory
-                ),
-            workingDirectoryPath: configuration.workingDirectory.path,
-            createdAt: existingSession?.createdAt ?? now,
-            savedAt: now,
-            modelID: currentEffectiveModelID(),
-            agentID: selectedAgent?.id,
-            agentName: selectedAgent?.name,
-            selectedTools: Self.selectedToolSelectionNames(selectedToolKeys),
-            selectedSkillIDs: selectedSkillIDs.sorted(),
-            thinkingSelection: currentAgentThinkingSelection()?.rawValue,
-            contextWindow: await statusBar.currentContextWindowStatus().map {
-                TerminalSavedSessionContextWindow($0)
-            },
-            systemPrompt: snapshot.systemPrompt,
-            dynamicContext: snapshot.dynamicContext,
-            history: snapshot.history,
-            transcriptHistory: activeSessionTranscript,
-            activePlan: activePlan,
-            taskGraph: taskGraph,
-            checkpointTree: (activeCheckpointTree ?? existingSession?.checkpointTree)?.mergingHistory(activeSessionTranscript)
-                ?? SessionCheckpointTree.fromLinearHistory(activeSessionTranscript, sessionID: snapshot.sessionID)
-        )
-
-        do {
-            _ = try TerminalSessionStore.save(savedSession)
-            recordSavedSessionIndex(savedSession)
-            activeSavedSessionName = savedSession.name
-            activeCheckpointTree = savedSession.checkpointTree
-            await writeSystemMessage(
-                "Saved session: \(savedSession.name) (\(savedSession.messageCount) messages).\n"
-            )
-        } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-            return
-        }
-        // The only place that writes a DS4 KV checkpoint: an explicit save.
-        await saveEngineCheckpoint(forSavedSession: savedSession)
+        await writeSessionNotices(outcome.notices)
     }
 
-    /// Writes the engine KV checkpoint (DS4) next to the `.session` file that
-    /// was just saved. Reached only through `saveCurrentSession`, that is
-    /// `/sessions save` and `/sessions <name>`: ZenCODE never saves a
-    /// checkpoint after a generation, on session close or on shutdown.
-    /// Non-blocking: a failure is reported and the saved session stays valid.
-    /// Whenever no new checkpoint is written, a checkpoint left by an earlier
-    /// save of the same name is removed so it cannot outlive its session state.
-    func saveEngineCheckpoint(forSavedSession savedSession: TerminalSavedSession) async {
-        let checkpointURL = TerminalSessionStore.engineCheckpointURL(
-            name: savedSession.name,
-            workingDirectory: configuration.workingDirectory
-        )
-        do {
-            let outcome = try await sessionRunner.saveEngineCheckpoint(
-                sessionID: sessionID,
-                to: checkpointURL
-            )
-            switch outcome {
-            case .saved:
-                await writeSystemMessage(Self.engineCheckpointSavedMessage)
-                return
-            case .skippedImages:
-                await writeSystemMessage(Self.engineCheckpointSkippedImagesMessage)
-            case .skippedNoLiveState:
-                await writeSystemMessage(Self.engineCheckpointSkippedNoLiveStateMessage)
-            case .notApplicable:
-                break
-            }
-        } catch {
-            await writeFailureMessage(
-                "ZenCODE: DS4 KV checkpoint not saved: \(error.localizedDescription)\n"
-            )
-        }
-        TerminalSessionStore.deleteEngineCheckpoint(
-            name: savedSession.name,
-            workingDirectory: configuration.workingDirectory
-        )
-    }
-
-    /// Loads the engine KV checkpoint of a restored session, when the current
-    /// model is DS4 and the file exists. Reached only from `loadSavedSession`,
-    /// after `restoreSession`. Never blocks loading the session.
-    func restoreEngineCheckpoint(forSavedSession savedSession: TerminalSavedSession) async {
-        let checkpointURL = TerminalSessionStore.engineCheckpointURL(
-            name: savedSession.name,
-            workingDirectory: configuration.workingDirectory
-        )
-        guard FileManager.default.fileExists(atPath: checkpointURL.path) else {
-            return
-        }
-        let outcome = await sessionRunner.restoreEngineCheckpoint(
-            sessionID: sessionID,
-            from: checkpointURL
-        ) { @TerminalChatActor event in
-            if case let .status(message) = event {
-                await self.writeSystemMessage("\(message)\n")
-            }
-        }
-        switch outcome {
-        case .restored:
-            await writeSystemMessage(Self.engineCheckpointRestoredMessage)
-        case .incompatible:
-            await writeSystemMessage(Self.engineCheckpointIncompatibleMessage)
-        case .notApplicable:
-            break
-        case let .failed(reason):
-            await writeFailureMessage("ZenCODE: DS4 KV checkpoint not restored: \(reason)\n")
-        }
-    }
-
-    static let engineCheckpointSavedMessage = "Saved DS4 KV checkpoint.\n"
-    static let engineCheckpointSkippedImagesMessage = "KV checkpoint skipped: session contains images.\n"
-    static let engineCheckpointSkippedNoLiveStateMessage =
-        "DS4 KV checkpoint skipped: no live DS4 state for this session.\n"
-    static let engineCheckpointRestoredMessage = "Restored DS4 KV checkpoint.\n"
-    static let engineCheckpointIncompatibleMessage =
-        "DS4 checkpoint not compatible, the prompt will be re-evaluated.\n"
-
+    /// `/sessions compact`: adapter of
+    /// ``ChatSessionController/compactSession(maxTokensOverride:)``.
     public func compactCurrentSession() async {
         do {
             let runtimeMaxTokens = await statusBar.currentContextWindowStatus()?.maxTokens
                 .flatMap { $0 > 0 ? $0 : nil }
-            guard let result = try await sessionRunner.compactSession(
-                id: sessionID,
-                force: true,
+            let outcome = try await chatSession.compactSession(
                 maxTokensOverride: runtimeMaxTokens
-            ) else {
-                await writeSystemMessage(
-                    "Nothing to compact yet. The session may be too short or the current model has no context-window limit.\n"
-                )
-                return
+            )
+            if let contextWindow = outcome.contextWindow {
+                _ = await statusBar.update(contextWindow: contextWindow)
             }
-
-            let snapshot = result.snapshot
-            activeSessionCacheKey = snapshot.cacheKey
-            activeSessionHistory = snapshot.history
-            activeSessionSystemPromptOverride = snapshot.systemPrompt
-            activeSessionDynamicContextOverride = snapshot.dynamicContext
-
-            _ = await statusBar.update(
-                contextWindow: DirectAgentContextWindowStatus(
-                    usedTokens: result.estimatedTokenCount,
-                    maxTokens: result.maxTokens,
-                    modelID: snapshot.modelID ?? currentEffectiveModelID() ?? "unknown",
-                    isApproximate: true
-                )
-            )
-            await writeSystemMessage(
-                "Compacted session context from \(Self.savedSessionTokenCountText(result.originalEstimatedTokenCount)) to \(Self.savedSessionTokenCountText(result.estimatedTokenCount)) estimated tokens, keeping \(result.keptRecentMessageCount) recent messages.\n"
-            )
+            await writeSessionNotice(outcome.notice)
         } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            await writeSessionNotice(.operationFailed(description: error.localizedDescription))
         }
     }
 
+    /// See ``ChatSessionController/recordSavedSessionIndex(_:)``.
     public func recordSavedSessionIndex(_ savedSession: TerminalSavedSession) {
-        do {
-            try SavedSessionsStore().recordSavedSession(
-                projectPath: savedSession.workingDirectoryPath,
-                sessionName: savedSession.name,
-                sessionID: savedSession.sessionID,
-                savedAt: savedSession.savedAt
-            )
-        } catch {
-            ZenLogger.warning(
-                .memory,
-                "failed to update saved-session index for \(savedSession.name): \(error.localizedDescription)"
-            )
-        }
+        chatSession.recordSavedSessionIndex(savedSession)
     }
 
     public func loadSavedSession(_ savedSession: TerminalSavedSession) async throws {
@@ -378,102 +132,59 @@ extension TerminalChat {
     /// Loads a saved session, optionally restoring from a specific checkpoint
     /// entry in the tree.  When `checkpointEntryID` is provided the message
     /// history is rebuilt from the root-to-entry path and a new branch is
-    /// started from that entry.
+    /// started from that entry. Adapter of
+    /// ``ChatSessionController/loadSavedSession(_:checkpointEntryID:)``; the
+    /// terminal's own steps run in the `savedSession…` hooks.
     public func loadSavedSession(
         _ savedSession: TerminalSavedSession,
         checkpointEntryID: String?
     ) async throws {
-        let tree = savedSession.checkpointTree
-        let restoredMessages: [AgentRuntimeMessage]
-        let restoredTranscript: [AgentRuntimeMessage]
-        var workingTree = tree
-
-        if let entryID = checkpointEntryID,
-           tree.entry(id: entryID) != nil {
-            restoredMessages = tree.messages(from: entryID)
-            restoredTranscript = restoredMessages
-            // Move the active leaf to the selected entry so new messages branch
-            // from it rather than from the previous leaf.
-            workingTree.navigate(to: entryID)
-        } else {
-            restoredMessages = savedSession.history
-            restoredTranscript = Self.savedSessionDisplayHistory(savedSession)
-        }
-
-        await stopTaskGraphObserver()
-        await abandonPlanBrainstorming()
-        activeWorkflow = nil
-        await sessionRunner.resetSession(id: sessionID)
-        sessionID = savedSession.sessionID
-        resetFileArtifactState()
-        activeSessionCacheKey = savedSession.cacheKey
-        activeSessionHistory = restoredMessages
-        replaceActiveSessionTranscript(with: restoredTranscript)
-        activeSessionSystemPromptOverride = savedSession.systemPrompt
-        activeSessionDynamicContextOverride = savedSession.dynamicContext
-        activePlan = savedSession.activePlan
-        // Deliberately absent from TerminalSavedSession; abandonment above closes
-        // the runtime Planner before the restored state is installed.
-        pendingPlanApprovalPlanID = nil
-        activeCheckpointTree = workingTree
-        resetResponseLanguageLock()
-        activeSavedSessionName = savedSession.name
-        manualModelIDOverride = savedSession.modelID ?? configuration.modelID
-        manualThinkingSelectionOverride = savedSession.thinkingSelection.flatMap {
-            AgentThinkingSelection(rawValue: $0)
-        }
-
-        if let agent = try restoredAgent(for: savedSession) {
-            selectedAgent = agent
-        } else {
-            selectedAgent = nil
-        }
-        // The restored agent counts as selected again: read the launch folder
-        // anew when the restored session's prompt is composed.
-        launchFolderProjectsCache = nil
-        let items = await toolSelectionItems()
-        selectedToolKeys = Self.toolSelectionKeys(
-            from: savedSession.selectedTools,
-            items: items
+        let outcome = try await chatSession.loadSavedSession(
+            savedSession,
+            checkpointEntryID: checkpointEntryID
         )
-        selectedSkillIDs = Set(savedSession.selectedSkillIDs)
+        await writeSessionNotices(outcome.notices)
+    }
 
-        await ensureWorkspaceAccessIfNeeded()
+    // MARK: - Saved-session load steps
+
+    /// Before the active session is discarded: the task-graph observer stops
+    /// and the response language is decided again for the loaded session.
+    func savedSessionWillLoad() async {
+        await stopTaskGraphObserver()
+        resetResponseLanguageLock()
+    }
+
+    /// Before the loaded session's model is loaded: pending input and the
+    /// overview are cleared, the active tools and the loaded-model line are
+    /// printed again, and the status bar starts over from the loaded
+    /// selection.
+    func savedSessionWillRestore() async {
         pendingAttachments.removeAll()
-        lastFileChangeSummary = nil
         await renderCoordinator.resetOverview(.subAgents)
         await renderSubAgentOverview(force: false)
         didPrintActiveTools = false
         printedModelID = nil
         await statusBar.reset()
+        await refreshInitialStatusBarContextWindow()
+        // The first step of `preloadCurrentModel`, which the controller's
+        // preload replaces.
+        await refreshStatusBarThinkingSelection()
+    }
 
-                await refreshInitialStatusBarContextWindow()
-        _ = try await preloadCurrentModel(emitStatus: configuration.hostedModels != nil)
-        try await sessionRunner.restoreSession(
-            configuration: await currentSessionConfiguration(discoverExternalTools: true)
-        )
-        await sessionRunner.updatePromptSkillSelection(
-            selectedPromptSkills(),
-            sessionID: sessionID
-        )
-        if let taskGraph = savedSession.taskGraph {
-            _ = try await sessionRunner.restoreTaskGraph(
-                taskGraph,
-                sessionID: savedSession.sessionID
-            )
-        }
-        restoreWorkflowProjection(from: try await sessionRunner.taskGraphSnapshot(sessionID: sessionID))
+    /// After the runtime session and its task graph are restored: the
+    /// observer is bound to the loaded session, the status bar shows its
+    /// saved context window, and its transcript is replayed.
+    func savedSessionDidRestore(
+        transcript: [AgentRuntimeMessage],
+        contextWindow: DirectAgentContextWindowStatus?
+    ) async {
         await startTaskGraphObserver()
-        if let contextWindow = savedSession.contextWindow?.runtimeStatus {
+        if let contextWindow {
             _ = await statusBar.update(contextWindow: contextWindow)
         }
         await printActiveToolsIfNeeded()
-        await renderSavedSessionHistory(activeSessionTranscript)
-        await writeSystemMessage(
-            "Loaded session: \(savedSession.name) (\(savedSession.messageCount) messages).\n"
-        )
-        // The only place that reads a DS4 KV checkpoint: loading a saved session.
-        await restoreEngineCheckpoint(forSavedSession: savedSession)
+        await renderSavedSessionHistory(transcript)
     }
 
     public func renderSavedSessionHistory(_ history: [AgentRuntimeMessage]) async {
@@ -662,135 +373,58 @@ extension TerminalChat {
             .nilIfBlank ?? "restored tool output"
     }
 
+    /// See ``ChatSessionController/savedSessionDisplayHistory(_:)``.
     public nonisolated static func savedSessionDisplayHistory(
         _ savedSession: TerminalSavedSession
     ) -> [AgentRuntimeMessage] {
-        if let transcriptHistory = savedSession.transcriptHistory {
-            return transcriptHistory
-        }
-
-        guard let compactedSummary = compactionSummaryDisplayText(
-            from: savedSession.systemPrompt
-        ) else {
-            return savedSession.history
-        }
-
-        return [
-            AgentRuntimeMessage(
-                role: .assistant,
-                content: compactedSummary
-            )
-        ] + savedSession.history
-    }
-
-    private nonisolated static func compactionSummaryDisplayText(
-        from systemPrompt: String?
-    ) -> String? {
-        guard let systemPrompt,
-              let summaryRange = systemPrompt.range(
-                of: AgentConversationCompactionSupport.memorySummaryHeader
-              ) else {
-            return nil
-        }
-        let summary = String(systemPrompt[summaryRange.lowerBound...])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !summary.isEmpty else {
-            return nil
-        }
-        return """
-        Restored compacted context:
-
-        \(summary)
-        """
+        ChatSessionController.savedSessionDisplayHistory(savedSession)
     }
 
     public func renderSavedSessionList(_ sessions: [TerminalSavedSession]) async {
-        await writeSystemMessage("\nSaved sessions:\n")
-        for (offset, session) in sessions.enumerated() {
-            let marker = activeSavedSessionName == session.name ? " *" : ""
-            await writeSystemMessage(
-                "  \(offset + 1). \(session.name) - \(savedSessionDetail(session))\(marker)\n"
+        await writeSessionNotice(
+            .savedSessions(
+                sessions.map(ChatSavedSessionSummary.init),
+                activeName: activeSavedSessionName
             )
-        }
-        await writeSystemMessage("\n")
+        )
     }
 
     public func savedSessionSelectionItems(
         _ sessions: [TerminalSavedSession]
     ) -> [TerminalCheckboxMenuItem<String>] {
-        sessions.map { session in
-            TerminalCheckboxMenuItem(
-                value: session.name,
-                title: session.name,
-                detail: savedSessionDetail(session)
-            )
-        }
+        TerminalInteractionHost.menuItems(
+            ChatSessionController.savedSessionChoiceItems(sessions)
+        )
     }
 
     public func savedSessionDetail(_ session: TerminalSavedSession) -> String {
-        var parts: [String] = []
-        if let modelID = session.modelID {
-            parts.append(modelID)
-        }
-        parts.append("\(session.messageCount) messages")
-        if let usedTokens = session.contextWindow?.usedTokens {
-            parts.append("ctx \(Self.savedSessionTokenCountText(usedTokens))")
-        }
-        parts.append("saved \(Self.savedSessionTimestamp(session.savedAt))")
-        return parts.joined(separator: " · ")
+        ChatSessionNoticeText.savedSessionDetail(ChatSavedSessionSummary(session))
     }
 
+    /// See ``ChatSessionController/restoredAgent(for:)``.
     public func restoredAgent(
         for savedSession: TerminalSavedSession
     ) throws -> AgentProfile? {
-        guard savedSession.agentID != nil || savedSession.agentName != nil else {
-            return nil
-        }
-        let agents = try availableAgents()
-        if let agentID = savedSession.agentID,
-           let agent = agents.first(where: { $0.id == agentID }) {
-            return agent
-        }
-        if let agentName = savedSession.agentName {
-            let key = Self.agentSelectionKey(agentName)
-            return agents.first { Self.agentSelectionKey($0.name) == key }
-        }
-        return nil
+        try chatSession.restoredAgent(for: savedSession)
     }
 
     public nonisolated static func renderSessionSelectionUsage() -> String {
-        """
-        Usage: /sessions                    List and select saved sessions
-               /sessions <name>             Save or overwrite a named snapshot
-               /sessions save               Save the current session
-               /sessions new                Start a new session
-               /sessions compact            Compact context
-               /sessions delete             Delete a session
-               /sessions restore [entry-id] Restore in-place from a checkpoint
-                                            (interactive picker when omitted)
-        """
+        ChatSessionNoticeText.text(for: .sessionSelectionUsage)
     }
 
     // MARK: - Checkpoint tree operations
 
     /// Restores the session from a specific checkpoint entry, branching from
     /// that point.  Subsequent messages will form a new branch in the tree.
+    /// Adapter of ``ChatSessionController/restoreFromCheckpoint(_:entryID:)``.
     public func restoreFromCheckpoint(
         _ savedSession: TerminalSavedSession,
         entryID: String
     ) async throws {
-        let tree = savedSession.checkpointTree
-        guard tree.entry(id: entryID) != nil else {
-            await writeFailureMessage(
-                "Checkpoint entry \(entryID) not found in session \(savedSession.name).\n"
-            )
-            return
-        }
-        try await loadSavedSession(savedSession, checkpointEntryID: entryID)
-        let messageCount = activeSessionTranscript.filter { $0.role != .system }.count
-        await writeSystemMessage(
-            "Restored from checkpoint \(entryID) (\(messageCount) messages on this branch).\n"
+        let outcome = try await chatSession.restoreFromCheckpoint(
+            savedSession,
+            entryID: entryID
         )
+        await writeSessionNotices(outcome.notices)
     }
-
 }

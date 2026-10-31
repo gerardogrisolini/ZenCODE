@@ -113,4 +113,116 @@ struct TerminalChatProjectAgentsTests {
         #expect(descriptor.help.contains("sub-agents"))
         #expect(descriptor.help.contains("Enter"))
     }
+
+    @Test
+    func switchingAgentKeepsTheConversationAndSaysSo() async throws {
+        try await ProjectAgentSelectionTestSupport.withTemporaryProjectAsync { _, workspace in
+            try await Self.agentSwitchScenario(in: workspace)
+        }
+    }
+
+    /// `/agents <name>` resets the plan and the task graph but recreates the
+    /// session with the same conversation, and its message says exactly that.
+    @TerminalChatActor
+    private static func agentSwitchScenario(in workspace: URL) async throws {
+        let developer = ProjectAgentSelectionTestSupport.developer
+        let reviewer = ProjectAgentSelectionTestSupport.reviewer
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in AgentSwitchStubBackend() },
+            taskGraphStore: nil
+        )
+        let terminal = TerminalChat(
+            configuration: try AgentConfiguration(
+                hostedModelID: "remote-community/test",
+                availableAgents: [developer, reviewer],
+                workingDirectory: workspace
+            ),
+            stdinIsTerminal: false,
+            sessionRunner: runner
+        )
+        let conversation = [
+            AgentRuntimeMessage(role: .user, content: "Keep this request."),
+            AgentRuntimeMessage(role: .assistant, content: "Kept answer."),
+        ]
+        terminal.activeSessionHistory = conversation
+        terminal.pendingPlanApprovalPlanID = "plan-to-reset"
+        try await terminal.createCurrentSession(discoverExternalTools: false)
+
+        terminal.telegramImmediateCommandOutput = []
+        try await terminal.handleAgentsCommand("/agents Reviewer")
+        let output = terminal.telegramImmediateCommandOutput?.joined() ?? ""
+        terminal.telegramImmediateCommandOutput = nil
+
+        #expect(terminal.selectedAgent == reviewer)
+        #expect(terminal.pendingPlanApprovalPlanID == nil)
+        // The active tools of the new session, then the switch message.
+        let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
+        #expect(lines.count == 3)
+        #expect(lines.first?.hasPrefix("Active tools: ") == true)
+        #expect(output.hasSuffix(
+            "\nSwitched to agent: Reviewer. Plan and task graph reset; conversation kept.\n"
+        ))
+        #expect(!output.contains("Session reset."))
+
+        // The conversation is kept, in the controller and in the new session.
+        #expect(terminal.activeSessionHistory.map(\.content) == conversation.map(\.content))
+        let snapshot = try #require(await runner.snapshotSession(id: terminal.sessionID))
+        #expect(snapshot.history.map(\.role) == conversation.map(\.role))
+        #expect(snapshot.history.map(\.content) == conversation.map(\.content))
+    }
+}
+
+private actor AgentSwitchStubBackend: AgentRuntimeBackend {
+    func createSession(
+        id _: String,
+        cwd _: String,
+        systemPrompt _: String?,
+        history _: [AgentRuntimeMessage],
+        cacheKey _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func createSessionIfNeeded(
+        id _: String,
+        cwd _: String,
+        systemPrompt _: String?,
+        history _: [AgentRuntimeMessage],
+        cacheKey _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func updateSessionOptions(
+        id _: String,
+        systemPrompt _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func closeSession(id _: String) {}
+
+    func shutdown() async {}
+
+    func preloadModel(
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> String {
+        "test-model"
+    }
+
+    func activeToolDescriptors() async -> [DirectToolDescriptor] {
+        []
+    }
+
+    func sendPrompt(
+        sessionID _: String,
+        prompt _: String,
+        attachments _: [AgentRuntimeAttachment],
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> DirectAgentResponse {
+        DirectAgentResponse(text: "", stopReason: "end_turn", modelID: "test-model")
+    }
 }

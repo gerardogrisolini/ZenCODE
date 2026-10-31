@@ -15,15 +15,33 @@ import Foundation
 /// and the mapping of runtime events onto a ``ChatSessionPresenter``. Channels
 /// keep their transport (rendering, JSON-RPC, JSONL) and their own commands.
 ///
+/// It also owns what the session runs with: the selection (agent, model,
+/// thinking, tools, skills), the link to a saved session, and the composition
+/// of the session configuration and system prompt from them (see
+/// `ChatSessionController+Composition.swift`).
+///
 /// All state is isolated to ``ChatSessionActor``. A turn writes back only
 /// while it is still current: the session it started on is still the active
 /// one and no channel invalidated it (see ``cancelActiveTurn(armingWorkflowRecovery:)``).
 @ChatSessionActor
 final class ChatSessionController {
+    /// The runtime the turn pipeline drives.
     let runtime: any ChatSessionRuntime
+    /// The runtime behind the session operations and the tool catalog, the
+    /// same object as ``runtime``. `nil` for a controller that only runs
+    /// turns, whose tool catalog then lists no MCP tool.
+    let managementRuntime: (any ChatSessionManagementRuntime)?
+    /// What the channel launched the process with.
+    let environment: ChatSessionEnvironment
+    /// The models the session can choose from.
+    let modelCatalog: ChatModelCatalog
     let workingDirectory: URL
     let presenter: any ChatSessionPresenter
     let host: any ChatInteractionHost
+    /// The channel's own steps between the steps of a selection operation
+    /// (see ``ChatSessionChannelHooks``). Held weakly; `nil` for a channel
+    /// without such steps.
+    weak var channelHooks: (any ChatSessionChannelHooks)?
     let authorizer: ChatToolConsentAuthorizer
     /// `false` for channels that never read the session transcript, so a
     /// long-lived session does not retain a copy nobody presents or saves.
@@ -52,11 +70,41 @@ final class ChatSessionController {
     var fileArtifactHistory = SessionFileArtifactHistory()
     var activeFileArtifactTurn: ChatFileArtifactTurn?
 
-    /// Nonisolated so channels living in another isolation domain (the ACP
-    /// bridge actor) can create a session's controller synchronously.
-    nonisolated init(
+    /// The agent, model, thinking, tool, and skill choices of the session. A
+    /// new controller starts from the launch agent and the launch's explicit
+    /// model.
+    var selection: ChatSessionSelection
+    /// The link to the saved session and the prompt it was restored with.
+    var savedSessionState = ChatSavedSessionState()
+    /// The launch-folder listing read for the selected agent when its role
+    /// delegates by role, together with the selection it was read for. The
+    /// prompt is recomposed on every send, so the listing must be a snapshot
+    /// taken at selection time instead of a fresh scan: selecting an agent and
+    /// loading a saved session clear it, and the next composition (the session
+    /// creation) reads the folder again. Transient: never copied into
+    /// snapshots, checkpoints, or persisted session models.
+    var launchFolderProjectsCache: LaunchFolderProjectsCache?
+    /// The installed prompt skills, discovered on first use. Cleared when a
+    /// skill is installed or uninstalled.
+    var availableSkillsCache: [PromptSkill]?
+
+    /// A launch-folder listing and the key (see
+    /// ``ProjectAgentSelectionStore/selectionKey(for:)``) of the agent
+    /// selection it was read for.
+    struct LaunchFolderProjectsCache: Sendable {
+        let agentKey: String
+        let projects: LaunchFolderProjects
+    }
+
+    /// A controller that only runs turns: session operations and the MCP part
+    /// of the tool catalog are unavailable (``managementRuntime`` is `nil`).
+    ///
+    /// Nonisolated so channels living in another isolation domain can create
+    /// a session's controller synchronously.
+    nonisolated convenience init(
         sessionID: String,
         runtime: any ChatSessionRuntime,
+        environment: ChatSessionEnvironment,
         workingDirectory: URL,
         presenter: any ChatSessionPresenter,
         host: any ChatInteractionHost,
@@ -64,8 +112,71 @@ final class ChatSessionController {
         retainsTranscript: Bool = true,
         retainsFileArtifactHistory: Bool = true
     ) {
+        self.init(
+            sessionID: sessionID,
+            runtime: runtime,
+            managementRuntime: nil,
+            environment: environment,
+            workingDirectory: workingDirectory,
+            presenter: presenter,
+            host: host,
+            authorizer: authorizer,
+            retainsTranscript: retainsTranscript,
+            retainsFileArtifactHistory: retainsFileArtifactHistory
+        )
+    }
+
+    /// A controller that runs turns and the session operations on
+    /// `managementRuntime`.
+    ///
+    /// Nonisolated so channels living in another isolation domain (the ACP
+    /// bridge actor) can create a session's controller synchronously.
+    nonisolated convenience init(
+        sessionID: String,
+        managementRuntime: any ChatSessionManagementRuntime,
+        environment: ChatSessionEnvironment,
+        workingDirectory: URL,
+        presenter: any ChatSessionPresenter,
+        host: any ChatInteractionHost,
+        authorizer: ChatToolConsentAuthorizer,
+        retainsTranscript: Bool = true,
+        retainsFileArtifactHistory: Bool = true
+    ) {
+        self.init(
+            sessionID: sessionID,
+            runtime: managementRuntime,
+            managementRuntime: managementRuntime,
+            environment: environment,
+            workingDirectory: workingDirectory,
+            presenter: presenter,
+            host: host,
+            authorizer: authorizer,
+            retainsTranscript: retainsTranscript,
+            retainsFileArtifactHistory: retainsFileArtifactHistory
+        )
+    }
+
+    private nonisolated init(
+        sessionID: String,
+        runtime: any ChatSessionRuntime,
+        managementRuntime: (any ChatSessionManagementRuntime)?,
+        environment: ChatSessionEnvironment,
+        workingDirectory: URL,
+        presenter: any ChatSessionPresenter,
+        host: any ChatInteractionHost,
+        authorizer: ChatToolConsentAuthorizer,
+        retainsTranscript: Bool,
+        retainsFileArtifactHistory: Bool
+    ) {
         self.sessionID = sessionID
         self.runtime = runtime
+        self.managementRuntime = managementRuntime
+        self.environment = environment
+        self.modelCatalog = ChatModelCatalog(environment: environment)
+        self.selection = ChatSessionSelection(
+            agent: environment.launchAgent,
+            modelIDOverride: environment.explicitModelID
+        )
         self.workingDirectory = workingDirectory
         self.presenter = presenter
         self.host = host

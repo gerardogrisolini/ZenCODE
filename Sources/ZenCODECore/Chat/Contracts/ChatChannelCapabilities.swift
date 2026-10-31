@@ -31,4 +31,7 @@ public struct ChatChannelCapabilities: OptionSet, Sendable, Hashable {
     public static let textInput = ChatChannelCapabilities(rawValue: 1 << 4)
     /// The host renders file artifacts live while the turn runs.
     public static let liveFileArtifacts = ChatChannelCapabilities(rawValue: 1 << 5)
+    /// The host can present a multiple-choice menu whose cursor rests on one
+    /// item, returning the ticked items together with the focused one.
+    public static let focusedMultipleChoice = ChatChannelCapabilities(rawValue: 1 << 6)
 }

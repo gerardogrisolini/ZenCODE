@@ -65,14 +65,26 @@ public final class TerminalChat {
         get { chatSession.transcriptCountedMessageCount }
         set { chatSession.transcriptCountedMessageCount = newValue }
     }
-    public var activeSessionSystemPromptOverride: String?
-    public var activeSessionDynamicContextOverride: String?
+    public var activeSessionSystemPromptOverride: String? {
+        get { chatSession.savedSessionState.systemPromptOverride }
+        set { chatSession.savedSessionState.systemPromptOverride = newValue }
+    }
+    public var activeSessionDynamicContextOverride: String? {
+        get { chatSession.savedSessionState.dynamicContextOverride }
+        set { chatSession.savedSessionState.dynamicContextOverride = newValue }
+    }
     public var activeResponseLanguageName: String?
     public var didLockResponseLanguage = false
-    public var activeSavedSessionName: String?
+    public var activeSavedSessionName: String? {
+        get { chatSession.savedSessionState.savedSessionName }
+        set { chatSession.savedSessionState.savedSessionName = newValue }
+    }
     /// Tracks the checkpoint tree for the active session. Populated when a
     /// session is loaded or saved, and updated as messages accumulate.
-    public var activeCheckpointTree: SessionCheckpointTree?
+    public var activeCheckpointTree: SessionCheckpointTree? {
+        get { chatSession.savedSessionState.checkpointTree }
+        set { chatSession.savedSessionState.checkpointTree = newValue }
+    }
     public var printedModelID: String?
     public var didPrintActiveTools = false
     /// Tracks whether the status-bar git summary has already been refreshed
@@ -80,27 +92,35 @@ public final class TerminalChat {
     /// sub-agent overview refresh task and the generation callback; their
     /// accesses are serialized by ``TerminalChatActor`` isolation.
     var didRefreshGitStatusDuringCurrentPrompt = false
-    public var selectedAgent: AgentProfile?
-    /// The launch-folder listing read for the selected agent when its role
-    /// delegates by role, together with the selection it was read for. The
-    /// prompt is recomposed on every send, so the listing must be a snapshot
-    /// taken at selection time instead of a fresh scan: ``applyAgentSelection``
-    /// and `loadSavedSession` clear it, and the next composition (the session
-    /// creation) reads the folder again. Transient: never copied into
-    /// snapshots, checkpoints, or persisted session models.
-    var launchFolderProjectsCache: LaunchFolderProjectsCache?
-
-    /// A launch-folder listing and the key (see
-    /// ``ProjectAgentSelectionStore/selectionKey(for:)``) of the agent
-    /// selection it was read for.
-    struct LaunchFolderProjectsCache: Sendable {
-        let agentKey: String
-        let projects: LaunchFolderProjects
+    public var selectedAgent: AgentProfile? {
+        get { chatSession.selection.agent }
+        set { chatSession.selection.agent = newValue }
     }
-    public var manualModelIDOverride: String?
-    public var manualThinkingSelectionOverride: AgentThinkingSelection?
-    public var selectedToolKeys = Set<String>()
-    public var selectedSkillIDs = Set<String>()
+    /// The controller's launch-folder listing for the selected agent (see
+    /// ``ChatSessionController/launchFolderProjectsCache``): ``applyAgentSelection``
+    /// and `loadSavedSession` clear it.
+    var launchFolderProjectsCache: LaunchFolderProjectsCache? {
+        get { chatSession.launchFolderProjectsCache }
+        set { chatSession.launchFolderProjectsCache = newValue }
+    }
+
+    typealias LaunchFolderProjectsCache = ChatSessionController.LaunchFolderProjectsCache
+    public var manualModelIDOverride: String? {
+        get { chatSession.selection.modelIDOverride }
+        set { chatSession.selection.modelIDOverride = newValue }
+    }
+    public var manualThinkingSelectionOverride: AgentThinkingSelection? {
+        get { chatSession.selection.thinkingOverride }
+        set { chatSession.selection.thinkingOverride = newValue }
+    }
+    public var selectedToolKeys: Set<String> {
+        get { chatSession.selection.toolKeys }
+        set { chatSession.selection.toolKeys = newValue }
+    }
+    public var selectedSkillIDs: Set<String> {
+        get { chatSession.selection.skillIDs }
+        set { chatSession.selection.skillIDs = newValue }
+    }
     public var pendingAttachments: [AgentRuntimeAttachment] = []
     public var lastFileChangeSummary: TurnFileChangeSummary? {
         get { chatSession.lastFileChangeSummary }
@@ -193,7 +213,10 @@ public final class TerminalChat {
     /// awaits this closure before rendering, allowing tests to deterministically
     /// gate tick timing. Captured at `start` time; `nil` in production.
     var onSubAgentOverviewTick: (@Sendable () async -> Void)?
-    public var availableSkillsCache: [PromptSkill]?
+    public var availableSkillsCache: [PromptSkill]? {
+        get { chatSession.availableSkillsCache }
+        set { chatSession.availableSkillsCache = newValue }
+    }
     let renderCoordinator: TerminalChatRenderCoordinator
     public let telegramControlService: TerminalTelegramControlService
     let telegramSessionRouter: TerminalTelegramSessionRouter
@@ -402,8 +425,6 @@ public final class TerminalChat {
                 swiftFeatureRuntime: featureRuntime
             )
         }
-        self.selectedAgent = configuration.selectedAgent
-        self.manualModelIDOverride = configuration.modelID
         self.telegramControlService = TerminalTelegramControlService(
             transportFactory: telegramTransportFactory ?? { NIOTelegramHTTPTransport() }
         )
@@ -419,12 +440,23 @@ public final class TerminalChat {
         self.telegramSessionRouter = telegramRouter
         self.telegramRouteRuntimeState = TerminalTelegramRouteRuntimeState(router: telegramRouter)
         let chatSessionPresenter = TerminalChatSessionPresenter()
-        let interactionHost = TerminalInteractionHost()
+        // Menus and line input need an interactive terminal.
+        let interactionHost = TerminalInteractionHost(
+            stdinIsTerminal: stdinIsTerminal,
+            appMode: configuration.appMode
+        )
         self.chatSessionPresenter = chatSessionPresenter
         self.interactionHost = interactionHost
+        // The controller starts from the launch agent and the launch's
+        // explicit model, and reads the tool catalog from the runner's
+        // feature runtime.
         self.chatSession = ChatSessionController(
             sessionID: Self.newTerminalSessionID(),
-            runtime: self.sessionRunner,
+            managementRuntime: self.sessionRunner,
+            environment: ChatSessionEnvironment(
+                configuration: configuration,
+                featureRuntime: self.sessionRunner.swiftFeatureRuntime
+            ),
             workingDirectory: configuration.workingDirectory,
             presenter: chatSessionPresenter,
             host: interactionHost,
@@ -432,6 +464,7 @@ public final class TerminalChat {
         )
         chatSessionPresenter.chat = self
         interactionHost.chat = self
+        chatSession.channelHooks = self
     }
 
     deinit {
@@ -448,14 +481,7 @@ public final class TerminalChat {
     }
 
     public func currentEffectiveModelID() -> String? {
-        let manifest = hostedModelSelectionManifest()
-            ?? AgentSettingsManifestStore.load()
-        let resolved = Self.effectiveModelID(
-            selectedAgent: selectedAgent,
-            manualModelIDOverride: manualModelIDOverride,
-            manifest: manifest
-        )
-        return resolved ?? configuration.effectiveModelID
+        chatSession.currentEffectiveModelID()
     }
 
     public static func effectiveModelID(
@@ -463,90 +489,16 @@ public final class TerminalChat {
         manualModelIDOverride: String?,
         manifest: AgentSettingsManifest? = AgentSettingsManifestStore.load()
     ) -> String? {
-        if let manualModelIDOverride = manualModelIDOverride?.nilIfBlank {
-            return resolvedConfiguredModelID(
-                matching: manualModelIDOverride,
-                manifest: manifest,
-                preservesUnknownReference: true
-            )
-        }
-
-        if let defaultModelID = selectedAgent?.defaultModelBinding?.modelID {
-            return resolvedConfiguredModelID(
-                matching: defaultModelID,
-                manifest: manifest,
-                preservesUnknownReference: false
-            )
-        }
-
-        return AgentSettingsStore.resolvedEffectiveModelID(
-            explicitModelID: nil,
-            agentModelID: nil,
+        ChatSessionController.effectiveModelID(
+            selectedAgent: selectedAgent,
+            manualModelIDOverride: manualModelIDOverride,
             manifest: manifest
         )
     }
 
-    /// Resolves a configured manifest identifier for a profile default or a
-    /// manual selection. A manual reference is retained when it is external to
-    /// the manifest, matching the command-line explicit-model behavior. A
-    /// profile default instead falls through to the global selection when its
-    /// binding no longer names a configured model.
-    private static func resolvedConfiguredModelID(
-        matching modelID: String,
-        manifest: AgentSettingsManifest?,
-        preservesUnknownReference: Bool
-    ) -> String? {
-        guard let manifest else {
-            return modelID
-        }
-        let references = Self.modelReferences(for: modelID)
-        for reference in references {
-            if let model = manifest.models.first(where: { $0.matches(reference) }) {
-                return model.id
-            }
-        }
-        return preservesUnknownReference ? modelID : nil
-    }
-
-    private func hostedModelSelectionManifest() -> AgentSettingsManifest? {
-        guard let hostedModels = configuration.hostedModels else {
-            return nil
-        }
-        return AgentSettingsManifest(
-            models: hostedModels,
-            selectedModelID: configuration.effectiveModelID
-        )
-    }
-
-    /// Returns the direct identifier plus the model component of a pre-v15
-    /// remote API identifier (`remoteapi:<provider>:<modelID>`), which saved
-    /// sessions may still contain. The model component resolves the session
-    /// against the migrated `<providerKey>:<modelID>` model by its model id.
-    /// The provider segment is deliberately not parsed (hosted transports may
-    /// also use opaque provider segments).
+    /// See ``ChatModelCatalog/modelReferences(for:)``.
     static func modelReferences(for rawModelID: String) -> [String] {
-        let modelID = rawModelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !modelID.isEmpty else {
-            return []
-        }
-        var references = [modelID]
-        let prefixes = ["remoteapi:", "remoteapimodel:"]
-        if let prefix = prefixes.first(where: {
-            modelID.lowercased().hasPrefix($0)
-        }) {
-            let remainder = modelID.dropFirst(prefix.count)
-            if let separator = remainder.firstIndex(of: ":") {
-                let modelComponent = String(remainder[remainder.index(after: separator)...])
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !modelComponent.isEmpty {
-                    references.append(modelComponent)
-                }
-            }
-        }
-        var seen = Set<String>()
-        return references.filter { reference in
-            seen.insert(reference.lowercased()).inserted
-        }
+        ChatModelCatalog.modelReferences(for: rawModelID)
     }
 
     public func run() async throws -> TerminalChatRunOutcome {

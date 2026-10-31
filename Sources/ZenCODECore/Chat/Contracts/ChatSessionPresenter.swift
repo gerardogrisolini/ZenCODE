@@ -43,6 +43,14 @@ protocol ChatSessionPresenter: Sendable {
     /// A `/goal` workflow changed state at the end of a turn.
     func presentWorkflowNotice(_ notice: ChatWorkflowNotice) async
     func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async
+    /// The outcome of a session operation or selection command (`/sessions`,
+    /// `/models`, `/think`, `/agents`, `/tools`, `/skills`). A text channel
+    /// writes ``ChatSessionNoticeText/text(for:)`` on the channel named by
+    /// ``ChatSessionNotice/channel``.
+    func presentSessionNotice(_ notice: ChatSessionNotice) async
+    /// The selection or the saved-session link of the active session changed;
+    /// `state` is the complete new state, for channels that mirror it.
+    func presentSessionStateChanged(_ state: ChatSessionState) async
 }
 
 extension ChatSessionPresenter {
@@ -66,4 +74,6 @@ extension ChatSessionPresenter {
     func turnWillFinish() async {}
     func presentWorkflowNotice(_ notice: ChatWorkflowNotice) async {}
     func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async {}
+    func presentSessionNotice(_ notice: ChatSessionNotice) async {}
+    func presentSessionStateChanged(_ state: ChatSessionState) async {}
 }

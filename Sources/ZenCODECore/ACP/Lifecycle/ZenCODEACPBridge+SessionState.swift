@@ -9,6 +9,25 @@ import Foundation
 import ToolCore
 
 extension ZenCODEACPBridge {
+    /// The models ACP sessions choose from: the host's models, or the user's
+    /// configured catalog read on every use. Shared with the other channels.
+    var modelCatalog: ChatModelCatalog {
+        ChatModelCatalog(hostedModels: configuration.hostedModels)
+    }
+
+    /// The model a new session defaults to (see
+    /// ``ChatModelCatalog/defaultModelID(explicitModelID:agentModelID:launchModelID:)``):
+    /// with hosted models the launch-time model, otherwise `--model`, the
+    /// launch agent's model, then the selected model, read from the settings
+    /// now, so a model saved by `set_model` becomes the next default.
+    func defaultSessionModelID() -> String? {
+        modelCatalog.defaultModelID(
+            explicitModelID: configuration.modelID,
+            agentModelID: configuration.selectedAgent?.modelID,
+            launchModelID: configuration.effectiveModelID
+        )
+    }
+
     public func configOptions(
         for modelID: String?,
         thinkingSelection: AgentThinkingSelection? = nil
@@ -18,7 +37,7 @@ extension ZenCODEACPBridge {
             return []
         }
         let selectedModelID = modelID?.nilIfBlank
-            ?? configuration.effectiveModelID?.nilIfBlank
+            ?? defaultSessionModelID()?.nilIfBlank
             ?? (modelOptions.first?["value"] as? String)
             ?? ""
         var options: [[String: Any]] = [
@@ -59,7 +78,7 @@ extension ZenCODEACPBridge {
     public func thinkingConfigOptions(
         for model: AgentSettingsModelManifest
     ) -> [[String: Any]] {
-        model.availableThinkingSelections.map { selection in
+        ChatModelCatalog.thinkingOptions(for: model).map { selection in
             [
                 "value": selection.rawValue,
                 "name": selection.displayTitle,
@@ -69,22 +88,17 @@ extension ZenCODEACPBridge {
     }
 
     public func availableModelManifests() -> [AgentSettingsModelManifest] {
-        configuration.hostedModels ?? AgentSettingsStore.availableModels()
+        modelCatalog.availableModels()
     }
 
     public func modelManifest(for modelID: String?) -> AgentSettingsModelManifest? {
-        guard let modelID = modelID?.nilIfBlank else {
-            return nil
-        }
-        return availableModelManifests().first { model in
-            model.matches(modelID)
-        }
+        modelCatalog.model(matching: modelID)
     }
 
     public func modelState(for modelID: String?) -> [String: Any] {
         let modelOptions = modelConfigOptions()
         let selectedModelID = modelID?.nilIfBlank
-            ?? configuration.effectiveModelID?.nilIfBlank
+            ?? defaultSessionModelID()?.nilIfBlank
             ?? (modelOptions.first?["value"] as? String)
             ?? ""
         return [
@@ -160,7 +174,11 @@ extension ZenCODEACPBridge {
     ) -> ChatSessionController {
         ChatSessionController(
             sessionID: configuration.sessionID,
-            runtime: sessionRunner,
+            managementRuntime: sessionRunner,
+            environment: ChatSessionEnvironment(
+                configuration: self.configuration,
+                featureRuntime: sessionRunner.swiftFeatureRuntime
+            ),
             workingDirectory: configuration.workingDirectory,
             presenter: ACPSilentPresenter(),
             host: ACPConsentHost(writer: writer),

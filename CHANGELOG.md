@@ -17,6 +17,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
   goal, file-change, and tool-consent handling runs in every channel, as the
   base for further interfaces. Headless output and the JSONL records are
   unchanged.
+- The shared chat-session controller now also runs the session operations
+  (new, save, list, load, delete, compact, and restore from a checkpoint,
+  DS4 engine checkpoints included) and the selections of model, thinking level,
+  agent and project agents, tools, and skills (with install and uninstall)
+  that the terminal UI used to run itself, ready for the other interfaces. The
+  terminal UI and ACP now share one model list. `/sessions`, `/models`,
+  `/think`, `/agents`, `/tools`, and `/skills` keep their output, apart from
+  the `/agents` message listed under Fixed, and headless runs now compose
+  their session from the controller instead of the terminal chat.
 
 ### Changed
 
@@ -31,6 +40,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `tasks.list`, `tasks.get`, and `tasks.update`, which the review prompt asks
   for, as ACP already did. ACP turns now get the plan task tools whenever an
   approved plan is open and keep its progress in sync, as the terminal does.
+- ACP: the model and the thinking level chosen from the client
+  (`session/set_model`, `session/set_config_option`) are now saved in
+  `settings.json` as the default for every channel, as the terminal does, once
+  the change has taken effect, and new ACP sessions start from that default
+  instead of the model resolved when `zen --acp` started. A `modelId`
+  sent by the client and `--model` still take precedence. A host app that
+  supplies its own models never has a choice saved and keeps its model. ACP
+  requests, replies, and notifications are unchanged.
 
 ### Fixed
 
@@ -48,6 +65,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   The terminal UI keeps their actions (`Run`, `Build`, `Commit`, …). Rebuild
   the installed Xcode, Swift, Git, and Browser features to apply the change to
   their tools.
+- Selected skills are no longer dropped from the session when a `/tools`
+  change rebuilds it.
+- `/sessions delete` now also removes the deleted session from the
+  saved-sessions index (`sessions.json`), which kept recording it.
+- Terminal `/agents` now says `Switched to agent: <name>. Plan and task graph
+  reset; conversation kept.` instead of `… Session reset.`: the conversation
+  was already kept, and only the plan and the task graph are reset.
 
 ## [3.2.0] - 2026-10-30
 

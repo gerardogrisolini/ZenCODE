@@ -22,17 +22,12 @@ extension TerminalChat {
         await printToolSelectionStatus()
     }
 
-    /// Uses the backend's resolved descriptor set so runtime-discovered feature
-    /// prefixes such as `git.` are not presented as active groups with zero tools.
+    /// See ``ChatSessionController/resolvedActiveToolNames(fallbackAllowedToolNames:)``.
     func resolvedActiveToolNames(
         fallbackAllowedToolNames: Set<String>
     ) async -> [String] {
-        let activeDescriptors = await sessionRunner.activeToolDescriptors(
-            sessionID: sessionID
-        )
-        return Self.resolvedActiveToolNames(
-            fallbackAllowedToolNames: fallbackAllowedToolNames,
-            activeDescriptors: activeDescriptors
+        await chatSession.resolvedActiveToolNames(
+            fallbackAllowedToolNames: fallbackAllowedToolNames
         )
     }
 
@@ -40,9 +35,10 @@ extension TerminalChat {
         fallbackAllowedToolNames: Set<String>,
         activeDescriptors: [DirectToolDescriptor]
     ) -> [String] {
-        let activeToolNames = Set(activeDescriptors.map(\.name))
-        return (activeToolNames.isEmpty ? fallbackAllowedToolNames : activeToolNames)
-            .sorted()
+        ChatSessionController.resolvedActiveToolNames(
+            fallbackAllowedToolNames: fallbackAllowedToolNames,
+            activeDescriptors: activeDescriptors
+        )
     }
 
     public func printStartupSummary() async {
@@ -112,42 +108,19 @@ extension TerminalChat {
         items: [TerminalToolSelectionItem],
         selectedKeys: Set<String>
     ) -> String {
-        let uniqueToolNames = Set(toolNames).subtracting(AgentProfileStore.featureManagementToolNames)
-        guard !uniqueToolNames.isEmpty else {
-            return "Active tools: none\n"
-        }
-
-        var renderedGroups: [String] = []
-        let normalizedKeys = TerminalToolSelectionCatalog.normalizedSelectionKeys(
-            selectedKeys,
-            items: items
+        ChatSessionNoticeText.text(
+            for: .activeTools(
+                ChatActiveToolsSummary(
+                    toolNames: toolNames,
+                    items: items,
+                    selectedKeys: selectedKeys
+                )
+            )
         )
-
-        for item in items where normalizedKeys.contains(item.key) {
-            let itemToolNames = uniqueToolNames.filter { item.allows(toolName: $0) }
-            guard !itemToolNames.isEmpty else {
-                continue
-            }
-            let concreteToolNames = itemToolNames.filter { toolName in
-                !toolName.hasSuffix(".")
-            }.sorted()
-            let toolCount = concreteToolNames.count
-            renderedGroups.append("\(item.title) (\(toolCount))")
-        }
-
-        let skillToolNames = uniqueToolNames.intersection(PromptSkillToolProvider.toolNames)
-        if !skillToolNames.isEmpty {
-            renderedGroups.append("Skills (\(skillToolNames.count))")
-        }
-
-        guard !renderedGroups.isEmpty else {
-            return "Active tools: none\n"
-        }
-        return "Active tools: \(renderedGroups.joined(separator: ", "))\n"
     }
 
     public nonisolated static func renderSelectedSkills(_ skills: [PromptSkill]) -> String {
-        renderSkills(skills, label: "Selected")
+        ChatSessionNoticeText.text(for: .selectedSkills(skills))
     }
 
     public nonisolated static func renderActiveSkills(_ skills: [PromptSkill]) -> String {
@@ -165,11 +138,11 @@ extension TerminalChat {
     }
 
     public nonisolated static func renderToolSelectionUsage() -> String {
-        "Usage: /tools [all|none|tool-name|package-name|tool-number|logs]\n"
+        ChatSessionNoticeText.text(for: .toolSelectionUsage)
     }
 
     public nonisolated static func renderSkillSelectionUsage() -> String {
-        "Usage: /skills [all|none|skill-name|skill-number|install <github-url|local-path>|uninstall|<github-url|local-path>]\n"
+        ChatSessionNoticeText.text(for: .skillSelectionUsage)
     }
 
     public nonisolated static func renderStartupBox(lines: [String]) -> String {
@@ -324,56 +297,22 @@ extension TerminalChat {
     }
 
     /// Collapses `text` to a single line and truncates it to at most `limit`
-    /// grapheme clusters, appending an `...` ellipsis when content is cut and
-    /// the marker fits the supplied budget.
-    ///
-    /// - Note: **Count-based family.** `limit` is measured in extended grapheme
-    ///   clusters (`String.count`), so a double-width emoji or CJK glyph is one
-    ///   unit even when it renders in two terminal columns. This deliberately
-    ///   differs from width-aware `fitDisplayWidth` and
-    ///   ``TerminalANSIText/truncate(_:to:)``: routing this helper through that
-    ///   core would silently change startup, overview, and Telegram output. The
-    ///   `...` glyph has a three-cluster budget, while its measurement remains
-    ///   count-based.
+    /// grapheme clusters. See ``InlineTextTruncation/truncatedInline(_:limit:)``.
     public nonisolated static func truncatedInline(_ text: String, limit: Int) -> String {
-        let singleLine = inlineText(text)
-        return truncatedByCount(singleLine, limit: limit, ellipsis: "...")
+        InlineTextTruncation.truncatedInline(text, limit: limit)
     }
 
-    /// Shared count-based truncation core for the inline (non-width) family.
-    /// Cuts `text` to at most `limit` grapheme clusters, reserving room for
-    /// `ellipsis` and appending it only when content is actually removed.
-    ///
-    /// This mirrors the parametric-ellipsis shape of the width-based core
-    /// ``TerminalANSIText/truncate(_:to:ellipsis:ellipsisWidth:)`` so the two
-    /// families read consistently, but it deliberately measures with
-    /// `String.count`/`prefix` (one unit per grapheme) instead of visible
-    /// columns. Callers are expected to have already flattened newlines
-    /// (e.g. via ``inlineText(_:)``). No ANSI handling is performed because the
-    /// count-based callers never carry escape sequences.
+    /// See ``InlineTextTruncation/truncatedByCount(_:limit:ellipsis:)``.
     nonisolated static func truncatedByCount(
         _ text: String,
         limit: Int,
         ellipsis: String = "..."
     ) -> String {
-        let boundedLimit = max(0, limit)
-        guard text.count > boundedLimit else {
-            return text
-        }
-        // The count-based contract is still an upper bound even when there is
-        // insufficient room for the ellipsis. In that case preserve the prefix
-        // without a marker instead of passing a negative count to `prefix`.
-        guard boundedLimit >= ellipsis.count else {
-            return String(text.prefix(boundedLimit))
-        }
-        return String(text.prefix(boundedLimit - ellipsis.count)) + ellipsis
+        InlineTextTruncation.truncatedByCount(text, limit: limit, ellipsis: ellipsis)
     }
 
+    /// See ``InlineTextTruncation/inlineText(_:)``.
     public nonisolated static func inlineText(_ text: String) -> String {
-        text
-            .replacingOccurrences(of: "\r\n", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        InlineTextTruncation.inlineText(text)
     }
 }

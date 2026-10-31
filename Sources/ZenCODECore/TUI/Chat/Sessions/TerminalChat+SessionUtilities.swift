@@ -44,77 +44,42 @@ extension TerminalChat {
         }
     }
 
-    /// Derives a session name from the first user prompt in a message list.
-    /// Used when `/sessions save` runs without an active saved session so a new
-    /// snapshot is named after what the user first asked instead of failing.
+    /// See ``ChatSessionController/derivedSessionName(fromFirstPromptIn:)``.
     nonisolated static func derivedSessionName(
         fromFirstPromptIn messages: [AgentRuntimeMessage]
     ) -> String? {
-        guard let firstPrompt = messages.first(where: { $0.role == .user })?.content else {
-            return nil
-        }
-        return derivedSessionName(fromFirstPrompt: firstPrompt)
+        ChatSessionController.derivedSessionName(fromFirstPromptIn: messages)
     }
 
-    /// Reduces a raw prompt to a concise single-line session name, truncating at
-    /// a word boundary when it exceeds `limit`. Returns nil for blank prompts.
+    /// See ``ChatSessionController/derivedSessionName(fromFirstPrompt:limit:)``.
     nonisolated static func derivedSessionName(
         fromFirstPrompt prompt: String,
         limit: Int = 40
     ) -> String? {
-        let singleLine = prompt
-            .replacingOccurrences(of: "\n", with: " ")
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        guard !singleLine.isEmpty else {
-            return nil
-        }
-        guard singleLine.count > limit else {
-            return singleLine
-        }
-
-        let truncated = String(singleLine.prefix(limit))
-        if let lastSpace = truncated.lastIndex(of: " ") {
-            let wordBounded = String(truncated[..<lastSpace])
-                .trimmingCharacters(in: .whitespaces)
-            if !wordBounded.isEmpty {
-                return wordBounded
-            }
-        }
-        return truncated.trimmingCharacters(in: .whitespaces)
+        ChatSessionController.derivedSessionName(fromFirstPrompt: prompt, limit: limit)
     }
 
     public nonisolated static func selectedToolSelectionNames(
         _ selectedToolKeys: Set<String>
     ) -> [String] {
-        selectedToolKeys.sorted()
+        ChatSessionController.selectedToolSelectionNames(selectedToolKeys)
     }
 
     public nonisolated static func savedSessionCacheKey(
         name: String,
         workingDirectory: URL
     ) -> String {
-        let stem = TerminalSessionStore.filenameStem(for: name)
-        let projectKey = TerminalSessionStore.projectKey(for: workingDirectory)
-        return "terminal:\(projectKey):session:\(stem)"
+        ChatSessionController.savedSessionCacheKey(
+            name: name,
+            workingDirectory: workingDirectory
+        )
     }
 
     public nonisolated static func savedSessionTimestamp(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        ChatSessionNoticeText.timestampText(date)
     }
 
     public nonisolated static func savedSessionTokenCountText(_ value: Int) -> String {
-        let absoluteValue = abs(value)
-                if absoluteValue >= 1_000_000 {
-            return String(format: "%.1fm", Double(value) / 1_000_000)
-        }
-        if absoluteValue >= 1_000 {
-            return String(format: "%.1fk", Double(value) / 1_000)
-        }
-        return "\(value)"
+        ChatSessionNoticeText.tokenCountText(value)
     }
 }

@@ -160,21 +160,9 @@ extension TerminalChat {
         }
     }
 
+    /// See ``ChatSessionController/restoreWorkflowProjection(from:)``.
     func restoreWorkflowProjection(from snapshot: TaskGraphSnapshot?) {
-        guard let snapshot, snapshot.source.isWorkflow,
-              !snapshot.state.isTerminal else {
-            activeWorkflow = nil
-            return
-        }
-        var workflow = WorkflowCommandRuntimeState(
-            goal: snapshot.workflow?.originalGoal ?? "", graphID: snapshot.id
-        )
-        if snapshot.workflow != nil, snapshot.workflow?.state != .running {
-            workflow.recordCoordinatorOutput(nil, graph: snapshot)
-        } else {
-            workflow.armForResumedGraph()
-        }
-        activeWorkflow = workflow
+        chatSession.restoreWorkflowProjection(from: snapshot)
     }
 
     func writeResumedTaskGraphNotice(_ graph: ResumableTaskGraph) async {

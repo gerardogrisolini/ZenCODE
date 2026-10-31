@@ -17,6 +17,7 @@ extension ZenCODEACPBridge {
         advertisedAuthenticationMethodIDs = Set(
             authMethods.compactMap { $0["id"] as? String }
         )
+        let defaultModelID = defaultSessionModelID()
         let result: [String: Any] = [
             "protocolVersion": protocolVersion,
             "agentCapabilities": [
@@ -35,7 +36,7 @@ extension ZenCODEACPBridge {
                     "resume": [:]
                 ]
             ],
-            "configOptions": configOptions(for: configuration.effectiveModelID),
+            "configOptions": configOptions(for: defaultModelID),
             "agentInfo": [
                 "name": "ZenCODE",
                 "title": "ZenCODE",
@@ -43,7 +44,7 @@ extension ZenCODEACPBridge {
             ],
             "authMethods": authMethods,
             "_meta": [
-                "models": modelState(for: configuration.effectiveModelID)
+                "models": modelState(for: defaultModelID)
             ]
         ]
         await writer.sendResultIfRequest(id: id, result: JSONValue.acpValue(from: result))
@@ -141,7 +142,7 @@ extension ZenCODEACPBridge {
         try ensureLifecycleOperationLive(operation)
         let requestedModelID = Self.modelID(from: params)
         let modelID = requestedModelID
-            ?? configuration.effectiveModelID
+            ?? defaultSessionModelID()
 
         let workingDirectoryURL = URL(fileURLWithPath: cwd)
         let selectedAgent = try resolvedACPAgentProfile(
@@ -198,18 +199,12 @@ extension ZenCODEACPBridge {
                 selectedAgent: selectedAgent
             )
             let requestedThinkingSelection = Self.thinkingSelection(from: params["thinkingSelection"])
-            let hostedManifest = configuration.hostedModels.map { hostedModels in
-                AgentSettingsManifest(
-                    models: hostedModels,
-                    selectedModelID: modelID
-                )
-            }
-            let thinkingSelection = AgentSettingsStore.thinkingSelection(
-                requestedSelection: requestedThinkingSelection,
+            let thinkingSelection = modelCatalog.resolvedThinkingSelection(
+                requested: requestedThinkingSelection,
                 explicitModelID: requestedModelID ?? configuration.modelID,
                 agentModelID: selectedAgent?.modelID,
                 agentThinkingSelection: selectedAgent?.thinkingSelection,
-                manifest: hostedManifest ?? AgentSettingsManifestStore.load()
+                selectedModelID: modelID
             )
             let preserveThinking = (params["preserveThinking"] as? Bool) ?? false
             let runnerConfiguration = AgentCoreSessionConfiguration(
@@ -391,23 +386,20 @@ extension ZenCODEACPBridge {
         let updatedConfiguration: AgentCoreSessionConfiguration
         switch configID {
         case "model":
-            let availableModels = modelConfigOptions()
-            guard availableModels.contains(where: { option in
-                (option["value"] as? String) == value
-            }) else {
+            guard modelCatalog.containsModel(withID: value) else {
                 throw ACPError.invalidParams("Unsupported model: \(value)")
             }
-            let model = modelManifest(for: value)
             updatedConfiguration = session.configuration
                 .withModelID(value)
-                .withThinkingSelection(model?.thinkingSelection(
-                    for: session.configuration.thinkingSelection
+                .withThinkingSelection(modelCatalog.thinkingSelection(
+                    session.configuration.thinkingSelection,
+                    carriedTo: value
                 ))
         case "thinking":
-            guard let model = modelManifest(for: session.configuration.modelID),
-                  let requestedSelection = AgentThinkingSelection(rawValue: value),
-                  let thinkingSelection = model.thinkingSelection(for: requestedSelection),
-                  thinkingSelection == requestedSelection else {
+            guard let thinkingSelection = modelCatalog.validatedThinkingSelection(
+                value,
+                forModelID: session.configuration.modelID
+            ) else {
                 throw ACPError.invalidParams("Unsupported thinking option: \(value)")
             }
             updatedConfiguration = session.configuration.withThinkingSelection(thinkingSelection)
@@ -437,6 +429,13 @@ extension ZenCODEACPBridge {
                 configuration: updatedConfiguration,
                 selectedAgent: session.selectedAgent
             )
+            // Committed and still live: no suspension since the fence and
+            // commit checks above. Save before the first `await`.
+            if configID == "model" {
+                persistModelSelection(of: updatedConfiguration)
+            } else {
+                persistThinkingSelection(updatedConfiguration.thinkingSelection)
+            }
         } catch {
             await rollbackReconfiguration(
                 sessionID: sessionID,
@@ -474,17 +473,15 @@ extension ZenCODEACPBridge {
         guard let modelID = Self.modelID(from: params) else {
             throw ACPError.invalidParams("Missing modelId.")
         }
-        guard modelConfigOptions().contains(where: { option in
-            (option["value"] as? String) == modelID
-        }) else {
+        guard modelCatalog.containsModel(withID: modelID) else {
             throw ACPError.invalidParams("Unsupported model: \(modelID)")
         }
 
-        let model = modelManifest(for: modelID)
         let updatedConfiguration = session.configuration
             .withModelID(modelID)
-            .withThinkingSelection(model?.thinkingSelection(
-                for: session.configuration.thinkingSelection
+            .withThinkingSelection(modelCatalog.thinkingSelection(
+                session.configuration.thinkingSelection,
+                carriedTo: modelID
             ))
         let sessionEpoch = session.epoch
         let reconfigurationID = UUID()
@@ -506,6 +503,8 @@ extension ZenCODEACPBridge {
                 configuration: updatedConfiguration,
                 selectedAgent: session.selectedAgent
             )
+            // Same save point as `setConfigOption`.
+            persistModelSelection(of: updatedConfiguration)
         } catch {
             await rollbackReconfiguration(
                 sessionID: sessionID,
@@ -579,6 +578,45 @@ extension ZenCODEACPBridge {
             selectedAgent: selectedAgent,
             epoch: epoch
         )
+    }
+
+    /// Saves a committed model choice, with the thinking level it resulted
+    /// in, as the default of the next sessions (nothing with hosted models,
+    /// see ``ChatModelCatalog/persistsSelections``).
+    ///
+    /// Call it only right after a successful `commitReconfiguration` and
+    /// before any suspension, so the operation is still the live one. A
+    /// failed write is logged and never changes the response.
+    private func persistModelSelection(
+        of sessionConfiguration: AgentCoreSessionConfiguration
+    ) {
+        guard let modelID = sessionConfiguration.modelID else {
+            return
+        }
+        do {
+            try modelCatalog.saveModelSelection(
+                modelID: modelID,
+                thinking: sessionConfiguration.thinkingSelection
+            )
+        } catch {
+            ZenLogger.warning(
+                .viewModelRuntime,
+                "failed to save the ACP model selection '\(modelID)': \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Saves a committed thinking choice as the default of the next sessions,
+    /// under the same rules as ``persistModelSelection(of:)``.
+    private func persistThinkingSelection(_ selection: AgentThinkingSelection?) {
+        do {
+            try modelCatalog.saveThinkingSelection(selection)
+        } catch {
+            ZenLogger.warning(
+                .viewModelRuntime,
+                "failed to save the ACP thinking selection '\(selection?.rawValue ?? "default")': \(error.localizedDescription)"
+            )
+        }
     }
 
     /// Rebuilds the prior runner configuration, then releases the reservation.
@@ -827,7 +865,7 @@ extension ZenCODEACPBridge {
     ) async -> AgentCoreSessionConfiguration {
         let requestedModelID = Self.modelID(from: params)
         let modelID = requestedModelID
-            ?? configuration.effectiveModelID
+            ?? defaultSessionModelID()
         let requestedAllowedToolNames = Self.allowedToolNames(from: params)
             ?? selectedAgent?.allowedToolNames()
         let resolvedRequestedAllowedToolNames = await resolvedAllowedToolNames(
@@ -854,18 +892,12 @@ extension ZenCODEACPBridge {
             selectedAgent: selectedAgent
         )
         let requestedThinkingSelection = Self.thinkingSelection(from: params["thinkingSelection"])
-        let hostedManifest = configuration.hostedModels.map { hostedModels in
-            AgentSettingsManifest(
-                models: hostedModels,
-                selectedModelID: modelID
-            )
-        }
-        let thinkingSelection = AgentSettingsStore.thinkingSelection(
-            requestedSelection: requestedThinkingSelection,
+        let thinkingSelection = modelCatalog.resolvedThinkingSelection(
+            requested: requestedThinkingSelection,
             explicitModelID: requestedModelID ?? configuration.modelID,
             agentModelID: selectedAgent?.modelID,
             agentThinkingSelection: selectedAgent?.thinkingSelection,
-            manifest: hostedManifest ?? AgentSettingsManifestStore.load()
+            selectedModelID: modelID
         )
         let cacheKey = (params["sessionKey"] as? String)
             ?? (params["cacheKey"] as? String)
@@ -897,7 +929,7 @@ extension ZenCODEACPBridge {
         let session = sessions[sessionID]
         let sessionConfiguration = session?.configuration
         let modelID = sessionConfiguration?.modelID
-            ?? configuration.effectiveModelID
+            ?? defaultSessionModelID()
         var result: [String: Any] = [
             "sessionId": sessionID,
             "modes": [

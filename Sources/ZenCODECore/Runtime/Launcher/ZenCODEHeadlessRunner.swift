@@ -46,7 +46,7 @@ extension AgentCoreSessionRunner: ZenCODEHeadlessSessionRunning {
     }
 }
 
-/// A headless session as composed by `TerminalChat`: the session
+/// A headless session as composed by ``ChatSessionController``: the session
 /// configuration and the prompt skills selected for it.
 struct ZenCODEHeadlessSession: Sendable {
     let configuration: AgentCoreSessionConfiguration
@@ -136,36 +136,49 @@ public enum ZenCODEHeadlessRunner {
     }
 
     /// Composes the headless session configuration through the same
-    /// `TerminalChat` code used by the interactive session, without starting
-    /// its UI.
+    /// ``ChatSessionController`` composition used by the interactive session,
+    /// without a terminal.
     ///
-    /// `TerminalChat` only applies the selected agent profile (its tool
-    /// selection and prompt skills) from `run()`, which this path never
-    /// enters. Applying it here is what grants the profile's tools and skills
-    /// to the session: without it the allowlist would hold only the intrinsic
-    /// prompt-skill tools and no skill would be selected. The skills always
-    /// come from the profile: `--skills` / `ZENCODE_AGENT_SKILLS` are an
-    /// interactive startup selection and are deliberately not applied here.
-    /// Profile application has no terminal output, and tool authorization is
-    /// untouched: consent-requiring actions still go through the
-    /// non-interactive authorizer.
+    /// The interactive session applies the selected agent profile (its tool
+    /// selection and prompt skills) when it starts. Applying it here is what
+    /// grants the profile's tools and skills to the session: without it the
+    /// allowlist would hold only the intrinsic prompt-skill tools and no skill
+    /// would be selected. The skills always come from the profile: `--skills`
+    /// / `ZENCODE_AGENT_SKILLS` are an interactive startup selection and are
+    /// deliberately not applied here. Profile application has no output, and
+    /// tool authorization is untouched: consent-requiring actions still go
+    /// through the non-interactive authorizer.
+    ///
+    /// The prompt carries no response-language section, as for an interactive
+    /// session before its first prompt locks a language.
     @TerminalChatActor
     static func makeSession(
         configuration: AgentConfiguration,
         sessionRunner: AgentCoreSessionRunner
     ) async -> ZenCODEHeadlessSession {
-        let terminal = TerminalChat(
-            configuration: configuration,
-            stdinIsTerminal: false,
-            sessionRunner: sessionRunner
+        let host = HeadlessInteractionHost()
+        let chatSession = ChatSessionController(
+            sessionID: TerminalChat.newTerminalSessionID(),
+            managementRuntime: sessionRunner,
+            environment: ChatSessionEnvironment(
+                configuration: configuration,
+                featureRuntime: sessionRunner.swiftFeatureRuntime
+            ),
+            workingDirectory: configuration.workingDirectory,
+            presenter: HeadlessSilentPresenter(),
+            host: host,
+            authorizer: ChatToolConsentAuthorizer(host: host),
+            retainsTranscript: false,
+            retainsFileArtifactHistory: false
         )
-        await terminal.applyInitialAgentSelectionIfNeeded()
-        let sessionConfiguration = await terminal.currentSessionConfiguration(
-            discoverExternalTools: false
+        await chatSession.applyInitialAgentSelectionIfNeeded()
+        let sessionConfiguration = await chatSession.currentSessionConfiguration(
+            discoverExternalTools: false,
+            responseLanguageSection: nil
         )
         return ZenCODEHeadlessSession(
             configuration: sessionConfiguration,
-            promptSkills: terminal.selectedPromptSkills()
+            promptSkills: chatSession.selectedPromptSkills()
         )
     }
 
@@ -213,6 +226,12 @@ public enum ZenCODEHeadlessRunner {
         let chatSession = ChatSessionController(
             sessionID: sessionConfiguration.sessionID,
             runtime: sessionRunner,
+            // The turn runs on the composed configuration; this controller
+            // composes nothing, so it needs no feature runtime.
+            environment: ChatSessionEnvironment(
+                configuration: configuration,
+                featureRuntime: nil
+            ),
             workingDirectory: configuration.workingDirectory,
             presenter: presenter,
             host: host,

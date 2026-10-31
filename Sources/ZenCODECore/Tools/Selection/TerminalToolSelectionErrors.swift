@@ -28,3 +28,14 @@ public enum TerminalSkillSelectionError: LocalizedError {
         }
     }
 }
+
+public enum TerminalAgentSelectionError: LocalizedError {
+    case unknownAgent(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .unknownAgent(name):
+            return "Unknown agent '\(name)'."
+        }
+    }
+}

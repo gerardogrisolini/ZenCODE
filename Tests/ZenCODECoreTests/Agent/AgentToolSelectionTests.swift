@@ -357,6 +357,62 @@ extension AgentConfigurationTests {
         #expect(notice.content.contains("historical context"))
     }
 
+    /// A `/tools` change that alters the allowlist rebuilds the session, and
+    /// the rebuild drops the session's prompt-skill provider: the selected
+    /// skills must be handed to the rebuilt session again.
+    @Test
+    @TerminalChatActor
+    func toolSelectionRebuildKeepsTheSelectedSkills() async throws {
+        let workingDirectory = URL(
+            fileURLWithPath: "/tmp/ZenCODE-tool-rebuild-skills-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let configuration = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            workingDirectory: workingDirectory
+        )
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in SkillSelectionCountingBackend() }
+        )
+        let terminal = TerminalChat(
+            configuration: configuration,
+            stdinIsTerminal: false,
+            sessionRunner: runner
+        )
+        let skill = PromptSkill(
+            canonicalName: "release-review",
+            title: "Release Review",
+            summary: "Review release changes before publishing.",
+            promptBody: "FULL-SKILL-BODY",
+            sourceHash: "release-review-hash"
+        )
+        terminal.availableSkillsCache = [skill]
+        terminal.selectedSkillIDs = [skill.id]
+        terminal.selectedToolKeys = try TerminalChat.parseToolSelection(
+            "shell",
+            items: TerminalChat.toolSelectionItems(featureStatuses: [])
+        )
+
+        try await terminal.createCurrentSession(discoverExternalTools: false)
+        let initialSkills = await runner.promptSkillProvidersBySessionID[terminal.sessionID]?
+            .currentSkills()
+        #expect(initialSkills?.map(\.id) == [skill.id])
+        let initialAllowedToolNames = await runner.snapshotSession(id: terminal.sessionID)?
+            .allowedToolNames
+
+        await terminal.handleToolsCommand("/tools none")
+
+        // The allowlist changed, so the session was rebuilt.
+        let rebuiltAllowedToolNames = await runner.snapshotSession(id: terminal.sessionID)?
+            .allowedToolNames
+        #expect(rebuiltAllowedToolNames != initialAllowedToolNames)
+        #expect(terminal.selectedSkillIDs == [skill.id])
+        let rebuiltSkills = await runner.promptSkillProvidersBySessionID[terminal.sessionID]?
+            .currentSkills()
+        #expect(rebuiltSkills?.map(\.id) == [skill.id])
+    }
+
     @Test
     @TerminalChatActor
     func toolsSelectionCannotReenableMutableCoreToolsForReadOnlyProfile() async throws {

@@ -159,4 +159,29 @@ final class TerminalChatSessionPresenter: ChatSessionPresenter {
             )
         }
     }
+
+    func presentSessionNotice(_ notice: ChatSessionNotice) async {
+        await chat?.writeSessionNotice(notice)
+    }
+}
+
+extension TerminalChat {
+    /// Writes `notice` with ``ChatSessionNoticeText`` on the channel the
+    /// notice names, as the terminal wrote it before it presented notices.
+    func writeSessionNotice(_ notice: ChatSessionNotice) async {
+        let text = ChatSessionNoticeText.text(for: notice)
+        switch notice.channel {
+        case .system:
+            await writeSystemMessage(text)
+        case .failure:
+            await writeFailureMessage(text)
+        }
+    }
+
+    /// Writes `notices` in order.
+    func writeSessionNotices(_ notices: [ChatSessionNotice]) async {
+        for notice in notices {
+            await writeSessionNotice(notice)
+        }
+    }
 }
