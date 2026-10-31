@@ -150,6 +150,10 @@ extension ZenCODEACPBridge {
     func sessionEpochForTesting(sessionID: String) -> UInt64 {
         sessions[sessionID]?.epoch ?? 0
     }
+
+    func chatSessionControllerForTesting(sessionID: String) -> ChatSessionController? {
+        sessions[sessionID]?.controller
+    }
 }
 
 actor CapturingACPBackend: AgentRuntimeBackend {

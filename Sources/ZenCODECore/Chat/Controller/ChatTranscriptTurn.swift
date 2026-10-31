@@ -1,5 +1,5 @@
 //
-//  TerminalSessionTranscriptTurn.swift
+//  ChatTranscriptTurn.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -8,7 +8,11 @@
 import Foundation
 import ToolCore
 
-actor TerminalSessionTranscriptTurn {
+/// The transcript of one chat turn, assembled from runtime events.
+///
+/// Tool calls split coordinator content into blocks: the last block, not the
+/// runtime's aggregated response text, is the turn's final assistant content.
+actor ChatTranscriptTurn {
     var transcriptMessages: [AgentRuntimeMessage]
     var assistantContent = ""
     var reasoningContent = ""
@@ -123,3 +127,6 @@ actor TerminalSessionTranscriptTurn {
         )
     }
 }
+
+/// Compatibility name used by the terminal chat.
+typealias TerminalSessionTranscriptTurn = ChatTranscriptTurn

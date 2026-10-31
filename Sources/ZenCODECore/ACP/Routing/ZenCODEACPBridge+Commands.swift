@@ -17,26 +17,22 @@ enum ACPCommandPromptPurpose: Sendable {
     case review
     case planning(collectionID: UUID, baseline: PlannerTurnBaseline)
 
-    var suppressesCoordinatorContent: Bool {
-        if case .planning = self { return true }
-        return false
-    }
-
+    /// The coordinator tools this route grants, from the shared table in
+    /// ``ChatTurnPurpose``. A plain `.normal` turn adds the implementation
+    /// tools only while an approved plan is open (see
+    /// ``ChatTurnPurpose/additionalToolNames(activePlan:)``).
     var additionalToolNames: Set<String> {
         switch self {
         case .normal:
             return []
         case .planning:
-            return ["todo.write"]
+            return ChatTurnPurpose.plan(originalGoal: "").additionalToolNames(activePlan: nil)
         case .implementation:
-            return ["tasks.list", "tasks.get", "tasks.update", "tasks.retry", "tasks.cancel"]
+            return ChatTurnPurpose.implementationToolNames
         case .workflow:
-            return [
-                "tasks.create", "tasks.list", "tasks.get",
-                "tasks.update", "tasks.retry", "tasks.cancel",
-            ]
+            return ChatTurnPurpose.workflowToolNames
         case .review:
-            return ["tasks.create", "tasks.list", "tasks.get", "tasks.update"]
+            return ChatTurnPurpose.reviewToolNames
         }
     }
 }

@@ -121,10 +121,7 @@ extension ZenCODEACPBridge {
                 selectedAgent: agentMentionResolution.agent,
                 epoch: epoch,
                 activePromptID: promptID,
-                operationState: .prompting(promptID),
-                activePlan: session.activePlan,
-                planBrainstorming: session.planBrainstorming,
-                workflowContinuation: session.workflowContinuation
+                operationState: .prompting(promptID)
             )
             guard updateLiveSession(id: sessionID, epoch: epoch, { liveSession in
                 liveSession = session
@@ -206,12 +203,11 @@ extension ZenCODEACPBridge {
             throw CancellationError()
         }
         session = liveCommandSession
-        promptConfiguration = session.configuration
-        if var allowedToolNames = promptConfiguration.allowedToolNames,
-           !commandPurpose.additionalToolNames.isEmpty {
-            allowedToolNames.formUnion(commandPurpose.additionalToolNames)
-            promptConfiguration = sessionConfiguration(from: promptConfiguration, allowedToolNames: allowedToolNames)
-        }
+        let controller = session.controller
+        let chatPurpose = Self.chatTurnPurpose(for: commandPurpose, session: session)
+        promptConfiguration = session.configuration.addingAllowedToolNames(
+            controller.additionalToolNames(for: chatPurpose)
+        )
 
         let writer = self.writer
         let appMode = configuration.appMode
@@ -271,8 +267,6 @@ extension ZenCODEACPBridge {
         await sessionRunner.updateSubAgentToolEventHandler { [weak self] event in
             await self?.presentDelegatedToolEvent(event)
         }
-        let planPointCollector = PlanningPointCollector()
-        let assistantBlocks = ACPAssistantBlockCollector()
         let taskPresentation = session.taskPresentation
         let graphEvents = await sessionRunner.taskOrchestrator.events(sessionID: sessionID)
         let graphObserver = Task {
@@ -304,6 +298,15 @@ extension ZenCODEACPBridge {
         let clientFiles = clientFileSystem?.access(sessionID: sessionID) { [weak self] in
             await self?.canUseClientFileSystem(sessionID: sessionID, epoch: epoch) == true
         }
+        let presenter = ACPPromptPresenter(
+            sessionID: sessionID,
+            workspaceURL: workspaceURL,
+            writer: writer,
+            updatePipeline: updatePipeline,
+            ensureTasklessObserver: { [weak self] in
+                await self?.ensureTasklessObserver(sessionID: sessionID, epoch: epoch, promptID: promptID)
+            }
+        )
         let activePromptTask = Task(name: "ZenCODEACPBridge.prompt") {
             try await ClientTextFileSystem.$current.withValue(clientFiles) {
                 await sessionRunner.updatePromptSkillSelection(
@@ -336,123 +339,21 @@ extension ZenCODEACPBridge {
                 guard reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
                     throw CancellationError()
                 }
-                var generationPrompt = modelPromptText
-                var generationAttachments = attachments
-                while true {
-                    let response = try await sessionRunner.sendPrompt(
-                        configuration: promptConfiguration,
-                        prompt: generationPrompt,
-                        attachments: generationAttachments,
-                        toolProviders: [],
-                        onEvent: { event in
-                            switch event {
-                            case .status, .diagnostic, .modelLoaded:
-                                // Runtime lifecycle and diagnostics are not model reasoning.
-                                // Model selection is already exposed through ACP configuration.
-                                break
-                            case let .thought(message):
-                                await sendPromptUpdate(
-                                    Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: message)
-                                )
-                            case .metrics:
-                                break
-                            case let .contextWindow(status):
-                                if let update = Self.usageJSONUpdate(for: status) {
-                                    await sendPromptUpdate(update)
-                                }
-                            case let .subscriptionUsage(status):
-                                if let subscriptionData = Self.subscriptionUsageJSONData(for: status) {
-                                    // The custom notification bypasses the buffer. In app
-                                    // mode it must share the serialized exit point with
-                                    // updates, as a flush-then-notify unit; outside app
-                                    // mode there is no buffer and it goes straight out.
-                                    let params = JSONValue.object([
-                                        "sessionId": .string(sessionID),
-                                        "subscription": subscriptionData,
-                                    ])
-                                    if let updatePipeline {
-                                        await updatePipeline.enqueue(
-                                            .init(kind: .flushThenNotify(method: "_zencode/usage/subscription", params: params))
-                                        ).value
-                                    } else {
-                                        await writer.sendCustomNotification(method: "_zencode/usage/subscription", params: params)
-                                    }
-                                }
-                            case let .content(content):
-                                await assistantBlocks.append(content)
-                                if !commandPurpose.suppressesCoordinatorContent {
-                                    await sendPromptUpdate(
-                                        Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: content)
-                                    )
-                                }
-                            case let .toolCallStarted(toolCall):
-                                await self.ensureTasklessObserver(
-                                    sessionID: sessionID, epoch: epoch, promptID: promptID)
-                                await assistantBlocks.finishBlock()
-                                await sendPromptUpdate(
-                                    Self.toolCallCreateJSONUpdate(for: toolCall, workingDirectory: workspaceURL)
-                                )
-                            case let .toolCallCompleted(toolCall, result):
-                                if case .planning = commandPurpose {
-                                    let request = DirectTodoTaskRuntime.normalizedToolRequest(for: toolCall)
-                                    if request.name == "todo.write" {
-                                        let update =
-                                            result.isFailure
-                                            ? nil
-                                            : PlanningCommandKernel.planPointUpdates(from: toolCall)
-                                        await planPointCollector.recordTodoWrite(update)
-                                    }
-                                }
-                                await sendPromptUpdate(
-                                    Self.toolCallCompletionJSONUpdate(
-                                        for: toolCall,
-                                        result: result,
-                                        workingDirectory: workspaceURL
-                                    )
-                                )
-                            case .turnEnded:
-                                if let updatePipeline {
-                                    await updatePipeline.enqueue(.init(kind: .finishThought)).value
-                                }
-                            case .sessionSnapshot:
-                                break
-                            }
-                        }
+                let result = try await controller.runTurn(
+                    ChatTurnRequest(
+                        prompt: modelPromptText,
+                        attachments: attachments,
+                        purpose: chatPurpose,
+                        sessionConfiguration: promptConfiguration,
+                        presenter: presenter
                     )
-                    // Also covers backends that return without a turnEnded event,
-                    // before an automatic workflow continuation starts a new turn.
-                    if let updatePipeline {
-                        await updatePipeline.enqueue(.init(kind: .finishThought)).value
-                    }
-                    let completion = PromptCompletion(
-                        text: response.text,
-                        finalAssistantBlock: await assistantBlocks.lastBlock(),
-                        stopReason: Self.acpStopReason(response.stopReason),
-                        modelID: response.modelID
-                    )
-                    if case let .workflow(graphID) = commandPurpose {
-                        let graph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID, graphID: graphID)
-                        let disposition = PlanningCommandKernel.workflowTurnDisposition(
-                            graph: graph,
-                            expectedGraphID: graphID,
-                            coordinatorMessage: completion.finalAssistantBlock
-                        )
-                        if case .continueAutomatically = disposition, let graph {
-                            await assistantBlocks.finishBlock()
-                            let goal =
-                                session.workflowContinuation?.graphID == graphID
-                                ? session.workflowContinuation?.goal ?? ""
-                                : ""
-                            generationPrompt = PlanningCommandKernel.workflowAutomaticContinuationPrompt(
-                                goal: goal,
-                                graph: graph
-                            )
-                            generationAttachments = []
-                            continue
-                        }
-                    }
-                    return completion
-                }
+                )
+                return PromptCompletion(
+                    text: result.response.text,
+                    finalAssistantBlock: result.finalAssistantBlock,
+                    stopReason: Self.acpStopReason(result.response.stopReason),
+                    modelID: result.response.modelID
+                )
             }
         }
 
@@ -485,112 +386,72 @@ extension ZenCODEACPBridge {
                 expectedPromptID: promptID
             )
         }
-        func failTurn(reason: String) async {
-            if case let .planning(collectionID, _) = commandPurpose {
-                await clearACPPlanBrainstorming(sessionID: sessionID, epoch: epoch, expectedCollectionID: collectionID)
-            } else if case let .workflow(graphID) = commandPurpose {
-                await handleFailedACPWorkflowTurn(
-                    graphID: graphID, reason: reason, sessionID: sessionID, epoch: epoch, promptID: promptID
-                )
-            }
-        }
-
         do {
-            var completion = try await activePromptTask.value
+            let completion = try await activePromptTask.value
             if case .planning = commandPurpose {
-                completion = try await finalizeACPPlanningTurn(
-                    parent: completion,
-                    purpose: commandPurpose,
-                    collector: planPointCollector,
-                    sessionID: sessionID,
-                    epoch: epoch,
-                    promptID: promptID
-                )
                 await sendPromptUpdate(
                     Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: completion.text)
                 )
             }
             await settleTurn()
-            if case let .workflow(graphID) = commandPurpose {
-                await armACPWorkflowContinuationIfNeeded(
-                    graphID: graphID,
-                    coordinatorMessage: completion.finalAssistantBlock,
-                    sessionID: sessionID,
-                    epoch: epoch,
-                    promptID: promptID
-                )
-            }
-
             await sendStopReason(id: id, completion.stopReason)
             releaseReservation()
-        } catch is CancellationError {
-            await failTurn(reason: "the turn was cancelled")
-            await settleTurn()
-            await sendStopReason(id: id, "cancelled")
-            releaseReservation()
         } catch {
-            await failTurn(reason: error.localizedDescription)
-            await settleTurn()
-            releaseReservation()
-            throw error
+            // The controller already cleaned up a turn it ran. A turn that
+            // stopped before reaching it can only have been cancelled; keep
+            // the Planner discussion bound to this live incarnation.
+            if !(error is ChatTurnFailure),
+               case let .planning(collectionID, _) = commandPurpose {
+                await clearACPPlanBrainstorming(sessionID: sessionID, epoch: epoch, expectedCollectionID: collectionID)
+            }
+            let underlying = (error as? ChatTurnFailure)?.underlying ?? error
+            if underlying is CancellationError {
+                await settleTurn()
+                await sendStopReason(id: id, "cancelled")
+                releaseReservation()
+            } else {
+                await settleTurn()
+                releaseReservation()
+                throw Self.acpPromptError(for: underlying)
+            }
         }
     }
 
-    /// Projects structured workflow control into the ACP reply route, fenced by
-    /// the current prompt reservation. Prose does not suspend new workflows.
-    func armACPWorkflowContinuationIfNeeded(
-        graphID: String,
-        coordinatorMessage: String?,
-        sessionID: String,
-        epoch: UInt64,
-        promptID: UUID
-    ) async {
-        let graph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID)
-        let graphIsOpen = graph?.id == graphID
-            && graph?.source.isWorkflow == true
-            && graph?.state.isTerminal == false
-        _ = updateReservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) { session in
-            guard var workflow = session.workflowContinuation,
-                  workflow.graphID == graphID else {
-                return
-            }
-            guard graphIsOpen else {
-                session.workflowContinuation = nil
-                return
-            }
-            workflow.recordCoordinatorOutput(coordinatorMessage, graph: graph)
-            session.workflowContinuation = workflow
+    /// The shared chat purpose of an ACP command turn.
+    static func chatTurnPurpose(
+        for purpose: ACPCommandPromptPurpose,
+        session: SessionState
+    ) -> ChatTurnPurpose {
+        switch purpose {
+        case .normal, .implementation:
+            return .normal
+        case let .workflow(graphID):
+            let workflow = session.workflowContinuation
+            return .workflow(
+                originalGoal: workflow?.graphID == graphID ? workflow?.goal ?? "" : "",
+                graphID: graphID
+            )
+        case .review:
+            return .review
+        case .planning:
+            return .plan(originalGoal: session.planBrainstorming?.goal ?? "")
         }
     }
 
-    /// Preserves persisted objectives (including zero-task workflows) and arms
-    /// recovery without replacing an authoritative structured suspension.
-    func handleFailedACPWorkflowTurn(
-        graphID: String,
-        reason: String,
-        sessionID: String,
-        epoch: UInt64,
-        promptID: UUID
-    ) async {
-        let graph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID, graphID: graphID)
-        guard reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else { return }
-        guard let graph, graph.workflow != nil || !graph.tasks.isEmpty else {
-            _ = try? await sessionRunner.removeTaskGraph(id: graphID, sessionID: sessionID)
-            _ = updateLiveSession(id: sessionID, epoch: epoch) { session in
-                if session.workflowContinuation?.graphID == graphID {
-                    session.workflowContinuation = nil
-                }
-            }
-            return
+    /// Planner failures keep their established ACP messages on the wire.
+    static func acpPromptError(for error: Error) -> Error {
+        guard let planningError = error as? ChatPlanGenerationError else {
+            return error
         }
-        _ = updateLiveSession(id: sessionID, epoch: epoch) { session in
-            var workflow = session.workflowContinuation?.graphID == graphID
-                ? session.workflowContinuation!
-                : WorkflowCommandRuntimeState(goal: graph.workflow?.originalGoal ?? "", graphID: graphID)
-            if !workflow.recordCoordinatorOutput(nil, graph: graph) {
-                workflow.armForRecoverableFailure(reason: reason)
-            }
-            session.workflowContinuation = workflow
+        switch planningError {
+        case .plannerOutputUnavailable:
+            return ACPPlanningCommandError.plannerOutputUnavailable
+        case .sessionHistoryUnavailable:
+            return ACPPlanningCommandError.sessionHistoryUnavailable
+        case .structuredTasksUnavailable:
+            return ACPPlanningCommandError.structuredTasksUnavailable
+        case .unexpectedStructuredTasksForQuestions:
+            return ACPPlanningCommandError.unexpectedTasksForQuestions
         }
     }
 
@@ -622,18 +483,15 @@ extension ZenCODEACPBridge {
               var session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
+        // Fence the controller and arm synchronously while this incarnation
+        // still owns the reservation: the cancelled turn can no longer write
+        // command state back while it unwinds. The reply route projects any
+        // newer persisted pause before consuming the armed recovery.
+        session.controller.cancelActiveTurn(
+            armingWorkflowRecovery: session.activePromptID != nil
+                && session.activeWorkflowPromptID == session.activePromptID
+        )
         session.activePromptTask?.cancel()
-        // Arm synchronously while this incarnation still owns the reservation.
-        // Late prompt completions remain fenced out after activePromptID clears.
-        // The reply route projects any newer persisted pause before consuming it.
-        if let promptID = session.activePromptID,
-           session.activeWorkflowPromptID == promptID,
-           var workflow = session.workflowContinuation {
-            if !workflow.isAwaitingReply {
-                workflow.armForRecoverableFailure(reason: "cancelled")
-            }
-            session.workflowContinuation = workflow
-        }
         session.activePromptTask = nil
         session.activePromptID = nil
         session.activeWorkflowPromptID = nil
@@ -651,6 +509,7 @@ extension ZenCODEACPBridge {
         // Drop the session before any suspension so a prompt finishing
         // concurrently cannot restore it through refreshSessionStateIfAvailable.
         let closedSession = sessions.removeValue(forKey: sessionID)
+        closedSession?.controller.cancelActiveTurn()
         closedSession?.tasklessObserver?.cancel()
         // Snapshot before the first suspension. Teardown below awaits several
         // collaborators; a session recreated with this id during that window
@@ -698,28 +557,5 @@ extension ZenCODEACPBridge {
         // pending requests, so do not write a late reply.
         try ensureNotShutDown()
         await writer.sendResultIfRequest(id: id, result: .object([:]))
-    }
-}
-
-/// Keeps ACP content blocks separate across tool boundaries. A model response
-/// can contain a question before a tool and a normal summary afterwards; only
-/// the latter is the final assistant block of the turn.
-actor ACPAssistantBlockCollector {
-    private var completedBlocks: [String] = []
-    private var currentBlock = ""
-
-    func append(_ content: String) {
-        currentBlock.append(content)
-    }
-
-    func finishBlock() {
-        if currentBlock.nilIfBlank != nil {
-            completedBlocks.append(currentBlock)
-        }
-        currentBlock = ""
-    }
-
-    func lastBlock() -> String? {
-        currentBlock.nilIfBlank ?? completedBlocks.last?.nilIfBlank
     }
 }

@@ -140,4 +140,10 @@ public actor SessionFileArtifactHistory {
     public func snapshot() -> [Turn] {
         turns
     }
+
+    /// Drops the finished turns while pending turns and numbering continue,
+    /// for channels that never present the history.
+    func discardFinishedTurns() {
+        turns.removeAll(keepingCapacity: false)
+    }
 }

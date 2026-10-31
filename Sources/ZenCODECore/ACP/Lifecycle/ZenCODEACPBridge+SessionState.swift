@@ -120,54 +120,53 @@ extension ZenCODEACPBridge {
     }
 
     // All same-incarnation reconstruction paths (mention, refresh and
-    // reconfiguration) inherit ACP presentation state from the live entry.
-    // A fresh epoch, including load/resume, deliberately starts unannounced.
+    // reconfiguration) inherit ACP presentation state and the chat controller
+    // (with its command state) from the live entry. A fresh epoch, including
+    // load/resume, deliberately starts unannounced with a new controller.
     func sessionStateWithCommandState(
         configuration: AgentCoreSessionConfiguration,
         selectedAgent: AgentProfile? = nil,
         epoch: UInt64? = nil,
         activePromptID: UUID? = nil,
         activePromptTask: Task<PromptCompletion, Error>? = nil,
-        operationState: SessionOperationState = .idle,
-        activePlan: TerminalSessionPlan? = nil,
-        planBrainstorming: PlanningCommandRuntimeState? = nil,
-        pendingPlanApprovalPlanID: String? = nil,
-        workflowContinuation: WorkflowCommandRuntimeState? = nil
+        operationState: SessionOperationState = .idle
     ) -> SessionState {
-        SessionState(
+        let liveIncarnation = epoch.flatMap { expectedEpoch in
+            sessions[configuration.sessionID].flatMap { $0.epoch == expectedEpoch ? $0 : nil }
+        }
+        return SessionState(
             id: configuration.sessionID,
             cwd: configuration.workingDirectory.path,
             allowedToolNames: configuration.allowedToolNames,
             configuration: configuration,
             epoch: epoch ?? makeSessionEpoch(),
             selectedAgent: selectedAgent,
-            hasPresentedInitialConfiguration: epoch.flatMap { expectedEpoch in
-                sessions[configuration.sessionID].flatMap { existing in
-                    existing.epoch == expectedEpoch
-                        ? existing.hasPresentedInitialConfiguration
-                        : nil
-                }
-            } ?? false,
-            presentedCommands: epoch.flatMap { expectedEpoch in
-                sessions[configuration.sessionID].flatMap { $0.epoch == expectedEpoch ? $0.presentedCommands : nil }
-            },
-            tasklessPresentation: epoch.flatMap { expectedEpoch in
-                sessions[configuration.sessionID].flatMap { $0.epoch == expectedEpoch ? $0.tasklessPresentation : nil }
-            } ?? ACPTasklessPresentation(),
-            taskPresentation: epoch.flatMap { expectedEpoch in
-                sessions[configuration.sessionID].flatMap { $0.epoch == expectedEpoch ? $0.taskPresentation : nil }
-            } ?? ACPTaskPresentation(),
+            hasPresentedInitialConfiguration: liveIncarnation?.hasPresentedInitialConfiguration ?? false,
+            presentedCommands: liveIncarnation?.presentedCommands,
+            tasklessPresentation: liveIncarnation?.tasklessPresentation ?? ACPTasklessPresentation(),
+            taskPresentation: liveIncarnation?.taskPresentation ?? ACPTaskPresentation(),
             activePromptID: activePromptID,
             activePromptTask: activePromptTask,
             operationState: operationState,
-            activePlan: activePlan,
-            planBrainstorming: planBrainstorming,
-            pendingPlanApprovalPlanID: pendingPlanApprovalPlanID ?? epoch.flatMap { expectedEpoch in
-                sessions[configuration.sessionID].flatMap {
-                    $0.epoch == expectedEpoch ? $0.pendingPlanApprovalPlanID : nil
-                }
-            },
-            workflowContinuation: workflowContinuation
+            controller: liveIncarnation?.controller ?? makeChatSessionController(configuration: configuration)
+        )
+    }
+
+    /// The chat controller of a new session incarnation. ACP presents each
+    /// prompt through a presenter bound to that prompt, so the controller's
+    /// default presenter stays silent, and ACP never reads the transcript.
+    func makeChatSessionController(
+        configuration: AgentCoreSessionConfiguration
+    ) -> ChatSessionController {
+        ChatSessionController(
+            sessionID: configuration.sessionID,
+            runtime: sessionRunner,
+            workingDirectory: configuration.workingDirectory,
+            presenter: ACPSilentPresenter(),
+            host: ACPConsentHost(writer: writer),
+            authorizer: permissionBroker.consentAuthorizer,
+            retainsTranscript: false,
+            retainsFileArtifactHistory: false
         )
     }
 
@@ -285,10 +284,7 @@ extension ZenCODEACPBridge {
             epoch: session.epoch,
             activePromptID: session.activePromptID,
             activePromptTask: session.activePromptTask,
-            operationState: session.operationState,
-            activePlan: session.activePlan,
-            planBrainstorming: session.planBrainstorming,
-            workflowContinuation: session.workflowContinuation
+            operationState: session.operationState
         )
     }
 

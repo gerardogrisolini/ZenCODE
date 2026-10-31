@@ -577,10 +577,7 @@ extension ZenCODEACPBridge {
         sessions[sessionID] = sessionStateWithCommandState(
             configuration: configuration,
             selectedAgent: selectedAgent,
-            epoch: epoch,
-            activePlan: currentState.activePlan,
-            planBrainstorming: currentState.planBrainstorming,
-            workflowContinuation: currentState.workflowContinuation
+            epoch: epoch
         )
     }
 

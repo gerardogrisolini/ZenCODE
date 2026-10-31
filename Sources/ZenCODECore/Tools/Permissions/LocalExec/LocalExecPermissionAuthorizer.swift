@@ -7,6 +7,12 @@
 
 import Foundation
 
+/// Terminal-facing facade over the channel-neutral ``ChatToolConsentAuthorizer``.
+///
+/// The consent policy (gated tools, cache, persistence, dialog queue) lives in
+/// the shared authorizer; this type keeps the established terminal API and the
+/// `local.exec` identity/persistence helpers, and wires a terminal host that
+/// renders the consent card and reads the operator's key.
 public actor LocalExecPermissionAuthorizer {
     enum PermissionDecision: Sendable {
         case allowOnce
@@ -18,57 +24,36 @@ public actor LocalExecPermissionAuthorizer {
     /// is presented at the same time. The public Boolean API intentionally keeps
     /// its existing fail-closed contract, while the coordinator must distinguish
     /// an explicit rejection from a terminal that is unavailable or cancelled.
-    enum AuthorizationOutcome: Sendable, Equatable {
-        case allowedOnce
-        case allowedAlways
-        case denied
-        case unavailable
-        case cancelled
+    typealias AuthorizationOutcome = ChatToolConsentAuthorizer.AuthorizationOutcome
 
-        var isApproved: Bool {
-            switch self {
-            case .allowedOnce, .allowedAlways:
-                true
-            case .denied, .unavailable, .cancelled:
-                false
-            }
-        }
+    /// Tool names this authorizer gates: shell commands plus the destructive
+    /// direct tools. Everything else is pre-approved by tool selection.
+    public static let gatedToolNames: Set<String> = ChatToolConsentAuthorizer.gatedToolNames
+
+    /// The shared consent policy this terminal facade delegates to.
+    nonisolated let consentAuthorizer: ChatToolConsentAuthorizer
+    /// Terminal host behind ``consentAuthorizer``: it owns the injected reader.
+    nonisolated let terminalHost: TerminalConsentHost
+
+    public init() {
+        let terminalHost = TerminalConsentHost()
+        self.terminalHost = terminalHost
+        self.consentAuthorizer = ChatToolConsentAuthorizer(host: terminalHost)
     }
-
-    private struct DialogWaiter {
-        let id: UUID
-        let continuation: CheckedContinuation<Bool, Never>
-    }
-
-    private var alwaysAllowedKeys = Set<String>()
-    private var didLoadPersistedAllowedCommands = false
-    private var isDialogActive = false
-    private var dialogWaiters: [DialogWaiter] = []
-    private var cancelledDialogWaiterIDs = Set<UUID>()
 
     /// Injected single-key reader for consent prompts. When nil, the default
     /// terminal reader is used. The TUI sets this to route consent through its
     /// shared interactive reader (avoiding a second terminal input device),
     /// and tests set it for deterministic loop/EOF coverage.
-    var consentReader: ConsentKeyReader?
-
     func setConsentReader(_ reader: ConsentKeyReader?) {
-        consentReader = reader
+        terminalHost.setConsentReader(reader)
     }
-
-    /// Tool names this authorizer gates: shell commands plus the destructive
-    /// direct tools. Everything else is pre-approved by tool selection.
-    public static let gatedToolNames: Set<String> =
-        DirectToolExecutor.destructiveGatedToolNames.union(["local.exec"])
-
-    public init() {}
 
     /// Drops process-local authorization state so a completed setup run is
     /// reconciled from the current permissions manifest. This is especially
     /// important after setup reset removes that manifest.
-    func reloadPersistedPermissions() {
-        alwaysAllowedKeys.removeAll()
-        didLoadPersistedAllowedCommands = false
+    func reloadPersistedPermissions() async {
+        await consentAuthorizer.reloadPersistedPermissions()
     }
 
     /// Returns `true` when this request needs no dialog: either the tool is not
@@ -76,16 +61,12 @@ public actor LocalExecPermissionAuthorizer {
     ///
     /// Surfaces that mirror the session elsewhere (Telegram) use this to avoid
     /// announcing a consent step that will never be presented.
-    public func isAlreadyAuthorized(_ request: AgentToolAuthorizationRequest) -> Bool {
-        guard Self.gatedToolNames.contains(request.toolName) else {
-            return true
-        }
-        loadPersistedAllowedCommandsIfNeeded()
-        return permissionCacheKeys(for: request).allSatisfy(alwaysAllowedKeys.contains)
+    public func isAlreadyAuthorized(_ request: AgentToolAuthorizationRequest) async -> Bool {
+        await consentAuthorizer.isAlreadyAuthorized(request)
     }
 
     public func authorize(_ request: AgentToolAuthorizationRequest) async -> Bool {
-        await authorizationOutcome(for: request).isApproved
+        await consentAuthorizer.authorize(request)
     }
 
     /// Authorizes a request without ever attempting to acquire terminal input.
@@ -95,91 +76,23 @@ public actor LocalExecPermissionAuthorizer {
     /// request has no operator available to answer a consent dialog. Such a
     /// request is therefore denied with an actionable diagnostic rather than
     /// falling through to `/dev/tty`.
-    public func authorizeNonInteractively(_ request: AgentToolAuthorizationRequest) -> Bool {
-        guard Self.gatedToolNames.contains(request.toolName) else {
-            return true
-        }
-
-        loadPersistedAllowedCommandsIfNeeded()
-        let cacheKeys = permissionCacheKeys(for: request)
-        guard cacheKeys.allSatisfy(alwaysAllowedKeys.contains) else {
-            AgentOutput.standardError.writeString(
-                Self.nonInteractiveConsentMessage(for: request)
-            )
-            return false
-        }
-        return true
+    public func authorizeNonInteractively(
+        _ request: AgentToolAuthorizationRequest
+    ) async -> Bool {
+        await consentAuthorizer.nonInteractiveOutcome(for: request).isApproved
     }
 
     func authorizationOutcome(
         for request: AgentToolAuthorizationRequest
     ) async -> AuthorizationOutcome {
-        guard Self.gatedToolNames.contains(request.toolName) else {
-            return .allowedOnce
-        }
-
-        // Consent is presented on the terminal for every platform. SSH sessions
-        // (including into a remote macOS host) expose a pseudo-tty, so the
-        // prompt reaches the operator on all platforms.
-        loadPersistedAllowedCommandsIfNeeded()
-        let cacheKeys = permissionCacheKeys(for: request)
-        if cacheKeys.allSatisfy(alwaysAllowedKeys.contains) {
-            return .allowedAlways
-        }
-
-        // Actor isolation alone does not serialize this method across
-        // `presentDialog`: the actor is re-entrant while terminal input is
-        // awaited. Explicitly queue dialogs so concurrent tool calls can never
-        // install multiple readers on the same TTY or fight over panel focus.
-        guard await acquireDialogSlot() else {
-            return Task.isCancelled ? .cancelled : .unavailable
-        }
-        defer { releaseDialogSlot() }
-        guard !Task.isCancelled else {
-            return .cancelled
-        }
-
-        // A request ahead of us may have selected Always while this request was
-        // queued, so avoid presenting a now-redundant dialog.
-        if cacheKeys.allSatisfy(alwaysAllowedKeys.contains) {
-            return .allowedAlways
-        }
-
-        guard let decision = await presentDialog(for: request) else {
-            return Task.isCancelled ? .cancelled : .unavailable
-        }
-        guard !Task.isCancelled else {
-            return .cancelled
-        }
-
-        switch decision {
-        case .allowOnce:
-            return .allowedOnce
-        case .allowAlways:
-            alwaysAllowedKeys.formUnion(cacheKeys)
-            // Only shell command identities are persisted across sessions;
-            // destructive tool approvals live for the current process only.
-            if request.toolName == "local.exec" {
-                Self.persistAllowedCommand(request.command)
-            }
-            return .allowedAlways
-        case .deny:
-            return .denied
-        }
+        await consentAuthorizer.authorizationOutcome(for: request)
     }
 
     /// Imports an "always" decision made on another consent surface into the
     /// terminal authorizer's session cache. This keeps later local and Telegram
     /// turns consistent even if Telegram is disabled after the decision.
-    func recordAlwaysAuthorization(for request: AgentToolAuthorizationRequest) {
-        guard Self.gatedToolNames.contains(request.toolName) else {
-            return
-        }
-        loadPersistedAllowedCommandsIfNeeded()
-        alwaysAllowedKeys.formUnion(permissionCacheKeys(for: request))
-        if request.toolName == "local.exec" {
-            Self.persistAllowedCommand(request.command)
-        }
+    func recordAlwaysAuthorization(for request: AgentToolAuthorizationRequest) async {
+        await consentAuthorizer.recordAlwaysDecision(for: request)
     }
 
     static func commandPermissionIdentities(for command: String) -> [String] {
@@ -223,19 +136,6 @@ public actor LocalExecPermissionAuthorizer {
         persistAllowedCommandIdentities(commandIdentities)
     }
 
-    private func permissionCacheKeys(for request: AgentToolAuthorizationRequest) -> [String] {
-        let identities: [String]
-        if request.toolName == "local.exec" {
-            let parsedIdentities = Self.localExecPermissionCacheIdentities(for: request.command)
-            identities = parsedIdentities.isEmpty ? [request.command] : parsedIdentities
-        } else {
-            identities = [request.command]
-        }
-        return identities.map {
-            Self.permissionCacheKey(toolName: request.toolName, identity: $0)
-        }
-    }
-
     static func localExecPermissionCacheIdentities(for command: String) -> [String] {
         persistedCommandPermissionIdentities(for: command).map { identity in
             guard LocalExecCommandParser.isNonPersistableIdentity(identity) else {
@@ -276,82 +176,12 @@ public actor LocalExecPermissionAuthorizer {
         }.joined()
     }
 
-    private func loadPersistedAllowedCommandsIfNeeded() {
-        guard !didLoadPersistedAllowedCommands else {
-            return
-        }
-        didLoadPersistedAllowedCommands = true
-        guard let permissions = Self.persistedPermissions() else {
-            return
-        }
-        alwaysAllowedKeys.formUnion(
-            permissions.localExecAllowedCommands.map {
-                Self.permissionCacheKey(toolName: "local.exec", identity: $0)
-            }
-        )
-    }
-
     private static func persistAllowedCommandIdentities(_ commandIdentities: [String]) {
         do {
             _ = try AgentPermissionsManifestStore
                 .appendingLocalExecAllowedCommandIdentities(commandIdentities)
         } catch {
             return
-        }
-    }
-
-    private func acquireDialogSlot() async -> Bool {
-        guard !Task.isCancelled else {
-            return false
-        }
-        guard isDialogActive else {
-            isDialogActive = true
-            return true
-        }
-
-        let waiterID = UUID()
-        let acquired = await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                if Task.isCancelled || cancelledDialogWaiterIDs.remove(waiterID) != nil {
-                    continuation.resume(returning: false)
-                } else {
-                    dialogWaiters.append(
-                        DialogWaiter(id: waiterID, continuation: continuation)
-                    )
-                }
-            }
-        } onCancel: {
-            Task(name: "local.exec permission dialog cancellation") {
-                await self.cancelDialogWaiter(id: waiterID)
-            }
-        }
-
-        guard acquired, !Task.isCancelled else {
-            cancelledDialogWaiterIDs.remove(waiterID)
-            if acquired {
-                // Ownership may already have been handed to this waiter just as
-                // it was cancelled; pass the slot on instead of stranding it.
-                releaseDialogSlot()
-            }
-            return false
-        }
-        return true
-    }
-
-    private func releaseDialogSlot() {
-        guard !dialogWaiters.isEmpty else {
-            isDialogActive = false
-            return
-        }
-        dialogWaiters.removeFirst().continuation.resume(returning: true)
-    }
-
-    private func cancelDialogWaiter(id: UUID) {
-        if let index = dialogWaiters.firstIndex(where: { $0.id == id }) {
-            dialogWaiters.remove(at: index).continuation.resume(returning: false)
-        } else {
-            // Cancellation can race ahead of continuation registration.
-            cancelledDialogWaiterIDs.insert(id)
         }
     }
 

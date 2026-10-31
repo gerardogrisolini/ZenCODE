@@ -185,7 +185,7 @@ extension ACPStandardPresentationTests {
             if let message = try? JSONDecoder().decode(JSONValue.self, from: data) { continuation.yield(message) }
         }
         let broker = ACPPermissionBroker(writer: writer)
-        let request = AgentToolAuthorizationRequest(sessionID: "child", toolCallID: "call", toolName: "custom.exec",
+        let request = AgentToolAuthorizationRequest(sessionID: "child", toolCallID: "call", toolName: "git.push",
             title: "Execute", kind: "execute", command: "command", workingDirectory: "/tmp",
             delegatedIdentity: .init(agentID: "a", rootSessionID: "root"))
         let authorization = Task { await broker.authorize(request) }
@@ -206,7 +206,7 @@ extension ACPStandardPresentationTests {
             if let message = try? JSONDecoder().decode(JSONValue.self, from: data) { continuation.yield(message) }
         }
         let broker = ACPPermissionBroker(writer: writer)
-        let request = AgentToolAuthorizationRequest(sessionID: "child", toolCallID: "call", toolName: "custom.exec",
+        let request = AgentToolAuthorizationRequest(sessionID: "child", toolCallID: "call", toolName: "git.push",
             title: "Execute", kind: "execute", command: "command", workingDirectory: "/tmp",
             delegatedIdentity: .init(agentID: "a", rootSessionID: "root"))
         let authorization = Task { await broker.authorize(request) }
@@ -253,7 +253,7 @@ extension ACPStandardPresentationTests {
             if let message = try? JSONDecoder().decode(JSONValue.self, from: data) { continuation.yield(message) }
         }
         let broker = ACPPermissionBroker(writer: writer)
-        let request = AgentToolAuthorizationRequest(sessionID: "child", toolCallID: "call", toolName: "custom.exec",
+        let request = AgentToolAuthorizationRequest(sessionID: "child", toolCallID: "call", toolName: "git.push",
             title: "Execute", kind: "execute", command: "command", workingDirectory: "/tmp",
             delegatedIdentity: .init(agentID: "agent", rootSessionID: "root"))
         var iterator = stream.makeAsyncIterator()

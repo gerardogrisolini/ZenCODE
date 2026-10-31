@@ -10,6 +10,28 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- The terminal UI, ACP clients such as Xcode, and headless runs (`zen -p`,
+  including `--jsonl`) now share one chat-session controller: the same plan,
+  goal, file-change, and tool-consent handling runs in every channel, as the
+  base for further interfaces. Headless output and the JSONL records are
+  unchanged.
+
+### Changed
+
+- ACP: a turn that changes files now ends with its file-change summary
+  (`🪬 Summary: …` and one line per file) as a final message, before the turn
+  completes.
+- Terminal: "Always" approvals of destructive tools other than `local.exec`
+  (`local.delete`, `git.push`, `git.restore`, and the gated `desktop.run`
+  actions) now last for the current session instead of the whole process.
+  `local.exec` approvals are still saved and valid across sessions.
+- Terminal `/review` turns now give the coordinator `tasks.create`,
+  `tasks.list`, `tasks.get`, and `tasks.update`, which the review prompt asks
+  for, as ACP already did. ACP turns now get the plan task tools whenever an
+  approved plan is open and keep its progress in sync, as the terminal does.
+
 ### Fixed
 
 - In ACP clients such as Xcode, only `local.exec` is shown as a "Terminal

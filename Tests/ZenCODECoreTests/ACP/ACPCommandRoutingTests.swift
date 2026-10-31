@@ -838,21 +838,26 @@ struct ACPCommandRoutingTests {
 
     @Test
     func legacyACPWorkflowSignalUsesOnlyTheFinalAssistantBlockAfterTools() async {
-        let questionThenSummary = ACPAssistantBlockCollector()
-        await questionThenSummary.append("Workflow question\nWhich surface?")
-        await questionThenSummary.finishBlock()
-        await questionThenSummary.append("Summary: task list refreshed.")
+        // ACP turns run through the shared chat controller, whose transcript
+        // splits coordinator content into blocks at every tool call.
+        let toolCall = DirectAgentToolCall(
+            id: "list", name: "tasks.list", argumentsObject: [:], argumentsJSON: "{}"
+        )
+        let questionThenSummary = ChatTranscriptTurn(prompt: "/goal Ship it", attachments: [])
+        await questionThenSummary.appendAssistantContent("Workflow question\nWhich surface?")
+        await questionThenSummary.appendToolCallStarted(toolCall)
+        await questionThenSummary.appendAssistantContent("Summary: task list refreshed.")
 
         var state = WorkflowCommandRuntimeState(goal: "Ship it", graphID: "workflow_test")
-        let ignoredSummary = state.recordCoordinatorOutput(await questionThenSummary.lastBlock())
+        let ignoredSummary = state.recordCoordinatorOutput(await questionThenSummary.lastAssistantContent())
         #expect(!ignoredSummary)
         #expect(!state.isAwaitingReply)
 
-        let progressThenQuestion = ACPAssistantBlockCollector()
-        await progressThenQuestion.append("Progress: task list refreshed.")
-        await progressThenQuestion.finishBlock()
-        await progressThenQuestion.append("Workflow question\nWhich surface?")
-        let recordedQuestion = state.recordCoordinatorOutput(await progressThenQuestion.lastBlock())
+        let progressThenQuestion = ChatTranscriptTurn(prompt: "/goal Ship it", attachments: [])
+        await progressThenQuestion.appendAssistantContent("Progress: task list refreshed.")
+        await progressThenQuestion.appendToolCallStarted(toolCall)
+        await progressThenQuestion.appendAssistantContent("Workflow question\nWhich surface?")
+        let recordedQuestion = state.recordCoordinatorOutput(await progressThenQuestion.lastAssistantContent())
         #expect(recordedQuestion)
         #expect(state.isAwaitingReply)
     }
@@ -877,14 +882,15 @@ struct ACPCommandRoutingTests {
             ]
         )
 
-        let promptID = UUID()
-        await bridge.reserveWorkflowPromptForTesting(sessionID: sessionID, promptID: promptID)
-        await bridge.handleFailedACPWorkflowTurn(
+        // The session controller handles the failed turn while that turn is
+        // still the current one.
+        let controller = try #require(await bridge.chatSessionControllerForTesting(sessionID: sessionID))
+        let token = await controller.beginTurnToken()
+        await controller.handleFailedWorkflowTurn(
             graphID: graphID,
             reason: "the turn was cancelled",
-            sessionID: sessionID,
-            epoch: await bridge.sessionEpochForTesting(sessionID: sessionID),
-            promptID: promptID
+            token: token,
+            turnSessionID: sessionID
         )
 
         let graph = try #require(try await bridge.sessionRunner.taskGraphSnapshot(
@@ -933,10 +939,11 @@ struct ACPCommandRoutingTests {
             sessionID: fixture.sessionID, id: "workflow-stale", source: .workflow, state: .active,
             tasks: [], originalGoal: "Keep this goal"
         )
-        await fixture.bridge.reserveWorkflowPromptForTesting(sessionID: fixture.sessionID, promptID: UUID())
-        await fixture.bridge.handleFailedACPWorkflowTurn(
-            graphID: graph.id, reason: "stale", sessionID: fixture.sessionID,
-            epoch: await fixture.bridge.sessionEpochForTesting(sessionID: fixture.sessionID), promptID: UUID()
+        // A newer turn owns the controller: the stale turn's failure is fenced.
+        let controller = try #require(await fixture.bridge.chatSessionControllerForTesting(sessionID: fixture.sessionID))
+        _ = await controller.beginTurnToken()
+        await controller.handleFailedWorkflowTurn(
+            graphID: graph.id, reason: "stale", token: UUID(), turnSessionID: fixture.sessionID
         )
         #expect(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID) == graph)
         #expect(await fixture.bridge.workflowStateForTesting(sessionID: fixture.sessionID) == nil)

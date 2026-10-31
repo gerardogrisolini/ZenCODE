@@ -53,18 +53,38 @@ public actor ZenCODEACPBridge {
         /// prevents a prompt and a configuration change (or two configuration
         /// changes) from both observing the session as idle.
         public var operationState: SessionOperationState
+        /// The session's shared chat controller: it runs the prompt turns and
+        /// owns the `/plan` and `/goal` command state of this incarnation. A
+        /// same-epoch reconstruction keeps it; a new epoch gets a fresh one.
+        let controller: ChatSessionController
         /// Completed plan state is runtime session state; the unfinished
         /// clarification below is even more deliberately ephemeral and is never
         /// represented by ACP resume history or a task checkpoint.
-        var activePlan: TerminalSessionPlan?
-        var planBrainstorming: PlanningCommandRuntimeState?
+        ///
+        /// These forward to the controller's lock-protected command state, so a
+        /// fenced `updateLiveSession`/`updateReservedPromptSession` closure still
+        /// checks and writes in one synchronous step.
+        var activePlan: TerminalSessionPlan? {
+            get { controller.commandState.activePlan }
+            nonmutating set { controller.stateStore.withLock { $0.commandState.activePlan = newValue } }
+        }
+        var planBrainstorming: PlanningCommandRuntimeState? {
+            get { controller.commandState.planBrainstorming }
+            nonmutating set { controller.stateStore.withLock { $0.commandState.planBrainstorming = newValue } }
+        }
         /// Transient approval handshake; it is never represented by ACP resume
         /// history or a task checkpoint.
-        var pendingPlanApprovalPlanID: String?
+        var pendingPlanApprovalPlanID: String? {
+            get { controller.commandState.pendingPlanApprovalPlanID }
+            nonmutating set { controller.stateStore.withLock { $0.commandState.pendingPlanApprovalPlanID = newValue } }
+        }
         /// Ephemeral `/goal` continuation state, armed only by the explicit
         /// `Workflow question` block or by an interrupted turn that preserved a
         /// non-empty graph. It is never persisted or replayed.
-        var workflowContinuation: WorkflowCommandRuntimeState?
+        var workflowContinuation: WorkflowCommandRuntimeState? {
+            get { controller.commandState.activeWorkflow }
+            nonmutating set { controller.stateStore.withLock { $0.commandState.activeWorkflow = newValue } }
+        }
     }
 
     public struct PromptCompletion: Sendable {
@@ -180,6 +200,9 @@ public actor ZenCODEACPBridge {
         let tasklessObservers = sessions.values.compactMap(\.tasklessObserver)
         for observer in tasklessObservers { observer.cancel() }
         for sessionID in sessionIDs {
+            // Fence the controller first: the cancelled turn must not write
+            // command state back while it unwinds.
+            sessions[sessionID]?.controller.cancelActiveTurn()
             sessions[sessionID]?.activePromptTask?.cancel()
             sessions[sessionID]?.activePromptTask = nil
             sessions[sessionID]?.activePromptID = nil

@@ -114,36 +114,9 @@ extension TerminalChat {
         graphID: String,
         coordinatorMessage: String?
     ) async {
-        guard var workflow = activeWorkflow, workflow.graphID == graphID else { return }
-        guard let graph = await currentWorkflowGraph(), graph.id == graphID else {
-            activeWorkflow = nil
-            return
-        }
-        let didArm = workflow.recordCoordinatorOutput(coordinatorMessage, graph: graph)
-        activeWorkflow = workflow
-        guard didArm else {
-            // Truthful notice: the graph survives, but nothing is waiting for a
-            // reply, so the next message is an ordinary chat message.
-            await writeSystemMessage(
-                Self.workflowOpenWithoutQuestionMessage(
-                    graphID: graph.id,
-                    pendingTaskCount: Self.openTaskCount(in: graph)
-                )
-            )
-            return
-        }
-        if graph.workflow?.state == .blocked {
-            await writeSystemMessage(
-                "Workflow \"\(graph.id)\" is blocked: \(graph.workflow?.message ?? "")\n"
-                    + "Your next message resumes this same workflow; use /tasks clear to stop it.\n"
-            )
-            return
-        }
-        await writeSystemMessage(
-            Self.workflowStillOpenMessage(
-                graphID: graph.id,
-                pendingTaskCount: Self.openTaskCount(in: graph)
-            )
+        await chatSession.recordWorkflowTurnOutcome(
+            graphID: graphID,
+            coordinatorMessage: coordinatorMessage
         )
     }
 
@@ -153,42 +126,12 @@ extension TerminalChat {
     /// the objective even before delegation. Structured pauses take precedence
     /// over the transient failure signal.
     func handleFailedWorkflowTurn(graphID: String, reason: String) async {
-        guard let graph = await currentWorkflowGraph(), graph.id == graphID else {
-            if activeWorkflow?.graphID == graphID {
-                activeWorkflow = nil
-            }
-            return
-        }
-        guard graph.workflow != nil || !graph.tasks.isEmpty else {
-            _ = try? await sessionRunner.removeTaskGraph(id: graphID, sessionID: sessionID)
-            if activeWorkflow?.graphID == graphID {
-                activeWorkflow = nil
-            }
-            return
-        }
-        var workflow = activeWorkflow?.graphID == graphID
-            ? activeWorkflow!
-            : WorkflowCommandRuntimeState(goal: graph.workflow?.originalGoal ?? "", graphID: graphID)
-        if !workflow.recordCoordinatorOutput(nil, graph: graph) {
-            workflow.armForRecoverableFailure(reason: reason)
-        }
-        activeWorkflow = workflow
-        await writeSystemMessage(
-            Self.workflowRecoverableFailureMessage(
-                graphID: graphID,
-                pendingTaskCount: Self.openTaskCount(in: graph)
-            )
-        )
+        await chatSession.handleFailedWorkflowTurn(graphID: graphID, reason: reason)
     }
 
     /// The session's current task graph when it is an unfinished workflow graph.
     private func currentWorkflowGraph() async -> TaskGraphSnapshot? {
-        guard let graph = try? await sessionRunner.taskGraphSnapshot(sessionID: sessionID),
-              graph.source.isWorkflow,
-              !graph.state.isTerminal else {
-            return nil
-        }
-        return graph
+        await chatSession.currentWorkflowGraph(sessionID: sessionID)
     }
 
     nonisolated static func openTaskCount(in graph: TaskGraphSnapshot) -> Int {

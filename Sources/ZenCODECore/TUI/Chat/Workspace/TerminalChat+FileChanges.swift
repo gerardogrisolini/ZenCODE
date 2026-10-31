@@ -18,31 +18,11 @@ extension TerminalChat {
         case changedLines(contextLines: Int = 3)
     }
 
-    @TerminalChatActor
-    final class FileArtifactTurnContext {
-        let id: UUID
-        let sessionID: String
-        let history: SessionFileArtifactHistory
-        let coordinator: TurnFileChangeCoordinator?
-        var pendingPublication: Task<Void, Never>?
-        var acceptsPublications = true
-
-        init(id: UUID, sessionID: String, history: SessionFileArtifactHistory, coordinator: TurnFileChangeCoordinator?) {
-            self.id = id
-            self.sessionID = sessionID
-            self.history = history
-            self.coordinator = coordinator
-        }
-    }
+    /// Compatibility name of the controller's live artifact turn.
+    typealias FileArtifactTurnContext = ChatFileArtifactTurn
 
     func beginFileArtifactTurn(coordinator: TurnFileChangeCoordinator? = nil) async -> FileArtifactTurnContext? {
-        let observedSessionID = sessionID
-        let history = fileArtifactHistory
-        guard let id = await history.beginTurn(sessionID: observedSessionID),
-              sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
-        let context = FileArtifactTurnContext(id: id, sessionID: observedSessionID, history: history, coordinator: coordinator)
-        activeFileArtifactTurn = context
-        return context
+        await chatSession.beginFileArtifactTurn(coordinator: coordinator)
     }
 
     func publishLiveFileArtifacts(
@@ -51,57 +31,17 @@ extension TerminalChat {
         agentID: String? = nil,
         context: FileArtifactTurnContext?
     ) async {
-        guard let context, context.acceptsPublications, sessionID == context.sessionID,
-              fileArtifactHistory === context.history,
-              activeFileArtifactTurn?.id == context.id else { return }
-        let previous = context.pendingPublication
-        let publication = Task(name: "ZenCODE.TUI.live-artifact-publication") { @TerminalChatActor [weak self] in
-            await previous?.value
-            await self?.publishCompletedFileArtifacts(result, callID: callID, agentID: agentID, context: context)
-        }
-        context.pendingPublication = publication
-        await publication.value
-    }
-
-    private func publishCompletedFileArtifacts(
-        _ result: DirectAgentToolResult, callID: String, agentID: String?, context: FileArtifactTurnContext
-    ) async {
-        guard sessionID == context.sessionID, fileArtifactHistory === context.history,
-              activeFileArtifactTurn?.id == context.id else { return }
-        var turns: [SessionFileArtifactHistory.Turn] = []
-        if let turn = await context.history.recordLive(
-            result.fileChanges, agentID: agentID, callID: callID,
-            turnID: context.id, workingDirectory: configuration.workingDirectory
-        ) { turns.append(turn) }
-        if let summary = await context.coordinator?.collectLiveSummary(matching: result.fileChanges),
-           let turn = await context.history.recordLiveSummary(
-               summary, turnID: context.id, workingDirectory: configuration.workingDirectory
-           ) {
-            // Print each file once per completion: the workspace checkpoint
-            // replaces this completion's direct artifact for the same path,
-            // even when their diffs differ. Both recordings stay intact.
-            let checkpointPaths = Set(turn.artifacts.map(\.absolutePath))
-            turns = turns.compactMap { liveTurn in
-                let artifacts = liveTurn.artifacts.filter { !checkpointPaths.contains($0.absolutePath) }
-                return artifacts.isEmpty ? nil : .init(number: liveTurn.number, artifacts: artifacts)
-            }
-            turns.append(turn)
-        }
-        guard sessionID == context.sessionID, fileArtifactHistory === context.history else { return }
-        guard !turns.isEmpty else { return }
-        await writeFileArtifacts(
-            turns,
-            includeHistoryHeadings: false,
-            preservingStreamingContext: true,
-            replacingSubAgentOverviewFor: agentID == nil ? nil : context
+        await chatSession.publishLiveFileArtifacts(
+            result,
+            callID: callID,
+            agentID: agentID,
+            context: context
         )
     }
 
     /// Replacing the actor also fences restores that reuse the same session ID.
     func resetFileArtifactState() {
-        lastFileChangeSummary = nil
-        activeFileArtifactTurn = nil
-        fileArtifactHistory = SessionFileArtifactHistory(sessionID: sessionID)
+        chatSession.resetFileArtifactState()
         didInstallSubAgentToolEventHandler = false
     }
 
@@ -122,47 +62,12 @@ extension TerminalChat {
         history expectedHistory: SessionFileArtifactHistory? = nil,
         turnID: UUID? = nil
     ) async -> TurnFileChangeSummary? {
-        let observedSessionID = expectedSessionID ?? sessionID
-        let history = expectedHistory ?? fileArtifactHistory
-        if let turnID, let context = activeFileArtifactTurn, context.id == turnID {
-            context.acceptsPublications = false
-            await context.pendingPublication?.value
-            guard sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
-            activeFileArtifactTurn = nil
-        }
-        let liveChanges: [OperationFileChange]
-        if let turnID {
-            liveChanges = await history.sealTurn(turnID)
-        } else {
-            liveChanges = []
-        }
-        let summary = await coordinator.publishSummaryIfNeeded(matching: liveChanges)
-        // A session switch may race the final reconciliation of an old turn.
-        // Keep both the latest-summary slot and the runtime artifact history
-        // fenced to the session that started the turn.
-        guard sessionID == observedSessionID, fileArtifactHistory === history else {
-            return nil
-        }
-        let unseen: SessionFileArtifactHistory.Turn?
-        if let turnID {
-            let matchingPaths = await coordinator.matchingLiveArtifactPaths()
-            unseen = await history.finishTurn(
-                turnID, summary: summary, matchingLivePaths: matchingPaths,
-                workingDirectory: configuration.workingDirectory
-            )
-        } else if let summary {
-            unseen = await history.append(
-                summary: summary, sessionID: observedSessionID,
-                workingDirectory: configuration.workingDirectory
-            )
-        } else {
-            unseen = nil
-        }
-        guard sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
-        if let summary { lastFileChangeSummary = summary }
-        if let unseen { await writeFileArtifacts([unseen], includeHistoryHeadings: false) }
-        guard sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
-        return summary
+        await chatSession.collectFileChangeSummaryIfNeeded(
+            from: coordinator,
+            sessionID: expectedSessionID,
+            history: expectedHistory,
+            turnID: turnID
+        )
     }
 
     public func handleArtifactsCommand() async {
@@ -174,7 +79,7 @@ extension TerminalChat {
         await writeFileArtifacts(turns, includeHistoryHeadings: true)
     }
 
-    private func writeFileArtifacts(
+    func writeFileArtifacts(
         _ turns: [SessionFileArtifactHistory.Turn],
         includeHistoryHeadings: Bool,
         preservingStreamingContext: Bool = false,
@@ -188,9 +93,7 @@ extension TerminalChat {
         )
         if let context {
             let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
-            guard sessionID == context.sessionID,
-                  fileArtifactHistory === context.history,
-                  activeFileArtifactTurn?.id == context.id else { return }
+            guard chatSession.isActiveFileArtifactTurn(context) else { return }
             // Only a newly recorded delegated artifact removes the pending
             // overview. The coordinator clears and inserts without suspension.
             await renderCoordinator.writeSubAgentFileArtifactMessage(
@@ -497,27 +400,13 @@ extension TerminalChat {
     public nonisolated static func renderFileChangeSummary(
         _ summary: TurnFileChangeSummary
     ) -> String {
-        let title = summary.fileCount == 1
-            ? "1 file"
-            : "\(summary.fileCount) files"
-        let undoText = summary.canUndo
-            ? "Use /undo to revert, /changes diff to show patches."
-            : "Undo is not available for this summary."
-
-        var lines = ["", "🪬 Summary: \(title)  +\(summary.totalAdditions) -\(summary.totalDeletions)"]
-        lines.append(contentsOf: summary.entries.map(Self.renderFileChangeEntry))
-        lines.append(undoText)
-        return lines.joined(separator: "\n") + "\n"
+        TurnFileChangeSummaryPresentation.text(summary, includesCommandHint: true)
     }
 
     public nonisolated static func renderFileChangeEntry(
         _ entry: TurnFileChangeSummary.Entry
     ) -> String {
-        if entry.isBinary {
-            return "  \(entry.status.rawValue) \(entry.path) (binary)"
-        }
-
-        return "  \(entry.status.rawValue) \(entry.path)  +\(entry.additions) -\(entry.deletions)"
+        TurnFileChangeSummaryPresentation.entry(entry)
     }
 
     public func writeFileChangeDiffs(_ summary: TurnFileChangeSummary) async {

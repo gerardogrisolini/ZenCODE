@@ -18,360 +18,79 @@ extension TerminalChat {
     func generateResponse(
         attempt: TerminalPromptAttempt
     ) async throws -> TerminalChatGenerationSuccess {
-        let turnSessionID = sessionID
-        let turnArtifactHistory = fileArtifactHistory
-        let fileChanges = TurnFileChangeCoordinator(baseDirectoryURL: configuration.workingDirectory)
-        await fileChanges.prepareForTurn()
-        let artifactTurn = await beginFileArtifactTurn(coordinator: fileChanges)
-        await installSubAgentToolEventHandlerIfNeeded()
-        let planPointCollector = TerminalPlanPointCollector()
-        let plannerTurnBaseline: PlannerTurnBaseline?
-        let planningCollectionID: UUID?
-        if case .plan = attempt.purpose {
-            let snapshots = await sessionRunner.subAgentSnapshots()
-            plannerTurnBaseline = PlannerTurnBaseline(
-                state: planBrainstorming,
-                snapshots: snapshots,
-                rootSessionID: turnSessionID
-            )
-            planningCollectionID = planBrainstorming?.collectionID
-        } else {
-            plannerTurnBaseline = nil
-            planningCollectionID = nil
-        }
         if attempt.locksResponseLanguage {
             lockResponseLanguageIfNeeded()
         }
-        let transcriptTurn = TerminalSessionTranscriptTurn(
-            prompt: attempt.prompt,
-            attachments: attempt.attachments
-        )
+        await installSubAgentToolEventHandlerIfNeeded()
         let assistantOutput = TerminalAssistantResponseBuffer()
+        activeAssistantOutput = assistantOutput
         await beginTelegramTurnProgressReporting(for: attempt.origin)
         // The turn's Telegram reporting ends in `finishPromptResult`, after
         // deferred overview renders and their mirrors have been drained: the
         // final remote message must not overtake sections the turn produced.
+        let request = ChatTurnRequest(
+            prompt: attempt.prompt,
+            attachments: attempt.attachments,
+            purpose: attempt.purpose,
+            sessionConfiguration: await turnSessionConfiguration(for: attempt.purpose),
+            authorizeTool: telegramToolAuthorizationHandler(for: attempt.origin),
+            // Evaluated for every request, so `/voice pause` or `/voice off`
+            // while a workflow continues turn by turn takes effect on the
+            // next prompt.
+            turnInstructionProvider: { @TerminalChatActor [weak self] in
+                await self?.voiceTurnInstruction()
+            }
+        )
         do {
-            var sessionConfiguration = await currentSessionConfiguration()
-            if case .plan = attempt.purpose {
-                var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
-                allowedToolNames.insert("todo.write")
-                sessionConfiguration = currentSessionConfiguration(
-                    allowedToolNames: allowedToolNames,
-                    includesActivePlanProgress: false
-                )
-            } else if case .normal = attempt.purpose,
-                      let activePlan,
-                      activePlan.isApproved,
-                      !activePlan.isCompleted {
-                var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
-                allowedToolNames.formUnion([
-                    "tasks.list", "tasks.get", "tasks.update", "tasks.retry", "tasks.cancel"
-                ])
-                sessionConfiguration = currentSessionConfiguration(
-                    allowedToolNames: allowedToolNames
-                )
-            } else if case .workflow = attempt.purpose {
-                var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
-                allowedToolNames.formUnion([
-                    "tasks.create", "tasks.list", "tasks.get",
-                    "tasks.update", "tasks.retry", "tasks.cancel"
-                ])
-                sessionConfiguration = currentSessionConfiguration(
-                    allowedToolNames: allowedToolNames
-                )
-            } else if case .review = attempt.purpose {
-                sessionConfiguration = currentSessionConfiguration(
-                    allowedToolNames: sessionConfiguration.allowedToolNames ?? [],
-                    includesActivePlanProgress: false
-                )
-            }
-            var generationPrompt = attempt.prompt
-            var generationAttachments = attempt.attachments
-            var response: DirectAgentResponse
-            while true {
-                // Evaluated for every iteration, so `/voice pause` or
-                // `/voice off` while a workflow continues turn by turn takes
-                // effect on the next prompt.
-                let turnInstruction = await voiceTurnInstruction()
-                response = try await sessionRunner.sendPrompt(
-                    configuration: sessionConfiguration,
-                    prompt: generationPrompt,
-                    attachments: generationAttachments,
-                    authorizeTool: telegramToolAuthorizationHandler(for: attempt.origin),
-                    onToolWillExecute: { toolCall in
-                    await fileChanges.captureBaselineIfNeeded(
-                        forAgentToolCall: toolCall
-                    )
-                },
-                toolProviders: [],
-                turnInstruction: turnInstruction,
-                onEvent: { @TerminalChatActor event in
-                    switch event {
-                    case .status, .diagnostic:
-                        break
-                    case let .thought(message):
-                        await transcriptTurn.appendThought(message)
-                        await self.writeThought(message)
-                    case let .modelLoaded(modelID):
-                        await self.printModelIfNeeded(modelID)
-                    case let .metrics(metrics):
-                        await self.writeMetricsStatus(metrics)
-                    case let .contextWindow(status):
-                        await self.writeContextWindowStatus(status)
-                    case let .subscriptionUsage(status):
-                        await self.writeSubscriptionUsageStatus(status)
-                    case let .content(delta):
-                        if case .plan = attempt.purpose {
-                            break
-                        }
-                        await transcriptTurn.appendAssistantContent(delta)
-                        await assistantOutput.append(delta)
-                        await self.appendTelegramRootResponseDelta(delta)
-                    case let .toolCallStarted(toolCall):
-                        // The text written before a tool call is a comment on
-                        // what is about to happen: besides showing it, offer
-                        // it to voice mode, which reads it aloud when it can.
-                        let commentary = await assistantOutput.takePending()
-                        await self.writeAssistantContent(commentary)
-                        self.offerVoiceCommentary(commentary)
-                        await transcriptTurn.appendToolCallStarted(toolCall)
-                        await self.writeToolCallStarted(toolCall)
-                        // The tool call closes the root response that preceded
-                        // it: publish that response, never the call itself.
-                        await self.publishTelegramRootResponseAtToolBoundary()
-                        await self.publishSubAgentOverviewIfChanged(
-                            relatedToolName: toolCall.name
-                        )
-                        if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
-                            self.startSubAgentOverviewRefreshIfNeeded()
-                        }
-                    case let .toolCallCompleted(toolCall, result):
-                        await transcriptTurn.appendToolCallCompleted(toolCall, result: result)
-                        await self.writeToolCallCompleted(toolCall, result: result)
-                        await self.publishLiveFileArtifacts(
-                            result, callID: toolCall.id, context: artifactTurn
-                        )
-                        let planPointUpdate = result.isFailure
-                            ? nil
-                            : Self.planPointUpdates(from: toolCall)
-                        switch attempt.purpose {
-                        case .plan:
-                            let request = DirectTodoTaskRuntime.normalizedToolRequest(
-                                for: toolCall
-                            )
-                            if request.name == "todo.write" {
-                                await planPointCollector.recordTodoWrite(planPointUpdate)
-                            }
-                        case .normal:
-                            if planPointUpdate != nil {
-                                if self.synchronizeActivePlanStatus(
-                                    from: toolCall,
-                                    result: result
-                                ), let plan = self.activePlan {
-                                    await planPointCollector.recordAutomaticCompletion(plan)
-                                }
-                                await self.synchronizeTaskGraphFromLegacyTodo(
-                                    toolCall: toolCall,
-                                    result: result
-                                )
-                            }
-                        case .review, .workflow:
-                            break
-                        }
-                        if !result.isFailure,
-                           DirectTaskToolAdapter.isTaskToolName(toolCall.name),
-                           let currentPlan = self.activePlan,
-                           let graph = try? await self.sessionRunner.taskGraphSnapshot(
-                               sessionID: self.sessionID,
-                               graphID: currentPlan.id
-                           ) {
-                            let wasCompleted = currentPlan.isCompleted
-                            let projected = Self.plan(currentPlan, applying: graph)
-                            self.activePlan = projected
-                            if !wasCompleted && projected.isCompleted {
-                                await planPointCollector.recordAutomaticCompletion(projected)
-                            }
-                        }
-                        if Self.isFileMutationTool(toolCall.name) {
-                            await self.refreshStatusBarGitStatusSummaryForFileMutation()
-                        }
-                        if await self.shouldPublishDeferredTaskGraphOverview() {
-                            await self.publishTaskGraphOverviewIfChanged(
-                                observedSessionID: self.sessionID
-                            )
-                        }
-                        await self.publishSubAgentOverviewIfChanged(
-                            relatedToolName: toolCall.name
-                        )
-                        if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
-                            await self.stopSubAgentOverviewRefresh()
-                        }
-                    case let .sessionSnapshot(snapshot):
-                        self.activeSessionCacheKey = snapshot.cacheKey
-                        self.activeSessionHistory = snapshot.history
-                    case .turnEnded:
-                        break
-                    }
-                }
-                )
-                if case let .workflow(originalGoal, graphID) = attempt.purpose {
-                    let graph = try? await sessionRunner.taskGraphSnapshot(
-                        sessionID: turnSessionID,
-                        graphID: graphID
-                    )
-                    let disposition = PlanningCommandKernel.workflowTurnDisposition(
-                        graph: graph,
-                        expectedGraphID: graphID,
-                        coordinatorMessage: await transcriptTurn.lastAssistantContent()
-                    )
-                    if case .continueAutomatically = disposition, let graph {
-                        await writeAssistantContent(await assistantOutput.takePending())
-                        await finishStreamingOutput()
-                        await transcriptTurn.flushAssistantMessage()
-                        generationPrompt = PlanningCommandKernel.workflowAutomaticContinuationPrompt(
-                            goal: originalGoal,
-                            graph: graph
-                        )
-                        generationAttachments = []
-                        continue
-                    }
-                }
-                break
-            }
-            if case .plan = attempt.purpose {
-                guard let plannerTurnBaseline,
-                      let plannerResult = PlanningCommandKernel.plannerResponse(
-                    parentResponse: response,
-                    snapshots: await sessionRunner.subAgentSnapshots(),
-                    baseline: plannerTurnBaseline,
-                    rootSessionID: turnSessionID
-                ) else {
-                    throw TerminalPlanGenerationError.plannerOutputUnavailable
-                }
-                guard let planningCollectionID,
-                      var brainstorming = planBrainstorming,
-                      brainstorming.collectionID == planningCollectionID else {
-                    throw CancellationError()
-                }
-                brainstorming.recordPlannerOutput(
-                    plannerResult.response.text,
-                    agentID: plannerResult.snapshot.id,
-                    revision: plannerResult.snapshot.latestOutputRevision
-                )
-                response = plannerResult.response
-                let plannerPoints: [TerminalSessionPlanPoint]
-                if PlanningCommandKernel.isPlannerQuestionResponse(response.text) {
-                    guard !(await planPointCollector.hasObservedTodoWrites()) else {
-                        throw TerminalPlanGenerationError.unexpectedStructuredTasksForQuestions
-                    }
-                    plannerPoints = []
-                } else {
-                    guard let finalPoints = await planPointCollector.finalPlanPoints(
-                        forFinalText: response.text
-                    ) else {
-                        throw TerminalPlanGenerationError.structuredTasksUnavailable
-                    }
-                    plannerPoints = finalPoints
-                }
-                let historyBeforePlannerCorrection = activeSessionHistory
-                let correctedPlanningHistory = PlanningCommandKernel.historyByReplacingCoordinatorOutput(
-                    activeSessionHistory,
-                    with: response.text
-                )
-                guard await sessionRunner.replaceSessionHistory(
-                    id: turnSessionID,
-                    history: correctedPlanningHistory
-                ) else {
-                    throw TerminalPlanGenerationError.sessionHistoryUnavailable
-                }
-                guard sessionID == turnSessionID,
-                      let currentPlanningState = planBrainstorming,
-                      currentPlanningState.collectionID == planningCollectionID else {
-                    if let installed = await sessionRunner.snapshotSession(id: turnSessionID),
-                       installed.history == correctedPlanningHistory {
-                        _ = await sessionRunner.replaceSessionHistory(
-                            id: turnSessionID,
-                            history: historyBeforePlannerCorrection
-                        )
-                    }
-                    throw CancellationError()
-                }
-                activeSessionHistory = correctedPlanningHistory
-                if PlanningCommandKernel.isPlannerQuestionResponse(response.text) {
-                    planBrainstorming = brainstorming
-                } else {
-                    try await recordStructuredPlanIfNeeded(
-                        responseText: response.text,
-                        purpose: attempt.purpose,
-                        points: plannerPoints
-                    )
-                    planBrainstorming = nil
-                }
-                await transcriptTurn.appendAssistantContent(response.text)
-            }
+            let result = try await chatSession.runTurn(request)
             let finalAssistantContent: String
-            appendActiveSessionTranscript(
-                contentsOf: await transcriptTurn.messages(finalResponseText: response.text)
-            )
-            let fileChangeSummary = await collectFileChangeSummaryIfNeeded(
-                from: fileChanges, sessionID: turnSessionID,
-                history: turnArtifactHistory, turnID: artifactTurn?.id
-            )
-            await stopSubAgentOverviewRefresh()
-            await renderCoordinator.waitForOverviewMirrorsToDrain()
             if case .plan = attempt.purpose {
-                finalAssistantContent = response.text
+                finalAssistantContent = result.response.text
             } else {
-                finalAssistantContent = await assistantOutput.finalContent(fallback: response.text)
-                try await recordStructuredPlanIfNeeded(
-                    responseText: response.text,
-                    purpose: attempt.purpose,
-                    points: await planPointCollector.snapshot()
-                )
-            }
-            if case let .workflow(_, graphID) = attempt.purpose,
-               sessionID == turnSessionID {
-                await recordWorkflowTurnOutcome(
-                    graphID: graphID,
-                    coordinatorMessage: await transcriptTurn.lastAssistantContent()
+                finalAssistantContent = await assistantOutput.finalContent(
+                    fallback: result.response.text
                 )
             }
             return TerminalChatGenerationSuccess(
-                response: response,
+                response: result.response,
                 origin: attempt.origin,
-                fileChangeSummary: fileChangeSummary,
-                automaticallyCompletedPlan: await planPointCollector.automaticallyCompletedPlan(),
+                fileChangeSummary: result.fileChangeSummary,
+                automaticallyCompletedPlan: result.automaticallyCompletedPlan,
                 finalAssistantContent: finalAssistantContent
             )
-        } catch {
-            if let planningCollectionID {
-                await abandonPlanBrainstorming(
-                    expectedCollectionID: planningCollectionID
-                )
-            }
-            if case let .workflow(_, graphID) = attempt.purpose,
-               sessionID == turnSessionID {
-                await handleFailedWorkflowTurn(
-                    graphID: graphID,
-                    reason: error is CancellationError
-                        ? "the turn was cancelled"
-                        : error.localizedDescription
-                )
-            }
-            appendActiveSessionTranscript(contentsOf: await transcriptTurn.messages())
-            let fileChangeSummary = await collectFileChangeSummaryIfNeeded(
-                from: fileChanges, sessionID: turnSessionID,
-                history: turnArtifactHistory, turnID: artifactTurn?.id
-            )
-            await stopSubAgentOverviewRefresh()
-            await renderCoordinator.waitForOverviewMirrorsToDrain()
+        } catch let failure as ChatTurnFailure {
             await writeAssistantContent(await assistantOutput.takePending())
             throw TerminalChatGenerationRunError(
-                underlying: error,
-                fileChangeSummary: fileChangeSummary
+                underlying: failure.underlying,
+                fileChangeSummary: failure.fileChangeSummary
             )
         }
+    }
+
+    /// The configuration of one turn: the session grant plus the purpose's
+    /// coordinator tools, recomposed so the system prompt and the profile
+    /// tool policy see the final grant.
+    func turnSessionConfiguration(
+        for purpose: TerminalPromptPurpose
+    ) async -> AgentCoreSessionConfiguration {
+        let sessionConfiguration = await currentSessionConfiguration()
+        let additionalToolNames = chatSession.additionalToolNames(for: purpose)
+        let includesActivePlanProgress: Bool
+        switch purpose {
+        case .plan, .review:
+            includesActivePlanProgress = false
+        case .normal, .workflow:
+            includesActivePlanProgress = true
+        }
+        guard !additionalToolNames.isEmpty || !includesActivePlanProgress else {
+            return sessionConfiguration
+        }
+        var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
+        allowedToolNames.formUnion(additionalToolNames)
+        return currentSessionConfiguration(
+            allowedToolNames: allowedToolNames,
+            includesActivePlanProgress: includesActivePlanProgress
+        )
     }
 
     /// Records a structured plan (with task points) as the active plan **without**
@@ -388,24 +107,12 @@ extension TerminalChat {
         guard case let .plan(originalGoal) = purpose else {
             return false
         }
-        let consolidatedText = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !consolidatedText.isEmpty else {
-            return false
-        }
-        guard !points.isEmpty else {
-            throw TerminalPlanGenerationError.structuredTasksUnavailable
-        }
-
-        let planID = Self.planID(from: points)
-        activePlan = TerminalSessionPlan(
-            id: planID,
+        return try chatSession.recordStructuredPlan(
+            responseText: responseText,
             originalGoal: originalGoal,
-            consolidatedText: consolidatedText,
             createdAt: createdAt,
-            isApproved: false,
             points: points
         )
-        return true
     }
 
     nonisolated static func planID(from points: [TerminalSessionPlanPoint]) -> String {

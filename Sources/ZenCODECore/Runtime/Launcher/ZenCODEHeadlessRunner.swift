@@ -9,18 +9,14 @@ import Foundation
 
 /// Minimal lifecycle surface used by the headless turn executor. Production
 /// delegates to `AgentCoreSessionRunner`; tests can supply a controlled actor
-/// without replacing the CLI or weakening the real session composition.
-protocol ZenCODEHeadlessSessionRunning: Actor {
+/// without replacing the CLI or weakening the real session composition. The
+/// turn itself runs through the shared ``ChatSessionController``.
+protocol ZenCODEHeadlessSessionRunning: ChatSessionRuntime {
     /// Creates the session and installs its prompt-skill selection.
     func headlessCreateSession(
         configuration: AgentCoreSessionConfiguration,
         promptSkills: [PromptSkill]
     ) async throws
-    func headlessSendPrompt(
-        configuration: AgentCoreSessionConfiguration,
-        prompt: String,
-        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
-    ) async throws -> DirectAgentResponse
     func headlessCloseSession(id: String) async throws
     func headlessShutdown() async
 }
@@ -38,19 +34,6 @@ extension AgentCoreSessionRunner: ZenCODEHeadlessSessionRunning {
         await updatePromptSkillSelection(
             promptSkills,
             sessionID: configuration.sessionID
-        )
-    }
-
-    func headlessSendPrompt(
-        configuration: AgentCoreSessionConfiguration,
-        prompt: String,
-        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
-    ) async throws -> DirectAgentResponse {
-        try await sendPrompt(
-            configuration: configuration,
-            prompt: prompt,
-            attachments: [],
-            onEvent: onEvent
         )
     }
 
@@ -146,6 +129,7 @@ public enum ZenCODEHeadlessRunner {
             sessionRunner: sessionRunner,
             sessionConfiguration: session.configuration,
             promptSkills: session.promptSkills,
+            consentAuthorizer: permissionAuthorizer.consentAuthorizer,
             jsonlSink: jsonlSink,
             textSink: textSink
         )
@@ -195,6 +179,7 @@ public enum ZenCODEHeadlessRunner {
         sessionRunner: any ZenCODEHeadlessSessionRunning,
         sessionConfiguration: AgentCoreSessionConfiguration,
         promptSkills: [PromptSkill] = [],
+        consentAuthorizer: ChatToolConsentAuthorizer? = nil,
         jsonlSink: ZenCODEHeadlessJSONLWriter.Sink? = nil,
         textSink: TextSink? = nil
     ) async throws {
@@ -222,15 +207,33 @@ public enum ZenCODEHeadlessRunner {
             throw error
         }
 
+        let host = HeadlessInteractionHost()
+        let presenter: any ChatSessionPresenter = writer.map(HeadlessJSONLPresenter.init)
+            ?? HeadlessSilentPresenter()
+        let chatSession = ChatSessionController(
+            sessionID: sessionConfiguration.sessionID,
+            runtime: sessionRunner,
+            workingDirectory: configuration.workingDirectory,
+            presenter: presenter,
+            host: host,
+            authorizer: consentAuthorizer ?? ChatToolConsentAuthorizer(host: host),
+            retainsTranscript: false,
+            retainsFileArtifactHistory: false
+        )
         let response: DirectAgentResponse
         do {
-            response = try await sessionRunner.headlessSendPrompt(
-                configuration: sessionConfiguration,
-                prompt: prompt
-            ) { event in
-                if let writer {
-                    await writer.write(event: event)
-                }
+            do {
+                response = try await chatSession.runTurn(
+                    ChatTurnRequest(
+                        prompt: prompt,
+                        attachments: [],
+                        purpose: .normal,
+                        sessionConfiguration: sessionConfiguration
+                    )
+                ).response
+            } catch let failure as ChatTurnFailure {
+                // The JSONL error record classifies the runtime error itself.
+                throw failure.underlying
             }
             guard configuration.jsonl
                 ? !response.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -307,3 +310,40 @@ public enum ZenCODEHeadlessRunnerError: LocalizedError {
 /// Marker used only for public classification. The underlying teardown error is
 /// deliberately not retained or serialized.
 struct ZenCODEHeadlessTeardownError: Error {}
+
+/// Headless JSONL output of a chat turn: only the protocol-approved records
+/// (tool lifecycle and the turn outcome that classifies a failure). No other
+/// event reaches the public wire.
+struct HeadlessJSONLPresenter: ChatSessionPresenter {
+    let writer: ZenCODEHeadlessJSONLWriter
+
+    func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {
+        await writer.write(event: .toolCallStarted(toolCall))
+    }
+
+    func presentToolCallCompleted(
+        _ toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult
+    ) async {
+        await writer.write(event: .toolCallCompleted(toolCall, result))
+    }
+
+    func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async {
+        await writer.write(event: .turnEnded(outcome))
+    }
+}
+
+/// Plain-text headless output: only the final text, written by the runner.
+struct HeadlessSilentPresenter: ChatSessionPresenter {}
+
+/// The headless runner has no operator: it offers no interaction at all, so
+/// gated tools are refused instead of prompting.
+struct HeadlessInteractionHost: ChatInteractionHost {
+    var capabilities: ChatChannelCapabilities { [] }
+
+    func requestToolConsent(
+        _ request: AgentToolAuthorizationRequest
+    ) async -> ChatConsentDecision? {
+        nil
+    }
+}

@@ -32,14 +32,39 @@ public final class TerminalChat {
     public let interactiveReader = TerminalInteractiveLineReader()
     public let permissionAuthorizer: LocalExecPermissionAuthorizer
     public let featureRuntime: SwiftFeatureRuntime
-    public var sessionID = TerminalChat.newTerminalSessionID()
-    public var activeSessionCacheKey: String?
-    public var activeSessionHistory: [AgentRuntimeMessage] = []
-    public var activeSessionTranscript: [AgentRuntimeMessage] = [] {
-        didSet { activeSessionTranscriptCountedMessageCount = -1 }
+    /// Shared chat-session controller: turn pipeline, transcript, `/plan` and
+    /// `/goal` state, and file-change artifacts. The session properties below
+    /// forward to it on the same actor.
+    let chatSession: ChatSessionController
+    let chatSessionPresenter: TerminalChatSessionPresenter
+    let interactionHost: TerminalInteractionHost
+    /// Holds the current turn's assistant block until a tool boundary or the
+    /// turn end decides whether it is commentary or the answer.
+    var activeAssistantOutput: TerminalAssistantResponseBuffer?
+    public var sessionID: String {
+        get { chatSession.sessionID }
+        set { chatSession.sessionID = newValue }
     }
-    var activeSessionTranscriptRetainedByteCount = 0
-    var activeSessionTranscriptCountedMessageCount = 0
+    public var activeSessionCacheKey: String? {
+        get { chatSession.cacheKey }
+        set { chatSession.cacheKey = newValue }
+    }
+    public var activeSessionHistory: [AgentRuntimeMessage] {
+        get { chatSession.history }
+        set { chatSession.history = newValue }
+    }
+    public var activeSessionTranscript: [AgentRuntimeMessage] {
+        get { chatSession.transcript }
+        set { chatSession.transcript = newValue }
+    }
+    var activeSessionTranscriptRetainedByteCount: Int {
+        get { chatSession.transcriptRetainedByteCount }
+        set { chatSession.transcriptRetainedByteCount = newValue }
+    }
+    var activeSessionTranscriptCountedMessageCount: Int {
+        get { chatSession.transcriptCountedMessageCount }
+        set { chatSession.transcriptCountedMessageCount = newValue }
+    }
     public var activeSessionSystemPromptOverride: String?
     public var activeSessionDynamicContextOverride: String?
     public var activeResponseLanguageName: String?
@@ -77,24 +102,45 @@ public final class TerminalChat {
     public var selectedToolKeys = Set<String>()
     public var selectedSkillIDs = Set<String>()
     public var pendingAttachments: [AgentRuntimeAttachment] = []
-    public var lastFileChangeSummary: TurnFileChangeSummary?
+    public var lastFileChangeSummary: TurnFileChangeSummary? {
+        get { chatSession.lastFileChangeSummary }
+        set { chatSession.lastFileChangeSummary = newValue }
+    }
     /// Runtime-only artifact history. It is never serialized with a session.
-    var fileArtifactHistory = SessionFileArtifactHistory()
-    var activeFileArtifactTurn: FileArtifactTurnContext?
-    public var activePlan: TerminalSessionPlan?
+    var fileArtifactHistory: SessionFileArtifactHistory {
+        get { chatSession.fileArtifactHistory }
+        set { chatSession.fileArtifactHistory = newValue }
+    }
+    var activeFileArtifactTurn: FileArtifactTurnContext? {
+        get { chatSession.activeFileArtifactTurn }
+        set { chatSession.activeFileArtifactTurn = newValue }
+    }
+    public var activePlan: TerminalSessionPlan? {
+        get { chatSession.activePlan }
+        set { chatSession.activePlan = newValue }
+    }
     /// Ephemeral `/plan` clarification state. Never copy this into snapshots or
     /// persisted session models.
-    var planBrainstorming: TerminalPlanBrainstormingState?
+    var planBrainstorming: TerminalPlanBrainstormingState? {
+        get { chatSession.planBrainstorming }
+        set { chatSession.planBrainstorming = newValue }
+    }
     /// Ephemeral `/plan` approval state. It records only the plan being confirmed;
     /// the requested Goal itself is consumed immediately and never enters a
     /// checkpoint or persisted session model.
-    var pendingPlanApprovalPlanID: String?
+    var pendingPlanApprovalPlanID: String? {
+        get { chatSession.pendingPlanApprovalPlanID }
+        set { chatSession.pendingPlanApprovalPlanID = newValue }
+    }
     /// Ephemeral `/goal` workflow state used to continue the same workflow graph.
     /// It captures the next message only when an explicit signal armed it: the
     /// coordinator's `Workflow question` block, a graph resumed from a previous
     /// session, or an interrupted turn whose non-empty graph was preserved.
     /// Never copy this into snapshots or persisted session models.
-    var activeWorkflow: WorkflowCommandRuntimeState?
+    var activeWorkflow: WorkflowCommandRuntimeState? {
+        get { chatSession.activeWorkflow }
+        set { chatSession.activeWorkflow = newValue }
+    }
     /// Live voice loop of the interactive panel, started by `/voice on` with
     /// any agent: local dictation on macOS, sherpa-onnx programs on Linux.
     /// Transient: it lasts only for this TUI session and audio is never
@@ -372,6 +418,20 @@ public final class TerminalChat {
         )
         self.telegramSessionRouter = telegramRouter
         self.telegramRouteRuntimeState = TerminalTelegramRouteRuntimeState(router: telegramRouter)
+        let chatSessionPresenter = TerminalChatSessionPresenter()
+        let interactionHost = TerminalInteractionHost()
+        self.chatSessionPresenter = chatSessionPresenter
+        self.interactionHost = interactionHost
+        self.chatSession = ChatSessionController(
+            sessionID: Self.newTerminalSessionID(),
+            runtime: self.sessionRunner,
+            workingDirectory: configuration.workingDirectory,
+            presenter: chatSessionPresenter,
+            host: interactionHost,
+            authorizer: permissionAuthorizer.consentAuthorizer
+        )
+        chatSessionPresenter.chat = self
+        interactionHost.chat = self
     }
 
     deinit {

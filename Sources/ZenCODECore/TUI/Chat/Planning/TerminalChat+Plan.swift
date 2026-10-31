@@ -323,28 +323,10 @@ extension TerminalChat {
         closeAllPlanAuthors: Bool = false,
         expectedCollectionID: UUID? = nil
     ) async {
-        let state = planBrainstorming
-        if let expectedCollectionID,
-           state?.collectionID != expectedCollectionID {
-            return
-        }
-        planBrainstorming = nil
-        var agentIDs = Set<String>()
-        if let plannerAgentID = state?.plannerAgentID {
-            agentIDs.insert(plannerAgentID)
-        }
-        if closeAllPlanAuthors || (state != nil && agentIDs.isEmpty) {
-            let snapshots = await sessionRunner.subAgentSnapshots()
-            agentIDs.formUnion(
-                PlanningCommandKernel.plannerSnapshots(
-                    snapshots,
-                    rootSessionID: sessionID
-                ).map(\.id)
-            )
-        }
-        for agentID in agentIDs {
-            _ = await sessionRunner.closeSubAgent(id: agentID)
-        }
+        await chatSession.abandonPlanBrainstorming(
+            closeAllPlanAuthors: closeAllPlanAuthors,
+            expectedCollectionID: expectedCollectionID
+        )
     }
 
     nonisolated static let planMissingGoalMessage =
@@ -686,115 +668,14 @@ extension TerminalChat {
         from toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) -> Bool {
-        guard !result.isFailure,
-              var plan = activePlan,
-              plan.isApproved,
-              !plan.points.isEmpty,
-              let update = Self.planPointUpdates(from: toolCall) else {
-            return false
-        }
-        let wasCompleted = plan.isCompleted
-        let updatesByID = Dictionary(
-            update.points.map { ($0.id, $0.status) },
-            uniquingKeysWith: { _, latest in latest }
-        )
-        var didChange = false
-        for index in plan.points.indices {
-            guard let status = updatesByID[plan.points[index].id],
-                  plan.points[index].status != status else {
-                continue
-            }
-            plan.points[index].status = status
-            didChange = true
-        }
-        guard didChange else {
-            return false
-        }
-        activePlan = plan
-        return !wasCompleted && plan.isCompleted
+        chatSession.synchronizeActivePlanStatus(from: toolCall, result: result)
     }
 
     func synchronizeTaskGraphFromLegacyTodo(
         toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) async {
-        guard !result.isFailure,
-              let plan = activePlan,
-              plan.isApproved,
-              let update = Self.planPointUpdates(from: toolCall) else {
-            return
-        }
-
-        for point in update.points {
-            guard var view = try? await sessionRunner.taskOrchestrator.task(
-                sessionID: sessionID,
-                taskID: point.id,
-                graphID: plan.id
-            ) else { continue }
-            switch point.status {
-            case .pending:
-                if view.task.status == .failed || view.task.status == .blocked {
-                    view = (try? await sessionRunner.taskOrchestrator.retryTask(
-                        sessionID: sessionID,
-                        taskID: point.id,
-                        graphID: plan.id
-                    )) ?? view
-                }
-            case .inProgress:
-                if view.task.status == .pending {
-                    view = (try? await sessionRunner.taskOrchestrator.updateTask(
-                        sessionID: sessionID,
-                        taskID: point.id,
-                        graphID: plan.id,
-                        update: TaskUpdate(status: .inProgress)
-                    )) ?? view
-                }
-            case .completed:
-                if view.task.status == .pending {
-                    view = (try? await sessionRunner.taskOrchestrator.updateTask(
-                        sessionID: sessionID,
-                        taskID: point.id,
-                        graphID: plan.id,
-                        update: TaskUpdate(status: .inProgress)
-                    )) ?? view
-                }
-                if view.task.status == .inProgress {
-                    _ = try? await sessionRunner.taskOrchestrator.updateTask(
-                        sessionID: sessionID,
-                        taskID: point.id,
-                        graphID: plan.id,
-                        update: TaskUpdate(status: .completed)
-                    )
-                } else if view.task.status == .awaitingValidation {
-                    _ = try? await sessionRunner.taskOrchestrator.validateTaskResult(
-                        sessionID: sessionID,
-                        taskID: point.id,
-                        succeeded: true,
-                        evidence: [
-                            TaskEvidence(
-                                kind: "legacy_todo_bridge",
-                                summary: "Legacy plan progress reported completion."
-                            )
-                        ]
-                    )
-                }
-            case .blocked:
-                if view.task.status == .pending || view.task.status == .inProgress
-                    || view.task.status == .awaitingValidation {
-                    _ = try? await sessionRunner.taskOrchestrator.updateTask(
-                        sessionID: sessionID,
-                        taskID: point.id,
-                        graphID: plan.id,
-                        update: TaskUpdate(
-                            status: .blocked,
-                            statusReason: "legacy plan progress reported a blocker"
-                        )
-                    )
-                }
-            case .awaitingValidation, .failed, .cancelled:
-                break
-            }
-        }
+        await chatSession.synchronizeTaskGraphFromLegacyTodo(toolCall: toolCall, result: result)
     }
 
     /// Resolves the Planner profiles `/plan` may delegate to: every profile
@@ -825,30 +706,6 @@ extension TerminalChat {
             baseline: baseline,
             rootSessionID: nil
         )?.response
-    }
-}
-
-enum TerminalPlanGenerationError: LocalizedError {
-    case plannerOutputUnavailable
-    case sessionHistoryUnavailable
-    case structuredTasksUnavailable
-    case unexpectedStructuredTasksForQuestions
-
-    var errorDescription: String? {
-        switch self {
-        case .plannerOutputUnavailable:
-            return "The Planner agent did not produce fresh output for this planning turn. The current agent "
-                + "was not allowed to substitute its own plan; run /plan <goal> again."
-        case .sessionHistoryUnavailable:
-            return "The Planner produced a plan, but ZenCODE could not replace the current "
-                + "agent's response in the session history. The plan was not recorded."
-        case .structuredTasksUnavailable:
-            return "The Planner produced text but did not register a valid structured task list; "
-                + "the previous plan and task graph were left unchanged."
-        case .unexpectedStructuredTasksForQuestions:
-            return "The Planner asked clarification questions, but the coordinator also registered plan tasks; "
-                + "the previous plan and task graph were left unchanged."
-        }
     }
 }
 
