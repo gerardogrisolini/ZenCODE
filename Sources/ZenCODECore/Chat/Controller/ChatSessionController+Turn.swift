@@ -147,28 +147,27 @@ extension ChatSessionController {
                 )
             }
             let messages = await transcriptTurn.messages(finalResponseText: response.text)
-            if retainsTranscript, isCurrentTurn(token, sessionID: turnSessionID) {
-                appendTranscript(contentsOf: messages)
-            }
-            let fileChangeSummary = await collectFileChangeSummaryIfNeeded(
-                from: fileChanges, sessionID: turnSessionID,
-                history: turnArtifactHistory, turnID: artifactTurn?.id,
-                presenter: presenter
+            let fileChangeSummary = await finishTurn(
+                messages: messages,
+                token: token,
+                turnSessionID: turnSessionID,
+                fileChanges: fileChanges,
+                artifactHistory: turnArtifactHistory,
+                artifactTurnID: artifactTurn?.id,
+                presenter: presenter,
+                beforeSummary: {
+                    if case let .workflow(_, graphID) = purpose,
+                       isCurrentTurn(token, sessionID: turnSessionID) {
+                        await recordWorkflowTurnOutcome(
+                            graphID: graphID,
+                            coordinatorMessage: await transcriptTurn.lastAssistantContent(),
+                            token: token,
+                            turnSessionID: turnSessionID,
+                            presenter: presenter
+                        )
+                    }
+                }
             )
-            await presenter.turnWillFinish()
-            if case let .workflow(_, graphID) = purpose,
-               isCurrentTurn(token, sessionID: turnSessionID) {
-                await recordWorkflowTurnOutcome(
-                    graphID: graphID,
-                    coordinatorMessage: await transcriptTurn.lastAssistantContent(),
-                    token: token,
-                    turnSessionID: turnSessionID,
-                    presenter: presenter
-                )
-            }
-            if let fileChangeSummary {
-                await presenter.presentFileChangeSummary(fileChangeSummary)
-            }
             return ChatTurnResult(
                 response: response,
                 finalAssistantBlock: await transcriptTurn.lastAssistantContent(),
@@ -192,20 +191,47 @@ extension ChatSessionController {
                 )
             }
             let messages = await transcriptTurn.messages()
-            if retainsTranscript, isCurrentTurn(token, sessionID: turnSessionID) {
-                appendTranscript(contentsOf: messages)
-            }
-            let fileChangeSummary = await collectFileChangeSummaryIfNeeded(
-                from: fileChanges, sessionID: turnSessionID,
-                history: turnArtifactHistory, turnID: artifactTurn?.id,
+            let fileChangeSummary = await finishTurn(
+                messages: messages,
+                token: token,
+                turnSessionID: turnSessionID,
+                fileChanges: fileChanges,
+                artifactHistory: turnArtifactHistory,
+                artifactTurnID: artifactTurn?.id,
                 presenter: presenter
             )
-            await presenter.turnWillFinish()
-            if let fileChangeSummary {
-                await presenter.presentFileChangeSummary(fileChangeSummary)
-            }
             throw ChatTurnFailure(underlying: error, fileChangeSummary: fileChangeSummary)
         }
+    }
+
+    /// The end every turn shares, on success and on failure: appends
+    /// `messages` to the transcript while the turn is current, collects the
+    /// file-change summary, tells the presenter the turn will finish, runs
+    /// `beforeSummary`, and then presents the summary, which it returns.
+    private func finishTurn(
+        messages: [AgentRuntimeMessage],
+        token: UUID,
+        turnSessionID: String,
+        fileChanges: TurnFileChangeCoordinator,
+        artifactHistory: SessionFileArtifactHistory,
+        artifactTurnID: UUID?,
+        presenter: any ChatSessionPresenter,
+        beforeSummary: () async -> Void = {}
+    ) async -> TurnFileChangeSummary? {
+        if retainsTranscript, isCurrentTurn(token, sessionID: turnSessionID) {
+            appendTranscript(contentsOf: messages)
+        }
+        let fileChangeSummary = await collectFileChangeSummaryIfNeeded(
+            from: fileChanges, sessionID: turnSessionID,
+            history: artifactHistory, turnID: artifactTurnID,
+            presenter: presenter
+        )
+        await presenter.turnWillFinish()
+        await beforeSummary()
+        if let fileChangeSummary {
+            await presenter.presentFileChangeSummary(fileChangeSummary)
+        }
+        return fileChangeSummary
     }
 
     private func handleTurnEvent(_ event: DirectAgentEvent, turn: ChatTurnContext) async {

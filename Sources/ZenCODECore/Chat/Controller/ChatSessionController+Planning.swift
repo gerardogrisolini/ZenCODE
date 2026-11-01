@@ -30,7 +30,7 @@ extension ChatSessionController {
         ) else {
             return false
         }
-        commandState.activePlan = plan
+        stateStore.withLock { $0.commandState.activePlan = plan }
         return true
     }
 

@@ -400,10 +400,12 @@ struct ChatSessionControllerTests {
                 tasks: [],
                 originalGoal: goal
             )
-            harness.controller.commandState.activeWorkflow = WorkflowCommandRuntimeState(
-                goal: goal,
-                graphID: graph.id
-            )
+            harness.controller.stateStore.withLock {
+                $0.commandState.activeWorkflow = WorkflowCommandRuntimeState(
+                    goal: goal,
+                    graphID: graph.id
+                )
+            }
             let sessionID = harness.sessionID
             let question = "Which target should I use?"
             await harness.runtime.append { call in
@@ -543,6 +545,18 @@ struct ChatSessionControllerTests {
             #expect(first == .denied)
             #expect(second == .denied)
             #expect(await harness.host.requestCount == 1)
+        }
+    }
+
+    @Test
+    func nonInteractiveOutcomeHonorsAnAlwaysDecisionRecordedFromAnotherSurface() async throws {
+        try await withHarness { harness in
+            let request = gatedRequest(sessionID: harness.sessionID, toolCallID: "headless-always")
+
+            await harness.authorizer.recordAlwaysDecision(for: request)
+
+            #expect(await harness.authorizer.nonInteractiveOutcome(for: request).isApproved)
+            #expect(await harness.host.requestCount == 0)
         }
     }
 
@@ -732,10 +746,12 @@ struct ChatSessionControllerTests {
                 tasks: [],
                 originalGoal: goal
             )
-            harness.controller.commandState.activeWorkflow = WorkflowCommandRuntimeState(
-                goal: goal,
-                graphID: graph.id
-            )
+            harness.controller.stateStore.withLock {
+                $0.commandState.activeWorkflow = WorkflowCommandRuntimeState(
+                    goal: goal,
+                    graphID: graph.id
+                )
+            }
             let gate = TurnGate()
             await harness.runtime.append { call in
                 await call.onEvent(.content("Starting."))
@@ -779,10 +795,12 @@ struct ChatSessionControllerTests {
     func cancelActiveTurnArmsWorkflowRecoveryOnlyOnRequestAndKeepsAnExistingSignal() async throws {
         try await withHarness { harness in
             let controller = harness.controller
-            controller.commandState.activeWorkflow = WorkflowCommandRuntimeState(
-                goal: "Ship the chat controller",
-                graphID: "workflow_arming"
-            )
+            controller.stateStore.withLock {
+                $0.commandState.activeWorkflow = WorkflowCommandRuntimeState(
+                    goal: "Ship the chat controller",
+                    graphID: "workflow_arming"
+                )
+            }
 
             controller.cancelActiveTurn()
             #expect(controller.commandState.activeWorkflow?.isAwaitingReply == false)
@@ -794,7 +812,7 @@ struct ChatSessionControllerTests {
             // A workflow already waiting for the operator keeps its own signal.
             var resumed = WorkflowCommandRuntimeState(goal: "g", graphID: "workflow_arming")
             resumed.armForResumedGraph()
-            controller.commandState.activeWorkflow = resumed
+            controller.stateStore.withLock { $0.commandState.activeWorkflow = resumed }
             controller.cancelActiveTurn(armingWorkflowRecovery: true)
             #expect(controller.commandState.activeWorkflow == resumed)
         }
@@ -1129,7 +1147,7 @@ private func seedPlannerDiscussion(_ harness: ChatControllerHarness) async throw
     discussion.recordPlannerOutput(plannerQuestion, agentID: "plan-author-1", revision: 1)
     let didRecordReply = discussion.recordReply("All Apple platforms.")
     #expect(didRecordReply)
-    harness.controller.commandState.planBrainstorming = discussion
+    harness.controller.stateStore.withLock { $0.commandState.planBrainstorming = discussion }
     await harness.runtime.setPlannerSnapshots([
         plannerSnapshot(rootSessionID: harness.sessionID, revision: 1, output: plannerQuestion),
     ])
@@ -1138,7 +1156,7 @@ private func seedPlannerDiscussion(_ harness: ChatControllerHarness) async throw
 /// An approved plan with one pending point that `progressScript` completes.
 @ChatSessionActor
 private func seedApprovedPlan(_ harness: ChatControllerHarness) {
-    harness.controller.commandState.activePlan = TerminalSessionPlan(
+    let plan = TerminalSessionPlan(
         id: "plan-fence",
         originalGoal: "Finish the step",
         consolidatedText: "Do the thing.",
@@ -1151,6 +1169,7 @@ private func seedApprovedPlan(_ harness: ChatControllerHarness) {
             ),
         ]
     )
+    harness.controller.stateStore.withLock { $0.commandState.activePlan = plan }
 }
 
 @ChatSessionActor

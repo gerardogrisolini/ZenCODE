@@ -52,6 +52,12 @@ extension TelegramSessionCompanion {
     /// when neither decides, the call is denied. An origin without a linked
     /// chat cannot ask Telegram, so its call is denied.
     ///
+    /// A `/always` in the linked chat is also recorded in the controller's
+    /// authorizer (``ChatToolConsentAuthorizer/recordAlwaysDecision(for:)``),
+    /// as an *Always* given in the primary channel: it keeps covering later
+    /// turns of the session after ``detach()`` or a topic change, and a
+    /// `local.exec` approval is saved.
+    ///
     /// The primary channel is told, through
     /// ``TelegramCompanionChannel/presentCompanionNotice(_:channel:)``, that
     /// the permission is required and how the linked chat decided; the linked
@@ -151,6 +157,11 @@ extension TelegramSessionCompanion {
             )
             return approved
         case let .telegram(outcome):
+            if outcome == .allowedAlways {
+                // Like an Always given in the primary channel, so it keeps
+                // covering the session after the link or the topic changes.
+                await authorizer.recordAlwaysDecision(for: request)
+            }
             await presentTelegramPermissionOutcome(outcome, request: request)
             return outcome.isApproved
         case nil:

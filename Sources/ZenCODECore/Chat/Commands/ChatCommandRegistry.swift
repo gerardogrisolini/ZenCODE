@@ -101,15 +101,14 @@ public struct ChatCommandRegistry: Sendable {
 
     /// Composes the shared commands, in their order, with the channel's
     /// groups: each group follows the shared command named by `after`, and
-    /// groups with the same anchor keep their order.
+    /// groups with the same anchor keep their order. The descriptors of a
+    /// group whose `after` names no shared command follow every shared
+    /// command, in the order of the groups.
     public init(
         shared: [ChatCommandDescriptor],
         channel groups: [(after: String, descriptors: [ChatCommandDescriptor])] = []
     ) {
         let sharedCommands = Set(shared.map(\.command))
-        for group in groups where !sharedCommands.contains(group.after) {
-            preconditionFailure("ChatCommandRegistry: no shared command '\(group.after)' to place channel commands after.")
-        }
         var descriptors: [ChatCommandDescriptor] = []
         for descriptor in shared {
             descriptors.append(descriptor)
@@ -117,20 +116,23 @@ public struct ChatCommandRegistry: Sendable {
                 descriptors.append(contentsOf: group.descriptors)
             }
         }
+        for group in groups where !sharedCommands.contains(group.after) {
+            descriptors.append(contentsOf: group.descriptors)
+        }
         self.descriptors = descriptors
     }
 
     // MARK: - Lines
 
-    /// The command a line names: its first space-separated word, once the line
-    /// is trimmed, when it starts with a slash.
+    /// The command a line names: its first whitespace-separated word, once
+    /// the line is trimmed, when it starts with a slash.
     static func commandToken(from line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("/") else {
             return nil
         }
         return trimmed
-            .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            .split(maxSplits: 1, omittingEmptySubsequences: true, whereSeparator: \.isWhitespace)
             .first
             .map(String.init)
     }

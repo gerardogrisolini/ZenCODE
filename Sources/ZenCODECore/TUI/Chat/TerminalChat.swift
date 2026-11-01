@@ -61,10 +61,6 @@ public final class TerminalChat {
         get { chatSession.transcriptRetainedByteCount }
         set { chatSession.transcriptRetainedByteCount = newValue }
     }
-    var activeSessionTranscriptCountedMessageCount: Int {
-        get { chatSession.transcriptCountedMessageCount }
-        set { chatSession.transcriptCountedMessageCount = newValue }
-    }
     public var activeSessionSystemPromptOverride: String? {
         get { chatSession.savedSessionState.systemPromptOverride }
         set { chatSession.savedSessionState.systemPromptOverride = newValue }

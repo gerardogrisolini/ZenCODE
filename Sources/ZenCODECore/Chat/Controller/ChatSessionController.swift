@@ -64,10 +64,13 @@ public final class ChatSessionController {
     /// Detailed presentation/save transcript, bounded independently of the
     /// runtime context (see ``maximumTranscriptBytes``).
     public internal(set) var transcript: [AgentRuntimeMessage] = [] {
-        didSet { transcriptCountedMessageCount = -1 }
+        didSet { transcriptByteCountIsStale = true }
     }
     var transcriptRetainedByteCount = 0
-    var transcriptCountedMessageCount = 0
+    /// `true` once ``transcript`` changed after ``transcriptRetainedByteCount``
+    /// was last counted, so the next append counts it again. The empty initial
+    /// transcript is counted (0 bytes).
+    var transcriptByteCountIsStale = false
     /// Transient `/plan` and `/goal` state and the turn fence, shared with
     /// the channel under one lock.
     nonisolated let stateStore = ChatSessionStateStore()
@@ -244,33 +247,32 @@ public final class ChatSessionController {
     // MARK: - Command state shortcuts
 
     /// Transient `/plan` and `/goal` state. Never persisted except
-    /// ``ChatCommandState/activePlan``. Use ``ChatSessionStateStore/withLock(_:)``
-    /// for read-check-write sequences.
+    /// ``ChatCommandState/activePlan``. A snapshot: write it, and run every
+    /// read-check-write sequence, through ``ChatSessionStateStore/withLock(_:)``.
     nonisolated var commandState: ChatCommandState {
-        get { stateStore.commandState }
-        set { stateStore.commandState = newValue }
+        stateStore.commandState
     }
 
     /// The approved plan the session follows, if any. Unlike the rest of the
     /// command state, a channel may persist it with the session.
     public internal(set) var activePlan: TerminalSessionPlan? {
         get { commandState.activePlan }
-        set { commandState.activePlan = newValue }
+        set { stateStore.withLock { $0.commandState.activePlan = newValue } }
     }
 
     var planBrainstorming: PlanningCommandRuntimeState? {
         get { commandState.planBrainstorming }
-        set { commandState.planBrainstorming = newValue }
+        set { stateStore.withLock { $0.commandState.planBrainstorming = newValue } }
     }
 
     var pendingPlanApprovalPlanID: String? {
         get { commandState.pendingPlanApprovalPlanID }
-        set { commandState.pendingPlanApprovalPlanID = newValue }
+        set { stateStore.withLock { $0.commandState.pendingPlanApprovalPlanID = newValue } }
     }
 
     var activeWorkflow: WorkflowCommandRuntimeState? {
         get { commandState.activeWorkflow }
-        set { commandState.activeWorkflow = newValue }
+        set { stateStore.withLock { $0.commandState.activeWorkflow = newValue } }
     }
 
     /// Coordinator tools the purpose adds to the session grant, from the single
@@ -301,7 +303,20 @@ public final class ChatSessionController {
         _ body: (inout ChatCommandState) -> Void
     ) -> Bool {
         guard sessionID == turnSessionID else { return false }
-        return stateStore.withLock { state in
+        return commitCommandState(ifToken: token, body)
+    }
+
+    /// The fenced write every command-state commit goes through: runs `body`
+    /// on the command state while `token` is the turn token, in the same
+    /// locked step that checks it, and returns `false` (without running
+    /// `body`) otherwise. A `nil` token always runs `body`. It checks the
+    /// token only; callers that also fence on the session check it first.
+    @discardableResult
+    nonisolated func commitCommandState(
+        ifToken token: UUID?,
+        _ body: (inout ChatCommandState) -> Void
+    ) -> Bool {
+        stateStore.withLock { state in
             guard token == nil || state.activeTurnToken == token else { return false }
             body(&state.commandState)
             return true
@@ -365,7 +380,7 @@ public final class ChatSessionController {
             transcriptRetainedByteCount,
             Self.transcriptRetainedByteCount(messages)
         )
-        transcriptCountedMessageCount = transcript.count
+        transcriptByteCountIsStale = false
 
         guard transcriptRetainedByteCount > Self.maximumTranscriptBytes else {
             return
@@ -445,7 +460,7 @@ public final class ChatSessionController {
     }
 
     private func synchronizeTranscriptByteCountIfNeeded() {
-        guard transcriptCountedMessageCount != transcript.count else {
+        guard transcriptByteCountIsStale else {
             return
         }
         synchronizeTranscriptByteCount()
@@ -453,7 +468,7 @@ public final class ChatSessionController {
 
     private func synchronizeTranscriptByteCount() {
         transcriptRetainedByteCount = Self.transcriptRetainedByteCount(transcript)
-        transcriptCountedMessageCount = transcript.count
+        transcriptByteCountIsStale = false
     }
 
     private nonisolated static func addRetainedBytes(_ text: String?, to total: inout Int) {

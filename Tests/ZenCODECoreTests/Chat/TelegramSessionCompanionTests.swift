@@ -1666,9 +1666,9 @@ struct TelegramSessionCompanionTests {
 
     /// An "always" decision in the primary channel is remembered by the
     /// controller's authorizer, a `/always` in the linked chat by the
-    /// permission broker for its route; the controller does not import the
-    /// latter, as the terminal does not. A remembered request is not asked
-    /// again.
+    /// permission broker for its route and, as an *Always* given in the
+    /// primary channel, by the controller's authorizer too. A remembered
+    /// request is not asked again.
     @Test(.timeLimit(.minutes(1)))
     func alwaysDecisionsAreRememberedWhereTheTerminalRemembersThem() async throws {
         try await Self.withSupport(telegram: Self.pairedSettings) {
@@ -1703,12 +1703,46 @@ struct TelegramSessionCompanionTests {
             #expect(await companion.handlePermissionResponseIfNeeded("/always \(requestID)", lease: lease))
             #expect(await second.value)
             #expect(await companion.permissionBroker.isAlreadyAuthorized(telegramRequest, lease: lease))
-            #expect(!(await companion.controller.authorizer.isAlreadyAuthorized(telegramRequest)))
+            #expect(await companion.controller.authorizer.isAlreadyAuthorized(telegramRequest))
             let noticeCount = channel.notices.count
             let messageCount = await log.messages.count
             #expect(await handler(telegramRequest))
             #expect(channel.notices.count == noticeCount)
             #expect(await log.messages.count == messageCount)
+
+            await companion.shutdown()
+        }
+    }
+
+    /// A `/always` in the linked chat reaches the controller's authorizer,
+    /// so it still covers the session once the companion is detached
+    /// (`/telegram off`), when the broker's route decisions no longer apply.
+    @Test(.timeLimit(.minutes(1)))
+    func telegramAlwaysStillCoversTheSessionAfterTheCompanionDetaches() async throws {
+        try await Self.withSupport(telegram: Self.pairedSettings) {
+            let authorizer = LocalExecPermissionAuthorizer()
+            await authorizer.setConsentReader(ConsentKeys().reader)
+            let host = try Self.makeTerminal(
+                transport: CompanionTelegramTransport(botID: 9363), permissionAuthorizer: authorizer
+            )
+            let channel = TurnCompanionChannel()
+            let (companion, lease) = try await Self.linkedCompanion(on: host, botID: 9363, channel: channel)
+            let log = TurnMessageLog()
+            await Self.installLog(log, on: companion)
+            let handler = try #require(companion.toolAuthorizationHandler(for: .primary))
+            let request = Self.deleteRequest("Sources/Always.swift")
+            #expect(!(await companion.controller.authorizer.isAlreadyAuthorized(request)))
+
+            let authorization = Task { await handler(request) }
+            let requestMessage = (await log.waitForMessages(count: 1))[0]
+            let requestID = try #require(Self.permissionRequestID(in: requestMessage))
+            #expect(await companion.handlePermissionResponseIfNeeded("/always \(requestID)", lease: lease))
+            #expect(await authorization.value)
+            #expect(await companion.controller.authorizer.isAlreadyAuthorized(request))
+
+            await companion.detach()
+            #expect(companion.toolAuthorizationHandler(for: .primary) == nil)
+            #expect(await companion.controller.authorizer.isAlreadyAuthorized(request))
 
             await companion.shutdown()
         }

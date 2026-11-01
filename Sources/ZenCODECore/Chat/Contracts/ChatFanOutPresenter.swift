@@ -60,165 +60,105 @@ struct ChatFanOutPresenter: ChatSessionPresenter {
         self.companions = companions
     }
 
-    func turnWillStart(_ request: ChatTurnRequest) async {
+    /// Runs `call` on each companion, in the order they were attached, and
+    /// then on the primary, awaiting each one.
+    private func fanOut(_ call: (any ChatSessionPresenter) async -> Void) async {
         for companion in companions {
-            await companion.turnWillStart(request)
+            await call(companion)
         }
-        await primary.turnWillStart(request)
+        await call(primary)
+    }
+
+    func turnWillStart(_ request: ChatTurnRequest) async {
+        await fanOut { await $0.turnWillStart(request) }
     }
 
     func presentStatus(_ status: String) async {
-        for companion in companions {
-            await companion.presentStatus(status)
-        }
-        await primary.presentStatus(status)
+        await fanOut { await $0.presentStatus(status) }
     }
 
     func presentDiagnostic(_ diagnostic: String) async {
-        for companion in companions {
-            await companion.presentDiagnostic(diagnostic)
-        }
-        await primary.presentDiagnostic(diagnostic)
+        await fanOut { await $0.presentDiagnostic(diagnostic) }
     }
 
     func presentThought(_ thought: String) async {
-        for companion in companions {
-            await companion.presentThought(thought)
-        }
-        await primary.presentThought(thought)
+        await fanOut { await $0.presentThought(thought) }
     }
 
     func presentAssistantContent(_ content: String) async {
-        for companion in companions {
-            await companion.presentAssistantContent(content)
-        }
-        await primary.presentAssistantContent(content)
+        await fanOut { await $0.presentAssistantContent(content) }
     }
 
     func presentModelLoaded(_ modelID: String) async {
-        for companion in companions {
-            await companion.presentModelLoaded(modelID)
-        }
-        await primary.presentModelLoaded(modelID)
+        await fanOut { await $0.presentModelLoaded(modelID) }
     }
 
     func presentMetrics(_ metrics: DirectAgentGenerationMetrics) async {
-        for companion in companions {
-            await companion.presentMetrics(metrics)
-        }
-        await primary.presentMetrics(metrics)
+        await fanOut { await $0.presentMetrics(metrics) }
     }
 
     func presentContextWindow(_ status: DirectAgentContextWindowStatus) async {
-        for companion in companions {
-            await companion.presentContextWindow(status)
-        }
-        await primary.presentContextWindow(status)
+        await fanOut { await $0.presentContextWindow(status) }
     }
 
     func presentSubscriptionUsage(_ status: DirectAgentSubscriptionUsageStatus) async {
-        for companion in companions {
-            await companion.presentSubscriptionUsage(status)
-        }
-        await primary.presentSubscriptionUsage(status)
+        await fanOut { await $0.presentSubscriptionUsage(status) }
     }
 
     func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {
-        for companion in companions {
-            await companion.presentToolCallStarted(toolCall)
-        }
-        await primary.presentToolCallStarted(toolCall)
+        await fanOut { await $0.presentToolCallStarted(toolCall) }
     }
 
     func presentToolCallCompleted(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {
-        for companion in companions {
-            await companion.presentToolCallCompleted(toolCall, result: result)
-        }
-        await primary.presentToolCallCompleted(toolCall, result: result)
+        await fanOut { await $0.presentToolCallCompleted(toolCall, result: result) }
     }
 
     func presentToolCallSettled(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {
-        for companion in companions {
-            await companion.presentToolCallSettled(toolCall, result: result)
-        }
-        await primary.presentToolCallSettled(toolCall, result: result)
+        await fanOut { await $0.presentToolCallSettled(toolCall, result: result) }
     }
 
     func presentLiveFileArtifacts(_ turns: [SessionFileArtifactHistory.Turn], agentID: String?) async {
-        for companion in companions {
-            await companion.presentLiveFileArtifacts(turns, agentID: agentID)
-        }
-        await primary.presentLiveFileArtifacts(turns, agentID: agentID)
+        await fanOut { await $0.presentLiveFileArtifacts(turns, agentID: agentID) }
     }
 
     func presentSealedFileArtifacts(_ turn: SessionFileArtifactHistory.Turn) async {
-        for companion in companions {
-            await companion.presentSealedFileArtifacts(turn)
-        }
-        await primary.presentSealedFileArtifacts(turn)
+        await fanOut { await $0.presentSealedFileArtifacts(turn) }
     }
 
     func presentFileChangeSummary(_ summary: TurnFileChangeSummary) async {
-        for companion in companions {
-            await companion.presentFileChangeSummary(summary)
-        }
-        await primary.presentFileChangeSummary(summary)
+        await fanOut { await $0.presentFileChangeSummary(summary) }
     }
 
     func modelTurnDidReturn() async {
-        for companion in companions {
-            await companion.modelTurnDidReturn()
-        }
-        await primary.modelTurnDidReturn()
+        await fanOut { await $0.modelTurnDidReturn() }
     }
 
     func turnWillContinueAutomatically() async {
-        for companion in companions {
-            await companion.turnWillContinueAutomatically()
-        }
-        await primary.turnWillContinueAutomatically()
+        await fanOut { await $0.turnWillContinueAutomatically() }
     }
 
     func turnWillFinish() async {
-        for companion in companions {
-            await companion.turnWillFinish()
-        }
-        await primary.turnWillFinish()
+        await fanOut { await $0.turnWillFinish() }
     }
 
     func presentWorkflowNotice(_ notice: ChatWorkflowNotice) async {
-        for companion in companions {
-            await companion.presentWorkflowNotice(notice)
-        }
-        await primary.presentWorkflowNotice(notice)
+        await fanOut { await $0.presentWorkflowNotice(notice) }
     }
 
     func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async {
-        for companion in companions {
-            await companion.presentTurnEnded(outcome)
-        }
-        await primary.presentTurnEnded(outcome)
+        await fanOut { await $0.presentTurnEnded(outcome) }
     }
 
     func presentSessionNotice(_ notice: ChatSessionNotice) async {
-        for companion in companions {
-            await companion.presentSessionNotice(notice)
-        }
-        await primary.presentSessionNotice(notice)
+        await fanOut { await $0.presentSessionNotice(notice) }
     }
 
     func presentSessionStateChanged(_ state: ChatSessionState) async {
-        for companion in companions {
-            await companion.presentSessionStateChanged(state)
-        }
-        await primary.presentSessionStateChanged(state)
+        await fanOut { await $0.presentSessionStateChanged(state) }
     }
 
     func presentSubmittedCommand(_ line: String) async {
-        for companion in companions {
-            await companion.presentSubmittedCommand(line)
-        }
-        await primary.presentSubmittedCommand(line)
+        await fanOut { await $0.presentSubmittedCommand(line) }
     }
 
     /// The primary's reservation; the companions are not asked.
@@ -231,10 +171,7 @@ struct ChatFanOutPresenter: ChatSessionPresenter {
         origin: ChatOverviewOrigin,
         publication: ChatOverviewPublication?
     ) async {
-        for companion in companions {
-            await companion.presentTaskGraphOverview(overview, origin: origin, publication: publication)
-        }
-        await primary.presentTaskGraphOverview(overview, origin: origin, publication: publication)
+        await fanOut { await $0.presentTaskGraphOverview(overview, origin: origin, publication: publication) }
     }
 
     /// The primary's reservation; the companions are not asked.
@@ -247,9 +184,6 @@ struct ChatFanOutPresenter: ChatSessionPresenter {
         origin: ChatOverviewOrigin,
         publication: ChatOverviewPublication?
     ) async {
-        for companion in companions {
-            await companion.presentSubAgentOverview(overview, origin: origin, publication: publication)
-        }
-        await primary.presentSubAgentOverview(overview, origin: origin, publication: publication)
+        await fanOut { await $0.presentSubAgentOverview(overview, origin: origin, publication: publication) }
     }
 }

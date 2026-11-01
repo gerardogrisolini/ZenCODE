@@ -267,6 +267,23 @@ struct ChatCommandRegistryTests {
         #expect(registry.descriptors.map(\.command) == ["/a", "/y", "/b", "/x", "/z", "/w", "/c"])
     }
 
+    @Test
+    func channelGroupsWithAnUnknownAnchorFollowEverySharedCommandInOrder() {
+        func descriptor(_ command: String) -> ChatCommandDescriptor {
+            ChatCommandDescriptor(command: command, summary: "", help: command)
+        }
+        let registry = ChatCommandRegistry(
+            shared: [descriptor("/a"), descriptor("/b")],
+            channel: [
+                (after: "/missing", descriptors: [descriptor("/x")]),
+                (after: "/a", descriptors: [descriptor("/y")]),
+                (after: "/gone", descriptors: [descriptor("/z"), descriptor("/w")]),
+            ]
+        )
+        #expect(registry.descriptors.map(\.command) == ["/a", "/y", "/b", "/x", "/z", "/w"])
+        #expect(registry.descriptor(forLine: "/z")?.command == "/z")
+    }
+
     // MARK: - Visibility and /help
 
     @Test
@@ -409,6 +426,14 @@ struct ChatCommandRegistryTests {
         #expect(ChatCommandRegistry.commandToken(from: "  /plan fix it ") == "/plan")
         #expect(TerminalChat.commandToken(from: "  /plan fix it ") == "/plan")
         #expect(TerminalChat.unknownCommandMessage(for: "  /nope x") == "ZenCODE: unknown command '/nope'.\n")
+    }
+
+    @Test
+    func anyWhitespaceSeparatesTheCommandFromItsArguments() {
+        let line = "/sessions\tsave"
+        #expect(ChatCommandRegistry.commandToken(from: line) == "/sessions")
+        #expect(Self.registry.descriptor(forLine: line)?.command == "/sessions")
+        #expect(ChatCommandRegistry.arguments(from: line, commandPrefix: "/sessions") == "save")
     }
 
     @Test

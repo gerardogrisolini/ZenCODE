@@ -92,13 +92,6 @@ public actor LocalExecPermissionAuthorizer {
         await consentAuthorizer.authorizationOutcome(for: request)
     }
 
-    /// Imports an "always" decision made on another consent surface into the
-    /// terminal authorizer's session cache. This keeps later local and Telegram
-    /// turns consistent even if Telegram is disabled after the decision.
-    func recordAlwaysAuthorization(for request: AgentToolAuthorizationRequest) async {
-        await consentAuthorizer.recordAlwaysDecision(for: request)
-    }
-
     static func commandPermissionIdentities(for command: String) -> [String] {
         LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
     }

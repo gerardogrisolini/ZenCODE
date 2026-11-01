@@ -659,6 +659,22 @@ struct ChatSessionOperationsTests {
         }
     }
 
+    @Test
+    func aNewSessionDropsTheArmedWorkflow() async throws {
+        try await withChatHarness { harness in
+            let controller = harness.controller
+            try await harness.startSession(conversation: Fixtures.longConversation)
+            var workflow = WorkflowCommandRuntimeState(goal: "Ship the release", graphID: "workflow_new_session")
+            workflow.armForRecoverableFailure(reason: "cancelled")
+            controller.activeWorkflow = workflow
+            #expect(controller.activeWorkflow == workflow)
+
+            _ = try await controller.startNewSession(newSessionID: "channel-session-43")
+
+            #expect(controller.activeWorkflow == nil)
+        }
+    }
+
     // MARK: - DS4 engine checkpoint
 
     @Test

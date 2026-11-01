@@ -28,8 +28,8 @@ extension ChatSessionController {
 
     /// Discards the active session and starts a fresh, unsaved one with the
     /// ID `newSessionID`, which the channel chooses. The selection is kept;
-    /// the conversation, the artifacts, the saved-session link, and the plan
-    /// are cleared.
+    /// the conversation, the artifacts, the saved-session link, the plan, and
+    /// the `/goal` workflow are cleared.
     public func startNewSession(newSessionID: String) async throws -> ChatSessionOperationOutcome {
         await abandonPlanBrainstorming()
         await managementRuntime?.resetSession(id: sessionID)
@@ -44,6 +44,7 @@ extension ChatSessionController {
         savedSessionState.checkpointTree = nil
         activePlan = nil
         pendingPlanApprovalPlanID = nil
+        activeWorkflow = nil
         await presentSessionStateChanged()
         try await createSessionWithSelectedSkills()
         return ChatSessionOperationOutcome(notices: [.sessionStarted])

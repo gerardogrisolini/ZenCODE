@@ -33,8 +33,8 @@ final class ChatSessionStateStore: Sendable {
         }
     }
 
+    /// A snapshot of the command state. Write it through ``withLock(_:)``.
     var commandState: ChatCommandState {
-        get { withLock { $0.commandState } }
-        set { withLock { $0.commandState = newValue } }
+        withLock { $0.commandState }
     }
 }

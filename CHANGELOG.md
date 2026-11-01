@@ -159,6 +159,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the Bot API did not create the session's topic. They used to be dropped.
 - Terminal: a prompt sent while another one was generating was queued and
   then dropped without running. It now runs when the turn in progress ends.
+- Telegram: an *Always* approval given in the linked chat now also covers
+  later turns of the session after `/telegram off` or a topic change; for
+  `local.exec` it is saved like an *Always* given in the terminal.
 
 ## [3.2.0] - 2026-10-30
 

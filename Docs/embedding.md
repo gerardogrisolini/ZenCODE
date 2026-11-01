@@ -111,6 +111,12 @@ a `@ChatSessionActor` context.
 `ChatSessionPresenter` and `ChatInteractionHost` are `Sendable` protocols with
 `async` requirements, so their implementations can live on the main actor.
 
+Every session and every companion presenter of the app share the single
+`ChatSessionActor` executor, and the controller's `ChatFanOutPresenter`
+awaits each companion before the primary presenter. A presenter that blocks
+therefore delays every session: return quickly from each call, for example by
+enqueuing the output and rendering it elsewhere.
+
 ### Presenter
 
 The controller calls the presenter in event order and awaits each call.

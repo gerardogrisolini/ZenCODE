@@ -73,13 +73,7 @@ extension ChatSessionController {
         ifCurrent fence: ChatCommandFence,
         _ body: (inout ChatCommandState) -> Void
     ) -> Bool {
-        stateStore.withLock { state in
-            guard state.activeTurnToken == fence.token else {
-                return false
-            }
-            body(&state.commandState)
-            return true
-        }
+        commitCommandState(ifToken: fence.token, body)
     }
 
     /// `true` while a command started under `fence` may still act. No fence
@@ -100,8 +94,7 @@ extension ChatSessionController {
         _ body: (inout ChatCommandState) -> Void
     ) -> Bool {
         guard let fence else {
-            stateStore.withLock { body(&$0.commandState) }
-            return true
+            return commitCommandState(ifToken: nil, body)
         }
         return updateCommandStateIfCurrent(fence.token, sessionID: fence.sessionID, body)
     }

@@ -460,18 +460,6 @@ struct LocalExecPermissionAuthorizerTests {
     }
 
     @Test
-    func nonInteractiveAuthorizationHonorsExistingAlwaysAuthorization() async {
-        let authorizer = LocalExecPermissionAuthorizer()
-        let request = Self.destructiveConsentRequest(
-            toolCallID: "headless-always",
-            command: "delete headless-always"
-        )
-        await authorizer.recordAlwaysAuthorization(for: request)
-
-        #expect(await authorizer.authorizeNonInteractively(request))
-    }
-
-    @Test
     func presentDialogRetriesUntilRecognizedKeyThenDecides() async {
         let authorizer = LocalExecPermissionAuthorizer()
         let recorder = FakeConsentReader(answers: ["x", "a"])
