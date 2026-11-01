@@ -111,6 +111,79 @@ extension ChatTurnEntry {
         )
     }
 
+    /// The transcript of `entries` as runtime messages, oldest first: the
+    /// inverse of ``kinds(fromTranscript:)``, for a channel that renders log
+    /// entries with the renderer of a saved transcript (the terminal's
+    /// catch-up after `/telegram off`).
+    ///
+    /// - A ``Kind/userPrompt(text:attachments:origin:)`` is a user message.
+    /// - A ``Kind/thought(_:)`` and the ``Kind/assistantText(_:)`` that follows
+    ///   it form one assistant message (reasoning and content); the
+    ///   ``Kind/toolCallStarted(_:)`` entries that follow the block are its
+    ///   tool calls. Tool calls without a preceding block form an assistant
+    ///   message without content.
+    /// - A ``Kind/toolCallCompleted(_:result:)`` is the tool message of its
+    ///   call, with the result's output and error flag.
+    /// - Every other kind (artifacts, notices, phases) has no message.
+    static func transcriptMessages(from entries: [ChatTurnEntry]) -> [AgentRuntimeMessage] {
+        var messages: [AgentRuntimeMessage] = []
+        var pendingReasoning: String?
+        var pendingContent: String?
+        var pendingToolCalls: [AgentRuntimeToolCall] = []
+
+        func flushAssistantMessage() {
+            guard pendingReasoning != nil || pendingContent != nil || !pendingToolCalls.isEmpty else {
+                return
+            }
+            messages.append(AgentRuntimeMessage(
+                role: .assistant,
+                content: pendingContent ?? "",
+                reasoningContent: pendingReasoning,
+                toolCalls: pendingToolCalls
+            ))
+            pendingReasoning = nil
+            pendingContent = nil
+            pendingToolCalls = []
+        }
+
+        for entry in entries {
+            switch entry.kind {
+            case let .userPrompt(text, attachments, _):
+                flushAssistantMessage()
+                messages.append(AgentRuntimeMessage(role: .user, content: text, attachments: attachments))
+            case let .thought(text):
+                // A thought opens a new block: the previous one is complete.
+                flushAssistantMessage()
+                pendingReasoning = text
+            case let .assistantText(text):
+                if pendingContent != nil || !pendingToolCalls.isEmpty {
+                    flushAssistantMessage()
+                }
+                pendingContent = text
+            case let .toolCallStarted(call):
+                pendingToolCalls.append(AgentRuntimeToolCall(
+                    id: call.id,
+                    name: call.name,
+                    argumentsJSON: call.argumentsJSON
+                ))
+            case let .toolCallCompleted(call, result):
+                flushAssistantMessage()
+                messages.append(AgentRuntimeMessage(
+                    role: .tool,
+                    content: result.output,
+                    attachments: result.attachments,
+                    toolCallID: call.id,
+                    toolName: call.name,
+                    toolResultIsError: result.status == .failed ? true : nil
+                ))
+            case .fileArtifacts, .notice, .workflowNotice, .turnPhase:
+                continue
+            }
+        }
+        flushAssistantMessage()
+        return messages
+    }
+
     /// The first line of a restored tool output, which stands in for the
     /// summary the transcript does not store.
     private static func restoredToolResultSummary(_ output: String) -> String {

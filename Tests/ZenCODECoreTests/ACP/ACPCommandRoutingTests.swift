@@ -1112,12 +1112,13 @@ struct ACPCommandRoutingTests {
         }
     }
 
-    /// `/telegram on` attaches the session's companion through the scripted
-    /// Bot API and reads the linked chat; `/telegram` reports the link as the
-    /// companion does; `/telegram off` detaches it. None of them reaches the
-    /// model.
+    /// `/telegram on` hands the session's slot to its Telegram channel
+    /// through the scripted Bot API, which reads the linked chat; `/telegram`
+    /// reports the link as the channel does; `/telegram off` takes the slot
+    /// back and stops the link. None of them reaches the model, and while
+    /// Telegram drives the slot the editor's prompts are refused.
     @Test(.timeLimit(.minutes(1)))
-    func telegramOnAttachesStatusReportsAndOffDetaches() async throws {
+    func telegramOnHandsTheSlotOverStatusReportsAndOffTakesItBack() async throws {
         try await ACPTelegramTestSupport.withSupportDirectory { root in
             let transport = ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
             let sessionID = "acp-telegram-on-\(UUID().uuidString)"
@@ -1128,77 +1129,44 @@ struct ACPCommandRoutingTests {
 
             #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram")
                 == "Telegram: Configured")
-            #expect(await fixture.companion(sessionID: sessionID) == nil)
+            #expect(await fixture.telegramChannel(sessionID: sessionID) == nil)
 
             #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram on")
                 == "Telegram remote control is active.\nLinked chat: Test")
-            let companion = try #require(await fixture.companion(sessionID: sessionID))
-            #expect(await companion.isActive)
-            #expect(await companion.readsIngress)
-            #expect(await companion.configuration == ACPTelegramCompanionChannel.configuration)
+            let channel = try #require(await fixture.telegramChannel(sessionID: sessionID))
+            #expect(await channel.isActive)
+            #expect(await channel.readsIngress)
+            #expect(await channel.drivesSlot)
+            #expect(await channel.primaryChannelDescription == "editor")
             #expect(await ACPTelegramTestSupport.waitUntil { await transport.pollCount > 0 })
 
+            // The editor is dormant: a prompt is refused without reaching the
+            // model, the status is still answered.
+            #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "Hello from the editor")
+                == "ZenCODE: this session is driven from Telegram. Use /telegram off to take it back.")
+            #expect(await fixture.backend.prompts.isEmpty)
             let status = try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram")
-            #expect(status == (await companion.statusText()))
+            #expect(status == (await channel.statusText()))
             #expect(status?.hasPrefix("Telegram: ") == true)
             #expect(status?.contains("Linked chat: Test") == true)
 
             #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram off")
                 == "Telegram remote control stopped.")
-            #expect(await !companion.isActive)
-            #expect(await !companion.readsIngress)
-            #expect(await fixture.companion(sessionID: sessionID) === companion)
+            #expect(await !channel.isActive)
+            #expect(await !channel.readsIngress)
+            #expect(await !channel.drivesSlot)
+            #expect(await fixture.telegramChannel(sessionID: sessionID) === channel)
 
             // A failed start answers the terminal's failure text.
             await transport.setGetMeFails(true)
             let failure = try #require(
                 try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram on")
             )
-            let lastError = try #require(await companion.controlState.lastError)
+            let lastError = try #require(await channel.controlState.lastError)
             #expect(failure == "ZenCODE: \(lastError)")
-            #expect(await !companion.isActive)
+            #expect(await !channel.isActive)
+            #expect(await !channel.drivesSlot)
             #expect(await fixture.backend.prompts.isEmpty)
-            await bridge.shutdown()
-        }
-    }
-
-    /// The notices the companion presents while `/telegram on` attaches it
-    /// follow the activation text in the reply: a topic the Bot API refuses
-    /// to create is reported there, as the terminal reports it after the
-    /// activation text, instead of being dropped.
-    @Test(.timeLimit(.minutes(1)))
-    func telegramOnAppendsTheTopicFailureAfterTheActivationText() async throws {
-        try await ACPTelegramTestSupport.withSupportDirectory { root in
-            let transport = ACPTelegramScriptedTransport(
-                botID: ACPTelegramTestSupport.uniqueBotID(),
-                hasTopicsEnabled: true,
-                createdTopicIDs: []
-            )
-            let sessionID = "acp-telegram-topic-failure-\(UUID().uuidString)"
-            let fixture = try await ACPTelegramBridgeFixture.make(
-                root: root, sessionIDs: [sessionID], transport: transport
-            )
-            let bridge = fixture.bridge
-
-            let reply = try #require(
-                try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram on")
-            )
-
-            let companion = try #require(await fixture.companion(sessionID: sessionID))
-            #expect(await companion.isActive)
-            #expect(await companion.sessionTopic == nil)
-            let lastError = try #require(await companion.controlState.lastError)
-            #expect(reply == "Telegram remote control is active.\nLinked chat: Test\nZenCODE: \(lastError)")
-            #expect(await fixture.backend.prompts.isEmpty)
-
-            // A later `/telegram on` reports only what its own attach presents.
-            #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram off")
-                == "Telegram remote control stopped.")
-            let again = try #require(
-                try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram on")
-            )
-            #expect(again.components(separatedBy: "\n").filter { $0.hasPrefix("ZenCODE: ") }.count == 1)
-            #expect(!again.contains("Telegram remote control stopped."))
             await bridge.shutdown()
         }
     }

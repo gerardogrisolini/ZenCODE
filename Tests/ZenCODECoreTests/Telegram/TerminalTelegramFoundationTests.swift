@@ -416,7 +416,7 @@ struct TerminalTelegramFoundationTests {
     /// cannot drift from `setMyCommands`.
     @Test
     func remoteHelpListsEveryPublishedCommand() {
-        let listed = TerminalChat.telegramRemoteCommandList()
+        let listed = TelegramChannel.remoteCommandList()
             .components(separatedBy: ", ")
             .compactMap { $0.split(separator: " ").first.map(String.init) }
         let published = TerminalTelegramCommandRegistry.botCommands.map { "/\($0.command)" }

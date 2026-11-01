@@ -95,6 +95,13 @@ extension ZenCODEACPBridge {
         defer { controller.endCommandFence(fence) }
         let policy = acpPlanningPolicy(for: session)
 
+        // While Telegram drives the slot the editor runs only what takes it
+        // back (see `ChatSessionHost.admitLine`); every other line is
+        // answered with the refusal and runs nothing.
+        if case let .refused(text) = await host.admitLine(routedPromptText, in: session.slotID) {
+            return .immediate(Self.acpImmediateText(text))
+        }
+
         // `/telegram` is not a coordinator command: it is answered here, at
         // once, and never reaches the model (see `routeACPTelegramCommand`).
         if ChatCommandRegistry.commandToken(from: routedPromptText) == Self.telegramCommandToken {
@@ -639,9 +646,25 @@ extension ZenCODEACPBridge {
 ///
 /// The command is visible while the settings enable Telegram, read again at
 /// every use; otherwise every `/telegram` line is answered as an unknown
-/// command, as the terminal does, instead of reaching the model. The link is
-/// the session incarnation's own and is never persisted: a session loaded
-/// again needs `/telegram on` again.
+/// command, as the terminal does, instead of reaching the model. `on` hands
+/// the session's slot to the linked chat, which drives it from then on
+/// (``ChatSessionHost/activateTelegram(in:primaryChannelDescription:)``):
+/// the editor's prompts are refused until `off` takes the slot back, whose
+/// reply carries what the editor did not see. The notices the channel
+/// presents while it attaches (a topic that could not be created, for one)
+/// follow the activation text in the reply of `on`; ACP has no place for a
+/// text outside a prompt's reply, so every other notice is dropped. The
+/// link belongs to the session's slot and is never persisted: a session
+/// loaded again needs `/telegram on` again.
+///
+/// The editor cannot take the slot back in the middle of a turn from
+/// Telegram: that turn holds the slot's prompt reservation, so `/telegram
+/// off`, like every `session/prompt`, is refused while it runs, with a text
+/// that says so (``ZenCODEACPBridge/telegramTurnBusyMessage``); the editor
+/// stops it with `session/cancel`, or waits for it to end, and the next
+/// `/telegram off` catches up with it, the response in progress included.
+/// The terminal, which runs its commands outside the reservation, adopts
+/// such a turn instead.
 extension ZenCODEACPBridge {
     static let telegramCommandToken = "/telegram"
 
@@ -654,10 +677,11 @@ extension ZenCODEACPBridge {
     /// The answer to the `/telegram` line `line` of the prompt that holds the
     /// reservation `promptID`.
     ///
-    /// `on` creates the session's companion when it has none, attaches it,
-    /// and starts reading what the linked chat sends; `off` detaches it;
-    /// without an argument the link's status is answered. Ends `cancelled`
-    /// when the reservation is gone before the answer.
+    /// `on` hands the slot to Telegram and answers the activation text, with
+    /// the notices of the attach after it; `off` takes it back and answers
+    /// the stop text with the catch-up; without an argument the link's
+    /// status is answered. Ends `cancelled` when the reservation is gone
+    /// before the answer.
     func routeACPTelegramCommand(
         _ line: String,
         sessionID: String,
@@ -676,47 +700,84 @@ extension ZenCODEACPBridge {
         )
         switch TerminalTelegramCommandAction(argument: argument) {
         case .status:
-            guard let companion = session.telegramCompanion else {
-                return .immediate("Telegram: " + TerminalTelegramControlState.inactive().statusText)
-            }
-            return .immediate(await companion.statusText())
+            return .immediate(await host.telegramStatusText(in: session.slotID))
         case .turnOn:
-            let companion = try await reservedPromptTelegramCompanion(
-                sessionID: sessionID,
-                epoch: epoch,
-                promptID: promptID
-            )
-            // What the companion presents while it attaches (a topic it could
+            // What the channel presents while it attaches (a topic it could
             // not create, for one) follows the activation text in the reply.
             let attachNotices: [String]
             do {
-                attachNotices = try await ACPTelegramCompanionChannel.attachCollectingNotices(companion)
-            } catch {
+                attachNotices = try await host.activateTelegramCollectingNotices(
+                    in: session.slotID, primaryChannelDescription: "editor"
+                )
+            } catch let error as TelegramChannelAttachError {
                 return .immediate(Self.acpImmediateText(error.failureText))
+            } catch ChatSessionHostError.shutDown, ChatSessionHostError.unknownSlot {
+                throw CancellationError()
             }
-            // A close or a shutdown that landed meanwhile ends the companion
-            // itself, and the prompt ends `cancelled`.
+            // A close or a shutdown that landed meanwhile ends the slot and
+            // its channel, and the prompt ends `cancelled`.
             guard liveSession(id: sessionID, epoch: epoch) != nil else {
                 throw CancellationError()
             }
-            // The link is up, so the linked chat is read, even when a
-            // `session/cancel` dropped the reservation meanwhile: the prompt
-            // then ends `cancelled`, and the link stays as it was attached.
-            await companion.startConsuming()
             guard await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
                 throw CancellationError()
             }
             // The activation notice itself is among them: the reply starts
             // with it once.
-            let activationText = await ACPTelegramCompanionChannel.activationText(of: companion)
+            let channel = await host.telegramChannel(in: session.slotID)
+            let activationText = await Self.activationText(of: channel)
             let notices = attachNotices.filter { $0 != activationText }
             return .immediate(([activationText] + notices).joined(separator: "\n"))
         case .turnOff:
-            await session.telegramCompanion?.detach()
-            return .immediate("Telegram remote control stopped.")
+            let catchUp = await host.deactivateTelegram(in: session.slotID)
+            var lines = ["Telegram remote control stopped."]
+            if let catchUp {
+                lines.append(contentsOf: Self.catchUpLines(catchUp))
+            }
+            return .immediate(lines.joined(separator: "\n"))
         case .usage:
             return .immediate("Usage: /telegram [on|off]")
         }
+    }
+
+    /// The reply to a `/telegram on` that handed the slot to `channel`: the
+    /// text the channel presents on attaching, without its trailing newline.
+    static func activationText(of channel: TelegramChannel?) async -> String {
+        let title = await channel?.linkedChatTitle?.nilIfBlank
+        let chatID = await channel?.linkedChatID
+        let chatTitle = title ?? chatID.map { "chat \($0)" } ?? "chat"
+        return "Telegram remote control is active.\nLinked chat: \(chatTitle)"
+    }
+
+    /// The catch-up of a `/telegram off` as reply lines: a heading that says
+    /// whether the session changed or older entries were dropped, then the
+    /// prompts and responses the editor did not see, and the response still
+    /// in progress.
+    static func catchUpLines(_ catchUp: ChatTelegramCatchUp) -> [String] {
+        guard !catchUp.isEmpty else { return [] }
+        var heading = "Catch-up from Telegram"
+        if catchUp.incarnationChanged {
+            heading += " (new session \(catchUp.sessionID))"
+        }
+        if catchUp.omittedOlderEntries {
+            heading += " (older entries omitted)"
+        }
+        var lines = [heading + ":"]
+        for entry in catchUp.entries {
+            switch entry.kind {
+            case let .userPrompt(text, _, _):
+                lines.append("You: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+            case let .assistantText(text):
+                lines.append("ZenCODE: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+            default:
+                continue
+            }
+        }
+        let live = catchUp.liveAssistantText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !live.isEmpty {
+            lines.append("ZenCODE (in progress): \(live)")
+        }
+        return lines
     }
 
     /// `text` as an immediate ACP reply: without the one trailing newline the

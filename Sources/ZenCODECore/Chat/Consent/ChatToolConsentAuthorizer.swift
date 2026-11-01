@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 import ToolCore
 
 /// Channel-neutral consent policy for gated tool calls.
@@ -51,6 +52,9 @@ public actor ChatToolConsentAuthorizer {
         DirectToolExecutor.destructiveGatedToolNames.union(["local.exec"])
 
     private let host: any ChatInteractionHost
+    /// The host that asks the operator for the requests of one session, when
+    /// a ``ChatSessionHost`` routes them (see ``setConsentHostResolver(_:)``).
+    private nonisolated let hostResolver = Mutex<ConsentHostResolver?>(nil)
     private var alwaysAllowedKeys = Set<String>()
     private var alwaysRejectedKeys = Set<String>()
     private var decisionKeysBySessionID: [String: Set<String>] = [:]
@@ -62,6 +66,30 @@ public actor ChatToolConsentAuthorizer {
 
     public init(host: any ChatInteractionHost) {
         self.host = host
+    }
+
+    // MARK: - Consent host
+
+    /// Finds the host that asks the operator about `request`, or `nil` to
+    /// leave it to the authorizer's own host.
+    public typealias ConsentHostResolver = @Sendable (AgentToolAuthorizationRequest) -> (any ChatInteractionHost)?
+
+    /// Installs `resolver`, consulted for every request that needs the
+    /// operator: the ``ChatSessionHost`` resolves the request's session to
+    /// the slot that runs it, whose host asks on the channel that drives the
+    /// slot now, so the consent of a hosted session follows that channel
+    /// (Telegram while it drives the slot, the channel's own host otherwise).
+    /// A request the resolver does not place, and every request without a
+    /// resolver, is asked on the host the authorizer was created with. The
+    /// policy (gated tools, cache, persisted approvals, dialog serialization)
+    /// does not depend on which host asks. `nil` removes the resolver.
+    public nonisolated func setConsentHostResolver(_ resolver: ConsentHostResolver?) {
+        hostResolver.withLock { $0 = resolver }
+    }
+
+    /// The host that asks the operator about `request`.
+    private nonisolated func consentHost(for request: AgentToolAuthorizationRequest) -> any ChatInteractionHost {
+        hostResolver.withLock { $0 }?(request) ?? host
     }
 
     // MARK: - Authorization
@@ -85,7 +113,7 @@ public actor ChatToolConsentAuthorizer {
             return cached
         }
 
-        let capabilities = host.capabilities
+        let capabilities = consentHost(for: request).capabilities
         guard capabilities.contains(.toolConsent) else {
             // A host that cannot ask the operator never receives a request:
             // the gated call is refused with an actionable diagnostic.
@@ -130,7 +158,7 @@ public actor ChatToolConsentAuthorizer {
             }
         }
 
-        guard let decision = await host.requestToolConsent(request) else {
+        guard let decision = await consentHost(for: request).requestToolConsent(request) else {
             return Task.isCancelled ? .cancelled : .unavailable
         }
 
@@ -191,8 +219,8 @@ public actor ChatToolConsentAuthorizer {
     /// Returns `true` when this request needs no dialog and is approved: either
     /// the tool is not gated, or a previous approval already covers it.
     ///
-    /// Surfaces that mirror the session elsewhere (Telegram) use this to avoid
-    /// announcing a consent step that will never be presented. A remembered
+    /// A channel that presents the session elsewhere (Telegram) uses this to
+    /// avoid announcing a consent step that will never be presented. A remembered
     /// rejection is deliberately not "already authorized".
     public func isAlreadyAuthorized(_ request: AgentToolAuthorizationRequest) -> Bool {
         guard Self.gatedToolNames.contains(request.toolName) else {

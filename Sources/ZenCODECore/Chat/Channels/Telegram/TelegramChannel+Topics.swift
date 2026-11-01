@@ -1,5 +1,5 @@
 //
-//  TelegramSessionCompanion+Topics.swift
+//  TelegramChannel+Topics.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -41,7 +41,7 @@ import ToolCore
 /// when it is reused, so it is given once per topic without persisting
 /// anything: `settings.json` keeps its format. A topic name is not persisted
 /// either: a reused topic is shown with its default name, a topic the
-/// companion renamed with the name it gave.
+/// channel renamed with the name it gave.
 ///
 /// While the session is in topic mode, ``rebind(sessionID:displayName:)``
 /// moves its topic to the session the channel switched to, and
@@ -52,28 +52,28 @@ import ToolCore
 /// launch, the session receives a new topic; nothing is written in the old
 /// one any more, and it stays in Telegram. A turn that runs across such a
 /// detach and attach stays on the closed route, so nothing more of it is
-/// mirrored; the next turn uses the new topic. In legacy mode none of these
+/// sent; the next turn uses the new topic. In legacy mode none of these
 /// operations writes anything, as before topics.
 ///
 /// The router keeps one route per topic: a `create` after a prune starts
 /// again from generation 1, which is safe because Telegram never reuses a
 /// topic ID and only active routes are reused here.
 ///
-/// The ingress (`TelegramSessionCompanion+Ingress.swift`) follows the mode:
+/// The ingress (`TelegramChannel+Ingress.swift`) follows the mode:
 /// a message in the session's topic is answered by this session only; a
 /// message in General, in a topic no route knows (which falls back to the
 /// shared route), or on the legacy route is answered by every attached
-/// companion, in the topic it came from, with the permission replies without
-/// an ID refused while several companions share the bot. In topic mode such
-/// a message leaves the link, the shared-chat relay, and the next turn of the
-/// primary channel on the session's topic; in legacy mode it moves them onto
-/// its route, as before topics.
-extension TelegramSessionCompanion {
+/// channel, in the topic it came from, with the permission replies without
+/// an ID refused while several channels share the bot. In topic mode such a
+/// message leaves the link, the shared-chat relay, and the next turn on the
+/// session's topic; in legacy mode it moves them onto its route, as before
+/// topics.
+extension TelegramChannel {
     /// The session's own topic while the link is in topic mode.
     public struct SessionTopic: Sendable, Equatable {
         /// The current lease of the topic's route.
         public var lease: TerminalTelegramRouteLease
-        /// The topic's name, as the companion last gave it, bounded like the
+        /// The topic's name, as the channel last gave it, bounded like the
         /// name Telegram stores.
         public var name: String
     }
@@ -153,7 +153,7 @@ extension TelegramSessionCompanion {
         )
         guard settings.linkedChatID == linkedChatID,
               let ownerUserID = settings.ownerUserID else { return nil }
-        let sessionID = controller.sessionID
+        let sessionID = sessionID
         if let topicID = await router.activeRoute(forRoomID: sessionID)?.topicID,
            let lease = try? await router.resolve(
                chatID: linkedChatID, userID: ownerUserID, topicID: topicID
@@ -174,7 +174,7 @@ extension TelegramSessionCompanion {
     }
 
     /// The session's topic as ``attach()`` records it before the service
-    /// starts: the reused topic, keeping the name the companion gave it when
+    /// starts: the reused topic, keeping the name the channel gave it when
     /// it is the topic the link already had, or none on the shared route.
     func recordedSessionTopic(for route: EgressRoute) -> SessionTopic? {
         guard case let .sessionTopic(lease) = route else { return nil }
@@ -184,7 +184,7 @@ extension TelegramSessionCompanion {
         return SessionTopic(
             lease: lease,
             name: Self.defaultTopicName(
-                workingDirectory: controller.workingDirectory, sessionID: controller.sessionID
+                workingDirectory: workingDirectory, sessionID: sessionID
             )
         )
     }
@@ -192,23 +192,23 @@ extension TelegramSessionCompanion {
     /// Creates the session's topic once the control service started, when
     /// `route` is the shared route and the bot has Threaded mode; `nil`
     /// otherwise. The request is fenced by the shared route; the new route
-    /// is bound to the session ID. Nothing of the companion's state changes:
+    /// is bound to the session ID. Nothing of the channel's state changes:
     /// ``attach()`` applies the outcome with ``adoptTopicCreation(_:)`` if it
     /// was not overtaken meanwhile.
     func createSessionTopicIfNeeded(for route: EgressRoute) async -> TopicCreation? {
         guard case let .shared(shared) = route,
               controlState.hasTopicsEnabled == true else { return nil }
         let name = Self.defaultTopicName(
-            workingDirectory: controller.workingDirectory, sessionID: controller.sessionID
+            workingDirectory: workingDirectory, sessionID: sessionID
         )
         do {
-            guard let fence = wireFence(for: .telegram(shared)) else {
+            guard let fence = wireFence(for: shared) else {
                 throw TerminalTelegramControlError.missingConfiguration
             }
             let topicID = try await controlService.createTopic(
                 name: name, chatID: shared.key.chatID, fence: fence
             )
-            let lease = try await router.create(topicID: topicID, roomID: controller.sessionID)
+            let lease = try await router.create(topicID: topicID, roomID: sessionID)
             return .created(SessionTopic(lease: lease, name: name), shared: shared)
         } catch {
             return .failed(TerminalTelegramControlError.operatorDescription(error))
@@ -233,7 +233,7 @@ extension TelegramSessionCompanion {
     func announceTopicCreation(_ creation: TopicCreation) async {
         switch creation {
         case let .created(topic, shared):
-            guard let fence = wireFence(for: .telegram(shared)) else { return }
+            guard let fence = wireFence(for: shared) else { return }
             await sendSystemMessage(
                 Self.generalTopicNoticeText(topicName: topic.name),
                 to: shared.key.chatID, topicID: nil, fence: fence
@@ -245,7 +245,7 @@ extension TelegramSessionCompanion {
 
     // MARK: - Rebind
 
-    /// Moves the session's topic to the session the channel switched to
+    /// Moves the session's topic to the session the slot switched to
     /// (`/sessions new`, `/sessions load`), named `displayName`: the saved
     /// session's name, or ``defaultTopicName(workingDirectory:sessionID:)``
     /// of the new session.
@@ -258,18 +258,18 @@ extension TelegramSessionCompanion {
     /// failure is recorded and presented on the primary channel like a
     /// failed creation, and a failed rebind leaves the topic as it was. In
     /// legacy mode, and while detached, nothing happens, as before topics.
+    /// The slot's primary channel calls it when the slot switched session;
+    /// the relay is rebound right after.
     ///
     /// The previous lease fails validation from the rebind on, so nothing
     /// still holding it can write: every send of a turn in progress on it
     /// is fenced off, and its route validation task (polling every 100 ms)
-    /// reports the lease through
-    /// ``TelegramCompanionChannel/telegramRouteWasInvalidated(_:)``. The
-    /// channel stops that turn and calls ``routeWasInvalidated(_:)``, which
-    /// ends its reporting and tears down the previous route's state but
-    /// keeps the link's new route, which is no longer the invalidated one.
-    /// ForceReply receipts of the previous lease are no longer answered. The
-    /// channel calls this method before it rebinds the shared-chat relay to
-    /// the new room (``rebindSharedChatRelay(roomID:)``).
+    /// calls ``routeWasInvalidated(_:)``, which stops that turn, ends its
+    /// reporting and tears down the previous route's state but keeps the
+    /// link's new route, which is no longer the invalidated one. ForceReply
+    /// receipts of the previous lease are no longer answered. The channel
+    /// rebinds the shared-chat relay to the new room afterwards
+    /// (``rebindSharedChatRelay(roomID:)``).
     public func rebind(sessionID: String, displayName: String) async {
         guard let topic = sessionTopic else { return }
         let rebound: TerminalTelegramRouteLease
@@ -289,7 +289,7 @@ extension TelegramSessionCompanion {
         let name = TerminalTelegramAPIClient.boundedTopicName(displayName)
         do {
             guard let topicID = rebound.key.topicID,
-                  let fence = wireFence(for: .telegram(rebound)) else {
+                  let fence = wireFence(for: rebound) else {
                 throw TerminalTelegramControlError.missingConfiguration
             }
             try await controlService.renameTopic(
@@ -304,6 +304,7 @@ extension TelegramSessionCompanion {
         if sessionTopic?.lease == rebound {
             sessionTopic?.name = name
         }
+        await rebindSharedChatRelay(roomID: sessionID)
     }
 
     // MARK: - Detach
@@ -325,6 +326,6 @@ extension TelegramSessionCompanion {
     /// Presents a topic failure on the primary channel, as a failed send is
     /// presented.
     private func presentTopicFailure(_ description: String) async {
-        await channel?.presentCompanionNotice("ZenCODE: \(description)\n", channel: .failure)
+        await presentNotice("ZenCODE: \(description)\n", channel: .failure)
     }
 }

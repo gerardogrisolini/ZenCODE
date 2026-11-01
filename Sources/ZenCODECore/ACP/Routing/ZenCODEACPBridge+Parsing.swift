@@ -481,4 +481,18 @@ extension ZenCODEACPBridge {
         )
     }
 
+    /// Points the runner's prompt-skill selection of `sessionID` at the skills
+    /// `selectedAgent` declares (``selectedAgentSkills(for:)``). The turns the
+    /// session runs begin with it, whichever channel starts them: the editor's
+    /// prompts and the turns of the slot's Telegram channel.
+    func applySelectedAgentSkills(
+        sessionID: String,
+        selectedAgent: AgentProfile?
+    ) async {
+        await sessionRunner.updatePromptSkillSelection(
+            selectedAgentSkills(for: selectedAgent),
+            sessionID: sessionID
+        )
+    }
+
 }

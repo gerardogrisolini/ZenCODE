@@ -54,11 +54,19 @@ public final class ChatSessionHost {
     private(set) var slots: [ChatSlotID: ChatSlot] = [:]
     private var nextSessionEpochValue: UInt64 = 1
     private var sleepAssertion: ZenSleepAssertion?
-    /// The Telegram route authority shared by the companions of every slot,
-    /// created on first use (see `ChatSessionHost+Telegram.swift`).
+    /// The Telegram route authority shared by the Telegram channels of every
+    /// slot, created on first use (see `ChatSessionHost+Telegram.swift`).
     var telegramRouterStorage: TerminalTelegramSessionRouter?
     /// The Bot API poller shared by them, created with the router.
     var telegramDispatcherStorage: TerminalTelegramBotDispatcher?
+    /// The transport of the control service of every Telegram channel this
+    /// host creates; `nil` uses the production transport. A test installs a
+    /// fake transport here before the first `/telegram on`.
+    var telegramTransportFactory: (@Sendable () -> any TelegramHTTPTransport)?
+    /// The slot host that answers the consent requests of each session this
+    /// host runs, read by the consent authorizers of the slots (see
+    /// ``ChatToolConsentAuthorizer/setConsentHostResolver(_:)``).
+    nonisolated let consentHostRoutes = ChatConsentHostRoutes()
 
     /// A host over `runner`, which it shuts down with itself.
     ///
@@ -109,7 +117,9 @@ public final class ChatSessionHost {
 
     /// Opens a slot without a session. Throws `.shutDown` after
     /// ``shutdown()`` and `.statePublishingRequired` when the descriptor asks
-    /// with pending requests but publishes no state.
+    /// with pending requests but publishes no state. The descriptor's
+    /// authorizer asks its consent, from now on, on the slot that runs the
+    /// request's session (see ``ChatSlotInteractionHost``).
     public func openSlot(_ descriptor: ChatSlotDescriptor) throws(ChatSessionHostError) -> ChatSlotID {
         guard !isShutDown else { throw .shutDown }
         if case .pendingRequests = descriptor.interaction, !descriptor.publishesState {
@@ -117,6 +127,7 @@ public final class ChatSessionHost {
         }
         let id = ChatSlotID()
         slots[id] = ChatSlot(id: id, descriptor: descriptor)
+        installConsentHostResolver(on: descriptor.authorizer)
         return id
     }
 
@@ -134,6 +145,7 @@ public final class ChatSessionHost {
         guard let slot = slots[slotID] else { throw .unknownSlot }
         let incarnation = makeIncarnation(in: slot, sessionID: sessionID)
         slot.setIncarnation(incarnation)
+        registerConsentHost(of: slot)
         updateSleepAssertion()
         return incarnation
     }
@@ -152,6 +164,7 @@ public final class ChatSessionHost {
         if let previous {
             await disposeRuntimeSession(of: previous, runtimeSession)
         }
+        await slot.telegramChannel?.shutdown()
     }
 
     /// The open slots, in no particular order.
@@ -166,7 +179,7 @@ public final class ChatSessionHost {
     }
 
     /// The reducer of the session `slotID` runs now, when the slot publishes
-    /// state.
+    /// state or Telegram drives it.
     public func reducer(in slotID: ChatSlotID) -> ChatSessionStateReducer? {
         slots[slotID]?.incarnation?.reducer
     }
@@ -241,6 +254,7 @@ public final class ChatSessionHost {
         let previous = endIncarnation(of: slot)
         let incarnation = makeIncarnation(in: slot, sessionID: sessionID)
         slot.setIncarnation(incarnation)
+        registerConsentHost(of: slot)
         updateSleepAssertion()
         if let previous {
             await disposeRuntimeSession(of: previous, .discard)
@@ -305,6 +319,7 @@ public final class ChatSessionHost {
         let previous = endIncarnation(of: slot)
         let incarnation = makeIncarnation(in: slot, sessionID: savedSession.sessionID)
         slot.setIncarnation(incarnation)
+        registerConsentHost(of: slot)
         updateSleepAssertion()
         if let previous {
             await disposeRuntimeSession(of: previous, .discard)
@@ -355,9 +370,11 @@ public final class ChatSessionHost {
             throw .sessionBusy
         }
         guard incarnation.sessionID != sessionID else { return }
+        unregisterConsentHost(of: slot, sessionID: incarnation.sessionID)
         incarnation.controller.sessionID = sessionID
         incarnation.sessionID = sessionID
         slot.setIncarnation(incarnation)
+        registerConsentHost(of: slot)
         incarnation.reducer?.resetForSession(sessionID)
     }
 
@@ -395,6 +412,9 @@ public final class ChatSessionHost {
             slot.endObservation()
         }
         updateSleepAssertion()
+        for slot in closingSlots {
+            await slot.telegramChannel?.shutdown()
+        }
         if keepingExternalTools {
             await runner.shutdownBackendKeepingExternalTools()
         } else {
@@ -422,51 +442,42 @@ public final class ChatSessionHost {
     }
 
     /// A new incarnation of `slot` for the session `sessionID`: its epoch,
-    /// its reducer and pending-request host when the slot publishes state,
-    /// and its controller with the slot's bindings, the reducer attached
-    /// before anything can be presented, bound to this host so that its own
-    /// session replacements come back here.
+    /// its reducer and pending-request host when the slot publishes state
+    /// (and its reducer on demand while Telegram drives the slot, see
+    /// ``activateTelegram(in:)``), and its controller with the slot's
+    /// bindings, presenting through the slot's presenter and asking through
+    /// the slot's host, the reducer observing it before anything can be
+    /// presented, bound to this host so that its own session replacements
+    /// come back here.
     private func makeIncarnation(in slot: ChatSlot, sessionID: String) -> ChatSessionIncarnation {
         let epoch = makeSessionEpoch()
         // The controller starts from the launch profile; the reducer is seeded
         // with the same state, as it is created first.
-        let reducer: ChatSessionStateReducer? = slot.publishesState
-            ? ChatSessionStateReducer(
-                sessionID: sessionID,
-                workingDirectory: slot.workingDirectory,
-                defaultOrigin: slot.defaultOrigin,
-                state: ChatSessionState(
-                    selection: ChatSessionController.initialSelection(for: environment)
-                ),
-                epoch: epoch,
-                maximumLogBytes: ChatSessionController.maximumTranscriptBytes,
-                keepsEpochOnSessionChange: true
-            )
+        let reducerIsOnDemand = !slot.publishesState && slot.activeChannel == .telegram
+        let reducer: ChatSessionStateReducer? = slot.publishesState || reducerIsOnDemand
+            ? makeReducer(for: slot, sessionID: sessionID, epoch: epoch)
             : nil
-        let interactionHost: any ChatInteractionHost
+        slot.reducerIsOnDemand = reducerIsOnDemand
         let pendingRequestHost: ChatPendingRequestHost?
         switch slot.interaction {
-        case let .host(host):
-            interactionHost = host
+        case .host:
             pendingRequestHost = nil
         case let .pendingRequests(capabilities, gatesWorkspaceAccess, openExternal):
             // `openSlot` refused this interaction without a reducer.
-            let host = ChatPendingRequestHost(
+            pendingRequestHost = ChatPendingRequestHost(
                 reducer: reducer!,
                 capabilities: capabilities,
                 gatesWorkspaceAccess: gatesWorkspaceAccess,
                 openExternal: openExternal
             )
-            interactionHost = host
-            pendingRequestHost = host
         }
         let controller = ChatSessionController(
             sessionID: sessionID,
             managementRuntime: runner,
             environment: environment,
             workingDirectory: slot.workingDirectory,
-            presenter: slot.presenter,
-            host: interactionHost,
+            presenter: slot.slotPresenter,
+            host: slot.slotInteractionHost,
             authorizer: slot.authorizer,
             retainsTranscript: slot.retainsTranscript,
             retainsFileArtifactHistory: slot.retainsFileArtifactHistory
@@ -476,7 +487,7 @@ public final class ChatSessionHost {
             controller.commandRegistry = commandRegistry
         }
         if let reducer {
-            controller.attachCompanionPresenter(reducer)
+            controller.addObserver(reducer)
         }
         controller.hostBinding = ChatSessionHostBinding(host: self, slotID: slot.id)
         return ChatSessionIncarnation(
@@ -489,21 +500,39 @@ public final class ChatSessionHost {
         )
     }
 
+    /// A reducer for the incarnation `epoch` of `slot`, seeded with the
+    /// selection a new controller starts from.
+    func makeReducer(for slot: ChatSlot, sessionID: String, epoch: UInt64) -> ChatSessionStateReducer {
+        ChatSessionStateReducer(
+            sessionID: sessionID,
+            workingDirectory: slot.workingDirectory,
+            defaultOrigin: slot.defaultOrigin,
+            state: ChatSessionState(
+                selection: ChatSessionController.initialSelection(for: environment)
+            ),
+            epoch: epoch,
+            maximumLogBytes: ChatSessionController.maximumTranscriptBytes,
+            keepsEpochOnSessionChange: true
+        )
+    }
+
     /// Ends the incarnation of `slot` without suspending: the controller is
     /// fenced, so a turn still running cannot write session state back, the
     /// reservation is dropped, the pending requests are refused, and the
-    /// reducer stops following the controller. Returns it for the runner
+    /// reducer stops observing the controller. Returns it for the runner
     /// disposal; the caller installs what follows it.
     private func endIncarnation(of slot: ChatSlot) -> ChatSessionIncarnation? {
         guard var incarnation = slot.incarnation else { return nil }
         incarnation.controller.cancelActiveTurn()
         incarnation.pendingRequestHost?.cancelPendingRequests()
         if let reducer = incarnation.reducer {
-            incarnation.controller.detachCompanionPresenter(reducer)
+            incarnation.controller.removeObserver(reducer)
         }
         incarnation.activePromptID = nil
         incarnation.operationState = .idle
         slot.incarnation = nil
+        slot.reducerIsOnDemand = false
+        unregisterConsentHost(of: slot, sessionID: incarnation.sessionID)
         return incarnation
     }
 

@@ -114,7 +114,7 @@ extension ZenCODEACPBridge {
     }
 
     /// The ACP state of a new incarnation the host runs: unannounced, with
-    /// fresh presentation state, no companion, and no prompt.
+    /// fresh presentation state and no prompt.
     func sessionState(
         configuration: AgentCoreSessionConfiguration,
         selectedAgent: AgentProfile? = nil,
@@ -136,10 +136,11 @@ extension ZenCODEACPBridge {
     /// configuration. All same-incarnation reconstruction paths (mention,
     /// refresh and reconfiguration) inherit the ACP presentation state, the
     /// incarnation binding (its slot, epoch, and controller with its command
-    /// state), the registered prompt task, and the Telegram companion from
-    /// the live entry. A new epoch, including load/resume, deliberately
-    /// starts unannounced with a new controller and without a companion
-    /// (``sessionState(configuration:selectedAgent:incarnation:)``).
+    /// state) and the registered prompt task from the live entry. A new
+    /// epoch, including load/resume, deliberately starts unannounced with a
+    /// new controller (``sessionState(configuration:selectedAgent:incarnation:)``);
+    /// the slot's Telegram channel, if any, belongs to the slot and follows
+    /// it by itself.
     func sessionState(
         configuration: AgentCoreSessionConfiguration,
         selectedAgent: AgentProfile? = nil,
@@ -163,9 +164,7 @@ extension ZenCODEACPBridge {
             activeWorkflowPromptID: live.activeWorkflowPromptID,
             activePromptTask: live.activePromptTask,
             activePromptTaskID: live.activePromptTaskID,
-            controller: live.controller,
-            telegramCompanion: live.telegramCompanion,
-            telegramCompanionChannel: live.telegramCompanionChannel
+            controller: live.controller
         )
     }
 

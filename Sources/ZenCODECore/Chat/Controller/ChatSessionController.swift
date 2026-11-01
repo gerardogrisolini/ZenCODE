@@ -37,12 +37,12 @@ public final class ChatSessionController {
     public let modelCatalog: ChatModelCatalog
     public let workingDirectory: URL
     /// The channel's presenter. The controller presents through
-    /// ``effectivePresenter(for:)``, which adds the attached companions.
+    /// ``effectivePresenter(for:)``, which adds the observers.
     let presenter: any ChatSessionPresenter
-    /// The companions that mirror the session next to ``presenter``, in the
-    /// order they were attached, held until they are detached (see
-    /// ``attachCompanionPresenter(_:)``).
-    private(set) var companionPresenters: [any ChatCompanionPresenter] = []
+    /// The observers that see the session's output before ``presenter``, in
+    /// the order they were added, held until they are removed (see
+    /// ``addObserver(_:)``).
+    private(set) var observers: [any ChatSessionObserver] = []
     public let host: any ChatInteractionHost
     /// The channel's own steps between the steps of a selection operation
     /// (see ``ChatSessionChannelHooks``). Held weakly; `nil` for a channel
@@ -227,36 +227,32 @@ public final class ChatSessionController {
         )
     }
 
-    /// Attaches `companion`, which from the next turn or operation receives
-    /// every call of the presenter before the primary does (see
-    /// ``ChatFanOutPresenter``). The controller holds it until it is
-    /// detached. Attaching a companion that is already attached changes
-    /// nothing.
-    public func attachCompanionPresenter(_ companion: any ChatCompanionPresenter) {
-        let identifier = ObjectIdentifier(companion)
-        guard !companionPresenters.contains(where: { ObjectIdentifier($0) == identifier }) else {
+    /// Adds `observer`, which from now on receives every call of the
+    /// presenter before the channel's presenter does, whatever channel
+    /// presents the session, a turn already running included (see
+    /// ``ChatObservedPresenter``). The controller holds it until it is
+    /// removed. Adding an observer that is already added changes nothing.
+    public func addObserver(_ observer: any ChatSessionObserver) {
+        let identifier = ObjectIdentifier(observer)
+        guard !observers.contains(where: { ObjectIdentifier($0) == identifier }) else {
             return
         }
-        companionPresenters.append(companion)
+        observers.append(observer)
     }
 
-    /// Detaches `companion`, identified by its object identity, and releases
-    /// it. A turn already running keeps presenting on it until it finishes.
-    /// Detaching a companion that is not attached changes nothing.
-    public func detachCompanionPresenter(_ companion: any ChatCompanionPresenter) {
-        let identifier = ObjectIdentifier(companion)
-        companionPresenters.removeAll { ObjectIdentifier($0) == identifier }
+    /// Removes `observer`, identified by its object identity, and releases
+    /// it: it receives nothing more, a turn already running included.
+    /// Removing an observer that is not added changes nothing.
+    public func removeObserver(_ observer: any ChatSessionObserver) {
+        let identifier = ObjectIdentifier(observer)
+        observers.removeAll { ObjectIdentifier($0) == identifier }
     }
 
     /// The presenter an operation presents on: the request's presenter, or
     /// the controller's when the request binds none or there is no request,
-    /// fanned out to the companions attached now, when there are any. Without
-    /// companions it is that presenter itself. A turn reads it once when it
-    /// starts, so it keeps the companions it started with.
+    /// with the observers presented first, read at every call.
     func effectivePresenter(for request: ChatTurnRequest?) -> any ChatSessionPresenter {
-        let primary = request?.presenter ?? presenter
-        guard !companionPresenters.isEmpty else { return primary }
-        return ChatFanOutPresenter(primary: primary, companions: companionPresenters)
+        ChatObservedPresenter(primary: request?.presenter ?? presenter, controller: self)
     }
 
     // MARK: - Command state shortcuts

@@ -54,7 +54,7 @@ enum ACPTelegramTestSupport {
     }
 
     /// A bot id no other test uses, so the process-wide registry of attached
-    /// companions never mixes two tests.
+    /// channels never mixes two tests.
     static func uniqueBotID() -> Int64 {
         Int64.random(in: 30_000_001...39_000_000)
     }
@@ -260,27 +260,64 @@ actor ACPTelegramScriptedTransport: TelegramHTTPTransport {
 // MARK: - Model backend
 
 /// A model backend whose prompts follow the script of ``enqueue(_:)``, one
-/// list of steps per prompt; a prompt without a script answers `reply`.
-/// The runtime's authorization handler is captured from the configuration
-/// the backend factory receives (see ``factory``).
+/// list of steps per prompt; a prompt without a script answers `reply`. It
+/// keeps the history of every session, so the runner's snapshot (and ACP's
+/// `session/load` replay) carries the turns it ran, and records the system
+/// prompt and the tool grant of every session write, so a test can tell how
+/// a turn was composed. The runtime's authorization handler is captured
+/// from the configuration the backend factory receives (see ``factory``).
 actor ACPTelegramScriptedBackend: AgentRuntimeBackend {
     enum Step: Sendable {
         /// Streams `text` as model content.
         case reply(String)
+        /// Waits until ``release()`` lets the prompt go on.
+        case pause
         /// Writes `contents` to `path`, relative to the session's directory,
         /// through a reported `local.writeFile` tool call.
         case writeFile(path: String, contents: String)
         /// Asks permission to run `command` with `local.exec`, as a gated
-        /// tool call would, and records the decision.
+        /// tool call would, and records the decision; a prompt cancelled
+        /// while it waited ends there, as a model turn does.
         case askPermission(command: String)
+        /// Reads `path`, relative to the session's directory, through the text
+        /// file system the turn runs in (``ClientTextFileSystem/current``) and
+        /// records what it saw in ``clientFileAccesses``; without one, from
+        /// the disk.
+        case readClientFile(path: String)
+        /// Writes `contents` to `path`, relative to the session's directory,
+        /// through the text file system the turn runs in, as the file tools
+        /// do, and records it in ``clientFileAccesses``; without one, to the
+        /// disk.
+        case writeClientFile(path: String, contents: String)
+    }
+
+    /// A file access a turn made through ``Step/readClientFile(path:)`` or
+    /// ``Step/writeClientFile(path:contents:)``: whether the turn ran inside a
+    /// client text file system, and what a read returned.
+    struct ClientFileAccess: Equatable, Sendable {
+        let hadClientFileSystem: Bool
+        let readContents: String?
+    }
+
+    /// A session write the backend received: the system prompt and the
+    /// tool grant of a `createSession`, `createSessionIfNeeded`, or
+    /// `updateSessionOptions`.
+    struct SessionWrite: Equatable, Sendable {
+        let systemPrompt: String?
+        let allowedToolNames: Set<String>?
     }
 
     private let authorization = Mutex<AgentToolAuthorizationHandler?>(nil)
     private var scripts: [[Step]] = []
-    private var workingDirectories: [String: String] = [:]
+    private var sessions: [String: AgentRuntimeSessionSnapshot] = [:]
     private(set) var prompts: [String] = []
     private(set) var permissionDecisions: [Bool] = []
+    private(set) var sessionWrites: [SessionWrite] = []
+    private(set) var clientFileAccesses: [ClientFileAccess] = []
     private var permissionAskCount = 0
+    private var pauseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var pausedCount = 0
+    private var releasedCount = 0
 
     /// The backend factory of a bridge using this backend.
     nonisolated var factory: AgentRuntimeBackendFactory {
@@ -299,28 +336,60 @@ actor ACPTelegramScriptedBackend: AgentRuntimeBackend {
         permissionAskCount
     }
 
+    /// Whether a prompt waits at a `.pause` step.
+    var isPaused: Bool {
+        pausedCount > releasedCount
+    }
+
+    /// Lets the prompt waiting at a `.pause` step go on.
+    func release() {
+        releasedCount += 1
+        if !pauseWaiters.isEmpty {
+            pauseWaiters.removeFirst().resume()
+        }
+    }
+
     func createSession(
-        id: String, cwd: String, systemPrompt _: String?, history _: [AgentRuntimeMessage],
-        cacheKey _: String?, allowedToolNames _: Set<String>?,
-        thinkingSelection _: AgentThinkingSelection?, preserveThinking _: Bool
+        id: String, cwd: String, systemPrompt: String?, history: [AgentRuntimeMessage],
+        cacheKey: String?, allowedToolNames: Set<String>?,
+        thinkingSelection: AgentThinkingSelection?, preserveThinking: Bool
     ) {
-        workingDirectories[id] = cwd
+        sessionWrites.append(SessionWrite(systemPrompt: systemPrompt, allowedToolNames: allowedToolNames))
+        sessions[id] = AgentRuntimeSessionSnapshot(
+            sessionID: id, modelID: "test-model", workingDirectoryPath: cwd,
+            systemPrompt: systemPrompt, cacheKey: cacheKey, history: history,
+            allowedToolNames: allowedToolNames, thinkingSelection: thinkingSelection,
+            preserveThinking: preserveThinking
+        )
     }
 
     func createSessionIfNeeded(
-        id: String, cwd: String, systemPrompt _: String?, history _: [AgentRuntimeMessage],
-        cacheKey _: String?, allowedToolNames _: Set<String>?,
-        thinkingSelection _: AgentThinkingSelection?, preserveThinking _: Bool
+        id: String, cwd: String, systemPrompt: String?, history: [AgentRuntimeMessage],
+        cacheKey: String?, allowedToolNames: Set<String>?,
+        thinkingSelection: AgentThinkingSelection?, preserveThinking: Bool
     ) {
-        workingDirectories[id] = cwd
+        guard sessions[id] == nil else {
+            sessionWrites.append(SessionWrite(systemPrompt: systemPrompt, allowedToolNames: allowedToolNames))
+            return
+        }
+        createSession(
+            id: id, cwd: cwd, systemPrompt: systemPrompt, history: history, cacheKey: cacheKey,
+            allowedToolNames: allowedToolNames, thinkingSelection: thinkingSelection,
+            preserveThinking: preserveThinking
+        )
     }
 
     func updateSessionOptions(
-        id _: String, systemPrompt _: String?, allowedToolNames _: Set<String>?,
+        id _: String, systemPrompt: String?, allowedToolNames: Set<String>?,
         thinkingSelection _: AgentThinkingSelection?, preserveThinking _: Bool
-    ) {}
+    ) {
+        sessionWrites.append(SessionWrite(systemPrompt: systemPrompt, allowedToolNames: allowedToolNames))
+    }
 
-    func closeSession(id _: String) {}
+    func closeSession(id: String) {
+        sessions.removeValue(forKey: id)
+    }
+
     func shutdown() async {}
 
     func preloadModel(
@@ -333,6 +402,10 @@ actor ACPTelegramScriptedBackend: AgentRuntimeBackend {
         []
     }
 
+    func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? {
+        sessions[id]
+    }
+
     func sendPrompt(
         sessionID: String,
         prompt: String,
@@ -341,13 +414,19 @@ actor ACPTelegramScriptedBackend: AgentRuntimeBackend {
     ) async throws -> DirectAgentResponse {
         prompts.append(prompt)
         let steps = scripts.isEmpty ? [.reply("reply")] : scripts.removeFirst()
-        let directory = URL(fileURLWithPath: workingDirectories[sessionID] ?? FileManager.default.currentDirectoryPath)
+        let directory = URL(fileURLWithPath: sessions[sessionID]?.workingDirectoryPath ?? FileManager.default.currentDirectoryPath)
         var text = ""
         for (index, step) in steps.enumerated() {
             switch step {
             case let .reply(reply):
                 text += reply
                 await onEvent(.content(reply))
+            case .pause:
+                pausedCount += 1
+                if releasedCount < pausedCount {
+                    await withCheckedContinuation { pauseWaiters.append($0) }
+                }
+                try Task.checkCancellation()
             case let .writeFile(path, contents):
                 let write = DirectAgentToolCall(
                     id: "write-\(index)",
@@ -376,7 +455,45 @@ actor ACPTelegramScriptedBackend: AgentRuntimeBackend {
                 )
                 let approved = await handler?(request) ?? false
                 permissionDecisions.append(approved)
+                try Task.checkCancellation()
+            case let .readClientFile(path):
+                let url = directory.appendingPathComponent(path)
+                let client = ClientTextFileSystem.current
+                let contents: String?
+                if let read = client?.read {
+                    contents = try await read(url)
+                } else {
+                    contents = try? String(contentsOf: url, encoding: .utf8)
+                }
+                clientFileAccesses.append(ClientFileAccess(
+                    hadClientFileSystem: client != nil, readContents: contents
+                ))
+            case let .writeClientFile(path, contents):
+                let url = directory.appendingPathComponent(path)
+                let client = ClientTextFileSystem.current
+                if let write = client?.write {
+                    try await write(url, contents)
+                } else {
+                    try Data(contents.utf8).write(to: url)
+                }
+                clientFileAccesses.append(ClientFileAccess(
+                    hadClientFileSystem: client != nil, readContents: nil
+                ))
             }
+        }
+        if let snapshot = sessions[sessionID] {
+            sessions[sessionID] = AgentRuntimeSessionSnapshot(
+                sessionID: snapshot.sessionID, modelID: snapshot.modelID,
+                workingDirectoryPath: snapshot.workingDirectoryPath,
+                systemPrompt: snapshot.systemPrompt, cacheKey: snapshot.cacheKey,
+                history: snapshot.history + [
+                    AgentRuntimeMessage(role: .user, content: prompt),
+                    AgentRuntimeMessage(role: .assistant, content: text),
+                ],
+                allowedToolNames: snapshot.allowedToolNames,
+                thinkingSelection: snapshot.thinkingSelection,
+                preserveThinking: snapshot.preserveThinking
+            )
         }
         return DirectAgentResponse(text: text, stopReason: "end_turn", modelID: "test-model")
     }
@@ -387,13 +504,22 @@ actor ACPTelegramScriptedBackend: AgentRuntimeBackend {
 /// Every JSON-RPC message the bridge wrote, in order.
 final class ACPTelegramWire: Sendable {
     private let storage = Mutex<[JSONValue]>([])
+    private let observer = Mutex<(@Sendable (JSONValue) -> Void)?>(nil)
 
     var sink: ACPWriter.Sink {
         { [self] data in
             if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
                 storage.withLock { $0.append(value) }
+                let observe = observer.withLock { $0 }
+                observe?(value)
             }
         }
+    }
+
+    /// Calls `handler` with every message written from now on, after it is
+    /// recorded: the way a client double answers the bridge's requests.
+    func observe(_ handler: @escaping @Sendable (JSONValue) -> Void) {
+        observer.withLock { $0 = handler }
     }
 
     var messages: [[String: JSONValue]] {
@@ -428,6 +554,11 @@ final class ACPTelegramWire: Sendable {
         response(id: id)?["result"]?.objectValue?["stopReason"]?.acpStringValue
     }
 
+    /// The message of the error response to request `id`, if any.
+    func errorMessage(id: Int) -> String? {
+        response(id: id)?["error"]?.objectValue?["message"]?.acpStringValue
+    }
+
     /// The error responses written so far.
     var errorResponses: [[String: JSONValue]] {
         messages.filter { $0["error"] != nil }
@@ -442,10 +573,94 @@ final class ACPTelegramWire: Sendable {
     }
 }
 
+// MARK: - Client text file system
+
+/// The editor's side of the ACP text file system: answers the bridge's
+/// `fs/read_text_file` and `fs/write_text_file` requests from buffers it
+/// keeps in memory, and records the paths it served. Nothing reaches the
+/// disk. Files are keyed by their standardized absolute path.
+final class ACPTelegramClientFiles: Sendable {
+    private struct State {
+        var buffers: [String: String]
+        var readPaths: [String] = []
+        var writtenPaths: [String] = []
+        var sessionIDs: Set<String> = []
+    }
+
+    private let state: Mutex<State>
+
+    init(buffers: [URL: String] = [:]) {
+        state = Mutex(State(buffers: Dictionary(
+            uniqueKeysWithValues: buffers.map { ($0.key.standardizedFileURL.path, $0.value) }
+        )))
+    }
+
+    /// The paths read from the buffers, in order.
+    var readPaths: [String] {
+        state.withLock { $0.readPaths }
+    }
+
+    /// The paths written to the buffers, in order.
+    var writtenPaths: [String] {
+        state.withLock { $0.writtenPaths }
+    }
+
+    /// The sessions the requests named.
+    var requestedSessionIDs: Set<String> {
+        state.withLock { $0.sessionIDs }
+    }
+
+    /// The buffer of `url`.
+    func buffer(at url: URL) -> String? {
+        state.withLock { $0.buffers[url.standardizedFileURL.path] }
+    }
+
+    /// Answers the file system requests `wire` carries from now on to
+    /// `writer`, the bridge's.
+    func serve(wire: ACPTelegramWire, writer: ACPWriter) {
+        wire.observe { [self] message in
+            guard let reply = response(to: message) else { return }
+            Task(name: "ACP Telegram client files") { await writer.handleResponse(reply) }
+        }
+    }
+
+    private func response(to message: JSONValue) -> JSONValue? {
+        guard let object = message.objectValue,
+              let method = object["method"]?.acpStringValue, method.hasPrefix("fs/"),
+              let id = object["id"], let params = object["params"]?.objectValue,
+              let path = params["path"]?.acpStringValue else { return nil }
+        let result: JSONValue? = state.withLock { state in
+            if let sessionID = params["sessionId"]?.acpStringValue {
+                state.sessionIDs.insert(sessionID)
+            }
+            switch method {
+            case "fs/read_text_file":
+                guard let text = state.buffers[path] else { return nil }
+                state.readPaths.append(path)
+                return .object(["content": .string(text)])
+            case "fs/write_text_file":
+                guard let text = params["content"]?.acpStringValue else { return nil }
+                state.buffers[path] = text
+                state.writtenPaths.append(path)
+                return .null
+            default:
+                return nil
+            }
+        }
+        if let result {
+            return .object(["jsonrpc": .string("2.0"), "id": id, "result": result])
+        }
+        return .object([
+            "jsonrpc": .string("2.0"), "id": id,
+            "error": .object(["code": .number(-32000), "message": .string("Client file unavailable")]),
+        ])
+    }
+}
+
 // MARK: - Bridge fixture
 
 /// An ACP bridge whose sessions run on ``ACPTelegramScriptedBackend`` and
-/// whose Telegram companions use `transport`.
+/// whose Telegram channels use `transport`.
 struct ACPTelegramBridgeFixture {
     let bridge: ZenCODEACPBridge
     let backend: ACPTelegramScriptedBackend
@@ -453,10 +668,12 @@ struct ACPTelegramBridgeFixture {
     let transport: ACPTelegramScriptedTransport
     let workingDirectory: URL
 
-    /// A bridge with the sessions `sessionIDs` installed, in `root`.
+    /// A bridge with the sessions `sessionIDs` installed, in `root`, each
+    /// with `selectedAgent` as its agent.
     static func make(
         root: URL,
         sessionIDs: [String],
+        selectedAgent: AgentProfile? = nil,
         transport: ACPTelegramScriptedTransport
     ) async throws -> ACPTelegramBridgeFixture {
         let workingDirectory = root.appendingPathComponent("workspace", isDirectory: true)
@@ -489,7 +706,7 @@ struct ACPTelegramBridgeFixture {
                 allowedToolNames: nil
             )
             try await bridge.sessionRunner.createSession(configuration: sessionConfiguration)
-            await bridge.installTestSession(sessionConfiguration)
+            await bridge.installTestSession(sessionConfiguration, selectedAgent: selectedAgent)
         }
         return ACPTelegramBridgeFixture(
             bridge: bridge, backend: backend, wire: wire,
@@ -509,6 +726,41 @@ struct ACPTelegramBridgeFixture {
                 "prompt": [["type": "text", "text": text]] as [[String: Any]],
             ] as [String: Any],
         ])
+    }
+
+    /// Sends `session/cancel` for `sessionID` as request `id`, and returns
+    /// once the bridge answered it.
+    func cancel(sessionID: String, id: Int) async {
+        await bridge.handleMessage([
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "session/cancel",
+            "params": ["sessionId": sessionID] as [String: Any],
+        ])
+    }
+
+    /// Sends `session/load` for the live session `sessionID` as request
+    /// `id`, which replays its history, and returns once the bridge answered.
+    func loadSession(sessionID: String, id: Int) async {
+        await bridge.handleMessage([
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "session/load",
+            "params": ["sessionId": sessionID] as [String: Any],
+        ])
+    }
+
+    /// Waits until the linked chat is asked a permission and returns the
+    /// request ID the card carries; `nil`, with the expectation failed,
+    /// when it is not asked.
+    func pendingTelegramPermissionRequestID() async -> String? {
+        let card = await transport.waitForSentMessage { $0.text.contains("Request ID: ") }
+        guard let card, let range = card.text.range(of: "Request ID: ") else {
+            Issue.record("Telegram was not asked the permission")
+            return nil
+        }
+        let requestID = card.text[range.upperBound...].prefix { !$0.isWhitespace }
+        return requestID.isEmpty ? nil : String(requestID)
     }
 
     /// The last `agent_message_chunk` text of the prompt that started at
@@ -540,20 +792,36 @@ struct ACPTelegramBridgeFixture {
         await turn.value
     }
 
-    func companion(sessionID: String) async -> TelegramSessionCompanion? {
-        await bridge.telegramCompanionForTesting(sessionID: sessionID)
+    func telegramChannel(sessionID: String) async -> TelegramChannel? {
+        await bridge.telegramChannelForTesting(sessionID: sessionID)
     }
 }
 
 extension ZenCODEACPBridge {
-    func setTelegramTransportFactoryForTesting(
-        _ factory: (@Sendable () -> any TelegramHTTPTransport)?
-    ) {
-        telegramTransportFactoryForTesting = factory
+    /// ``installTestSession(_:)`` with the session's agent.
+    func installTestSession(
+        _ configuration: AgentCoreSessionConfiguration,
+        selectedAgent: AgentProfile?
+    ) async {
+        do {
+            _ = try await installSession(configuration: configuration, selectedAgent: selectedAgent)
+        } catch {
+            Issue.record("installTestSession failed: \(error)")
+        }
     }
 
-    func telegramCompanionForTesting(sessionID: String) -> TelegramSessionCompanion? {
-        sessions[sessionID]?.telegramCompanion
+    func setTelegramTransportFactoryForTesting(
+        _ factory: (@Sendable () -> any TelegramHTTPTransport)?
+    ) async {
+        telegramTransportFactoryForTesting = factory
+        await host.setTelegramTransportFactoryForTesting(factory)
+    }
+
+    /// The Telegram channel of the slot of `sessionID`, once `/telegram on`
+    /// created it.
+    func telegramChannelForTesting(sessionID: String) async -> TelegramChannel? {
+        guard let slotID = sessions[sessionID]?.slotID else { return nil }
+        return await host.telegramChannel(in: slotID)
     }
 
     func telegramRouterForTesting() async -> TerminalTelegramSessionRouter? {

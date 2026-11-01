@@ -552,69 +552,6 @@ extension ACPCompatibilityTests {
         }
     }
 
-    /// With a Telegram companion attached by `/telegram on`, the stream of the
-    /// same simple text `session/prompt` is still the baseline of
-    /// `simplePromptPublishesTheCurrentSessionUpdateSequence`: the companion
-    /// mirrors the turn to the linked chat, and nothing of it reaches the ACP
-    /// wire. Telegram goes through a scripted Bot API.
-    @Test(.timeLimit(.minutes(1)))
-    func attachedTelegramCompanionLeavesThePromptStreamUnchanged() async throws {
-        try await ACPTelegramTestSupport.withSupportDirectory { root in
-            let transport = ACPWireRecordingTransport()
-            let backend = SingleReplyACPBackend()
-            let bridge = try makeACPWireBridge(transport: transport, backendFactory: { _, _ in backend })
-            let telegram = ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
-            await bridge.setTelegramTransportFactoryForTesting { telegram }
-            let sessionID = "acp-wire-telegram-\(UUID().uuidString)"
-            let sessionConfiguration = AgentCoreSessionConfiguration(
-                sessionID: sessionID,
-                modelID: "test-model",
-                workingDirectory: root.appendingPathComponent("workspace", isDirectory: true),
-                systemPrompt: "ACP wire baseline",
-                cacheKey: nil,
-                history: [],
-                allowedToolNames: nil
-            )
-            try await bridge.sessionRunner.createSession(configuration: sessionConfiguration)
-            await bridge.installTestSession(sessionConfiguration)
-
-            for (id, text) in [(1, "/telegram on"), (2, "Hello")] {
-                if id == 2 {
-                    let companion = try #require(await bridge.telegramCompanionForTesting(sessionID: sessionID))
-                    #expect(await companion.isActive)
-                }
-                let start = transport.messageCount
-                await bridge.handleMessage([
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "method": "session/prompt",
-                    "params": [
-                        "sessionId": sessionID,
-                        "prompt": [["type": "text", "text": text]] as [[String: Any]]
-                    ] as [String: Any]
-                ])
-                #expect(transport.errorCode(id: id) == nil)
-                let result = try #require(transport.response(id: id)?["result"] as? [String: Any])
-                #expect(result["stopReason"] as? String == "end_turn")
-                guard id == 2 else { continue }
-                let stream = ACPSessionUpdateStream(updates: transport.sessionUpdates(from: start))
-                #expect(stream.orderedKinds == [
-                    "user_message_chunk",
-                    "session_info_update",
-                    "available_commands_update",
-                    "agent_message_chunk",
-                    "agent_message_chunk",
-                ])
-                #expect(stream.plans.count == 1)
-                #expect((stream.plans.first?["entries"] as? [Any])?.isEmpty == true)
-            }
-            // The turn did reach the linked chat.
-            let mirrored = await telegram.sentTexts
-            #expect(mirrored.contains { $0.contains("ZenCODE completed") && $0.contains("reply") })
-            await bridge.shutdown()
-        }
-    }
-
     @Test
     func configuredBridgeDoesNotAnswerAuthRequired() async throws {
         let transport = ACPWireRecordingTransport()

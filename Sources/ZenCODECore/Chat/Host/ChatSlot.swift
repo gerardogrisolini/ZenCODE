@@ -55,7 +55,8 @@ public struct ChatSlotDescriptor: Sendable {
     public var identity: ChatSlotIdentity
     /// The working directory of every session the slot runs.
     public var workingDirectory: URL
-    /// The channel's presenter, the primary presenter of every controller.
+    /// The channel's presenter, the presenter of every controller while the
+    /// channel drives the slot (see ``ChatSlotChannel``).
     public var presenter: any ChatSessionPresenter
     public var interaction: ChatSlotInteraction
     /// The channel's consent policy for the gated tools.
@@ -78,6 +79,12 @@ public struct ChatSlotDescriptor: Sendable {
     /// that present the session themselves and would retain the log for
     /// nobody.
     public var publishesState: Bool
+    /// Presents the ending of a turn another channel of the slot ran, when
+    /// the channel drives the slot as the turn ends, for a channel whose
+    /// presenter does not conform to the slot's channel presenter (see
+    /// ``ChatSessionHost/presentTurnEnding(_:in:)``). Internal: the terminal
+    /// sets it; a presenter that conforms needs none.
+    var presentTurnEnding: (@ChatSessionActor (ChatTurnEnding) async -> Void)?
 
     public init(
         identity: ChatSlotIdentity,
@@ -111,7 +118,13 @@ public struct ChatSlotDescriptor: Sendable {
 /// (``ChatSessionIncarnation``): the channel's bindings belong to it and are
 /// applied to each new controller, so a new or loaded session keeps the
 /// channel's presenter, interaction, hooks, and commands while selection,
-/// plan, workflow, and transcript start over.
+/// plan, workflow, and transcript start over. So does the slot's Telegram
+/// link: the channel that drives the slot (``activeChannel``) and the
+/// ``TelegramChannel`` behind it survive `/sessions new` and `/sessions load`.
+///
+/// Every controller of the slot presents through the slot's
+/// ``ChatSlotPresenter`` and asks through its ``ChatSlotInteractionHost``,
+/// which forward to the channel that drives the slot now.
 ///
 /// Isolated to ``ChatSessionActor`` with the host that owns it.
 @ChatSessionActor
@@ -119,6 +132,7 @@ final class ChatSlot {
     let id: ChatSlotID
     let identity: ChatSlotIdentity
     let workingDirectory: URL
+    /// The presenter of the channel that opened the slot.
     let presenter: any ChatSessionPresenter
     let interaction: ChatSlotInteraction
     let authorizer: ChatToolConsentAuthorizer
@@ -129,18 +143,45 @@ final class ChatSlot {
     let retainsFileArtifactHistory: Bool
     let defaultOrigin: ChatTurnOrigin
     let publishesState: Bool
+    /// See ``ChatSlotDescriptor/presentTurnEnding``.
+    let presentTurnEndingHandler: (@ChatSessionActor (ChatTurnEnding) async -> Void)?
     /// The session the slot runs now; `nil` between sessions.
     var incarnation: ChatSessionIncarnation?
     /// Called with the new incarnation (or `nil`) after every change of
-    /// ``incarnation``, in registration order. A companion that follows the
+    /// ``incarnation``, in registration order. A channel that follows the
     /// slot from one controller to the next registers here (see
     /// ``ChatSessionHost/addIncarnationObserver(to:_:)``).
     var incarnationObservers: [UUID: @ChatSessionActor (ChatSessionIncarnation?) -> Void] = [:]
     /// The streams of ``ChatSessionHost/incarnations(in:)`` still open, by
     /// the token of the observer that feeds them.
     var incarnationStreams: [UUID: AsyncStream<ChatSessionIncarnation?>.Continuation] = [:]
-    // The channel that drives the slot's turns (`activeChannel`) is added
-    // here when Telegram becomes an exclusive channel.
+
+    // MARK: Channels
+
+    /// The channel that drives the slot's turns now.
+    var activeChannel: ChatSlotChannel = .primary
+    /// The slot's Telegram channel, created by the first `/telegram on` and
+    /// kept, attached or not, for the life of the slot.
+    var telegramChannel: TelegramChannel?
+    /// The presenter of every controller of the slot (see
+    /// ``ChatSlotPresenter``); created with the slot.
+    private(set) var slotPresenter: ChatSlotPresenter!
+    /// The interaction host of every controller of the slot (see
+    /// ``ChatSlotInteractionHost``); created with the slot.
+    let slotInteractionHost: ChatSlotInteractionHost
+    /// The last sequence the primary channel saw when it handed the slot to
+    /// Telegram, with the epoch of the incarnation it was read on; `nil`
+    /// while the primary channel drives the slot.
+    var telegramHandoverLastSeenSequence: Int?
+    var telegramHandoverEpoch: UInt64?
+    /// `true` when the reducer of the current incarnation was created for the
+    /// Telegram handover, not by ``ChatSlotDescriptor/publishesState``: it is
+    /// detached once the catch-up is delivered.
+    var reducerIsOnDemand = false
+    /// The prompt the slot's Telegram channel reserved for the turn it runs
+    /// now (``ChatSessionHost/runTelegramTurn(in:prompt:attachments:purpose:isUserVisible:)``);
+    /// `nil` while no turn of the channel holds the slot's reservation.
+    var telegramTurnPromptID: UUID?
 
     init(id: ChatSlotID, descriptor: ChatSlotDescriptor) {
         self.id = id
@@ -155,13 +196,53 @@ final class ChatSlot {
         retainsFileArtifactHistory = descriptor.retainsFileArtifactHistory
         defaultOrigin = descriptor.defaultOrigin
         publishesState = descriptor.publishesState
+        presentTurnEndingHandler = descriptor.presentTurnEnding
+        let primaryHost: any ChatInteractionHost
+        switch descriptor.interaction {
+        case let .host(host):
+            primaryHost = host
+        case .pendingRequests:
+            // Replaced by the incarnation's pending-request host as soon as
+            // one exists (see ``setIncarnation(_:)``).
+            primaryHost = ChatRefusingInteractionHost()
+        }
+        slotInteractionHost = ChatSlotInteractionHost(activeHost: primaryHost)
+        slotPresenter = ChatSlotPresenter(slot: self, primary: descriptor.presenter)
     }
 
-    /// Installs `incarnation` and tells the observers.
+    /// Installs `incarnation`, points the slot's host at its primary host
+    /// while the primary channel drives the slot, and tells the observers.
     func setIncarnation(_ incarnation: ChatSessionIncarnation?) {
         self.incarnation = incarnation
+        if activeChannel == .primary {
+            slotInteractionHost.setActiveHost(primaryInteractionHost)
+        }
         for observer in incarnationObservers.values {
             observer(incarnation)
+        }
+    }
+
+    /// The host of the primary channel for the incarnation the slot runs: the
+    /// channel's own, or the pending-request host of the incarnation.
+    var primaryInteractionHost: any ChatInteractionHost {
+        switch interaction {
+        case let .host(host):
+            return host
+        case .pendingRequests:
+            return incarnation?.pendingRequestHost ?? ChatRefusingInteractionHost()
+        }
+    }
+
+    /// Makes `channel` the channel that drives the slot: the slot's host asks
+    /// on that channel from now on, and the requests still open are asked
+    /// again there.
+    func setActiveChannel(_ channel: ChatSlotChannel) {
+        activeChannel = channel
+        switch channel {
+        case .primary:
+            slotInteractionHost.setActiveHost(primaryInteractionHost)
+        case .telegram:
+            slotInteractionHost.setActiveHost(telegramChannel ?? primaryInteractionHost)
         }
     }
 

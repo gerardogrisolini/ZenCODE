@@ -266,23 +266,17 @@ public final class TerminalChat {
         set { chatSession.availableSkillsCache = newValue }
     }
     let renderCoordinator: TerminalChatRenderCoordinator
-    /// The session's Telegram companion: the link to Telegram, its control
-    /// service and route lease, and the Telegram side of the turn in
-    /// progress (see `TerminalChat+Telegram.swift`, whose forwarders keep the
-    /// terminal's former `telegram*` members). It follows the slot: at every
-    /// new incarnation it moves to the new controller
-    /// (``TelegramSessionCompanion/follow(_:)``) keeping its link.
-    ///
-    /// Implicitly unwrapped only because the companion holds this chat as its
-    /// channel, so it can be created only once `self` is complete: `init`
-    /// assigns it as its last statement, before it returns and so before
-    /// any task of the chat can start or any member can read it. It is never
-    /// reassigned.
-    private(set) var telegramCompanion: TelegramSessionCompanion!
-    /// The panel loop's event queue, from the start of the loop to its
-    /// teardown: Telegram voice transcripts and route invalidations reach
-    /// the loop through it (see `TerminalChat+Telegram.swift`).
-    var telegramRuntimeEventQueue: TerminalChatEventQueue?
+    /// The event queue of the running input loop, from its start to its
+    /// teardown: the ending of a turn the terminal adopted from Telegram
+    /// reaches the loop through it (see `TerminalChat+Telegram.swift`).
+    var loopEventQueue: TerminalChatEventQueue?
+    /// `true` from `/telegram off` while a turn from Telegram was running
+    /// until the loop adopted that turn (see
+    /// ``takeAdoptedTurnIfNeeded()``).
+    var hasAdoptedTelegramTurn = false
+    /// Returning `true` stands in for publishing a shared-chat mention the
+    /// operator typed or dictated; `nil` in production.
+    var onSharedChatPublicationForTesting: (@Sendable () -> Bool)?
     /// Test-only runtime seams. Production leaves these nil/false; they let a
     /// deterministic harness drive the real serialized panel FIFO without raw
     /// terminal I/O or a live model.
@@ -291,13 +285,9 @@ public final class TerminalChat {
     var onGenerateResponseForTesting: (@Sendable (TerminalPromptAttempt) async throws -> TerminalChatGenerationSuccess)?
     var onInteractiveGenerationStateForTesting: (@Sendable (Bool) -> Void)?
     /// The system, failure, and Markdown messages the terminal writes while
-    /// it is not `nil`, one entry per write: the capture of what a command
-    /// presents.
-    var telegramImmediateCommandOutput: [String]?
-    /// `true` while the terminal retires a turn's Telegram side, so the
-    /// overview barrier only drains the mirror queue (see
-    /// ``overviewMirrorBarrier()``).
-    var isRetiringTelegramTurn = false
+    /// it is not `nil`, one entry per write: a test's capture of what a
+    /// command presents.
+    var capturedCommandOutputForTesting: [String]?
     var optionalCommandAvailability = TerminalOptionalCommandAvailability.load()
     /// Reads and replaces the user's crontab for `/cron`. Tests install a
     /// stand-in so no command ever touches the real crontab.
@@ -406,6 +396,9 @@ public final class TerminalChat {
         self.sessionHost = host
         self.sessionRunner = host.runner
         self.featureRuntime = host.runner.swiftFeatureRuntime
+        if let telegramTransportFactory {
+            host.telegramTransportFactory = telegramTransportFactory
+        }
         let chatSessionPresenter = TerminalChatSessionPresenter()
         // Menus and line input need an interactive terminal.
         let interactionHost = TerminalInteractionHost(
@@ -420,21 +413,26 @@ public final class TerminalChat {
         // starts from the launch agent and the launch's explicit model, and
         // reads the tool catalog from the runner's feature runtime. After
         // `/setup` the session is the one the setup interrupted. The slot's
-        // bindings (presenter, host, hooks, commands) outlive the session.
+        // bindings (presenter, host, hooks, commands) outlive the session, and
+        // so does its Telegram channel, created by the first `/telegram on`.
+        var descriptor = ChatSlotDescriptor(
+            identity: .terminal,
+            workingDirectory: configuration.workingDirectory,
+            presenter: chatSessionPresenter,
+            interaction: .host(interactionHost),
+            authorizer: permissionAuthorizer.consentAuthorizer,
+            channelHooks: self,
+            commandRegistry: Self.commandRegistry,
+            // Nobody consumes a reducer of the terminal: the host creates one
+            // on demand while Telegram drives the slot.
+            publishesState: false
+        )
+        descriptor.presentTurnEnding = { [weak self] ending in
+            await self?.presentAdoptedTurnEnding(ending)
+        }
         do {
             currentIncarnation = try host.openSlot(
-                ChatSlotDescriptor(
-                    identity: .terminal,
-                    workingDirectory: configuration.workingDirectory,
-                    presenter: chatSessionPresenter,
-                    interaction: .host(interactionHost),
-                    authorizer: permissionAuthorizer.consentAuthorizer,
-                    channelHooks: self,
-                    commandRegistry: Self.commandRegistry,
-                    // Nobody consumes a reducer of the terminal yet: it would
-                    // retain the log for nobody.
-                    publishesState: false
-                ),
+                descriptor,
                 sessionID: runtimeSetupResumeSnapshot?.sessionID ?? Self.newTerminalSessionID()
             )
         } catch {
@@ -443,21 +441,6 @@ public final class TerminalChat {
         host.addIncarnationObserver(to: terminalSlotID) { [weak self] incarnation in
             self?.incarnationDidChange(incarnation)
         }
-        // Last, once `self` is complete: the companion holds the chat as its
-        // channel, and registers its presenter in the controller now, so
-        // every turn is fanned out to it (see `telegramCompanion`). Its
-        // router and poller are the host's, one of each per process.
-        telegramCompanion = TelegramSessionCompanion(
-            controller: chatSession,
-            sessionRunner: host.runner,
-            router: host.telegramRouter(),
-            controlService: TerminalTelegramControlService(
-                transportFactory: telegramTransportFactory ?? { NIOTelegramHTTPTransport() },
-                dispatcher: host.telegramDispatcher()
-            ),
-            channel: self,
-            configuration: .init(primaryChannelDescription: "TUI", policy: .full)
-        )
     }
 
     /// The host of a terminal chat over `sessionRunner`, with the environment
@@ -481,20 +464,20 @@ public final class TerminalChat {
 
     /// The slot runs `incarnation` now: `/sessions new` or `/sessions load`
     /// replaced the session, or ``sessionID`` changed in place. The terminal
-    /// follows: ``chatSession`` is the new controller, the Telegram companion
-    /// moves to it with its link, and the runner's sub-agent event handler,
-    /// bound to the previous artifact history, is installed again at the
-    /// next turn. Everything else the terminal keeps per session (status
-    /// bar, overviews, task-graph observer, staged attachments, response
-    /// language) is realigned by the channel hooks of the operation, in the
-    /// order they always ran. A slot without session (closed, shut down)
-    /// changes nothing: late work keeps finding the last controller.
+    /// follows: ``chatSession`` is the new controller, and the runner's
+    /// sub-agent event handler, bound to the previous artifact history, is
+    /// installed again at the next turn. The slot's Telegram channel follows
+    /// the slot by itself. Everything else the terminal keeps per session
+    /// (status bar, overviews, task-graph observer, staged attachments,
+    /// response language) is realigned by the channel hooks of the
+    /// operation, in the order they always ran. A slot without session
+    /// (closed, shut down) changes nothing: late work keeps finding the last
+    /// controller.
     private func incarnationDidChange(_ incarnation: ChatSessionIncarnation?) {
         guard let incarnation else { return }
         let previous: ChatSessionIncarnation = currentIncarnation
         currentIncarnation = incarnation
         guard incarnation.epoch != previous.epoch else { return }
-        telegramCompanion.follow(incarnation.controller)
         didInstallSubAgentToolEventHandler = false
     }
 
@@ -542,7 +525,6 @@ public final class TerminalChat {
                 token: memoryDiagnosticSink
             )
         }
-        await installOverviewMirroringHandler()
 
         let initialInputLine: String?
         if stdinIsTerminal {
@@ -617,10 +599,11 @@ public final class TerminalChat {
         // cancellation handler, so the child is signalled even if ZenCODE
         // exits right after; the cancelled task prints no report.
         activeCronRun?.task.cancel()
-        // The turn's Telegram side, the shared-chat relay, and the control
-        // service, in that order, and the companion's presenter leaves the
-        // controller.
-        await telegramCompanion.shutdown()
+        // The slot's Telegram channel, if `/telegram on` created one: the
+        // turn's Telegram side, the shared-chat relay, and the control
+        // service, in that order, before the terminal's own services stop.
+        // The host shuts it down again with the slot, which changes nothing.
+        await sessionHost.telegramChannel(in: terminalSlotID)?.shutdown()
         await statusBar.stop()
     }
 }

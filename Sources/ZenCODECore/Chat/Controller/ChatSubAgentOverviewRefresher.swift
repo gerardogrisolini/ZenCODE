@@ -113,8 +113,8 @@ extension ChatSessionController {
 
     /// Publishes the sub-agent overview on `presenter`, or on the controller's
     /// ``effectivePresenter(for:)`` when `nil`; a presenter the channel passes
-    /// is used as it is, without the companions, which do not draw overviews
-    /// (see ``ChatCompanionPresenter``). A `relatedToolName` that does not
+    /// is used as it is, without the observers, which do not draw overviews
+    /// (see ``ChatSessionObserver``). A `relatedToolName` that does not
     /// name a sub-agent tool publishes nothing: the publication around a tool
     /// call concerns only `agent.*` calls. Without a tool name it always
     /// publishes. The channel skips an overview whose signature it already

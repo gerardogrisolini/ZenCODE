@@ -259,22 +259,22 @@ struct ChatPromptQueueTests {
 
     // MARK: - Terminal origin
 
-    @Test("The terminal queue keeps the terminal origins and its capacity of 32")
+    @Test("The terminal queue keeps the terminal origin and its capacity of 32")
     func terminalQueueKeepsTerminalOrigins() {
         var queue = ChatPromptQueue<TerminalPromptOrigin>()
         let local = ChatQueuedPrompt<TerminalPromptOrigin>(text: "from the panel", origin: .local)
-        let remote = ChatQueuedPrompt<TerminalPromptOrigin>(
-            text: "from telegram",
-            origin: .telegram(chatID: 7),
+        let dictated = ChatQueuedPrompt<TerminalPromptOrigin>(
+            text: "from a voice note",
+            origin: .local,
             mode: .directPrompt
         )
 
-        var accepted = [queue.enqueue(local), queue.enqueue(remote)]
+        var accepted = [queue.enqueue(local), queue.enqueue(dictated)]
         for index in 3...32 {
             accepted.append(queue.enqueue(ChatQueuedPrompt<TerminalPromptOrigin>(text: "prompt \(index)", origin: .local)))
         }
         let refused = queue.enqueue(
-            ChatQueuedPrompt<TerminalPromptOrigin>(text: "refused", origin: .telegram(chatID: 7))
+            ChatQueuedPrompt<TerminalPromptOrigin>(text: "refused", origin: .local)
         )
         let countAtCapacity = queue.count
         let first = queue.dequeue()
@@ -285,8 +285,7 @@ struct ChatPromptQueueTests {
         #expect(!refused)
         #expect(countAtCapacity == 32)
         #expect(first == local)
-        #expect(second == remote)
-        #expect(second?.origin.telegramChatID == 7)
+        #expect(second == dictated)
         #expect(second?.mode == .directPrompt)
         #expect(queue.count == 30)
     }

@@ -1,5 +1,5 @@
 //
-//  TelegramSessionCompanion+MentionPicker.swift
+//  TelegramChannel+MentionPicker.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -10,7 +10,7 @@ import ToolCore
 
 /// The `/chat` mention picker: a keyboard of the live recipients, then a
 /// ForceReply card whose reply goes to the chosen one.
-extension TelegramSessionCompanion {
+extension TelegramChannel {
     // MARK: - Mention picker
 
     /// The callback data prefix of a picker button, followed by the handle.
@@ -20,7 +20,7 @@ extension TelegramSessionCompanion {
     /// API has no typing events. It is intentionally available while a turn is
     /// generating: choosing a recipient does not enqueue or start work.
     func handleMentionPickerRequest(
-        chatID: Int64, origin: TelegramTurnOrigin? = nil
+        chatID: Int64, lease: TerminalTelegramRouteLease
     ) async {
         let buttons = Self.mentionPickerButtons(
             from: await sharedChatMentionSuggestions()
@@ -31,7 +31,7 @@ extension TelegramSessionCompanion {
             "Choose who to message. After selecting, reply to the next card with your message.",
             to: chatID,
             replyMarkup: markup,
-            origin: origin
+            lease: lease
         )
     }
 
@@ -39,7 +39,7 @@ extension TelegramSessionCompanion {
     /// snapshot (see ``SharedChatMentionParser/suggestions(for:handleMap:)``).
     func sharedChatMentionSuggestions() async -> [SharedChatMentionParser.Suggestion] {
         let roster = await sessionRunner.sharedChatMentionRoster(
-            rootSessionID: controller.sessionID
+            rootSessionID: sessionID
         )
         return SharedChatMentionParser.suggestions(
             for: roster.participants,
@@ -65,19 +65,18 @@ extension TelegramSessionCompanion {
 
     /// Answers the tap of a picker button with the ForceReply card whose
     /// reply goes to the chosen recipient, which must still be in the
-    /// roster. The channel's ingress calls it for a callback whose data has
+    /// roster. The ingress calls it for a callback whose data has
     /// ``mentionPickerCallbackPrefix``.
     func handleMentionPickerCallback(
-        _ data: String, chatID: Int64, origin: TelegramTurnOrigin? = nil
+        _ data: String, chatID: Int64, lease: TerminalTelegramRouteLease
     ) async {
-        guard let lease = origin?.lease,
-              lease.key.chatID == chatID,
+        guard lease.key.chatID == chatID,
               (try? await router.validate(lease)) != nil else { return }
         guard data.hasPrefix(Self.mentionPickerCallbackPrefix) else { return }
         let handle = String(data.dropFirst(Self.mentionPickerCallbackPrefix.count))
         guard handle.utf8.count <= 48 else { return }
         let roster = await sessionRunner.sharedChatMentionRoster(
-            rootSessionID: controller.sessionID
+            rootSessionID: sessionID
         )
         guard case let .route(route) = SharedChatMentionParser.parse(
             from: "@\(handle) selected",
@@ -86,7 +85,7 @@ extension TelegramSessionCompanion {
             await sendSystemMessage(
                 "ZenCODE message: that agent is no longer active. Run /chat again.",
                 to: chatID,
-                origin: .telegram(lease)
+                lease: lease
             )
             return
         }
@@ -94,12 +93,12 @@ extension TelegramSessionCompanion {
             "Writing to @\(handle). Reply to this message with the content to send; it will not be treated as a normal prompt.",
             to: chatID,
             replyMarkup: .forceReply,
-            origin: origin
+            lease: lease
         )
         guard let receipt else { return }
         await sharedChatRelay.registerReplyTarget(
             Self.mentionPickerReplyTarget(
-                destination: route.destination, roomID: controller.sessionID,
+                destination: route.destination, roomID: sessionID,
                 chatID: chatID, handle: handle
             ),
             forTelegramMessageID: receipt,
@@ -111,14 +110,14 @@ extension TelegramSessionCompanion {
     /// ``onTelegramMentionPickerMessage`` seam takes it over in tests.
     func sendReplyMarkupMessage(
         _ text: String, to chatID: Int64, replyMarkup: TerminalTelegramReplyMarkup,
-        origin: TelegramTurnOrigin? = nil
+        lease: TerminalTelegramRouteLease
     ) async -> Int? {
         if let hook = onTelegramMentionPickerMessage { return await hook(text, chatID, replyMarkup) }
-        guard let origin, let fence = wireFence(for: origin) else { return nil }
+        guard let fence = wireFence(for: lease) else { return nil }
         do {
             return try await controlService.sendPlainMessageWithReceipt(
                 text, to: chatID,
-                topicID: origin.lease?.effectiveMessageThreadID,
+                topicID: lease.effectiveMessageThreadID,
                 replyMarkup: replyMarkup, fence: fence
             )
         } catch {

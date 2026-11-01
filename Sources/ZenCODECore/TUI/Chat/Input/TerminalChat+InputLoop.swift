@@ -67,10 +67,6 @@ extension TerminalChat {
         var voiceAnnouncementsSince = Date.now
         // `/voice on` feeds dictated utterances into this FIFO.
         voiceEventQueue = eventQueue
-        // This loop owns the only Telegram ingress consumer, so replies to a
-        // forwarded card can actually be delivered while it runs.
-        telegramCompanion.readsIngress = true
-        defer { telegramCompanion.readsIngress = false }
         // SIGWINCH is handled by the status-bar actor, but reader ownership
         // belongs to this one FIFO consumer. The handler only enqueues the
         // collapse notification, so it cannot form an actor callback cycle.
@@ -81,12 +77,14 @@ extension TerminalChat {
         }
         var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
         var generationTask: Task<Void, Never>?
-        // Telegram voice transcripts and route invalidations reach this FIFO
-        // through the companion's channel until the loop ends.
-        telegramRuntimeEventQueue = eventQueue
-        let telegramForwardingTask = startTelegramForwardingTask(eventQueue: eventQueue)
-        // Persistent polling failures are told to the operator by the
-        // companion, which installs its poll-health handler when it attaches.
+        // The reservation of the turn running now, held in the session host
+        // so the slot's other channel sees the session busy (see
+        // `ChatSessionHost.reservePrompt`); `nil` for a turn the terminal
+        // adopted from Telegram, whose reservation the channel holds.
+        var promptReservation: ChatPromptReservation?
+        // The ending of a turn the terminal adopted from Telegram reaches
+        // this FIFO as a generation completion until the loop ends.
+        loopEventQueue = eventQueue
         // The room follows the live session id: `/new` and `/resume` swap it and
         // delegated agents then register in the new room, so the observation is
         // rebound instead of silently watching a retired one.
@@ -125,14 +123,12 @@ extension TerminalChat {
             // running (or keeps this chat alive) after the loop exits, and any
             // event racing the teardown is dropped instead of buffered forever.
             generationTask?.cancel()
-            telegramForwardingTask.cancel()
             sharedChatObservation.task.cancel()
-            // `defer` cannot suspend. This synchronous fallback closes admission
-            // and cancels any transcription if a future early-exit path is added;
-            // the current exits await cleanup explicitly below.
-            telegramCompanion.voiceTranscriptions.cancelAll()
             eventQueue.finish()
-            telegramRuntimeEventQueue = nil
+            loopEventQueue = nil
+            if let promptReservation {
+                sessionHost.releasePrompt(promptReservation)
+            }
             // This loop owns exactly one subscriber. Session teardown performs
             // room-wide stop; detaching here must never end another TUI/ACP
             // observer that is still handling live messages.
@@ -210,9 +206,6 @@ extension TerminalChat {
             readableSharedChatMentionHandles = await sessionRunner.sharedChatMentionHandles(
                 rootSessionID: sharedChatRoomID
             )
-            // A new room invalidates the Telegram receipt map: a reply to a card
-            // from the retired room must not be routed into this one.
-            await telegramCompanion.rebindSharedChatRelay(roomID: sharedChatRoomID)
             await synchronizeSharedChatConsumerBusyState()
         }
 
@@ -268,6 +261,26 @@ extension TerminalChat {
         }
 
         func startGeneration(attempt: TerminalPromptAttempt) async {
+            // The turn is reserved in the session host, so the slot's Telegram
+            // channel sees the session busy and never runs a turn alongside.
+            // A reservation that fails (the channel's own turn still runs
+            // after `/telegram off`) queues the prompt instead.
+            do {
+                promptReservation = try sessionHost.reservePrompt(in: terminalSlotID)
+            } catch {
+                guard queuedPrompts.enqueue(
+                    ChatQueuedPrompt<TerminalPromptOrigin>(
+                        text: attempt.prompt, origin: attempt.origin, mode: .directPrompt
+                    )
+                ) else {
+                    await writeFailureMessage(
+                        "ZenCODE: prompt queue is full; wait for the current prompt to finish.\n"
+                    )
+                    return
+                }
+                await refreshQueuedPromptCount()
+                return
+            }
             // Hidden/synthetic turns do not necessarily write a submitted
             // prompt, so every generation entry point reopens automatic local
             // progress independently of the visible-prompt renderer.
@@ -302,12 +315,21 @@ extension TerminalChat {
 
         func startDirectPrompt(_ prompt: String, origin: TerminalPromptOrigin) async {
             let attempt = promptAttempt(prompt: prompt, origin: origin)
-            if origin == .local {
-                await writeSubmittedPrompt(prompt)
-            } else {
-                await writeTelegramSubmittedPrompt(prompt)
-            }
+            await writeSubmittedPrompt(prompt)
             await startGeneration(attempt: attempt)
+        }
+
+        /// A turn from Telegram was running when `/telegram off` took the
+        /// slot back: the loop treats it as its own from here on, and its
+        /// ending arrives as a generation completion.
+        func adoptRunningTurnIfNeeded() async {
+            guard takeAdoptedTurnIfNeeded(), !isGenerating else { return }
+            isGenerating = true
+            onInteractiveGenerationStateForTesting?(true)
+            await synchronizeSharedChatConsumerBusyState()
+            await statusBar.beginRequest()
+            await statusBar.setProcessing(true)
+            await interactiveReader.setPanelProcessing(true)
         }
 
         await synchronizeLocalExecAccessModeStatusBar()
@@ -318,7 +340,6 @@ extension TerminalChat {
         await installSharedChatMentionSuggestionsProvider()
 
         guard await startPanelInput() else {
-            await telegramCompanion.cancelVoiceTranscriptions()
             await statusBar.stop()
             throw TerminalChatError.interactivePromptUnavailable
         }
@@ -339,6 +360,9 @@ extension TerminalChat {
             if shouldSuspendPanel {
                 await renderCoordinator.setOverviewPublishingSuspended(false)
             }
+            // `/telegram off` while a turn from Telegram runs: the loop takes
+            // the turn over before it handles anything else.
+            await adoptRunningTurnIfNeeded()
 
             switch action {
             case .continueChat:
@@ -383,6 +407,11 @@ extension TerminalChat {
 
         /// A typed or dictated line. Returns `false` when the loop must end.
         func handleSubmittedInputLine(_ line: String) async -> Bool {
+            // While Telegram drives the slot the terminal runs only what takes
+            // it back; everything else is refused before it is routed.
+            guard await admitTerminalLine(line) else {
+                return true
+            }
             // A valid leading mention is live control input, not a
             // regular prompt. Route it before the busy/queued-prompt
             // branches so an operator can reach active agents and the
@@ -442,11 +471,11 @@ extension TerminalChat {
             return await handleSubmittedPanelLine(line)
         }
 
-        /// A transcribed voice prompt (Telegram voice note, or a dictated
-        /// slash-like utterance) always runs as a plain prompt.
+        /// A dictated slash-like utterance always runs as a plain prompt.
         func handleVoicePromptCompleted(_ result: TerminalVoicePromptResult) async {
             switch result.outcome {
             case let .success(prompt):
+                guard await admitTerminalLine(prompt) else { return }
                 if isGenerating || !queuedPrompts.isEmpty {
                     guard queuedPrompts.enqueue(
                         ChatQueuedPrompt<TerminalPromptOrigin>(
@@ -457,10 +486,6 @@ extension TerminalChat {
                     ) else {
                         let message = "ZenCODE: prompt queue is full; voice prompt was not queued."
                         await writeFailureMessage(message + "\n")
-                        await sendTelegramSystemMessageIfLinked(
-                            message,
-                            origin: result.origin
-                        )
                         return
                     }
                     await refreshQueuedPromptCount()
@@ -470,10 +495,6 @@ extension TerminalChat {
                 }
             case let .failure(message):
                 await writeFailureMessage("ZenCODE: \(message)\n")
-                await sendTelegramSystemMessageIfLinked(
-                    "Voice transcription failed: \(message)",
-                    origin: result.origin
-                )
             }
         }
 
@@ -753,12 +774,18 @@ extension TerminalChat {
                 generationTask = nil
                 isGenerating = false
                 onInteractiveGenerationStateForTesting?(false)
+                if let reservation = promptReservation {
+                    promptReservation = nil
+                    sessionHost.releasePrompt(reservation)
+                }
                 await statusBar.setProcessing(false)
                 await interactiveReader.setPanelProcessing(false)
                 // The prompt consumed whatever was staged, so the indicator must
                 // not keep advertising attachments that already left.
                 await synchronizePanelPendingAttachmentCount()
-                await finishPromptResult(result)
+                // The channel that drives the slot presents the ending: the
+                // terminal, or Telegram when `/telegram on` ran meanwhile.
+                await presentOwnTurnEnding(result)
                 var isReadingAnswer = false
                 if case let .success(success) = result {
                     // Replaces a comment still being read: `speak` takes over
@@ -779,19 +806,6 @@ extension TerminalChat {
                 // genuinely idle.
                 await synchronizeSharedChatConsumerBusyState()
                 scheduleQueuedPromptIfNeeded()
-            case let .telegramPollHealthChanged(notice):
-                await telegramCompanion.presentPollHealthNotice(notice)
-            case let .telegramRouteInvalidated(lease):
-                guard telegramCompanion.activeTurnOrigin?.lease == lease else { continue }
-                generationTask?.cancel()
-                generationTask = nil
-                isGenerating = false
-                await statusBar.setProcessing(false)
-                await interactiveReader.setPanelProcessing(false)
-                // The rest of the cleanup: the turn's reporting, the route's
-                // runtime state and command receipts, and the link's route.
-                await telegramCompanion.routeWasInvalidated(lease)
-                scheduleQueuedPromptIfNeeded()
             case .startNextQueuedPrompt:
                 isQueuedPromptStartScheduled = false
                 guard !isGenerating, !queuedPrompts.isEmpty else {
@@ -799,15 +813,6 @@ extension TerminalChat {
                 }
                 let nextPrompt = queuedPrompts.dequeue()!
                 await refreshQueuedPromptCount()
-                // Only a prompt that came through a Telegram route holds a
-                // lease the router must still validate. A local prompt (the
-                // panel, or a dictated voice prompt) has none and always runs.
-                if nextPrompt.origin.telegramLease != nil {
-                    guard await validateTelegramOrigin(nextPrompt.origin) else {
-                        scheduleQueuedPromptIfNeeded()
-                        continue
-                    }
-                }
                 if nextPrompt.mode == .directPrompt {
                     await startDirectPrompt(nextPrompt.text, origin: nextPrompt.origin)
                     continue
@@ -820,13 +825,6 @@ extension TerminalChat {
                 }
                 scheduleQueuedPromptIfNeeded()
             case let .sharedChatMessages(_, messages):
-                // Relay first: Telegram delivery is tracked by the relay's own
-                // ledger, not by the terminal reader buffer, which is rebuilt on
-                // a forced reattach and would resend the replayed transcript.
-                await telegramCompanion.forwardSharedChatMessages(
-                    messages,
-                    roomID: sharedChatRoomID
-                )
                 // Turn starts arrive as a separate Core auto-trigger. The reader
                 // buffer deduplicates by identity, so replays never update the dock
                 // or its unread counter twice.
@@ -862,6 +860,11 @@ extension TerminalChat {
                     )
                     continue
                 }
+                // While Telegram drives the slot its channel observes the room
+                // and claims the trigger; the dormant terminal leaves it alone.
+                guard sessionHost.activeChannel(in: terminalSlotID) == .primary else {
+                    continue
+                }
                 guard !isGenerating, queuedPrompts.isEmpty else {
                     // A real local busy state still has to be visible before
                     // declining, otherwise the requeued batch could be offered
@@ -892,8 +895,7 @@ extension TerminalChat {
                 await startGeneration(
                     attempt: promptAttempt(
                         prompt: trigger.prompt,
-                        origin: telegramCompanion.takeSharedChatOrigin(for: trigger.messages)
-                            .map(TerminalPromptOrigin.init) ?? .local,
+                        origin: .local,
                         isUserVisible: false
                     )
                 )
@@ -903,33 +905,6 @@ extension TerminalChat {
                     rootSessionID: sharedChatRoomID
                 )
                 await refreshSharedChatPanelSuggestions()
-            case let .telegramMessage(message):
-                if message.stoppedMessageGenerationDraftID != nil {
-                    // Correlate the stop to the current reporter's native draft.
-                    // A delayed update for a retired/rebound turn is inert.
-                    if await telegramCompanion.stoppedDraftBelongsToActiveTurn(message) {
-                        generationTask?.cancel()
-                    }
-                    continue
-                }
-                // The companion answers what it can in the linked chat and hands
-                // a prompt to this queue, which runs it when the session is free.
-                let didQueuePrompt = await telegramCompanion.handleIncomingMessage(
-                    message,
-                    isSessionGenerating: isGenerating
-                ) { prompt in
-                    queuedPrompts.enqueue(
-                        ChatQueuedPrompt<TerminalPromptOrigin>(
-                            text: prompt.text,
-                            origin: .telegramLease(prompt.origin),
-                            mode: prompt.mode
-                        )
-                    ) ? .queued : .queueFull
-                }
-                if didQueuePrompt {
-                    await refreshQueuedPromptCount()
-                    scheduleQueuedPromptIfNeeded()
-                }
             case let .voicePromptCompleted(result):
                 await handleVoicePromptCompleted(result)
             case let .voiceUtterance(utterance):
@@ -978,25 +953,25 @@ extension TerminalChat {
         }
 
         // Teardown paths that bypass `finishPromptResult` (end-of-input during
-        // generation, cancellation) must still retire the turn's Telegram
-        // reporting. Finish the queue BEFORE joining the cancelled generation:
-        // its detached completion delivery can only conclude once the queue is
-        // finished, since this loop no longer consumes it. `finish()` is
-        // idempotent, so the teardown defer stays safe. Joining first also stops
-        // a cancelled `generateResponse` from opening a reporting session after
-        // the retirement below.
+        // generation, cancellation). Finish the queue BEFORE joining the
+        // cancelled generation: its detached completion delivery can only
+        // conclude once the queue is finished, since this loop no longer
+        // consumes it. `finish()` is idempotent, so the teardown defer stays
+        // safe.
         eventQueue.finish()
         if let generation = generationTask {
             generationTask = nil
             generation.cancel()
             _ = await generation.value
         }
+        if let reservation = promptReservation {
+            promptReservation = nil
+            sessionHost.releasePrompt(reservation)
+        }
         // This loop is ending for good: stop the task-graph observer (and its
         // in-flight debounce) without restarting it, so no observer-driven
-        // render can run during or after the turn retirement below.
+        // render can run during or after the teardown below.
         await stopTaskGraphObserver()
-        await finishTelegramTurn(outcome: nil, fileChangeSummary: nil)
-        await telegramCompanion.cancelVoiceTranscriptions()
         await stopVoiceMode()
 
         await stopPanelInput()

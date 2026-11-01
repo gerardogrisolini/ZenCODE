@@ -67,8 +67,8 @@ struct TerminalVoiceTurnInstructionTests {
         let chat = try makeChat()
         chat.voiceController = ListeningVoiceController()
         // Collect the command messages instead of writing to a terminal.
-        chat.telegramImmediateCommandOutput = []
-        defer { chat.telegramImmediateCommandOutput = nil }
+        chat.capturedCommandOutputForTesting = []
+        defer { chat.capturedCommandOutputForTesting = nil }
 
         await chat.handleVoiceCommand("/voice pause")
         #expect(await chat.voiceTurnInstruction() == nil)

@@ -61,8 +61,8 @@ actor TerminalChatRenderCoordinator {
     }
 
     /// One assistant block that a sub-agent completed before starting a tool.
-    /// The same block is shown as a 💬 row in the live overview and mirrored
-    /// once to remote chat even when later refreshes redraw that row.
+    /// The same block is shown as a 💬 row in the live overview, consumed once
+    /// even when later refreshes redraw that row.
     struct SubAgentPartialResponse: Sendable, Equatable {
         let token: String
         let heading: String
@@ -165,26 +165,6 @@ actor TerminalChatRenderCoordinator {
     /// and nested-reader cases from flushing an inner prompt prematurely.
     var externalTerminalPromptDepth = 0
     var externalTerminalPromptWrites: [PendingWrite] = []
-
-    /// Optional mirror invoked after publishable overview content is actually
-    /// rendered locally. The typed notification excludes transient status,
-    /// reasoning, tools, and metadata while including every model-authored 💬
-    /// block and completed response.
-    /// Deferred overviews flow through here too, once they become renderable,
-    /// so remote mirrors (e.g. Telegram) cannot miss a section that only
-    /// rendered after streaming finished.
-    ///
-    /// Notifications are queued on this actor in render order and delivered to
-    /// the handler by a single drain task, so the remote channel observes the
-    /// same section order as the terminal even though delivery is asynchronous
-    /// and never blocks local rendering. Use
-    /// ``waitForOverviewMirrorsToDrain()`` as an end-of-turn barrier.
-    var overviewMirroringHandler: (@Sendable (
-        _ notification: OverviewMirrorNotification,
-        _ epoch: Int
-    ) async -> Void)?
-
-    var mirrorQueue = TerminalOverviewMirrorQueue<OverviewMirrorQueueEntry>()
 
     init(
         stdinIsTerminal: Bool,

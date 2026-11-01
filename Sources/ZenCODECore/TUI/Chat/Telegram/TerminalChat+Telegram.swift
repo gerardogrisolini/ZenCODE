@@ -8,45 +8,18 @@
 import Foundation
 import ToolCore
 
-// MARK: - Origins
-
-extension TerminalPromptOrigin {
-    /// The origin the Telegram companion follows a turn of this origin with
-    /// (see ``TelegramTurnOrigin``): the terminal is the primary channel and
-    /// a validated lease is its Telegram route. An origin that carries no
-    /// validated lease (`.telegram(chatID:)`, `.telegramRoute`) has none: the
-    /// companion follows such a turn without an origin, which reaches no
-    /// chat.
-    var telegramTurnOrigin: TelegramTurnOrigin? {
-        switch self {
-        case .local: .primary
-        case let .telegramLease(lease): .telegram(lease)
-        case .telegram, .telegramRoute: nil
-        }
-    }
-
-    /// The companion's origin for a lookup or a send that does not route the
-    /// turn onto the link: the lease of a Telegram origin, and the primary
-    /// channel for any other origin. The companion's egress reaches a chat
-    /// only through a lease, so an origin without one reaches none, as the
-    /// terminal's own egress did.
-    var telegramEgressOrigin: TelegramTurnOrigin {
-        telegramLease.map(TelegramTurnOrigin.telegram) ?? .primary
-    }
-
-    /// The terminal's origin of a turn the Telegram companion follows.
-    init(_ origin: TelegramTurnOrigin) {
-        switch origin {
-        case .primary:
-            self = .local
-        case let .telegram(lease):
-            self = .telegramLease(lease)
-        }
-    }
-}
-
-// MARK: - `/telegram`
-
+/// `/telegram` in the terminal: the slot's handover to Telegram and back.
+///
+/// `/telegram on` hands the terminal's slot to the linked chat
+/// (``ChatSessionHost/activateTelegram(in:primaryChannelDescription:)``):
+/// from then on the chat drives the session, the terminal shows a status
+/// line and accepts only `/telegram`, `/telegram off` and `/exit` (see
+/// ``ChatSessionHost/admitLine(_:in:)``), and the texts the channel has for
+/// the terminal (the activation text, a poll-health notice, a failure)
+/// arrive through ``TelegramChannel/noticeSink``. `/telegram off` takes the
+/// slot back: the terminal renders what it did not see, as it renders a
+/// restored transcript, and a turn still running from Telegram goes on in
+/// the terminal, which adopts it.
 extension TerminalChat {
     func handleTelegramCommand(_ command: String) async {
         let argument = Self.slashCommandArguments(
@@ -66,8 +39,15 @@ extension TerminalChat {
         }
     }
 
-    /// `/telegram on`: links the session through the companion, which tells
-    /// the terminal the link is active (see ``presentCompanionNotice(_:channel:)``).
+    /// The status line the terminal shows once Telegram drives its slot.
+    static let telegramDrivingStatusText =
+        "Session driven from Telegram. Type /telegram off to take it back.\n"
+
+    /// `/telegram on`: hands the slot to Telegram. The channel tells the
+    /// terminal the link is active through its notice sink, installed before
+    /// the first attach so the activation text is not lost, then the
+    /// terminal writes its status line. A repeated `/telegram on` restarts
+    /// the link and writes the activation text again, as before.
     func startTelegramControl() async {
         guard stdinIsTerminal else {
             await writeFailureMessage("ZenCODE: /telegram requires the interactive TUI.\n")
@@ -77,700 +57,202 @@ extension TerminalChat {
             await writeFailureMessage(Self.unknownCommandMessage(for: "/telegram"))
             return
         }
+        let wasDriving = sessionHost.activeChannel(in: terminalSlotID) == .telegram
+        installTelegramNoticeSinkIfNeeded()
         do {
-            try await telegramCompanion.attach()
-        } catch {
+            try await sessionHost.activateTelegram(in: terminalSlotID, primaryChannelDescription: "TUI")
+        } catch let error as TelegramChannelAttachError {
             await writeFailureMessage(error.failureText)
+            return
+        } catch {
+            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
+            return
+        }
+        if !wasDriving, sessionHost.activeChannel(in: terminalSlotID) == .telegram {
+            await writeSystemMessage(Self.telegramDrivingStatusText)
         }
     }
 
-    /// `/telegram off`: unlinks the session; the companion tells the terminal
-    /// the link stopped.
+    /// `/telegram off`: takes the slot back and renders the catch-up. A turn
+    /// still running from Telegram is adopted: the loop treats it as its own
+    /// from now on (``takeAdoptedTurnIfNeeded()``) and its ending reaches
+    /// the loop as a generation completion.
     func stopTelegramControl() async {
-        await telegramCompanion.detach()
+        let wasGenerating = sessionHost.incarnation(in: terminalSlotID)?.activePromptID != nil
+        let wasDriving = sessionHost.activeChannel(in: terminalSlotID) == .telegram
+        if wasDriving, wasGenerating {
+            hasAdoptedTelegramTurn = true
+        }
+        let catchUp = await sessionHost.deactivateTelegram(in: terminalSlotID)
+        if let catchUp {
+            await renderTelegramCatchUp(catchUp)
+        }
     }
 
     func printTelegramStatus() async {
-        await writeSystemMessage(await telegramCompanion.statusText() + "\n")
+        await writeSystemMessage(await sessionHost.telegramStatusText(in: terminalSlotID) + "\n")
     }
 
-    /// Echoes a prompt from the linked chat before it runs.
-    func writeTelegramSubmittedPrompt(_ prompt: String) async {
-        let title = telegramLinkedChatTitle?.nilIfBlank ?? "Telegram"
-        await writeSystemMessage("\n\(title) sent a prompt:\n")
-        await writeSubmittedPrompt(prompt)
+    /// Connects the channel's notices to the terminal's system and failure
+    /// messages, once per channel; the channel is created now when the slot
+    /// has none yet, so the first attach presents through it too.
+    func installTelegramNoticeSinkIfNeeded() {
+        guard let channel = sessionHost.telegramChannelCreatingIfNeeded(
+            in: terminalSlotID, primaryChannelDescription: "TUI"
+        ), channel.noticeSink == nil else { return }
+        channel.noticeSink = { [weak self] text, noticeChannel in
+            guard let self else { return }
+            switch noticeChannel {
+            case .system:
+                await writeSystemMessage(text)
+            case .failure:
+                await writeFailureMessage(text)
+            case .markdown:
+                await writeMarkdownMessage(text)
+            }
+        }
     }
 
-    /// Retires the turn's Telegram side with `outcome`, the turn's end as the
-    /// terminal presented it, or without one when the panel loop tears down
-    /// while a turn runs. The overview barrier only drains meanwhile (see
-    /// ``overviewMirrorBarrier()``).
-    func finishTelegramTurn(
-        outcome: TelegramSessionCompanion.Outcome?,
-        fileChangeSummary: TurnFileChangeSummary?
-    ) async {
-        isRetiringTelegramTurn = true
-        defer { isRetiringTelegramTurn = false }
-        await telegramCompanion.finishTurn(outcome: outcome, fileChangeSummary: fileChangeSummary)
+    /// Whether the terminal may run `line` now: not while Telegram drives
+    /// the slot, except for the lines that take it back. A refused line is
+    /// answered with the refusal text and runs nothing.
+    func admitTerminalLine(_ line: String) async -> Bool {
+        switch sessionHost.admitLine(line, in: terminalSlotID) {
+        case .admitted:
+            return true
+        case let .refused(text):
+            await writeFailureMessage(text)
+            return false
+        }
     }
+
+    /// Whether a turn started from Telegram is running when the terminal
+    /// takes the slot back: the loop marks itself generating and the turn's
+    /// ending reaches it as a completion (``presentAdoptedTurnEnding(_:)``).
+    /// Reading it clears it.
+    func takeAdoptedTurnIfNeeded() -> Bool {
+        defer { hasAdoptedTelegramTurn = false }
+        return hasAdoptedTelegramTurn
+    }
+
+    // MARK: - Catch-up
+
+    /// Renders the entries the terminal did not see while Telegram drove the
+    /// slot, with the rendering of a restored transcript, under a title that
+    /// says whether the session changed meanwhile and whether older entries
+    /// were dropped, then the text of the block still streaming, so the
+    /// terminal does not miss the beginning of the block it adopts.
+    func renderTelegramCatchUp(_ catchUp: ChatTelegramCatchUp) async {
+        var title = "Catch-up from Telegram"
+        if catchUp.incarnationChanged {
+            title += " (new session \(catchUp.sessionID))"
+        }
+        if catchUp.omittedOlderEntries {
+            title += " (older entries omitted)"
+        }
+        title += ":"
+        let messages = ChatTurnEntry.transcriptMessages(from: catchUp.entries)
+        if catchUp.incarnationChanged, messages.isEmpty {
+            await writeSystemMessage("\n\(title)\n")
+        } else {
+            await renderSavedSessionHistory(messages, title: title)
+        }
+        let live = catchUp.liveAssistantText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !live.isEmpty {
+            await writeSystemMessage("Response in progress so far:\n")
+            await writeAssistantContent(live)
+            await finishStreamingOutput()
+        }
+    }
+
+    // MARK: - Turns from Telegram
 
     /// Moves the session's Telegram topic to the session the terminal's slot
     /// switched to (`/sessions new`, `/sessions load`), named after the saved
-    /// session or, for a session never saved, as the companion names a new
-    /// topic. The companion already follows the new controller. Nothing
-    /// happens outside topic mode.
+    /// session or, for a session never saved, as the channel names a new
+    /// topic. Nothing happens without a channel or outside topic mode.
     func rebindTelegramTopicToCurrentSession() async {
+        guard let channel = sessionHost.telegramChannel(in: terminalSlotID) else { return }
         let displayName = activeSavedSessionName?.nilIfBlank
-            ?? TelegramSessionCompanion.defaultTopicName(
+            ?? TelegramChannel.defaultTopicName(
                 workingDirectory: chatSession.workingDirectory,
                 sessionID: sessionID
             )
-        await telegramCompanion.rebind(sessionID: sessionID, displayName: displayName)
-    }
-}
-
-// MARK: - Companion channel
-
-/// The terminal is the primary channel of its Telegram companion.
-extension TerminalChat: TelegramCompanionChannel {
-    public var primaryChannelDescription: String {
-        "TUI"
+        await channel.rebind(sessionID: sessionID, displayName: displayName)
     }
 
-    public func commandContext() -> ChatCommandContext {
-        currentCommandContext()
-    }
-
-    public func presentCompanionNotice(_ text: String, channel: ChatSessionNoticeChannel) async {
-        switch channel {
-        case .system:
-            await writeSystemMessage(text)
-        case .failure:
-            await writeFailureMessage(text)
-        case .markdown:
-            await writeMarkdownMessage(text)
+    /// The ending of a turn the terminal adopted (or of a Telegram turn that
+    /// ended while the terminal drives the slot), as the loop's generation
+    /// result, so the loop presents it exactly as the end of its own turns.
+    func generationResult(for ending: ChatTurnEnding) async -> TerminalChatGenerationResult {
+        switch ending.outcome {
+        case let .completed(response):
+            let finalAssistantContent = await activeAssistantOutput?.finalContent(
+                fallback: response.text
+            ) ?? response.text
+            return .success(TerminalChatGenerationSuccess(
+                response: response,
+                origin: .local,
+                fileChangeSummary: ending.fileChangeSummary,
+                automaticallyCompletedPlan: ending.automaticallyCompletedPlan,
+                finalAssistantContent: finalAssistantContent
+            ))
+        case let .failed(message):
+            return .failure(TerminalChatGenerationFailure(
+                message: message,
+                isCancellation: false,
+                origin: .local,
+                fileChangeSummary: ending.fileChangeSummary
+            ))
+        case .cancelled:
+            return .failure(TerminalChatGenerationFailure(
+                message: "",
+                isCancellation: true,
+                origin: .local,
+                fileChangeSummary: ending.fileChangeSummary
+            ))
         }
     }
 
-    /// The companion queues here the transcript of a voice note
-    /// (`.directPrompt`); lines from Telegram reach the panel loop's queue
-    /// through the `admit` of ``TelegramSessionCompanion/handleIncomingMessage(_:isSessionGenerating:admit:)``.
-    /// The transcript is handed to the panel loop as a completed voice
-    /// prompt, which runs it when the session is free and itself reports a
-    /// full queue, so the answer is always ``TelegramPromptAdmission/queued``.
-    /// Without a loop to hand it to, the transcript is dropped silently, as a
-    /// completion delivered after the loop ended always was.
-    public func enqueueTelegramPrompt(
-        _ text: String,
-        lease: TerminalTelegramRouteLease,
-        mode: ChatQueuedPromptMode
-    ) async -> TelegramPromptAdmission {
-        _ = await telegramRuntimeEventQueue?.sendWithBackpressure(
-            .voicePromptCompleted(
-                TerminalVoicePromptResult(origin: .telegramLease(lease), outcome: .success(text))
+    /// The ending of a turn another channel ran, presented by the terminal
+    /// because it drives the slot now: handed to the running loop as a
+    /// generation completion, or, without a loop (the blocking fallback,
+    /// which never hands its slot over), presented at once.
+    func presentAdoptedTurnEnding(_ ending: ChatTurnEnding) async {
+        let result = await generationResult(for: ending)
+        if let loopEventQueue {
+            _ = await loopEventQueue.sendWithBackpressure(.generationCompleted(result))
+        } else {
+            await finishPromptResult(result)
+        }
+    }
+
+    /// The ending of a turn the terminal ran, which the channel that drives
+    /// the slot now presents: the terminal itself through
+    /// ``finishPromptResult(_:)``, or Telegram when the slot was handed over
+    /// while the turn ran.
+    func presentOwnTurnEnding(_ result: TerminalChatGenerationResult) async {
+        guard sessionHost.activeChannel(in: terminalSlotID) == .telegram else {
+            await finishPromptResult(result)
+            return
+        }
+        let ending: ChatTurnEnding
+        switch result {
+        case let .success(success):
+            ending = ChatTurnEnding(
+                outcome: .completed(success.response),
+                fileChangeSummary: success.fileChangeSummary,
+                automaticallyCompletedPlan: success.automaticallyCompletedPlan
             )
-        )
-        return .queued
-    }
-
-    /// Hands the invalidation to the panel loop, which stops the turn that
-    /// came from `lease` when it is still the one in progress and then calls
-    /// ``TelegramSessionCompanion/routeWasInvalidated(_:)``. Without a loop
-    /// nothing happens.
-    public func telegramRouteWasInvalidated(_ lease: TerminalTelegramRouteLease) async {
-        _ = await telegramRuntimeEventQueue?.sendWithBackpressure(.telegramRouteInvalidated(lease))
-    }
-
-    /// Returns once every overview section the render coordinator queued for
-    /// mirroring was handed to the companion.
-    ///
-    /// The fan-out calls the companion's presenter before this terminal's, so
-    /// at a tool boundary the companion publishes the root response before
-    /// the terminal writes the comment that precedes the call. Writing that
-    /// comment begins by closing a tool block that is still pending
-    /// (`interruptActiveToolForInterleavedOutputIfNeeded`), which writes the
-    /// messages held next to that tool and renders the overviews deferred
-    /// behind it: those sections reached the linked chat before the response
-    /// when the terminal published it after its own writes. So while a comment
-    /// waits for its tool boundary, the barrier takes that first step of the
-    /// comment ahead of time, and the comment's own step finds nothing left
-    /// to close: the terminal writes the same, and the chat receives those
-    /// sections ahead of the response, as before. While the terminal retires
-    /// the turn (``finishTelegramTurn(outcome:fileChangeSummary:)``) no comment
-    /// follows, and the barrier only drains.
-    ///
-    /// Sections queued by producers that run on their own (the sub-agent
-    /// overview refresh, the task-graph observer) while the boundary is
-    /// presented land before or after the response depending on timing, as
-    /// they always did.
-    public func overviewMirrorBarrier() async {
-        if !isRetiringTelegramTurn,
-           let output = activeAssistantOutput,
-           await output.hasPendingContent {
-            await renderCoordinator.interruptActiveToolForInterleavedOutputIfNeeded()
+        case let .failure(failure):
+            ending = ChatTurnEnding(
+                outcome: failure.isCancellation ? .cancelled : .failed(failure.message),
+                fileChangeSummary: failure.fileChangeSummary
+            )
         }
-        await renderCoordinator.waitForOverviewMirrorsToDrain()
-    }
-
-    public func sharedChatPanelDidChange() async {
-        await refreshSharedChatPanelSuggestions()
-    }
-}
-
-// MARK: - Forwarders
-
-/// The terminal's former Telegram members, kept with their signatures and
-/// answered by the companion. An origin is mapped with
-/// ``TerminalPromptOrigin/telegramTurnOrigin`` where the companion routes the
-/// turn, and with ``TerminalPromptOrigin/telegramEgressOrigin`` where it only
-/// looks a route up or sends through it.
-extension TerminalChat {
-    typealias TelegramWorkEffectForTesting = TelegramSessionCompanion.TelegramWorkEffectForTesting
-
-    // MARK: State
-
-    public var telegramControlService: TerminalTelegramControlService {
-        telegramCompanion.controlService
-    }
-
-    var telegramSessionRouter: TerminalTelegramSessionRouter {
-        telegramCompanion.router
-    }
-
-    var telegramRouteRuntimeState: TerminalTelegramRouteRuntimeState {
-        telegramCompanion.routeRuntimeState
-    }
-
-    var telegramPermissionBroker: TerminalTelegramPermissionBroker {
-        telegramCompanion.permissionBroker
-    }
-
-    public var telegramControlState: TerminalTelegramControlState {
-        get { telegramCompanion.controlState }
-        set { telegramCompanion.controlState = newValue }
-    }
-
-    public var telegramLinkedChatID: Int64? {
-        get { telegramCompanion.linkedChatID }
-        set { telegramCompanion.linkedChatID = newValue }
-    }
-
-    public var telegramLinkedChatTitle: String? {
-        get { telegramCompanion.linkedChatTitle }
-        set { telegramCompanion.linkedChatTitle = newValue }
-    }
-
-    /// Telegram user id of the last linked-chat sender, used to bind outbound
-    /// artifact consent offers to the operator who will confirm them.
-    public var telegramLinkedUserID: Int64? {
-        get { telegramCompanion.linkedUserID }
-        set { telegramCompanion.linkedUserID = newValue }
-    }
-
-    var telegramActiveRouteLease: TerminalTelegramRouteLease? {
-        get { telegramCompanion.activeRouteLease }
-        set { telegramCompanion.activeRouteLease = newValue }
-    }
-
-    var activeTelegramTurnOrigin: TerminalPromptOrigin? {
-        get { telegramCompanion.activeTurnOrigin.map(TerminalPromptOrigin.init) }
-        set { telegramCompanion.activeTurnOrigin = newValue?.telegramTurnOrigin }
-    }
-
-    var activeTelegramProgressReporter: TerminalTelegramTurnProgressReporter? {
-        get { telegramCompanion.activeProgressReporter }
-        set { telegramCompanion.activeProgressReporter = newValue }
-    }
-
-    var activeTelegramPresenceLease: TerminalTelegramPresenceLeaseManager.Lease? {
-        get { telegramCompanion.activePresenceLease }
-        set { telegramCompanion.activePresenceLease = newValue }
-    }
-
-    var telegramRouteValidationTask: Task<Void, Never>? {
-        get { telegramCompanion.routeValidationTask }
-        set { telegramCompanion.routeValidationTask = newValue }
-    }
-
-    var onTelegramWorkEffectForTesting: (@Sendable (TelegramWorkEffectForTesting) -> Bool)? {
-        get { telegramCompanion.onTelegramWorkEffectForTesting }
-        set { telegramCompanion.onTelegramWorkEffectForTesting = newValue }
-    }
-
-    var onDirectTelegramTurnMessage: (@Sendable (TerminalTelegramTurnPayload, Int64) async -> Bool)? {
-        get { telegramCompanion.onDirectTelegramTurnMessage }
-        set { telegramCompanion.onDirectTelegramTurnMessage = newValue }
-    }
-
-    var telegramCommandReplyBindings: [TerminalTelegramCommandReplyKey: TerminalTelegramCommandReplyBinding] {
-        get { telegramCompanion.commandReplyBindings }
-        set { telegramCompanion.commandReplyBindings = newValue }
-    }
-
-    var onTelegramSystemMessage: (@Sendable (String, Int64) async -> Bool)? {
-        get { telegramCompanion.onTelegramSystemMessage }
-        set { telegramCompanion.onTelegramSystemMessage = newValue }
-    }
-
-    var onTelegramRoutedSystemMessage: (@Sendable (String, Int64, Int?) async -> Bool)? {
-        get { telegramCompanion.onTelegramRoutedSystemMessage }
-        set { telegramCompanion.onTelegramRoutedSystemMessage = newValue }
-    }
-
-    var onTelegramMentionPickerMessage: (@Sendable (String, Int64, TerminalTelegramReplyMarkup) async -> Int?)? {
-        get { telegramCompanion.onTelegramMentionPickerMessage }
-        set { telegramCompanion.onTelegramMentionPickerMessage = newValue }
-    }
-
-    var telegramRootResponseBlockHasContent: Bool {
-        get { telegramCompanion.rootResponseBlockHasContent }
-        set { telegramCompanion.rootResponseBlockHasContent = newValue }
-    }
-
-    var telegramRootResponseBlockIsSuppressed: Bool {
-        get { telegramCompanion.rootResponseBlockIsSuppressed }
-        set { telegramCompanion.rootResponseBlockIsSuppressed = newValue }
-    }
-
-    var telegramDidPublishIntermediateRootResponse: Bool {
-        get { telegramCompanion.didPublishIntermediateRootResponse }
-        set { telegramCompanion.didPublishIntermediateRootResponse = newValue }
-    }
-
-    var mirroredTaskGraphOverviewSignature: String? {
-        get { telegramCompanion.mirroredTaskGraphOverviewSignature }
-        set { telegramCompanion.mirroredTaskGraphOverviewSignature = newValue }
-    }
-
-    var currentTelegramMirrorEpoch: Int {
-        get { telegramCompanion.currentMirrorEpoch }
-        set { telegramCompanion.currentMirrorEpoch = newValue }
-    }
-
-    /// `true` only while the interactive panel loop, the single surface that
-    /// consumes Telegram ingress, is running (see
-    /// ``TelegramSessionCompanion/readsIngress``).
-    var readsTelegramIngress: Bool {
-        get { telegramCompanion.readsIngress }
-        set { telegramCompanion.readsIngress = newValue }
-    }
-
-    var telegramSharedChatRelayStorage: TerminalTelegramSharedChatRelay? {
-        get { telegramCompanion.sharedChatRelayStorage }
-        set { telegramCompanion.sharedChatRelayStorage = newValue }
-    }
-
-    var telegramVoiceTranscriptions: TerminalVoiceTranscriptionRegistry {
-        telegramCompanion.voiceTranscriptions
-    }
-
-    var telegramSharedChatRelay: TerminalTelegramSharedChatRelay {
-        telegramCompanion.sharedChatRelay
-    }
-
-    // MARK: Egress and consent
-
-    func telegramToolAuthorizationHandler(
-        for origin: TerminalPromptOrigin
-    ) -> AgentToolAuthorizationHandler? {
-        // Not routed: a local origin owns no handler here, as before; a turn
-        // is routed when it starts (`promptAttempt`, `beginTurn`).
-        guard let lease = origin.telegramLease else { return nil }
-        return telegramCompanion.toolAuthorizationHandler(for: .telegram(lease))
-    }
-
-    func authorizeTelegramToolRequest(
-        _ request: AgentToolAuthorizationRequest,
-        origin: TerminalPromptOrigin
-    ) async -> Bool {
-        await telegramCompanion.authorizeToolRequest(request, origin: origin.telegramEgressOrigin)
-    }
-
-    func handleTelegramPermissionResponseIfNeeded(
-        _ text: String,
-        lease: TerminalTelegramRouteLease
-    ) async -> Bool {
-        await telegramCompanion.handlePermissionResponseIfNeeded(text, lease: lease)
-    }
-
-    func sendTelegramSystemMessageIfLinked(
-        _ message: String,
-        origin: TerminalPromptOrigin
-    ) async {
-        await telegramCompanion.sendSystemMessageIfLinked(message, origin: origin.telegramEgressOrigin)
-    }
-
-    @discardableResult
-    func sendTelegramTurnMessage(
-        _ payload: TerminalTelegramTurnPayload,
-        to chatID: Int64,
-        origin: TerminalPromptOrigin
-    ) async -> Bool {
-        await telegramCompanion.sendTurnMessage(payload, to: chatID, origin: origin.telegramEgressOrigin)
-    }
-
-    func sendTelegramTurnMessageIfLinked(
-        _ payload: TerminalTelegramTurnPayload,
-        origin: TerminalPromptOrigin
-    ) async {
-        await telegramCompanion.sendTurnMessageIfLinked(payload, origin: origin.telegramEgressOrigin)
-    }
-
-    func telegramOutgoingChatID(for origin: TerminalPromptOrigin) -> Int64? {
-        telegramCompanion.outgoingChatID(for: origin.telegramEgressOrigin)
-    }
-
-    func validateTelegramOrigin(_ origin: TerminalPromptOrigin) async -> Bool {
-        await telegramCompanion.validateOrigin(origin.telegramEgressOrigin)
-    }
-
-    func telegramWireFence(for origin: TerminalPromptOrigin) -> TerminalTelegramWireFence? {
-        telegramCompanion.wireFence(for: origin.telegramEgressOrigin)
-    }
-
-    @discardableResult
-    func sendTelegramSystemMessage(
-        _ message: String, to chatID: Int64, origin: TerminalPromptOrigin
-    ) async -> Bool {
-        await telegramCompanion.sendSystemMessage(message, to: chatID, origin: origin.telegramEgressOrigin)
-    }
-
-    @discardableResult
-    func sendTelegramSystemMessage(
-        _ message: String, to chatID: Int64, topicID: Int? = nil,
-        fence: TerminalTelegramWireFence
-    ) async -> Bool {
-        await telegramCompanion.sendSystemMessage(message, to: chatID, topicID: topicID, fence: fence)
-    }
-
-    /// The `/telegram` status of the link as last read.
-    func telegramStatusText() -> String {
-        TelegramSessionCompanion.statusText(
-            controlState: telegramCompanion.controlState,
-            linkedChatTitle: telegramCompanion.linkedChatTitle,
-            topicName: telegramCompanion.sessionTopic?.name
-        )
-    }
-
-    func telegramRemoteStatusText() -> String {
-        telegramCompanion.remoteStatusText()
-    }
-
-    func telegramRemoteChangesText() -> String {
-        telegramCompanion.remoteChangesText()
-    }
-
-    func telegramRemoteHelpText() -> String {
-        telegramCompanion.remoteHelpText()
-    }
-
-    nonisolated static func telegramRemoteCommandList() -> String {
-        TelegramSessionCompanion.remoteCommandList(policy: .full)
-    }
-
-    func makeTelegramTurnProgressReporter(
-        for origin: TerminalPromptOrigin
-    ) -> TerminalTelegramTurnProgressReporter? {
-        telegramCompanion.makeTurnProgressReporter(for: origin.telegramEgressOrigin)
-    }
-
-    // MARK: Ingress
-
-    /// A line from Telegram as it leaves the queue, answered by the
-    /// companion: a line it answered continues the chat, a prompt runs, and
-    /// the outcome of `/plan` `/goal` `/review` or of a pending reply is
-    /// presented as a line typed in the terminal would be.
-    func submittedTelegramLineAction(
-        _ prompt: String,
-        origin: TerminalPromptOrigin
-    ) async -> TerminalSubmittedLineAction {
-        guard let lease = origin.telegramLease else { return .continueChat }
-        switch await telegramCompanion.lineAction(for: prompt, lease: lease) {
-        case .handled:
-            return .continueChat
-        case let .runPrompt(prompt):
-            return .runPrompt(prompt)
-        case let .commandOutcome(outcome):
-            return await terminalAction(presenting: outcome)
-        }
-    }
-
-    nonisolated static func telegramCommandWithoutBotMention(_ text: String) -> String {
-        TelegramSessionCompanion.commandWithoutBotMention(text)
-    }
-
-    /// Forwards incoming Telegram messages into the runtime queue.
-    ///
-    /// The task holds only a weak reference to the chat, so it cannot keep it
-    /// alive after teardown, and it stops as soon as it is cancelled or the chat
-    /// is gone rather than draining messages into a queue nobody consumes.
-    func startTelegramForwardingTask(
-        eventQueue: TerminalChatEventQueue
-    ) -> Task<Void, Never> {
-        let service = telegramControlService
-        return Task(name: "ZenCODE.Telegram.forwarding") { [weak self] in
-            for await message in service.incomingMessages {
-                if Task.isCancelled || self == nil {
-                    return
-                }
-                guard await eventQueue.sendWithBackpressure(.telegramMessage(message)) else {
-                    // The runtime loop ended or this forwarder was cancelled.
-                    return
-                }
-            }
-        }
-    }
-
-    /// One Telegram message a runtime loop dequeued, handled by the companion,
-    /// which admits a prompt to `queuedPrompts`. Returns `true` when this
-    /// message queued a prompt. `transcriptions` is not used: the companion
-    /// owns the voice transcriptions, whose transcripts reach
-    /// ``telegramRuntimeEventQueue``.
-    func handleTelegramRuntimeMessage(
-        _ message: TerminalTelegramIncomingMessage,
-        eventQueue: TerminalChatEventQueue,
-        queuedPrompts: inout ChatPromptQueue<TerminalPromptOrigin>,
-        transcriptions: TerminalVoiceTranscriptionRegistry,
-        isSessionGenerating: Bool = false
-    ) async -> Bool {
-        let didQueuePrompt = await telegramCompanion.handleIncomingMessage(
-            message,
-            isSessionGenerating: isSessionGenerating
-        ) { prompt in
-            queuedPrompts.enqueue(
-                ChatQueuedPrompt<TerminalPromptOrigin>(
-                    text: prompt.text,
-                    origin: .telegramLease(prompt.origin),
-                    mode: prompt.mode
-                )
-            ) ? .queued : .queueFull
-        }
-        if didQueuePrompt {
-            // The queue whose consumer runs the prompt follows its turn.
-            telegramRuntimeEventQueue = eventQueue
-        }
-        return didQueuePrompt
-    }
-
-    /// ``handleTelegramRuntimeMessage(_:eventQueue:queuedPrompts:transcriptions:isSessionGenerating:)``
-    /// without its answer.
-    func handleTelegramMessage(
-        _ message: TerminalTelegramIncomingMessage,
-        queuedPrompts: inout ChatPromptQueue<TerminalPromptOrigin>,
-        eventQueue: TerminalChatEventQueue,
-        transcriptions: TerminalVoiceTranscriptionRegistry,
-        isSessionGenerating: Bool = false
-    ) async {
-        _ = await handleTelegramRuntimeMessage(
-            message,
-            eventQueue: eventQueue,
-            queuedPrompts: &queuedPrompts,
-            transcriptions: transcriptions,
-            isSessionGenerating: isSessionGenerating
-        )
-    }
-
-    func telegramEgressRouteLease(
-        settings: AgentTelegramSettingsManifest,
-        linkedChatID: Int64
-    ) async -> TerminalTelegramRouteLease? {
-        await telegramCompanion.egressRoute(settings: settings, linkedChatID: linkedChatID)?.lease
-    }
-
-    func writeTelegramPollHealthNotice(_ notice: TerminalTelegramPollHealthNotice) async {
-        await telegramCompanion.presentPollHealthNotice(notice)
-    }
-
-    // MARK: Turn
-
-    func beginTelegramTurnProgressReporting(for origin: TerminalPromptOrigin) async {
-        await telegramCompanion.beginTurn(
-            origin: origin.telegramTurnOrigin,
-            mirrorEpoch: await renderCoordinator.advanceMirrorEpoch()
-        )
-    }
-
-    func synchronizeTelegramTurnProgressReporting() async {
-        await telegramCompanion.synchronizeTurnReporting()
-    }
-
-    func endTelegramTurnProgressReporting() async {
-        await telegramCompanion.endTurnReporting()
-    }
-
-    func appendTelegramRootResponseDelta(_ delta: String) async {
-        await telegramCompanion.appendRootResponseDelta(delta)
-    }
-
-    func publishTelegramRootResponseAtToolBoundary() async {
-        await telegramCompanion.publishRootResponseAtToolBoundary()
-    }
-
-    func telegramMirroredFinalResponseText(fallback: String) async -> String {
-        await telegramCompanion.mirroredFinalResponseText(fallback: fallback)
-    }
-
-    /// Retires the turn's Telegram side, mirroring `outcome` as it is.
-    func finalizeTelegramTurnProgressReporting(
-        outcome: TerminalTelegramTurnPayload? = nil,
-        fileChangeSummary: TurnFileChangeSummary? = nil
-    ) async {
-        isRetiringTelegramTurn = true
-        defer { isRetiringTelegramTurn = false }
-        await telegramCompanion.retireTurn(outcomePayload: outcome, fileChangeSummary: fileChangeSummary)
-    }
-
-    // MARK: Mention picker
-
-    nonisolated static var telegramMentionPickerCallbackPrefix: String {
-        TelegramSessionCompanion.mentionPickerCallbackPrefix
-    }
-
-    func handleTelegramMentionPickerRequest(
-        chatID: Int64, origin: TerminalPromptOrigin? = nil
-    ) async {
-        await telegramCompanion.handleMentionPickerRequest(
-            chatID: chatID, origin: origin?.telegramEgressOrigin
-        )
-    }
-
-    /// One button per direct recipient among `suggestions`; only the command
-    /// of a suggestion reaches its button.
-    nonisolated static func telegramMentionPickerButtons(
-        from suggestions: [TerminalCommandSuggestion]
-    ) -> [TerminalTelegramInlineKeyboardButton] {
-        TelegramSessionCompanion.mentionPickerButtons(
-            from: suggestions.compactMap { suggestion in
-                let command = suggestion.command.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard command.first == "@" else { return nil }
-                let handle = String(command.dropFirst())
-                return SharedChatMentionParser.Suggestion(handle: handle, target: .agent(name: handle))
-            }
-        )
-    }
-
-    func handleTelegramMentionPickerCallback(
-        _ data: String, chatID: Int64, origin: TerminalPromptOrigin? = nil
-    ) async {
-        await telegramCompanion.handleMentionPickerCallback(
-            data, chatID: chatID, origin: origin?.telegramEgressOrigin
-        )
-    }
-
-    nonisolated static func telegramMentionPickerReplyTarget(
-        destination: AgentSharedChat.Destination, roomID: String, chatID: Int64, handle: String
-    ) -> TerminalTelegramSharedChatReplyTarget {
-        TelegramSessionCompanion.mentionPickerReplyTarget(
-            destination: destination, roomID: roomID, chatID: chatID, handle: handle
-        )
-    }
-
-    // MARK: Artifacts and voice
-
-    /// Directories whose individually selected files may be exported to the
-    /// linked chat: the artifact staging directory only.
-    nonisolated static var telegramArtifactPolicy: TerminalTelegramArtifactPolicy {
-        TerminalTelegramArtifactPolicy(
-            allowedDirectories: [Self.telegramArtifactStagingDirectory]
-        )
-    }
-
-    /// The companion's default staging directory for outbound artifacts,
-    /// created 0700 when missing.
-    nonisolated static var telegramArtifactStagingDirectory: URL {
-        let url = TelegramSessionCompanion.defaultArtifactStagingDirectory
-        try? FileManager.default.createDirectory(
-            at: url,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: NSNumber(value: 0o700)]
-        )
-        return url
-    }
-
-    func handleTelegramDiffRequest(origin: TerminalPromptOrigin) async {
-        await telegramCompanion.handleDiffRequest(origin: origin.telegramEgressOrigin)
-    }
-
-    func handleTelegramArtifactConsentCallback(
-        _ data: String,
-        message: TerminalTelegramIncomingMessage,
-        origin: TerminalPromptOrigin
-    ) async -> Bool {
-        await telegramCompanion.handleArtifactConsentCallback(
-            data, message: message, origin: origin.telegramEgressOrigin
-        )
-    }
-
-    func handleTelegramInboundAttachment(
-        _ attachment: TerminalTelegramInboundAttachment,
-        message: TerminalTelegramIncomingMessage,
-        origin: TerminalPromptOrigin
-    ) async {
-        await telegramCompanion.handleInboundAttachment(
-            attachment, message: message, origin: origin.telegramEgressOrigin
-        )
-    }
-
-    /// A voice note received on `origin`'s route, transcribed by the
-    /// companion; `eventQueue` and `transcriptions` are not used (see
-    /// ``enqueueTelegramPrompt(_:lease:mode:)``).
-    func handleTelegramVoiceMessage(
-        _ voice: TerminalTelegramVoiceAttachment,
-        origin: TerminalPromptOrigin,
-        eventQueue: TerminalChatEventQueue,
-        transcriptions: TerminalVoiceTranscriptionRegistry
-    ) async {
-        await telegramCompanion.handleVoiceMessage(voice, origin: origin.telegramEgressOrigin)
-    }
-
-    // MARK: Shared chat
-
-    func telegramReplyRoutingHasPrecedence(over text: String) async -> Bool {
-        await telegramCompanion.replyRoutingHasPrecedence(over: text)
-    }
-
-    func forwardSharedChatMessagesToTelegram(
-        _ messages: [AgentSharedChat.Message],
-        roomID: String
-    ) async {
-        await telegramCompanion.forwardSharedChatMessages(messages, roomID: roomID)
-    }
-
-    func rebindTelegramSharedChatRelay(roomID: String) async {
-        await telegramCompanion.rebindSharedChatRelay(roomID: roomID)
-    }
-
-    func telegramDirectReplyTarget(
-        for message: TerminalTelegramIncomingMessage
-    ) async -> TerminalTelegramSharedChatReplyTarget? {
-        await telegramCompanion.directReplyTarget(for: message)
-    }
-
-    func handleTelegramSharedChatReplyIfNeeded(
-        _ text: String,
-        message: TerminalTelegramIncomingMessage,
-        origin: TerminalPromptOrigin
-    ) async -> Bool {
-        await telegramCompanion.handleSharedChatReplyIfNeeded(
-            text, message: message, origin: origin.telegramEgressOrigin
-        )
-    }
-
-    /// Associates a live shared-chat message with the coordinator turn that
-    /// will consume it (see ``TelegramSessionCompanion/recordSharedChatMessageOrigin(_:origin:)``).
-    /// An origin without a validated lease is not recorded.
-    func recordTelegramSharedChatMessageOrigin(
-        _ messageID: UUID, origin: TerminalPromptOrigin
-    ) {
-        guard let origin = origin.telegramTurnOrigin else { return }
-        telegramCompanion.recordSharedChatMessageOrigin(messageID, origin: origin)
-    }
-
-    /// Returns the Telegram origin of a trigger, consuming its batch mappings
-    /// so a replay cannot mirror an unrelated later coordinator response.
-    func takeTelegramSharedChatOrigin(
-        for messages: [AgentSharedChat.Message]
-    ) -> TerminalPromptOrigin? {
-        telegramCompanion.takeSharedChatOrigin(for: messages).map(TerminalPromptOrigin.init)
+        await finishStreamingOutput()
+        await quiesceTaskGraphObserverForTurnBoundary()
+        await sessionHost.presentTurnEnding(ending, in: terminalSlotID)
+        await startTaskGraphObserver()
     }
 }

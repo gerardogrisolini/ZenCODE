@@ -202,13 +202,16 @@ struct TelegramCausalRoundTripTests {
     }
 
     /// The single causal chain: a Telegram update polled through the fake
-    /// transport crosses the whole production ingress and egress path, and the
-    /// answer the model produced is posted back to the chat that asked.
+    /// transport crosses the whole production ingress and egress path of the
+    /// slot's Telegram channel (the handover, the channel's own ingress, the
+    /// turn run through the session host), and the answer the model produced
+    /// is posted back to the chat that asked; the terminal then takes the
+    /// slot back with the catch-up of what it did not see.
     ///
     /// The flow runs inside one `withSupportDirectoryURL` scope: the task-local
-    /// override is inherited by the polling, forwarding and generation tasks,
-    /// so seeded settings reach the production code without a process-global
-    /// override that could leak into parallel suites.
+    /// override is inherited by the polling and turn tasks, so seeded settings
+    /// reach the production code without a process-global override that could
+    /// leak into parallel suites.
     @Test
     func polledUpdateTravelsTheProductionPathAndAnswerReturnsToSameChat() async throws {
         // Seeded support directory: settings pair the bot with chat 42.
@@ -243,8 +246,8 @@ struct TelegramCausalRoundTripTests {
         }
     }
 
-    /// The isolated body of the causal chain. Runs on ``ChatSessionActor``
-    /// exactly like the production runtime loop that normally owns this state.
+    /// The isolated body of the causal chain. Runs on ``ChatSessionActor``,
+    /// the isolation of the host that owns the slot and its channel.
     @ChatSessionActor
     private static func runCausalFlow(transport: FakeTelegramTransport) async throws {
         let workingDirectory = FileManager.default.temporaryDirectory
@@ -263,98 +266,62 @@ struct TelegramCausalRoundTripTests {
             sessionRunner: runner,
             telegramTransportFactory: { transport }
         )
-        // Production ingress: the forwarding task consumes the service stream.
-        let eventQueue = TerminalChatEventQueue()
-        let transcriptions = TerminalVoiceTranscriptionRegistry()
-        let forwardingTask = terminal.startTelegramForwardingTask(eventQueue: eventQueue)
-        defer { forwardingTask.cancel() }
+        try await terminal.createCurrentSession(discoverExternalTools: false)
+        let host = terminal.sessionHost
+        let slot = terminal.terminalSlotID
 
-        // The settings are already bound, so `start` activates polling for real.
-        let activeState = try await terminal.telegramControlService.start()
-        #expect(activeState.isActive)
-        #expect(activeState.botUsername == "zencode_bot")
-        terminal.telegramLinkedChatID = Self.linkedChatID
-        terminal.telegramLinkedChatTitle = "Gerardo"
-        terminal.telegramControlState = TerminalTelegramControlState(
-            isConfigured: true,
-            isActive: true,
-            statusText: "Active",
-            botUsername: "zencode_bot",
-            lastError: nil,
-            lastMessagePreview: nil,
-            wireLifecycleEpoch: activeState.wireLifecycleEpoch
-        )
-        terminal.readsTelegramIngress = true
+        // Production handover: the settings are already bound, so the attach
+        // starts polling for real, and the channel drives the slot from here.
+        try await host.activateTelegram(in: slot)
+        let channel = try #require(host.telegramChannel(in: slot))
+        #expect(channel.isActive)
+        #expect(channel.controlState.botUsername == "zencode_bot")
+        #expect(channel.readsIngress)
+        #expect(host.activeChannel(in: slot) == .telegram)
+        #expect(host.admitLine("typed in the terminal", in: slot)
+            == .refused(ChatSlotAdmission.dormantRefusalText))
 
-        // Deliver the inbound update on the wire the poller is reading.
+        // Deliver the inbound update on the wire the poller is reading. The
+        // channel admits it and runs the turn through the host, on the
+        // session's controller, and its ending goes back to the chat.
         transport.enqueueUpdate(
             id: 501,
             payload: Self.updatesPayload(updateID: 501, text: "ciao dal telefono")
         )
-
-        // Serialized consumer of the runtime queue, mirroring the production
-        // loop's dispatch: pull the event, route through the shared production
-        // entry point, then run the turn like `startNextQueuedPrompt` does.
-        let generationTask = Task {
-            var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
-            var didQueuePrompt = false
-            for await event in eventQueue.events {
-                guard case let .telegramMessage(message) = event else {
-                    continue
-                }
-                didQueuePrompt = await terminal.handleTelegramRuntimeMessage(
-                    message,
-                    eventQueue: eventQueue,
-                    queuedPrompts: &queuedPrompts,
-                    transcriptions: transcriptions
-                )
-                guard didQueuePrompt, let next = queuedPrompts.dequeue() else {
-                    continue
-                }
-                let attempt = terminal.promptAttempt(
-                    prompt: next.text,
-                    origin: next.origin
-                )
-                do {
-                    let success = try await terminal.generateResponse(attempt: attempt)
-                    await terminal.finishPromptResult(.success(success))
-                } catch {
-                    await terminal.finishPromptResult(
-                        .failure(TerminalChatGenerationFailure(
-                            error: error,
-                            origin: next.origin
-                        ))
-                    )
-                }
-            }
-        }
-
-        // The answer must have been posted to the linked chat through the
-        // production control service and the fake transport.
         let completion = await transport.nextSendMessage()
 
         // Busy egress is fenced inside the real control service, not merely by
         // a pre-transport hook. A stale wire lifecycle must produce no additional
         // HTTP send even though ingress ACL resolution still succeeds.
         let sendCountBeforeStaleBusy = transport.requests(forMethod: "sendMessage").count
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
-        var staleBusyQueue = ChatPromptQueue<TerminalPromptOrigin>()
-        _ = await terminal.handleTelegramRuntimeMessage(
+        channel.controlState.wireLifecycleEpoch = UUID()
+        let reservation = try host.reservePrompt(in: slot)
+        _ = await channel.handleIncomingMessage(
             TerminalTelegramIncomingMessage(
                 chatID: Self.linkedChatID, userID: 7, text: "busy stale egress",
                 voice: nil, messageID: 502, chatTitle: nil, username: nil
-            ),
-            eventQueue: eventQueue,
-            queuedPrompts: &staleBusyQueue,
-            transcriptions: transcriptions,
-            isSessionGenerating: true
+            )
         )
-        #expect(staleBusyQueue.isEmpty)
+        host.releasePrompt(reservation)
+        #expect(channel.promptQueue.isEmpty)
         #expect(transport.requests(forMethod: "sendMessage").count == sendCountBeforeStaleBusy)
 
-        generationTask.cancel()
-        eventQueue.finish()
-        _ = await terminal.telegramControlService.stop()
+        // The terminal takes the slot back: the catch-up holds the prompt the
+        // chat sent and the answer it received, in sequence order.
+        let catchUp = try #require(await host.deactivateTelegram(in: slot))
+        #expect(host.activeChannel(in: slot) == .primary)
+        let transcript = catchUp.entries.compactMap { entry -> String? in
+            switch entry.kind {
+            case let .userPrompt(text, _, origin):
+                return "\(origin == .telegram ? "telegram" : "other"): \(text)"
+            case let .assistantText(text):
+                return "assistant: \(text)"
+            default:
+                return nil
+            }
+        }
+        #expect(transcript == ["telegram: ciao dal telefono", "assistant: echo: ciao dal telefono"])
+        await host.shutdown()
 
         // Inbound causality: the polled text reached the session runner as the
         // turn's prompt.

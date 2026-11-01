@@ -11,20 +11,37 @@ import ToolCore
 /// Renders the shared chat-turn pipeline in the terminal chat.
 ///
 /// The presenter holds the chat weakly: the chat owns the session controller,
-/// which owns this presenter, so a strong reference would form a cycle.
+/// which owns this presenter, so a strong reference would form a cycle. It is
+/// the terminal's channel presenter in its slot (``ChatSlotChannelPresenter``):
+/// a turn that moves onto the terminal from Telegram is rendered from the
+/// point it moved, and the ending of a turn the terminal did not run reaches
+/// the input loop as a generation completion.
 @ChatSessionActor
-final class TerminalChatSessionPresenter: ChatSessionPresenter {
+final class TerminalChatSessionPresenter: ChatSlotChannelPresenter {
     weak var chat: TerminalChat?
 
     init() {}
+
+    func turnDidMoveToChannel(_ turn: ChatMovedTurn) async {
+        guard let chat else { return }
+        // The terminal renders the rest of the turn as if it had started it:
+        // the response buffer and the transcript turn open now; the text that
+        // streamed before the move was rendered by the catch-up.
+        await chat.renderCoordinator.beginTranscriptTurn()
+        chat.activeAssistantOutput = TerminalAssistantResponseBuffer()
+        await chat.statusBar.beginRequest()
+        await chat.statusBar.setProcessing(true)
+    }
+
+    func presentTurnEnding(_ ending: ChatTurnEnding) async {
+        await chat?.presentAdoptedTurnEnding(ending)
+    }
 
     func presentThought(_ thought: String) async {
         await chat?.writeThought(thought)
     }
 
     func presentAssistantContent(_ content: String) async {
-        // The Telegram companion's presenter, which the controller calls
-        // first, buffers the same content for the linked chat.
         await chat?.activeAssistantOutput?.append(content)
     }
 
@@ -53,9 +70,6 @@ final class TerminalChatSessionPresenter: ChatSessionPresenter {
         await chat.writeAssistantContent(commentary)
         chat.offerVoiceCommentary(commentary)
         await chat.writeToolCallStarted(toolCall)
-        // The Telegram companion's presenter, which the controller calls
-        // first, already published the root response this call closes (see
-        // `TerminalChat.overviewMirrorBarrier()`).
         await chat.publishSubAgentOverviewIfChanged(relatedToolName: toolCall.name)
         if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
             chat.startSubAgentOverviewRefreshIfNeeded()
@@ -123,7 +137,6 @@ final class TerminalChatSessionPresenter: ChatSessionPresenter {
     func turnWillFinish() async {
         guard let chat else { return }
         await chat.stopSubAgentOverviewRefresh()
-        await chat.renderCoordinator.waitForOverviewMirrorsToDrain()
     }
 
     func presentWorkflowNotice(_ notice: ChatWorkflowNotice) async {

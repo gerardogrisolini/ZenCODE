@@ -22,7 +22,7 @@ import ToolCore
 /// `parseSharedChatMention(from:readableHandles:)`,
 /// `sharedChatMentionSuggestions(for:handleMap:)`,
 /// `sharedChatTerminalSafeText(_:)` and the others) as forwarders to this
-/// type, so the terminal and the Telegram companion parse and sanitize
+/// type, so the terminal and the Telegram channel parse and sanitize
 /// exactly the same way.
 public enum SharedChatMentionParser {
     /// A complete mention: where the message goes and its sanitized text.

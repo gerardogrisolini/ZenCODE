@@ -551,6 +551,32 @@ guessing a task breakdown from prose.
 **Optional integrations:**
 - `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup). Available even while a prompt is running.
 
+`/telegram on` moves the chat to the linked Telegram chat, which drives the
+session from then on: prompts, voice notes, `/plan`, `/goal`, `/review`,
+replies to pending questions, and the permission replies `/allow`, `/always`,
+and `/deny` come from the chat, which also answers `/start`, `/help`,
+`/status`, `/changes`, `/diff`, and `/chat`; `/undo` stays in the terminal. The
+chat first receives the last six prompts and responses of the session as
+context. Meanwhile the terminal shows `Session driven from Telegram. Type
+/telegram off to take it back.` and accepts only `/telegram`, `/telegram off`,
+and `/exit`; a question the session had open in the terminal is asked again in
+the chat. `/telegram off` takes the session back: the terminal renders what it
+did not see under `Catch-up from Telegram:`, with the response still in
+progress, and a turn still running from Telegram goes on in the terminal. The
+link belongs to the session's place in the terminal: it stays, with its topic,
+through `/sessions new` and `/sessions load`. An *Always* given in the chat
+covers the session in the terminal too.
+
+In ACP clients such as Xcode the same commands exist (`/telegram`, `/telegram
+on`, `/telegram off`), answered at once. While Telegram drives the session the
+editor's prompts are refused with `ZenCODE: this session is driven from
+Telegram. Use /telegram off to take it back.`, and the reply to `/telegram
+off` carries the catch-up as text. Unlike the terminal, the editor cannot take
+the session back in the middle of a turn from Telegram: cancel it from the
+editor first (the chat sees `Stopped.`), or wait for it to end, then send
+`/telegram off`, which catches up with it. The link is not saved: after the
+client loads the session again, send `/telegram on` again.
+
 Telegram pairs exactly one global owner through a private chat. That owner may route
 multiple terminal sessions through a default private route or distinct private
 `message_thread_id` topics; every route retains lifecycle, generation, lease and

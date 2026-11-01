@@ -25,7 +25,7 @@ struct ChatSessionStateTests {
         try await withChatHarness { harness in
             let controller = harness.controller
             let reducer = ChatSessionStateReducer(controller: controller, defaultOrigin: .local)
-            controller.attachCompanionPresenter(reducer)
+            controller.addObserver(reducer)
             try await harness.startSession()
 
             await harness.runtime.append(Self.inspectionTurn)
@@ -78,7 +78,7 @@ struct ChatSessionStateTests {
         try await withChatHarness { harness in
             let controller = harness.controller
             let reducer = ChatSessionStateReducer(controller: controller, defaultOrigin: .local)
-            controller.attachCompanionPresenter(reducer)
+            controller.addObserver(reducer)
             try await harness.startSession()
 
             try await Self.runComparisonTurns(on: controller, runtime: harness.runtime) { prompt, attachments in
@@ -130,7 +130,7 @@ struct ChatSessionStateTests {
         try await withChatHarness(retainsTranscript: false) { harness in
             let controller = harness.controller
             let reducer = ChatSessionStateReducer(controller: controller, defaultOrigin: .acp)
-            controller.attachCompanionPresenter(reducer)
+            controller.addObserver(reducer)
             try await harness.startSession()
             let sessionID = controller.sessionID
             let workspace = controller.workingDirectory.path
@@ -197,7 +197,7 @@ struct ChatSessionStateTests {
         try await withChatHarness { harness in
             let controller = harness.controller
             let reducer = ChatSessionStateReducer(controller: controller, defaultOrigin: .local)
-            controller.attachCompanionPresenter(reducer)
+            controller.addObserver(reducer)
             try await harness.startSession()
 
             await harness.runtime.append { call in
@@ -231,7 +231,7 @@ struct ChatSessionStateTests {
         try await withChatHarness { harness in
             let controller = harness.controller
             let reducer = ChatSessionStateReducer(controller: controller, defaultOrigin: .local)
-            controller.attachCompanionPresenter(reducer)
+            controller.addObserver(reducer)
             try await harness.startSession()
 
             try await Self.runComparisonTurns(on: controller, runtime: harness.runtime) { prompt, attachments in
@@ -430,7 +430,7 @@ struct ChatSessionStateTests {
         try await withChatHarness { harness in
             let controller = harness.controller
             let reducer = ChatSessionStateReducer(controller: controller, defaultOrigin: .local)
-            controller.attachCompanionPresenter(reducer)
+            controller.addObserver(reducer)
             try await harness.startSession()
             await harness.runtime.append { call in
                 await call.onEvent(.thought("Only reasoning."))

@@ -24,10 +24,17 @@ extension ZenCODEACPBridge {
 
         // Reserve the session in the host, which checks and reserves in one
         // step: a second `session/prompt` dispatched concurrently finds the
-        // reservation taken, whichever of the two the host serves first.
+        // reservation taken, whichever of the two the host serves first. A
+        // session busy with a turn from Telegram says so (see
+        // `promptBusyMessage(slotID:)`).
         let reservation: ChatPromptReservation
         do {
             reservation = try await host.reservePrompt(in: knownSession.slotID)
+        } catch ChatSessionHostError.sessionBusy {
+            throw acpError(
+                for: .sessionBusy,
+                busyMessage: await promptBusyMessage(slotID: knownSession.slotID)
+            )
         } catch {
             throw acpError(for: error, busyMessage: "A prompt is already running for this session.")
         }
@@ -209,9 +216,6 @@ extension ZenCODEACPBridge {
         }
         session = liveCommandSession
         let controller = session.controller
-        // The incarnation's Telegram companion, if `/telegram on` created one:
-        // it follows the turn, attached or not, from its start to its end.
-        let telegramCompanion = session.telegramCompanion
         let chatPurpose = Self.chatTurnPurpose(for: commandPurpose, session: session)
         promptConfiguration = session.configuration.addingAllowedToolNames(
             controller.additionalToolNames(for: chatPurpose)
@@ -305,9 +309,7 @@ extension ZenCODEACPBridge {
                 await updatePipeline.drain()
             }
         }
-        let clientFiles = clientFileSystem?.access(sessionID: sessionID) { [weak self] in
-            await self?.canUseClientFileSystem(sessionID: sessionID, epoch: epoch) == true
-        }
+        let clientFiles = clientTextFileSystem(sessionID: sessionID, epoch: epoch)
         let presenter = ACPPromptPresenter(
             sessionID: sessionID,
             workspaceURL: workspaceURL,
@@ -319,9 +321,9 @@ extension ZenCODEACPBridge {
         )
         let activePromptTask = Task(name: "ZenCODEACPBridge.prompt") {
             try await ClientTextFileSystem.$current.withValue(clientFiles) {
-                await sessionRunner.updatePromptSkillSelection(
-                    selectedAgentSkills(for: session.selectedAgent),
-                    sessionID: promptConfiguration.sessionID
+                await applySelectedAgentSkills(
+                    sessionID: promptConfiguration.sessionID,
+                    selectedAgent: session.selectedAgent
                 )
                 try Task.checkCancellation()
                 guard let currentSession = await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
@@ -349,23 +351,12 @@ extension ZenCODEACPBridge {
                 guard await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
                     throw CancellationError()
                 }
-                // While Telegram is linked the turn is mirrored to the chat, and
-                // a gated tool is asked both in the editor (the controller's
-                // authorizer, `session/request_permission`) and in the chat:
-                // the first answer wins. When Telegram answers first, the
-                // editor's request is withdrawn on ZenCODE's side only: ACP
-                // cannot close the dialog, which stays open in the editor, and
-                // its late answer matches no pending request and is ignored
-                // without reaching the wire.
-                await telegramCompanion?.beginTurn(origin: .primary)
-                let telegramAuthorization = await telegramCompanion?.toolAuthorizationHandler(for: .primary)
                 let result = try await controller.runTurn(
                     ChatTurnRequest(
                         prompt: modelPromptText,
                         attachments: attachments,
                         purpose: chatPurpose,
                         sessionConfiguration: promptConfiguration,
-                        authorizeTool: telegramAuthorization,
                         presenter: presenter
                     )
                 )
@@ -404,20 +395,11 @@ extension ZenCODEACPBridge {
             throw CancellationError()
         }
 
-        /// Ends the turn: its task presentation, its buffered updates, its
-        /// Telegram side (`telegramOutcome` and the files it changed are
-        /// mirrored to a linked chat once the editor received the whole turn),
-        /// and the session snapshot.
-        func settleTurn(
-            telegramOutcome: TelegramSessionCompanion.Outcome,
-            fileChangeSummary: TurnFileChangeSummary?
-        ) async {
+        /// Ends the turn: its task presentation, its buffered updates, and
+        /// the session snapshot.
+        func settleTurn() async {
             await finishTaskPresentation()
             await flushPromptUpdates()
-            await telegramCompanion?.finishTurn(
-                outcome: telegramOutcome,
-                fileChangeSummary: fileChangeSummary
-            )
             await refreshSessionStateIfAvailable(
                 sessionID: sessionID,
                 preservingAllowedToolNames: session.allowedToolNames,
@@ -432,16 +414,7 @@ extension ZenCODEACPBridge {
                     Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: completion.text)
                 )
             }
-            let finalResponse: String
-            if case .planning = commandPurpose {
-                finalResponse = completion.text
-            } else {
-                finalResponse = completion.finalAssistantBlock ?? completion.text
-            }
-            await settleTurn(
-                telegramOutcome: .completed(finalResponse),
-                fileChangeSummary: completion.fileChangeSummary
-            )
+            await settleTurn()
             await sendStopReason(id: id, completion.stopReason)
             await releaseReservation()
         } catch {
@@ -453,17 +426,13 @@ extension ZenCODEACPBridge {
                 await clearACPPlanBrainstorming(sessionID: sessionID, epoch: epoch, expectedCollectionID: collectionID)
             }
             let underlying = (error as? ChatTurnFailure)?.underlying ?? error
-            let fileChangeSummary = (error as? ChatTurnFailure)?.fileChangeSummary
             if underlying is CancellationError {
-                await settleTurn(telegramOutcome: .cancelled, fileChangeSummary: fileChangeSummary)
+                await settleTurn()
                 await sendStopReason(id: id, "cancelled")
                 await releaseReservation()
             } else {
                 let promptError = Self.acpPromptError(for: underlying)
-                await settleTurn(
-                    telegramOutcome: .failed(promptError.localizedDescription),
-                    fileChangeSummary: fileChangeSummary
-                )
+                await settleTurn()
                 await releaseReservation()
                 throw promptError
             }
@@ -545,7 +514,9 @@ extension ZenCODEACPBridge {
         // state back while it unwinds. The reply route projects any newer
         // persisted pause before consuming the armed recovery. A
         // reconfiguration in progress is not a prompt and is left to its
-        // owner.
+        // owner. A turn from Telegram (the slot's Telegram channel holds the
+        // reservation while it drives the slot) is stopped in the channel too,
+        // so it ends now and the chat is told it stopped.
         let cancelledTask = session.activePromptTask
         let cancelledTaskPromptID = session.activePromptTaskID
         let workflowPromptID = session.activeWorkflowPromptID
@@ -561,6 +532,9 @@ extension ZenCODEACPBridge {
             if let cancelledPromptID, live.activeWorkflowPromptID == cancelledPromptID {
                 live.activeWorkflowPromptID = nil
             }
+        }
+        if let cancelledPromptID {
+            await host.stopTelegramTurnIfReserved(cancelledPromptID, in: session.slotID)
         }
         await clearACPPlanBrainstorming(sessionID: sessionID, epoch: session.epoch)
         await writer.sendResultIfRequest(id: id, result: .object([:]))
@@ -602,11 +576,6 @@ extension ZenCODEACPBridge {
         // close's own reply. The runner's `closeSession` below additionally
         // waits for the backend-side prompt tasks it owns.
         await waitForPromptHandlersToDrain(sessionID: sessionID, tokens: promptHandlersToDrain)
-        // The closed incarnation's Telegram link ends with it, once its turn
-        // retired its Telegram side above and before this close answers. Only
-        // this incarnation's companion is touched: a session recreated with
-        // the same id meanwhile has its own, or none.
-        await closedSession?.telegramCompanion?.detach()
         // The host ends the incarnation and closes the runner session.
         // `AgentCoreSessionRunner` keys its state by session id, not ACP
         // incarnation: if a `session/load` recreated this id while the old

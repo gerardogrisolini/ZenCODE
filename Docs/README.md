@@ -37,7 +37,7 @@ Guides for using, extending, and maintaining ZenCODE. Start with the
 | Guide | Read it for |
 | --- | --- |
 | [architecture.md](architecture.md) | Layout contract, module boundaries, dependency direction, validation gates |
-| [embedding.md](embedding.md) | Embedding `ZenCODECore` in a host app: composition, isolation, turns, overviews, the Telegram companion, the sandbox contract, and the semver policy of the Chat API |
+| [embedding.md](embedding.md) | Embedding `ZenCODECore` in a host app: composition, isolation, turns, overviews, observing a session, the Telegram channel, the sandbox contract, and the semver policy of the Chat API |
 | [memory.md](memory.md) | Durable memory ownership, retrieval, embeddings, recall, and persisted graph format |
 | [release.md](release.md) | Release checklist and reproducible installs |
 | [security.md](security.md) | Protection model for persisted credentials |

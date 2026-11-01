@@ -1,5 +1,5 @@
 //
-//  TelegramSessionCompanion+Ingress.swift
+//  TelegramChannel+Ingress.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -8,30 +8,27 @@
 import Foundation
 import ToolCore
 
-/// What the primary channel does with a line from Telegram once
-/// ``TelegramSessionCompanion/lineAction(for:lease:)`` answered it.
-enum TelegramCompanionLineAction: Sendable, Equatable {
-    /// The companion answered the line in the linked chat (a remote command,
-    /// a live mention, a refusal); nothing follows.
+/// What the channel does with a line from Telegram once
+/// ``TelegramChannel/lineAction(for:lease:)`` answered it.
+enum TelegramLineAction: Sendable, Equatable {
+    /// The channel answered the line in the linked chat (a remote command, a
+    /// live mention, a reply the controller took); nothing follows.
     case handled
-    /// The line was `/plan`, `/goal`, `/review`, or a reply to the
-    /// conversation waiting for the operator, and the controller ran it. The
-    /// channel presents the outcome's notices and takes its action, exactly
-    /// as for a line typed on the channel. When the action starts no turn,
-    /// the companion already sent the command's notices to the linked chat.
-    case commandOutcome(ChatCommandOutcome)
-    /// An ordinary prompt: the channel runs it as a turn of origin
-    /// ``TelegramTurnOrigin/telegram(_:)``.
+    /// An ordinary prompt: the channel runs it as a turn.
     case runPrompt(String)
+    /// The line was `/plan`, `/goal`, `/review`, or a reply to the
+    /// conversation waiting for the operator, and the controller asks for a
+    /// turn with `prompt` and `purpose`; `locksResponseLanguage` tells a
+    /// prompt the operator wrote from one the command built.
+    case startTurn(prompt: String, purpose: ChatTurnPurpose, locksResponseLanguage: Bool)
 }
 
-/// The Telegram ingress, as the terminal's panel loop hands it over: owner
-/// authorization, callbacks, the busy gate, ForceReply for a bare menu
-/// command, replies to forwarded cards, admission to the channel's prompt
-/// queue, and the remote commands a line carries when it leaves that
-/// queue. ``Policy/mirrorOnly`` refuses what would drive the session before
-/// the busy gate (see its documentation).
-extension TelegramSessionCompanion {
+/// The Telegram ingress: owner authorization, callbacks, the busy gate,
+/// ForceReply for a bare menu command, replies to forwarded cards, the
+/// questions of the controller waiting for the next message, admission to the
+/// channel's prompt queue, and the remote commands a line carries when it
+/// runs.
+extension TelegramChannel {
     // MARK: - Texts
 
     /// The answer to a request that arrives while the session is generating.
@@ -45,60 +42,103 @@ extension TelegramSessionCompanion {
 
     /// The answer to `/start` on a linked chat.
     var alreadyLinkedText: String {
-        switch configuration.policy {
-        case .full:
-            "Telegram is already linked to this ZenCODE session. Send a prompt or /help."
-        case .mirrorOnly:
-            "Telegram is already linked to this ZenCODE session. Send /help."
-        }
+        "Telegram is already linked to this ZenCODE session. Send a prompt or /help."
     }
 
     /// The answer to the remote `/undo`, naming the primary channel.
     var undoText: String {
-        "Use /undo in the \(configuration.primaryChannelDescription) to revert file changes."
+        "Use /undo in the \(primaryChannelDescription) to revert file changes."
+    }
+
+    // MARK: - Driving
+
+    /// Starts reading the chat: the control service's ingress, until
+    /// ``stopDriving(shuttingDown:)``, and the session's shared-chat room,
+    /// whose messages for the operator are forwarded to the chat (see
+    /// `TelegramChannel+SharedChatRelay.swift`). Starting it again while it
+    /// reads does nothing. ``readsIngress`` is `true` while it reads.
+    func startDriving() {
+        startSharedChatObservation()
+        guard ingressConsumerTask == nil else { return }
+        readsIngress = true
+        let messages = controlService.incomingMessages
+        ingressConsumerTask = Task(name: "ZenCODE.Telegram.channel-ingress") { [weak self] in
+            for await message in messages {
+                guard !Task.isCancelled, let self else { return }
+                await self.consumeIngressMessage(message)
+            }
+        }
+    }
+
+    /// Stops what ``startDriving()`` started and waits for the message in
+    /// hand, if any: the questions waiting for the next message are refused,
+    /// the queued prompts dropped, and the shared-chat observation ended.
+    /// `shuttingDown` also ends every voice transcription for good; a detach
+    /// lets a later attach transcribe again.
+    func stopDriving(shuttingDown: Bool = false) async {
+        await stopSharedChatObservation()
+        cancelPendingReaders()
+        promptQueue = ChatPromptQueue()
+        if let task = ingressConsumerTask {
+            ingressConsumerTask = nil
+            task.cancel()
+            await task.value
+        }
+        readsIngress = false
+        if shuttingDown {
+            await cancelVoiceTranscriptions()
+        }
+    }
+
+    /// Handles one message ``startDriving()`` read: a stop-generation update
+    /// stops the turn that streamed the draft, the others go through
+    /// ``handleIncomingMessage(_:)``.
+    private func consumeIngressMessage(_ message: TerminalTelegramIncomingMessage) async {
+        if message.stoppedMessageGenerationDraftID != nil {
+            // Correlate the stop to the current reporter's native draft. A
+            // delayed update for a retired/rebound turn is inert.
+            if await stoppedDraftBelongsToActiveTurn(message) {
+                await stopActiveTurn()
+            }
+            return
+        }
+        await handleIncomingMessage(message)
     }
 
     // MARK: - Messages
 
-    /// Handles one message the channel read from the control service's
-    /// ingress, as the terminal's `handleTelegramMessage` does it, and
-    /// returns `true` when it admitted a prompt to the channel's queue.
+    /// Handles one message read from the control service's ingress and
+    /// returns `true` when it admitted a prompt (started or queued).
     ///
     /// Only an active link reads messages, and only a private chat whose
     /// owner route belongs to this session, or to every session
     /// (`default`), is answered; any other message is dropped without a
-    /// word. A stop-generation update is dropped too: the channel that owns
-    /// the turn checks it with ``stoppedDraftBelongsToActiveTurn(_:)``
-    /// before calling this.
+    /// word. A stop-generation update is dropped too: ``startDriving()``
+    /// checks it with ``stoppedDraftBelongsToActiveTurn(_:)`` before calling
+    /// this.
     ///
     /// An answered message makes its route the link's route and the
     /// shared-chat relay's, except in topic mode
-    /// (`TelegramSessionCompanion+Topics.swift`): there a message from
-    /// another route than the session's topic (General, or a topic no route
-    /// knows) is answered, and its prompt run, in the topic it came from,
-    /// while the link, the relay, and the next turn of the primary channel
-    /// stay on the session's topic.
+    /// (`TelegramChannel+Topics.swift`): there a message from another route
+    /// than the session's topic (General, or a topic no route knows) is
+    /// answered, and its prompt run, in the topic it came from, while the
+    /// link, the relay, and the next turn stay on the session's topic.
     ///
-    /// `isSessionGenerating` is the channel's state when it read the message:
-    /// while it is `true`, only permission replies, `/status`, `/chat`, the
+    /// A question of the controller waiting for the next message takes a
+    /// text message (``readLine(prompt:)``) or a document or image
+    /// (``pickAttachment(startingAt:)``) before anything else. While the
+    /// session generates, only permission replies, `/status`, `/chat`, the
     /// slash forms of `/help` and `/changes`, the mention picker taps, and
     /// the artifact consent taps are answered; everything else is told the
     /// session is busy. Permission replies go through
     /// ``handlePermissionReplyIfNeeded(_:lease:)``, which refuses one
-    /// without a request ID on a route several sessions share. A prompt, and
-    /// a menu command completed through its ForceReply, are handed to
-    /// `admit` as a submitted line on the message's route; a full queue or a
-    /// refusal is answered in the chat.
-    /// The channel reacts to the queued prompt only after this method
-    /// returns. A ``Policy/mirrorOnly`` companion never calls `admit`: it
-    /// answers the line at once with ``lineAction(for:lease:)``.
-    func handleIncomingMessage(
-        _ message: TerminalTelegramIncomingMessage,
-        isSessionGenerating: Bool,
-        admit: (ChatQueuedPrompt<TerminalTelegramRouteLease>) -> TelegramPromptAdmission
-    ) async -> Bool {
-        // Stop-generation updates are consumed by the channel that owns the
-        // generating turn; never reinterpret them as a prompt.
+    /// without a request ID on a route several sessions share. A prompt,
+    /// and a menu command completed through its ForceReply, are admitted to
+    /// the channel's queue (``admitPrompt(_:lease:mode:kind:)``).
+    @discardableResult
+    func handleIncomingMessage(_ message: TerminalTelegramIncomingMessage) async -> Bool {
+        // Stop-generation updates are consumed by `startDriving()`; never
+        // reinterpret them as a prompt.
         guard message.stoppedMessageGenerationDraftID == nil else { return false }
         guard controlState.isActive else { return false }
 
@@ -121,8 +161,8 @@ extension TelegramSessionCompanion {
                 repliesEnabled: readsIngress
             )
         }
-        let routeOrigin = TelegramTurnOrigin.telegram(routeLease)
-        guard let ingressFence = wireFence(for: routeOrigin) else { return false }
+        guard let ingressFence = wireFence(for: routeLease) else { return false }
+        let isSessionGenerating = isSessionGenerating
 
         if let callbackQueryID = message.callbackQueryID,
            let callbackData = message.callbackData {
@@ -130,25 +170,18 @@ extension TelegramSessionCompanion {
                 callbackQueryID, chatID: message.chatID, fence: ingressFence
             )
             if await handleArtifactConsentCallback(
-                callbackData, message: message, origin: routeOrigin
+                callbackData, message: message, lease: routeLease
             ) {
                 return false
             }
             guard !isSessionGenerating
                 || callbackData.hasPrefix(Self.mentionPickerCallbackPrefix) else {
-                await sendBusyMessage(origin: routeOrigin)
+                await sendBusyMessage(lease: routeLease)
                 return false
             }
             await handleMentionPickerCallback(
-                callbackData, chatID: message.chatID, origin: routeOrigin
+                callbackData, chatID: message.chatID, lease: routeLease
             )
-            return false
-        }
-
-        // A mirror-only session is never driven from Telegram, busy or not:
-        // what would drive it is refused before the busy gate.
-        if configuration.policy == .mirrorOnly, await mirrorOnlyRefuses(message) {
-            await sendSystemMessageIfLinked(mirrorOnlyRefusalText, origin: routeOrigin)
             return false
         }
 
@@ -164,6 +197,18 @@ extension TelegramSessionCompanion {
            await handlePermissionReplyIfNeeded(text, lease: routeLease) {
             return false
         }
+        // A question of the controller takes the next message before the
+        // busy gate: the session waits for exactly this answer.
+        if let attachment = message.attachment, pendingAttachmentReader != nil {
+            await handleInboundAttachment(attachment, message: message, lease: routeLease)
+            return false
+        }
+        if pendingLineReader != nil, message.attachment == nil, message.voice == nil,
+           let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty,
+           deliverPendingLine(text, lease: routeLease) {
+            return false
+        }
         if isSessionGenerating,
            let busyText = message.text.map(Self.commandWithoutBotMention),
            let invocation = TerminalTelegramRemoteCommand.invocation(text: busyText),
@@ -171,28 +216,28 @@ extension TelegramSessionCompanion {
             let isSlash = CoordinatorCommandParser.isSlashCommand(busyText)
             switch invocation.command {
             case .status:
-                await sendSystemMessageIfLinked(remoteStatusText(), origin: routeOrigin)
+                await sendSystemMessageIfLinked(remoteStatusText(), lease: routeLease)
                 return false
             case .chat:
-                await handleMentionPickerRequest(chatID: message.chatID, origin: routeOrigin)
+                await handleMentionPickerRequest(chatID: message.chatID, lease: routeLease)
                 return false
             case .help where isSlash:
-                await sendSystemMessageIfLinked(remoteHelpText(), origin: routeOrigin)
+                await sendSystemMessageIfLinked(remoteHelpText(), lease: routeLease)
                 return false
             case .changes where isSlash:
-                await sendSystemMessageIfLinked(remoteChangesText(), origin: routeOrigin)
+                await sendSystemMessageIfLinked(remoteChangesText(), lease: routeLease)
                 return false
             default:
                 break
             }
         }
         guard !isSessionGenerating else {
-            await sendBusyMessage(origin: routeOrigin)
+            await sendBusyMessage(lease: routeLease)
             return false
         }
 
         if let attachment = message.attachment {
-            await handleInboundAttachment(attachment, message: message, origin: routeOrigin)
+            await handleInboundAttachment(attachment, message: message, lease: routeLease)
             return false
         }
 
@@ -204,11 +249,11 @@ extension TelegramSessionCompanion {
             if await directReplyTarget(for: message) != nil {
                 await sendSystemMessageIfLinked(
                     "ZenCODE message: replies to a live message must be text. Send your answer as text, or record a voice note without replying to run it as an ordinary prompt.",
-                    origin: routeOrigin
+                    lease: routeLease
                 )
                 return false
             }
-            await handleVoiceMessage(voice, origin: routeOrigin)
+            await handleVoiceMessage(voice, lease: routeLease)
             return false
         }
 
@@ -227,10 +272,10 @@ extension TelegramSessionCompanion {
         // falls through to the queued path, which rejects the argument.
         switch (invocation?.command, invocation?.argument.isEmpty) {
         case (.start?, _):
-            await sendSystemMessageIfLinked(alreadyLinkedText, origin: routeOrigin)
+            await sendSystemMessageIfLinked(alreadyLinkedText, lease: routeLease)
             return false
         case (.chat?, true?):
-            await handleMentionPickerRequest(chatID: message.chatID, origin: routeOrigin)
+            await handleMentionPickerRequest(chatID: message.chatID, lease: routeLease)
             return false
         default:
             break
@@ -243,9 +288,7 @@ extension TelegramSessionCompanion {
         }
 
         if let completedCommand = consumeCommandArgumentReply(from: message, lease: routeLease) {
-            return await admitLine(
-                completedCommand, lease: routeLease, kind: "command", admit: admit
-            )
+            return await admitPrompt(completedCommand, lease: routeLease, kind: "command")
         }
 
         // A reply to a forwarded live-message card answers its sender
@@ -253,18 +296,12 @@ extension TelegramSessionCompanion {
         // precedence, so quoting a card never changes what an explicitly
         // addressed line means.
         if await replyRoutingHasPrecedence(over: text) == false,
-           await handleSharedChatReplyIfNeeded(text, message: message, origin: routeOrigin) {
+           await handleSharedChatReplyIfNeeded(text, message: message, lease: routeLease) {
             return false
         }
 
         guard (try? await router.validate(routeLease)) != nil else { return false }
-        if configuration.policy == .mirrorOnly {
-            // No queue to wait in: the line is a command, answered at once.
-            // `lineAction` never runs a line for a mirror-only companion.
-            _ = await lineAction(for: text, lease: routeLease)
-            return false
-        }
-        return await admitLine(text, lease: routeLease, kind: "prompt", admit: admit)
+        return await admitPrompt(text, lease: routeLease, kind: "prompt")
     }
 
     /// The owner route of `message` for this session, or `nil`.
@@ -279,7 +316,7 @@ extension TelegramSessionCompanion {
                   chatID: message.chatID, userID: message.userID,
                   topicID: message.topicID
               ),
-              lease.key.roomID == controller.sessionID || lease.key.roomID == "default" else {
+              lease.key.roomID == sessionID || lease.key.roomID == "default" else {
             return nil
         }
         return lease
@@ -288,16 +325,14 @@ extension TelegramSessionCompanion {
     /// Whether `message` is a stop-generation update for the draft of the
     /// turn in progress: the turn's route is still valid and its topic is
     /// the message's, and the turn's reporter streamed that draft. A delayed
-    /// update for a retired or rebound turn is not. The channel that owns the
-    /// generating turn stops it when this is `true`, as the terminal's panel
-    /// loop does, and ignores the update otherwise.
+    /// update for a retired or rebound turn is not.
     func stoppedDraftBelongsToActiveTurn(
         _ message: TerminalTelegramIncomingMessage
     ) async -> Bool {
         guard let draftID = message.stoppedMessageGenerationDraftID,
-              let origin = activeTurnOrigin,
-              await validateOrigin(origin),
-              origin.lease?.effectiveMessageThreadID == message.topicID,
+              let lease = activeTurnLease,
+              await validateLease(lease),
+              lease.effectiveMessageThreadID == message.topicID,
               let reporter = activeProgressReporter else {
             return false
         }
@@ -319,39 +354,28 @@ extension TelegramSessionCompanion {
 
     // MARK: - Lines
 
-    /// Answers a line that came from Telegram on `lease`, as the terminal's
-    /// `submittedTelegramLineAction` does it when the line leaves the queue.
+    /// Answers a line that came from Telegram on `lease` when it leaves the
+    /// queue.
     ///
     /// Remote commands (`/help`, `/status`, `/chat`, `/changes`, `/undo`,
     /// `/diff`, `/start`) and live `@mention` messages are answered in the
     /// linked chat; a remote command with an argument and an unknown slash
     /// command are told so. `/plan`, `/goal` and `/review` run through
     /// ``ChatSessionController/handleCommandLine(_:context:)`` with the
-    /// channel's ``TelegramCompanionChannel/commandContext()``, and a plain
-    /// line goes first to the conversation waiting for the operator
+    /// context of the slot's primary channel, and a plain line goes first to
+    /// the conversation waiting for the operator
     /// (``ChatSessionController/pendingReplyAction(for:fence:policy:)``).
     /// When such a command starts no turn, the notices it presented and its
     /// closing notices go to the chat, in order, as the terminal sends what
     /// it wrote. A plain-word alias ("status") is a command only while no
-    /// conversation waits for a reply. Anything else is a prompt.
-    ///
-    /// A ``Policy/mirrorOnly`` companion refuses with
-    /// ``mirrorOnlyRefusalText`` what would drive the session, and never
-    /// answers ``TelegramCompanionLineAction/commandOutcome(_:)`` or
-    /// ``TelegramCompanionLineAction/runPrompt(_:)``. A line whose route is
-    /// no longer valid is dropped.
+    /// conversation waits for a reply. Anything else is a prompt. A line
+    /// whose route is no longer valid is dropped.
     func lineAction(
         for line: String,
         lease: TerminalTelegramRouteLease
-    ) async -> TelegramCompanionLineAction {
-        let origin = TelegramTurnOrigin.telegram(lease)
-        guard await validateOrigin(origin) else { return .handled }
+    ) async -> TelegramLineAction {
+        guard await validateLease(lease) else { return .handled }
         let prompt = Self.commandWithoutBotMention(line)
-        let isMirrorOnly = configuration.policy == .mirrorOnly
-        if isMirrorOnly, await mirrorOnlyRefusesLine(prompt) {
-            await sendSystemMessageIfLinked(mirrorOnlyRefusalText, origin: origin)
-            return .handled
-        }
         let isSlash = CoordinatorCommandParser.isSlashCommand(prompt)
         let remoteInvocation = TerminalTelegramRemoteCommand.invocation(text: prompt)
         let remoteCommand = remoteInvocation?.command
@@ -360,40 +384,39 @@ extension TelegramSessionCompanion {
             let name = prompt.split(whereSeparator: \.isWhitespace).first
                 .map { String($0).lowercased() } ?? prompt
             await sendSystemMessageIfLinked(
-                "ZenCODE: \(name) does not accept arguments.", origin: origin
+                "ZenCODE: \(name) does not accept arguments.", lease: lease
             )
             return .handled
         }
         // A plain-word alias ("status", "diff", "undo", ...) is ordinary text
         // while a conversation explicitly waits for the operator: the pending
         // reply wins, exactly as in the terminal, where those words are never
-        // commands. Slash forms keep their command meaning. A mirror-only
-        // companion takes no replies, so its aliases stay commands.
-        if !isMirrorOnly, remoteCommand != nil, !isSlash,
-           let action = await pendingReplyLineAction(prompt, origin: origin) {
+        // commands. Slash forms keep their command meaning.
+        if remoteCommand != nil, !isSlash,
+           let action = await pendingReplyLineAction(prompt, lease: lease) {
             return action
         }
         switch remoteCommand {
         case .start:
-            await sendSystemMessageIfLinked(alreadyLinkedText, origin: origin)
+            await sendSystemMessageIfLinked(alreadyLinkedText, lease: lease)
             return .handled
         case .help:
-            await sendSystemMessageIfLinked(remoteHelpText(), origin: origin)
+            await sendSystemMessageIfLinked(remoteHelpText(), lease: lease)
             return .handled
         case .status:
-            await sendSystemMessageIfLinked(remoteStatusText(), origin: origin)
+            await sendSystemMessageIfLinked(remoteStatusText(), lease: lease)
             return .handled
         case .chat:
-            await handleMentionPickerRequest(chatID: lease.key.chatID, origin: origin)
+            await handleMentionPickerRequest(chatID: lease.key.chatID, lease: lease)
             return .handled
         case .changes:
-            await sendSystemMessageIfLinked(remoteChangesText(), origin: origin)
+            await sendSystemMessageIfLinked(remoteChangesText(), lease: lease)
             return .handled
         case .undo:
-            await sendSystemMessageIfLinked(undoText, origin: origin)
+            await sendSystemMessageIfLinked(undoText, lease: lease)
             return .handled
         case .diff:
-            await handleDiffRequest(origin: origin)
+            await handleDiffRequest(lease: lease)
             return .handled
         case .none:
             break
@@ -402,41 +425,34 @@ extension TelegramSessionCompanion {
         switch SharedChatMentionParser.parse(
             from: prompt,
             readableHandles: await sessionRunner.sharedChatMentionHandles(
-                rootSessionID: controller.sessionID
+                rootSessionID: sessionID
             )
         ) {
         case let .route(route):
-            await sendSharedChatMention(route, origin: origin)
+            await sendSharedChatMention(route, lease: lease)
             return .handled
         case .missingText:
             await sendSystemMessageIfLinked(
-                "ZenCODE message: add a message after the live mention.", origin: origin
+                "ZenCODE message: add a message after the live mention.", lease: lease
             )
             return .handled
         case .none:
             break
         }
 
-        if !isMirrorOnly, !isSlash,
-           let action = await pendingReplyLineAction(prompt, origin: origin) {
+        if !isSlash, let action = await pendingReplyLineAction(prompt, lease: lease) {
             return action
         }
-        if !isMirrorOnly, let coordinatorCommand = CoordinatorCommandParser.parse(prompt) {
-            return await coordinatorCommandLineAction(coordinatorCommand, line: prompt, origin: origin)
+        if let coordinatorCommand = CoordinatorCommandParser.parse(prompt) {
+            return await coordinatorCommandLineAction(coordinatorCommand, line: prompt, lease: lease)
         }
         if isSlash, TerminalTelegramPermissionBroker.permissionCommand(from: prompt) == nil {
             let token = prompt.split(whereSeparator: \.isWhitespace).first
                 .map(String.init) ?? prompt
             await sendSystemMessageIfLinked(
-                "ZenCODE: unknown command '\(token)'. Available commands: \(Self.remoteCommandList(policy: configuration.policy))",
-                origin: origin
+                "ZenCODE: unknown command '\(token)'. Available commands: \(Self.remoteCommandList())",
+                lease: lease
             )
-            return .handled
-        }
-        guard !isMirrorOnly else {
-            // Unreachable from the ingress, which consumes permission replies
-            // first; a mirror-only companion runs no line.
-            await sendSystemMessageIfLinked(mirrorOnlyRefusalText, origin: origin)
             return .handled
         }
         return .runPrompt(prompt)
@@ -449,17 +465,18 @@ extension TelegramSessionCompanion {
     private func coordinatorCommandLineAction(
         _ command: CoordinatorCommand,
         line: String,
-        origin: TelegramTurnOrigin
-    ) async -> TelegramCompanionLineAction {
+        lease: TerminalTelegramRouteLease
+    ) async -> TelegramLineAction {
+        guard let controller else { return .handled }
         let commandLine = Self.coordinatorCommandLine(command, from: line)
         presenter.beginNoticeCapture()
         let outcome = await controller.handleCommandLine(
             commandLine,
-            context: channel?.commandContext() ?? []
+            context: commandContext()
         )
         let captured = presenter.endNoticeCapture()
-        await sendCommandNotices(of: outcome, captured: captured, origin: origin)
-        return .commandOutcome(outcome)
+        await sendCommandNotices(of: outcome, captured: captured, lease: lease)
+        return Self.lineAction(for: outcome)
     }
 
     /// Routes a plain line to the conversation that is explicitly waiting
@@ -470,28 +487,48 @@ extension TelegramSessionCompanion {
     /// only on the primary channel.
     private func pendingReplyLineAction(
         _ prompt: String,
-        origin: TelegramTurnOrigin
-    ) async -> TelegramCompanionLineAction? {
+        lease: TerminalTelegramRouteLease
+    ) async -> TelegramLineAction? {
+        guard let controller else { return nil }
         presenter.beginNoticeCapture()
         let outcome = await controller.pendingReplyAction(for: prompt)
         let captured = presenter.endNoticeCapture()
         guard let outcome else { return nil }
-        await sendCommandNotices(of: outcome, captured: captured, origin: origin)
-        return .commandOutcome(outcome)
+        await sendCommandNotices(of: outcome, captured: captured, lease: lease)
+        return Self.lineAction(for: outcome)
     }
 
-    /// Sends to the chat of `origin`, when the command starts no turn, the
+    /// The action of a command's outcome: the turn it asks for, or nothing
+    /// more (its notices were sent).
+    nonisolated static func lineAction(for outcome: ChatCommandOutcome) -> TelegramLineAction {
+        switch outcome.action {
+        case let .startTurn(prompt, purpose, locksResponseLanguage):
+            .startTurn(prompt: prompt, purpose: purpose, locksResponseLanguage: locksResponseLanguage)
+        case .none, .channelCommand:
+            .handled
+        }
+    }
+
+    /// The facts that decide which slash commands the session accepts from
+    /// the chat: the registry context of the slot's primary channel is not
+    /// known here, so the shared commands decide with what the controller
+    /// knows (the agent, the plan, the workflow).
+    func commandContext() -> ChatCommandContext {
+        []
+    }
+
+    /// Sends to the chat on `lease`, when the command starts no turn, the
     /// notices it presented while it ran (`captured`) and its closing
     /// notices, in order, joined by newlines; a blank result sends nothing.
     private func sendCommandNotices(
         of outcome: ChatCommandOutcome,
         captured: [String],
-        origin: TelegramTurnOrigin
+        lease: TerminalTelegramRouteLease
     ) async {
         if case .startTurn = outcome.action { return }
         let texts = captured + outcome.notices.map { ChatSessionNoticeText.text(for: $0) }
         guard let output = texts.joined(separator: "\n").nilIfBlank else { return }
-        await sendSystemMessageIfLinked(output, origin: origin)
+        await sendSystemMessageIfLinked(output, lease: lease)
     }
 
     /// `line` as the command registry resolves `command`: the family's
@@ -533,7 +570,7 @@ extension TelegramSessionCompanion {
         await sendTurnMessage(
             .authorization(Self.sharedRoutePermissionReplyText),
             to: lease.key.chatID,
-            origin: .telegram(lease)
+            lease: lease
         )
         return true
     }
@@ -541,10 +578,10 @@ extension TelegramSessionCompanion {
     /// Whether `text` is an `/allow`, `/always` or `/deny` without a request
     /// ID on the route several sessions share (no topic: General, an
     /// unknown topic that fell back to it, or the legacy route) while more
-    /// than one companion is attached to this bot. Such a reply could
-    /// decide a request of another session, so it must name its request.
-    /// With one companion, or in the session's own topic, the reply is
-    /// answered as before.
+    /// than one channel is attached to this bot. Such a reply could decide
+    /// a request of another session, so it must name its request. With one
+    /// channel, or in the session's own topic, the reply is answered as
+    /// before.
     func permissionReplyNeedsRequestID(
         _ text: String,
         lease: TerminalTelegramRouteLease
@@ -555,140 +592,10 @@ extension TelegramSessionCompanion {
               let botID = controlState.botID else {
             return false
         }
-        return attachments.attachedCount(botID: botID) > 1
-    }
-
-    // MARK: - Mirror only
-
-    /// Whether a ``Policy/mirrorOnly`` companion refuses `message` before
-    /// the busy gate: a voice note, or a text line
-    /// ``mirrorOnlyRefusesLine(_:)`` refuses that is not a text reply to an
-    /// answerable forwarded card. Documents and images are not refused.
-    private func mirrorOnlyRefuses(_ message: TerminalTelegramIncomingMessage) async -> Bool {
-        guard message.attachment == nil else { return false }
-        if message.voice != nil { return true }
-        guard let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !text.isEmpty,
-              await mirrorOnlyRefusesLine(Self.commandWithoutBotMention(text)) else {
-            return false
-        }
-        // A plain line quoting an answerable card is a reply to its sender,
-        // the same as a reply after `/chat`.
-        if await replyRoutingHasPrecedence(over: text) == false,
-           await directReplyTarget(for: message) != nil {
-            return false
-        }
-        return true
-    }
-
-    /// Whether a ``Policy/mirrorOnly`` companion refuses the line `prompt`
-    /// (without its bot mention): `/undo` in any form, `/plan` `/goal`
-    /// `/review` in any form, and any plain text that is neither a remote
-    /// command alias nor a live mention, which covers prompts and replies
-    /// to pending questions. Permission replies, the other remote commands,
-    /// live mentions, and unknown slash commands are not refused.
-    private func mirrorOnlyRefusesLine(_ prompt: String) async -> Bool {
-        if TerminalTelegramPermissionBroker.permissionCommand(from: prompt) != nil {
-            return false
-        }
-        if let invocation = TerminalTelegramRemoteCommand.invocation(text: prompt) {
-            return invocation.command == .undo
-        }
-        if CoordinatorCommandParser.parse(prompt) != nil {
-            return true
-        }
-        if CoordinatorCommandParser.isSlashCommand(prompt) {
-            return false
-        }
-        switch SharedChatMentionParser.parse(
-            from: prompt,
-            readableHandles: await sessionRunner.sharedChatMentionHandles(
-                rootSessionID: controller.sessionID
-            )
-        ) {
-        case .route, .missingText:
-            return false
-        case .none:
-            return true
-        }
-    }
-
-    // MARK: - Consuming
-
-    /// Reads the control service's ingress for a primary channel without an
-    /// event loop of its own (an ACP session), until ``detach()`` or
-    /// ``shutdown()``. Starting it again while it reads does nothing.
-    ///
-    /// Each message is handled as the terminal's panel loop handles it: a
-    /// stop-generation update is ignored, the others go through
-    /// ``handleIncomingMessage(_:isSessionGenerating:admit:)`` with the
-    /// channel's ``TelegramCompanionChannel/isSessionGenerating()``. Such a
-    /// channel has no prompt queue, so a prompt that would be admitted is
-    /// refused. ``readsIngress`` is `true` while it reads.
-    public func startConsuming() {
-        guard ingressConsumerTask == nil else { return }
-        readsIngress = true
-        let messages = controlService.incomingMessages
-        ingressConsumerTask = Task(name: "ZenCODE.Telegram.companion-ingress") { [weak self] in
-            for await message in messages {
-                guard !Task.isCancelled, let self else { return }
-                await self.consumeIngressMessage(message)
-            }
-        }
-    }
-
-    /// Handles one message ``startConsuming()`` read.
-    private func consumeIngressMessage(_ message: TerminalTelegramIncomingMessage) async {
-        guard message.stoppedMessageGenerationDraftID == nil else { return }
-        let isSessionGenerating = channel?.isSessionGenerating() ?? false
-        _ = await handleIncomingMessage(
-            message,
-            isSessionGenerating: isSessionGenerating,
-            admit: { _ in .refused }
-        )
-    }
-
-    /// Stops what ``startConsuming()`` started and waits for the message in
-    /// hand, if any. `shuttingDown` also ends every voice transcription for
-    /// good, as the end of the terminal's panel loop does; a detach lets a
-    /// later attach transcribe again. Without a consumer nothing changes.
-    func stopConsuming(shuttingDown: Bool) async {
-        guard let task = ingressConsumerTask else { return }
-        ingressConsumerTask = nil
-        task.cancel()
-        await task.value
-        readsIngress = false
-        if shuttingDown {
-            await cancelVoiceTranscriptions()
-        }
+        return registry.attachedCount(botID: botID) > 1
     }
 
     // MARK: - Support
-
-    /// Hands `text` to `admit` as a submitted line on `lease`, answering a
-    /// full queue (the terminal's text, where `kind` names what was not
-    /// queued) and a refusal in the chat. `true` when it was queued.
-    private func admitLine(
-        _ text: String,
-        lease: TerminalTelegramRouteLease,
-        kind: String,
-        admit: (ChatQueuedPrompt<TerminalTelegramRouteLease>) -> TelegramPromptAdmission
-    ) async -> Bool {
-        let origin = TelegramTurnOrigin.telegram(lease)
-        switch admit(ChatQueuedPrompt(text: text, origin: lease)) {
-        case .queued:
-            return true
-        case .queueFull:
-            await sendSystemMessageIfLinked(
-                "ZenCODE is busy and the prompt queue is full. Your \(kind) was not queued; try again after a running prompt completes.",
-                origin: origin
-            )
-            return false
-        case .refused:
-            await sendSystemMessageIfLinked(mirrorOnlyRefusalText, origin: origin)
-            return false
-        }
-    }
 
     /// A menu selection is delivered by Telegram as a bare message. Asks for
     /// the missing argument with a receipt-backed ForceReply, then accepts
@@ -703,7 +610,7 @@ extension TelegramSessionCompanion {
             prompt = "Enter the argument for \(command). Reply to this message; it will not be treated as a normal prompt."
         }
         let receipt = await sendReplyMarkupMessage(
-            prompt, to: chatID, replyMarkup: .forceReply, origin: .telegram(lease)
+            prompt, to: chatID, replyMarkup: .forceReply, lease: lease
         )
         guard let receipt else { return }
         // One unanswered command per route bounds this ledger even if an
@@ -735,7 +642,7 @@ extension TelegramSessionCompanion {
         return "\(binding.command) \(argument)"
     }
 
-    private func sendBusyMessage(origin: TelegramTurnOrigin) async {
-        await sendSystemMessageIfLinked(Self.busyMessageText, origin: origin)
+    private func sendBusyMessage(lease: TerminalTelegramRouteLease) async {
+        await sendSystemMessageIfLinked(Self.busyMessageText, lease: lease)
     }
 }

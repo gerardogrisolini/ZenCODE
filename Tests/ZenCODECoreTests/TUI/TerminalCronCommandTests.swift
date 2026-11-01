@@ -1623,13 +1623,13 @@ struct TerminalCronCommandTests {
 
         // The deferred report reaches the terminal only, never the immediate
         // output of whatever Telegram command is in progress when it lands.
-        terminal.telegramImmediateCommandOutput = []
-        defer { terminal.telegramImmediateCommandOutput = nil }
+        terminal.capturedCommandOutputForTesting = []
+        defer { terminal.capturedCommandOutputForTesting = nil }
         runner.release()
         await terminal.activeCronRun?.task.value
 
         #expect(terminal.activeCronRun == nil)
-        #expect(terminal.telegramImmediateCommandOutput == [])
+        #expect(terminal.capturedCommandOutputForTesting == [])
         #expect(runner.calls.count == 1)
     }
 
@@ -2711,10 +2711,10 @@ struct TerminalCronCommandTests {
     /// Runs `/cron …` and returns what it wrote, captured the same way the
     /// Telegram bridge captures immediate command output.
     private func run(_ command: String, in terminal: TerminalChat) async -> String {
-        terminal.telegramImmediateCommandOutput = []
+        terminal.capturedCommandOutputForTesting = []
         await terminal.handleCronCommand(command)
-        defer { terminal.telegramImmediateCommandOutput = nil }
-        return terminal.telegramImmediateCommandOutput?.joined() ?? ""
+        defer { terminal.capturedCommandOutputForTesting = nil }
+        return terminal.capturedCommandOutputForTesting?.joined() ?? ""
     }
 
     /// Crontab text with `foreign` user lines followed by a ZenCODE block.

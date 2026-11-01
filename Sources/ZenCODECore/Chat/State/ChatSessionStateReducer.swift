@@ -12,9 +12,10 @@ import ToolCore
 /// from what its controller presents.
 ///
 /// The reducer is a presenter: a client either passes it to the controller as
-/// its presenter, or attaches it next to the channel's presenter with
-/// ``ChatSessionController/attachCompanionPresenter(_:)``, which also covers
-/// the presenter an ACP prompt binds to its request. It records every event in
+/// its presenter, or adds it as an observer with
+/// ``ChatSessionController/addObserver(_:)``, which also covers the presenter
+/// an ACP prompt binds to its request and whatever channel presents the
+/// session (see ``ChatSessionObserver``). It records every event in
 /// one ordered log, assigning each entry its ``ChatTurnEntry/sequence`` in a
 /// single place, and closes the assistant blocks where the session transcript
 /// closes them, with the same rules as the transcript. The text still
@@ -36,7 +37,7 @@ import ToolCore
 /// ``ChatPendingRequestHost`` that publishes requests in its snapshot shares
 /// that isolation.
 @ChatSessionActor
-public final class ChatSessionStateReducer: ChatCompanionPresenter {
+public final class ChatSessionStateReducer: ChatSessionObserver {
     /// The most notices ``ChatSessionSnapshot/notices`` holds.
     public nonisolated static let maximumNoticeCount = 64
 
@@ -101,7 +102,7 @@ public final class ChatSessionStateReducer: ChatCompanionPresenter {
 
     /// A reducer for the session `controller` runs now, with its working
     /// directory, selection, and saved-session link. It does not attach
-    /// itself: pass it to ``ChatSessionController/attachCompanionPresenter(_:)``.
+    /// itself: pass it to ``ChatSessionController/addObserver(_:)``.
     public convenience init(
         controller: ChatSessionController,
         defaultOrigin: ChatTurnOrigin,

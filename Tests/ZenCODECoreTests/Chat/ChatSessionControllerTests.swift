@@ -119,16 +119,16 @@ struct ChatSessionControllerTests {
         }
     }
 
-    // MARK: - Companion fan-out
+    // MARK: - Observers
 
     @Test
-    func companionsPresentEveryTurnEventBeforeThePrimaryInAttachOrder() async throws {
+    func observersPresentEveryTurnEventBeforeThePrimaryInAttachOrder() async throws {
         let log = ChatPresentationLog()
         try await withHarness(presentationLog: log) { harness in
             let first = RecordingChatPresenter(name: "first", log: log)
             let second = RecordingChatPresenter(name: "second", log: log)
-            harness.controller.attachCompanionPresenter(first)
-            harness.controller.attachCompanionPresenter(second)
+            harness.controller.addObserver(first)
+            harness.controller.addObserver(second)
             await harness.runtime.append { call in
                 let read = scriptedToolCall(id: "tool-read", name: "local.readFile")
                 await call.onEvent(.content("Reading."))
@@ -152,7 +152,7 @@ struct ChatSessionControllerTests {
                 .modelTurnDidReturn,
                 .turnWillFinish,
             ]
-            // Every event reaches the companions in attach order, then the
+            // Every event reaches the observers in attach order, then the
             // primary, before the next event starts.
             #expect(log.entries == fannedOut(turnEvents, to: ["first", "second", "primary"]))
             #expect(await first.events == turnEvents)
@@ -162,24 +162,24 @@ struct ChatSessionControllerTests {
     }
 
     @Test
-    func companionsPresentASessionNoticeBeforeThePrimary() async throws {
+    func observersPresentASessionNoticeBeforeThePrimary() async throws {
         let log = ChatPresentationLog()
         try await withHarness(presentationLog: log) { harness in
-            let companion = RecordingChatPresenter(name: "companion", log: log)
-            harness.controller.attachCompanionPresenter(companion)
+            let observer = RecordingChatPresenter(name: "observer", log: log)
+            harness.controller.addObserver(observer)
             let missing = harness.workspace.appendingPathComponent("missing-skill", isDirectory: true)
 
             _ = await harness.controller.installSkill(from: .local(missing))
 
             #expect(log.entries == fannedOut(
                 [.sessionNotice(.skillInstallStarted(source: missing.path))],
-                to: ["companion", "primary"]
+                to: ["observer", "primary"]
             ))
         }
     }
 
     @Test
-    func companionsAttachedAndDetachedMidSessionFollowOnlyTheTurnsInBetween() async throws {
+    func observersAddedAndRemovedMidSessionFollowOnlyTheTurnsInBetween() async throws {
         let log = ChatPresentationLog()
         try await withHarness(presentationLog: log) { harness in
             let controller = harness.controller
@@ -187,19 +187,19 @@ struct ChatSessionControllerTests {
             let second = RecordingChatPresenter(name: "second", log: log)
 
             try await runContentTurn("one", in: harness)
-            controller.attachCompanionPresenter(first)
-            controller.attachCompanionPresenter(second)
-            // Attaching an attached companion again changes nothing.
-            controller.attachCompanionPresenter(first)
-            #expect(controller.companionPresenters.map { ObjectIdentifier($0) }
+            controller.addObserver(first)
+            controller.addObserver(second)
+            // Adding an added observer again changes nothing.
+            controller.addObserver(first)
+            #expect(controller.observers.map { ObjectIdentifier($0) }
                 == [ObjectIdentifier(first), ObjectIdentifier(second)])
             try await runContentTurn("two", in: harness)
-            controller.detachCompanionPresenter(first)
+            controller.removeObserver(first)
             try await runContentTurn("three", in: harness)
-            controller.detachCompanionPresenter(second)
-            // Detaching a companion that is not attached changes nothing.
-            controller.detachCompanionPresenter(first)
-            #expect(controller.companionPresenters.isEmpty)
+            controller.removeObserver(second)
+            // Removing an observer that is not added changes nothing.
+            controller.removeObserver(first)
+            #expect(controller.observers.isEmpty)
             try await runContentTurn("four", in: harness)
 
             #expect(log.entries
@@ -209,19 +209,20 @@ struct ChatSessionControllerTests {
                 + fannedOut(contentTurnEvents("four"), to: ["primary"]))
             #expect(await first.events == contentTurnEvents("two"))
             #expect(await second.events == contentTurnEvents("two") + contentTurnEvents("three"))
-            // Without companions the controller presents on its own presenter.
-            let effective = controller.effectivePresenter(for: nil)
-            #expect((effective as? RecordingChatPresenter) === harness.presenter)
+            // The observers are read at every call: the observed presenter
+            // over the controller's own presenter is what the controller
+            // presents on, with or without observers.
+            #expect(controller.effectivePresenter(for: nil) is ChatObservedPresenter)
         }
     }
 
     @Test
-    func companionsFanOutAlsoWhenTheRequestBindsItsOwnPresenter() async throws {
+    func observersPresentAlsoWhenTheRequestBindsItsOwnPresenter() async throws {
         let log = ChatPresentationLog()
         try await withHarness(presentationLog: log) { harness in
-            let companion = RecordingChatPresenter(name: "companion", log: log)
+            let observer = RecordingChatPresenter(name: "observer", log: log)
             let perTurn = RecordingChatPresenter(name: "request", log: log)
-            harness.controller.attachCompanionPresenter(companion)
+            harness.controller.addObserver(observer)
             await harness.runtime.append { call in
                 await call.onEvent(.content("bound to the request"))
                 return DirectAgentResponse(text: "bound to the request", stopReason: "end_turn", modelID: "m")
@@ -237,7 +238,7 @@ struct ChatSessionControllerTests {
             ]
             // The request's presenter is the primary of this turn: the
             // controller's default presenter sees nothing.
-            #expect(log.entries == fannedOut(turnEvents, to: ["companion", "request"]))
+            #expect(log.entries == fannedOut(turnEvents, to: ["observer", "request"]))
             #expect(await perTurn.events == turnEvents)
             #expect(await harness.presenter.events.isEmpty)
         }
@@ -247,27 +248,27 @@ struct ChatSessionControllerTests {
     func overviewReservationsAskOnlyThePrimaryAndThePublicationsCarryItsReservation() async throws {
         let log = ChatPresentationLog()
         try await withHarness(presentationLog: log) { harness in
-            let companion = RecordingChatPresenter(name: "companion", log: log)
-            harness.controller.attachCompanionPresenter(companion)
+            let observer = RecordingChatPresenter(name: "observer", log: log)
+            harness.controller.addObserver(observer)
 
             // `/tasks` echoes its line on every presenter, but reserves the
             // publication on the primary alone.
             let outcome = await harness.controller.runTasksCommand(line: "/tasks")
 
             #expect(outcome == ChatCommandOutcome(notices: [.noTaskGraph]))
-            #expect(log.entries == fannedOut([.submittedCommand("/tasks")], to: ["companion", "primary"]) + [
+            #expect(log.entries == fannedOut([.submittedCommand("/tasks")], to: ["observer", "primary"]) + [
                 .init(presenter: "primary", event: .taskGraphReservation(ChatOverviewPublication(revision: 1))),
             ])
 
             log.clear()
             await harness.presenter.setRecordsSubAgentOverviews(true)
-            await companion.setRecordsSubAgentOverviews(true)
-            let fanOut = ChatFanOutPresenter(primary: harness.presenter, companions: [companion])
-            let taskGraphPublication = await fanOut.reserveTaskGraphOverviewPublication()
-            await fanOut.presentTaskGraphOverview(nil, origin: .explicit, publication: taskGraphPublication)
-            let subAgentPublication = await fanOut.reserveSubAgentOverviewPublication()
+            await observer.setRecordsSubAgentOverviews(true)
+            let observed = ChatObservedPresenter(primary: harness.presenter, controller: harness.controller)
+            let taskGraphPublication = await observed.reserveTaskGraphOverviewPublication()
+            await observed.presentTaskGraphOverview(nil, origin: .explicit, publication: taskGraphPublication)
+            let subAgentPublication = await observed.reserveSubAgentOverviewPublication()
             let overview = ChatSubAgentOverview(snapshots: [])
-            await fanOut.presentSubAgentOverview(overview, origin: .automatic, publication: subAgentPublication)
+            await observed.presentSubAgentOverview(overview, origin: .automatic, publication: subAgentPublication)
 
             #expect(taskGraphPublication == ChatOverviewPublication(revision: 2))
             #expect(subAgentPublication == ChatOverviewPublication(revision: 1))
@@ -275,7 +276,7 @@ struct ChatSessionControllerTests {
                 .init(presenter: "primary", event: .taskGraphReservation(taskGraphPublication)),
             ] + fannedOut(
                 [.taskGraphOverview(nil, origin: .explicit, publication: taskGraphPublication)],
-                to: ["companion", "primary"]
+                to: ["observer", "primary"]
             ) + [
                 .init(presenter: "primary", event: .subAgentReservation(subAgentPublication)),
             ] + fannedOut(
@@ -286,7 +287,7 @@ struct ChatSessionControllerTests {
                     origin: .automatic,
                     publication: subAgentPublication
                 )],
-                to: ["companion", "primary"]
+                to: ["observer", "primary"]
             ))
         }
     }

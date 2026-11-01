@@ -15,7 +15,7 @@ import ZenCODECore
 
 @Suite(.serialized)
 struct ChatPublicAPITests {
-    @Test("A host app composes a session, runs a command and a turn, and builds a Telegram companion")
+    @Test("A host app composes a session, runs a command and a turn, and reads the slot's channel state")
     func aHostAppComposesASessionThroughThePublicAPI() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("chat-public-api-\(UUID().uuidString)", isDirectory: true)
@@ -124,15 +124,13 @@ struct ChatPublicAPITests {
             #expect(await next.controller.transcript.isEmpty)
             #expect(await hooks.startedSessions == 1)
 
-            // The Telegram companion of the session, built from the public
-            // factories; it stays detached until `attach()`.
-            let channel = AppTelegramChannel()
-            let companionIsActive = await Self.makeAndShutDownCompanion(
-                controller: next.controller,
-                runner: sessionHost.runner,
-                channel: channel
-            )
-            #expect(!companionIsActive)
+            // The slot's channel state: the app drives the slot until a
+            // `/telegram on` hands it to the slot's Telegram channel, which
+            // does not exist yet, and every line is admitted meanwhile.
+            #expect(await sessionHost.activeChannel(in: slotID) == .primary)
+            #expect(await sessionHost.telegramChannel(in: slotID) == nil)
+            #expect(await sessionHost.admitLine("hello", in: slotID) == .admitted)
+            #expect(await sessionHost.deactivateTelegram(in: slotID) == nil)
 
             // The mention parser of the shared chat.
             guard case let .route(route) = SharedChatMentionParser.parse(from: "@coordinator ciao") else {
@@ -272,28 +270,6 @@ struct ChatPublicAPITests {
         }
     }
 
-    @ChatSessionActor
-    private static func makeAndShutDownCompanion(
-        controller: ChatSessionController,
-        runner: AgentCoreSessionRunner,
-        channel: AppTelegramChannel
-    ) async -> Bool {
-        let companion = TelegramSessionCompanion(
-            controller: controller,
-            sessionRunner: runner,
-            router: TelegramCompanionRuntimeFactory.makeRouter(settings: nil),
-            controlService: TelegramCompanionRuntimeFactory.makeControlService(),
-            channel: channel,
-            configuration: TelegramSessionCompanion.Configuration(
-                primaryChannelDescription: "app",
-                policy: .mirrorOnly,
-                consentLocationDescription: "the app"
-            )
-        )
-        let isActive = companion.isActive
-        await companion.shutdown()
-        return isActive
-    }
 }
 
 // MARK: - A host app's channel types
@@ -334,31 +310,6 @@ private final class AppChannelHooks: ChatSessionChannelHooks {
     func sessionDidStartNew() async {
         startedSessions += 1
     }
-}
-
-/// The app as the primary channel of a mirror-only Telegram companion.
-@ChatSessionActor
-private final class AppTelegramChannel: TelegramCompanionChannel {
-    let primaryChannelDescription = "app"
-    private(set) var notices: [String] = []
-
-    func commandContext() -> ChatCommandContext {
-        []
-    }
-
-    func presentCompanionNotice(_ text: String, channel: ChatSessionNoticeChannel) async {
-        notices.append(text)
-    }
-
-    func enqueueTelegramPrompt(
-        _ text: String,
-        lease: TerminalTelegramRouteLease,
-        mode: ChatQueuedPromptMode
-    ) async -> TelegramPromptAdmission {
-        .refused
-    }
-
-    func telegramRouteWasInvalidated(_ lease: TerminalTelegramRouteLease) async {}
 }
 
 // MARK: - Observing a session

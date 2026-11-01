@@ -60,8 +60,7 @@ struct TerminalVoiceChatLoopTests {
             terminal.bypassInteractivePanelInputForTesting = true
             terminal.voiceController = voice
             let recorder = recorder
-            terminal.onTelegramWorkEffectForTesting = { effect in
-                guard case .sharedChatPublication = effect else { return false }
+            terminal.onSharedChatPublicationForTesting = {
                 recorder.recordPublication()
                 return publicationsSucceed
             }

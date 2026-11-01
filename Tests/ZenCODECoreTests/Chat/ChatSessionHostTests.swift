@@ -483,7 +483,11 @@ struct ChatSessionHostTests {
             let incarnation = try await host.newSession(in: slot, sessionID: "asking")
             let pendingHost = try #require(incarnation.pendingRequestHost)
             let reducer = try #require(incarnation.reducer)
-            #expect(incarnation.controller.host as? ChatPendingRequestHost === pendingHost)
+            // The controller asks through the slot's host, which forwards to
+            // the incarnation's pending-request host while the channel that
+            // opened the slot drives it.
+            #expect(incarnation.controller.host is ChatSlotInteractionHost)
+            #expect(host.activeChannel(in: slot) == .primary)
 
             let answer = Task { @ChatSessionActor in
                 await pendingHost.readLine(prompt: "Name?")
@@ -533,7 +537,8 @@ struct ChatSessionHostTests {
             let incarnation = try await host.newSession(in: slot, sessionID: "silent")
             #expect(incarnation.reducer == nil)
             #expect(incarnation.pendingRequestHost == nil)
-            #expect(incarnation.controller.host as? ScriptedChatInteractionHost === scriptedHost)
+            #expect(incarnation.controller.host is ChatSlotInteractionHost)
+            #expect(incarnation.controller.host.capabilities == scriptedHost.capabilities)
             await host.shutdown()
         }
     }
@@ -695,8 +700,12 @@ struct ChatSessionHostTests {
             #expect(first.controller.selection.modelIDOverride == "other-model")
             for incarnation in [first, second] {
                 let controller = incarnation.controller
-                #expect(controller.presenter as? RecordingChatPresenter === presenter)
-                #expect(controller.host as? ScriptedChatInteractionHost === interactionHost)
+                // The slot's presenter and host, which forward to the
+                // channel's own while the channel drives the slot.
+                let slotPresenter = try #require(controller.presenter as? ChatSlotPresenter)
+                #expect(slotPresenter.activePresenter as? RecordingChatPresenter === presenter)
+                #expect(controller.host is ChatSlotInteractionHost)
+                #expect(controller.host.capabilities == interactionHost.capabilities)
                 #expect(controller.channelHooks === hooks)
                 #expect(controller.commandRegistry.descriptor(forLine: "/window")?.scope == .channel)
                 #expect(controller.hostBinding?.slotID == slot)

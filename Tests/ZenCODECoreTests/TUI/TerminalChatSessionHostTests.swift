@@ -4,8 +4,9 @@
 //
 //  The terminal as one slot of a `ChatSessionHost`: the slot it opens, the
 //  incarnation it follows, `/sessions new` from the launch profile and
-//  `/sessions load` with the saved selection, the Telegram companion that
-//  follows the slot with its topic renamed, the session id adopted in place,
+//  `/sessions load` with the saved selection, the slot's Telegram channel
+//  that follows the slot with its topic renamed, the session id adopted in
+//  place,
 //  and the shutdown that goes through the host. Every test runs in
 //  directories named by UUIDs; nothing touches the real application state.
 //
@@ -159,13 +160,17 @@ struct TerminalChatSessionHostTests {
             #expect(incarnation.reducer == nil)
             #expect(incarnation.sessionID == terminal.sessionID)
             #expect(terminal.sessionID.hasPrefix("terminal-"))
-            #expect(controller.presenter as? TerminalChatSessionPresenter === terminal.chatSessionPresenter)
-            #expect(controller.host as? TerminalInteractionHost === terminal.interactionHost)
+            // The controller presents and asks through the slot, which
+            // forwards to the terminal while the terminal drives it.
+            #expect(controller.presenter is ChatSlotPresenter)
+            #expect((controller.presenter as? ChatSlotPresenter)?.activePresenter as? TerminalChatSessionPresenter
+                === terminal.chatSessionPresenter)
+            #expect(controller.host is ChatSlotInteractionHost)
             #expect(controller.channelHooks === terminal)
             #expect(controller.commandRegistry.descriptor(forLine: "/setup")?.scope == .channel)
             #expect(controller.hostBinding?.slotID == slot)
-            #expect(terminal.telegramCompanion.controller === controller)
-            #expect(terminal.telegramSessionRouter === host.telegramRouter())
+            #expect(host.activeChannel(in: slot) == .primary)
+            #expect(host.telegramChannel(in: slot) == nil)
 
             // The id is set in place, through the host.
             terminal.sessionID = "adopted-session"
@@ -250,12 +255,11 @@ struct TerminalChatSessionHostTests {
             #expect(terminal.selectedSkillIDs.isEmpty)
             #expect(terminal.activeSessionHistory.isEmpty)
             #expect(previous.selection.modelIDOverride == "other-model")
-            // The slot is the same and runs the new incarnation; the companion
-            // and the sub-agent event handler follow it.
+            // The slot is the same and runs the new incarnation; the Telegram
+            // channel and the sub-agent event handler follow it.
             #expect(terminal.terminalSlotID == slot)
             let incarnation = try #require(host.incarnation(in: slot))
             #expect(incarnation.controller === next)
-            #expect(terminal.telegramCompanion.controller === next)
             #expect(terminal.didInstallSubAgentToolEventHandler == false)
             #expect(await terminal.sessionRunner.snapshotSession(id: terminal.sessionID) != nil)
             #expect(await terminal.sessionRunner.snapshotSession(id: previousSessionID) == nil)
@@ -328,7 +332,6 @@ struct TerminalChatSessionHostTests {
             #expect(terminal.manualThinkingSelectionOverride == nil)
             #expect(terminal.selectedToolKeys.isEmpty)
             #expect(host.incarnation(in: slot)?.controller === next)
-            #expect(terminal.telegramCompanion.controller === next)
             #expect(previous.taskGraphObserverTask == nil)
             #expect(next.taskGraphObserverTask != nil)
             #expect(await terminal.sessionRunner.snapshotSession(id: "terminal-kept") != nil)
@@ -347,41 +350,50 @@ struct TerminalChatSessionHostTests {
         }
     }
 
-    // MARK: - Telegram companion
+    // MARK: - Telegram channel
 
+    /// The slot's Telegram channel belongs to the slot: `/sessions new` and
+    /// `/sessions load` keep the link, the control service, and the router,
+    /// and the session's topic follows the new session, renamed; the slot
+    /// stays driven by Telegram across both.
     @Test
-    nonisolated func theTelegramCompanionFollowsNewAndLoadedSessionsWithItsTopicRenamed() async throws {
+    nonisolated func theTelegramChannelFollowsNewAndLoadedSessionsWithItsTopicRenamed() async throws {
         try await withEnvironment(telegram: Self.pairedTelegram) { environment in
             let transport = TerminalHostTopicTransport(botID: 9801, topicID: 701)
             let terminal = try environment.makeTerminal(stdinIsTerminal: true, transport: transport)
-            let companion = try #require(terminal.telegramCompanion)
             try await terminal.createCurrentSession(discoverExternalTools: false)
             let firstSessionID = terminal.sessionID
+            let host = terminal.sessionHost
+            let slot = terminal.terminalSlotID
 
             await terminal.startTelegramControl()
-            #expect(companion.isActive)
-            #expect(companion.sessionTopic?.lease.key.topicID == 701)
-            #expect(companion.sessionTopic?.lease.key.roomID == firstSessionID)
-            let controlService = companion.controlService
-            let router = companion.router
+            let channel = try #require(host.telegramChannel(in: slot))
+            #expect(channel.isActive)
+            #expect(host.activeChannel(in: slot) == .telegram)
+            #expect(channel.sessionTopic?.lease.key.topicID == 701)
+            #expect(channel.sessionTopic?.lease.key.roomID == firstSessionID)
+            let controlService = channel.controlService
+            let router = channel.router
 
-            // `/sessions new`: the companion moves to the new controller with
-            // its link, and the topic follows the new session, renamed.
+            // `/sessions new`: the slot's channel keeps its link, and the
+            // topic follows the new session, renamed.
             await terminal.startNewSession()
             let newSessionID = terminal.sessionID
             #expect(newSessionID != firstSessionID)
-            #expect(companion.controller === terminal.chatSession)
-            #expect(companion.isActive)
-            #expect(companion.controlService === controlService)
-            #expect(companion.router === router)
-            #expect(companion.sessionTopic?.lease.key.topicID == 701)
-            #expect(companion.sessionTopic?.lease.key.roomID == newSessionID)
-            #expect(companion.activeRouteLease == companion.sessionTopic?.lease)
-            let newTopicName = TelegramSessionCompanion.defaultTopicName(
+            #expect(host.telegramChannel(in: slot) === channel)
+            #expect(host.activeChannel(in: slot) == .telegram)
+            #expect(channel.controller === terminal.chatSession)
+            #expect(channel.isActive)
+            #expect(channel.controlService === controlService)
+            #expect(channel.router === router)
+            #expect(channel.sessionTopic?.lease.key.topicID == 701)
+            #expect(channel.sessionTopic?.lease.key.roomID == newSessionID)
+            #expect(channel.activeRouteLease == channel.sessionTopic?.lease)
+            let newTopicName = TelegramChannel.defaultTopicName(
                 workingDirectory: environment.workspace, sessionID: newSessionID
             )
             #expect(await transport.renamedTopics == [newTopicName])
-            #expect(companion.sessionTopic?.name == newTopicName)
+            #expect(channel.sessionTopic?.name == newTopicName)
             #expect(await router.activeRoute(forRoomID: newSessionID)?.topicID == 701)
             #expect(await router.activeRoute(forRoomID: firstSessionID) == nil)
 
@@ -391,17 +403,17 @@ struct TerminalChatSessionHostTests {
                 history: [AgentRuntimeMessage(role: .user, content: "Saved")]
             )
             try await terminal.loadSavedSession(saved)
-            #expect(companion.controller === terminal.chatSession)
+            #expect(channel.controller === terminal.chatSession)
             #expect(terminal.sessionID == "terminal-kept")
-            #expect(companion.isActive)
-            #expect(companion.sessionTopic?.lease.key.roomID == "terminal-kept")
-            #expect(companion.sessionTopic?.name == "kept")
+            #expect(channel.isActive)
+            #expect(host.activeChannel(in: slot) == .telegram)
+            #expect(channel.sessionTopic?.lease.key.roomID == "terminal-kept")
+            #expect(channel.sessionTopic?.name == "kept")
             #expect(await transport.renamedTopics == [newTopicName, "kept"])
             #expect(await router.activeRoute(forRoomID: "terminal-kept")?.topicID == 701)
             #expect(await router.activeRoute(forRoomID: newSessionID) == nil)
 
             await terminal.stopTaskGraphObserver()
-            await companion.shutdown()
             await terminal.sessionHost.shutdown()
         }
     }

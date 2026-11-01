@@ -24,24 +24,11 @@ extension TerminalChat {
         await installSubAgentToolEventHandlerIfNeeded()
         let assistantOutput = TerminalAssistantResponseBuffer()
         activeAssistantOutput = assistantOutput
-        // The Telegram companion follows the turn under the render
-        // coordinator's new mirror epoch, so an overview queued during the
-        // previous turn is not adopted by this one.
-        await telegramCompanion.beginTurn(
-            origin: attempt.origin.telegramTurnOrigin,
-            mirrorEpoch: await renderCoordinator.advanceMirrorEpoch()
-        )
-        // The turn's Telegram reporting ends in `finishPromptResult`, after
-        // deferred overview renders and their mirrors have been drained: the
-        // final remote message must not overtake sections the turn produced.
         let request = ChatTurnRequest(
             prompt: attempt.prompt,
             attachments: attempt.attachments,
             purpose: attempt.purpose,
             sessionConfiguration: await turnSessionConfiguration(for: attempt.purpose),
-            authorizeTool: attempt.origin.telegramTurnOrigin.flatMap {
-                telegramCompanion.toolAuthorizationHandler(for: $0)
-            },
             // Evaluated for every request, so `/voice pause` or `/voice off`
             // while a workflow continues turn by turn takes effect on the
             // next prompt.
@@ -143,8 +130,8 @@ extension TerminalChat {
         case let .success(success):
             let response = success.response
             // Seal the terminal transcript before publishing the final
-            // response. Task/sub-agent observations still refresh and mirror,
-            // but no automatic terminal overview may overtake the answer (or a
+            // response. Task/sub-agent observations still refresh, but no
+            // automatic terminal overview may overtake the answer (or a
             // model question) below this point.
             await renderCoordinator.beginAssistantTranscriptTail()
             await finishStreamingOutput()
@@ -159,15 +146,11 @@ extension TerminalChat {
             await finishStreamingOutput()
             await writeChatOutput("\n")
             // Quiesce the debounced task-graph observer and publish the
-            // latest known section once while the reporter is still alive;
-            // then retire the turn's Telegram reporting, restart the observer
-            // for the next turn, and snapshot once more so mutations that
-            // landed during the handoff window are not lost (no event replay).
+            // latest known section once at the turn boundary; then restart
+            // the observer for the next turn, and snapshot once more so
+            // mutations that landed during the handoff window are not lost
+            // (no event replay).
             await quiesceTaskGraphObserverForTurnBoundary()
-            await finishTelegramTurn(
-                outcome: .completed(completionText),
-                fileChangeSummary: success.fileChangeSummary
-            )
             await startTaskGraphObserver()
             await publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
             if let summary = success.fileChangeSummary {
@@ -176,19 +159,12 @@ extension TerminalChat {
         case let .failure(failure):
             await renderCoordinator.beginAssistantTranscriptTail()
             await finishStreamingOutput()
-            let telegramOutcome: TelegramSessionCompanion.Outcome
             if failure.isCancellation {
                 await writeChatError("\nStopped.\n")
-                telegramOutcome = .cancelled
             } else {
                 await writeFailureMessage("ZenCODE: \(failure.message)\n")
-                telegramOutcome = .failed(failure.message)
             }
             await quiesceTaskGraphObserverForTurnBoundary()
-            await finishTelegramTurn(
-                outcome: telegramOutcome,
-                fileChangeSummary: failure.fileChangeSummary
-            )
             await startTaskGraphObserver()
             await publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
             if let summary = failure.fileChangeSummary {

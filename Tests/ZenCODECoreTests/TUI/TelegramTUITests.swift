@@ -14,26 +14,28 @@ import ToolCore
 @ChatSessionActor
 @Suite
 struct TelegramTUITests {
-    private static var testTelegramOrigin: TerminalPromptOrigin {
-        .telegramLease(.init(
-            key: .init(chatID: 42, userID: 7, roomID: "terminal-room"), generation: 1
-        ))
+    private static var testTelegramLease: TerminalTelegramRouteLease {
+        .init(key: .init(chatID: 42, userID: 7, roomID: "terminal-room"), generation: 1)
     }
 
+    /// Installs the test route of `roomID` (the terminal's session by
+    /// default) in the router of the terminal's Telegram channel and makes
+    /// it the link's route.
     private static func installTestRoute(
         on terminal: TerminalChat, roomID: String? = nil
     ) async -> TerminalTelegramRouteLease {
         let roomID = roomID ?? terminal.sessionID
         let route = AgentTelegramRouteManifest(roomID: roomID, generation: 1)
-        await terminal.telegramSessionRouter.refresh(
+        await terminal.telegramChannel.router.refresh(
             linkedChatID: 42, ownerUserID: 7, routes: [route]
         )
         let lease = TerminalTelegramRouteLease(
             key: .init(chatID: 42, userID: 7, roomID: roomID), generation: 1
         )
-        terminal.telegramActiveRouteLease = lease
+        terminal.telegramChannel.activeRouteLease = lease
         return lease
     }
+
     @Test
     func telegramSettingsRequireEnabledToken() {
         let tokenOnlySettings = AgentTelegramSettingsManifest(
@@ -321,14 +323,6 @@ struct TelegramTUITests {
     }
 
     @Test
-    func telegramOriginKeepsChatID() {
-        let textOrigin = TerminalPromptOrigin.telegram(chatID: 42)
-
-        #expect(textOrigin.telegramChatID == 42)
-        #expect(TerminalPromptOrigin.local.telegramChatID == nil)
-    }
-
-    @Test
     func telegramCommandActionAcceptsOnlyOnOffAndBareStatus() {
         #expect(TerminalTelegramCommandAction(argument: "") == .status)
         #expect(TerminalTelegramCommandAction(argument: " on ") == .turnOn)
@@ -345,8 +339,8 @@ struct TelegramTUITests {
         #expect(TerminalTelegramRemoteCommand(text: "/start@zencode_bot 233B0EC4") == .start)
         #expect(TerminalTelegramRemoteCommand(text: "/help") == .help)
         #expect(TerminalTelegramRemoteCommand(text: "ciao") == nil)
-        #expect(TerminalChat.telegramCommandWithoutBotMention("/review@zencode_bot routing") == "/review routing")
-        #expect(TerminalChat.telegramCommandWithoutBotMention("person@example.com") == "person@example.com")
+        #expect(TelegramChannel.commandWithoutBotMention("/review@zencode_bot routing") == "/review routing")
+        #expect(TelegramChannel.commandWithoutBotMention("person@example.com") == "person@example.com")
     }
 
     @Test
@@ -360,27 +354,25 @@ struct TelegramTUITests {
             stdinIsTerminal: false
         )
         terminal.selectedToolKeys.insert("sub-agents")
-        terminal.telegramLinkedChatID = 42
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
-        let origin = TerminalPromptOrigin.telegramLease(
-            await Self.installTestRoute(on: terminal)
-        )
+        terminal.telegramChannel.linkedChatID = 42
+        terminal.telegramChannel.controlState.isActive = true
+        terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
+        let lease = await Self.installTestRoute(on: terminal)
         let messages = Mutex<[String]>([])
-        terminal.onTelegramSystemMessage = { message, chatID in
+        terminal.telegramChannel.onTelegramSystemMessage = { message, chatID in
             #expect(chatID == 42)
             messages.withLock { $0.append(message) }
             return true
         }
 
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "/review@zencode_bot routing", origin: origin
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "/review@zencode_bot routing", lease: lease
         ) else {
             Issue.record("Bot-addressed /review should be handled immediately when nothing is reviewable")
             return
         }
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "/help@zencode_bot", origin: origin
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "/help@zencode_bot", lease: lease
         ) else {
             Issue.record("Bot-addressed /help should remain a remote command")
             return
@@ -402,21 +394,21 @@ struct TelegramTUITests {
             stdinIsTerminal: false
         )
         let route = AgentTelegramRouteManifest(roomID: terminal.sessionID)
-        await terminal.telegramSessionRouter.refresh(
+        await terminal.telegramChannel.router.refresh(
             linkedChatID: 42, ownerUserID: 7, routes: [route]
         )
-        let lease = try await terminal.telegramSessionRouter.resolve(
+        let lease = try await terminal.telegramChannel.router.resolve(
             chatID: 42, userID: 7, topicID: 44
         )
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
+        terminal.telegramChannel.controlState.isActive = true
+        terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
         let routed = Mutex<(Int64, Int?)?>(nil)
-        terminal.onTelegramRoutedSystemMessage = { _, chatID, topicID in
+        terminal.telegramChannel.onTelegramRoutedSystemMessage = { _, chatID, topicID in
             routed.withLock { $0 = (chatID, topicID) }
             return true
         }
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "/status", origin: .telegramLease(lease)
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "/status", lease: lease
         ) else {
             Issue.record("Expected immediate Telegram status command")
             return
@@ -437,16 +429,16 @@ struct TelegramTUITests {
             stdinIsTerminal: false
         )
         let lease = await Self.installTestRoute(on: terminal)
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
+        terminal.telegramChannel.controlState.isActive = true
+        terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
         let messages = Mutex<[String]>([])
-        terminal.onTelegramSystemMessage = { message, _ in
+        terminal.telegramChannel.onTelegramSystemMessage = { message, _ in
             messages.withLock { $0.append(message) }
             return true
         }
 
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "/review", origin: .telegramLease(lease)
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "/review", lease: lease
         ) else {
             Issue.record("/review has no required argument and must stay immediate")
             return
@@ -470,17 +462,16 @@ struct TelegramTUITests {
         )
         terminal.selectedToolKeys.insert("sub-agents")
         let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
-        let telegramOrigin = TerminalPromptOrigin.telegramLease(lease)
-        try await terminal.sessionRunner.taskOrchestrator.registerSession(
+        terminal.telegramChannel.controlState.isActive = true
+        terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
+                try await terminal.sessionRunner.taskOrchestrator.registerSession(
             id: terminal.sessionID,
             workingDirectory: workingDirectory
         )
 
-        guard case let .runHiddenPrompt(startPrompt, startPurpose) =
-            await terminal.submittedTelegramLineAction(
-                "/plan route all frontends", origin: telegramOrigin
+        guard case let .startTurn(prompt: startPrompt, purpose: startPurpose, locksResponseLanguage: _) =
+            await terminal.telegramChannel.lineAction(for:
+                "/plan route all frontends", lease: lease
             ) else {
             Issue.record("Telegram /plan should use the local hidden planning router")
             return
@@ -496,9 +487,9 @@ struct TelegramTUITests {
         )
         terminal.planBrainstorming = discussion
 
-        guard case let .runHiddenPrompt(replyPrompt, replyPurpose) =
-            await terminal.submittedTelegramLineAction(
-                "Yes, runtime-only.", origin: telegramOrigin
+        guard case let .startTurn(prompt: replyPrompt, purpose: replyPurpose, locksResponseLanguage: _) =
+            await terminal.telegramChannel.lineAction(for:
+                "Yes, runtime-only.", lease: lease
             ) else {
             Issue.record("A Telegram plain-text reply should continue the Planner")
             return
@@ -516,15 +507,15 @@ struct TelegramTUITests {
             revision: 2
         )
         terminal.planBrainstorming = discussion
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "/help", origin: telegramOrigin
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "/help", lease: lease
         ) else {
             Issue.record("Telegram /help must retain remote-command precedence")
             return
         }
         #expect(terminal.planBrainstorming?.isAwaitingReply == true)
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "@coordinator keep this separate", origin: telegramOrigin
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "@coordinator keep this separate", lease: lease
         ) else {
             Issue.record("Telegram live mentions must retain mention routing precedence")
             return
@@ -532,9 +523,9 @@ struct TelegramTUITests {
         #expect(terminal.planBrainstorming?.isAwaitingReply == true)
 
         terminal.planBrainstorming = nil
-        guard case let .runHiddenPrompt(goalPrompt, goalPurpose) =
-            await terminal.submittedTelegramLineAction(
-                "/goal implement parity", origin: telegramOrigin
+        guard case let .startTurn(prompt: goalPrompt, purpose: goalPurpose, locksResponseLanguage: _) =
+            await terminal.telegramChannel.lineAction(for:
+                "/goal implement parity", lease: lease
             ) else {
             Issue.record("Telegram /goal should create a workflow and use its hidden prompt")
             return
@@ -546,9 +537,9 @@ struct TelegramTUITests {
         ))
         #expect(goalPrompt.contains("Goal: implement parity"))
 
-        guard case let .runHiddenPrompt(reviewPrompt, reviewPurpose) =
-            await terminal.submittedTelegramLineAction(
-                "/review focus on routing", origin: telegramOrigin
+        guard case let .startTurn(prompt: reviewPrompt, purpose: reviewPurpose, locksResponseLanguage: _) =
+            await terminal.telegramChannel.lineAction(for:
+                "/review focus on routing", lease: lease
             ) else {
             Issue.record("Telegram /review should use the local hidden review router")
             return
@@ -575,12 +566,11 @@ struct TelegramTUITests {
             terminal.selectedToolKeys.remove("sub-agents")
         }
         let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
-        let telegramOrigin = TerminalPromptOrigin.telegramLease(lease)
+        terminal.telegramChannel.controlState.isActive = true
+        terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
 
-        guard case .runHiddenPrompt = await terminal.submittedTelegramLineAction(
-            "/goal implement parity", origin: telegramOrigin
+        guard case .startTurn = await terminal.telegramChannel.lineAction(for:
+            "/goal implement parity", lease: lease
         ) else {
             Issue.record("Telegram /goal should create a workflow and use its hidden prompt")
             return
@@ -588,8 +578,8 @@ struct TelegramTUITests {
         let graphID = try #require(terminal.activeWorkflow?.graphID)
 
         // Nothing is armed yet: an ordinary Telegram message stays ordinary.
-        guard case .runPrompt = await terminal.submittedTelegramLineAction(
-            "unrelated", origin: telegramOrigin
+        guard case .runPrompt = await terminal.telegramChannel.lineAction(for:
+            "unrelated", lease: lease
         ) else {
             Issue.record("Telegram must not capture messages before the workflow asks")
             return
@@ -606,9 +596,9 @@ struct TelegramTUITests {
         )
         #expect(terminal.activeWorkflow?.isAwaitingReply == true)
 
-        guard case let .runHiddenPrompt(prompt, purpose) =
-            await terminal.submittedTelegramLineAction(
-                "Start with Telegram", origin: telegramOrigin
+        guard case let .startTurn(prompt: prompt, purpose: purpose, locksResponseLanguage: _) =
+            await terminal.telegramChannel.lineAction(for:
+                "Start with Telegram", lease: lease
             ) else {
             Issue.record("a Telegram reply should continue the open workflow")
             return
@@ -628,14 +618,14 @@ struct TelegramTUITests {
             graphID: graphID,
             coordinatorMessage: "Anything else?"
         )
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "/status", origin: telegramOrigin
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "/status", lease: lease
         ) else {
             Issue.record("Telegram commands must keep precedence over the workflow reply")
             return
         }
         #expect(terminal.activeWorkflow?.isAwaitingReply == true)
-        #expect(terminal.telegramRemoteHelpText().contains(
+        #expect(terminal.telegramChannel.remoteHelpText().contains(
             "While /goal is waiting for an answer"
         ))
     }
@@ -649,23 +639,22 @@ struct TelegramTUITests {
                 .appendingPathComponent("ZenCODE-telegram-plan-\(UUID().uuidString)", isDirectory: true)
         ), stdinIsTerminal: false)
         let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
-        let origin = TerminalPromptOrigin.telegramLease(lease)
+        terminal.telegramChannel.controlState.isActive = true
+        terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
         terminal.activePlan = TerminalSessionPlan(
             originalGoal: "old planner goal",
             consolidatedText: "Implement the Telegram plan approval flow."
         )
 
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "/plan approve", origin: origin
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "/plan approve", lease: lease
         ) else {
             Issue.record("Telegram /plan approve should first request a Goal")
             return
         }
-        guard case let .runHiddenPrompt(prompt, purpose) =
-            await terminal.submittedTelegramLineAction(
-                "Keep the approved plan's objective explicit", origin: origin
+        guard case let .startTurn(prompt: prompt, purpose: purpose, locksResponseLanguage: _) =
+            await terminal.telegramChannel.lineAction(for:
+                "Keep the approved plan's objective explicit", lease: lease
             ) else {
             Issue.record("Telegram should consume the Goal reply and start implementation")
             return
@@ -689,20 +678,19 @@ struct TelegramTUITests {
             )
         ), stdinIsTerminal: false)
         let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
-        let origin = TerminalPromptOrigin.telegramLease(lease)
+        terminal.telegramChannel.controlState.isActive = true
+        terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
 
         // Nothing is waiting: the alias is still the remote command.
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "status", origin: origin
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "status", lease: lease
         ) else {
             Issue.record("a plain alias must stay a command while nothing waits")
             return
         }
 
-        guard case .runHiddenPrompt = await terminal.submittedTelegramLineAction(
-            "/goal choose a format", origin: origin
+        guard case .startTurn = await terminal.telegramChannel.lineAction(for:
+            "/goal choose a format", lease: lease
         ) else {
             Issue.record("Telegram /goal should create a workflow")
             return
@@ -718,8 +706,8 @@ struct TelegramTUITests {
             coordinatorMessage: "Should I emit a diff or a patch?"
         )
 
-        guard case let .runHiddenPrompt(prompt, purpose) =
-            await terminal.submittedTelegramLineAction("diff", origin: origin) else {
+        guard case let .startTurn(prompt: prompt, purpose: purpose, locksResponseLanguage: _) =
+            await terminal.telegramChannel.lineAction(for: "diff", lease: lease) else {
             Issue.record("\"diff\" must answer the open workflow question")
             return
         }
@@ -731,7 +719,7 @@ struct TelegramTUITests {
     /// The outcome of a Telegram `/plan approve` Goal reply reaches the chat
     /// that sent it, instead of being written only to the TUI.
     @Test
-    func telegramPlanApprovalFailureIsMirroredToTheChat() async throws {
+    func telegramPlanApprovalFailureIsSentToTheChat() async throws {
         let terminal = TerminalChat(configuration: try AgentConfiguration(
             hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
@@ -739,11 +727,10 @@ struct TelegramTUITests {
                 .appendingPathComponent("ZenCODE-telegram-plan-fail-\(UUID().uuidString)", isDirectory: true)
         ), stdinIsTerminal: false)
         let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
-        let origin = TerminalPromptOrigin.telegramLease(lease)
+        terminal.telegramChannel.controlState.isActive = true
+        terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
         let messages = Mutex<[String]>([])
-        terminal.onTelegramSystemMessage = { message, _ in
+        terminal.telegramChannel.onTelegramSystemMessage = { message, _ in
             messages.withLock { $0.append(message) }
             return true
         }
@@ -752,8 +739,8 @@ struct TelegramTUITests {
             consolidatedText: "Implement the Telegram plan approval flow."
         )
 
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "/plan approve", origin: origin
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "/plan approve", lease: lease
         ) else {
             Issue.record("Telegram /plan approve should first request a Goal")
             return
@@ -765,8 +752,8 @@ struct TelegramTUITests {
         )
         messages.withLock { $0.removeAll() }
 
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "Ship the approval flow", origin: origin
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "Ship the approval flow", lease: lease
         ) else {
             Issue.record("a stale approval must not start implementation")
             return
@@ -780,10 +767,10 @@ struct TelegramTUITests {
     @Test
     func telegramStatusRendersSeparateDiagnostics() async throws {
         let terminal = try await Self.activeTelegramTerminal()
-        terminal.telegramControlState.pollError = "Telegram polling failed: 409"
-        terminal.telegramControlState.commandMenuError = "Could not publish Telegram command menu: x"
-        terminal.telegramControlState.lastError = "send failed"
-        let text = terminal.telegramStatusText()
+        terminal.telegramChannel.controlState.pollError = "Telegram polling failed: 409"
+        terminal.telegramChannel.controlState.commandMenuError = "Could not publish Telegram command menu: x"
+        terminal.telegramChannel.controlState.lastError = "send failed"
+        let text = TelegramChannel.statusText(controlState: terminal.telegramChannel.controlState, linkedChatTitle: terminal.telegramChannel.linkedChatTitle, topicName: terminal.telegramChannel.sessionTopic?.name)
         #expect(text.contains("Polling error: Telegram polling failed: 409"))
         #expect(text.contains("Command menu error: Could not publish Telegram command menu: x"))
         #expect(text.contains("Last error: send failed"))
@@ -793,58 +780,21 @@ struct TelegramTUITests {
     @Test
     func telegramRemoteHelpDoesNotMentionTheTUIOnlyTelegramCommand() async throws {
         let terminal = try await Self.activeTelegramTerminal()
-        #expect(!terminal.telegramRemoteHelpText().contains("/telegram"))
+        #expect(!terminal.telegramChannel.remoteHelpText().contains("/telegram"))
     }
 
     @Test
     func telegramProgressReporterRequiresActiveTelegramSession() async throws {
         let terminal = try await Self.activeTelegramTerminal()
-        let lease = try #require(terminal.telegramActiveRouteLease)
-        let origin = TerminalPromptOrigin.telegramLease(lease)
-        terminal.telegramControlState.isActive = false
-        #expect(terminal.makeTelegramTurnProgressReporter(for: origin) == nil)
+        let lease = try #require(terminal.telegramChannel.activeRouteLease)
+        terminal.telegramChannel.controlState.isActive = false
+        #expect(terminal.telegramChannel.makeTurnProgressReporter(for: lease) == nil)
 
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
-        #expect(terminal.makeTelegramTurnProgressReporter(for: .local) == nil)
-        #expect(terminal.makeTelegramTurnProgressReporter(for: .telegram(chatID: 43)) == nil)
-        #expect(terminal.makeTelegramTurnProgressReporter(for: origin) != nil)
-    }
-
-    @Test
-    func telegramOnRestoresPersistedRouteForLocalEgress() async throws {
-        let terminal = TerminalChat(
-            configuration: try AgentConfiguration(
-                hostedModelID: "remote-community/test",
-                availableAgents: AgentProfileStore.defaultProfiles(),
-                workingDirectory: FileManager.default.temporaryDirectory
-            ),
-            stdinIsTerminal: false
-        )
-        let route = AgentTelegramRouteManifest(
-            roomID: "default",
-            generation: 3
-        )
-        let settings = AgentTelegramSettingsManifest(
-            enabled: true,
-            botToken: "123456:ABCDEF",
-            linkedChatID: 42,
-            ownerUserID: 7,
-            routes: [route]
-        )
-
-        let lease = try #require(await terminal.telegramEgressRouteLease(
-            settings: settings,
-            linkedChatID: 42
-        ))
-        terminal.telegramActiveRouteLease = lease
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
-
-        let attempt = terminal.promptAttempt(prompt: "local prompt")
-        #expect(attempt.origin == .telegramLease(lease))
-        #expect(terminal.telegramOutgoingChatID(for: attempt.origin) == 42)
-        #expect(try await terminal.telegramSessionRouter.validate(lease) == ())
+        terminal.telegramChannel.controlState.isActive = true
+        terminal.telegramChannel.controlState.wireLifecycleEpoch = nil
+        #expect(terminal.telegramChannel.makeTurnProgressReporter(for: lease) == nil)
+        terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
+        #expect(terminal.telegramChannel.makeTurnProgressReporter(for: lease) != nil)
     }
 
     @Test
@@ -867,7 +817,7 @@ struct TelegramTUITests {
             ]
         )
 
-        #expect(await terminal.telegramEgressRouteLease(
+        #expect(await terminal.telegramChannel.egressRoute(
             settings: settings,
             linkedChatID: 42
         ) == nil)
@@ -903,11 +853,11 @@ struct TelegramTUITests {
                     telegramTransportFactory: { TelegramRecordingTransport(recorder: recorder) }
                 )
 
-                terminal.telegramImmediateCommandOutput = []
+                terminal.capturedCommandOutputForTesting = []
                 await terminal.startTelegramControl()
                 return (
-                    !terminal.telegramControlState.isActive,
-                    terminal.telegramImmediateCommandOutput?.joined() ?? ""
+                    !terminal.telegramChannel.controlState.isActive,
+                    terminal.capturedCommandOutputForTesting?.joined() ?? ""
                 )
             }.value
 
@@ -917,199 +867,12 @@ struct TelegramTUITests {
         }
     }
 
-    @Test
-    func telegramTurnProgressReportingFollowsOnOffDuringLocalRequest() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        let lease = try #require(terminal.telegramActiveRouteLease)
-        let origin = TerminalPromptOrigin.telegramLease(lease)
-        terminal.telegramControlState.isActive = false
-
-        // A local turn begins while Telegram is off. Its origin is retained so
-        // `/telegram on` can attach the in-flight request immediately.
-        await terminal.beginTelegramTurnProgressReporting(for: origin)
-        #expect(terminal.activeTelegramTurnOrigin == origin)
-        #expect(terminal.activeTelegramProgressReporter == nil)
-
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
-        await terminal.synchronizeTelegramTurnProgressReporting()
-        let firstReporter = try #require(terminal.activeTelegramProgressReporter)
-        let firstChatID = await firstReporter.chatID
-        #expect(firstChatID == 42)
-
-        // `/telegram off` detaches the same in-flight turn, and turning it back
-        // on does not require a Telegram-originated prompt.
-        terminal.telegramControlState.isActive = false
-        await terminal.synchronizeTelegramTurnProgressReporting()
-        #expect(terminal.activeTelegramProgressReporter == nil)
-
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
-        await terminal.synchronizeTelegramTurnProgressReporting()
-        let secondReporter = try #require(terminal.activeTelegramProgressReporter)
-        let secondChatID = await secondReporter.chatID
-        #expect(secondChatID == 42)
-
-        await terminal.endTelegramTurnProgressReporting()
-        #expect(terminal.activeTelegramTurnOrigin == nil)
-        #expect(terminal.activeTelegramProgressReporter == nil)
-    }
-
-    /// While Telegram mirrors the session every turn owns an authorization
-    /// handler, regardless of whether its prompt came from the terminal or the
-    /// linked chat.
-    @Test
-    func telegramInstallsAuthorizationHandlerForMirroredTurns() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        let lease = try #require(terminal.telegramActiveRouteLease)
-        let origin = TerminalPromptOrigin.telegramLease(lease)
-
-        #expect(terminal.telegramToolAuthorizationHandler(for: origin) != nil)
-        #expect(terminal.telegramToolAuthorizationHandler(for: .local) == nil)
-        #expect(terminal.telegramToolAuthorizationHandler(for: .telegram(chatID: 43)) == nil)
-
-        terminal.telegramControlState.isActive = false
-        #expect(terminal.telegramToolAuthorizationHandler(for: .local) == nil)
-        #expect(terminal.telegramToolAuthorizationHandler(for: origin) == nil)
-    }
-
-    /// Gated tools are the terminal authorizer's set, and a remote turn that
-    /// cannot be asked is denied instead of silently approved.
-    @Test
-    func telegramTurnGatesDestructiveToolsAndFailsClosed() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        let deleteRequest = Self.authorizationRequest(
-            toolName: "local.delete",
-            title: "Delete Sources/Old.swift",
-            kind: "destructive",
-            command: "delete Sources/Old.swift"
-        )
-
-        #expect(DirectToolExecutor.destructiveGatedToolNames.allSatisfy(
-            LocalExecPermissionAuthorizer.gatedToolNames.contains
-        ))
-
-        // Tools outside the gated set keep running without any dialogue.
-        let readApproved = await terminal.authorizeTelegramToolRequest(
-            Self.authorizationRequest(
-                toolName: "local.readFile",
-                title: "Read Sources/Main.swift",
-                kind: "read",
-                command: "read Sources/Main.swift"
-            ),
-            origin: .telegram(chatID: 42)
-        )
-        #expect(readApproved)
-
-        // The chat that submitted the prompt can no longer be asked: refuse
-        // rather than perform an unconfirmed destructive operation.
-        terminal.telegramControlState.isActive = false
-        let deleteApproved = await terminal.authorizeTelegramToolRequest(
-            deleteRequest,
-            origin: .telegram(chatID: 42)
-        )
-        #expect(!deleteApproved)
-    }
-
-    /// A locally submitted turn must send an actionable Telegram request too;
-    /// answering the terminal dialog first cancels the remote wait and continues.
-    @Test(.timeLimit(.minutes(1)))
-    func mirroredLocalTurnCanBeAuthorizedFromTerminal() async throws {
-        let consent = AsyncStream<String>.makeStream()
-        let messages = AsyncStream<String>.makeStream()
-        defer {
-            consent.continuation.finish()
-            messages.continuation.finish()
-        }
-        let authorizer = LocalExecPermissionAuthorizer()
-        await authorizer.setConsentReader { _ in
-            var answers = consent.stream.makeAsyncIterator()
-            return await answers.next()
-        }
-        let terminal = try await Self.activeTelegramTerminal(permissionAuthorizer: authorizer)
-        let origin = TerminalPromptOrigin.telegramLease(
-            try #require(terminal.telegramActiveRouteLease)
-        )
-        terminal.activeTelegramProgressReporter = TerminalTelegramTurnProgressReporter(
-            chatID: 42
-        ) { message, _ in
-            messages.continuation.yield(message)
-            return true
-        }
-        let request = Self.authorizationRequest(
-            toolName: "local.delete",
-            title: "Delete Sources/Terminal.swift",
-            kind: "destructive",
-            command: "delete Sources/Terminal.swift"
-        )
-
-        let authorization = Task(name: "ZenCODE.Tests.terminal-telegram-authorization") {
-            await terminal.authorizeTelegramToolRequest(request, origin: origin)
-        }
-        defer { authorization.cancel() }
-        var deliveredMessages = messages.stream.makeAsyncIterator()
-        let telegramRequest = try #require(await deliveredMessages.next())
-
-        #expect(telegramRequest.contains("Permission required"))
-        #expect(telegramRequest.contains("/allow"))
-        // The operator answers only after the mirrored request is observable.
-        // A fixed delay races Telegram delivery when the full suite is busy.
-        consent.continuation.yield("r")
-        consent.continuation.finish()
-        #expect(await authorization.value)
-        let terminalConfirmation = try #require(await deliveredMessages.next())
-        #expect(terminalConfirmation.contains("Permission granted in the terminal for local.delete"))
-    }
-
-    /// The same coordinated request can be resolved from Telegram while the
-    /// terminal dialog is pending; cancelling that dialog must not deny the tool.
-    @Test
-    func mirroredLocalTurnCanBeAuthorizedFromTelegram() async throws {
-        let authorizer = LocalExecPermissionAuthorizer()
-        await authorizer.setConsentReader { _ in
-            do {
-                try await Task.sleep(nanoseconds: 5_000_000_000)
-                return "c"
-            } catch {
-                return nil
-            }
-        }
-        let terminal = try await Self.activeTelegramTerminal(permissionAuthorizer: authorizer)
-        let lease = try #require(terminal.telegramActiveRouteLease)
-        let origin = TerminalPromptOrigin.telegramLease(lease)
-        let collector = TelegramTestMessageCollector()
-        terminal.activeTelegramProgressReporter = TerminalTelegramTurnProgressReporter(
-            chatID: 42
-        ) { message, _ in
-            await collector.append(message)
-            return true
-        }
-        let request = Self.authorizationRequest(
-            toolName: "local.delete",
-            title: "Delete Sources/Telegram.swift",
-            kind: "destructive",
-            command: "delete Sources/Telegram.swift"
-        )
-
-        let authorization = Task {
-            await terminal.authorizeTelegramToolRequest(request, origin: origin)
-        }
-        let telegramRequest = await collector.firstMessage()
-        let requestID = try #require(Self.telegramPermissionRequestID(in: telegramRequest))
-        _ = await terminal.telegramPermissionBroker.handleMessage(
-            "/allow \(requestID)",
-            lease: lease
-        )
-
-        #expect(await authorization.value)
-    }
-
     /// A generating session can be blocked on remote tool consent, so the busy
     /// gate must let that correlated reply reach the permission broker.
     @Test
     func busyTelegramSessionStillAcceptsAuthorizationReply() async throws {
         let terminal = try await Self.activeTelegramTerminal()
-        let lease = try #require(terminal.telegramActiveRouteLease)
+        let lease = try #require(terminal.telegramChannel.activeRouteLease)
         let collector = TelegramTestMessageCollector()
         let request = Self.authorizationRequest(
             toolName: "local.delete",
@@ -1118,7 +881,7 @@ struct TelegramTUITests {
             command: "delete Sources/Busy.swift"
         )
         let authorization = Task {
-            await terminal.telegramPermissionBroker.authorize(
+            await terminal.telegramChannel.permissionBroker.authorize(
                 request, lease: lease
             ) { message in
                 await collector.append(message)
@@ -1128,34 +891,30 @@ struct TelegramTUITests {
         let requestMessage = await collector.firstMessage()
         let requestID = try #require(Self.telegramPermissionRequestID(in: requestMessage))
         let busyNotices = Mutex<[String]>([])
-        terminal.onTelegramSystemMessage = { text, _ in
+        terminal.telegramChannel.onTelegramSystemMessage = { text, _ in
             busyNotices.withLock { $0.append(text) }
             return true
         }
-        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
+        // The session generates: the host holds a prompt reservation.
+        let reservation = try terminal.sessionHost.reservePrompt(in: terminal.terminalSlotID)
+        defer { terminal.sessionHost.releasePrompt(reservation) }
 
-        _ = await terminal.handleTelegramRuntimeMessage(
+        _ = await terminal.telegramChannel.handleIncomingMessage(
             TerminalTelegramIncomingMessage(
                 chatID: 42, userID: 7, text: "unrelated prompt", voice: nil,
                 messageID: 98, chatTitle: nil, username: nil
-            ),
-            eventQueue: TerminalChatEventQueue(), queuedPrompts: &queuedPrompts,
-            transcriptions: TerminalVoiceTranscriptionRegistry(),
-            isSessionGenerating: true
+            )
         )
 
-        let didQueue = await terminal.handleTelegramRuntimeMessage(
+        let didQueue = await terminal.telegramChannel.handleIncomingMessage(
             TerminalTelegramIncomingMessage(
                 chatID: 42, userID: 7, text: "/deny \(requestID)", voice: nil,
                 messageID: 99, chatTitle: nil, username: nil
-            ),
-            eventQueue: TerminalChatEventQueue(), queuedPrompts: &queuedPrompts,
-            transcriptions: TerminalVoiceTranscriptionRegistry(),
-            isSessionGenerating: true
+            )
         )
 
         #expect(!didQueue)
-        #expect(queuedPrompts.isEmpty)
+        #expect(terminal.telegramChannel.promptQueue.isEmpty)
         #expect(busyNotices.withLock { messages in
             messages.filter { $0.contains("was not queued") }.count
         } == 1)
@@ -1166,20 +925,18 @@ struct TelegramTUITests {
     func busyTelegramSessionAnswersHelpAndChangesButKeepsAliasesBusy() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let notices = Mutex<[String]>([])
-        terminal.onTelegramSystemMessage = { text, _ in
+        terminal.telegramChannel.onTelegramSystemMessage = { text, _ in
             notices.withLock { $0.append(text) }
             return true
         }
-        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
+        let reservation = try terminal.sessionHost.reservePrompt(in: terminal.terminalSlotID)
+        defer { terminal.sessionHost.releasePrompt(reservation) }
         for (index, text) in ["/help", "/changes@zencode_bot", "help"].enumerated() {
-            let didQueue = await terminal.handleTelegramRuntimeMessage(
+            let didQueue = await terminal.telegramChannel.handleIncomingMessage(
                 TerminalTelegramIncomingMessage(
                     chatID: 42, userID: 7, text: text, voice: nil,
                     messageID: 200 + index, chatTitle: nil, username: nil
-                ),
-                eventQueue: TerminalChatEventQueue(), queuedPrompts: &queuedPrompts,
-                transcriptions: TerminalVoiceTranscriptionRegistry(),
-                isSessionGenerating: true
+                )
             )
             #expect(!didQueue)
         }
@@ -1193,34 +950,33 @@ struct TelegramTUITests {
     @Test
     func telegramUnknownSlashAndArgumentedRemoteCommandsAreRejected() async throws {
         let terminal = try await Self.activeTelegramTerminal()
-        let lease = try #require(terminal.telegramActiveRouteLease)
-        let origin = TerminalPromptOrigin.telegramLease(lease)
+        let lease = try #require(terminal.telegramChannel.activeRouteLease)
         let notices = Mutex<[String]>([])
-        terminal.onTelegramSystemMessage = { text, _ in
+        terminal.telegramChannel.onTelegramSystemMessage = { text, _ in
             notices.withLock { $0.append(text) }
             return true
         }
 
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "/bogus now", origin: origin
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "/bogus now", lease: lease
         ) else {
             Issue.record("Unknown slash command must not reach the model")
             return
         }
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "/status foo", origin: origin
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "/status foo", lease: lease
         ) else {
             Issue.record("/status with an argument must not run or reach the model")
             return
         }
-        guard case .runPrompt = await terminal.submittedTelegramLineAction(
-            "status report please", origin: origin
+        guard case .runPrompt = await terminal.telegramChannel.lineAction(for:
+            "status report please", lease: lease
         ) else {
             Issue.record("Plain text starting with an alias word stays a prompt")
             return
         }
-        guard case .continueChat = await terminal.submittedTelegramLineAction(
-            "/help@zencode_bot", origin: origin
+        guard case .handled = await terminal.telegramChannel.lineAction(for:
+            "/help@zencode_bot", lease: lease
         ) else {
             Issue.record("/help@bot should resolve")
             return
@@ -1234,24 +990,21 @@ struct TelegramTUITests {
 
     @Test
     func telegramPlanSubcommandsAreListedAndDegeneratePlanMentionAsksForArgument() async throws {
-        #expect(TerminalChat.telegramRemoteCommandList().contains(
+        #expect(TelegramChannel.remoteCommandList().contains(
             "/plan <goal> (or save|load|list|delete|status|approve|clear)"
         ))
         let terminal = try await Self.activeTelegramTerminal()
         let prompts = Mutex<[String]>([])
-        terminal.onTelegramMentionPickerMessage = { text, _, _ in
+        terminal.telegramChannel.onTelegramMentionPickerMessage = { text, _, _ in
             prompts.withLock { $0.append(text) }
             return 1
         }
-        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
         for (index, text) in ["/plan", "/plan@"].enumerated() {
-            let didQueue = await terminal.handleTelegramRuntimeMessage(
+            let didQueue = await terminal.telegramChannel.handleIncomingMessage(
                 TerminalTelegramIncomingMessage(
                     chatID: 42, userID: 7, text: text, voice: nil,
                     messageID: 300 + index, chatTitle: nil, username: nil
-                ),
-                eventQueue: TerminalChatEventQueue(), queuedPrompts: &queuedPrompts,
-                transcriptions: TerminalVoiceTranscriptionRegistry()
+                )
             )
             #expect(!didQueue)
         }
@@ -1263,15 +1016,15 @@ struct TelegramTUITests {
     @Test
     func tuiOnlyToolsHintIsWordedForTheTUI() async throws {
         let terminal = try await Self.activeTelegramTerminal()
-        let lease = try #require(terminal.telegramActiveRouteLease)
+        let lease = try #require(terminal.telegramChannel.activeRouteLease)
         let notices = Mutex<[String]>([])
-        terminal.onTelegramSystemMessage = { text, _ in
+        terminal.telegramChannel.onTelegramSystemMessage = { text, _ in
             notices.withLock { $0.append(text) }
             return true
         }
         terminal.selectedToolKeys.remove("sub-agents")
-        _ = await terminal.submittedTelegramLineAction(
-            "/plan build it", origin: .telegramLease(lease)
+        _ = await terminal.telegramChannel.lineAction(for:
+            "/plan build it", lease: lease
         )
         #expect(notices.withLock { $0 }.contains {
             $0.contains("Enable it from the ZenCODE TUI with /tools")
@@ -1292,8 +1045,8 @@ struct TelegramTUITests {
             permissionAuthorizer: permissionAuthorizer,
             telegramTransportFactory: nil
         )
-        terminal.telegramLinkedChatID = 42
-        terminal.telegramControlState = TerminalTelegramControlState(
+        terminal.telegramChannel.linkedChatID = 42
+        terminal.telegramChannel.controlState = TerminalTelegramControlState(
             isConfigured: true,
             isActive: true,
             statusText: "Active",
@@ -1302,7 +1055,7 @@ struct TelegramTUITests {
             lastMessagePreview: nil,
             wireLifecycleEpoch: UUID()
         )
-        terminal.telegramActiveRouteLease = await Self.installTestRoute(on: terminal)
+        terminal.telegramChannel.activeRouteLease = await Self.installTestRoute(on: terminal)
         return terminal
     }
 
@@ -1332,7 +1085,7 @@ struct TelegramTUITests {
 
     @Test
     func telegramSubAgentOverviewRoutesToSubAgentResponsePayload() {
-        let payload = TerminalChat.telegramSubAgentResponsePayload(
+        let payload = TelegramChannelPresenter.subAgentResponsePayload(
             heading: "\u{001B}[1mResponse from Reviewer:\u{001B}[0m",
             markdown: "Completed the review."
         )
@@ -1372,7 +1125,7 @@ struct TelegramTUITests {
     func telegramFinalizationDeliversResponseBeforeSummary() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let collector = TelegramTestMessageCollector()
-        terminal.activeTelegramProgressReporter = TerminalTelegramTurnProgressReporter(
+        terminal.telegramChannel.activeProgressReporter = TerminalTelegramTurnProgressReporter(
             chatID: 42
         ) { message, _ in
             await collector.append(message)
@@ -1391,9 +1144,8 @@ struct TelegramTUITests {
             )
         ])
 
-        await terminal.activeTelegramProgressReporter?.enqueue(.tasks("📋 Task graph"))
-        await terminal.finalizeTelegramTurnProgressReporting(
-            outcome: .agentResponse("*ZenCODE completed*\n\nDone."),
+        await terminal.telegramChannel.activeProgressReporter?.enqueue(.tasks("📋 Task graph"))
+        await terminal.telegramChannel.retireTurn(outcomePayload: .agentResponse("*ZenCODE completed*\n\nDone."),
             fileChangeSummary: summary
         )
 
@@ -1401,15 +1153,15 @@ struct TelegramTUITests {
         #expect(messages.count == 3)
         #expect(messages[1] == "*ZenCODE completed*\n\nDone.")
         #expect(messages[2].hasPrefix("🪬 Summary:"))
-        #expect(terminal.activeTelegramProgressReporter == nil)
+        #expect(terminal.telegramChannel.activeProgressReporter == nil)
     }
 
     @Test
     func telegramFinalizationDeliversOutcomeAndSummaryWithoutReporter() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let collector = TelegramTestMessageCollector()
-        terminal.activeTelegramTurnOrigin = .telegramLease(terminal.telegramActiveRouteLease!)
-        terminal.onDirectTelegramTurnMessage = { payload, chatID in
+        terminal.telegramChannel.activeTurnLease = terminal.telegramChannel.activeRouteLease!
+        terminal.telegramChannel.onDirectTelegramTurnMessage = { payload, chatID in
             #expect(chatID == 42)
             await collector.append(payload.text)
             return true
@@ -1427,8 +1179,7 @@ struct TelegramTUITests {
             )
         ])
 
-        await terminal.finalizeTelegramTurnProgressReporting(
-            outcome: .agentResponse("*ZenCODE completed*\n\nDone."),
+        await terminal.telegramChannel.retireTurn(outcomePayload: .agentResponse("*ZenCODE completed*\n\nDone."),
             fileChangeSummary: summary
         )
 
@@ -1436,8 +1187,8 @@ struct TelegramTUITests {
         #expect(messages.count == 2)
         #expect(messages[0] == "*ZenCODE completed*\n\nDone.")
         #expect(messages[1].hasPrefix("🪬 Summary:"))
-        #expect(terminal.activeTelegramProgressReporter == nil)
-        #expect(terminal.activeTelegramTurnOrigin == nil)
+        #expect(terminal.telegramChannel.activeProgressReporter == nil)
+        #expect(terminal.telegramChannel.activeTurnLease == nil)
     }
 
     @Test
@@ -1445,27 +1196,25 @@ struct TelegramTUITests {
         let terminal = try await Self.activeTelegramTerminal()
         let reporterCollector = TelegramTestMessageCollector()
         let fallbackCollector = TelegramTestMessageCollector()
-        terminal.activeTelegramTurnOrigin = .telegramLease(terminal.telegramActiveRouteLease!)
-        terminal.activeTelegramProgressReporter = TerminalTelegramTurnProgressReporter(
+        terminal.telegramChannel.activeTurnLease = terminal.telegramChannel.activeRouteLease!
+        terminal.telegramChannel.activeProgressReporter = TerminalTelegramTurnProgressReporter(
             chatID: 42
         ) { message, _ in
             await reporterCollector.append(message)
             return true
         }
-        terminal.onDirectTelegramTurnMessage = { payload, _ in
+        terminal.telegramChannel.onDirectTelegramTurnMessage = { payload, _ in
             await fallbackCollector.append(payload.text)
             return true
         }
 
-        await terminal.finalizeTelegramTurnProgressReporting(
-            outcome: .agentResponse("Done.")
-        )
+        await terminal.telegramChannel.retireTurn(outcomePayload: .agentResponse("Done."), fileChangeSummary: nil)
 
         #expect((await reporterCollector.allMessages()) == ["Done."])
         #expect((await fallbackCollector.allMessages()).isEmpty)
     }
 
-    // MARK: - Root response mirroring
+    // MARK: - Root responses in the chat
 
     @Test
     func telegramAggregatesRootResponseDeltasIntoOneMessageAtToolBoundary() async throws {
@@ -1473,12 +1222,12 @@ struct TelegramTUITests {
         let collector = TelegramTestMessageCollector()
         let reporter = Self.attachTestReporter(to: terminal, collector: collector)
 
-        await terminal.appendTelegramRootResponseDelta("Inspecting ")
-        await terminal.appendTelegramRootResponseDelta("the reporter")
-        await terminal.appendTelegramRootResponseDelta(" first.\n")
+        await terminal.telegramChannel.appendRootResponseDelta("Inspecting ")
+        await terminal.telegramChannel.appendRootResponseDelta("the reporter")
+        await terminal.telegramChannel.appendRootResponseDelta(" first.\n")
         #expect((await collector.allMessages()).isEmpty)
 
-        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
         await reporter.flush()
 
         #expect((await collector.allMessages()) == ["Inspecting the reporter first."])
@@ -1490,12 +1239,12 @@ struct TelegramTUITests {
         let collector = TelegramTestMessageCollector()
         let reporter = Self.attachTestReporter(to: terminal, collector: collector)
 
-        await terminal.appendTelegramRootResponseDelta("First step.")
-        await terminal.publishTelegramRootResponseAtToolBoundary()
-        await terminal.appendTelegramRootResponseDelta("Second step.")
-        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await terminal.telegramChannel.appendRootResponseDelta("First step.")
+        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
+        await terminal.telegramChannel.appendRootResponseDelta("Second step.")
+        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
         // A boundary without any content in between publishes nothing.
-        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
         await reporter.flush()
 
         #expect((await collector.allMessages()) == ["First step.", "Second step."])
@@ -1505,18 +1254,16 @@ struct TelegramTUITests {
     func telegramDoesNotDuplicateTrailingRootResponseAsFinalOutcome() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let collector = TelegramTestMessageCollector()
-        terminal.activeTelegramTurnOrigin = .telegramLease(terminal.telegramActiveRouteLease!)
+        terminal.telegramChannel.activeTurnLease = terminal.telegramChannel.activeRouteLease!
         _ = Self.attachTestReporter(to: terminal, collector: collector)
 
-        await terminal.appendTelegramRootResponseDelta("Intermediate.")
-        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await terminal.telegramChannel.appendRootResponseDelta("Intermediate.")
+        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
         // Trailing content that no tool call closes is the final response.
-        await terminal.appendTelegramRootResponseDelta("All done, ")
-        await terminal.appendTelegramRootResponseDelta("everything works.")
+        await terminal.telegramChannel.appendRootResponseDelta("All done, ")
+        await terminal.telegramChannel.appendRootResponseDelta("everything works.")
 
-        await terminal.finalizeTelegramTurnProgressReporting(
-            outcome: .agentResponse("All done, everything works.")
-        )
+        await terminal.telegramChannel.retireTurn(outcomePayload: .agentResponse("All done, everything works."), fileChangeSummary: nil)
 
         #expect(
             (await collector.allMessages()) == [
@@ -1524,24 +1271,24 @@ struct TelegramTUITests {
                 "All done, everything works."
             ]
         )
-        #expect(terminal.activeTelegramProgressReporter == nil)
+        #expect(terminal.telegramChannel.activeProgressReporter == nil)
     }
 
     @Test
-    func telegramMirrorsOnlyResponsesAndNeverThinkingOrToolDetails() async throws {
+    func telegramSendsOnlyResponsesAndNeverThinkingOrToolDetails() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let collector = TelegramTestMessageCollector()
-        terminal.activeTelegramTurnOrigin = .telegramLease(terminal.telegramActiveRouteLease!)
+        terminal.telegramChannel.activeTurnLease = terminal.telegramChannel.activeRouteLease!
         let reporter = Self.attachTestReporter(to: terminal, collector: collector)
 
         // A turn that reasons, answers, calls a tool, and answers again: only
-        // the visible responses have a mirroring hook, so reasoning and tool
-        // identity have no path to the remote chat.
+        // the visible responses have a path to the chat, so reasoning and tool
+        // identity never reach it.
         await terminal.writeThought("Secret reasoning about local.delete.\n")
-        await terminal.appendTelegramRootResponseDelta("Reading the manifest.")
-        await terminal.publishTelegramRootResponseAtToolBoundary()
-        await terminal.appendTelegramRootResponseDelta("Manifest looks fine.")
-        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await terminal.telegramChannel.appendRootResponseDelta("Reading the manifest.")
+        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
+        await terminal.telegramChannel.appendRootResponseDelta("Manifest looks fine.")
+        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
         await reporter.flush()
 
         let messages = await collector.allMessages()
@@ -1558,23 +1305,21 @@ struct TelegramTUITests {
     func telegramKeepsRootResponsesInOrderWithDelegatedAndAuthorizationPayloads() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let collector = TelegramTestMessageCollector()
-        terminal.activeTelegramTurnOrigin = .telegramLease(terminal.telegramActiveRouteLease!)
+        terminal.telegramChannel.activeTurnLease = terminal.telegramChannel.activeRouteLease!
         let reporter = Self.attachTestReporter(to: terminal, collector: collector)
 
-        await terminal.appendTelegramRootResponseDelta("Delegating the work.")
-        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await terminal.telegramChannel.appendRootResponseDelta("Delegating the work.")
+        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
         await reporter.enqueue(.tasks("📋 Task graph\n\nstep 1"))
         await reporter.enqueue(.subAgentResponse("🤖 worker\n\nDelegated answer."))
-        await terminal.sendTelegramTurnMessage(
+        await terminal.telegramChannel.sendTurnMessage(
             .authorization("Permission required"), to: 42,
-            origin: Self.testTelegramOrigin
+            lease: Self.testTelegramLease
         )
-        await terminal.appendTelegramRootResponseDelta("Continuing after the tool.")
-        await terminal.publishTelegramRootResponseAtToolBoundary()
+        await terminal.telegramChannel.appendRootResponseDelta("Continuing after the tool.")
+        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
 
-        await terminal.finalizeTelegramTurnProgressReporting(
-            outcome: .agentResponse("Final answer.")
-        )
+        await terminal.telegramChannel.retireTurn(outcomePayload: .agentResponse("Final answer."), fileChangeSummary: nil)
 
         #expect(
             (await collector.allMessages()) == [
@@ -1586,45 +1331,6 @@ struct TelegramTUITests {
                 "Final answer."
             ]
         )
-    }
-
-    @Test
-    func telegramSuppressesRootResponseStartedWhileTelegramWasOff() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        let firstCollector = TelegramTestMessageCollector()
-        terminal.activeTelegramTurnOrigin = .telegramLease(
-            try #require(terminal.telegramActiveRouteLease)
-        )
-        _ = Self.attachTestReporter(to: terminal, collector: firstCollector)
-
-        await terminal.appendTelegramRootResponseDelta("Visible beginning ")
-
-        // /telegram off in the middle of the response.
-        terminal.telegramControlState.isActive = false
-        await terminal.synchronizeTelegramTurnProgressReporting()
-        #expect(terminal.activeTelegramProgressReporter == nil)
-        await terminal.appendTelegramRootResponseDelta("hidden middle ")
-
-        // /telegram on again, still inside the same response block.
-        terminal.telegramControlState.isActive = true
-        terminal.telegramControlState.wireLifecycleEpoch = UUID()
-        await terminal.synchronizeTelegramTurnProgressReporting()
-        #expect(terminal.activeTelegramProgressReporter != nil)
-        let secondCollector = TelegramTestMessageCollector()
-        let secondReporter = Self.attachTestReporter(to: terminal, collector: secondCollector)
-        await terminal.appendTelegramRootResponseDelta("and the tail.")
-        await terminal.publishTelegramRootResponseAtToolBoundary()
-        await secondReporter.flush()
-
-        // Neither a replay of the hidden text nor a partial suffix is sent.
-        #expect((await firstCollector.allMessages()).isEmpty)
-        #expect((await secondCollector.allMessages()).isEmpty)
-
-        // The next response block starts clean and is mirrored again.
-        await terminal.appendTelegramRootResponseDelta("Next response.")
-        await terminal.publishTelegramRootResponseAtToolBoundary()
-        await secondReporter.flush()
-        #expect((await secondCollector.allMessages()) == ["Next response."])
     }
 
     @Test
@@ -1666,26 +1372,24 @@ struct TelegramTUITests {
     }
 
     @Test
-    func telegramFinalResponseTextExcludesAlreadyMirroredIntermediateResponses() async throws {
+    func telegramFinalResponseTextExcludesAlreadyPublishedIntermediateResponses() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let collector = TelegramTestMessageCollector()
-        terminal.activeTelegramTurnOrigin = .telegramLease(terminal.telegramActiveRouteLease!)
+        terminal.telegramChannel.activeTurnLease = terminal.telegramChannel.activeRouteLease!
         _ = Self.attachTestReporter(to: terminal, collector: collector)
 
-        await terminal.appendTelegramRootResponseDelta("Inspecting the manifest.")
-        await terminal.publishTelegramRootResponseAtToolBoundary()
-        await terminal.appendTelegramRootResponseDelta("All done, everything works.")
+        await terminal.telegramChannel.appendRootResponseDelta("Inspecting the manifest.")
+        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
+        await terminal.telegramChannel.appendRootResponseDelta("All done, everything works.")
 
         // A turn's response text accumulates every block it produced.
         let accumulated = "Inspecting the manifest.All done, everything works."
-        let mirrored = await terminal.telegramMirroredFinalResponseText(
+        let finalText = await terminal.telegramChannel.finalResponseText(
             fallback: accumulated
         )
-        #expect(mirrored == "All done, everything works.")
+        #expect(finalText == "All done, everything works.")
 
-        await terminal.finalizeTelegramTurnProgressReporting(
-            outcome: .agentResponse("*ZenCODE completed*\n\n\(mirrored)")
-        )
+        await terminal.telegramChannel.retireTurn(outcomePayload: .agentResponse("*ZenCODE completed*\n\n\(finalText)"), fileChangeSummary: nil)
 
         let messages = await collector.allMessages()
         #expect(
@@ -1697,16 +1401,16 @@ struct TelegramTUITests {
     }
 
     @Test
-    func telegramFinalResponseTextKeepsFallbackWithoutMirroredIntermediateResponses() async throws {
+    func telegramFinalResponseTextKeepsFallbackWithoutPublishedIntermediateResponses() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let collector = TelegramTestMessageCollector()
-        terminal.activeTelegramTurnOrigin = .telegramLease(terminal.telegramActiveRouteLease!)
+        terminal.telegramChannel.activeTurnLease = terminal.telegramChannel.activeRouteLease!
         _ = Self.attachTestReporter(to: terminal, collector: collector)
 
-        await terminal.appendTelegramRootResponseDelta("Only one response.")
+        await terminal.telegramChannel.appendRootResponseDelta("Only one response.")
 
         #expect(
-            (await terminal.telegramMirroredFinalResponseText(fallback: "Only one response."))
+            (await terminal.telegramChannel.finalResponseText(fallback: "Only one response."))
                 == "Only one response."
         )
     }
@@ -1720,7 +1424,7 @@ struct TelegramTUITests {
             await collector.append(message)
             return true
         }
-        terminal.activeTelegramProgressReporter = reporter
+        terminal.telegramChannel.activeProgressReporter = reporter
         return reporter
     }
 
@@ -1981,13 +1685,13 @@ struct TelegramTUITests {
         let receipts = TelegramCardReceiptRecorder()
         // Injected sender: the routing map is exercised end-to-end through the
         // terminal-owned relay without touching the Telegram transport.
-        terminal.telegramSharedChatRelayStorage = TerminalTelegramSharedChatRelay {
+        terminal.telegramChannel.sharedChatRelayStorage = TerminalTelegramSharedChatRelay {
             text, chatID in
             await receipts.record(text, chatID: chatID)
         }
         let room = terminal.sessionID
-        let lease = try #require(terminal.telegramActiveRouteLease)
-        let relay = terminal.telegramSharedChatRelay
+        let lease = try #require(terminal.telegramChannel.activeRouteLease)
+        let relay = terminal.telegramChannel.sharedChatRelay
         await relay.activate(roomID: room, chatID: 42)
 
         await relay.forward(
@@ -2058,19 +1762,19 @@ struct TelegramTUITests {
     }
 
     /// A voice note is refused only when it quotes a card that really routes
-    /// somewhere. Quoting the operator's own mirrored traffic is not a direct
+    /// somewhere. Quoting the operator's own relayed traffic is not a direct
     /// reply, so it must keep the ordinary voice-prompt path instead of being
     /// bounced with the "replies must be text" refusal.
     @Test
     func telegramVoiceReplyToAnOperatorCardKeepsTheOrdinaryPath() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let receipts = TelegramCardReceiptRecorder()
-        terminal.telegramSharedChatRelayStorage = TerminalTelegramSharedChatRelay {
+        terminal.telegramChannel.sharedChatRelayStorage = TerminalTelegramSharedChatRelay {
             text, chatID in
             await receipts.record(text, chatID: chatID)
         }
         let room = terminal.sessionID
-        let relay = terminal.telegramSharedChatRelay
+        let relay = terminal.telegramChannel.sharedChatRelay
         await relay.activate(roomID: room, chatID: 42)
 
         await relay.forward(
@@ -2105,18 +1809,18 @@ struct TelegramTUITests {
         // Same decision for voice and text: an operator card is not a direct
         // reply target, an agent card is.
         #expect(
-            await terminal.telegramDirectReplyTarget(
+            await terminal.telegramChannel.directReplyTarget(
                 for: Self.incomingTelegramMessage(replyToMessageID: operatorReceipt)
             ) == nil
         )
         #expect(
-            await terminal.handleTelegramSharedChatReplyIfNeeded(
+            await terminal.telegramChannel.handleSharedChatReplyIfNeeded(
                 "spoken answer",
                 message: Self.incomingTelegramMessage(replyToMessageID: operatorReceipt),
-                origin: Self.testTelegramOrigin
+                lease: Self.testTelegramLease
             ) == false
         )
-        let agentTarget = await terminal.telegramDirectReplyTarget(
+        let agentTarget = await terminal.telegramChannel.directReplyTarget(
             for: Self.incomingTelegramMessage(replyToMessageID: agentReceipt)
         )
         #expect(agentTarget?.replyDestination == .direct(["agent-7"]))
@@ -2129,11 +1833,11 @@ struct TelegramTUITests {
     func telegramReplyToUnknownOrRetiredCardFallsBackToThePromptPath() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let receipts = TelegramCardReceiptRecorder()
-        terminal.telegramSharedChatRelayStorage = TerminalTelegramSharedChatRelay {
+        terminal.telegramChannel.sharedChatRelayStorage = TerminalTelegramSharedChatRelay {
             text, chatID in
             await receipts.record(text, chatID: chatID)
         }
-        let relay = terminal.telegramSharedChatRelay
+        let relay = terminal.telegramChannel.sharedChatRelay
         // Bound to a room that is not the live session: a card of that binding
         // must never be routed into the current room.
         await relay.activate(roomID: "retired-room", chatID: 42)
@@ -2153,24 +1857,24 @@ struct TelegramTUITests {
         let staleReceipt = try #require(await receipts.cards.first?.receipt)
 
         #expect(
-            await terminal.handleTelegramSharedChatReplyIfNeeded(
+            await terminal.telegramChannel.handleSharedChatReplyIfNeeded(
                 "answer",
                 message: Self.incomingTelegramMessage(replyToMessageID: staleReceipt),
-                origin: Self.testTelegramOrigin
+                lease: Self.testTelegramLease
             ) == false
         )
         #expect(
-            await terminal.handleTelegramSharedChatReplyIfNeeded(
+            await terminal.telegramChannel.handleSharedChatReplyIfNeeded(
                 "answer",
                 message: Self.incomingTelegramMessage(replyToMessageID: staleReceipt + 1),
-                origin: Self.testTelegramOrigin
+                lease: Self.testTelegramLease
             ) == false
         )
         #expect(
-            await terminal.handleTelegramSharedChatReplyIfNeeded(
+            await terminal.telegramChannel.handleSharedChatReplyIfNeeded(
                 "answer",
                 message: Self.incomingTelegramMessage(replyToMessageID: nil),
-                origin: Self.testTelegramOrigin
+                lease: Self.testTelegramLease
             ) == false
         )
     }
@@ -2183,26 +1887,26 @@ struct TelegramTUITests {
     func telegramReplyRoutingYieldsToCommandsAndResolvingMentions() async throws {
         let terminal = try await Self.activeTelegramTerminal()
 
-        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "/help"))
-        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "/start 233B0EC4"))
-        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "/plan route it"))
-        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "@coordinator status"))
-        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "@all status"))
+        #expect(await terminal.telegramChannel.replyRoutingHasPrecedence(over: "/help"))
+        #expect(await terminal.telegramChannel.replyRoutingHasPrecedence(over: "/start 233B0EC4"))
+        #expect(await terminal.telegramChannel.replyRoutingHasPrecedence(over: "/plan route it"))
+        #expect(await terminal.telegramChannel.replyRoutingHasPrecedence(over: "@coordinator status"))
+        #expect(await terminal.telegramChannel.replyRoutingHasPrecedence(over: "@all status"))
         // A recognised mention without text keeps its own diagnostic.
-        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "@coordinator"))
+        #expect(await terminal.telegramChannel.replyRoutingHasPrecedence(over: "@coordinator"))
         // Not mentions, so a reply keeps its meaning.
-        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "@nobody hi") == false)
-        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "yes, ship it") == false)
+        #expect(await terminal.telegramChannel.replyRoutingHasPrecedence(over: "@nobody hi") == false)
+        #expect(await terminal.telegramChannel.replyRoutingHasPrecedence(over: "yes, ship it") == false)
         #expect(
-            await terminal.telegramReplyRoutingHasPrecedence(
+            await terminal.telegramChannel.replyRoutingHasPrecedence(
                 over: "answer with an email like a@b.com"
             ) == false
         )
         // A plain-word command alias is an answer to the quoted card, as in
         // the TUI; only its slash form keeps command precedence.
-        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "diff") == false)
-        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "status") == false)
-        #expect(await terminal.telegramReplyRoutingHasPrecedence(over: "/diff"))
+        #expect(await terminal.telegramChannel.replyRoutingHasPrecedence(over: "diff") == false)
+        #expect(await terminal.telegramChannel.replyRoutingHasPrecedence(over: "status") == false)
+        #expect(await terminal.telegramChannel.replyRoutingHasPrecedence(over: "/diff"))
     }
 
     private static func sharedChatMessage(
@@ -2235,39 +1939,6 @@ struct TelegramTUITests {
         )
     }
 
-    @Test
-    func routeRevocationPublishesGenerationCancellationEvent() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        let route = AgentTelegramRouteManifest(
-            roomID: terminal.sessionID, generation: 1
-        )
-        await terminal.telegramSessionRouter.refresh(
-            linkedChatID: 42, ownerUserID: 7, routes: [route]
-        )
-        let lease = try await terminal.telegramSessionRouter.resolve(
-            chatID: 42, userID: 7, topicID: nil
-        )
-        let queue = TerminalChatEventQueue()
-        terminal.telegramRuntimeEventQueue = queue
-        let observed = Task {
-            for await event in queue.events {
-                if case let .telegramRouteInvalidated(stale) = event {
-                    return stale == lease
-                }
-            }
-            return false
-        }
-        await terminal.beginTelegramTurnProgressReporting(for: .telegramLease(lease))
-        let rebound = AgentTelegramRouteManifest(
-            roomID: terminal.sessionID, generation: 2
-        )
-        await terminal.telegramSessionRouter.refresh(
-            linkedChatID: 42, ownerUserID: 7, routes: [rebound]
-        )
-        #expect(await observed.value)
-        await terminal.endTelegramTurnProgressReporting()
-        queue.finish()
-    }
 }
 
 /// Hands the relay synthetic Telegram receipts so card routing can be asserted
@@ -2342,5 +2013,14 @@ private actor TelegramTestMessageCollector {
 
     func allMessages() -> [String] {
         messages
+    }
+}
+
+extension TerminalChat {
+    /// The Telegram channel of the terminal's slot, created on first use
+    /// without attaching it, so a test drives it as the terminal's loop
+    /// never does.
+    var telegramChannel: TelegramChannel {
+        sessionHost.telegramChannelCreatingIfNeeded(in: terminalSlotID)!
     }
 }

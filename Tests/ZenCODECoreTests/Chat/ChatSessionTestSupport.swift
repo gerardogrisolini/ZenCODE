@@ -4,7 +4,7 @@
 //
 //  Test doubles shared by the Chat-layer suites: a scripted session runtime
 //  (turns and session management, with an ordered call log), a presenter that
-//  records every event (also as a companion, optionally into a log several
+//  records every event (also as an observer, optionally into a log several
 //  presenters share), a scripted interaction host with configurable
 //  capabilities and a queue of answers, and the harness that wires them to a
 //  `ChatSessionController` inside a throwaway support directory.
@@ -358,14 +358,14 @@ actor RecordingChatPresenter: ChatSessionPresenter {
     }
 }
 
-/// A recording presenter also attaches to a controller as a companion.
-extension RecordingChatPresenter: ChatCompanionPresenter {}
+/// A recording presenter also observes a controller.
+extension RecordingChatPresenter: ChatSessionObserver {}
 
 // MARK: - Presentation log
 
 /// The events of several recording presenters in the order they were
 /// presented, each with the name of the presenter that recorded it, so a test
-/// asserts the order between the companions and the primary.
+/// asserts the order between the observers and the primary.
 final class ChatPresentationLog: Sendable {
     struct Entry: Equatable, Sendable {
         let presenter: String

@@ -137,13 +137,20 @@ extension TerminalChat {
     }
 
     public func renderSavedSessionHistory(_ history: [AgentRuntimeMessage]) async {
+        await renderSavedSessionHistory(history, title: "Restored transcript:")
+    }
+
+    /// ``renderSavedSessionHistory(_:)`` under `title`: the one rendering of
+    /// a transcript the terminal did not see live, used for a restored
+    /// session and for the catch-up after `/telegram off`.
+    func renderSavedSessionHistory(_ history: [AgentRuntimeMessage], title: String) async {
         guard Self.savedSessionHistoryHasVisibleContent(history) else {
             return
         }
 
         await finishThoughtOutputIfNeeded()
         await finishAssistantContentFormatting()
-        await writeSystemMessage("\nRestored transcript:\n")
+        await writeSystemMessage("\n\(title)\n")
         let activeDescriptors = await sessionRunner.activeToolDescriptors(
             sessionID: sessionID
         )

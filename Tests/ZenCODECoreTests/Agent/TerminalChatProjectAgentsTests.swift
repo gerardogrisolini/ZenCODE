@@ -148,10 +148,10 @@ struct TerminalChatProjectAgentsTests {
         terminal.pendingPlanApprovalPlanID = "plan-to-reset"
         try await terminal.createCurrentSession(discoverExternalTools: false)
 
-        terminal.telegramImmediateCommandOutput = []
+        terminal.capturedCommandOutputForTesting = []
         try await terminal.handleAgentsCommand("/agents Reviewer")
-        let output = terminal.telegramImmediateCommandOutput?.joined() ?? ""
-        terminal.telegramImmediateCommandOutput = nil
+        let output = terminal.capturedCommandOutputForTesting?.joined() ?? ""
+        terminal.capturedCommandOutputForTesting = nil
 
         #expect(terminal.selectedAgent == reviewer)
         #expect(terminal.pendingPlanApprovalPlanID == nil)

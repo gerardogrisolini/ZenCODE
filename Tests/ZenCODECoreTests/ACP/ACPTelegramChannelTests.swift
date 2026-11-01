@@ -1,0 +1,519 @@
+//
+//  ACPTelegramChannelTests.swift
+//  ZenCODE
+//
+//  An ACP session whose slot is handed to Telegram with `/telegram on`,
+//  through a scripted Bot API: the turns the linked chat starts run with the
+//  editor's composition and end up in the history `session/load` replays,
+//  their consent is decided in the chat, `/status` is answered there, the
+//  editor's `session/cancel` stops them and the next `/telegram off` catches
+//  up with them, they run in the environment of the editor's own prompts (the
+//  client's text file system, the agent's skills), a busy session names the
+//  turn from Telegram, and the notices of the attach follow the activation
+//  text in the reply of `/telegram on`. Nothing reaches the network; every
+//  test runs in a UUID support directory.
+//
+
+import Foundation
+import Synchronization
+import Testing
+import ToolCore
+@testable import ZenCODECore
+
+@Suite(.serialized, .timeLimit(.minutes(2)))
+struct ACPTelegramChannelTests {
+    private static let activationReply = "Telegram remote control is active.\nLinked chat: Test"
+
+    /// A turn from the linked chat runs with the editor's composition (the
+    /// session's configuration plus the purpose's tools, the same write the
+    /// editor's prompt made), presents nothing on the ACP wire, and is in the
+    /// history the runner keeps, so `/telegram off` catches up with it and
+    /// `session/load` replays it next to the editor's turns.
+    @Test
+    func telegramTurnsRunWithTheEditorsCompositionAndSessionLoadReplaysThem() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedFixture(root: root, editorPromptsFirst: true)
+            let backend = fixture.backend
+            let editorWrite = try #require(await backend.sessionWrites.last)
+            let wireCountBeforeTelegram = fixture.wire.count
+            let sentBefore = await fixture.transport.sentMessages.count
+
+            try await fixture.transport.deliver("Hello from Telegram")
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.transport.sentTexts.dropFirst(sentBefore).contains { $0.contains("ZenCODE completed") }
+            })
+            #expect(await backend.prompts == ["Hello from the editor", "Hello from Telegram"])
+            // The same composition as the editor's prompt.
+            #expect(await backend.sessionWrites.count > 1)
+            #expect(await backend.sessionWrites.last == editorWrite)
+            #expect(editorWrite.systemPrompt == "ACP Telegram test")
+            // Nothing of the turn reached the editor.
+            #expect(fixture.wire.count == wireCountBeforeTelegram)
+            #expect(fixture.wire.permissionRequestIDs.isEmpty)
+
+            // The way back: the stop text, then what the editor did not see.
+            let offStart = fixture.wire.count
+            await fixture.prompt("/telegram off", id: 3, sessionID: sessionID)
+            #expect(fixture.wire.stopReason(id: 3) == "end_turn")
+            #expect(fixture.lastAgentText(from: offStart) == """
+                Telegram remote control stopped.
+                Catch-up from Telegram:
+                You: Hello from Telegram
+                ZenCODE: reply
+                """)
+
+            // `session/load` of the live session replays the runner's history,
+            // the turn from Telegram included, in order.
+            let loadStart = fixture.wire.count
+            await fixture.loadSession(sessionID: sessionID, id: 4)
+            #expect(fixture.wire.response(id: 4)?["result"] != nil)
+            #expect(fixture.wire.updateTexts(kind: "user_message_chunk", from: loadStart)
+                == ["Hello from the editor", "Hello from Telegram"])
+            #expect(fixture.wire.updateTexts(kind: "agent_message_chunk", from: loadStart)
+                == ["reply", "reply"])
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// A gated tool of a turn from the chat is asked in the chat only, where
+    /// `/allow ID` decides it; the editor is asked nothing. The remote
+    /// `/status` is answered in the chat too, without a turn.
+    @Test
+    func aTelegramTurnsConsentIsDecidedWithAllowInTheChatAndStatusIsAnsweredThere() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedFixture(root: root)
+            let channel = try #require(await fixture.telegramChannel(sessionID: sessionID))
+            let wireCount = fixture.wire.count
+
+            let status = await channel.remoteStatusText()
+            let statusBefore = await fixture.transport.sentMessages.count
+            try await fixture.transport.deliver("/status")
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.transport.sentMessages.count > statusBefore
+            })
+            #expect(await fixture.transport.sentTexts.dropFirst(statusBefore) == [status])
+            #expect(status.hasPrefix("Session active."))
+            #expect(await fixture.backend.prompts.isEmpty)
+
+            await fixture.backend.enqueue([.askPermission(command: "echo hi"), .reply("ran")])
+            try await fixture.transport.deliver("Run echo hi")
+            guard let requestID = await fixture.pendingTelegramPermissionRequestID() else {
+                await fixture.bridge.shutdown()
+                return
+            }
+            #expect(fixture.wire.permissionRequestIDs.isEmpty)
+            try await fixture.transport.deliver("/allow \(requestID)")
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.transport.sentTexts.contains { $0.contains("ZenCODE completed") }
+            })
+            #expect(await fixture.backend.permissionDecisions == [true])
+            #expect(await fixture.transport.sentTexts.contains(
+                "✅ Permission \(requestID) allowed once. Continuing."
+            ))
+            #expect(fixture.wire.count == wireCount)
+            #expect(fixture.wire.errorResponses.isEmpty)
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// The editor cannot take the slot back in the middle of a turn from
+    /// Telegram: `/telegram off`, like every prompt, is refused with the text
+    /// that names the turn, while the plain busy text of before stays for the
+    /// editor's own prompt. `session/cancel` stops the turn (its pending
+    /// consent closes, the chat sees `Stopped.`), and the next `/telegram
+    /// off` catches up with the prompt and the text streamed so far.
+    @Test
+    func cancelStopsATelegramTurnAndTheNextTelegramOffCatchesUpWithIt() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedFixture(root: root)
+            await fixture.backend.enqueue([
+                .reply("Working "),
+                .askPermission(command: "rm -rf build"),
+                .reply("done"),
+            ])
+
+            try await fixture.transport.deliver("Clean the build")
+            guard await fixture.pendingTelegramPermissionRequestID() != nil else {
+                await fixture.bridge.shutdown()
+                return
+            }
+
+            // Refused, naming the turn from Telegram.
+            let busyStart = fixture.wire.count
+            await fixture.prompt("/telegram off", id: 3, sessionID: sessionID)
+            #expect(fixture.wire.errorMessage(id: 3) == ZenCODEACPBridge.telegramTurnBusyMessage)
+            #expect(fixture.wire.updateTexts(kind: "user_message_chunk", from: busyStart).isEmpty)
+            await fixture.prompt("Hello?", id: 4, sessionID: sessionID)
+            #expect(fixture.wire.errorMessage(id: 4) == ZenCODEACPBridge.telegramTurnBusyMessage)
+            #expect(await fixture.backend.prompts == ["Clean the build"])
+
+            // Stopped from the editor.
+            let stoppedBefore = await fixture.transport.sentMessages.count
+            await fixture.cancel(sessionID: sessionID, id: 5)
+            #expect(fixture.wire.response(id: 5)?["result"] != nil)
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.transport.sentTexts.dropFirst(stoppedBefore).contains("Stopped.")
+            })
+            #expect(await fixture.backend.permissionDecisions == [false])
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.bridge.telegramTestPromptIsReserved(sessionID: sessionID) == false
+            })
+
+            // Taken back, with the prompt and the text streamed so far.
+            let offStart = fixture.wire.count
+            await fixture.prompt("/telegram off", id: 6, sessionID: sessionID)
+            #expect(fixture.wire.stopReason(id: 6) == "end_turn")
+            #expect(fixture.lastAgentText(from: offStart) == """
+                Telegram remote control stopped.
+                Catch-up from Telegram:
+                You: Clean the build
+                ZenCODE: Working
+                """)
+            #expect(fixture.wire.permissionRequestIDs.isEmpty)
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// Outside Telegram the busy text is the one of before: a second
+    /// `session/prompt` while the editor's own turn runs is refused with it.
+    @Test
+    func aSecondEditorPromptKeepsThePlainBusyText() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let sessionID = "acp-telegram-busy-\(UUID().uuidString)"
+            let fixture = try await ACPTelegramBridgeFixture.make(
+                root: root, sessionIDs: [sessionID],
+                transport: ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+            )
+            await fixture.backend.enqueue([.reply("Half "), .pause, .reply("done")])
+            let turn = Task { await fixture.prompt("Long one", id: 1, sessionID: sessionID) }
+            #expect(await ACPTelegramTestSupport.waitUntil { await fixture.backend.isPaused })
+
+            await fixture.prompt("Another", id: 2, sessionID: sessionID)
+            #expect(fixture.wire.errorMessage(id: 2) == "A prompt is already running for this session.")
+
+            await fixture.backend.release()
+            await fixture.finish(turn, id: 1)
+            #expect(fixture.wire.stopReason(id: 1) == "end_turn")
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// A turn from the linked chat runs inside the text file system the
+    /// editor serves, for as long as the session lives, as the editor's own
+    /// prompt does: what the turn reads is the editor's buffer, what it
+    /// writes goes to the buffer and never past it to the disk. The editor's
+    /// next prompt, after `/telegram off`, sees the same environment.
+    @Test
+    func aTelegramTurnRunsInsideTheEditorsClientFileSystem() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let notes = root.appendingPathComponent("workspace/Notes.txt")
+            let editor = ACPTelegramClientFiles(buffers: [notes: "unsaved editor text"])
+            let (fixture, sessionID) = try await Self.linkedFixture(root: root, clientFiles: editor)
+            let sentBefore = await fixture.transport.sentMessages.count
+            await fixture.backend.enqueue([
+                .readClientFile(path: "Notes.txt"),
+                .writeClientFile(path: "Notes.txt", contents: "written by the turn from Telegram"),
+                .reply("done"),
+            ])
+
+            try await fixture.transport.deliver("Update the notes")
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.transport.sentTexts.dropFirst(sentBefore).contains { $0.contains("ZenCODE completed") }
+            })
+            let telegramAccesses = await fixture.backend.clientFileAccesses
+            #expect(telegramAccesses == [
+                .init(hadClientFileSystem: true, readContents: "unsaved editor text"),
+                .init(hadClientFileSystem: true, readContents: nil),
+            ])
+            // The editor's buffer took the write; the disk never saw the file.
+            #expect(editor.buffer(at: notes) == "written by the turn from Telegram")
+            #expect(editor.writtenPaths == [notes.standardizedFileURL.path])
+            #expect(editor.requestedSessionIDs == [sessionID])
+            #expect(!FileManager.default.fileExists(atPath: notes.path))
+
+            // The editor's own prompt reads the same through the same access.
+            await fixture.prompt("/telegram off", id: 3, sessionID: sessionID)
+            #expect(fixture.wire.stopReason(id: 3) == "end_turn")
+            await fixture.backend.enqueue([.readClientFile(path: "Notes.txt")])
+            await fixture.prompt("Read the notes", id: 4, sessionID: sessionID)
+            #expect(fixture.wire.stopReason(id: 4) == "end_turn")
+            let accesses = await fixture.backend.clientFileAccesses
+            #expect(accesses.count == 3)
+            #expect(accesses.last == .init(
+                hadClientFileSystem: true, readContents: "written by the turn from Telegram"
+            ))
+            #expect(!FileManager.default.fileExists(atPath: notes.path))
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// A client that serves no text file system leaves a turn from Telegram
+    /// on the disk, as it leaves the editor's prompts: the turn is not given
+    /// an access that is not there.
+    @Test
+    func aTelegramTurnWithoutAClientFileSystemUsesTheDisk() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, _) = try await Self.linkedFixture(root: root)
+            let sentBefore = await fixture.transport.sentMessages.count
+            let notes = fixture.workingDirectory.appendingPathComponent("Notes.txt")
+            await fixture.backend.enqueue([
+                .writeClientFile(path: "Notes.txt", contents: "on the disk"),
+                .readClientFile(path: "Notes.txt"),
+            ])
+
+            try await fixture.transport.deliver("Write the notes")
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.transport.sentTexts.dropFirst(sentBefore).contains { $0.contains("ZenCODE completed") }
+            })
+            #expect(await fixture.backend.clientFileAccesses == [
+                .init(hadClientFileSystem: false, readContents: nil),
+                .init(hadClientFileSystem: false, readContents: "on the disk"),
+            ])
+            #expect(try String(contentsOf: notes, encoding: .utf8) == "on the disk")
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// A turn from the linked chat selects the skills of the session's agent
+    /// before it runs, with the same derivation as the editor's prompt
+    /// (`selectedAgentSkills(for:)`), so the agent's skills are there for a
+    /// session the editor has not prompted yet.
+    @Test
+    func aTelegramTurnSelectsTheAgentsSkillsAsTheEditorsPromptDoes() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let skillDirectory = root.appendingPathComponent("skills/release-notes", isDirectory: true)
+            try FileManager.default.createDirectory(at: skillDirectory, withIntermediateDirectories: true)
+            try """
+            ---
+            name: Release Notes
+            description: Writes the release notes.
+            ---
+
+            # Release Notes
+
+            Summarize the changes since the last tag.
+            """
+            .write(to: skillDirectory.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+            let skill = try #require(PromptSkillCatalog.discoverSkills(
+                searchRoots: PromptSkillCatalog.appCatalogSearchRoots()
+            ).first)
+            let agent = AgentProfile(
+                id: "skilled",
+                name: "Skilled",
+                role: .developer,
+                skills: [AgentProfileSkill(id: skill.id, canonicalName: skill.canonicalName)]
+            )
+            let (fixture, sessionID) = try await Self.linkedFixture(root: root, selectedAgent: agent)
+            let runner = await fixture.bridge.sessionRunner
+            // Nothing is selected before the turn: no editor prompt ran.
+            let initialSelection = await runner.promptSkillProvidersBySessionID[sessionID]?.currentSkills()
+            #expect(initialSelection?.isEmpty ?? true)
+            let sentBefore = await fixture.transport.sentMessages.count
+
+            try await fixture.transport.deliver("Write the release notes")
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.transport.sentTexts.dropFirst(sentBefore).contains { $0.contains("ZenCODE completed") }
+            })
+            let selected = try #require(await runner.promptSkillProvidersBySessionID[sessionID]?.currentSkills())
+            #expect(selected.map(\.id) == [skill.id])
+            #expect(selected == (await fixture.bridge.selectedAgentSkills(for: agent)))
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// A turn the slot's hooks wrap runs inside the client's file system while
+    /// the session lives; once the session closed, the controller it was
+    /// started on is no longer one the bridge runs, and the body runs exactly
+    /// once without any environment, as for a slot without hooks.
+    @Test
+    func aTurnOnAClosedSessionRunsItsBodyWithoutTheEnvironment() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let notes = root.appendingPathComponent("workspace/Notes.txt")
+            let editor = ACPTelegramClientFiles(buffers: [notes: "unsaved editor text"])
+            let (fixture, sessionID) = try await Self.linkedFixture(root: root, clientFiles: editor)
+            let controller = try #require(await fixture.bridge.telegramTestController(sessionID: sessionID))
+            let hooks = await fixture.bridge.slotChannelHooks
+            let result = ChatTurnResult(
+                response: DirectAgentResponse(text: "ran", stopReason: "end_turn", modelID: "test-model"),
+                finalAssistantBlock: nil,
+                fileChangeSummary: nil,
+                automaticallyCompletedPlan: nil
+            )
+            let bodies = ACPTelegramBodyRecorder()
+
+            let live = try await hooks.runTurnFromAnotherChannel(controller: controller) {
+                bodies.record(hadClientFileSystem: ClientTextFileSystem.current != nil)
+                return result
+            }
+            #expect(live.response.text == "ran")
+            #expect(bodies.recorded == [true])
+
+            await fixture.bridge.handleMessage([
+                "jsonrpc": "2.0", "id": 9, "method": "session/close",
+                "params": ["sessionId": sessionID],
+            ])
+            #expect(fixture.wire.response(id: 9)?["result"] == .object([:]))
+            #expect(await fixture.bridge.telegramTestController(sessionID: sessionID) == nil)
+
+            let closed = try await hooks.runTurnFromAnotherChannel(controller: controller) {
+                bodies.record(hadClientFileSystem: ClientTextFileSystem.current != nil)
+                return result
+            }
+            #expect(closed.response.text == "ran")
+            #expect(bodies.recorded == [true, false])
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// The notices the channel presents while `/telegram on` attaches it
+    /// follow the activation text in the reply: a topic the Bot API refuses
+    /// to create is reported there, as the terminal reports it after the
+    /// activation text, instead of being dropped. A later `/telegram on`
+    /// reports only what its own attach presents.
+    @Test
+    func telegramOnAppendsTheTopicFailureAfterTheActivationText() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let transport = ACPTelegramScriptedTransport(
+                botID: ACPTelegramTestSupport.uniqueBotID(),
+                hasTopicsEnabled: true,
+                createdTopicIDs: []
+            )
+            let sessionID = "acp-telegram-topic-failure-\(UUID().uuidString)"
+            let fixture = try await ACPTelegramBridgeFixture.make(
+                root: root, sessionIDs: [sessionID], transport: transport
+            )
+
+            let reply = await fixture.turnTelegramOn(sessionID: sessionID, id: 1)
+            let channel = try #require(await fixture.telegramChannel(sessionID: sessionID))
+            #expect(await channel.isActive)
+            #expect(await channel.drivesSlot)
+            #expect(await channel.sessionTopic == nil)
+            #expect(await channel.noticeSink == nil)
+            let lastError = try #require(await channel.controlState.lastError)
+            #expect(reply == "\(Self.activationReply)\nZenCODE: \(lastError)")
+            #expect(await fixture.backend.prompts.isEmpty)
+
+            let offStart = fixture.wire.count
+            await fixture.prompt("/telegram off", id: 2, sessionID: sessionID)
+            #expect(fixture.lastAgentText(from: offStart) == "Telegram remote control stopped.")
+            let again = try #require(await fixture.turnTelegramOn(sessionID: sessionID, id: 3))
+            #expect(again.components(separatedBy: "\n").filter { $0.hasPrefix("ZenCODE: ") }.count == 1)
+            #expect(!again.contains("Telegram remote control stopped."))
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// `/telegram on` is a prompt of its own, so no turn of the editor is
+    /// ever open when the slot changes hands: the slot's presenter has no
+    /// turn to move, and the reducer the handover creates starts from the
+    /// runner's history, the editor's turns included.
+    @Test
+    func noEditorTurnIsOpenWhenTheSlotIsHandedOver() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedFixture(root: root, editorPromptsFirst: true)
+            let state = try #require(await fixture.bridge.telegramTestSlotState(sessionID: sessionID))
+            #expect(!state.turnIsOpen)
+            #expect(state.movedTurn == nil)
+            #expect(state.transcript == ["user: Hello from the editor", "assistant: reply"])
+            // The chat received the editor's turns as context.
+            let context = try #require(await fixture.transport.sentTexts.first { $0.contains("messages of the session") })
+            #expect(context.contains("👤 Hello from the editor"))
+            #expect(context.contains("🤖 reply"))
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    // MARK: - Support
+
+    /// A bridge with one session, linked to the scripted Bot API by a
+    /// `/telegram on` prompt (request 2, after the editor's prompt request 1
+    /// when `editorPromptsFirst`; request 1 otherwise). With `clientFiles`
+    /// the client advertises a text file system, which the double serves;
+    /// `selectedAgent` is the session's agent.
+    private static func linkedFixture(
+        root: URL,
+        editorPromptsFirst: Bool = false,
+        selectedAgent: AgentProfile? = nil,
+        clientFiles: ACPTelegramClientFiles? = nil
+    ) async throws -> (fixture: ACPTelegramBridgeFixture, sessionID: String) {
+        let sessionID = "acp-telegram-channel-\(UUID().uuidString)"
+        let fixture = try await ACPTelegramBridgeFixture.make(
+            root: root,
+            sessionIDs: [sessionID],
+            selectedAgent: selectedAgent,
+            transport: ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+        )
+        if let clientFiles {
+            try await fixture.bridge.initialize(
+                id: .string("initialize"),
+                params: ["clientCapabilities": ["fs": ["readTextFile": true, "writeTextFile": true]]]
+            )
+            clientFiles.serve(wire: fixture.wire, writer: await fixture.bridge.writer)
+        }
+        var nextID = 1
+        if editorPromptsFirst {
+            await fixture.prompt("Hello from the editor", id: nextID, sessionID: sessionID)
+            #expect(fixture.wire.stopReason(id: nextID) == "end_turn")
+            nextID += 1
+        }
+        let reply = await fixture.turnTelegramOn(sessionID: sessionID, id: nextID)
+        #expect(reply == activationReply)
+        #expect(await ACPTelegramTestSupport.waitUntil { await fixture.transport.pollCount > 0 })
+        return (fixture, sessionID)
+    }
+}
+
+extension ZenCODEACPBridge {
+    /// The controller of the live incarnation of `sessionID`.
+    fileprivate func telegramTestController(sessionID: String) -> ChatSessionController? {
+        sessions[sessionID]?.controller
+    }
+
+    /// Whether a prompt is reserved on the live incarnation of `sessionID`.
+    fileprivate func telegramTestPromptIsReserved(sessionID: String) async -> Bool {
+        guard let session = sessions[sessionID] else { return false }
+        return await host.activePromptID(in: session.slotID, epoch: session.epoch) != nil
+    }
+
+    /// What the slot of `sessionID` knows of its turn in progress and of the
+    /// reducer the handover created: for the assertion that ACP never hands
+    /// a turn of the editor over.
+    fileprivate func telegramTestSlotState(
+        sessionID: String
+    ) async -> (turnIsOpen: Bool, movedTurn: ChatMovedTurn?, transcript: [String])? {
+        guard let session = sessions[sessionID] else { return nil }
+        return await host.telegramTestSlotState(in: session.slotID)
+    }
+}
+
+extension ChatSessionHost {
+    fileprivate func telegramTestSlotState(
+        in slotID: ChatSlotID
+    ) -> (turnIsOpen: Bool, movedTurn: ChatMovedTurn?, transcript: [String])? {
+        guard let slot = slots[slotID] else { return nil }
+        let transcript = slot.incarnation?.reducer?.snapshot.transcript.compactMap { entry -> String? in
+            switch entry.kind {
+            case let .userPrompt(text, _, _):
+                "user: \(text)"
+            case let .assistantText(text):
+                "assistant: \(text)"
+            default:
+                nil
+            }
+        } ?? []
+        return (slot.slotPresenter.isTurnOpen, slot.slotPresenter.movedTurn, transcript)
+    }
+}
+
+/// What the bodies handed to the slot's hooks saw around them, in order.
+private final class ACPTelegramBodyRecorder: Sendable {
+    private let storage = Mutex<[Bool]>([])
+
+    func record(hadClientFileSystem: Bool) {
+        storage.withLock { $0.append(hadClientFileSystem) }
+    }
+
+    var recorded: [Bool] {
+        storage.withLock { $0 }
+    }
+}

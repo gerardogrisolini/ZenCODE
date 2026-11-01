@@ -47,17 +47,16 @@ extension TerminalChat {
     ) async -> TerminalSubmittedLineAction {
         let prompt = promptInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else {
-            if origin == .local && !pendingAttachments.isEmpty {
+            if !pendingAttachments.isEmpty {
                 return .runPrompt("")
             }
             return .continueChat
         }
 
-        if origin != .local {
-            return await submittedTelegramLineAction(
-                prompt,
-                origin: origin
-            )
+        // While Telegram drives the slot the terminal runs only what takes
+        // it back (see `ChatSessionHost.admitLine`).
+        guard await admitTerminalLine(prompt) else {
+            return .continueChat
         }
 
         switch Self.parseSharedChatMention(
@@ -150,22 +149,10 @@ extension TerminalChat {
         isUserVisible: Bool = true,
         purpose: ChatTurnPurpose = .normal
     ) -> TerminalPromptAttempt {
-        // `/telegram on` mirrors terminal-originated turns through the currently
-        // validated route lease. Keep attachment ownership based on the original
-        // local origin: promoting the routing origin must not leave locally
-        // selected attachments pending for the following prompt.
-        let routedOrigin: TerminalPromptOrigin
-        if origin == .local,
-           telegramControlState.isActive,
-           let lease = telegramActiveRouteLease {
-            routedOrigin = .telegramLease(lease)
-        } else {
-            routedOrigin = origin
-        }
-        return TerminalPromptAttempt(
+        TerminalPromptAttempt(
             prompt: prompt,
-            attachments: origin == .local && isUserVisible ? consumePendingAttachmentsForPrompt() : [],
-            origin: routedOrigin,
+            attachments: isUserVisible ? consumePendingAttachmentsForPrompt() : [],
+            origin: origin,
             locksResponseLanguage: isUserVisible,
             purpose: purpose
         )

@@ -717,10 +717,10 @@ struct DS4CommandTests {
         }
 
         private static func output(of chat: TerminalChat, _ body: () async throws -> Void) async rethrows -> String {
-            chat.telegramImmediateCommandOutput = []
-            defer { chat.telegramImmediateCommandOutput = nil }
+            chat.capturedCommandOutputForTesting = []
+            defer { chat.capturedCommandOutputForTesting = nil }
             try await body()
-            return chat.telegramImmediateCommandOutput?.joined() ?? ""
+            return chat.capturedCommandOutputForTesting?.joined() ?? ""
         }
 
         private static func start(_ chat: TerminalChat) async throws {

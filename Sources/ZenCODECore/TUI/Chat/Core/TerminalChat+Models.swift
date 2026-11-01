@@ -113,37 +113,11 @@ struct TerminalChatGenerationRunError: Error, Sendable {
     let fileChangeSummary: TurnFileChangeSummary?
 }
 
+/// Where a prompt the terminal runs came from. The terminal runs only its
+/// own prompts: a prompt from Telegram runs through the session host, by the
+/// slot's Telegram channel, never through the terminal's loop.
 enum TerminalPromptOrigin: Sendable, Equatable {
     case local
-    case telegram(chatID: Int64)
-    case telegramRoute(TerminalTelegramRouteKey)
-    case telegramLease(TerminalTelegramRouteLease)
-
-    var telegramChatID: Int64? {
-        switch self {
-        case .local:
-            return nil
-        case let .telegram(chatID):
-            return chatID
-        case let .telegramRoute(route):
-            return route.chatID
-        case let .telegramLease(lease):
-            return lease.key.chatID
-        }
-    }
-
-    var telegramRoute: TerminalTelegramRouteKey? {
-        switch self {
-        case let .telegramRoute(route): return route
-        case let .telegramLease(lease): return lease.key
-        case .local, .telegram: return nil
-        }
-    }
-
-    var telegramLease: TerminalTelegramRouteLease? {
-        guard case let .telegramLease(lease) = self else { return nil }
-        return lease
-    }
 }
 
 struct TerminalVoicePromptResult: Sendable {
@@ -165,10 +139,6 @@ enum TerminalChatRuntimeEvent: Sendable {
     case input(TerminalPromptInputEvent)
     case generationCompleted(TerminalChatGenerationResult)
     case startNextQueuedPrompt
-    case telegramMessage(TerminalTelegramIncomingMessage)
-    case telegramRouteInvalidated(TerminalTelegramRouteLease)
-    /// Telegram polling entered or left a persistent failure.
-    case telegramPollHealthChanged(TerminalTelegramPollHealthNotice)
     case voicePromptCompleted(TerminalVoicePromptResult)
     /// A dictated utterance. The runtime loop decides whether it answers a
     /// spoken live-chat question, sends a "message to …" phrase, or becomes
@@ -214,9 +184,6 @@ enum TerminalChatRuntimeEvent: Sendable {
         case .input,
              .generationCompleted,
              .startNextQueuedPrompt,
-             .telegramMessage,
-             .telegramRouteInvalidated,
-             .telegramPollHealthChanged,
              .voicePromptCompleted,
              .voiceUtterance,
              .voiceSpeakingChanged,

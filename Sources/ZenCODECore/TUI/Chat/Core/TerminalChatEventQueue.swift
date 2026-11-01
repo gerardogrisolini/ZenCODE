@@ -75,8 +75,8 @@ final class TerminalChatEventQueue: Sendable {
     /// Preserves critical terminal work using producer-side backpressure.
     ///
     /// This method intentionally parks no continuations in the queue: the
-    /// bounded producers (panel reader, one Telegram forwarder, at most three
-    /// voice tasks, and one generation lifecycle task) wait in their own task.
+    /// bounded producers (panel reader, at most three voice tasks, and one
+    /// generation lifecycle task) wait in their own task.
     /// Therefore a flood cannot turn the waiter list itself into another
     /// unbounded queue. Cancellation and teardown explicitly return `false`.
     @discardableResult
@@ -275,9 +275,6 @@ private final class Storage: Sendable {
             case .input,
                  .generationCompleted,
                  .startNextQueuedPrompt,
-                 .telegramMessage,
-                 .telegramRouteInvalidated,
-                 .telegramPollHealthChanged,
                  .voicePromptCompleted,
                  .voiceUtterance,
                  .voiceSpeakingChanged,

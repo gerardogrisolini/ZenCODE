@@ -165,6 +165,36 @@ public protocol ChatSessionChannelHooks: AnyObject, Sendable {
     /// window on its status bar here. Not called when there was nothing to
     /// compact.
     func sessionDidCompact(contextWindow: DirectAgentContextWindowStatus) async
+
+    // MARK: Turns of other channels
+
+    /// The configuration of a turn of `purpose` that another channel of the
+    /// slot (its Telegram channel) runs on `controller`: the composition this
+    /// channel gives its own turns, so a turn from Telegram runs with the same
+    /// system prompt, response-language section, grant, and purpose tools as
+    /// one typed on the channel. The default is the controller's own
+    /// composition with ``responseLanguageSection()``
+    /// (``ChatSessionController/turnSessionConfiguration(for:responseLanguageSection:)``),
+    /// which is the terminal's; a channel that composes its turns otherwise
+    /// overrides it.
+    func turnSessionConfiguration(
+        for purpose: ChatTurnPurpose,
+        controller: ChatSessionController
+    ) async -> AgentCoreSessionConfiguration
+
+    /// Runs `body`, the turn that another channel of the slot (its Telegram
+    /// channel) starts on `controller`, in the environment this channel gives
+    /// its own turns: whatever a turn typed on the channel has around it
+    /// beyond its configuration (a text file system the host client serves,
+    /// the prompt-skill selection of the active agent). The channel sets that
+    /// environment up, runs `body` once inside it, and returns what `body`
+    /// returns or rethrows what it throws; it never skips `body` or runs it
+    /// more than once. The default runs `body` as it is, which is the
+    /// terminal's: its turns have no environment of their own.
+    func runTurnFromAnotherChannel(
+        controller: ChatSessionController,
+        _ body: () async throws -> ChatTurnResult
+    ) async throws -> ChatTurnResult
 }
 
 extension ChatSessionChannelHooks {
@@ -208,4 +238,21 @@ extension ChatSessionChannelHooks {
     public func sessionDidStartNew() async {}
 
     public func sessionDidCompact(contextWindow: DirectAgentContextWindowStatus) async {}
+
+    public func turnSessionConfiguration(
+        for purpose: ChatTurnPurpose,
+        controller: ChatSessionController
+    ) async -> AgentCoreSessionConfiguration {
+        await controller.turnSessionConfiguration(
+            for: purpose,
+            responseLanguageSection: responseLanguageSection()
+        )
+    }
+
+    public func runTurnFromAnotherChannel(
+        controller: ChatSessionController,
+        _ body: () async throws -> ChatTurnResult
+    ) async throws -> ChatTurnResult {
+        try await body()
+    }
 }

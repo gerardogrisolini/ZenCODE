@@ -1,5 +1,5 @@
 //
-//  TelegramSessionCompanion+SharedChatRelay.swift
+//  TelegramChannel+SharedChatRelay.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -8,16 +8,18 @@
 import Foundation
 import ToolCore
 
-/// The live shared-chat relay: operator-directed messages forwarded to the
-/// linked chat as cards, Telegram replies to a card delivered back to its
-/// sender, and live `@mention` messages sent from Telegram, published as the
-/// terminal's `TerminalChat+SharedChat.swift` publishes the operator's own.
-extension TelegramSessionCompanion {
+/// The live shared chat while Telegram drives the slot: the channel observes
+/// the session's room itself, forwards the operator-directed messages to the
+/// linked chat as cards, delivers Telegram replies to a card back to their
+/// sender, publishes live `@mention` messages sent from Telegram as the
+/// terminal publishes the operator's own, and runs the coordinator turns the
+/// room asks for (the Core's auto-triggers) as hidden turns of the channel.
+extension TelegramChannel {
     // MARK: - Relay
 
     /// Forwards operator-directed shared-chat messages to the linked chat
     /// and resolves Telegram replies back to their sender. Created on first
-    /// use and owned for the companion's whole lifetime, so its ledger
+    /// use and owned for the channel's whole lifetime, so its ledger
     /// survives ``detach()`` → ``attach()``.
     var sharedChatRelay: TerminalTelegramSharedChatRelay {
         if let relay = sharedChatRelayStorage {
@@ -34,6 +36,102 @@ extension TelegramSessionCompanion {
         )
         sharedChatRelayStorage = relay
         return relay
+    }
+
+    // MARK: - Observation
+
+    /// Observes the session's shared-chat room while the channel drives the
+    /// slot: the room's messages reach the relay, and its auto-triggers run
+    /// as hidden turns of the channel when the session is free. The
+    /// observation follows the slot's incarnation: a new session rebinds it
+    /// to the new room (see ``rebindSharedChatObservationIfNeeded()``).
+    /// Starting it again while it runs does nothing.
+    func startSharedChatObservation() {
+        guard sharedChatObservationTask == nil else { return }
+        let roomID = sessionID
+        observedSharedChatRoomID = roomID
+        sharedChatObservationTask = Task(name: "ZenCODE.Telegram.shared-chat-events") { [weak self] in
+            guard let self else { return }
+            let observation = await sessionRunner.attachSharedChatObservation(rootSessionID: roomID)
+            self.sharedChatObservation = observation
+            for await event in observation.events {
+                guard !Task.isCancelled else { break }
+                await self.handleSharedChatEvent(event, roomID: roomID, observation: observation)
+            }
+            await sessionRunner.detachSharedChatObservation(observation)
+            if self.sharedChatObservation?.id == observation.id {
+                self.sharedChatObservation = nil
+            }
+        }
+    }
+
+    /// Ends the observation of the room, releasing the observer's claim.
+    func stopSharedChatObservation() async {
+        guard let task = sharedChatObservationTask else { return }
+        sharedChatObservationTask = nil
+        task.cancel()
+        await task.value
+        if let observation = sharedChatObservation {
+            sharedChatObservation = nil
+            await sessionRunner.detachSharedChatObservation(observation)
+        }
+        observedSharedChatRoomID = nil
+    }
+
+    /// Moves the observation to the room of the session the slot runs now,
+    /// when it changed (`/sessions new`, `/sessions load`), and rebinds the
+    /// relay to it. Nothing happens while the channel does not drive the
+    /// slot.
+    func rebindSharedChatObservationIfNeeded() async {
+        guard drivesSlot, sharedChatObservationTask != nil else { return }
+        let roomID = sessionID
+        guard observedSharedChatRoomID != roomID else { return }
+        await stopSharedChatObservation()
+        await rebindSharedChatRelay(roomID: roomID)
+        startSharedChatObservation()
+    }
+
+    private func handleSharedChatEvent(
+        _ event: AgentSharedChatCoordinatorEvent,
+        roomID: String,
+        observation: AgentSharedChatCoordinator.Observation
+    ) async {
+        switch event {
+        case let .messages(messages):
+            await forwardSharedChatMessages(messages, roomID: roomID)
+        case .participantsChanged:
+            break
+        case let .autoTrigger(trigger):
+            guard trigger.roomID == roomID, roomID == sessionID, drivesSlot else {
+                await sessionRunner.declineSharedChatAutoTrigger(
+                    id: trigger.id, rootSessionID: trigger.roomID
+                )
+                return
+            }
+            guard !isSessionGenerating, activeTurnTask == nil, promptQueue.isEmpty else {
+                // Busy: the Core requeues the batch and offers it again once
+                // the room is idle.
+                await sessionRunner.setSharedChatConsumerBusy(true, observation: observation)
+                await sessionRunner.declineSharedChatAutoTrigger(
+                    id: trigger.id, rootSessionID: trigger.roomID
+                )
+                return
+            }
+            let claim = await sessionRunner.resolveSharedChatAutoTrigger(
+                id: trigger.id, observation: observation, resolution: .started
+            )
+            guard claim == .acquired else { return }
+            let lease = takeSharedChatLease(for: trigger.messages) ?? activeRouteLease
+            guard let lease else { return }
+            activeTurnTask = Task(name: "ZenCODE.Telegram.shared-chat-turn") { [weak self] in
+                guard let self else { return }
+                await sessionRunner.setSharedChatConsumerBusy(true, observation: observation)
+                await self.runTurn(prompt: trigger.prompt, lease: lease, isUserVisible: false)
+                await sessionRunner.setSharedChatConsumerBusy(false, observation: observation)
+                self.activeTurnTask = nil
+                self.startNextQueuedPromptIfNeeded()
+            }
+        }
     }
 
     // MARK: - Live-message relay
@@ -57,7 +155,7 @@ extension TelegramSessionCompanion {
         switch SharedChatMentionParser.parse(
             from: text,
             readableHandles: await sessionRunner.sharedChatMentionHandles(
-                rootSessionID: controller.sessionID
+                rootSessionID: sessionID
             )
         ) {
         case .route, .missingText:
@@ -67,13 +165,8 @@ extension TelegramSessionCompanion {
         }
     }
 
-    /// Offers one shared-chat observer batch to the Telegram relay.
-    ///
-    /// The primary channel's single observation of the room stays the only
-    /// subscriber and calls this with each batch; the relay owns its own
-    /// delivery ledger, so a reader buffer of the channel (which may be rebuilt
-    /// on a forced reattach) can never be mistaken for an "already sent"
-    /// record.
+    /// Offers one shared-chat observer batch to the Telegram relay, which
+    /// owns its own delivery ledger.
     func forwardSharedChatMessages(
         _ messages: [AgentSharedChat.Message],
         roomID: String
@@ -90,10 +183,10 @@ extension TelegramSessionCompanion {
         )
     }
 
-    /// Follows a room swap (`/new`, `/resume`, observation restart). A new room
-    /// invalidates the ledger and the receipt map: identifiers of a retired room
-    /// must never route a reply into the live one. Cards invite a reply only
-    /// while ``readsIngress`` is `true`.
+    /// Follows a room swap (`/sessions new`, `/sessions load`). A new room
+    /// invalidates the ledger and the receipt map: identifiers of a retired
+    /// room must never route a reply into the live one. Cards invite a reply
+    /// only while ``readsIngress`` is `true`.
     func rebindSharedChatRelay(roomID: String) async {
         guard controlState.isActive,
               let lease = activeRouteLease,
@@ -157,8 +250,8 @@ extension TelegramSessionCompanion {
     /// route and the voice-note guard must agree, otherwise a message could be
     /// refused as a reply on one path and treated as an ordinary prompt on the
     /// other. A card whose sender has no live destination — the operator's own
-    /// mirrored traffic — is deliberately not one, so answering it by voice or by
-    /// text simply prompts the session as usual.
+    /// traffic — is deliberately not one, so answering it by voice or by text
+    /// simply prompts the session as usual.
     func directReplyTarget(
         for message: TerminalTelegramIncomingMessage
     ) async -> TerminalTelegramSharedChatReplyTarget? {
@@ -170,7 +263,7 @@ extension TelegramSessionCompanion {
                   chatID: message.chatID,
                   lease: lease
               ),
-              target.roomID == controller.sessionID,
+              target.roomID == sessionID,
               target.replyDestination != nil else {
             return nil
         }
@@ -184,13 +277,11 @@ extension TelegramSessionCompanion {
     /// stable sender id it recorded, never from the quoted text: Telegram echoes
     /// user-controlled content in `reply_to_message`, which must not be able to
     /// address an arbitrary participant. When the quoted card is unknown the
-    /// message falls through to the ordinary prompt path. A delivered reply
-    /// changes the shared chat, so the primary channel is told with
-    /// ``TelegramCompanionChannel/sharedChatPanelDidChange()``.
+    /// message falls through to the ordinary prompt path.
     func handleSharedChatReplyIfNeeded(
         _ text: String,
         message: TerminalTelegramIncomingMessage,
-        origin: TelegramTurnOrigin
+        lease: TerminalTelegramRouteLease
     ) async -> Bool {
         guard let target = await directReplyTarget(for: message),
               let destination = target.replyDestination else {
@@ -204,7 +295,7 @@ extension TelegramSessionCompanion {
             await sendSystemMessage(
                 "ZenCODE message: that agent is no longer active, so the reply was not delivered.",
                 to: message.chatID,
-                origin: origin
+                lease: lease
             )
             return true
         }
@@ -215,7 +306,6 @@ extension TelegramSessionCompanion {
                 destination: destination,
                 rootSessionID: target.roomID
             )
-            await channel?.sharedChatPanelDidChange()
         } catch {
             let safeError = SharedChatMentionParser.inlineTerminalSafeText(
                 TerminalTelegramControlError.operatorDescription(error)
@@ -223,17 +313,17 @@ extension TelegramSessionCompanion {
             await sendSystemMessage(
                 "ZenCODE message: \(safeError)",
                 to: message.chatID,
-                origin: origin
+                lease: lease
             )
         }
         return true
     }
 
     /// The shared-chat actor accepts legacy display names as direct
-    /// identifiers. The companion must not use that ambiguous fallback:
-    /// confirm that a direct destination names one current active agent by
-    /// ID, in the session's mention roster, before delivery. Any other
-    /// destination is current.
+    /// identifiers. The channel must not use that ambiguous fallback: confirm
+    /// that a direct destination names one current active agent by ID, in
+    /// the session's mention roster, before delivery. Any other destination
+    /// is current.
     func isCurrentSharedChatDirectDestination(
         _ destination: AgentSharedChat.Destination
     ) async -> Bool {
@@ -243,7 +333,7 @@ extension TelegramSessionCompanion {
             return true
         }
         let roster = await sessionRunner.sharedChatMentionRoster(
-            rootSessionID: controller.sessionID
+            rootSessionID: sessionID
         )
         return roster.participants.contains {
             $0.kind == .agent && $0.isActive && $0.id == identifier
@@ -252,33 +342,32 @@ extension TelegramSessionCompanion {
 
     // MARK: - Live mentions
 
-    /// Publishes a live `@mention` sent from Telegram on `origin`'s route, as
-    /// the terminal's `sendSharedChatMention(_:)` publishes the operator's.
+    /// Publishes a live `@mention` sent from Telegram on `lease`, as the
+    /// terminal's `sendSharedChatMention(_:)` publishes the operator's.
     /// Returns `true` when the room accepted the message (or the
     /// ``TelegramWorkEffectForTesting/sharedChatPublication`` seam consumed
     /// it), `false` for a direct recipient that is no longer active or a
     /// failed publication.
     ///
-    /// The origin is recorded before the message crosses to the runtime, so
+    /// The route is recorded before the message crosses to the runtime, so
     /// the coordinator turn the message triggers answers on the same route
-    /// (see ``takeSharedChatOrigin(for:)``). Every outcome but a failed
-    /// publication tells the primary channel that the shared chat changed
-    /// (``TelegramCompanionChannel/sharedChatPanelDidChange()``). A recipient
-    /// that is gone is reported on the primary channel only, like the
-    /// terminal; a failed publication is reported there and in the chat,
-    /// through the route that admitted the mention.
+    /// (see ``takeSharedChatLease(for:)``). A recipient that is gone and a
+    /// failed publication are reported in the chat, through the route that
+    /// admitted the mention, and on the primary channel.
     @discardableResult
     func sendSharedChatMention(
         _ route: SharedChatMentionParser.Route,
-        origin: TelegramTurnOrigin
+        lease: TerminalTelegramRouteLease
     ) async -> Bool {
         if onTelegramWorkEffectForTesting?(.sharedChatPublication) == true { return true }
         guard await isCurrentSharedChatDirectDestination(route.destination) else {
-            await channel?.presentCompanionNotice(
+            await presentNotice(
                 "ZenCODE message: selected agent is no longer active.\n",
                 channel: .failure
             )
-            await channel?.sharedChatPanelDidChange()
+            await sendSystemMessageIfLinked(
+                "ZenCODE message: selected agent is no longer active.", lease: lease
+            )
             return false
         }
 
@@ -286,26 +375,25 @@ extension TelegramSessionCompanion {
         // Record before crossing an actor boundary. The backend publishes and
         // wakes the coordinator while this actor is suspended, so recording
         // only after `sendSharedChatMessage` returns races the auto-trigger.
-        recordSharedChatMessageOrigin(messageID, origin: origin)
+        recordSharedChatMessageLease(messageID, lease: lease)
         do {
             let delivery = try await sessionRunner.sendSharedChatMessage(
                 text: route.text,
                 destination: route.destination,
-                rootSessionID: controller.sessionID,
+                rootSessionID: sessionID,
                 messageID: messageID
             )
             assert(delivery.message.id == messageID)
-            await channel?.sharedChatPanelDidChange()
             return true
         } catch {
-            discardSharedChatMessageOrigin(messageID)
+            discardSharedChatMessageLease(messageID)
             let safeError = SharedChatMentionParser.inlineTerminalSafeText(error.localizedDescription)
             let failureMessage = "ZenCODE message: \(safeError)"
-            await channel?.presentCompanionNotice(failureMessage + "\n", channel: .failure)
+            await presentNotice(failureMessage + "\n", channel: .failure)
             // The same generation-fenced route that admitted the mention: a
             // revoked or stale lease sends nothing, and transport details are
             // never reflected to another chat.
-            await sendSystemMessageIfLinked(failureMessage, origin: origin)
+            await sendSystemMessageIfLinked(failureMessage, lease: lease)
             return false
         }
     }
@@ -314,37 +402,37 @@ extension TelegramSessionCompanion {
     /// coordinator turn that will consume it. The shared-chat bus carries no
     /// transport metadata, so this short-lived association keeps the
     /// Telegram route of the answer. Bounded like the retained transcript.
-    func recordSharedChatMessageOrigin(_ messageID: UUID, origin: TelegramTurnOrigin) {
-        if sharedChatMessageOrigins[messageID] == nil {
-            sharedChatMessageOriginOrder.append(messageID)
+    func recordSharedChatMessageLease(_ messageID: UUID, lease: TerminalTelegramRouteLease) {
+        if sharedChatMessageLeases[messageID] == nil {
+            sharedChatMessageLeaseOrder.append(messageID)
         }
-        sharedChatMessageOrigins[messageID] = origin
-        let maximumOrigins = AgentSharedChat.maximumRetainedMessagesPerRoom
-        while sharedChatMessageOriginOrder.count > maximumOrigins {
-            let oldestMessageID = sharedChatMessageOriginOrder.removeFirst()
-            sharedChatMessageOrigins.removeValue(forKey: oldestMessageID)
+        sharedChatMessageLeases[messageID] = lease
+        let maximumLeases = AgentSharedChat.maximumRetainedMessagesPerRoom
+        while sharedChatMessageLeaseOrder.count > maximumLeases {
+            let oldestMessageID = sharedChatMessageLeaseOrder.removeFirst()
+            sharedChatMessageLeases.removeValue(forKey: oldestMessageID)
         }
     }
 
-    /// Forgets the origin of a message that was never published.
-    func discardSharedChatMessageOrigin(_ messageID: UUID) {
-        sharedChatMessageOrigins.removeValue(forKey: messageID)
-        sharedChatMessageOriginOrder.removeAll { $0 == messageID }
+    /// Forgets the route of a message that was never published.
+    func discardSharedChatMessageLease(_ messageID: UUID) {
+        sharedChatMessageLeases.removeValue(forKey: messageID)
+        sharedChatMessageLeaseOrder.removeAll { $0 == messageID }
     }
 
-    /// The Telegram origin of a shared-chat trigger: the origin of the first
+    /// The Telegram route of a shared-chat trigger: the route of the first
     /// message of `messages` sent from Telegram, or `nil`. Every message's
-    /// association is consumed, so a replay cannot mirror an unrelated later
+    /// association is consumed, so a replay cannot route an unrelated later
     /// coordinator response.
-    func takeSharedChatOrigin(for messages: [AgentSharedChat.Message]) -> TelegramTurnOrigin? {
-        var origin: TelegramTurnOrigin?
+    func takeSharedChatLease(for messages: [AgentSharedChat.Message]) -> TerminalTelegramRouteLease? {
+        var lease: TerminalTelegramRouteLease?
         for message in messages {
-            if origin == nil {
-                origin = sharedChatMessageOrigins[message.id]
+            if lease == nil {
+                lease = sharedChatMessageLeases[message.id]
             }
-            sharedChatMessageOrigins.removeValue(forKey: message.id)
-            sharedChatMessageOriginOrder.removeAll { $0 == message.id }
+            sharedChatMessageLeases.removeValue(forKey: message.id)
+            sharedChatMessageLeaseOrder.removeAll { $0 == message.id }
         }
-        return origin
+        return lease
     }
 }

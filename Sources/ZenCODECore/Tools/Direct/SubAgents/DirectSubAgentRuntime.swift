@@ -128,7 +128,7 @@ public actor DirectSubAgentRuntime {
         /// Typed provenance of `currentActivity`; nil when there is no activity.
         public var currentActivityKind: ActivityKind? = nil
         /// Monotonic identity of assistant content promoted into
-        /// `currentActivity` at a tool boundary. It lets presentation mirrors
+        /// `currentActivity` at a tool boundary. It lets the presenters
         /// publish every visible 💬 block exactly once across overview refreshes.
         public var currentActivityRevision: UInt64 = 0
         /// The incomplete thinking paragraph currently being streamed, kept in

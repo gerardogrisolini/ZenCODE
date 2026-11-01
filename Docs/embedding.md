@@ -47,8 +47,9 @@ Compose a session in this order.
    runner from `ChatSessionRuntimeFactory.makeSessionRunner(...)`, the
    low-level construction point of the runtime), or let it build the runner
    (`ChatSessionHost(configuration:toolAuthorizationHandler:...)`). One host
-   per process: it owns the runner, the Telegram router and poller every
-   companion shares, the sleep assertion, and the epochs of every session.
+   per process: it owns the runner, the Telegram router and poller the
+   Telegram channel of every slot shares, the sleep assertion, and the epochs
+   of every session.
 5. Open a *slot* for each place the app runs sessions in (a window) with a
    `ChatSlotDescriptor`: the host, the consent authorizer, the presenter, the
    hooks, and the commands of the window, which the slot keeps across its
@@ -144,18 +145,18 @@ slot and the runner.
 `ChatSessionActor` global actor. Their initializers are `nonisolated`, so the
 app creates them from any context. From the main actor or a nonisolated
 context, every other call to the host or the controller takes `await`. The
-companion and the protocols `ChatSessionChannelHooks` and
-`TelegramCompanionChannel` are isolated to `ChatSessionActor` too. Open the
-slots and create the companion inside a `@ChatSessionActor` context.
+`TelegramChannel` and the protocol `ChatSessionChannelHooks` are isolated to
+`ChatSessionActor` too. Open the slots inside a `@ChatSessionActor` context.
 
 `ChatSessionPresenter` and `ChatInteractionHost` are `Sendable` protocols with
 `async` requirements, so their implementations can live on the main actor.
 
-Every session and every companion presenter of the app share the single
-`ChatSessionActor` executor, and the controller's `ChatFanOutPresenter`
-awaits each companion before the primary presenter. A presenter that blocks
-therefore delays every session: return quickly from each call, for example by
-enqueuing the output and rendering it elsewhere.
+Every session and every observer of the app share the single
+`ChatSessionActor` executor, and the controller awaits each observer
+(`ChatSessionObserver`, see [Observing a Session](#observing-a-session))
+before the presenter of the channel that drives the slot. A presenter that
+blocks therefore delays every session: return quickly from each call, for
+example by enqueuing the output and rendering it elsewhere.
 
 ### Presenter
 
@@ -227,10 +228,11 @@ passes as `responseLanguageSection` to a turn.
 
 ### Session
 
-The session object of the app owns the hooks and the companion, and follows
-its slot in the host: `controller` is the controller of the slot's current
-incarnation. It is isolated to `ChatSessionActor`, so it reaches the host and
-the controller without hopping.
+The session object of the app owns the hooks and follows its slot in the
+host: `controller` is the controller of the slot's current incarnation. It is
+isolated to `ChatSessionActor`, so it reaches the host and the controller
+without hopping. The slot's Telegram channel belongs to the host (see
+[Telegram Channel](#telegram-channel)); the app never owns it.
 
 ```swift
 @ChatSessionActor
@@ -243,7 +245,6 @@ final class AppSession {
     private(set) var epoch: UInt64
     private let presenter: AppPresenter
     private let hooks: AppChannelHooks
-    var companion: TelegramSessionCompanion?
     private var incarnationObservation: Task<Void, Never>?
 
     init(
@@ -278,19 +279,19 @@ final class AppSession {
     }
 
     /// After a new or loaded session: observe its task graph, and move the
-    /// Telegram topic to it.
+    /// Telegram topic to it (nothing happens without a topic).
     func sessionDidChange() async {
         await controller.startTaskGraphObserver()
-        await companion?.rebind(
+        await sessionHost.telegramChannel(in: slotID)?.rebind(
             sessionID: controller.sessionID,
             displayName: controller.savedSessionState.savedSessionName ?? controller.sessionID
         )
     }
 
+    /// Closing the slot shuts its Telegram channel down with it.
     func close() async {
         incarnationObservation?.cancel()
         await controller.stopTaskGraphObserver()
-        await companion?.shutdown()
         await sessionHost.closeSlot(slotID)
     }
 }
@@ -307,17 +308,23 @@ slot and the runner.
 
 A line goes through the controller in this order:
 
-1. `handleCommandLine(_:context:)` for a slash command;
-2. `pendingReplyAction(for:)` for any other line, so a reply the session is
+1. `admitLine(_:in:)` on the host, which tells whether the app may run the
+   line now: while Telegram drives the slot the app is dormant and runs only
+   `/telegram`, `/telegram status`, `/telegram off`, and `/exit`
+   (`ChatSlotAdmission.admitted`); every other line gets
+   `.refused(ChatSlotAdmission.dormantRefusalText)`, which the app shows
+   instead of running it;
+2. `handleCommandLine(_:context:)` for a slash command;
+3. `pendingReplyAction(for:)` for any other line, so a reply the session is
    waiting for (the goal of `/plan approve`, a Planner question, a `/goal`
    workflow) is not sent as a new prompt; `nil` means the line is a prompt;
-3. `reservePrompt(in:)` on the host, which reserves the right to run one
+4. `reservePrompt(in:)` on the host, which reserves the right to run one
    prompt on the slot's current incarnation in the same step as it checks
    that none runs (`ChatSessionHostError.sessionBusy` otherwise);
-4. `turnSessionConfiguration(for:responseLanguageSection:)`, the
+5. `turnSessionConfiguration(for:responseLanguageSection:)`, the
    configuration of one turn with its purpose, composed as the terminal
    composes it;
-5. `runTurn(_:)` with a `ChatTurnRequest`, then `releasePrompt(_:)`.
+6. `runTurn(_:)` with a `ChatTurnRequest`, then `releasePrompt(_:)`.
 
 ```swift
 extension AppSession {
@@ -326,6 +333,10 @@ extension AppSession {
         var purpose = ChatTurnPurpose.normal
         var typedByOperator = true
 
+        if case let .refused(text) = sessionHost.admitLine(line, in: slotID) {
+            presenter.show(text)
+            return
+        }
         let outcome: ChatCommandOutcome?
         if line.trimmingCharacters(in: .whitespaces).hasPrefix("/") {
             outcome = await controller.handleCommandLine(line, context: [])
@@ -356,26 +367,14 @@ extension AppSession {
             for: purpose,
             responseLanguageSection: nil
         )
-        await companion?.beginTurn(origin: .primary)
-        do {
-            let result = try await controller.runTurn(ChatTurnRequest(
-                prompt: prompt,
-                attachments: typedByOperator ? controller.consumePendingAttachments() : [],
-                purpose: purpose,
-                sessionConfiguration: configuration,
-                origin: .app
-            ))
-            await companion?.finishTurn(
-                outcome: .completed(result.response.text),
-                fileChangeSummary: result.fileChangeSummary
-            )
-        } catch let failure as ChatTurnFailure {
-            let outcome: TelegramSessionCompanion.Outcome = failure.isCancellation
-                ? .cancelled
-                : .failed(failure.underlying.localizedDescription)
-            await companion?.finishTurn(outcome: outcome, fileChangeSummary: failure.fileChangeSummary)
-            throw failure
-        }
+        let result = try await controller.runTurn(ChatTurnRequest(
+            prompt: prompt,
+            attachments: typedByOperator ? controller.consumePendingAttachments() : [],
+            purpose: purpose,
+            sessionConfiguration: configuration,
+            origin: .app
+        ))
+        presenter.showEnding(of: result)
     }
 
     /// Stops the prompt that runs: the controller's turn is fenced and the
@@ -532,10 +531,12 @@ also be composed by hand, below the host:
 `ChatSessionStateReducer(sessionID:workingDirectory:defaultOrigin:)`,
 `ChatPendingRequestHost(reducer:capabilities:gatesWorkspaceAccess:)`, and the
 controller initializer with the reducer as presenter, or
-`controller.attachCompanionPresenter(reducer)` next to a presenter of the
-app's own (the convenience `ChatSessionStateReducer(controller:defaultOrigin:)`
-reads the session, the working directory, and the selection from the
-controller).
+`controller.addObserver(reducer)` next to a presenter of the app's own: the
+reducer is a `ChatSessionObserver`, a presenter that sees every event of the
+controller before the channel's presenter, whatever channel drives the slot,
+and `removeObserver(_:)` detaches it (the convenience
+`ChatSessionStateReducer(controller:defaultOrigin:)` reads the session, the
+working directory, and the selection from the controller).
 
 The reducer and the host are isolated to `ChatSessionActor`. Each call of
 `snapshots()` returns a new stream that starts with the current snapshot and
@@ -605,106 +606,85 @@ Notes:
 - Switch over `ChatTurnEntry.Kind` and `ChatPendingRequest.Kind` with a
   `default` case, as over every public Chat enum.
 
-## Telegram Companion
+## Telegram Channel
 
-A `TelegramSessionCompanion` mirrors the session to the Telegram chat that
-setup linked; `TelegramCompanionRuntimeFactory.makeRouter()` reads that link
-from `settings.json` in the support directory. Create the companion on
-`ChatSessionActor`, with the router and the control service of
-`TelegramCompanionRuntimeFactory`:
+Telegram is a channel of the slot, not a mirror of it: `/telegram on` hands
+the slot to the Telegram chat that setup linked, which drives the session from
+then on, and `/telegram off` takes it back. The host owns the slot's
+`TelegramChannel`, created on the first activation on the router and poller
+every slot shares and kept, attached or not, for the life of the slot; the app
+never builds it.
 
 ```swift
 extension AppSession {
-    func makeCompanion(channel: AppTelegramChannel) -> TelegramSessionCompanion {
-        let companion = TelegramSessionCompanion(
-            controller: controller,
-            sessionRunner: sessionHost.runner,
-            router: TelegramCompanionRuntimeFactory.makeRouter(),
-            controlService: TelegramCompanionRuntimeFactory.makeControlService(),
-            channel: channel,
-            configuration: TelegramSessionCompanion.Configuration(
-                primaryChannelDescription: channel.primaryChannelDescription,
-                policy: .mirrorOnly,
-                consentLocationDescription: "the app"
-            )
-        )
-        channel.companion = companion
-        self.companion = companion
-        return companion
+    /// `/telegram on`: hands the slot to the linked chat. Throws a
+    /// `TelegramChannelAttachError` with a `failureText` when the session
+    /// cannot be linked, leaving the app in charge.
+    func startTelegram() async throws {
+        try await sessionHost.activateTelegram(in: slotID, primaryChannelDescription: "app")
+        presenter.show("Session driven from Telegram.")
+    }
+
+    /// `/telegram off`: takes the slot back and shows what the app missed.
+    func stopTelegram() async {
+        guard let catchUp = await sessionHost.deactivateTelegram(in: slotID) else { return }
+        presenter.showCatchUp(catchUp)
+    }
+
+    var isDrivenFromTelegram: Bool {
+        sessionHost.activeChannel(in: slotID) == .telegram
     }
 }
 ```
 
-The companion holds the channel weakly, so the app keeps it. A process that
-runs several sessions builds one router and shares it among their companions,
-as the ACP bridge does. A companion follows the controller it was created
-with: when the slot runs a new incarnation (`/sessions new`, a loaded
-session), end it with `shutdown()` and create one for the new controller.
+What happens at the handover:
 
-```swift
-@ChatSessionActor
-final class AppTelegramChannel: TelegramCompanionChannel {
-    let primaryChannelDescription = "app"
-    weak var companion: TelegramSessionCompanion?
-    private(set) var notices: [String] = []
-
-    func commandContext() -> ChatCommandContext {
-        []
-    }
-
-    func presentCompanionNotice(_ text: String, channel: ChatSessionNoticeChannel) async {
-        notices.append(text)
-    }
-
-    func enqueueTelegramPrompt(
-        _ text: String,
-        lease: TerminalTelegramRouteLease,
-        mode: ChatQueuedPromptMode
-    ) async -> TelegramPromptAdmission {
-        .refused
-    }
-
-    func telegramRouteWasInvalidated(_ lease: TerminalTelegramRouteLease) async {
-        guard let companion, companion.activeTurnOrigin?.lease == lease else { return }
-        await companion.routeWasInvalidated(lease)
-        await companion.detach()
-    }
-}
-```
-
-`overviewMirrorBarrier()`, `sharedChatPanelDidChange()`, and
-`isSessionGenerating()` have defaults.
-
-Lifecycle:
-
-- The companion registers its presenter in the controller when it is created,
-  and stays detached until `attach()`.
-- To link the session, call `try await companion.attach()`, which throws a
-  `TelegramCompanionAttachError` with a `failureText`, then
-  `companion.startConsuming()`, because the app has no loop of its own that
-  reads Telegram. `detach()` unlinks it, and `shutdown()` ends it with the
-  session. `isActive` and `statusText()` report the link.
-- Mark every turn with `beginTurn(origin: .primary)` and
-  `finishTurn(outcome:fileChangeSummary:)`, as in [Running a Line](#running-a-line).
-- After a new or loaded session, call `rebind(sessionID:displayName:)` with
-  the name of the session's topic, for example the saved session's name.
-
-Policy:
-
-- With `.mirrorOnly` the linked chat mirrors the session and can consult it
-  (`/status`, `/changes`, `/diff`, `/chat`), but it cannot drive it: the
-  companion refuses prompts, voice notes, `/plan`, `/goal`, `/review`,
-  replies to pending questions, and `/undo` with `mirrorOnlyRefusalText`. It
-  never hands a prompt to the channel. Use it when the app does not run
-  prompts from Telegram.
-- With `.full` the companion hands prompts to
-  `enqueueTelegramPrompt(_:lease:mode:)`, and the app manages the prompt
-  queue itself: it queues the prompt, for example in a `ChatPromptQueue`,
-  answers `.queued` or `.queueFull`, and runs it as a turn with
-  `beginTurn(origin: .telegram(lease))`. A `.submittedLine` is classified
-  again (command, reply, or prompt) when it leaves the queue. When the route
-  of the turn in progress is invalidated, the channel stops that turn before
-  it calls `routeWasInvalidated(_:)`.
+- `activateTelegram(in:primaryChannelDescription:)` attaches the channel (a
+  repeated call restarts the link), names the app in the texts sent to the
+  chat, sends the chat the last `TelegramChannel.handoverContextEntryCount`
+  (6) prompts and responses of the session as context, switches the slot's
+  presenter and interaction host to the channel, and starts reading the
+  chat. From then on the chat runs prompts, voice notes, `/plan`, `/goal`,
+  `/review`, and replies to pending questions, with the composition the
+  slot's hooks give (`ChatSessionChannelHooks.turnSessionConfiguration(for:controller:)`,
+  by default the controller's own) and inside the environment they give the
+  turn (`ChatSessionChannelHooks.runTurnFromAnotherChannel(controller:_:)`,
+  by default none: the turn runs as it is), answers `/start`, `/help`, `/status`,
+  `/changes`, `/diff`, and `/chat`, and decides the gated tools with
+  `/allow`, `/always`, and `/deny`; `/undo` is refused and names the app. A
+  question the session had open on the app (a tool consent, a line of text,
+  an attachment) is withdrawn there and asked again in the chat, and the
+  other way round at `/telegram off`. A turn in progress moves with the slot:
+  the chat receives the block already streaming as context and the rest of
+  the turn, and its ending is presented by whoever drives the slot when it
+  ends; a turn still running from Telegram at `/telegram off` goes on
+  presented to the app.
+- While Telegram drives the slot the app is dormant: `admitLine(_:in:)`
+  admits only `/telegram`, `/telegram status`, `/telegram off`, and `/exit`
+  (see [Running a Line](#running-a-line)), and a `reservePrompt(in:)` of the
+  app meets `.sessionBusy` while a turn from Telegram runs.
+- `deactivateTelegram(in:)` returns the catch-up, a `ChatTelegramCatchUp`:
+  the `entries` of the session's log with a sequence greater than the last
+  one the app saw (`ChatTurnEntry`, oldest first; render them as a restored
+  transcript, `ChatTurnEntry.transcriptMessages(from:)` turns them into
+  runtime messages), the `liveAssistantText` of a response still streaming,
+  `incarnationChanged` when `/sessions new` or a load ran from the chat (the
+  entries are then the whole log of the new session), and
+  `omittedOlderEntries` when the log's bound dropped entries. It is `nil`
+  when Telegram did not drive the slot; the link, if any, is stopped all
+  the same. A slot that publishes no state gets a reducer for the handover,
+  detached once the catch-up is read; the log is transient either way.
+- The texts the channel has for the app (the activation text, a poll-health
+  notice, a failure) arrive through `telegramChannel(in:)?.noticeSink`, with
+  their `ChatSessionNoticeChannel`; without a sink they are dropped. Install
+  it before the first activation to receive the activation text.
+- `telegramStatusText(in:)` is the `/telegram` status; `isActive`,
+  `linkedChatTitle`, and `sessionTopic` of the channel report the link.
+- The link belongs to the slot: a new or loaded session keeps the channel and
+  the handover, and `rebind(sessionID:displayName:)` moves the session's
+  topic to it. `closeSlot(_:)` and `shutdown()` shut the channel down.
+- An *Always* given in the chat is recorded in the slot's consent authorizer
+  and covers the session on every channel afterwards.
 
 ## Sandbox Contract
 

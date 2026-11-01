@@ -120,8 +120,8 @@ sessions of one process. A `ChatSessionHost` owns what every session shares:
 the `AgentCoreSessionRunner`, the Telegram route authority
 (`TerminalTelegramSessionRouter`) and Bot API poller
 (`TerminalTelegramBotDispatcher`), one of each per host, created on first use
-and handed to every companion, the sleep assertion held while any slot runs a
-session, and the epoch counter. A channel opens a *slot* with a
+and handed to the Telegram channel of every slot, the sleep assertion held
+while any slot runs a session, and the epoch counter. A channel opens a *slot* with a
 `ChatSlotDescriptor`: its identity (`ChatSlotIdentity`: `.terminal`, an
 `.acpSession`, a `.window` of a host app), the working directory, and the
 channel's bindings, which the slot keeps across its sessions and applies to
@@ -217,50 +217,84 @@ busy wait in `ChatPromptQueue<Origin>` (`Chat/Queue`), a FIFO of
 `ChatQueuedPrompt<Origin>` bounded at 32 prompts whose origin type is the
 channel's.
 
-Telegram is a companion of the chat session (`Chat/Companions/Telegram`)
-instead of a part of the terminal chat, and never a channel of its own: a
-`TelegramSessionCompanion` follows the session of exactly one primary channel
-(the terminal, an ACP session, or a host app), which owns it and which it
-reaches through `TelegramCompanionChannel`. The channel configures it with a
-`TelegramSessionCompanion.Configuration`: `primaryChannelDescription` (the
-channel's name in the texts sent to Telegram, `TUI` or `editor`), the `policy`
-(`.full`, or `.mirrorOnly` to mirror, consult, and approve only), and
-`consentLocationDescription` (where the channel asks for permissions, as the
-consent texts name it). `TelegramCompanionAttachments` keeps the companions
-attached in the process, per bot. The companion's `TelegramCompanionPresenter`
-is registered in the controller (`attachCompanionPresenter(_:)`) when the
-companion is created and removed only by its `shutdown()`, not at every attach
-and detach: a turn reads its presenters once, when it starts, so a
-`/telegram on` in the middle of a turn still mirrors it from its next tool
-boundary. `ChatFanOutPresenter` (`Chat/Contracts`) hands every call of the
-controller to the companions before the primary presenter. The channel marks
-the turn boundaries (`beginTurn(origin:mirrorEpoch:)` and
-`finishTurn(outcome:fileChangeSummary:)`). The overview mirror stays driven by
-the hook of the terminal's render coordinator
-(`TerminalChat+TelegramOverviews.swift`, which hands each section to
-`enqueueOverview(_:epoch:taskGraphSignature:)`), with the epoch aligned by
-`beginTurn(origin:mirrorEpoch:)`; the terminal's `overviewMirrorBarrier()`
-takes the first step of the commentary written at a tool boundary ahead of
-time, so the sections it renders reach the chat before the response. ACP
-mirrors no overview. `SharedChatMentionParser` (`Chat/Contracts`) parses and
-sanitizes live `@mentions` for the terminal and the companion alike. The
-terminal goes through its companion (`.full`). Of its nine
-`TerminalChat+Telegram*.swift` extensions only
-`TerminalChat+TelegramOverviews.swift` is left, next to the new
-`TerminalChat+Telegram.swift`: the `/telegram` command, the companion channel,
-the overview barrier, and forwarders that keep the signatures of the former
-members. `TerminalPromptOrigin` stays in the TUI and is mapped onto
-`TelegramTurnOrigin` (`.local` to `.primary`, `.telegramLease` to
-`.telegram`). ACP sessions link Telegram through `ACPTelegramCompanionChannel`
-(`ACP/Telegram`), with the `.mirrorOnly` policy: the editor drives the session
-and the linked chat follows it. The companion of each session has its own
-`TerminalTelegramControlService`, while every companion of a `ChatSessionHost`
-shares the host's `TerminalTelegramSessionRouter` and
+Telegram is a channel of the slot (`Chat/Channels/Telegram`), never a part of
+the terminal chat and never a mirror: a slot is driven by the channel that
+opened it (`ChatSlotChannel.primary`: the terminal, an ACP session, a window of
+a host app) until `/telegram on` hands it to the linked chat
+(`ChatSessionHost.activateTelegram(in:primaryChannelDescription:)`), and
+`/telegram off` takes it back (`deactivateTelegram(in:)`). The slot's
+`TelegramChannel` is created on the first `/telegram on` and kept, attached or
+not, for the life of the slot: it owns the control service, the validated
+route lease, the linked chat, the session's topic, and the Telegram side of the
+turn in progress, and it runs the turns the chat asks for through the host
+(`runTelegramTurn`, internal), with the composition of the primary channel
+(`ChatSessionChannelHooks.turnSessionConfiguration(for:controller:)`: the
+terminal's default composition, or the editor's for an ACP slot, through
+`ACPSessionChannelHooks`) and inside the environment of its turns
+(`ChatSessionChannelHooks.runTurnFromAnotherChannel(controller:_:)`: none for
+the terminal, which has no environment of its own; for an ACP slot the text
+file system the client serves, so a file the turn writes goes to the editor's
+buffer and not past it to the disk, and the prompt-skill selection of the
+session's agent, both through the helpers the editor's prompts use), so a
+prompt, a voice note, or a `/plan` `/goal`
+`/review` from the chat runs as one typed on the primary channel.
+`TelegramChannelRegistry` keeps the channels attached in the process, per bot.
+Every controller of a slot presents through the slot's `ChatSlotPresenter` and
+asks through its `ChatSlotInteractionHost`, which forward to the channel that
+drives the slot now; a switch in the middle of a turn tells the new channel the
+turn moved onto it (`ChatSlotChannelPresenter.turnDidMoveToChannel(_:)`, with
+the block already streaming), asks the open requests again on the new channel,
+and the ending of a turn is presented by whoever drives the slot when it ends
+(`presentTurnEnding(_:in:)`). The channel's `TelegramChannelPresenter` sends
+the session's output to the chat: a root response buffered by the turn's
+reporter and published at the next tool boundary, the overviews the controller
+publishes (a task graph once per signature within a turn, each sub-agent
+response once), and the ending with its outcome and file-change summary. The
+chat receives the last `TelegramChannel.handoverContextEntryCount` (6) prompts
+and responses as context at the handover. The catch-up of `/telegram off` is a
+`ChatTelegramCatchUp`: the entries of the incarnation's log with a sequence
+greater than the last one the primary channel saw, or the whole log when the
+slot runs another incarnation, with the response still streaming; a slot that
+publishes no state gets a reducer for the handover, seeded with the transcript
+(or the runtime history when the controller keeps none) and detached once the
+catch-up is read. The log and that reducer are transient: nothing of the link
+is persisted. While Telegram drives the slot the primary channel is dormant:
+`admitLine(_:in:)` admits only `/telegram`, `/telegram status`, `/telegram
+off`, and `/exit`, and answers `ChatSlotAdmission.dormantRefusalText` to every
+other line. The consent authorizer resolves the host that asks each session's
+consent by session id (`ChatToolConsentAuthorizer.setConsentHostResolver(_:)`,
+installed by the host), so an *Always* given in the chat is recorded in the
+slot's authorizer and covers the session on every channel. `ChatSessionObserver`
+(`Chat/Contracts`) is the presenter that observes a controller whatever
+channel presents it, the reducer: `addObserver(_:)` and `removeObserver(_:)`,
+read at every call by the internal `ChatObservedPresenter`, so an observer
+added in the middle of a turn sees the rest of it. `SharedChatMentionParser`
+(`Chat/Contracts`) parses and sanitizes live `@mentions` for the terminal and
+the channel alike; while the channel drives the slot it observes the session's
+shared-chat room itself, relays its messages to the chat, and runs its
+auto-triggers as hidden turns. The terminal's `TerminalChat+Telegram.swift`
+holds the `/telegram` command, the notice sink that writes the channel's texts
+(the activation text, a poll-health notice, a failure) as system or failure
+messages, the status line, the dormant admission, the rendering of the
+catch-up as a restored transcript, and the adoption of a turn still running
+from Telegram, whose ending reaches the input loop as a generation completion.
+ACP routes `/telegram` in `Routing/ZenCODEACPBridge+Commands.swift`: the reply
+to `/telegram on` carries the notices of the attach after the activation text
+(`activateTelegramCollectingNotices`, `ACP/Telegram`), the editor's prompts are
+refused with the dormant text while Telegram drives the slot, and the reply to
+`/telegram off` carries the catch-up as text (`Catch-up from Telegram:` with
+`You:`, `ZenCODE:`, and `ZenCODE (in progress):` lines). On ACP the editor
+cannot take the slot back in the middle of a turn from Telegram, which holds
+the slot's prompt reservation: `session/prompt` is refused with a text that
+says so, `session/cancel` stops the turn (`stopTelegramTurnIfReserved`), and
+the next `/telegram off` catches up with it; the terminal, which runs its
+commands outside the reservation, adopts such a turn instead. The channel of
+each slot has its own `TerminalTelegramControlService`, while every channel of
+a `ChatSessionHost` shares the host's `TerminalTelegramSessionRouter` and
 `TerminalTelegramBotDispatcher` (`ChatSessionHost+Telegram.swift`), so a bot
-has a single long poll. The terminal's companion follows the terminal's slot:
-at every new incarnation it moves to the new controller with its link
-(`TelegramSessionCompanion.follow(_:)`, internal), and the topic follows the
-session through `rebind(sessionID:displayName:)` as before.
+has a single long poll. The link belongs to the slot: a new or loaded session
+keeps the channel, and the topic follows the session through
+`rebind(sessionID:displayName:)`.
 
 *Public API and construction points.* The Chat surface is public API under the
 semver rule of this contract. It comprises `ChatSessionController`, whose
@@ -269,7 +303,7 @@ initializers are `nonisolated`; the session host (`Chat/Host`):
 `ChatSlotIdentity`, `ChatSlotInteraction`, `ChatSlotDescriptor`,
 `ChatSessionIncarnation`, `ChatSessionOperationState`,
 `ChatPromptReservation`, and `ChatSessionHostError`; the contracts `ChatSessionEnvironment`,
-`ChatSessionPresenter`, `ChatCompanionPresenter`, `ChatSessionRuntime`,
+`ChatSessionPresenter`, `ChatSessionObserver`, `ChatSessionRuntime`,
 `ChatSessionManagementRuntime`, `ChatSessionChannelHooks`,
 `ChatInteractionHost`, `ChatChannelCapabilities`, and
 `ChatToolConsentAuthorizer`; the notices and their payloads, with
@@ -277,10 +311,11 @@ initializers are `nonisolated`; the session host (`Chat/Host`):
 `ChatTurnResult`, and `ChatTurnFailure`; `ChatModelCatalog`;
 `ChatPromptQueue` and `ChatQueuedPrompt`; `ChatCommandRegistry`,
 `ChatCommandDescriptor`, and `ChatCommandContext`; `SharedChatMentionParser`;
-and the Telegram companion: `TelegramSessionCompanion` (with `Policy`,
-`Configuration`, `Outcome`, and `SessionTopic`), `TelegramCompanionChannel`,
-`TelegramPromptAdmission`, `TelegramTurnOrigin`, and
-`TelegramCompanionAttachError`. Of the controller, the session facts and state
+and the Telegram channel: `TelegramChannel` (with `SessionTopic`),
+`TelegramChannelAttachError`, `ChatSlotChannel`, `ChatSlotAdmission`, and
+`ChatTelegramCatchUp`, with the host's `activateTelegram(in:primaryChannelDescription:)`,
+`deactivateTelegram(in:)`, `telegramStatusText(in:)`, `activeChannel(in:)`,
+`telegramChannel(in:)`, and `admitLine(_:in:)`. Of the controller, the session facts and state
 (`sessionID`, `environment`, `modelCatalog`, `workingDirectory`, `host`,
 `authorizer`, `transcript`, `selection`, `savedSessionState`, and
 `activePlan`) are read-only, and `commandRegistry` and `channelHooks` are
@@ -290,7 +325,8 @@ and `pendingReplyAction(for:)`), the composition
 (`currentSessionConfiguration(discoverExternalTools:responseLanguageSection:)`,
 `turnSessionConfiguration(for:responseLanguageSection:)`, and the initial
 agent and skill selections), the selections, the session operations, the
-staged attachments, the overviews, and the companion presenters are public.
+staged attachments, the overviews, and the observers (`addObserver(_:)`,
+`removeObserver(_:)`) are public.
 `turnSessionConfiguration(for:responseLanguageSection:)` composes the
 configuration of one turn as the terminal does: `/plan` and `/review` turns
 leave the active plan's progress out, and normal and `/goal` turns keep it.
@@ -310,13 +346,13 @@ factory they receive, or `productionBackendFactory` when it is `nil`, and a
 `TerminalChat` created without a runner uses the default. The ACP bridge
 builds its runner as before, with the factory it receives. The fallback of
 `AgentCoreBackend.prepareBackend` for a `nil` factory stays for compatibility.
-`TelegramCompanionRuntimeFactory` (`Chat/Companions/Telegram`) builds what a
-companion runs on: `makeRouter(settings:)`, the route authority of the
-Telegram settings, which saves every route change with
-`AgentSettingsManifestStore.saveTelegramRoutes(_:ownerUserID:)`, and
-`makeControlService()`. `ChatSessionHost.telegramRouter()` builds the router
-there, once per host, for the terminal's companion and the ACP bridge's
-alike. `ChatSessionHost` is the construction point of the sessions a channel
+`ChatSessionHost.telegramRouter()` (`ChatSessionHost+Telegram.swift`) builds
+the route authority of the Telegram settings once per host, which saves every
+route change with `AgentSettingsManifestStore.saveTelegramRoutes(_:ownerUserID:)`,
+and `telegramDispatcher()` the poller; the host creates the Telegram channel
+of a slot on them, with a control service of its own, at the first
+`activateTelegram(in:primaryChannelDescription:)`: nothing of the link is
+built outside the host. `ChatSessionHost` is the construction point of the sessions a channel
 runs: `zen`'s command-line runner builds one per chat lifecycle with
 `TerminalChat.makeSessionHost(configuration:sessionRunner:)` over the runner
 it owns, hands it to `AgentRuntimeLauncher.runTerminalChat(…sessionHost:)`,
@@ -361,20 +397,31 @@ notification is unchanged, and so are the headless output and the JSONL wire
 - ACP: while the settings enable Telegram, `available_commands_update` lists,
   after the existing entries,
   `{"name":"telegram","description":"Telegram status, or turn it on/off for this session","input":{"hint":"on or off"}}`.
-- ACP with Telegram linked: the linked chat mirrors the editor's turns and
-  accepts `/start`, `/help`, `/status`, `/changes`, `/diff`, `/chat`, and the
-  permission replies; it refuses with one text (`mirrorOnlyRefusalText`)
-  prompts, voice notes, `/plan`, `/goal`, `/review`, replies to pending
-  questions, and `/undo`. Its drafts have no stop button, and its consent
-  texts name "the editor". A gated tool of a linked session is asked both in
-  the editor (`session/request_permission`) and in the chat, and the first
-  answer wins. When Telegram answers first, the editor's dialog stays open,
-  because ACP cannot close it, and its late answer is ignored without any
-  error on the wire.
+- ACP with Telegram driving the session: the linked chat runs prompts, voice
+  notes, `/plan`, `/goal`, `/review`, and replies to pending questions, with
+  the editor's composition (the session's configuration plus the purpose's
+  tools) and environment (the client's text file system, the agent's skills),
+  and accepts `/start`, `/help`, `/status`, `/changes`, `/diff`,
+  `/chat`, and the permission replies; `/undo` is refused with a text that
+  names the editor. A gated tool of a turn from Telegram is asked in the chat
+  only; the editor receives no `session/request_permission` for it. The
+  editor's `session/prompt` is answered with `ZenCODE: this session is driven
+  from Telegram. Use /telegram off to take it back.` and `end_turn` while the
+  session is idle, and refused with the `invalidParams` error `A turn from
+  Telegram is running for this session. Send session/cancel to stop it, or
+  wait for it to end, then send /telegram off.` while a turn from Telegram
+  holds the reservation (the editor's own prompt keeps `A prompt is already
+  running for this session.`). `session/cancel` stops a turn from Telegram
+  as it stops the editor's; the chat sees `Stopped.`. The reply to
+  `/telegram off` is `Telegram remote control stopped.` followed, when there
+  is something to catch up with, by `Catch-up from Telegram:` (with `(new
+  session <id>)` or `(older entries omitted)` when it applies) and one `You:
+  …` or `ZenCODE: …` line per prompt and response, then `ZenCODE (in
+  progress): …` for a response still streaming. `session/load` of a live
+  session replays the runner's history, the turns run from Telegram included.
 - ACP: the Telegram link is not persisted: after `session/load` the session
   needs `/telegram on` again. The reply to `session/close` waits for the
-  companion to detach, and an invalidated route detaches the companion
-  without cancelling the editor's turn.
+  channel to shut down.
 - Terminal: "always" approvals of destructive tools other than `local.exec`
   now last for the current session instead of the process, while
   `local.exec` approvals remain persisted and valid across sessions.
@@ -391,7 +438,7 @@ notification is unchanged, and so are the headless output and the JSONL wire
 - Telegram with several sessions: a message in General, in a topic no route
   knows, or on the legacy route (see
   [Telegram Single-Owner Routing and Persistence](#telegram-single-owner-routing-and-persistence))
-  is handled by every attached session. While several companions are
+  is handled by every attached session. While several channels are
   attached to the same bot in the process, `/allow`, `/always`, and `/deny`
   without a request ID on such a shared route are refused and ask for the ID,
   since they could decide the request of another session. Duplications
@@ -416,15 +463,10 @@ notification is unchanged, and so are the headless output and the JSONL wire
   unavailable while a prompt is running;
   `ChatCommandRegistry.isAvailableDuringGeneration` reads the line without
   its leading spaces.
-- The file-change summary that a mirror-only companion (ACP) mirrors to
-  Telegram no longer carries the terminal's `/undo` and `/changes` hint, since
-  that companion refuses `/undo`:
-  `TurnFileChangeSummaryPresentation.text(_:includesCommandHint:)` adds it
-  only for `.full`.
 - ACP: the reply to `/telegram on` carries, after the activation text, the
-  notices the companion presented while it attached, for example a topic that
+  notices the channel presented while it attached, for example a topic that
   the Bot API did not create, instead of dropping them. Outside that window
-  the companion's notices are still dropped, because ACP writes only inside
+  the channel's notices are still dropped, because ACP writes only inside
   the reply to a prompt.
 - Terminal: a prompt submitted while another one was generating was queued
   and then dropped without running; it now runs when the turn in progress
@@ -1162,10 +1204,10 @@ lookup, and persisted bindings are unchanged.
 | `Sources/ZenCODECore/Tools/Direct/SubAgents` | Delegated-agent lifecycle and dispatch. `agent.create` requires an explicit configured profile or a `profileRole` that the runtime resolves to one, and normally derives the child tool grant from that profile; model-authored creation arguments and task metadata cannot add, remove, or replace profile tools. An optional `workingDirectory` (an existing directory equal to or inside the coordinator's) sets the directory the child works in; files, shell, git, project memory, and project-agent association follow it. When the resolved child profile is the same as the coordinator profile, the child inherits the coordinator's effective session allowlist so session-local additions and removals are preserved; only child-intrinsic skills, collaboration, and applicable task-reporting tools are added, with the profile's `readOnly` core-tool policy reapplied. Different profiles (including Reviewer, Planner, and Minimal) retain their own grant boundaries. Model bindings are optional: a profile without bindings inherits the main session's selected model and provider when `model` is omitted; profiles with bindings still require an explicitly authorized model reference, except `profileRole` items, whose binding the runtime selects from `complexity`. |
 | `Sources/ZenCODECore/Setup` | Interactive first-run and in-process configuration for providers, models, agents, feature packages, Telegram, voice, response language, optional memory embeddings, and the build-and-install of ZenCRON (`Integrations/ZenCODESetupRunner+ScheduledPrompts.swift`). Setup remains invoked by the executable composition root even though its implementation and contracts belong to Core. |
 | `Sources/ZenCODECore/Runtime/Sessions` | Neutral session state and persistence, including the authoritative task DAG, attempt fencing, execution scopes, atomic task-graph checkpoints, startup enumeration/recovery, and the session checkpoint tree (`SessionCheckpointTree`). Workflow-sourced graphs require sub-agent execution attempts, while coordinator tool grants remain independent of that lifecycle constraint. Startup recovery is graph-specific: the orchestrator restores the owning session, interrupts persisted active attempts, activates exactly the operator-selected graph, archives superseded active graphs, and persists `currentGraphID` before backend creation. A negative validation persists `failed`; `tasks.retry` returns the task to `pending`, and retrying a failed attempt always claims a fresh workflow attempt through a new `agent.create(taskID:)` rather than resuming the prior agent. Separately, once a task-bound attempt completes, the agent may optionally remain in a runtime-only, non-persisted `.standby` state for conversational follow-up turns over direct messages that do not mutate the task graph; standby is bounded by a turn budget and an idle timeout, and is released when the graph becomes terminal, when a newer attempt supersedes it, or when the budget/timeout is exhausted. Standby turns are never task attempts, never reopen the completed attempt, and never change `task.activeAttemptID`. `AgentCoreSessionRunner` owns one orchestrator and injects it into every backend; its internal `AgentCoreBackendManager`, `AgentCoreSessionSnapshotStore`, and `AgentCoreAuthorizationRouter` isolate backend generations, session snapshot incarnations, and authorization lifecycle without changing the runner facade. The runner declaration itself keeps only actor state, initializers, local-exec access mode, session creation/options, and skill selection, with domain companions (`+PromptTurn`, `+SessionLifecycle`, `+SharedChat`, `+SnapshotAuthorization`, `+MCP`, `+Tasks`, `+SavedSessions`) implementing prompt-turn execution, session/backend lifecycle, shared-chat turns, snapshot/authorization routing, MCP wiring, task-graph projection, and saved-session persistence for the same actor. Direct task tools are stateless adapters and TUI/ACP code only projects or requests orchestrator-owned snapshot restoration. |
-| `Sources/ZenCODECore/Telegram` | Telegram remote-control runtime: Bot API transport, long-polling, pairing, channel state, voice-attachment download, tool-call permission brokering, safe tool-call presentation, and the ordered per-turn progress reporter. `TerminalTelegramControlService` retains lifecycle and ingress coordination; pairing, wire effects, attachments, and the command registry are separated into dedicated runtime files. It depends only on `Foundation`/`FoundationNetworking`, `ToolCore`, and neutral runtime contracts (`Agent` settings, `Agent` tool-authorization requests, `ToolCallPresentation`, voice input); it must not depend on terminal presentation types. `TelegramSessionCompanion` (`Chat/Companions/Telegram`) is the only adapter that binds this runtime to a chat session; the TUI and ACP reach it through their companion channel (`TUI/Chat/Telegram/TerminalChat+Telegram.swift`, `ACP/Telegram/ACPTelegramCompanionChannel.swift`). |
-| `Sources/ZenCODECore/ACP` | ACP protocol adaptation only: JSON-RPC routing, parsing, lifecycle, and event encoding. Tool-call updates are wire-normalized here: the richer internal presentation kinds are mapped onto the closed ACP set (`read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other`), and `locations` are absolute paths resolved against the session workspace rather than the agent process directory. `ACP/Telegram` holds `ACPTelegramCompanionChannel`, the ACP session as the primary channel of its Telegram companion (`.mirrorOnly`), next to the `/telegram` command of `Routing/ZenCODEACPBridge+Commands.swift`. |
-| `Sources/ZenCODECore/Chat` | Channel-neutral chat-session layer consumed by `TUI`, ACP, the headless runner in `Runtime/Launcher`, and a host app through its public API (see [Embedding ZenCODECore in a Host App](embedding.md)); the headless runner composes its session configuration and prompt skills from a controller and does not instantiate `TerminalChat`. The layer contains no terminal, ACP, or JSONL types. `ChatSessionController` (one per session, isolated to the `ChatSessionActor` global actor, of which `TerminalChatActor` is the deprecated alias) runs the turn pipeline: the purpose-specific coordinator tools from the single `ChatTurnPurpose` table, `/plan` finalization and `/goal` continuation, the bounded session transcript, file-change tracking (`TurnFileChangeCoordinator`, `SessionFileArtifactHistory`), and the mapping of runtime events onto a `ChatSessionPresenter`, which a channel may bind to one request (ACP prompts). `ChatSessionStateStore` keeps the transient command state and the turn fence under one lock, so a channel in another isolation domain can check its own fences and update that state in one synchronous step, and `cancelActiveTurn` fences a turn that is still unwinding. The controller also owns the session operations (`ChatSessionController+Sessions.swift`: new, save, save under a name, list, load, delete, compact, restore from a checkpoint, and the DS4 engine checkpoints) and the selections (`+Selection.swift`: initial model, model, thinking level, agent and the project's agents, tools, and skills with install and uninstall), and composes the session configuration and system prompt from them (`+Composition.swift`). A channel gives it a `ChatSessionEnvironment`, the immutable launch facts read once from `AgentConfiguration` (hosted models and agent profiles, explicit and launch model, launch agent, tool-round and output limits, app mode, initial skills, feature runtime), so Chat never reads environment variables, the current directory, or the terminal. The operations run on `ChatSessionManagementRuntime`, the wider runtime contract that `AgentCoreSessionRunner` implements (session create, restore, reset, rebuild, and compaction, model preload, prompt-skill selection, DS4 checkpoints, task graphs, tool descriptors) next to the turn-only `ChatSessionRuntime`. A `choose…` operation asks the host for a menu and, without the matching capability, returns the non-interactive output of its command instead; a `select…` operation applies a choice. Results reach the channel as `ChatSessionNotice` values, through `ChatSessionPresenter.presentSessionNotice` as they happen or in the `ChatSelectionOutcome` and `ChatSessionOperationOutcome` that an operation returns, and `ChatSessionNoticeText` is the exact text the terminal writes for each; the selection and the saved-session link (`ChatSessionState`) are mirrored to the channel through `presentSessionStateChanged`. A channel's own steps between the runtime steps of an operation (status bar, panel suggestions, response-language lock) and the response-language section of its prompt go through the weakly held `ChatSessionChannelHooks`. `ChatModelCatalog` (`Chat/Models`) lists, searches, and validates the models, resolves the thinking level and the default model, and saves a choice as the global default unless the channel supplies `hostedModels`; the terminal and ACP share it, while ACP keeps its epochs, fences, reconfiguration with rollback, and prompt composition. `ChatInteractionHost` declares `ChatChannelCapabilities` (tool consent, serial consent dialogs, single choice, multiple choice, focused multiple choice, text input, live file artifacts, external open, attachment picker); its public additions are source-compatible, each with a default: `chooseManyWithFocus(…)` (default `nil`, returning a `ChatFocusedChoice` with the ticked items and the confirmed one), `requestWorkspaceAccess(_:)` (default grants, taking a `ChatWorkspaceAccessRequest`), `openExternal(_:)` (default throws, taking a `ChatOpenTarget`), `pickAttachment(startingAt:)` (default `nil`), and `ChatChoiceItem.group` and `isCurrent`. The terminal host declares menus, text input, external open, and the attachment picker only when stdin or `/dev/tty` is an interactive terminal, and the headless host offers nothing. `ChatToolConsentAuthorizer` is the single consent policy behind `LocalExecPermissionAuthorizer` and `ACPPermissionBroker`, and refuses gated tools with a diagnostic when the host offers no consent. The controller also resolves and runs the shared slash commands (`Chat/Commands`: `ChatCommandRegistry`, `ChatCommandFence`, `ChatPlanningCommandPolicy`; `handleCommandLine(_:context:)`) and owns the task-graph observer and the sub-agent refresh that publish the semantic overviews of `Chat/Contracts/ChatOverviewState.swift`; `Chat/Queue` holds the bounded prompt queue (`ChatPromptQueue`). `Chat/Companions/Telegram` holds the Telegram companion (`TelegramSessionCompanion`, the `TelegramCompanionChannel` contract of its primary channel, `TelegramCompanionPresenter`, `TelegramCompanionAttachments`, and `TelegramTurnOrigin`), which a primary channel owns and whose presenter the controller fans out to through `ChatFanOutPresenter` (`Chat/Contracts/ChatFanOutPresenter.swift`); `TelegramCompanionRuntimeFactory` in the same folder builds the router and the control service a companion runs on. `Chat/Contracts/SharedChatMentionParser.swift` parses and sanitizes live `@mentions` for every channel. `Chat/Runtime` holds `ChatSessionRuntimeFactory`, which builds the session runner (`makeSessionRunner(toolAuthorizationHandler:featureRuntime:mcpRuntime:backendFactory:)`): the backend is chosen in one place of Core, `ChatSessionRuntimeFactory.productionBackendFactory`; `zen` and a host app are composition roots that inject it; no other layer of Core chooses a backend. `Chat/Host` holds the session host, the container of the chat sessions of one process (see *The session host* under the Compatibility Contract): `ChatSessionHost`, the slots a channel opens (`ChatSlotDescriptor`, `ChatSlotIdentity`, `ChatSlotInteraction`, `ChatSlotID`), the incarnations they run (`ChatSessionIncarnation`, with their epochs), the prompt reservation (`ChatPromptReservation`, `ChatSessionOperationState`), the Telegram router and dispatcher shared per host, and the sleep assertion; the task graphs stay with the runner's orchestrator. `Chat/State` holds the observable session state: `ChatSessionStateReducer`, a presenter that builds a `ChatSessionSnapshot` from one ordered log per session, and `ChatPendingRequestHost`, a host that publishes the operator interactions in that snapshot until the client resolves them (see the transient rule above). The public API of the layer follows the semver rule of the Compatibility Contract; `ChatCommandFence`, `ChatPlanningCommandPolicy`, `ChatSessionStateStore`, and `ChatCommandState` are internal. Channels keep their transport, the rendering of the overviews, their own commands (the terminal's `/setup`, `/telegram`, `/voice`, `/ds4`, `/feature`, `/cron`, `/exit`, and `/tools logs`, and ACP's `/telegram`), their Telegram companion channel, voice, and the steps only they have (the terminal's status bar). |
-| `Sources/ZenCODECore/TUI` | Terminal-only state, input, rendering, and presentation. `TerminalChatRenderCoordinator` is the sole actor owner of stateful chat writes and streaming formatter/cursor state; the coordinator declaration itself keeps only actor state, initializers, and cursor topology, while cohesive implementation units live in same-domain extension files (streaming and write coalescing, transcript messages, tool-block lifecycle and row ownership, overview arbitration and mirror FIFO, diagnostics/snapshot barriers, and low-level channel output). Its actor-confined overview arbitration, mirror FIFO, tool-block accounting, and per-channel/pending-write value state live in `TerminalChatRenderState` value types, while stateless text normalization lives in `TerminalChatTextFormatting`, `TerminalMarkdownStreamFormatter` owns incremental Markdown state, and `TerminalWidth` centralizes cached terminal-width probes. `TerminalStatusBar` separately owns status and input-panel rendering state. `TerminalChat` is one slot of a `ChatSessionHost` (`ChatSlotIdentity.terminal`, `publishesState: false`), opened in its `init` with its first session, and runs the controller of the slot's current incarnation (`chatSession`); it follows the slot through the host's incarnation observer when `/sessions new` or `/sessions load` replace the session, moving its Telegram companion to the new controller, while its own per-session steps keep running in the channel hooks; the host is given by `ZenCODECommandLineRunner` or built over the runner the chat receives or creates, and ends the chat's session with `closeSession(in:)`. Shared runtime types must not be introduced here. Telegram runtime lives under `Telegram` and its session companion under `Chat/Companions/Telegram`; in `TUI/Chat/Telegram`, `TerminalChat+Telegram.swift` makes the terminal the companion's primary channel (the `/telegram` command, the companion channel, the overview barrier, and the forwarders of the former Telegram members), and `TerminalChat+TelegramOverviews.swift` hands the overview sections of the render coordinator to the companion. |
+| `Sources/ZenCODECore/Telegram` | Telegram remote-control runtime: Bot API transport, long-polling, pairing, channel state, voice-attachment download, tool-call permission brokering, safe tool-call presentation, and the ordered per-turn progress reporter. `TerminalTelegramControlService` retains lifecycle and ingress coordination; pairing, wire effects, attachments, and the command registry are separated into dedicated runtime files. It depends only on `Foundation`/`FoundationNetworking`, `ToolCore`, and neutral runtime contracts (`Agent` settings, `Agent` tool-authorization requests, `ToolCallPresentation`, voice input); it must not depend on terminal presentation types. `TelegramChannel` (`Chat/Channels/Telegram`) is the only adapter that binds this runtime to a chat session, as the Telegram channel of a slot of the `ChatSessionHost`; the TUI and ACP hand their slot to it and back through the host (`TUI/Chat/Telegram/TerminalChat+Telegram.swift`, `ACP/Routing/ZenCODEACPBridge+Commands.swift`). |
+| `Sources/ZenCODECore/ACP` | ACP protocol adaptation only: JSON-RPC routing, parsing, lifecycle, and event encoding. Tool-call updates are wire-normalized here: the richer internal presentation kinds are mapped onto the closed ACP set (`read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other`), and `locations` are absolute paths resolved against the session workspace rather than the agent process directory. `ACP/Telegram` holds `ACPSessionChannelHooks`, the composition and the environment of the turns the Telegram channel runs on an ACP slot, and the collection of the attach notices for the reply to `/telegram on`, next to the `/telegram` command of `Routing/ZenCODEACPBridge+Commands.swift`. |
+| `Sources/ZenCODECore/Chat` | Channel-neutral chat-session layer consumed by `TUI`, ACP, the headless runner in `Runtime/Launcher`, and a host app through its public API (see [Embedding ZenCODECore in a Host App](embedding.md)); the headless runner composes its session configuration and prompt skills from a controller and does not instantiate `TerminalChat`. The layer contains no terminal, ACP, or JSONL types. `ChatSessionController` (one per session, isolated to the `ChatSessionActor` global actor, of which `TerminalChatActor` is the deprecated alias) runs the turn pipeline: the purpose-specific coordinator tools from the single `ChatTurnPurpose` table, `/plan` finalization and `/goal` continuation, the bounded session transcript, file-change tracking (`TurnFileChangeCoordinator`, `SessionFileArtifactHistory`), and the mapping of runtime events onto a `ChatSessionPresenter`, which a channel may bind to one request (ACP prompts). `ChatSessionStateStore` keeps the transient command state and the turn fence under one lock, so a channel in another isolation domain can check its own fences and update that state in one synchronous step, and `cancelActiveTurn` fences a turn that is still unwinding. The controller also owns the session operations (`ChatSessionController+Sessions.swift`: new, save, save under a name, list, load, delete, compact, restore from a checkpoint, and the DS4 engine checkpoints) and the selections (`+Selection.swift`: initial model, model, thinking level, agent and the project's agents, tools, and skills with install and uninstall), and composes the session configuration and system prompt from them (`+Composition.swift`). A channel gives it a `ChatSessionEnvironment`, the immutable launch facts read once from `AgentConfiguration` (hosted models and agent profiles, explicit and launch model, launch agent, tool-round and output limits, app mode, initial skills, feature runtime), so Chat never reads environment variables, the current directory, or the terminal. The operations run on `ChatSessionManagementRuntime`, the wider runtime contract that `AgentCoreSessionRunner` implements (session create, restore, reset, rebuild, and compaction, model preload, prompt-skill selection, DS4 checkpoints, task graphs, tool descriptors) next to the turn-only `ChatSessionRuntime`. A `choose…` operation asks the host for a menu and, without the matching capability, returns the non-interactive output of its command instead; a `select…` operation applies a choice. Results reach the channel as `ChatSessionNotice` values, through `ChatSessionPresenter.presentSessionNotice` as they happen or in the `ChatSelectionOutcome` and `ChatSessionOperationOutcome` that an operation returns, and `ChatSessionNoticeText` is the exact text the terminal writes for each; the selection and the saved-session link (`ChatSessionState`) are mirrored to the channel through `presentSessionStateChanged`. A channel's own steps between the runtime steps of an operation (status bar, panel suggestions, response-language lock) and the response-language section of its prompt go through the weakly held `ChatSessionChannelHooks`. `ChatModelCatalog` (`Chat/Models`) lists, searches, and validates the models, resolves the thinking level and the default model, and saves a choice as the global default unless the channel supplies `hostedModels`; the terminal and ACP share it, while ACP keeps its epochs, fences, reconfiguration with rollback, and prompt composition. `ChatInteractionHost` declares `ChatChannelCapabilities` (tool consent, serial consent dialogs, single choice, multiple choice, focused multiple choice, text input, live file artifacts, external open, attachment picker); its public additions are source-compatible, each with a default: `chooseManyWithFocus(…)` (default `nil`, returning a `ChatFocusedChoice` with the ticked items and the confirmed one), `requestWorkspaceAccess(_:)` (default grants, taking a `ChatWorkspaceAccessRequest`), `openExternal(_:)` (default throws, taking a `ChatOpenTarget`), `pickAttachment(startingAt:)` (default `nil`), and `ChatChoiceItem.group` and `isCurrent`. The terminal host declares menus, text input, external open, and the attachment picker only when stdin or `/dev/tty` is an interactive terminal, and the headless host offers nothing. `ChatToolConsentAuthorizer` is the single consent policy behind `LocalExecPermissionAuthorizer` and `ACPPermissionBroker`, and refuses gated tools with a diagnostic when the host offers no consent. The controller also resolves and runs the shared slash commands (`Chat/Commands`: `ChatCommandRegistry`, `ChatCommandFence`, `ChatPlanningCommandPolicy`; `handleCommandLine(_:context:)`) and owns the task-graph observer and the sub-agent refresh that publish the semantic overviews of `Chat/Contracts/ChatOverviewState.swift`; `Chat/Queue` holds the bounded prompt queue (`ChatPromptQueue`). `Chat/Channels/Telegram` holds the Telegram channel (`TelegramChannel`, its `TelegramChannelPresenter`, and `TelegramChannelRegistry`), which the slot owns; the controller presents through the slot's `ChatSlotPresenter` and the observers (`ChatSessionObserver`, through the internal `ChatObservedPresenter` of `Chat/Contracts`). `Chat/Contracts/SharedChatMentionParser.swift` parses and sanitizes live `@mentions` for every channel. `Chat/Runtime` holds `ChatSessionRuntimeFactory`, which builds the session runner (`makeSessionRunner(toolAuthorizationHandler:featureRuntime:mcpRuntime:backendFactory:)`): the backend is chosen in one place of Core, `ChatSessionRuntimeFactory.productionBackendFactory`; `zen` and a host app are composition roots that inject it; no other layer of Core chooses a backend. `Chat/Host` holds the session host, the container of the chat sessions of one process (see *The session host* under the Compatibility Contract): `ChatSessionHost`, the slots a channel opens (`ChatSlotDescriptor`, `ChatSlotIdentity`, `ChatSlotInteraction`, `ChatSlotID`), the incarnations they run (`ChatSessionIncarnation`, with their epochs), the prompt reservation (`ChatPromptReservation`, `ChatSessionOperationState`), the Telegram router and dispatcher shared per host, and the sleep assertion; the task graphs stay with the runner's orchestrator. `Chat/State` holds the observable session state: `ChatSessionStateReducer`, a presenter that builds a `ChatSessionSnapshot` from one ordered log per session, and `ChatPendingRequestHost`, a host that publishes the operator interactions in that snapshot until the client resolves them (see the transient rule above). The public API of the layer follows the semver rule of the Compatibility Contract; `ChatCommandFence`, `ChatPlanningCommandPolicy`, `ChatSessionStateStore`, and `ChatCommandState` are internal. Channels keep their transport, the rendering of the overviews, their own commands (the terminal's `/setup`, `/telegram`, `/voice`, `/ds4`, `/feature`, `/cron`, `/exit`, and `/tools logs`, and ACP's `/telegram`), the handover of their slot to Telegram and back, voice, and the steps only they have (the terminal's status bar). |
+| `Sources/ZenCODECore/TUI` | Terminal-only state, input, rendering, and presentation. `TerminalChatRenderCoordinator` is the sole actor owner of stateful chat writes and streaming formatter/cursor state; the coordinator declaration itself keeps only actor state, initializers, and cursor topology, while cohesive implementation units live in same-domain extension files (streaming and write coalescing, transcript messages, tool-block lifecycle and row ownership, overview arbitration, diagnostics/snapshot barriers, and low-level channel output). Its actor-confined overview arbitration, tool-block accounting, and per-channel/pending-write value state live in `TerminalChatRenderState` value types, while stateless text normalization lives in `TerminalChatTextFormatting`, `TerminalMarkdownStreamFormatter` owns incremental Markdown state, and `TerminalWidth` centralizes cached terminal-width probes. `TerminalStatusBar` separately owns status and input-panel rendering state. `TerminalChat` is one slot of a `ChatSessionHost` (`ChatSlotIdentity.terminal`, `publishesState: false`), opened in its `init` with its first session, and runs the controller of the slot's current incarnation (`chatSession`); it follows the slot through the host's incarnation observer when `/sessions new` or `/sessions load` replace the session, while the slot's Telegram channel follows the new controller by itself and its own per-session steps keep running in the channel hooks; the host is given by `ZenCODECommandLineRunner` or built over the runner the chat receives or creates, and ends the chat's session with `closeSession(in:)`. Shared runtime types must not be introduced here. Telegram runtime lives under `Telegram` and the channel of a slot under `Chat/Channels/Telegram`; in `TUI/Chat/Telegram`, `TerminalChat+Telegram.swift` holds the `/telegram` command, the notice sink, the status line, the dormant admission, the catch-up rendering, and the adoption of a turn still running from Telegram. |
 | `Sources/zen` | The executable composition root, command-line dispatch, automatic first-run setup, `/setup` handler injection, and optional-feature installer CLI. The backend is chosen in one place of Core, `ChatSessionRuntimeFactory.productionBackendFactory`; `zen` and a host app are composition roots that inject it; no other layer of Core chooses a backend. `ZenCODEMain` passes it to `ZenCODECommandLineRunner.main(arguments:setupHandler:backendFactory:)`. Core reports a setup request with an in-memory conversational snapshot and `ZenCODECommandLineRunner` rebuilds `AgentConfiguration` plus the TUI while reusing the session runner, with a new `ChatSessionHost` over it for each chat lifecycle (the previous one is shut down keeping the external tools); the composition root invokes `ZenCODESetupRunner`, so the task graph remains owned by the same orchestrator. |
 | `Tests` | Root-package unit targets: `ToolCoreTests`, `FeatureKitTests`, `FeatureMCPBridgeKitTests`, `LocalToolsSupportTests`, and `ZenCODECoreTests`. Memory-engine suites live under `Tests/ZenCODECoreTests/Memory/Engine`; setup suites live under `Tests/ZenCODECoreTests/Setup`. Feature packages, including XcodeTools, own and run their package-local tests separately. |
 
@@ -1256,14 +1298,13 @@ and is composed only by its package-local `xcode-tools-feature` executable;
 contracts, but Agent, Remote, and ACP code must not depend on terminal
 presentation types. `Chat` depends only on the Agent, Tools,
 FileChanges, Features, Memory, Skills, Support, Presentation, and Runtime
-domains, and its Telegram companion (`Chat/Companions/Telegram`) on the
+domains, and its Telegram channel (`Chat/Channels/Telegram`) on the
 `Telegram` runtime; it never depends on `TUI` or ACP. `TUI`, ACP, and
 `Runtime/Launcher` depend on `Chat`, never the reverse, and the TUI and ACP
-drive Telegram through the companion: they create the control service it uses,
-take the router and the dispatcher from their `ChatSessionHost`, and the
-terminal forwards to it the ingress it reads, but neither runs the link
-itself. The host (`Chat/Host`) depends on the controller, the reducer, the
-Telegram companion's runtime objects, and the runner, never on a channel;
+drive Telegram through the host: they hand their slot to its Telegram channel
+and back, and neither runs the link itself. The host (`Chat/Host`) depends on
+the controller, the reducer, the Telegram channel and its runtime objects, and
+the runner, never on a channel of its own;
 `TUI`, ACP, and `Runtime/Launcher` open their slots in it. Remote providers receive backend factories through runtime
 contracts rather than constructing Agent coordinators directly. The backend
 is chosen in one place of Core,
@@ -1347,7 +1388,7 @@ a private chat, and `has_topics_enabled`, which `getMe` reports) and 9.4
 the bot in @BotFather. In topic mode each attached session has a topic of its
 own, whose route carries its `topicID` and `roomID == sessionID`; otherwise the
 link is in legacy mode, on the `default` route without a topic that every
-attached session shares. On attach a companion reuses an active route of its
+attached session shares. On attach a channel reuses an active route of its
 session (`activeRoute(forRoomID:)`); otherwise, when the bot has Threaded mode,
 it creates a topic, and General is told once, only when the topic is created;
 otherwise, and also when the creation fails, it falls back to legacy mode.

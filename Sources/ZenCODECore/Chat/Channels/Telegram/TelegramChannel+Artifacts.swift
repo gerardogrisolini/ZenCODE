@@ -1,5 +1,5 @@
 //
-//  TelegramSessionCompanion+Artifacts.swift
+//  TelegramChannel+Artifacts.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -10,7 +10,7 @@ import ToolCore
 
 /// `/diff`, the explicit Send/Cancel consent of an outbound artifact, and the
 /// selective ingress of documents and images.
-extension TelegramSessionCompanion {
+extension TelegramChannel {
     // MARK: - Secure artifacts
 
     /// The terminal's staging directory for outbound artifacts, the default
@@ -47,13 +47,13 @@ extension TelegramSessionCompanion {
     /// `/diff` materializes the session diff into a bounded staging file and
     /// asks for explicit consent. The repository itself is never uploaded:
     /// only this excerpt, only after confirmation.
-    func handleDiffRequest(origin: TelegramTurnOrigin) async {
-        guard let chatID = origin.lease?.key.chatID else { return }
+    func handleDiffRequest(lease: TerminalTelegramRouteLease) async {
+        let chatID = lease.key.chatID
         guard let diffText = sessionDiffText()?.nilIfBlank else {
             await sendSystemMessage(
                 "ZenCODE message: no diff is available for this session yet.",
                 to: chatID,
-                origin: origin
+                lease: lease
             )
             return
         }
@@ -61,12 +61,12 @@ extension TelegramSessionCompanion {
             await sendSystemMessage(
                 "ZenCODE message: the session diff exceeds the Telegram upload budget and cannot be sent.",
                 to: chatID,
-                origin: origin
+                lease: lease
             )
             return
         }
         let url = preparedArtifactStagingDirectory
-            .appendingPathComponent("session-\(controller.sessionID.prefix(8))-\(UUID().uuidString).diff")
+            .appendingPathComponent("session-\(sessionID.prefix(8))-\(UUID().uuidString).diff")
         do {
             try Self.writePrivateArtifact(diffText, to: url)
             await offerArtifact(
@@ -77,7 +77,7 @@ extension TelegramSessionCompanion {
                 ),
                 chatID: chatID,
                 summary: "Send the session diff as a document?",
-                origin: origin
+                lease: lease
             )
         } catch {
             // writePrivateArtifact failed: no offer exists, so the service never
@@ -86,7 +86,7 @@ extension TelegramSessionCompanion {
             await sendSystemMessage(
                 "ZenCODE message: the diff could not be prepared for upload.",
                 to: chatID,
-                origin: origin
+                lease: lease
             )
         }
     }
@@ -97,12 +97,8 @@ extension TelegramSessionCompanion {
         _ artifact: TerminalTelegramArtifact,
         chatID: Int64,
         summary: String,
-        origin: TelegramTurnOrigin
+        lease: TerminalTelegramRouteLease
     ) async {
-        guard let lease = origin.lease else {
-            removeStagedArtifact(at: artifact.fileURL)
-            return
-        }
         do {
             guard let offerID = try await controlService.offerArtifactConsent(
                 artifact: artifact,
@@ -115,7 +111,7 @@ extension TelegramSessionCompanion {
                 await sendSystemMessage(
                     "ZenCODE message: too many pending file requests. Confirm or cancel one first.",
                     to: chatID,
-                    origin: origin
+                    lease: lease
                 )
                 return
             }
@@ -123,7 +119,7 @@ extension TelegramSessionCompanion {
                 summary,
                 to: chatID,
                 replyMarkup: TerminalTelegramArtifactConsentKeyboard.markup(offerID: offerID),
-                origin: origin
+                lease: lease
             )
             if receipt == nil {
                 // The request never reached the chat: spend the offer so the
@@ -139,26 +135,25 @@ extension TelegramSessionCompanion {
             await sendSystemMessage(
                 "ZenCODE message: this file cannot be sent (\(TerminalTelegramControlError.operatorDescription(error))).",
                 to: chatID,
-                origin: origin
+                lease: lease
             )
         }
     }
 
     /// Handles the explicit Send/Cancel tap of an artifact consent offer.
     /// Returns `true` when the callback belonged to the consent flow. The
-    /// channel's ingress calls it for every callback query.
+    /// ingress calls it for every callback query.
     func handleArtifactConsentCallback(
         _ data: String,
         message: TerminalTelegramIncomingMessage,
-        origin: TelegramTurnOrigin
+        lease: TerminalTelegramRouteLease
     ) async -> Bool {
         guard let consent = TerminalTelegramArtifactConsentKeyboard
             .action(fromCallbackData: data) else {
             return false
         }
         let offerID = consent.offerID
-        guard let lease = origin.lease,
-              let fence = wireFence(for: origin) else { return true }
+        guard let fence = wireFence(for: lease) else { return true }
         switch consent.action {
         case .cancel:
             await controlService.cancelArtifactConsent(
@@ -167,12 +162,12 @@ extension TelegramSessionCompanion {
             await sendSystemMessage(
                 "ZenCODE message: file send cancelled.",
                 to: message.chatID,
-                origin: origin
+                lease: lease
             )
         case .send:
             // Once the offer is registered the control service owns the staged
             // excerpt: it deletes it after consume (sent, refused or failed),
-            // on cancel, on expiry and on reset. The companion never deletes
+            // on cancel, on expiry and on reset. The channel never deletes
             // it here.
             do {
                 guard let messageID = try await controlService
@@ -188,7 +183,7 @@ extension TelegramSessionCompanion {
                     await sendSystemMessage(
                         "ZenCODE message: that confirmation expired or no longer matches the file. Ask again with /diff.",
                         to: message.chatID,
-                        origin: origin
+                        lease: lease
                     )
                     return true
                 }
@@ -196,7 +191,7 @@ extension TelegramSessionCompanion {
                 await sendSystemMessage(
                     "ZenCODE message: file sent.",
                     to: message.chatID,
-                    origin: origin
+                    lease: lease
                 )
             } catch {
                 // Failures before the offer was consumed (e.g. wire fence)
@@ -207,7 +202,7 @@ extension TelegramSessionCompanion {
                 await sendSystemMessage(
                     "ZenCODE message: the file could not be sent (\(TerminalTelegramControlError.operatorDescription(error))).",
                     to: message.chatID,
-                    origin: origin
+                    lease: lease
                 )
             }
         }
@@ -238,42 +233,52 @@ extension TelegramSessionCompanion {
     // MARK: - Inbound attachments
 
     /// Selective ingress: an admitted attachment is downloaded into the
-    /// bounded 0600 store and acknowledged. The file is never opened by this
-    /// path — the operator asks the agent to read it explicitly afterwards.
+    /// bounded 0600 store and acknowledged, or handed to the controller's
+    /// question waiting for an attachment (``pickAttachment(startingAt:)``).
+    /// The file is never opened by this path — the operator asks the agent to
+    /// read it explicitly afterwards.
     func handleInboundAttachment(
         _ attachment: TerminalTelegramInboundAttachment,
         message: TerminalTelegramIncomingMessage,
-        origin: TelegramTurnOrigin
+        lease: TerminalTelegramRouteLease
     ) async {
         if onTelegramWorkEffectForTesting?(.attachmentDownload) == true { return }
-        guard let fence = wireFence(for: origin) else { return }
+        guard let fence = wireFence(for: lease) else { return }
         do {
             let stored = try await controlService.receiveInboundAttachment(
                 attachment, chatID: message.chatID, fence: fence
             )
+            if deliverPendingAttachment(stored.url, lease: lease) {
+                await sendSystemMessage(
+                    "ZenCODE message: received “\(stored.filename)” (\(stored.mimeType)); it is attached to the next prompt.",
+                    to: message.chatID,
+                    lease: lease
+                )
+                return
+            }
             await sendSystemMessage(
                 "ZenCODE message: received “\(stored.filename)” (\(stored.mimeType)). Ask the agent to read it by path when needed; it will be removed automatically.",
                 to: message.chatID,
-                origin: origin
+                lease: lease
             )
         } catch TerminalTelegramControlError.attachmentStoreBusy {
             await sendSystemMessage(
                 "ZenCODE message: too many attachments are being received. Try again shortly.",
                 to: message.chatID,
-                origin: origin
+                lease: lease
             )
         } catch TerminalTelegramControlError.fileTooLarge(let limit) {
             await sendSystemMessage(
                 TerminalTelegramInboundAttachmentGate.Refusal
                     .tooLarge(limit: limit).operatorMessage,
                 to: message.chatID,
-                origin: origin
+                lease: lease
             )
         } catch {
             await sendSystemMessage(
                 "ZenCODE message: the attachment could not be received.",
                 to: message.chatID,
-                origin: origin
+                lease: lease
             )
         }
     }
@@ -285,7 +290,7 @@ extension TelegramSessionCompanion {
     /// capped by the multipart budget so a giant working tree can never
     /// produce an unbounded artifact.
     func sessionDiffText() -> String? {
-        guard let summary = controller.lastFileChangeSummary, !summary.entries.isEmpty else {
+        guard let summary = controller?.lastFileChangeSummary, !summary.entries.isEmpty else {
             return nil
         }
         let budget = TerminalTelegramMultipartForm.maximumBodyBytes
@@ -323,16 +328,16 @@ extension TelegramSessionCompanion {
         _ text: String,
         to chatID: Int64,
         replyMarkup: TerminalTelegramReplyMarkup,
-        origin: TelegramTurnOrigin
+        lease: TerminalTelegramRouteLease
     ) async -> Int? {
         if let onTelegramSystemMessage {
             _ = await onTelegramSystemMessage(text, chatID)
             return nil
         }
-        guard let fence = wireFence(for: origin) else { return nil }
+        guard let fence = wireFence(for: lease) else { return nil }
         do {
             return try await controlService.sendPlainMessageWithReceipt(
-                text, to: chatID, topicID: origin.lease?.effectiveMessageThreadID,
+                text, to: chatID, topicID: lease.effectiveMessageThreadID,
                 replyMarkup: replyMarkup, fence: fence
             )
         } catch {

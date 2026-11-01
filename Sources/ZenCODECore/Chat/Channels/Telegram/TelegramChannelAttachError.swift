@@ -1,18 +1,18 @@
 //
-//  TelegramCompanionAttachError.swift
+//  TelegramChannelAttachError.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
 //
 
-/// Why ``TelegramSessionCompanion/attach()`` could not link the session to
+/// Why ``TelegramChannel/attach()`` could not link the slot's session to
 /// Telegram.
 ///
 /// The primary channel presents ``failureText`` on its failure channel. That
 /// is the text the terminal wrote for the same failure, byte for byte, with
 /// its `ZenCODE: ` prefix and its trailing newline, so a terminal that
 /// presents it is unchanged.
-public enum TelegramCompanionAttachError: Error, Sendable, Equatable {
+public enum TelegramChannelAttachError: Error, Sendable, Equatable {
     /// The settings hold no linked chat: Telegram was never paired.
     case notPaired
     /// The settings do not resolve to exactly one owner route this session
@@ -22,8 +22,8 @@ public enum TelegramCompanionAttachError: Error, Sendable, Equatable {
     /// The control service failed to start. `description` is the
     /// operator-facing text of the error
     /// (``TerminalTelegramControlError/operatorDescription(_:)``), with any
-    /// bot token removed; the companion also records it as the control
-    /// state's `lastError`.
+    /// bot token removed; the channel also records it as the control state's
+    /// `lastError`.
     case controlFailed(description: String)
 
     /// The text the primary channel writes on its failure channel.

@@ -63,8 +63,8 @@ public actor LocalExecPermissionAuthorizer {
     /// Returns `true` when this request needs no dialog: either the tool is not
     /// gated, or a previous decision already covers it.
     ///
-    /// Surfaces that mirror the session elsewhere (Telegram) use this to avoid
-    /// announcing a consent step that will never be presented.
+    /// A channel that presents the session elsewhere (Telegram) uses this to
+    /// avoid announcing a consent step that will never be presented.
     public func isAlreadyAuthorized(_ request: AgentToolAuthorizationRequest) async -> Bool {
         await consentAuthorizer.isAlreadyAuthorized(request)
     }
