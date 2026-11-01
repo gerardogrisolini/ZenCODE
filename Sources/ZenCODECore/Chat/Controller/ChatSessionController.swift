@@ -444,18 +444,45 @@ public final class ChatSessionController {
         addRetainedBytes(message.toolName, to: &total)
 
         for attachment in message.attachments {
-            total = saturatingSum(total, 128)
-            total = saturatingSum(total, attachment.data?.count ?? 0)
-            addRetainedBytes(attachment.fileURL?.path, to: &total)
-            addRetainedBytes(attachment.contentType, to: &total)
-            addRetainedBytes(attachment.originalFilename, to: &total)
+            total = saturatingSum(total, transcriptRetainedByteCount(attachment))
         }
         for toolCall in message.toolCalls {
-            total = saturatingSum(total, 96)
-            addRetainedBytes(toolCall.id, to: &total)
-            addRetainedBytes(toolCall.name, to: &total)
-            addRetainedBytes(toolCall.argumentsJSON, to: &total)
+            total = saturatingSum(
+                total,
+                transcriptRetainedToolCallByteCount(
+                    id: toolCall.id,
+                    name: toolCall.name,
+                    argumentsJSON: toolCall.argumentsJSON
+                )
+            )
         }
+        return total
+    }
+
+    /// The retained bytes of one attachment, counted the same way in the
+    /// transcript and in the session log (see ``ChatTurnEntry``).
+    nonisolated static func transcriptRetainedByteCount(
+        _ attachment: AgentRuntimeAttachment
+    ) -> Int {
+        var total = 128
+        total = saturatingSum(total, attachment.data?.count ?? 0)
+        addRetainedBytes(attachment.fileURL?.path, to: &total)
+        addRetainedBytes(attachment.contentType, to: &total)
+        addRetainedBytes(attachment.originalFilename, to: &total)
+        return total
+    }
+
+    /// The retained bytes of one tool call, counted the same way in the
+    /// transcript and in the session log (see ``ChatTurnEntry``).
+    nonisolated static func transcriptRetainedToolCallByteCount(
+        id: String?,
+        name: String,
+        argumentsJSON: String
+    ) -> Int {
+        var total = 96
+        addRetainedBytes(id, to: &total)
+        addRetainedBytes(name, to: &total)
+        addRetainedBytes(argumentsJSON, to: &total)
         return total
     }
 
@@ -471,11 +498,11 @@ public final class ChatSessionController {
         transcriptByteCountIsStale = false
     }
 
-    private nonisolated static func addRetainedBytes(_ text: String?, to total: inout Int) {
+    nonisolated static func addRetainedBytes(_ text: String?, to total: inout Int) {
         total = saturatingSum(total, text?.utf8.count ?? 0)
     }
 
-    private nonisolated static func saturatingSum(_ lhs: Int, _ rhs: Int) -> Int {
+    nonisolated static func saturatingSum(_ lhs: Int, _ rhs: Int) -> Int {
         guard rhs <= Int.max - lhs else { return Int.max }
         return lhs + rhs
     }

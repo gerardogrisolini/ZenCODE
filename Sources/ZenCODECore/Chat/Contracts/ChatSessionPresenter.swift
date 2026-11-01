@@ -35,6 +35,14 @@ public protocol ChatSessionPresenter: Sendable {
     func presentFileChangeSummary(_ summary: TurnFileChangeSummary) async
     /// One model request of the turn returned successfully.
     func modelTurnDidReturn() async
+    /// The turn's final response, after the purpose-specific finalization:
+    /// for a `/plan` turn, the Planner response that replaced the coordinator
+    /// output, which the transcript records as the turn's last assistant
+    /// content. Called once, only when the turn succeeds, after the last
+    /// ``modelTurnDidReturn()`` and before ``turnWillFinish()``; the
+    /// transcript closes its last block with `response.text` (a block of
+    /// reasoning alone takes the text as its content).
+    func presentFinalResponse(_ response: DirectAgentResponse) async
     /// A `/goal` workflow is about to continue with an automatic turn.
     func turnWillContinueAutomatically() async
     /// The turn's model work and file-change seal are done; workflow notices
@@ -53,6 +61,19 @@ public protocol ChatSessionPresenter: Sendable {
     /// The selection or the saved-session link of the active session changed;
     /// `state` is the complete new state, for channels that mirror it.
     func presentSessionStateChanged(_ state: ChatSessionState) async
+    /// The controller switched to the session `sessionID`
+    /// (``ChatSessionController/startNewSession(newSessionID:)``, a saved
+    /// session being loaded or restored from a checkpoint), once the previous
+    /// conversation is discarded: everything presented before belongs to the
+    /// previous session.
+    func sessionDidChange(sessionID: String) async
+    /// A saved session was restored: `entries` is its transcript rebuilt as
+    /// log entries, oldest first, the one rebuild the controller makes. A
+    /// turn starts at each ``ChatTurnEntry/Kind/userPrompt(text:attachments:origin:)``.
+    /// Called after ``sessionDidChange(sessionID:)``, where the controller
+    /// hands the transcript to
+    /// ``ChatSessionChannelHooks/savedSessionDidRestore(transcript:contextWindow:)``.
+    func presentRestoredLog(_ entries: [ChatTurnEntry.Kind]) async
     /// The operator submitted a slash command line that the shared commands
     /// run (`/plan`, `/goal`, `/review`, `/tasks`, and the other commands that
     /// echo their line); a channel that echoes submitted lines writes it now,
@@ -121,12 +142,15 @@ extension ChatSessionPresenter {
     public func presentSealedFileArtifacts(_ turn: SessionFileArtifactHistory.Turn) async {}
     public func presentFileChangeSummary(_ summary: TurnFileChangeSummary) async {}
     public func modelTurnDidReturn() async {}
+    public func presentFinalResponse(_ response: DirectAgentResponse) async {}
     public func turnWillContinueAutomatically() async {}
     public func turnWillFinish() async {}
     public func presentWorkflowNotice(_ notice: ChatWorkflowNotice) async {}
     public func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async {}
     public func presentSessionNotice(_ notice: ChatSessionNotice) async {}
     public func presentSessionStateChanged(_ state: ChatSessionState) async {}
+    public func sessionDidChange(sessionID: String) async {}
+    public func presentRestoredLog(_ entries: [ChatTurnEntry.Kind]) async {}
     public func presentSubmittedCommand(_ line: String) async {}
     public func reserveTaskGraphOverviewPublication() async -> ChatOverviewPublication? {
         nil

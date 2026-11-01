@@ -76,6 +76,9 @@ public struct ChatTurnRequest: Sendable {
     /// Presents this turn instead of the controller's default presenter, for
     /// channels whose presentation is bound to one request (ACP prompts).
     public var presenter: (any ChatSessionPresenter)?
+    /// Where the prompt came from, for presenters that record it (see
+    /// ``ChatSessionStateReducer``); `nil` lets each one use its default.
+    public var origin: ChatTurnOrigin?
 
     public init(
         prompt: String,
@@ -84,7 +87,8 @@ public struct ChatTurnRequest: Sendable {
         sessionConfiguration: AgentCoreSessionConfiguration,
         authorizeTool: AgentToolAuthorizationHandler? = nil,
         turnInstructionProvider: (@Sendable () async -> String?)? = nil,
-        presenter: (any ChatSessionPresenter)? = nil
+        presenter: (any ChatSessionPresenter)? = nil,
+        origin: ChatTurnOrigin? = nil
     ) {
         self.prompt = prompt
         self.attachments = attachments
@@ -93,6 +97,7 @@ public struct ChatTurnRequest: Sendable {
         self.authorizeTool = authorizeTool
         self.turnInstructionProvider = turnInstructionProvider
         self.presenter = presenter
+        self.origin = origin
     }
 }
 

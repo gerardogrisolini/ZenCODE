@@ -44,7 +44,7 @@ public enum DirectAgentToolCallError: LocalizedError, Sendable {
     }
 }
 
-public struct DirectAgentToolCall: Sendable {
+public struct DirectAgentToolCall: Sendable, Equatable {
     public let id: String
     public let name: String
     private let arguments: [String: JSONValue]
@@ -112,7 +112,7 @@ public struct DirectAgentToolCall: Sendable {
     }
 }
 
-public struct DirectAgentToolResult: Sendable {
+public struct DirectAgentToolResult: Sendable, Equatable {
     public enum Status: String, Sendable, Equatable {
         case completed
         case failed
@@ -192,7 +192,7 @@ public struct DirectAgentGenerationThroughput: Sendable, Equatable {
     }
 }
 
-public struct DirectAgentGenerationMetrics: Sendable {
+public struct DirectAgentGenerationMetrics: Sendable, Equatable {
     /// Prompt tokens evaluated during prefill. Excludes tokens known to have
     /// been reused from the prompt cache.
     public let promptTokenCount: Int?
@@ -295,7 +295,7 @@ public struct DirectAgentGenerationMetrics: Sendable {
     }
 }
 
-public struct DirectAgentContextWindowStatus: Sendable {
+public struct DirectAgentContextWindowStatus: Sendable, Equatable {
     public let usedTokens: Int?
     public let maxTokens: Int?
     public let modelID: String

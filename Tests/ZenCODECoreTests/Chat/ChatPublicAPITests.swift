@@ -113,7 +113,99 @@ struct ChatPublicAPITests {
         }
     }
 
+    @Test("A host app observes a session through the reducer and answers its pending requests")
+    func aHostAppObservesASessionThroughThePublicAPI() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chat-public-api-\(UUID().uuidString)", isDirectory: true)
+        let support = root.appendingPathComponent("support", isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try await AppStorageDirectory.withSupportDirectoryURL(support) {
+            let configuration = try AgentConfiguration(
+                hostedModelID: "public-api-model",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                availableModels: [
+                    AgentSettingsModelManifest(
+                        id: "public-api-model",
+                        kind: .remoteAPI,
+                        modelID: "local/public-api-model"
+                    ),
+                ],
+                workingDirectory: workspace,
+                appMode: true
+            )
+            let environment = ChatSessionEnvironment(
+                configuration: configuration,
+                featureRuntime: nil,
+                userHomeDirectoryURL: nil
+            )
+            let backend = ScriptedACPCommandBackend()
+            // The composition of Docs/embedding.md, with a scripted backend.
+            let session = await makeObservedSession(
+                environment: environment,
+                workspaceURL: workspace,
+                backendFactory: { _, _ in backend }
+            )
+            let viewModel = await SessionViewModel(host: session.host)
+            let observation = Task { await viewModel.observe(session.reducer) }
+
+            await session.controller.applyInitialAgentSelectionIfNeeded()
+            let sessionConfiguration = await session.controller.turnSessionConfiguration(
+                for: .normal,
+                responseLanguageSection: nil
+            )
+            _ = try await session.controller.runTurn(ChatTurnRequest(
+                prompt: "Hello",
+                sessionConfiguration: sessionConfiguration,
+                origin: .app
+            ))
+
+            let snapshot = await session.reducer.snapshot
+            #expect(snapshot.transcript.map(\.kind) == [
+                .userPrompt(text: "Hello", attachments: [], origin: .app),
+                .assistantText("COORDINATOR INTERNAL QUESTION"),
+            ])
+            #expect(!snapshot.turn.isGenerating)
+            #expect(snapshot.summary.title == "Hello")
+            #expect(entries(after: 0, epoch: snapshot.epoch, in: snapshot) == snapshot.log)
+            #expect(entries(after: 0, epoch: snapshot.epoch + 1, in: snapshot) == nil)
+            #expect(snapshot.log.compactMap(Self.text(of:)) == ["Hello", "COORDINATOR INTERNAL QUESTION"])
+
+            // A pending request, answered from the main actor.
+            let line = Task { await session.host.readLine(prompt: "Name?") }
+            var pending: ChatPendingRequest?
+            for await update in await session.reducer.snapshots() where !update.pendingRequests.isEmpty {
+                pending = update.pendingRequests.first
+                break
+            }
+            let request = try #require(pending)
+            #expect(request.kind == .readLine(prompt: "Name?"))
+            await viewModel.answer(request, with: .text("zen"))
+            #expect(await line.value == "zen")
+            #expect(await session.reducer.snapshot.pendingRequests.isEmpty)
+
+            observation.cancel()
+            await session.runner.shutdown()
+        }
+    }
+
     // MARK: - Helpers
+
+    /// A client's switch over a log entry, with a `default` for the kinds a
+    /// minor release may add.
+    private static func text(of entry: ChatTurnEntry) -> String? {
+        switch entry.kind {
+        case let .userPrompt(text, _, _):
+            return text
+        case let .assistantText(text):
+            return text
+        default:
+            return nil
+        }
+    }
 
     /// A switch over a public Chat enum from a client: new cases may arrive in
     /// a minor release, so a client always has a `default`.
@@ -218,4 +310,85 @@ private final class AppTelegramChannel: TelegramCompanionChannel {
     }
 
     func telegramRouteWasInvalidated(_ lease: TerminalTelegramRouteLease) async {}
+}
+
+// MARK: - Observing a session
+
+/// The observed session of `Docs/embedding.md`.
+private struct ObservedSession: Sendable {
+    let controller: ChatSessionController
+    let runner: AgentCoreSessionRunner
+    let reducer: ChatSessionStateReducer
+    let host: ChatPendingRequestHost
+}
+
+/// The composition of `Docs/embedding.md`: the reducer is the presenter and
+/// the pending-request host is the host. `backendFactory` replaces the
+/// production backend for the test.
+@MainActor
+private func makeObservedSession(
+    environment: ChatSessionEnvironment,
+    workspaceURL: URL,
+    backendFactory: @escaping AgentRuntimeBackendFactory
+) -> ObservedSession {
+    let sessionID = UUID().uuidString.lowercased()
+    let reducer = ChatSessionStateReducer(
+        sessionID: sessionID,
+        workingDirectory: workspaceURL,
+        defaultOrigin: .app
+    )
+    let host = ChatPendingRequestHost(
+        reducer: reducer,
+        capabilities: [.toolConsent, .singleChoice, .multipleChoice, .textInput],
+        gatesWorkspaceAccess: true
+    )
+    let authorizer = ChatToolConsentAuthorizer(host: host)
+    let runner = ChatSessionRuntimeFactory.makeSessionRunner(
+        toolAuthorizationHandler: { await authorizer.authorize($0) },
+        backendFactory: backendFactory
+    )
+    let controller = ChatSessionController(
+        sessionID: sessionID,
+        managementRuntime: runner,
+        environment: environment,
+        workingDirectory: workspaceURL,
+        presenter: reducer,
+        host: host,
+        authorizer: authorizer
+    )
+    return ObservedSession(controller: controller, runner: runner, reducer: reducer, host: host)
+}
+
+/// The view model of `Docs/embedding.md`, on the main actor.
+@MainActor
+private final class SessionViewModel {
+    private(set) var snapshot: ChatSessionSnapshot?
+    private let host: ChatPendingRequestHost
+
+    init(host: ChatPendingRequestHost) {
+        self.host = host
+    }
+
+    /// Runs until the task that calls it is cancelled.
+    func observe(_ reducer: ChatSessionStateReducer) async {
+        for await snapshot in await reducer.snapshots() {
+            self.snapshot = snapshot
+        }
+    }
+
+    func answer(_ request: ChatPendingRequest, with answer: ChatPendingRequest.Answer?) async {
+        await host.resolve(request.id, answer: answer)
+    }
+}
+
+/// The catch-up of `Docs/embedding.md`.
+private func entries(
+    after lastSeen: Int,
+    epoch: UInt64,
+    in snapshot: ChatSessionSnapshot
+) -> [ChatTurnEntry]? {
+    guard snapshot.epoch == epoch, lastSeen + 1 >= snapshot.firstRetainedSequence else {
+        return nil
+    }
+    return snapshot.log.filter { $0.sequence > lastSeen }
 }

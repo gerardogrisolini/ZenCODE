@@ -211,3 +211,14 @@ public struct ChatSubAgentOverview: Sendable {
         ].joined(separator: "/")
     }
 }
+
+/// Two overviews are equal when a channel renders them alike: the same
+/// ``ChatSubAgentOverview/signature`` and the same current wave
+/// (``ChatSubAgentOverview/currentBatchID``). Both are derived from the
+/// snapshots, so equal snapshots always give equal overviews; the snapshot
+/// fields that no row shows do not take part.
+extension ChatSubAgentOverview: Equatable {
+    public static func == (lhs: ChatSubAgentOverview, rhs: ChatSubAgentOverview) -> Bool {
+        lhs.signature == rhs.signature && lhs.currentBatchID == rhs.currentBatchID
+    }
+}

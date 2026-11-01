@@ -146,6 +146,7 @@ extension ChatSessionController {
                     turnSessionID: turnSessionID
                 )
             }
+            await presenter.presentFinalResponse(response)
             let messages = await transcriptTurn.messages(finalResponseText: response.text)
             let fileChangeSummary = await finishTurn(
                 messages: messages,

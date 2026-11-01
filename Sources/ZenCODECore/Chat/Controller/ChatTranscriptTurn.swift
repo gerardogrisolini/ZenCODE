@@ -81,29 +81,34 @@ actor ChatTranscriptTurn {
         )
     }
 
+    /// Closes the last block with `finalResponseText` (see
+    /// ``ChatTurnBlockRules/finalBlock(assistantContent:reasoningContent:finalResponseText:)``)
+    /// and returns the turn's messages.
     func messages(finalResponseText: String? = nil) -> [AgentRuntimeMessage] {
-        if let finalResponseText,
-           shouldPromoteReasoningToContent(finalResponseText) {
-            assistantContent = finalResponseText
-            reasoningContent = ""
-        }
+        let block = ChatTurnBlockRules.finalBlock(
+            assistantContent: assistantContent,
+            reasoningContent: reasoningContent,
+            finalResponseText: finalResponseText
+        )
+        assistantContent = block.assistantContent
+        reasoningContent = block.reasoningContent
         flushAssistantMessage()
         return transcriptMessages
     }
 
     func shouldPromoteReasoningToContent(_ finalResponseText: String) -> Bool {
-        let finalText = finalResponseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !finalText.isEmpty,
-              assistantContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !reasoningContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return false
-        }
-        return true
+        ChatTurnBlockRules.shouldPromoteReasoningToContent(
+            finalResponseText: finalResponseText,
+            assistantContent: assistantContent,
+            reasoningContent: reasoningContent
+        )
     }
 
     func flushAssistantMessage() {
-        guard assistantContent.nilIfBlank != nil
-            || reasoningContent.nilIfBlank != nil else {
+        guard ChatTurnBlockRules.hasBlock(
+            assistantContent: assistantContent,
+            reasoningContent: reasoningContent
+        ) else {
             return
         }
         transcriptMessages.append(

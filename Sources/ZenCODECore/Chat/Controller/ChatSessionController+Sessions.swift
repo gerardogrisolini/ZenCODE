@@ -45,6 +45,7 @@ extension ChatSessionController {
         activePlan = nil
         pendingPlanApprovalPlanID = nil
         activeWorkflow = nil
+        await effectivePresenter(for: nil).sessionDidChange(sessionID: sessionID)
         await presentSessionStateChanged()
         try await createSessionWithSelectedSkills()
         return ChatSessionOperationOutcome(notices: [.sessionStarted])
@@ -455,10 +456,22 @@ extension ChatSessionController {
         selection.thinkingOverride = savedSession.thinkingSelection.flatMap {
             AgentThinkingSelection(rawValue: $0)
         }
-        selection.agent = try restoredAgent(for: savedSession)
+        let agent: AgentProfile?
+        do {
+            agent = try restoredAgent(for: savedSession)
+        } catch {
+            // The session already switched: presenters learn it even when the
+            // load stops here.
+            await effectivePresenter(for: nil).sessionDidChange(sessionID: sessionID)
+            throw error
+        }
+        selection.agent = agent
         // The restored agent counts as selected again: read the launch folder
         // anew when the restored session's prompt is composed.
         launchFolderProjectsCache = nil
+        // Next to the suspension that follows, so the call opens no new window
+        // on the state installed above.
+        await effectivePresenter(for: nil).sessionDidChange(sessionID: sessionID)
         let items = await toolSelectionItems()
         selection.toolKeys = Self.toolSelectionKeys(
             from: savedSession.selectedTools,
@@ -493,6 +506,10 @@ extension ChatSessionController {
             name: savedSession.name,
             transcript: transcript,
             contextWindow: savedSession.contextWindow
+        )
+        // The one place the restored transcript becomes log entries.
+        await effectivePresenter(for: nil).presentRestoredLog(
+            ChatTurnEntry.kinds(fromTranscript: restoredSession.transcript)
         )
         await channelHooks?.savedSessionDidRestore(
             transcript: restoredSession.transcript,

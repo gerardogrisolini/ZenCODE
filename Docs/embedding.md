@@ -358,6 +358,141 @@ The task-graph and sub-agent overviews reach the presenter as values
   `reserveSubAgentOverviewPublication()` let the presenter drop a publication
   that a later one overtook. The default `nil` presents them as they come.
 
+## Observing a Session
+
+`ChatSessionStateReducer` is a presenter that keeps the observable state of a
+session, so the app renders a value instead of keeping state of its own. It
+records what the controller presents in one ordered log per session
+(`ChatTurnEntry`, with a strictly increasing `sequence`) and publishes a
+`ChatSessionSnapshot` after every change. The snapshot's `transcript`
+(prompts and closed assistant blocks), `activity` (tool calls), `notices`, and
+`fileChanges.artifactHistory` are projections of the `log`. The other members
+are sub-states of their own: `turn` (phase, the text still streaming in
+`liveAssistantText` and `liveThought`, metrics, context window, usage),
+`taskGraph`, `subAgents`, `fileChanges.turnSummary`, `selection`,
+`savedSession`, `pendingRequests`, and `summary`. Assistant text reaches the
+log in blocks, closed where the session transcript closes them.
+
+`ChatPendingRequestHost` is a host that publishes every interaction the
+controller asks for (tool consent, menus, a text line, an attachment, and
+workspace access when `gatesWorkspaceAccess` is `true`) in the snapshot's
+`pendingRequests`, and waits until the app answers it. Use the reducer as the
+presenter and the pending-request host as the host:
+
+```swift
+struct ObservedSession: Sendable {
+    let controller: ChatSessionController
+    let runner: AgentCoreSessionRunner
+    let reducer: ChatSessionStateReducer
+    let host: ChatPendingRequestHost
+}
+
+@MainActor
+func makeObservedSession(
+    environment: ChatSessionEnvironment,
+    workspaceURL: URL
+) -> ObservedSession {
+    let sessionID = UUID().uuidString.lowercased()
+    let reducer = ChatSessionStateReducer(
+        sessionID: sessionID,
+        workingDirectory: workspaceURL,
+        defaultOrigin: .app
+    )
+    let host = ChatPendingRequestHost(
+        reducer: reducer,
+        capabilities: [.toolConsent, .singleChoice, .multipleChoice, .textInput],
+        gatesWorkspaceAccess: true
+    )
+    let authorizer = ChatToolConsentAuthorizer(host: host)
+    let runner = ChatSessionRuntimeFactory.makeSessionRunner(
+        toolAuthorizationHandler: { await authorizer.authorize($0) }
+    )
+    let controller = ChatSessionController(
+        sessionID: sessionID,
+        managementRuntime: runner,
+        environment: environment,
+        workingDirectory: workspaceURL,
+        presenter: reducer,
+        host: host,
+        authorizer: authorizer
+    )
+    return ObservedSession(controller: controller, runner: runner, reducer: reducer, host: host)
+}
+```
+
+An app that keeps a presenter of its own attaches the reducer next to it
+instead, with `controller.attachCompanionPresenter(reducer)`; it then receives
+the same calls, the ones of a presenter bound to a request included. The
+convenience initializer `ChatSessionStateReducer(controller:defaultOrigin:)`
+reads the session, the working directory, and the selection from the
+controller. Mark the origin of each turn with `ChatTurnRequest(…, origin:)`; a
+turn without one takes the reducer's `defaultOrigin`. The closing notices of an
+operation, which the app presents itself (see [Running a Line](#running-a-line)),
+go to `reducer.presentSessionNotice(_:)` like any other presentation.
+
+The reducer and the host are isolated to `ChatSessionActor`. Each call of
+`snapshots()` returns a new stream that starts with the current snapshot and
+keeps only the newest one not yet delivered: a slow view skips snapshots, never
+receives them out of order, and always ends on the latest. Answer a request with
+`resolve(_:answer:)`; `nil` refuses it, an answer of another kind is refused
+and leaves the request open, and cancelling the task that waits refuses it too.
+`cancelPendingRequests()` refuses every open request, for a view that goes
+away.
+
+```swift
+@MainActor
+final class SessionViewModel {
+    private(set) var snapshot: ChatSessionSnapshot?
+    private let host: ChatPendingRequestHost
+
+    init(host: ChatPendingRequestHost) {
+        self.host = host
+    }
+
+    /// Runs until the task that calls it is cancelled.
+    func observe(_ reducer: ChatSessionStateReducer) async {
+        for await snapshot in await reducer.snapshots() {
+            self.snapshot = snapshot
+        }
+    }
+
+    func answer(_ request: ChatPendingRequest, with answer: ChatPendingRequest.Answer?) async {
+        await host.resolve(request.id, answer: answer)
+    }
+}
+```
+
+A view that keeps the last sequence it rendered catches up from the log while
+the epoch is the same and no entry it misses was dropped; otherwise it rebuilds
+from the snapshot:
+
+```swift
+func entries(
+    after lastSeen: Int,
+    epoch: UInt64,
+    in snapshot: ChatSessionSnapshot
+) -> [ChatTurnEntry]? {
+    guard snapshot.epoch == epoch, lastSeen + 1 >= snapshot.firstRetainedSequence else {
+        return nil
+    }
+    return snapshot.log.filter { $0.sequence > lastSeen }
+}
+```
+
+Notes:
+
+- The epoch increases, and the log starts again, when the controller switches
+  session (`startNewSession(newSessionID:)`, a saved session loaded or restored
+  from a checkpoint). The log of a loaded session is rebuilt from its
+  transcript, with `ChatTurnOrigin.unknown` prompts. Sequences are never reused.
+- The log has the byte budget of the session transcript and drops its oldest
+  entries whole; `firstRetainedSequence` tells which entries it still holds.
+  `notices` keeps the latest `ChatSessionStateReducer.maximumNoticeCount` (64).
+- The log and the snapshot are transient: they are never saved with a session
+  nor copied into a checkpoint.
+- Switch over `ChatTurnEntry.Kind` and `ChatPendingRequest.Kind` with a
+  `default` case, as over every public Chat enum.
+
 ## Telegram Companion
 
 A `TelegramSessionCompanion` mirrors the session to the Telegram chat that

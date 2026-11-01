@@ -133,6 +133,10 @@ struct ChatFanOutPresenter: ChatSessionPresenter {
         await fanOut { await $0.modelTurnDidReturn() }
     }
 
+    func presentFinalResponse(_ response: DirectAgentResponse) async {
+        await fanOut { await $0.presentFinalResponse(response) }
+    }
+
     func turnWillContinueAutomatically() async {
         await fanOut { await $0.turnWillContinueAutomatically() }
     }
@@ -155,6 +159,14 @@ struct ChatFanOutPresenter: ChatSessionPresenter {
 
     func presentSessionStateChanged(_ state: ChatSessionState) async {
         await fanOut { await $0.presentSessionStateChanged(state) }
+    }
+
+    func sessionDidChange(sessionID: String) async {
+        await fanOut { await $0.sessionDidChange(sessionID: sessionID) }
+    }
+
+    func presentRestoredLog(_ entries: [ChatTurnEntry.Kind]) async {
+        await fanOut { await $0.presentRestoredLog(entries) }
     }
 
     func presentSubmittedCommand(_ line: String) async {

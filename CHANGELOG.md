@@ -38,6 +38,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - `ChatSessionRuntimeFactory` and `TelegramCompanionRuntimeFactory`, the
   public construction points of a session runner and of the router and
   control service of a Telegram companion, described in the same guide.
+- Observable session state for host apps: `ChatSessionStateReducer` records
+  what a session shows in one ordered log, with a sequence number per entry,
+  and publishes a `ChatSessionSnapshot` (transcript, tool activity, the turn in
+  progress, overviews, file changes, selection, pending requests, and a
+  summary) after every change. `ChatPendingRequestHost` publishes tool
+  consents, menus, and text requests in it until the app answers them. The
+  log and the snapshot are never saved: see
+  [Docs/embedding.md](Docs/embedding.md#observing-a-session).
 - Telegram now works next to the terminal UI and next to ACP clients such as
   Xcode: one Telegram companion follows the session of either and mirrors it
   to the linked chat. In the terminal UI, Telegram works as before, apart from
