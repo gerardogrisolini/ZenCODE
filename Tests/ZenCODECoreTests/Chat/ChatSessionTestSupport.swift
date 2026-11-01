@@ -4,12 +4,14 @@
 //
 //  Test doubles shared by the Chat-layer suites: a scripted session runtime
 //  (turns and session management, with an ordered call log), a presenter that
-//  records every event, a scripted interaction host with configurable
+//  records every event (also as a companion, optionally into a log several
+//  presenters share), a scripted interaction host with configurable
 //  capabilities and a queue of answers, and the harness that wires them to a
 //  `ChatSessionController` inside a throwaway support directory.
 //
 
 import Foundation
+import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
@@ -63,6 +65,12 @@ actor RecordingChatPresenter: ChatSessionPresenter {
     }
 
     private(set) var events: [Event] = []
+    /// The name this presenter's entries carry in ``log``.
+    nonisolated let name: String
+    /// Where the presenter also writes every event it records, next to the
+    /// other presenters that share it; `nil` by default, which records the
+    /// events only in ``events``.
+    nonisolated let log: ChatPresentationLog?
     private var submittedCommandHook: (@Sendable (String) async -> Void)?
     /// Whether ``reserveTaskGraphOverviewPublication()`` hands out
     /// reservations (revisions 1, 2, 3, ...) or reserves nothing (`nil`).
@@ -83,6 +91,11 @@ actor RecordingChatPresenter: ChatSessionPresenter {
         predicate: @Sendable ([Event]) -> Bool,
         continuation: CheckedContinuation<Void, Never>
     )] = []
+
+    init(name: String = "primary", log: ChatPresentationLog? = nil) {
+        self.name = name
+        self.log = log
+    }
 
     /// The session notices presented so far, in order.
     var notices: [ChatSessionNotice] {
@@ -201,6 +214,7 @@ actor RecordingChatPresenter: ChatSessionPresenter {
     }
 
     private func record(_ event: Event) {
+        log?.append(event, presenter: name)
         events.append(event)
         let ready = eventWaiters.filter { $0.predicate(events) }
         eventWaiters.removeAll { $0.predicate(events) }
@@ -341,6 +355,36 @@ actor RecordingChatPresenter: ChatSessionPresenter {
             origin: origin,
             publication: publication
         ))
+    }
+}
+
+/// A recording presenter also attaches to a controller as a companion.
+extension RecordingChatPresenter: ChatCompanionPresenter {}
+
+// MARK: - Presentation log
+
+/// The events of several recording presenters in the order they were
+/// presented, each with the name of the presenter that recorded it, so a test
+/// asserts the order between the companions and the primary.
+final class ChatPresentationLog: Sendable {
+    struct Entry: Equatable, Sendable {
+        let presenter: String
+        let event: RecordingChatPresenter.Event
+    }
+
+    private let storage = Mutex<[Entry]>([])
+
+    /// Everything recorded so far, in order.
+    var entries: [Entry] {
+        storage.withLock { $0 }
+    }
+
+    func append(_ event: RecordingChatPresenter.Event, presenter: String) {
+        storage.withLock { $0.append(Entry(presenter: presenter, event: event)) }
+    }
+
+    func clear() {
+        storage.withLock { $0.removeAll() }
     }
 }
 

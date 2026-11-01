@@ -32,7 +32,7 @@ extension ChatSessionController {
     }
 
     func presentSessionStateChanged() async {
-        await presenter.presentSessionStateChanged(sessionState)
+        await effectivePresenter(for: nil).presentSessionStateChanged(sessionState)
     }
 
     // MARK: - Runtime steps
@@ -107,7 +107,7 @@ extension ChatSessionController {
         }
         let configuration = await composedSessionConfiguration(discoverExternalTools: false)
         let hooks = channelHooks
-        let presenter = self.presenter
+        let presenter = effectivePresenter(for: nil)
         let modelID = try await managementRuntime.preloadModel(
             configuration: configuration
         ) { event in
@@ -538,7 +538,7 @@ extension ChatSessionController {
                 agents = try availableAgents()
             } catch {
                 // The selected agent precedes the list that could not be read.
-                await presenter.presentSessionNotice(.selectedAgent(selection.agent))
+                await effectivePresenter(for: nil).presentSessionNotice(.selectedAgent(selection.agent))
                 throw error
             }
             return ChatSelectionOutcome(notices: [
@@ -590,7 +590,7 @@ extension ChatSessionController {
                     .projectAgentsSaveFailed(description: error.localizedDescription),
                 ])
             }
-            await presenter.presentSessionNotice(
+            await effectivePresenter(for: nil).presentSessionNotice(
                 .projectAgentsAssociated(agents: associatedAgents, projectName: menu.projectName)
             )
         }
@@ -734,7 +734,7 @@ extension ChatSessionController {
         }
 
         selection.toolKeys.subtract(workspaceSelectionKeys)
-        await presenter.presentSessionNotice(.workspaceAccessDenied(request))
+        await effectivePresenter(for: nil).presentSessionNotice(.workspaceAccessDenied(request))
         return true
     }
 
@@ -945,7 +945,7 @@ extension ChatSessionController {
                 )
             }
         } catch {
-            await presenter.presentSessionNotice(
+            await effectivePresenter(for: nil).presentSessionNotice(
                 .operationFailed(description: error.localizedDescription)
             )
         }
@@ -1098,12 +1098,12 @@ extension ChatSessionController {
         do {
             switch source {
             case let .gitHub(url):
-                await presenter.presentSessionNotice(
+                await effectivePresenter(for: nil).presentSessionNotice(
                     .skillInstallStarted(source: url.absoluteString)
                 )
                 result = try await PromptSkillInstaller.install(fromGitHubURL: url)
             case let .local(url):
-                await presenter.presentSessionNotice(.skillInstallStarted(source: url.path))
+                await effectivePresenter(for: nil).presentSessionNotice(.skillInstallStarted(source: url.path))
                 result = try PromptSkillInstaller.install(fromLocalURL: url)
             }
         } catch {

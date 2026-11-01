@@ -16,6 +16,13 @@ actor TerminalAssistantResponseBuffer {
         return pending
     }
 
+    /// Whether a block is waiting for its tool boundary or the turn end,
+    /// without taking it: the Telegram overview barrier reads it to tell that
+    /// the tool boundary in progress will write a comment.
+    var hasPendingContent: Bool {
+        !pending.isEmpty
+    }
+
     func finalContent(fallback: String) -> String {
         receivedContent ? takePending() : fallback
     }

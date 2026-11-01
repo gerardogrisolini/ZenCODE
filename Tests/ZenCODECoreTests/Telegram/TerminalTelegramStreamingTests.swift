@@ -244,4 +244,250 @@ struct TerminalTelegramStreamingWireTests {
         #expect(update.stoppedMessageGeneration?.chat.id == 42)
         #expect(update.stoppedMessageGeneration?.draftID == 99)
     }
+
+    // MARK: - Topic runtime (Bot API 9.3/9.4)
+
+    /// The draft targets the lease's topic: `message_thread_id` is present only
+    /// when the lease has an `effectiveMessageThreadID`. With the default
+    /// `canStop` a lease without a thread keeps exactly today's body.
+    @Test
+    func richDraftCarriesMessageThreadIDOnlyForATopicLease() async throws {
+        let transport = TopicWireTransport()
+        let support = try Self.makeSupportDirectory()
+        defer { try? FileManager.default.removeItem(at: support) }
+        try await AppStorageDirectory.withSupportDirectoryURL(support) {
+            let service = TerminalTelegramControlService(transportFactory: { transport })
+            let epoch = try #require(try await service.start().wireLifecycleEpoch)
+            try await service.sendRichMessageDraftWithFallback(
+                "## Root", to: 42, draftID: 11, fence: Self.makeFence(epoch: epoch, topicID: nil)
+            )
+            // Each draft is governed; skip the one-second per-chat spacing.
+            await service.rateGovernor.reset()
+            try await service.sendRichMessageDraftWithFallback(
+                "## Topic", to: 42, draftID: 12, fence: Self.makeFence(epoch: epoch, topicID: 77)
+            )
+            _ = await service.stop()
+        }
+        let requests = transport.requests
+        #expect(requests.map(\.method) == ["sendRichMessageDraft", "sendRichMessageDraft"])
+        let root = try Self.jsonObject(requests[0].body)
+        #expect(Set(root.keys) == ["chat_id", "draft_id", "rich_message", "can_stop", "keep_on_stop"])
+        #expect(root["can_stop"] as? Bool == true)
+        #expect(root["keep_on_stop"] as? Bool == true)
+        let topic = try Self.jsonObject(requests[1].body)
+        #expect(topic["message_thread_id"] as? Int == 77)
+        #expect(topic["draft_id"] as? Int == 12)
+        #expect(topic["can_stop"] as? Bool == true)
+    }
+
+    /// `canStop: false` hides the stop button on the rich draft and on its
+    /// legacy fallback. Both keep the lease's topic, and `keep_on_stop` stays
+    /// at its default.
+    @Test
+    func draftCanStopIsFalseWhenRequestedOnBothDraftPaths() async throws {
+        for richDraftStatus in [200, 404] {
+            let transport = TopicWireTransport(richDraftStatus: richDraftStatus)
+            let support = try Self.makeSupportDirectory()
+            defer { try? FileManager.default.removeItem(at: support) }
+            try await AppStorageDirectory.withSupportDirectoryURL(support) {
+                let service = TerminalTelegramControlService(transportFactory: { transport })
+                let epoch = try #require(try await service.start().wireLifecycleEpoch)
+                try await service.sendRichMessageDraftWithFallback(
+                    "## Partial", to: 42, draftID: 21, canStop: false,
+                    fence: Self.makeFence(epoch: epoch, topicID: 77)
+                )
+                _ = await service.stop()
+            }
+            let requests = transport.requests
+            let expected = richDraftStatus == 200
+                ? ["sendRichMessageDraft"] : ["sendRichMessageDraft", "sendMessageDraft"]
+            #expect(requests.map(\.method) == expected)
+            for request in requests {
+                let body = try Self.jsonObject(request.body)
+                #expect(body["can_stop"] as? Bool == false, "\(request.method)")
+                #expect(body["keep_on_stop"] as? Bool == true, "\(request.method)")
+                #expect(body["message_thread_id"] as? Int == 77, "\(request.method)")
+                #expect(body["draft_id"] as? Int == 21, "\(request.method)")
+            }
+        }
+    }
+
+    /// `start()` publishes `getMe().has_topics_enabled` in the control state.
+    /// The value survives `stop()` like `botUsername`. Callers that build the
+    /// state without it get `nil`.
+    @Test
+    func startPublishesTopicCapabilityFromGetMe() async throws {
+        let flags: [Bool?] = [true, false, nil]
+        for flag in flags {
+            let transport = TopicWireTransport(hasTopicsEnabled: flag)
+            let support = try Self.makeSupportDirectory()
+            defer { try? FileManager.default.removeItem(at: support) }
+            try await AppStorageDirectory.withSupportDirectoryURL(support) {
+                let service = TerminalTelegramControlService(transportFactory: { transport })
+                let started = try await service.start()
+                #expect(started.hasTopicsEnabled == flag)
+                let stopped = await service.stop()
+                #expect(stopped.hasTopicsEnabled == flag)
+            }
+        }
+        let legacy = TerminalTelegramControlState(
+            isConfigured: true, isActive: false, statusText: "Configured",
+            botUsername: nil, lastError: nil, lastMessagePreview: nil
+        )
+        #expect(legacy.hasTopicsEnabled == nil)
+    }
+
+    /// `createTopic` starts from the General lease and returns the new
+    /// `message_thread_id`. `renameTopic` edits only the topic its lease owns.
+    /// Both are governed: each one records a per-chat admission.
+    @Test
+    func createAndRenameTopicGoThroughFenceAndGovernor() async throws {
+        let transport = TopicWireTransport()
+        let support = try Self.makeSupportDirectory()
+        defer { try? FileManager.default.removeItem(at: support) }
+        try await AppStorageDirectory.withSupportDirectoryURL(support) {
+            let service = TerminalTelegramControlService(transportFactory: { transport })
+            let epoch = try #require(try await service.start().wireLifecycleEpoch)
+            let topicID = try await service.createTopic(
+                name: "  ZenCODE · main  ", chatID: 42, fence: Self.makeFence(epoch: epoch, topicID: nil)
+            )
+            #expect(topicID == 77)
+            #expect(await service.rateGovernor.reserve(chatID: 42) != nil)
+            await service.rateGovernor.reset()
+            try await service.renameTopic(
+                name: "ZenCODE · review", chatID: 42, topicID: 77,
+                fence: Self.makeFence(epoch: epoch, topicID: 77)
+            )
+            #expect(await service.rateGovernor.reserve(chatID: 42) != nil)
+            _ = await service.stop()
+        }
+        let requests = transport.requests
+        #expect(requests.map(\.method) == ["createForumTopic", "editForumTopic"])
+        let create = try Self.jsonObject(requests[0].body)
+        #expect(Set(create.keys) == ["chat_id", "name"])
+        #expect(create["name"] as? String == "ZenCODE · main")
+        let edit = try Self.jsonObject(requests[1].body)
+        #expect(edit["message_thread_id"] as? Int == 77)
+        #expect(edit["name"] as? String == "ZenCODE · review")
+    }
+
+    /// A revoked fence, a lease for another topic, a stopped service or a blank
+    /// name each stop the topic call before it reaches the wire.
+    @Test
+    func topicCallsNeverReachTheWireWhenFencedOrBlank() async throws {
+        let transport = TopicWireTransport()
+        let support = try Self.makeSupportDirectory()
+        defer { try? FileManager.default.removeItem(at: support) }
+        try await AppStorageDirectory.withSupportDirectoryURL(support) {
+            let service = TerminalTelegramControlService(transportFactory: { transport })
+            let epoch = try #require(try await service.start().wireLifecycleEpoch)
+            let revoked = Self.makeFence(epoch: epoch, topicID: nil)
+            revoked.invalidate()
+            await #expect(throws: CancellationError.self) {
+                _ = try await service.createTopic(name: "main", chatID: 42, fence: revoked)
+            }
+            await #expect(throws: CancellationError.self) {
+                try await service.renameTopic(
+                    name: "main", chatID: 42, topicID: 77, fence: Self.makeFence(epoch: epoch, topicID: 5)
+                )
+            }
+            await #expect(throws: TerminalTelegramControlError.emptyMessage) {
+                _ = try await service.createTopic(
+                    name: " \n ", chatID: 42, fence: Self.makeFence(epoch: epoch, topicID: nil)
+                )
+            }
+            await #expect(throws: TerminalTelegramControlError.emptyMessage) {
+                try await service.renameTopic(
+                    name: "", chatID: 42, topicID: 77, fence: Self.makeFence(epoch: epoch, topicID: 77)
+                )
+            }
+            _ = await service.stop()
+            await #expect(throws: CancellationError.self) {
+                _ = try await service.createTopic(
+                    name: "main", chatID: 42, fence: Self.makeFence(epoch: epoch, topicID: nil)
+                )
+            }
+        }
+        #expect(transport.requests.isEmpty)
+    }
+
+    private static func makeSupportDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("telegram-topic-wire-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try AgentSettingsManifestStore.save(
+            AgentSettingsManifest(
+                models: [],
+                telegram: AgentTelegramSettingsManifest(
+                    enabled: true, botToken: "123456:ABCDEF", linkedChatID: 42,
+                    linkedChatTitle: "Test", ownerUserID: 7,
+                    routes: [.init(roomID: "default")]
+                )
+            ),
+            to: url.appendingPathComponent(AgentSettingsManifestStore.settingsFilename)
+        )
+        return url
+    }
+
+    /// A lease for `topicID`, or for General when `nil`, whose route always
+    /// stays current. Only revocation and mismatches can fence it.
+    private static func makeFence(epoch: UUID, topicID: Int?) -> TerminalTelegramWireFence {
+        let lease = TerminalTelegramRouteLease(
+            key: .init(chatID: 42, userID: 7, topicID: topicID, roomID: "test-room"),
+            generation: 1,
+            effectiveMessageThreadID: topicID
+        )
+        return TerminalTelegramWireFence(lease: lease, lifecycleEpoch: epoch) { candidate in
+            guard candidate == lease else { throw CancellationError() }
+        }
+    }
+
+    private static func jsonObject(_ body: Data) throws -> [String: Any] {
+        try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+    }
+}
+
+/// Bot API fake for the topic runtime. It answers the lifecycle calls itself,
+/// records every other request, and can reject rich drafts to drive the
+/// legacy draft fallback.
+private final class TopicWireTransport: TelegramHTTPTransport, @unchecked Sendable {
+    struct Request: Sendable { let method: String; let body: Data }
+    private let storage = Mutex<[Request]>([])
+    private let hasTopicsEnabled: Bool?
+    private let richDraftStatus: Int
+
+    init(hasTopicsEnabled: Bool? = true, richDraftStatus: Int = 200) {
+        self.hasTopicsEnabled = hasTopicsEnabled
+        self.richDraftStatus = richDraftStatus
+    }
+
+    func send(url: URL, method: String, headers: [RemoteHTTPHeader], body: Data?, timeout: Duration?) async throws -> (status: Int, body: Data) {
+        let apiMethod = url.lastPathComponent
+        switch apiMethod {
+        case "deleteWebhook", "setMyCommands":
+            return (200, Data(#"{"ok":true,"result":true}"#.utf8))
+        case "getMe":
+            let flag = hasTopicsEnabled.map { #","has_topics_enabled":\#($0)"# } ?? ""
+            return (200, Data(#"{"ok":true,"result":{"id":9001,"is_bot":true,"first_name":"bot","username":"test_bot"\#(flag)}}"#.utf8))
+        case "getUpdates":
+            try await Task.sleep(for: .seconds(60))
+            throw CancellationError()
+        default:
+            break
+        }
+        storage.withLock { $0.append(Request(method: apiMethod, body: body ?? Data())) }
+        switch apiMethod {
+        case "sendRichMessageDraft" where richDraftStatus != 200:
+            return (
+                richDraftStatus,
+                Data("{\"ok\":false,\"error_code\":\(richDraftStatus),\"description\":\"rich messages unsupported\"}".utf8)
+            )
+        case "createForumTopic":
+            return (200, Data(#"{"ok":true,"result":{"message_thread_id":77,"name":"ZenCODE · main","icon_color":7322096}}"#.utf8))
+        default:
+            return (200, Data(#"{"ok":true,"result":true}"#.utf8))
+        }
+    }
+
+    var requests: [Request] { storage.withLock { $0 } }
 }

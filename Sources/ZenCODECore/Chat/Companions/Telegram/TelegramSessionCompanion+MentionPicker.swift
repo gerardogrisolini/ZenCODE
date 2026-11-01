@@ -1,5 +1,5 @@
 //
-//  TerminalChat+TelegramMentionPicker.swift
+//  TelegramSessionCompanion+MentionPicker.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -8,24 +8,26 @@
 import Foundation
 import ToolCore
 
-extension TerminalChat {
-
+/// The `/chat` mention picker: a keyboard of the live recipients, then a
+/// ForceReply card whose reply goes to the chosen one.
+extension TelegramSessionCompanion {
     // MARK: - Mention picker
 
-    nonisolated static let telegramMentionPickerCallbackPrefix = "zencode:mention:"
+    /// The callback data prefix of a picker button, followed by the handle.
+    nonisolated static let mentionPickerCallbackPrefix = "zencode:mention:"
 
     /// `/chat` opens the explicit, non-ambiguous picker for Telegram, whose Bot
     /// API has no typing events. It is intentionally available while a turn is
     /// generating: choosing a recipient does not enqueue or start work.
-    func handleTelegramMentionPickerRequest(
-        chatID: Int64, origin: TerminalPromptOrigin? = nil
+    func handleMentionPickerRequest(
+        chatID: Int64, origin: TelegramTurnOrigin? = nil
     ) async {
-        let buttons = Self.telegramMentionPickerButtons(
+        let buttons = Self.mentionPickerButtons(
             from: await sharedChatMentionSuggestions()
         )
         guard !buttons.isEmpty else { return }
         let markup = TerminalTelegramReplyMarkup.inlineKeyboard(buttons.map { [$0] })
-        _ = await sendTelegramReplyMarkupMessage(
+        _ = await sendReplyMarkupMessage(
             "Choose who to message. After selecting, reply to the next card with your message.",
             to: chatID,
             replyMarkup: markup,
@@ -33,74 +35,100 @@ extension TerminalChat {
         )
     }
 
-    nonisolated static func telegramMentionPickerButtons(
-        from suggestions: [TerminalCommandSuggestion]
+    /// The live `@mention` catalogue of the session's room, from one roster
+    /// snapshot (see ``SharedChatMentionParser/suggestions(for:handleMap:)``).
+    func sharedChatMentionSuggestions() async -> [SharedChatMentionParser.Suggestion] {
+        let roster = await sessionRunner.sharedChatMentionRoster(
+            rootSessionID: controller.sessionID
+        )
+        return SharedChatMentionParser.suggestions(
+            for: roster.participants,
+            handleMap: roster.handleMap
+        )
+    }
+
+    /// One button per direct recipient: `@all` is left out, because the card
+    /// that follows is a direct reply, and so is a handle too long for the
+    /// callback data.
+    nonisolated static func mentionPickerButtons(
+        from suggestions: [SharedChatMentionParser.Suggestion]
     ) -> [TerminalTelegramInlineKeyboardButton] {
         suggestions.compactMap { suggestion in
             let handle = suggestion.command.trimmingCharacters(in: .whitespacesAndNewlines)
             guard handle.first == "@", handle != "@all", handle.utf8.count <= 48 else { return nil }
             return TerminalTelegramInlineKeyboardButton(
                 text: handle,
-                callbackData: telegramMentionPickerCallbackPrefix + String(handle.dropFirst())
+                callbackData: mentionPickerCallbackPrefix + String(handle.dropFirst())
             )
         }
     }
 
-    func handleTelegramMentionPickerCallback(
-        _ data: String, chatID: Int64, origin: TerminalPromptOrigin? = nil
+    /// Answers the tap of a picker button with the ForceReply card whose
+    /// reply goes to the chosen recipient, which must still be in the
+    /// roster. The channel's ingress calls it for a callback whose data has
+    /// ``mentionPickerCallbackPrefix``.
+    func handleMentionPickerCallback(
+        _ data: String, chatID: Int64, origin: TelegramTurnOrigin? = nil
     ) async {
-        guard let lease = origin?.telegramLease,
+        guard let lease = origin?.lease,
               lease.key.chatID == chatID,
-              (try? await telegramSessionRouter.validate(lease)) != nil else { return }
-        guard data.hasPrefix(Self.telegramMentionPickerCallbackPrefix) else { return }
-        let handle = String(data.dropFirst(Self.telegramMentionPickerCallbackPrefix.count))
+              (try? await router.validate(lease)) != nil else { return }
+        guard data.hasPrefix(Self.mentionPickerCallbackPrefix) else { return }
+        let handle = String(data.dropFirst(Self.mentionPickerCallbackPrefix.count))
         guard handle.utf8.count <= 48 else { return }
-        let roster = await sessionRunner.sharedChatMentionRoster(rootSessionID: sessionID)
-        guard case let .route(route) = Self.parseSharedChatMention(
+        let roster = await sessionRunner.sharedChatMentionRoster(
+            rootSessionID: controller.sessionID
+        )
+        guard case let .route(route) = SharedChatMentionParser.parse(
             from: "@\(handle) selected",
             readableHandles: roster.handleMap
         ), await isCurrentSharedChatDirectDestination(route.destination) else {
-            await sendTelegramSystemMessage(
+            await sendSystemMessage(
                 "ZenCODE message: that agent is no longer active. Run /chat again.",
                 to: chatID,
-                origin: .telegramLease(lease)
+                origin: .telegram(lease)
             )
             return
         }
-        let receipt = await sendTelegramReplyMarkupMessage(
+        let receipt = await sendReplyMarkupMessage(
             "Writing to @\(handle). Reply to this message with the content to send; it will not be treated as a normal prompt.",
             to: chatID,
             replyMarkup: .forceReply,
             origin: origin
         )
         guard let receipt else { return }
-        await telegramSharedChatRelay.registerReplyTarget(
-            Self.telegramMentionPickerReplyTarget(
-                destination: route.destination, roomID: sessionID, chatID: chatID, handle: handle
+        await sharedChatRelay.registerReplyTarget(
+            Self.mentionPickerReplyTarget(
+                destination: route.destination, roomID: controller.sessionID,
+                chatID: chatID, handle: handle
             ),
             forTelegramMessageID: receipt,
             lease: lease
         )
     }
 
-    /// Wire helper shared with the artifact-consent and relay extensions.
-    func sendTelegramReplyMarkupMessage(
+    /// Plain-text send with a reply markup, returning the receipt. The
+    /// ``onTelegramMentionPickerMessage`` seam takes it over in tests.
+    func sendReplyMarkupMessage(
         _ text: String, to chatID: Int64, replyMarkup: TerminalTelegramReplyMarkup,
-        origin: TerminalPromptOrigin? = nil
+        origin: TelegramTurnOrigin? = nil
     ) async -> Int? {
         if let hook = onTelegramMentionPickerMessage { return await hook(text, chatID, replyMarkup) }
-        guard let origin, let fence = telegramWireFence(for: origin) else { return nil }
+        guard let origin, let fence = wireFence(for: origin) else { return nil }
         do {
-            return try await telegramControlService.sendPlainMessageWithReceipt(
+            return try await controlService.sendPlainMessageWithReceipt(
                 text, to: chatID,
-                topicID: origin.telegramLease?.effectiveMessageThreadID,
+                topicID: origin.lease?.effectiveMessageThreadID,
                 replyMarkup: replyMarkup, fence: fence
             )
+        } catch {
+            controlState.lastError = TerminalTelegramControlError.operatorDescription(error)
+            return nil
         }
-        catch { telegramControlState.lastError = TerminalTelegramControlError.operatorDescription(error); return nil }
     }
 
-    nonisolated static func telegramMentionPickerReplyTarget(
+    /// The reply target a picker card registers for the chosen destination.
+    nonisolated static func mentionPickerReplyTarget(
         destination: AgentSharedChat.Destination, roomID: String, chatID: Int64, handle: String
     ) -> TerminalTelegramSharedChatReplyTarget {
         let senderID: String
@@ -126,5 +154,4 @@ extension TerminalChat {
             senderID: senderID, senderKind: senderKind, senderName: senderName
         )
     }
-
 }

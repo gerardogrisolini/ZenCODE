@@ -197,7 +197,7 @@ extension ChatSessionController {
         savedSessionState.savedSessionName = savedSession.name
         savedSessionState.checkpointTree = savedSession.checkpointTree
         await presentSessionStateChanged()
-        await presenter.presentSessionNotice(
+        await effectivePresenter(for: nil).presentSessionNotice(
             .sessionSaved(name: savedSession.name, messageCount: savedSession.messageCount)
         )
 
@@ -497,7 +497,7 @@ extension ChatSessionController {
             transcript: restoredSession.transcript,
             contextWindow: savedSession.contextWindow?.runtimeStatus
         )
-        await presenter.presentSessionNotice(
+        await effectivePresenter(for: nil).presentSessionNotice(
             .sessionLoaded(name: savedSession.name, messageCount: savedSession.messageCount)
         )
 
@@ -526,7 +526,7 @@ extension ChatSessionController {
               let managementRuntime else {
             return nil
         }
-        let presenter = self.presenter
+        let presenter = effectivePresenter(for: nil)
         let outcome = await managementRuntime.restoreEngineCheckpoint(
             sessionID: sessionID,
             from: checkpointURL

@@ -39,13 +39,42 @@ struct TerminalTelegramSendMessageRequest: Encodable {
     }
 }
 
+/// `messageThreadID` is the route's topic (Bot API 9.3 private-chat topics).
+/// It is declared last and omitted when `nil`, so a draft without a topic keeps
+/// the exact pre-topic wire bytes.
 struct TerminalTelegramSendMessageDraftRequest: Encodable {
     let chatID: Int64
     let draftID: Int
     let text: String
     let canStop: Bool
     let keepOnStop: Bool
-    let messageThreadID: Int? = nil
+    let messageThreadID: Int?
+}
+
+/// `createForumTopic` in the private chat with the user (Bot API 9.4).
+struct TerminalTelegramCreateForumTopicRequest: Encodable {
+    let chatID: Int64
+    let name: String
+}
+
+/// `editForumTopic`; only the name is edited, the icon is left untouched.
+struct TerminalTelegramEditForumTopicRequest: Encodable {
+    let chatID: Int64
+    let messageThreadID: Int
+    let name: String
+}
+
+/// Bounded projection of the `ForumTopic` returned by `createForumTopic`.
+/// Icon fields are not decoded: nothing reads them.
+struct TerminalTelegramForumTopic: Decodable, Sendable, Equatable {
+    let messageThreadID: Int
+    let name: String
+
+    // Responses decode with the default strategy, so wire keys stay manual.
+    enum CodingKeys: String, CodingKey {
+        case messageThreadID = "message_thread_id"
+        case name
+    }
 }
 
 struct TerminalTelegramEditMessageTextRequest: Encodable {
@@ -304,12 +333,20 @@ struct TerminalTelegramUser: Decodable {
     let id: Int64
     let isBot: Bool?
     let username: String?
+    /// Bot API 9.3: the bot has Threaded mode (topics in private chats)
+    /// enabled in @BotFather. Returned only in `getMe`; `nil` elsewhere.
+    let hasTopicsEnabled: Bool?
+    /// Bot API 9.4: users may create and delete topics in the private chat
+    /// with the bot. Returned only in `getMe`; `nil` elsewhere.
+    let allowsUsersToCreateTopics: Bool?
 
     // Responses decode with the default strategy, so wire keys stay manual.
     enum CodingKeys: String, CodingKey {
         case id
         case isBot = "is_bot"
         case username
+        case hasTopicsEnabled = "has_topics_enabled"
+        case allowsUsersToCreateTopics = "allows_users_to_create_topics"
     }
 }
 

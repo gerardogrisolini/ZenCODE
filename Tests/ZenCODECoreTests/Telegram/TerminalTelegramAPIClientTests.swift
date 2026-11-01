@@ -232,6 +232,122 @@ struct TerminalTelegramAPIClientTests {
         #expect(encoded[2]?["parse_mode"] as? String == "MarkdownV2")
         #expect(encoded[3]?["file_id"] as? String == "download-file")
     }
+
+    /// Changed on purpose by the topic runtime (plan 4, point 3). The point-1
+    /// characterization pinned that `getMe` ignored the topic flags. Now it
+    /// decodes `has_topics_enabled` (Bot API 9.3) and
+    /// `allows_users_to_create_topics` (Bot API 9.4), because topic mode reads
+    /// the first flag to decide on one topic per session. The `Mirror` check
+    /// still pins the whole decoded surface, so any other new field remains a
+    /// deliberate change.
+    @Test
+    func getMeDecodesTopicCapabilityFlags() async throws {
+        let transport = StubTelegramHTTPTransport(status: 200, body: Data(#"""
+        {"ok":true,"result":{"id":123456,"is_bot":true,"first_name":"ZenCODE","username":"zencode_bot","has_topics_enabled":true,"allows_users_to_create_topics":false}}
+        """#.utf8))
+        let client = TerminalTelegramAPIClient(token: "123456:ABCDEF", transport: transport)
+
+        let bot = try await client.getMe()
+
+        #expect(bot.id == 123456)
+        #expect(bot.isBot == true)
+        #expect(bot.username == "zencode_bot")
+        #expect(bot.hasTopicsEnabled == true)
+        #expect(bot.allowsUsersToCreateTopics == false)
+        #expect(Mirror(reflecting: bot).children.map(\.label) == [
+            "id", "isBot", "username", "hasTopicsEnabled", "allowsUsersToCreateTopics",
+        ])
+    }
+
+    /// A bot without Threaded mode, or an older Bot API, omits both flags.
+    /// They decode as `nil`, and `nil` keeps the legacy shared route.
+    @Test
+    func getMeWithoutTopicCapabilityFlagsDecodesNil() async throws {
+        let transport = StubTelegramHTTPTransport(status: 200, body: Data(#"""
+        {"ok":true,"result":{"id":123456,"is_bot":true,"first_name":"ZenCODE","username":"zencode_bot"}}
+        """#.utf8))
+        let client = TerminalTelegramAPIClient(token: "123456:ABCDEF", transport: transport)
+
+        let bot = try await client.getMe()
+
+        #expect(bot.username == "zencode_bot")
+        #expect(bot.hasTopicsEnabled == nil)
+        #expect(bot.allowsUsersToCreateTopics == nil)
+    }
+
+    /// Changed on purpose by the topic runtime (plan 4, point 3). The point-1
+    /// characterization pinned that a native draft never carried
+    /// `message_thread_id`. Now the key is present only when a topic is given.
+    /// Without one the body keeps exactly the pre-topic keys, including the
+    /// default `can_stop: true` and `keep_on_stop: true`, so the legacy route's
+    /// wire does not change.
+    @Test
+    func sendMessageDraftCarriesMessageThreadIDOnlyWithATopic() async throws {
+        let transport = DraftRecordingTelegramTransport()
+        let client = TerminalTelegramAPIClient(token: "123456:ABCDEF", transport: transport)
+
+        try await client.sendMessageDraft("streaming", to: 42, draftID: 7)
+        try await client.sendMessageDraft("streaming", to: 42, messageThreadID: 5, draftID: 7)
+
+        let requests = await transport.requests
+        #expect(requests.map(\.method) == ["sendMessageDraft", "sendMessageDraft"])
+        let legacy = try Self.jsonObject(requests.first?.body)
+        #expect(Set(legacy.keys) == ["chat_id", "draft_id", "text", "can_stop", "keep_on_stop"])
+        #expect(legacy["chat_id"] as? Int == 42)
+        #expect(legacy["draft_id"] as? Int == 7)
+        #expect(legacy["text"] as? String == "streaming")
+        #expect(legacy["can_stop"] as? Bool == true)
+        #expect(legacy["keep_on_stop"] as? Bool == true)
+        let topic = try Self.jsonObject(requests.last?.body)
+        #expect(Set(topic.keys) == Set(legacy.keys).union(["message_thread_id"]))
+        #expect(topic["message_thread_id"] as? Int == 5)
+    }
+
+    /// `createForumTopic` (Bot API 9.4, private chat) sends only `chat_id` and
+    /// `name` and decodes the returned `ForumTopic`. `editForumTopic` sends
+    /// only the name, so the topic icon is kept.
+    @Test
+    func forumTopicRequestsUseBotAPIWireShapes() async throws {
+        let transport = DraftRecordingTelegramTransport()
+        let client = TerminalTelegramAPIClient(token: "123456:ABCDEF", transport: transport)
+
+        let topic = try await client.createForumTopic(chatID: 42, name: "  ZenCODE · main \n")
+        try await client.editForumTopic(chatID: 42, messageThreadID: 77, name: "ZenCODE · review")
+
+        #expect(topic == TerminalTelegramForumTopic(messageThreadID: 77, name: "ZenCODE · main"))
+        let requests = await transport.requests
+        #expect(requests.map(\.method) == ["createForumTopic", "editForumTopic"])
+        let create = try Self.jsonObject(requests.first?.body)
+        #expect(Set(create.keys) == ["chat_id", "name"])
+        #expect(create["chat_id"] as? Int == 42)
+        #expect(create["name"] as? String == "ZenCODE · main")
+        let edit = try Self.jsonObject(requests.last?.body)
+        #expect(Set(edit.keys) == ["chat_id", "message_thread_id", "name"])
+        #expect(edit["message_thread_id"] as? Int == 77)
+        #expect(edit["name"] as? String == "ZenCODE · review")
+    }
+
+    /// Topic names are trimmed and cut on grapheme boundaries within
+    /// Telegram's 128-unit limit, measured in UTF-16 units. A blank name stays
+    /// empty, so the service can reject it before the wire.
+    @Test
+    func topicNameIsTrimmedAndBoundedOnGraphemeBoundaries() {
+        #expect(TerminalTelegramAPIClient.boundedTopicName("  main \n") == "main")
+        #expect(TerminalTelegramAPIClient.boundedTopicName(" \n ").isEmpty)
+        let long = String(repeating: "a", count: 200)
+        #expect(TerminalTelegramAPIClient.boundedTopicName(long) == String(repeating: "a", count: 128))
+        // "👍" takes two UTF-16 units: after 127 ASCII units it no longer fits
+        // and is dropped whole, never split into a lone surrogate.
+        let mixed = String(repeating: "a", count: 127) + "👍b"
+        let bounded = TerminalTelegramAPIClient.boundedTopicName(mixed)
+        #expect(bounded == String(repeating: "a", count: 127))
+        #expect(bounded.utf16.count <= TerminalTelegramAPIClient.maximumTopicNameUTF16Length)
+    }
+
+    private static func jsonObject(_ body: Data?) throws -> [String: Any] {
+        let data = try #require(body)
+        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
 }
 
 private struct AnyEncodable: Encodable {
@@ -243,5 +359,26 @@ private struct AnyEncodable: Encodable {
 
     func encode(to encoder: Encoder) throws {
         try encodeValue(encoder)
+    }
+}
+
+/// Records the method and body of every request. It answers
+/// `createForumTopic` with a `ForumTopic` and every other method with the
+/// boolean result that `sendMessageDraft` and `editForumTopic` decode.
+private actor DraftRecordingTelegramTransport: TelegramHTTPTransport {
+    private(set) var requests: [(method: String, body: Data?)] = []
+
+    func send(
+        url: URL,
+        method: String,
+        headers: [RemoteHTTPHeader],
+        body: Data?,
+        timeout: Duration?
+    ) async throws -> (status: Int, body: Data) {
+        requests.append((method: url.lastPathComponent, body: body))
+        if url.lastPathComponent == "createForumTopic" {
+            return (200, Data(#"{"ok":true,"result":{"message_thread_id":77,"name":"ZenCODE · main","icon_color":7322096}}"#.utf8))
+        }
+        return (200, Data(#"{"ok":true,"result":true}"#.utf8))
     }
 }

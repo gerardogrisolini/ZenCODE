@@ -34,6 +34,37 @@ Release tags follow the strict `vX.Y.Z` contract described in
   operations, and their ACP replies and the ACP wire stay the same. The output
   stays the same, apart from the `/open` and `/tasks` entries under Changed and
   Fixed.
+- Telegram now works next to the terminal UI and next to ACP clients such as
+  Xcode: one Telegram companion follows the session of either and mirrors it
+  to the linked chat. In the terminal UI, Telegram works as before, apart from
+  the changes listed below.
+- Telegram topics: when the bot has Threaded mode (enabled in @BotFather, your
+  bot › Bot Settings), each session linked with `/telegram on` gets a topic of
+  its own in the private chat with the bot, named after the working directory
+  and the end of the session ID. The topic follows the session through
+  `/sessions new` and `/sessions load` and is renamed after it. A message in
+  the session's topic reaches that session only, and a message in General
+  reaches every linked session. A new `/telegram on` after `/telegram off`, or
+  a new launch of ZenCODE, opens a new topic; the previous one stays in
+  Telegram and receives nothing more. Without Threaded mode every session
+  shares the chat, as before.
+- ACP: `/telegram on` links the session to Telegram, `/telegram off` unlinks
+  it, and `/telegram` shows its status. The linked chat mirrors the editor's
+  turns, answers `/start`, `/help`, `/status`, `/changes`, `/diff`, and
+  `/chat`, and approves or denies tools with `/allow`, `/always`, and `/deny`:
+  a permission is asked both in the editor and in the chat, and the first
+  answer wins. When Telegram answers first, the editor's permission dialog
+  stays open and its answer is ignored. Prompts, voice notes, `/plan`,
+  `/goal`, `/review`, replies to pending questions, and `/undo` are refused
+  from Telegram with a message, and the streamed response has no stop button.
+  The link is not saved: after the client loads the session again, send
+  `/telegram on` again.
+- With several sessions linked to the same bot in one process (for example the
+  sessions of one ACP client), `/allow`, `/always`, and `/deny` without a
+  request ID where those sessions share the chat (General, or the whole chat
+  without Threaded mode) are refused with `ZenCODE: several ZenCODE sessions
+  are attached to this chat; reply with the request ID: /allow ID, /always ID
+  or /deny ID.`
 
 ### Changed
 
@@ -60,6 +91,26 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `/dev/tty` is a terminal), `/open <file-or-url>` no longer opens the file or
   URL and answers `ZenCODE: Opening files is not supported by this channel.`
   A missing file is still reported as not found.
+- ACP: when Telegram is set up, `available_commands_update` also lists the
+  `telegram` command ("Telegram status, or turn it on/off for this session",
+  with the hint "on or off"), after the existing commands.
+- ACP: `/telegram` in a prompt is now a command, answered at once. Without
+  Telegram set up it answers `ZenCODE: unknown command '/telegram'.` instead
+  of being sent to the model.
+- Telegram topics: when the topic of a session is created, General receives
+  once `ZenCODE session “<name>” now has its own topic; messages sent here in
+  General reach every attached session.`
+- `/setup` > Telegram now says whether the bot has Threaded mode, while pairing
+  and when the stored pairing is kept: `Threaded mode: enabled — each ZenCODE
+  session gets its own Telegram topic.` or `Threaded mode: disabled — all
+  sessions share the chat. To get one topic per session, open @BotFather ›
+  your bot › Bot Settings and enable Threaded mode.`
+- `/telegram`, in the terminal UI and in ACP, now shows a `Topic: <name>` line
+  while the session has its own topic.
+- Terminal: the notices that Telegram polling stopped receiving messages and
+  that it recovered now also appear when the chat runs without its status bar
+  (standard error is not a terminal, or the window is too small when the chat
+  starts). There they were visible only through `/telegram status`.
 
 ### Fixed
 
@@ -89,6 +140,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   instead of answering `ZenCODE: command '/tasks' is unavailable while a
   prompt is running.`: the action was read from the line before its leading
   spaces were removed.
+- Telegram: the live draft of a response sent to a topic now appears in that
+  topic, as the final message does, instead of in the chat outside it.
+- Telegram: `/review` written in another case, such as `/REVIEW focus on
+  parsing`, now keeps its argument as the review focus instead of reviewing
+  without it.
 
 ## [3.2.0] - 2026-10-30
 

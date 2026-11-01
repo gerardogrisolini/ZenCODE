@@ -51,7 +51,7 @@ extension ChatSessionController {
     /// cancellation, carrying the file changes the turn still produced.
     func runTurn(_ request: ChatTurnRequest) async throws -> ChatTurnResult {
         let purpose = request.purpose
-        let presenter = request.presenter ?? self.presenter
+        let presenter = effectivePresenter(for: request)
         let turnSessionID = sessionID
         let token = beginTurnToken()
         defer { endTurnToken(token) }

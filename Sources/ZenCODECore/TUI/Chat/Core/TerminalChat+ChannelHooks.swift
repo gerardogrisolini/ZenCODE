@@ -103,6 +103,8 @@ extension TerminalChat: ChatSessionChannelHooks {
         await refreshInitialStatusBarContextWindow()
         pendingAttachments.removeAll()
         await renderCoordinator.resetOverview(.subAgents)
+        // Before the panel loop rebinds the shared-chat relay to the new room.
+        await rebindTelegramTopicToCurrentSession()
     }
 
     func sessionDidCompact(contextWindow: DirectAgentContextWindowStatus) async {

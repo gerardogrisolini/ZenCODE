@@ -245,11 +245,13 @@ struct TerminalTelegramSendRichMessageRequest: Encodable {
     }
 }
 
+/// Like ``TerminalTelegramSendMessageDraftRequest``: `messageThreadID` is
+/// declared last and omitted when `nil`, so a topic-less draft keeps its wire.
 struct TerminalTelegramSendRichMessageDraftRequest: Encodable {
     let chatID: Int64
     let draftID: Int
     let richMessage: TerminalTelegramInputRichMessage
     let canStop: Bool
     let keepOnStop: Bool
-    let messageThreadID: Int? = nil
+    let messageThreadID: Int?
 }

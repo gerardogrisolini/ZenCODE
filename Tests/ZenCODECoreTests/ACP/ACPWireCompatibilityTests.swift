@@ -45,11 +45,61 @@ private final class ACPWireRecordingTransport: Sendable {
             .flatMap { ($0 as? [String: Any])?["code"] }
             .flatMap { ($0 as? NSNumber)?.intValue }
     }
+
+    /// Payloads of the `session/update` notifications, in wire order, from
+    /// the message at `index` on.
+    func sessionUpdates(from index: Int = 0) -> [[String: Any]] {
+        decodedMessages.dropFirst(index).compactMap { message in
+            guard message["method"] as? String == "session/update",
+                  let params = message["params"] as? [String: Any] else {
+                return nil
+            }
+            return params["update"] as? [String: Any]
+        }
+    }
+
+    /// How many messages reached the wire so far.
+    var messageCount: Int {
+        messages.withLock { $0.count }
+    }
+}
+
+/// One prompt's `session/update` stream, split the way the wire baseline
+/// compares it: the exact order of every `sessionUpdate` kind except `plan`,
+/// and the `plan` updates kept apart.
+///
+/// The position of `plan` is deliberately not part of the order. The task
+/// graph observer publishes it from its own task, concurrently with the turn
+/// that publishes every other update, so where it lands depends on actor
+/// scheduling. When the observer loses the race, `finishTaskPresentation`
+/// publishes it at the end of the turn, deduplicating on `lastPlan`, so it is
+/// still published exactly once.
+struct ACPSessionUpdateStream {
+    /// `sessionUpdate` kinds in wire order, `plan` excluded.
+    let orderedKinds: [String]
+    /// The `plan` updates, in wire order.
+    let plans: [[String: Any]]
+
+    init(updates: [[String: Any]]) {
+        var orderedKinds: [String] = []
+        var plans: [[String: Any]] = []
+        for update in updates {
+            guard let kind = update["sessionUpdate"] as? String else { continue }
+            if kind == "plan" {
+                plans.append(update)
+            } else {
+                orderedKinds.append(kind)
+            }
+        }
+        self.orderedKinds = orderedKinds
+        self.plans = plans
+    }
 }
 
 private func makeACPWireBridge(
     transport: ACPWireRecordingTransport,
-    setupRequired: Bool = false
+    setupRequired: Bool = false,
+    backendFactory: AgentRuntimeBackendFactory? = nil
 ) throws -> ZenCODEACPBridge {
     // A bridge that still needs its setup has no model: the hosted model list
     // is empty, which keeps `configOptions` and `models` deterministic instead
@@ -69,6 +119,7 @@ private func makeACPWireBridge(
     return ZenCODEACPBridge(
         configuration: configuration,
         writer: ACPWriter(sink: transport.sink),
+        backendFactory: backendFactory,
         setupRequired: setupRequired
     )
 }
@@ -440,6 +491,127 @@ extension ACPCompatibilityTests {
         }
         await #expect(throws: ACPShutdownFenceError.self) {
             try await bridge.preloadModel(id: nil, params: [:])
+        }
+    }
+
+    /// Characterization of the current wire: the ordered `sessionUpdate` kinds
+    /// and the stop reason of a simple text `session/prompt` on an installed
+    /// session whose model answers with one content event, from the prompt
+    /// line to its result. Texts and timing are deliberately not compared, and
+    /// the `plan` position is not constrained (see `ACPSessionUpdateStream`).
+    @Test
+    func simplePromptPublishesTheCurrentSessionUpdateSequence() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("acp-wire-prompt-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try await AppStorageDirectory.withSupportDirectoryURL(root) {
+            let transport = ACPWireRecordingTransport()
+            let backend = SingleReplyACPBackend()
+            let bridge = try makeACPWireBridge(transport: transport, backendFactory: { _, _ in backend })
+            let sessionID = "acp-wire-prompt-\(UUID().uuidString)"
+            let sessionConfiguration = AgentCoreSessionConfiguration(
+                sessionID: sessionID,
+                modelID: "test-model",
+                workingDirectory: root.appendingPathComponent("workspace", isDirectory: true),
+                systemPrompt: "ACP wire baseline",
+                cacheKey: nil,
+                history: [],
+                allowedToolNames: nil
+            )
+            try await bridge.sessionRunner.createSession(configuration: sessionConfiguration)
+            await bridge.installTestSession(sessionConfiguration)
+
+            await bridge.handleMessage([
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "session/prompt",
+                "params": [
+                    "sessionId": sessionID,
+                    "prompt": [["type": "text", "text": "Hello"]] as [[String: Any]]
+                ] as [String: Any]
+            ])
+
+            #expect(transport.errorCode(id: 1) == nil)
+            let result = try #require(transport.response(id: 1)?["result"] as? [String: Any])
+            #expect(result["stopReason"] as? String == "end_turn")
+            let stream = ACPSessionUpdateStream(updates: transport.sessionUpdates())
+            // The first agent message is the initial configuration summary, the
+            // second one the model reply.
+            #expect(stream.orderedKinds == [
+                "user_message_chunk",
+                "session_info_update",
+                "available_commands_update",
+                "agent_message_chunk",
+                "agent_message_chunk",
+            ])
+            // No task graph: exactly one empty plan.
+            #expect(stream.plans.count == 1)
+            #expect((stream.plans.first?["entries"] as? [Any])?.isEmpty == true)
+        }
+    }
+
+    /// With a Telegram companion attached by `/telegram on`, the stream of the
+    /// same simple text `session/prompt` is still the baseline of
+    /// `simplePromptPublishesTheCurrentSessionUpdateSequence`: the companion
+    /// mirrors the turn to the linked chat, and nothing of it reaches the ACP
+    /// wire. Telegram goes through a scripted Bot API.
+    @Test(.timeLimit(.minutes(1)))
+    func attachedTelegramCompanionLeavesThePromptStreamUnchanged() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let transport = ACPWireRecordingTransport()
+            let backend = SingleReplyACPBackend()
+            let bridge = try makeACPWireBridge(transport: transport, backendFactory: { _, _ in backend })
+            let telegram = ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+            await bridge.setTelegramTransportFactoryForTesting { telegram }
+            let sessionID = "acp-wire-telegram-\(UUID().uuidString)"
+            let sessionConfiguration = AgentCoreSessionConfiguration(
+                sessionID: sessionID,
+                modelID: "test-model",
+                workingDirectory: root.appendingPathComponent("workspace", isDirectory: true),
+                systemPrompt: "ACP wire baseline",
+                cacheKey: nil,
+                history: [],
+                allowedToolNames: nil
+            )
+            try await bridge.sessionRunner.createSession(configuration: sessionConfiguration)
+            await bridge.installTestSession(sessionConfiguration)
+
+            for (id, text) in [(1, "/telegram on"), (2, "Hello")] {
+                if id == 2 {
+                    let companion = try #require(await bridge.telegramCompanionForTesting(sessionID: sessionID))
+                    #expect(await companion.isActive)
+                }
+                let start = transport.messageCount
+                await bridge.handleMessage([
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "session/prompt",
+                    "params": [
+                        "sessionId": sessionID,
+                        "prompt": [["type": "text", "text": text]] as [[String: Any]]
+                    ] as [String: Any]
+                ])
+                #expect(transport.errorCode(id: id) == nil)
+                let result = try #require(transport.response(id: id)?["result"] as? [String: Any])
+                #expect(result["stopReason"] as? String == "end_turn")
+                guard id == 2 else { continue }
+                let stream = ACPSessionUpdateStream(updates: transport.sessionUpdates(from: start))
+                #expect(stream.orderedKinds == [
+                    "user_message_chunk",
+                    "session_info_update",
+                    "available_commands_update",
+                    "agent_message_chunk",
+                    "agent_message_chunk",
+                ])
+                #expect(stream.plans.count == 1)
+                #expect((stream.plans.first?["entries"] as? [Any])?.isEmpty == true)
+            }
+            // The turn did reach the linked chat.
+            let mirrored = await telegram.sentTexts
+            #expect(mirrored.contains { $0.contains("ZenCODE completed") && $0.contains("reply") })
+            await bridge.shutdown()
         }
     }
 
@@ -1328,5 +1500,62 @@ private extension ACPCompatibilityTests {
         #expect(object["sessionUpdate"]?.acpStringValue == "usage_update")
         #expect(object["used"]?.numberValue == 5000)
         #expect(object["size"]?.numberValue == 20000)
+    }
+}
+
+/// Minimal backend whose model answers every prompt with one content event,
+/// so the reply path of a turn is on the wire.
+private actor SingleReplyACPBackend: AgentRuntimeBackend {
+    func createSession(
+        id _: String,
+        cwd _: String,
+        systemPrompt _: String?,
+        history _: [AgentRuntimeMessage],
+        cacheKey _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func createSessionIfNeeded(
+        id _: String,
+        cwd _: String,
+        systemPrompt _: String?,
+        history _: [AgentRuntimeMessage],
+        cacheKey _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func updateSessionOptions(
+        id _: String,
+        systemPrompt _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func closeSession(id _: String) {}
+    func shutdown() async {}
+
+    func preloadModel(
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> String {
+        "test-model"
+    }
+
+    func activeToolDescriptors() async -> [DirectToolDescriptor] {
+        []
+    }
+
+    func sendPrompt(
+        sessionID _: String,
+        prompt _: String,
+        attachments _: [AgentRuntimeAttachment],
+        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> DirectAgentResponse {
+        await onEvent(.content("reply"))
+        return DirectAgentResponse(text: "reply", stopReason: "end_turn", modelID: "test-model")
     }
 }

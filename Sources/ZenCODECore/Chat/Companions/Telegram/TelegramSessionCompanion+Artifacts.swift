@@ -1,5 +1,5 @@
 //
-//  TerminalChat+TelegramArtifacts.swift
+//  TelegramSessionCompanion+Artifacts.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 30/05/26.
@@ -8,25 +8,23 @@
 import Foundation
 import ToolCore
 
-extension TerminalChat {
+/// `/diff`, the explicit Send/Cancel consent of an outbound artifact, and the
+/// selective ingress of documents and images.
+extension TelegramSessionCompanion {
     // MARK: - Secure artifacts
 
-    /// Directories whose individually selected files may be exported to the
-    /// linked chat. Deliberately narrow: the temporary artifact staging
-    /// directory only. Nothing under the repository working directory is a
-    /// member, so `/diff` materializes a bounded excerpt into
-    /// this staging area first and only that excerpt can ever be uploaded.
-    nonisolated static var telegramArtifactPolicy: TerminalTelegramArtifactPolicy {
-        TerminalTelegramArtifactPolicy(
-            allowedDirectories: [Self.telegramArtifactStagingDirectory]
-        )
+    /// The terminal's staging directory for outbound artifacts, the default
+    /// of ``artifactStagingDirectory``.
+    nonisolated static var defaultArtifactStagingDirectory: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("ZenCODE-telegram-artifacts", isDirectory: true)
     }
 
-    /// Staging directory for outbound artifacts. Created 0700; excerpts are
-    /// written 0600 and removed right after the upload (or refusal).
-    nonisolated static var telegramArtifactStagingDirectory: URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ZenCODE-telegram-artifacts", isDirectory: true)
+    /// ``artifactStagingDirectory``, created 0700 when missing. Excerpts are
+    /// written 0600 inside it and removed right after the upload (or
+    /// refusal).
+    var preparedArtifactStagingDirectory: URL {
+        let url = artifactStagingDirectory
         try? FileManager.default.createDirectory(
             at: url,
             withIntermediateDirectories: true,
@@ -35,13 +33,24 @@ extension TerminalChat {
         return url
     }
 
+    /// Directories whose individually selected files may be exported to the
+    /// linked chat. Deliberately narrow: the temporary artifact staging
+    /// directory only. Nothing under the repository working directory is a
+    /// member, so `/diff` materializes a bounded excerpt into this staging
+    /// area first and only that excerpt can ever be uploaded.
+    var artifactPolicy: TerminalTelegramArtifactPolicy {
+        TerminalTelegramArtifactPolicy(
+            allowedDirectories: [preparedArtifactStagingDirectory]
+        )
+    }
+
     /// `/diff` materializes the session diff into a bounded staging file and
     /// asks for explicit consent. The repository itself is never uploaded:
     /// only this excerpt, only after confirmation.
-    func handleTelegramDiffRequest(origin: TerminalPromptOrigin) async {
-        guard let chatID = origin.telegramChatID else { return }
-        guard let diffText = telegramSessionDiffText()?.nilIfBlank else {
-            await sendTelegramSystemMessage(
+    func handleDiffRequest(origin: TelegramTurnOrigin) async {
+        guard let chatID = origin.lease?.key.chatID else { return }
+        guard let diffText = sessionDiffText()?.nilIfBlank else {
+            await sendSystemMessage(
                 "ZenCODE message: no diff is available for this session yet.",
                 to: chatID,
                 origin: origin
@@ -49,18 +58,18 @@ extension TerminalChat {
             return
         }
         guard diffText.utf8.count <= TerminalTelegramMultipartForm.maximumBodyBytes else {
-            await sendTelegramSystemMessage(
+            await sendSystemMessage(
                 "ZenCODE message: the session diff exceeds the Telegram upload budget and cannot be sent.",
                 to: chatID,
                 origin: origin
             )
             return
         }
-        let url = Self.telegramArtifactStagingDirectory
-            .appendingPathComponent("session-\(sessionID.prefix(8))-\(UUID().uuidString).diff")
+        let url = preparedArtifactStagingDirectory
+            .appendingPathComponent("session-\(controller.sessionID.prefix(8))-\(UUID().uuidString).diff")
         do {
             try Self.writePrivateArtifact(diffText, to: url)
-            await offerTelegramArtifact(
+            await offerArtifact(
                 TerminalTelegramArtifact(
                     fileURL: url,
                     filename: url.lastPathComponent,
@@ -73,8 +82,8 @@ extension TerminalChat {
         } catch {
             // writePrivateArtifact failed: no offer exists, so the service never
             // owned the file. Remove any partial excerpt.
-            Self.removeStagedArtifact(at: url)
-            await sendTelegramSystemMessage(
+            removeStagedArtifact(at: url)
+            await sendSystemMessage(
                 "ZenCODE message: the diff could not be prepared for upload.",
                 to: chatID,
                 origin: origin
@@ -84,33 +93,33 @@ extension TerminalChat {
 
     /// Sends the consent request with the two-button keyboard. The upload
     /// happens only through the explicit callback.
-    private func offerTelegramArtifact(
+    private func offerArtifact(
         _ artifact: TerminalTelegramArtifact,
         chatID: Int64,
         summary: String,
-        origin: TerminalPromptOrigin
+        origin: TelegramTurnOrigin
     ) async {
-        guard let lease = origin.telegramLease else {
-            Self.removeStagedArtifact(at: artifact.fileURL)
+        guard let lease = origin.lease else {
+            removeStagedArtifact(at: artifact.fileURL)
             return
         }
         do {
-            guard let offerID = try await telegramControlService.offerArtifactConsent(
+            guard let offerID = try await controlService.offerArtifactConsent(
                 artifact: artifact,
                 chatID: chatID,
-                userID: telegramLinkedUserID ?? 0,
+                userID: linkedUserID ?? 0,
                 routeLease: lease,
-                cleanupAfterUse: Self.isTelegramStagedArtifact(artifact.fileURL)
+                cleanupAfterUse: isStagedArtifact(artifact.fileURL)
             ) else {
-                Self.removeStagedArtifact(at: artifact.fileURL)
-                await sendTelegramSystemMessage(
+                removeStagedArtifact(at: artifact.fileURL)
+                await sendSystemMessage(
                     "ZenCODE message: too many pending file requests. Confirm or cancel one first.",
                     to: chatID,
-                origin: origin
+                    origin: origin
                 )
                 return
             }
-            let receipt = await sendTelegramArtifactConsentMessage(
+            let receipt = await sendArtifactConsentMessage(
                 summary,
                 to: chatID,
                 replyMarkup: TerminalTelegramArtifactConsentKeyboard.markup(offerID: offerID),
@@ -119,15 +128,15 @@ extension TerminalChat {
             if receipt == nil {
                 // The request never reached the chat: spend the offer so the
                 // consent cannot be used later without a visible prompt.
-                await telegramControlService.cancelArtifactConsent(
+                await controlService.cancelArtifactConsent(
                     offerID: offerID, chatID: chatID
                 )
             }
         } catch {
             // The offer was never registered (the service threw before taking
             // ownership), so the staged excerpt is still ours to remove.
-            Self.removeStagedArtifact(at: artifact.fileURL)
-            await sendTelegramSystemMessage(
+            removeStagedArtifact(at: artifact.fileURL)
+            await sendSystemMessage(
                 "ZenCODE message: this file cannot be sent (\(TerminalTelegramControlError.operatorDescription(error))).",
                 to: chatID,
                 origin: origin
@@ -136,26 +145,26 @@ extension TerminalChat {
     }
 
     /// Handles the explicit Send/Cancel tap of an artifact consent offer.
-    /// Returns `true` when the callback belonged to the consent flow.
-    /// Cross-extension visibility: consumed by the ingress dispatcher.
-    func handleTelegramArtifactConsentCallback(
+    /// Returns `true` when the callback belonged to the consent flow. The
+    /// channel's ingress calls it for every callback query.
+    func handleArtifactConsentCallback(
         _ data: String,
         message: TerminalTelegramIncomingMessage,
-        origin: TerminalPromptOrigin
+        origin: TelegramTurnOrigin
     ) async -> Bool {
         guard let consent = TerminalTelegramArtifactConsentKeyboard
             .action(fromCallbackData: data) else {
             return false
         }
         let offerID = consent.offerID
-        guard let lease = origin.telegramLease,
-              let fence = telegramWireFence(for: origin) else { return true }
+        guard let lease = origin.lease,
+              let fence = wireFence(for: origin) else { return true }
         switch consent.action {
         case .cancel:
-            await telegramControlService.cancelArtifactConsent(
+            await controlService.cancelArtifactConsent(
                 offerID: offerID, chatID: message.chatID
             )
-            await sendTelegramSystemMessage(
+            await sendSystemMessage(
                 "ZenCODE message: file send cancelled.",
                 to: message.chatID,
                 origin: origin
@@ -163,19 +172,20 @@ extension TerminalChat {
         case .send:
             // Once the offer is registered the control service owns the staged
             // excerpt: it deletes it after consume (sent, refused or failed),
-            // on cancel, on expiry and on reset. The TUI never deletes it here.
+            // on cancel, on expiry and on reset. The companion never deletes
+            // it here.
             do {
-                guard let messageID = try await telegramControlService
+                guard let messageID = try await controlService
                     .sendArtifactWithConsent(
                         offerID: offerID,
                         chatID: message.chatID,
                         userID: message.userID,
                         routeLease: lease,
-                        policy: Self.telegramArtifactPolicy,
+                        policy: artifactPolicy,
                         topicID: lease.effectiveMessageThreadID,
                         fence: fence
                     ) else {
-                    await sendTelegramSystemMessage(
+                    await sendSystemMessage(
                         "ZenCODE message: that confirmation expired or no longer matches the file. Ask again with /diff.",
                         to: message.chatID,
                         origin: origin
@@ -183,7 +193,7 @@ extension TerminalChat {
                     return true
                 }
                 _ = messageID
-                await sendTelegramSystemMessage(
+                await sendSystemMessage(
                     "ZenCODE message: file sent.",
                     to: message.chatID,
                     origin: origin
@@ -191,10 +201,10 @@ extension TerminalChat {
             } catch {
                 // Failures before the offer was consumed (e.g. wire fence)
                 // leave it pending: spend it so the service removes the file.
-                await telegramControlService.cancelArtifactConsent(
+                await controlService.cancelArtifactConsent(
                     offerID: offerID, chatID: message.chatID
                 )
-                await sendTelegramSystemMessage(
+                await sendSystemMessage(
                     "ZenCODE message: the file could not be sent (\(TerminalTelegramControlError.operatorDescription(error))).",
                     to: message.chatID,
                     origin: origin
@@ -207,9 +217,9 @@ extension TerminalChat {
     /// Removes a staged outbound excerpt after its upload attempt. Only files
     /// inside the private staging directory are ever deleted: operator-owned
     /// files elsewhere stay untouched.
-    private nonisolated static func removeStagedArtifact(at url: URL?) {
+    private func removeStagedArtifact(at url: URL?) {
         guard let url else { return }
-        let staging = telegramArtifactStagingDirectory
+        let staging = preparedArtifactStagingDirectory
             .resolvingSymlinksInPath().standardizedFileURL.path
         let target = url.resolvingSymlinksInPath().standardizedFileURL.path
         guard target == staging || target.hasPrefix(staging + "/") else {
@@ -218,47 +228,49 @@ extension TerminalChat {
         try? FileManager.default.removeItem(at: url)
     }
 
-    private nonisolated static func isTelegramStagedArtifact(_ url: URL) -> Bool {
-        let staging = telegramArtifactStagingDirectory
+    private func isStagedArtifact(_ url: URL) -> Bool {
+        let staging = preparedArtifactStagingDirectory
             .resolvingSymlinksInPath().standardizedFileURL.path
         let target = url.resolvingSymlinksInPath().standardizedFileURL.path
         return target.hasPrefix(staging + "/")
     }
 
+    // MARK: - Inbound attachments
+
     /// Selective ingress: an admitted attachment is downloaded into the
     /// bounded 0600 store and acknowledged. The file is never opened by this
     /// path — the operator asks the agent to read it explicitly afterwards.
-    func handleTelegramInboundAttachment(
+    func handleInboundAttachment(
         _ attachment: TerminalTelegramInboundAttachment,
         message: TerminalTelegramIncomingMessage,
-        origin: TerminalPromptOrigin
+        origin: TelegramTurnOrigin
     ) async {
         if onTelegramWorkEffectForTesting?(.attachmentDownload) == true { return }
-        guard let fence = telegramWireFence(for: origin) else { return }
+        guard let fence = wireFence(for: origin) else { return }
         do {
-            let stored = try await telegramControlService.receiveInboundAttachment(
+            let stored = try await controlService.receiveInboundAttachment(
                 attachment, chatID: message.chatID, fence: fence
             )
-            await sendTelegramSystemMessage(
+            await sendSystemMessage(
                 "ZenCODE message: received “\(stored.filename)” (\(stored.mimeType)). Ask the agent to read it by path when needed; it will be removed automatically.",
                 to: message.chatID,
                 origin: origin
             )
         } catch TerminalTelegramControlError.attachmentStoreBusy {
-            await sendTelegramSystemMessage(
+            await sendSystemMessage(
                 "ZenCODE message: too many attachments are being received. Try again shortly.",
                 to: message.chatID,
                 origin: origin
             )
         } catch TerminalTelegramControlError.fileTooLarge(let limit) {
-            await sendTelegramSystemMessage(
+            await sendSystemMessage(
                 TerminalTelegramInboundAttachmentGate.Refusal
                     .tooLarge(limit: limit).operatorMessage,
                 to: message.chatID,
                 origin: origin
             )
         } catch {
-            await sendTelegramSystemMessage(
+            await sendSystemMessage(
                 "ZenCODE message: the attachment could not be received.",
                 to: message.chatID,
                 origin: origin
@@ -266,12 +278,14 @@ extension TerminalChat {
         }
     }
 
+    // MARK: - Support
+
     /// Bounded session diff text assembled from the per-file patches the
     /// session already holds, or `nil` when none exists. The excerpt is
     /// capped by the multipart budget so a giant working tree can never
     /// produce an unbounded artifact.
-    private func telegramSessionDiffText() -> String? {
-        guard let summary = lastFileChangeSummary, !summary.entries.isEmpty else {
+    func sessionDiffText() -> String? {
+        guard let summary = controller.lastFileChangeSummary, !summary.entries.isEmpty else {
             return nil
         }
         let budget = TerminalTelegramMultipartForm.maximumBodyBytes
@@ -305,24 +319,24 @@ extension TerminalChat {
 
     /// Plain-text send with a reply markup, returning the receipt, so consent
     /// keyboards never inherit Markdown parsing from operator-typed names.
-    private func sendTelegramArtifactConsentMessage(
+    private func sendArtifactConsentMessage(
         _ text: String,
         to chatID: Int64,
         replyMarkup: TerminalTelegramReplyMarkup,
-        origin: TerminalPromptOrigin
+        origin: TelegramTurnOrigin
     ) async -> Int? {
         if let onTelegramSystemMessage {
             _ = await onTelegramSystemMessage(text, chatID)
             return nil
         }
-        guard let fence = telegramWireFence(for: origin) else { return nil }
+        guard let fence = wireFence(for: origin) else { return nil }
         do {
-            return try await telegramControlService.sendPlainMessageWithReceipt(
-                text, to: chatID, topicID: origin.telegramLease?.effectiveMessageThreadID,
+            return try await controlService.sendPlainMessageWithReceipt(
+                text, to: chatID, topicID: origin.lease?.effectiveMessageThreadID,
                 replyMarkup: replyMarkup, fence: fence
             )
         } catch {
-            telegramControlState.lastError = TerminalTelegramControlError.operatorDescription(error)
+            controlState.lastError = TerminalTelegramControlError.operatorDescription(error)
             return nil
         }
     }

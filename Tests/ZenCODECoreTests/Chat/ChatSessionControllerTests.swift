@@ -119,6 +119,178 @@ struct ChatSessionControllerTests {
         }
     }
 
+    // MARK: - Companion fan-out
+
+    @Test
+    func companionsPresentEveryTurnEventBeforeThePrimaryInAttachOrder() async throws {
+        let log = ChatPresentationLog()
+        try await withHarness(presentationLog: log) { harness in
+            let first = RecordingChatPresenter(name: "first", log: log)
+            let second = RecordingChatPresenter(name: "second", log: log)
+            harness.controller.attachCompanionPresenter(first)
+            harness.controller.attachCompanionPresenter(second)
+            await harness.runtime.append { call in
+                let read = scriptedToolCall(id: "tool-read", name: "local.readFile")
+                await call.onEvent(.content("Reading."))
+                await call.onEvent(.toolCallStarted(read))
+                await call.onEvent(.toolCallCompleted(read, DirectAgentToolResult(output: "ok", summary: "ok")))
+                await call.onEvent(.content("Done."))
+                await call.onEvent(.turnEnded(.completed))
+                return DirectAgentResponse(text: "Reading.Done.", stopReason: "end_turn", modelID: "scripted-model")
+            }
+
+            _ = try await harness.controller.runTurn(harness.request("Inspect"))
+
+            let turnEvents: [RecordingChatPresenter.Event] = [
+                .turnWillStart(prompt: "Inspect"),
+                .content("Reading."),
+                .toolStarted("tool-read"),
+                .toolCompleted("tool-read"),
+                .toolSettled("tool-read"),
+                .content("Done."),
+                .turnEnded(.completed),
+                .modelTurnDidReturn,
+                .turnWillFinish,
+            ]
+            // Every event reaches the companions in attach order, then the
+            // primary, before the next event starts.
+            #expect(log.entries == fannedOut(turnEvents, to: ["first", "second", "primary"]))
+            #expect(await first.events == turnEvents)
+            #expect(await second.events == turnEvents)
+            #expect(await harness.presenter.events == turnEvents)
+        }
+    }
+
+    @Test
+    func companionsPresentASessionNoticeBeforeThePrimary() async throws {
+        let log = ChatPresentationLog()
+        try await withHarness(presentationLog: log) { harness in
+            let companion = RecordingChatPresenter(name: "companion", log: log)
+            harness.controller.attachCompanionPresenter(companion)
+            let missing = harness.workspace.appendingPathComponent("missing-skill", isDirectory: true)
+
+            _ = await harness.controller.installSkill(from: .local(missing))
+
+            #expect(log.entries == fannedOut(
+                [.sessionNotice(.skillInstallStarted(source: missing.path))],
+                to: ["companion", "primary"]
+            ))
+        }
+    }
+
+    @Test
+    func companionsAttachedAndDetachedMidSessionFollowOnlyTheTurnsInBetween() async throws {
+        let log = ChatPresentationLog()
+        try await withHarness(presentationLog: log) { harness in
+            let controller = harness.controller
+            let first = RecordingChatPresenter(name: "first", log: log)
+            let second = RecordingChatPresenter(name: "second", log: log)
+
+            try await runContentTurn("one", in: harness)
+            controller.attachCompanionPresenter(first)
+            controller.attachCompanionPresenter(second)
+            // Attaching an attached companion again changes nothing.
+            controller.attachCompanionPresenter(first)
+            #expect(controller.companionPresenters.map { ObjectIdentifier($0) }
+                == [ObjectIdentifier(first), ObjectIdentifier(second)])
+            try await runContentTurn("two", in: harness)
+            controller.detachCompanionPresenter(first)
+            try await runContentTurn("three", in: harness)
+            controller.detachCompanionPresenter(second)
+            // Detaching a companion that is not attached changes nothing.
+            controller.detachCompanionPresenter(first)
+            #expect(controller.companionPresenters.isEmpty)
+            try await runContentTurn("four", in: harness)
+
+            #expect(log.entries
+                == fannedOut(contentTurnEvents("one"), to: ["primary"])
+                + fannedOut(contentTurnEvents("two"), to: ["first", "second", "primary"])
+                + fannedOut(contentTurnEvents("three"), to: ["second", "primary"])
+                + fannedOut(contentTurnEvents("four"), to: ["primary"]))
+            #expect(await first.events == contentTurnEvents("two"))
+            #expect(await second.events == contentTurnEvents("two") + contentTurnEvents("three"))
+            // Without companions the controller presents on its own presenter.
+            let effective = controller.effectivePresenter(for: nil)
+            #expect((effective as? RecordingChatPresenter) === harness.presenter)
+        }
+    }
+
+    @Test
+    func companionsFanOutAlsoWhenTheRequestBindsItsOwnPresenter() async throws {
+        let log = ChatPresentationLog()
+        try await withHarness(presentationLog: log) { harness in
+            let companion = RecordingChatPresenter(name: "companion", log: log)
+            let perTurn = RecordingChatPresenter(name: "request", log: log)
+            harness.controller.attachCompanionPresenter(companion)
+            await harness.runtime.append { call in
+                await call.onEvent(.content("bound to the request"))
+                return DirectAgentResponse(text: "bound to the request", stopReason: "end_turn", modelID: "m")
+            }
+
+            _ = try await harness.controller.runTurn(harness.request("Hello", presenter: perTurn))
+
+            let turnEvents: [RecordingChatPresenter.Event] = [
+                .turnWillStart(prompt: "Hello"),
+                .content("bound to the request"),
+                .modelTurnDidReturn,
+                .turnWillFinish,
+            ]
+            // The request's presenter is the primary of this turn: the
+            // controller's default presenter sees nothing.
+            #expect(log.entries == fannedOut(turnEvents, to: ["companion", "request"]))
+            #expect(await perTurn.events == turnEvents)
+            #expect(await harness.presenter.events.isEmpty)
+        }
+    }
+
+    @Test
+    func overviewReservationsAskOnlyThePrimaryAndThePublicationsCarryItsReservation() async throws {
+        let log = ChatPresentationLog()
+        try await withHarness(presentationLog: log) { harness in
+            let companion = RecordingChatPresenter(name: "companion", log: log)
+            harness.controller.attachCompanionPresenter(companion)
+
+            // `/tasks` echoes its line on every presenter, but reserves the
+            // publication on the primary alone.
+            let outcome = await harness.controller.runTasksCommand(line: "/tasks")
+
+            #expect(outcome == ChatCommandOutcome(notices: [.noTaskGraph]))
+            #expect(log.entries == fannedOut([.submittedCommand("/tasks")], to: ["companion", "primary"]) + [
+                .init(presenter: "primary", event: .taskGraphReservation(ChatOverviewPublication(revision: 1))),
+            ])
+
+            log.clear()
+            await harness.presenter.setRecordsSubAgentOverviews(true)
+            await companion.setRecordsSubAgentOverviews(true)
+            let fanOut = ChatFanOutPresenter(primary: harness.presenter, companions: [companion])
+            let taskGraphPublication = await fanOut.reserveTaskGraphOverviewPublication()
+            await fanOut.presentTaskGraphOverview(nil, origin: .explicit, publication: taskGraphPublication)
+            let subAgentPublication = await fanOut.reserveSubAgentOverviewPublication()
+            let overview = ChatSubAgentOverview(snapshots: [])
+            await fanOut.presentSubAgentOverview(overview, origin: .automatic, publication: subAgentPublication)
+
+            #expect(taskGraphPublication == ChatOverviewPublication(revision: 2))
+            #expect(subAgentPublication == ChatOverviewPublication(revision: 1))
+            #expect(log.entries == [
+                .init(presenter: "primary", event: .taskGraphReservation(taskGraphPublication)),
+            ] + fannedOut(
+                [.taskGraphOverview(nil, origin: .explicit, publication: taskGraphPublication)],
+                to: ["companion", "primary"]
+            ) + [
+                .init(presenter: "primary", event: .subAgentReservation(subAgentPublication)),
+            ] + fannedOut(
+                [.subAgentOverview(
+                    agentIDs: [],
+                    signature: overview.signature,
+                    currentBatchID: overview.currentBatchID,
+                    origin: .automatic,
+                    publication: subAgentPublication
+                )],
+                to: ["companion", "primary"]
+            ))
+        }
+    }
+
     // MARK: - /plan
 
     @Test
@@ -837,6 +1009,32 @@ private func scriptedToolCall(id: String, name: String) -> DirectAgentToolCall {
     DirectAgentToolCall(id: id, name: name, argumentsObject: ["path": "."], argumentsJSON: "{}")
 }
 
+/// `events` as the log of a fan-out records them: every event on each of
+/// `presenters`, in order, before the next event.
+private func fannedOut(
+    _ events: [RecordingChatPresenter.Event],
+    to presenters: [String]
+) -> [ChatPresentationLog.Entry] {
+    events.flatMap { event in
+        presenters.map { ChatPresentationLog.Entry(presenter: $0, event: event) }
+    }
+}
+
+/// What a presenter records for a turn that ``runContentTurn(_:in:)`` ran.
+private func contentTurnEvents(_ text: String) -> [RecordingChatPresenter.Event] {
+    [.turnWillStart(prompt: text), .content(text), .modelTurnDidReturn, .turnWillFinish]
+}
+
+/// Runs a turn whose prompt is `text` and whose model streams `text` back.
+@ChatSessionActor
+private func runContentTurn(_ text: String, in harness: ChatControllerHarness) async throws {
+    await harness.runtime.append { call in
+        await call.onEvent(.content(text))
+        return DirectAgentResponse(text: text, stopReason: "end_turn", modelID: "scripted-model")
+    }
+    _ = try await harness.controller.runTurn(harness.request(text))
+}
+
 private func gatedRequest(
     sessionID: String,
     toolCallID: String = "call-1"
@@ -954,6 +1152,7 @@ private func withHarness(
     hostCapabilities: ChatChannelCapabilities = [.toolConsent],
     hostDecisions: [ChatConsentDecision?] = [],
     retainsTranscript: Bool = true,
+    presentationLog: ChatPresentationLog? = nil,
     _ body: @escaping @Sendable @ChatSessionActor (ChatControllerHarness) async throws -> Void
 ) async throws {
     let root = FileManager.default.temporaryDirectory
@@ -969,7 +1168,8 @@ private func withHarness(
             workspace: workspace,
             hostCapabilities: hostCapabilities,
             hostDecisions: hostDecisions,
-            retainsTranscript: retainsTranscript
+            retainsTranscript: retainsTranscript,
+            presentationLog: presentationLog
         )
         try await body(harness)
     }
@@ -990,7 +1190,8 @@ private struct ChatControllerHarness: Sendable {
         workspace: URL,
         hostCapabilities: ChatChannelCapabilities,
         hostDecisions: [ChatConsentDecision?],
-        retainsTranscript: Bool
+        retainsTranscript: Bool,
+        presentationLog: ChatPresentationLog?
     ) throws {
         let sessionID = "chat-session-\(UUID().uuidString.lowercased())"
         let host = ScriptedChatInteractionHost(capabilities: hostCapabilities, decisions: hostDecisions)
@@ -998,7 +1199,7 @@ private struct ChatControllerHarness: Sendable {
         let runtime = ScriptedChatRuntime(
             defaultToolAuthorization: { await authorizer.authorize($0) }
         )
-        let presenter = RecordingChatPresenter()
+        let presenter = RecordingChatPresenter(name: "primary", log: presentationLog)
         self.workspace = workspace
         self.sessionID = sessionID
         self.runtime = runtime

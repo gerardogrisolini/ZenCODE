@@ -246,13 +246,13 @@ extension ZenCODEACPBridge {
                 // Do not leave a session entry that has no runner session behind.
                 // Scope the removal to our own incarnation so a racing handler's
                 // newer session is never dropped.
-                discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
+                await discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
                 throw error
             }
             // `createSession` suspends: if shutdown landed during it, drop the
             // session we just created instead of announcing it to a closing host.
             guard isLifecycleOperationLive(operation) else {
-                discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
+                await discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
                 throw ACPShutdownFenceError()
             }
         } catch {
@@ -763,7 +763,7 @@ extension ZenCODEACPBridge {
             // The incarnation never became live, or was discarded again: drop
             // the entry we may have published and release its orphaned MCP
             // registrations before propagating the failure.
-            discardSessionIfCurrent(id: sessionID, epoch: restoredSessionEpoch)
+            await discardSessionIfCurrent(id: sessionID, epoch: restoredSessionEpoch)
             await sessionRunner.releaseSessionMCPOwnership(
                 sessionID: sessionID,
                 epoch: restoredSessionEpoch

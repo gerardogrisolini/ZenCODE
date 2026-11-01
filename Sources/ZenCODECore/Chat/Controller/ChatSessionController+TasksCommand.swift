@@ -23,7 +23,7 @@ import ToolCore
 extension ChatSessionController {
     /// `/tasks` and its actions. `line` is the submitted command line.
     func runTasksCommand(line: String) async -> ChatCommandOutcome {
-        await presenter.presentSubmittedCommand(line)
+        await effectivePresenter(for: nil).presentSubmittedCommand(line)
         let argument = ChatCommandRegistry.arguments(from: line, commandPrefix: "/tasks")
         let components = argument.split(whereSeparator: \.isWhitespace).map(String.init)
         let action = components.first?.lowercased() ?? "status"
@@ -50,7 +50,7 @@ extension ChatSessionController {
                     sessionID: sessionID,
                     expectedRevision: nil
                 )
-                await presenter.presentSessionNotice(.taskRetried(taskID: components[1]))
+                await effectivePresenter(for: nil).presentSessionNotice(.taskRetried(taskID: components[1]))
                 return ChatCommandOutcome(notices: try await presentCurrentTaskGraph())
             case "cancel":
                 guard components.count >= 2 else {
@@ -62,7 +62,7 @@ extension ChatSessionController {
                     sessionID: sessionID,
                     reason: reason
                 )
-                await presenter.presentSessionNotice(.taskCancelled(taskID: components[1]))
+                await effectivePresenter(for: nil).presentSessionNotice(.taskCancelled(taskID: components[1]))
                 return ChatCommandOutcome(notices: try await presentCurrentTaskGraph())
             case "clear":
                 try await requiredManagementRuntime().clearTaskGraphs(sessionID: sessionID)
@@ -89,6 +89,7 @@ extension ChatSessionController {
     /// The publication is reserved before the graph is read, so a publication
     /// that started earlier cannot overtake it.
     private func presentCurrentTaskGraph() async throws -> [ChatSessionNotice] {
+        let presenter = effectivePresenter(for: nil)
         let publication = await presenter.reserveTaskGraphOverviewPublication()
         guard let overview = try await ChatTaskGraphOverview.current(
             in: runtime,

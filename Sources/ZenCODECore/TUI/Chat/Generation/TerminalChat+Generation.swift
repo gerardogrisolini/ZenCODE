@@ -24,7 +24,13 @@ extension TerminalChat {
         await installSubAgentToolEventHandlerIfNeeded()
         let assistantOutput = TerminalAssistantResponseBuffer()
         activeAssistantOutput = assistantOutput
-        await beginTelegramTurnProgressReporting(for: attempt.origin)
+        // The Telegram companion follows the turn under the render
+        // coordinator's new mirror epoch, so an overview queued during the
+        // previous turn is not adopted by this one.
+        await telegramCompanion.beginTurn(
+            origin: attempt.origin.telegramTurnOrigin,
+            mirrorEpoch: await renderCoordinator.advanceMirrorEpoch()
+        )
         // The turn's Telegram reporting ends in `finishPromptResult`, after
         // deferred overview renders and their mirrors have been drained: the
         // final remote message must not overtake sections the turn produced.
@@ -33,7 +39,9 @@ extension TerminalChat {
             attachments: attempt.attachments,
             purpose: attempt.purpose,
             sessionConfiguration: await turnSessionConfiguration(for: attempt.purpose),
-            authorizeTool: telegramToolAuthorizationHandler(for: attempt.origin),
+            authorizeTool: attempt.origin.telegramTurnOrigin.flatMap {
+                telegramCompanion.toolAuthorizationHandler(for: $0)
+            },
             // Evaluated for every request, so `/voice pause` or `/voice off`
             // while a workflow continues turn by turn takes effect on the
             // next prompt.
@@ -169,13 +177,8 @@ extension TerminalChat {
             // for the next turn, and snapshot once more so mutations that
             // landed during the handoff window are not lost (no event replay).
             await quiesceTaskGraphObserverForTurnBoundary()
-            let mirroredCompletionText = await telegramMirroredFinalResponseText(
-                fallback: completionText
-            )
-            await finalizeTelegramTurnProgressReporting(
-                outcome: .agentResponse(
-                    "*ZenCODE completed*\n\n\(String(mirroredCompletionText.prefix(3_600)))"
-                ),
+            await finishTelegramTurn(
+                outcome: .completed(completionText),
                 fileChangeSummary: success.fileChangeSummary
             )
             await startTaskGraphObserver()
@@ -186,17 +189,17 @@ extension TerminalChat {
         case let .failure(failure):
             await renderCoordinator.beginAssistantTranscriptTail()
             await finishStreamingOutput()
-            let remoteFailureText: String
+            let telegramOutcome: TelegramSessionCompanion.Outcome
             if failure.isCancellation {
                 await writeChatError("\nStopped.\n")
-                remoteFailureText = "Stopped."
+                telegramOutcome = .cancelled
             } else {
                 await writeFailureMessage("ZenCODE: \(failure.message)\n")
-                remoteFailureText = "ZenCODE failed: \(failure.message)"
+                telegramOutcome = .failed(failure.message)
             }
             await quiesceTaskGraphObserverForTurnBoundary()
-            await finalizeTelegramTurnProgressReporting(
-                outcome: .agentResponse(remoteFailureText),
+            await finishTelegramTurn(
+                outcome: telegramOutcome,
                 fileChangeSummary: failure.fileChangeSummary
             )
             await startTaskGraphObserver()

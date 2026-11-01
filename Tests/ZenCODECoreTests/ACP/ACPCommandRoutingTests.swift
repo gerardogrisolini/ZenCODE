@@ -1042,6 +1042,126 @@ struct ACPCommandRoutingTests {
             ? ["goal", "plan", "review"] : ["goal"]))
     }
 
+    /// Replaces the characterization of task 1
+    /// (`configuredTelegramDoesNotAnnounceATelegramCommand`), on purpose: ACP
+    /// now answers `/telegram` (plan 4, decision D1 b), so complete routing-v2
+    /// Telegram settings announce `telegram` after the commands announced
+    /// before, with exactly this entry, while without them the list is the
+    /// one of before.
+    @Test(arguments: [Set<String>(), ["agent.create", "agent.wait"]], [false, true])
+    func configuredTelegramAnnouncesTheTelegramCommandAfterTheOthers(
+        tools: Set<String>, telegramConfigured: Bool
+    ) async throws {
+        try await withTelegramSupportDirectory(telegramConfigured: telegramConfigured) {
+            let fixture = try await makeFixture(
+                sessionID: "acp-telegram-discovery-\(UUID().uuidString)", allowedToolNames: tools
+            )
+            let commands = await fixture.bridge.availableCommandsForTesting(sessionID: fixture.sessionID)
+            let names = commands.compactMap { $0.objectValue?["name"]?.stringValue }
+            let previous = tools.isEmpty ? ["goal"] : ["goal", "review", "plan"]
+            #expect(names == (telegramConfigured ? previous + ["telegram"] : previous))
+            if telegramConfigured {
+                #expect(commands.last == .object([
+                    "name": .string("telegram"),
+                    "description": .string("Telegram status, or turn it on/off for this session"),
+                    "input": .object(["hint": .string("on or off")]),
+                ]))
+            }
+        }
+    }
+
+    /// Replaces the characterization of task 1
+    /// (`telegramOnIsRoutedToTheModelAsAnOrdinaryPrompt`), on purpose: a line
+    /// whose command is `/telegram` is now answered at once and never reaches
+    /// the model, whether Telegram is configured or not. Without Telegram
+    /// settings every such line gets the terminal's unknown-command text
+    /// (without its trailing newline, like every immediate ACP reply). With
+    /// them, the lines that need no Bot API are answered as in the terminal.
+    @Test(arguments: [false, true])
+    func telegramLinesAreAnsweredAtOnceAndNeverReachTheModel(telegramConfigured: Bool) async throws {
+        try await withTelegramSupportDirectory(telegramConfigured: telegramConfigured) {
+            let fixture = try await makeFixture(sessionID: "acp-telegram-route-\(UUID().uuidString)")
+            #expect(CoordinatorCommandParser.parse("/telegram on") == nil)
+
+            let expectations: [(line: String, text: String)] = telegramConfigured
+                ? [
+                    ("/telegram", "Telegram: Configured"),
+                    ("/telegram off", "Telegram remote control stopped."),
+                    ("/telegram later", "Usage: /telegram [on|off]"),
+                ]
+                : ["/telegram", "/telegram on", "/telegram off", "/telegram later"].map {
+                    ($0, "ZenCODE: unknown command '/telegram'.")
+                }
+            for expectation in expectations {
+                let route = try await fixture.bridge.commandRouteForTesting(
+                    sessionID: fixture.sessionID, prompt: expectation.line
+                )
+                guard case let .immediate(text) = route else {
+                    Issue.record("\(expectation.line) must be answered at once, got \(route)")
+                    continue
+                }
+                #expect(text == expectation.text)
+            }
+
+            try await fixture.bridge.prompt(id: .number(1), params: [
+                "sessionId": fixture.sessionID, "prompt": telegramConfigured ? "/telegram" : "/telegram on",
+            ])
+            #expect(await fixture.backend.recordedPrompts().isEmpty)
+            #expect(fixture.wire.updateTexts(kind: "agent_message_chunk") == [expectations[0].text])
+            #expect(fixture.wire.stopReason(for: 1) == "end_turn")
+        }
+    }
+
+    /// `/telegram on` attaches the session's companion through the scripted
+    /// Bot API and reads the linked chat; `/telegram` reports the link as the
+    /// companion does; `/telegram off` detaches it. None of them reaches the
+    /// model.
+    @Test(.timeLimit(.minutes(1)))
+    func telegramOnAttachesStatusReportsAndOffDetaches() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let transport = ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+            let sessionID = "acp-telegram-on-\(UUID().uuidString)"
+            let fixture = try await ACPTelegramBridgeFixture.make(
+                root: root, sessionIDs: [sessionID], transport: transport
+            )
+            let bridge = fixture.bridge
+
+            #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram")
+                == "Telegram: Configured")
+            #expect(await fixture.companion(sessionID: sessionID) == nil)
+
+            #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram on")
+                == "Telegram remote control is active.\nLinked chat: Test")
+            let companion = try #require(await fixture.companion(sessionID: sessionID))
+            #expect(await companion.isActive)
+            #expect(await companion.readsIngress)
+            #expect(await companion.configuration == ACPTelegramCompanionChannel.configuration)
+            #expect(await ACPTelegramTestSupport.waitUntil { await transport.pollCount > 0 })
+
+            let status = try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram")
+            #expect(status == (await companion.statusText()))
+            #expect(status?.hasPrefix("Telegram: ") == true)
+            #expect(status?.contains("Linked chat: Test") == true)
+
+            #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram off")
+                == "Telegram remote control stopped.")
+            #expect(await !companion.isActive)
+            #expect(await !companion.readsIngress)
+            #expect(await fixture.companion(sessionID: sessionID) === companion)
+
+            // A failed start answers the terminal's failure text.
+            await transport.setGetMeFails(true)
+            let failure = try #require(
+                try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram on")
+            )
+            let lastError = try #require(await companion.controlState.lastError)
+            #expect(failure == "ZenCODE: \(lastError)")
+            #expect(await !companion.isActive)
+            #expect(await fixture.backend.prompts.isEmpty)
+            await bridge.shutdown()
+        }
+    }
+
     @Test
     func goalWithoutSubAgentsStartsResumesAndIsDiscoverable() async throws {
         let fixture = try await makeFixture(
@@ -1143,14 +1263,58 @@ struct ACPCommandRoutingTests {
         await bridge.installTestSession(sessionConfiguration)
         return (bridge, backend, wire, sessionID)
     }
+
+    /// Runs `body` in a fresh UUID support directory of its own, holding a
+    /// complete routing-v2 Telegram `settings.json` when `telegramConfigured`.
+    /// Every test case gets its own directory, so a configured case can never
+    /// leak its settings into an unconfigured one.
+    private func withTelegramSupportDirectory(
+        telegramConfigured: Bool,
+        _ body: () async throws -> Void
+    ) async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("acp-telegram-commands-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await AppStorageDirectory.withSupportDirectoryURL(root) {
+            if telegramConfigured {
+                try AgentSettingsManifestStore.save(AgentSettingsManifest(
+                    models: [],
+                    telegram: AgentTelegramSettingsManifest(
+                        enabled: true,
+                        botToken: "123456:ABCDEF",
+                        linkedChatID: 42,
+                        ownerUserID: 7,
+                        routingVersion: 2,
+                        routes: [.init(roomID: "default")]
+                    )
+                ))
+            }
+            #expect((AgentSettingsManifestStore.load()?.telegram?.isEnabled == true) == telegramConfigured)
+            try await body()
+        }
+    }
 }
 
 extension ZenCODEACPBridge {
     fileprivate func commandNamesForGoalTesting(sessionID: String) -> [String] {
-        guard let session = sessions[sessionID] else { return [] }
-        return availableCommandsUpdate(for: session).objectValue?["availableCommands"]?.arrayValue?.compactMap {
+        availableCommandsForTesting(sessionID: sessionID).compactMap {
             $0.objectValue?["name"]?.stringValue
-        } ?? []
+        }
+    }
+
+    fileprivate func availableCommandsForTesting(sessionID: String) -> [JSONValue] {
+        guard let session = sessions[sessionID] else { return [] }
+        return availableCommandsUpdate(for: session).objectValue?["availableCommands"]?.arrayValue ?? []
+    }
+
+    /// The text of the immediate answer to `prompt`, routed as
+    /// `session/prompt` routes it; `nil` when the line would start a turn.
+    fileprivate func immediateTextForTesting(sessionID: String, prompt: String) async throws -> String? {
+        guard case let .immediate(text) = try await commandRouteForTesting(sessionID: sessionID, prompt: prompt) else {
+            return nil
+        }
+        return text
     }
 
     fileprivate func installDisarmedWorkflowForTesting(sessionID: String, graphID: String) {
@@ -1160,5 +1324,25 @@ extension ZenCODEACPBridge {
     fileprivate func reserveWorkflowPromptForTesting(sessionID: String, promptID: UUID) {
         sessions[sessionID]?.activePromptID = promptID
         sessions[sessionID]?.operationState = .prompting(promptID)
+    }
+
+    /// Routes `prompt` the way `session/prompt` does once it holds the
+    /// reservation, and returns the route instead of running the turn.
+    fileprivate func commandRouteForTesting(sessionID: String, prompt: String) async throws -> ACPCommandTurnRoute {
+        guard let epoch = sessions[sessionID]?.epoch else { throw CancellationError() }
+        let promptID = UUID()
+        reserveWorkflowPromptForTesting(sessionID: sessionID, promptID: promptID)
+        defer {
+            sessions[sessionID]?.activePromptID = nil
+            sessions[sessionID]?.operationState = .idle
+        }
+        return try await routeACPCommandTurn(
+            command: CoordinatorCommandParser.parse(prompt),
+            routedPromptText: prompt,
+            hasAgentMention: false,
+            sessionID: sessionID,
+            epoch: epoch,
+            promptID: promptID
+        )
     }
 }

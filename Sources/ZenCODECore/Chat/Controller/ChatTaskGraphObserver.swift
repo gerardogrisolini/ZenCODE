@@ -81,7 +81,8 @@ final class ChatTaskGraphObserver {
                       controller.sessionID == observedSessionID else {
                     break
                 }
-                let publication = await controller.presenter.reserveTaskGraphOverviewPublication()
+                let publication = await controller.effectivePresenter(for: nil)
+                    .reserveTaskGraphOverviewPublication()
                 guard let self, !Task.isCancelled else { break }
                 let previousPublication = self.pendingPublication
                 previousPublication?.cancel()
@@ -164,7 +165,7 @@ extension ChatSessionController {
     /// read is not presented: the change publishes it again.
     func publishTaskGraphOverviewIfChanged(observedSessionID: String) async {
         guard sessionID == observedSessionID else { return }
-        let publication = await presenter.reserveTaskGraphOverviewPublication()
+        let publication = await effectivePresenter(for: nil).reserveTaskGraphOverviewPublication()
         await publishTaskGraphOverview(
             observedSessionID: observedSessionID,
             publication: publication
@@ -194,7 +195,7 @@ extension ChatSessionController {
             graphID: nil
         ) else {
             guard !Task.isCancelled, sessionID == observedSessionID else { return }
-            await presenter.presentTaskGraphOverview(
+            await effectivePresenter(for: nil).presentTaskGraphOverview(
                 nil,
                 origin: .automatic,
                 publication: publication
@@ -219,7 +220,7 @@ extension ChatSessionController {
             return
         }
         guard !Task.isCancelled, sessionID == observedSessionID else { return }
-        await presenter.presentTaskGraphOverview(
+        await effectivePresenter(for: nil).presentTaskGraphOverview(
             ChatTaskGraphOverview(graph: graph, tasks: tasks),
             origin: .automatic,
             publication: publication

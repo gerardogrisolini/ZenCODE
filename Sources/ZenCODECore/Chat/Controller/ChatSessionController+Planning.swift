@@ -395,7 +395,7 @@ extension ChatSessionController {
         turnSessionID: String? = nil,
         presenter turnPresenter: (any ChatSessionPresenter)? = nil
     ) async {
-        let presenter = turnPresenter ?? self.presenter
+        let presenter = turnPresenter ?? effectivePresenter(for: nil)
         let turnSessionID = turnSessionID ?? sessionID
         guard commandState.activeWorkflow?.graphID == graphID else { return }
         let graph = await currentWorkflowGraph(sessionID: turnSessionID)
@@ -444,7 +444,7 @@ extension ChatSessionController {
         turnSessionID: String? = nil,
         presenter turnPresenter: (any ChatSessionPresenter)? = nil
     ) async {
-        let presenter = turnPresenter ?? self.presenter
+        let presenter = turnPresenter ?? effectivePresenter(for: nil)
         let turnSessionID = turnSessionID ?? sessionID
         let graph = await currentWorkflowGraph(sessionID: turnSessionID)
         guard isCurrentTurn(token, sessionID: turnSessionID) else { return }

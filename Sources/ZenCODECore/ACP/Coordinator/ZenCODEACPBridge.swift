@@ -57,6 +57,17 @@ public actor ZenCODEACPBridge {
         /// owns the `/plan` and `/goal` command state of this incarnation. A
         /// same-epoch reconstruction keeps it; a new epoch gets a fresh one.
         let controller: ChatSessionController
+        /// The Telegram companion of this incarnation, created by its first
+        /// `/telegram on` and kept, attached or not, until the incarnation
+        /// ends: `session/close` and a discarded incarnation detach it,
+        /// `shutdown()` shuts it down. Like the controller, a same-epoch
+        /// reconstruction keeps it and a new epoch starts without one, so
+        /// after `session/load` of a closed session `/telegram on` is needed
+        /// again: the link is never persisted, as in the terminal.
+        var telegramCompanion: TelegramSessionCompanion? = nil
+        /// The primary channel of ``telegramCompanion``. The companion holds
+        /// its channel weakly, so the session state keeps it alive.
+        var telegramCompanionChannel: ACPTelegramCompanionChannel? = nil
         /// Completed plan state is runtime session state; the unfinished
         /// clarification below is even more deliberately ephemeral and is never
         /// represented by ACP resume history or a task checkpoint.
@@ -94,6 +105,9 @@ public actor ZenCODEACPBridge {
         public let finalAssistantBlock: String?
         public let stopReason: String
         public let modelID: String
+        /// The files the turn changed, mirrored to a linked Telegram chat
+        /// when the turn ends.
+        let fileChangeSummary: TurnFileChangeSummary?
     }
 
     /// Identifies the session incarnation a lifecycle operation acts on, so a
@@ -116,7 +130,32 @@ public actor ZenCODEACPBridge {
     let setupRequired: Bool
     var clientFileSystem: ACPClientFileSystem?
     public let sessionRunner: AgentCoreSessionRunner
-    public var sessions: [String: SessionState] = [:]
+    public var sessions: [String: SessionState] = [:] {
+        // Every write of `activePromptID` goes through `sessions`, so this is
+        // the one place that keeps the Telegram channels' view of it current.
+        didSet { publishTelegramPromptActivity() }
+    }
+    /// Which incarnations are generating a prompt, for the Telegram channels
+    /// of the sessions (see ``ACPSessionPromptActivity``).
+    nonisolated let telegramPromptActivity = ACPSessionPromptActivity()
+    /// The Telegram route authority shared by the companions of every session
+    /// of this bridge, created by the first `/telegram on` from the persisted
+    /// settings, which it writes back through
+    /// `AgentSettingsManifestStore.saveTelegramRoutes`. One router per
+    /// process keeps the routes of several sessions in one consistent set, so
+    /// no session overwrites the topic another one created.
+    var telegramRouterStorage: TerminalTelegramSessionRouter?
+    /// The Bot API poller shared by the companions of every session of this
+    /// bridge, created with the router. Each companion has a control service
+    /// of its own, but a service that brought its own dispatcher would start
+    /// its own long poll: two `getUpdates` on one bot make Telegram answer
+    /// HTTP 409 to one of them. Through one dispatcher a bot has exactly one
+    /// long poll, whose updates are broadcast to every service, which applies
+    /// its own route checks.
+    var telegramDispatcherStorage: TerminalTelegramBotDispatcher?
+    /// Test seam: the transport of every companion's control service. `nil`
+    /// in production, where each service uses a `NIOTelegramHTTPTransport`.
+    var telegramTransportFactoryForTesting: (@Sendable () -> any TelegramHTTPTransport)?
     private var sessionSleepAssertion: ZenSleepAssertion?
     private var nextSessionEpochValue: UInt64 = 1
     /// Latches on `shutdown()` so late prompt completions and new requests
@@ -198,6 +237,9 @@ public actor ZenCODEACPBridge {
         promptHandlerDrainWaiters.removeAll()
         let sessionIDs = Array(sessions.keys)
         let tasklessObservers = sessions.values.compactMap(\.tasklessObserver)
+        // The companions end with the bridge; collected before `sessions` is
+        // dropped and shut down once the transport is closed.
+        let telegramCompanions = sessions.values.compactMap(\.telegramCompanion)
         for observer in tasklessObservers { observer.cancel() }
         for sessionID in sessionIDs {
             // Fence the controller first: the cancelled turn must not write
@@ -223,6 +265,9 @@ public actor ZenCODEACPBridge {
         // shutdown" true regardless of where in-flight work was parked.
         await writer.close()
         for observer in tasklessObservers { await observer.value }
+        // Nothing they do reaches the closed ACP transport. Each one stops
+        // its link, closes its session's topic, and leaves the controller.
+        for companion in telegramCompanions { await companion.shutdown() }
         await permissionBroker.removeAllCachedDecisions()
         await sessionRunner.shutdown()
     }
@@ -451,13 +496,16 @@ public actor ZenCODEACPBridge {
 
     /// Removes the session only when it is still the incarnation the caller
     /// created, so a rollback never deletes a newer session with the same id.
-    func discardSessionIfCurrent(id sessionID: String, epoch: UInt64) {
+    /// The removal happens before any suspension; a Telegram companion the
+    /// incarnation had is then detached.
+    func discardSessionIfCurrent(id sessionID: String, epoch: UInt64) async {
         guard sessions[sessionID]?.epoch == epoch else {
             return
         }
         sessions[sessionID]?.tasklessObserver?.cancel()
-        sessions.removeValue(forKey: sessionID)
+        let telegramCompanion = sessions.removeValue(forKey: sessionID)?.telegramCompanion
         updateSessionSleepAssertion()
+        await telegramCompanion?.detach()
     }
 
     public func holdSessionSleepAssertionIfNeeded() {

@@ -126,6 +126,23 @@ extension ChatSessionNoticeText {
             + "use /tasks to review or /tasks clear to stop it.\n"
     }
 
+    /// The text of a `/goal` workflow notice, character for character what
+    /// the terminal writes on its system channel when the controller presents
+    /// it (``ChatSessionPresenter/presentWorkflowNotice(_:)``).
+    static func text(for notice: ChatWorkflowNotice) -> String {
+        switch notice {
+        case let .awaitingReply(graphID, pendingTaskCount):
+            workflowStillOpenMessage(graphID: graphID, pendingTaskCount: pendingTaskCount)
+        case let .blocked(graphID, message):
+            "Workflow \"\(graphID)\" is blocked: \(message)\n"
+                + "Your next message resumes this same workflow; use /tasks clear to stop it.\n"
+        case let .openWithoutQuestion(graphID, pendingTaskCount):
+            workflowOpenWithoutQuestionMessage(graphID: graphID, pendingTaskCount: pendingTaskCount)
+        case let .recoverableFailure(graphID, pendingTaskCount):
+            workflowRecoverableFailureMessage(graphID: graphID, pendingTaskCount: pendingTaskCount)
+        }
+    }
+
     // MARK: - /tasks
 
     /// `/tasks show`: one task as Markdown. Plain Markdown, so a channel

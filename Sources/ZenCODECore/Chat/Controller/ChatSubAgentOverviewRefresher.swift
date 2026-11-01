@@ -111,11 +111,14 @@ extension ChatSessionController {
         subAgentOverviewRefresher.refreshTask
     }
 
-    /// Publishes the sub-agent overview on `presenter` (the controller's own
-    /// when `nil`). A `relatedToolName` that does not name a sub-agent tool
-    /// publishes nothing: the publication around a tool call concerns only
-    /// `agent.*` calls. Without a tool name it always publishes. The channel
-    /// skips an overview whose signature it already rendered.
+    /// Publishes the sub-agent overview on `presenter`, or on the controller's
+    /// ``effectivePresenter(for:)`` when `nil`; a presenter the channel passes
+    /// is used as it is, without the companions, which do not draw overviews
+    /// (see ``ChatCompanionPresenter``). A `relatedToolName` that does not
+    /// name a sub-agent tool publishes nothing: the publication around a tool
+    /// call concerns only `agent.*` calls. Without a tool name it always
+    /// publishes. The channel skips an overview whose signature it already
+    /// rendered.
     func publishSubAgentOverviewIfChanged(
         relatedToolName: String? = nil,
         presenter: (any ChatSessionPresenter)? = nil
@@ -124,31 +127,32 @@ extension ChatSessionController {
            !DirectSubAgentRuntime.isSubAgentToolName(relatedToolName) {
             return
         }
-        await publishSubAgentOverview(presenter: presenter ?? self.presenter)
+        await publishSubAgentOverview(presenter: presenter ?? effectivePresenter(for: nil))
     }
 
     /// Starts publishing the sub-agent overview on `presenter` (the
-    /// controller's own when `nil`) every
-    /// ``ChatSubAgentOverviewRefresher/interval``, unless the refresh already
-    /// runs. Idempotent.
+    /// controller's ``effectivePresenter(for:)`` when `nil`, read once here)
+    /// every ``ChatSubAgentOverviewRefresher/interval``, unless the refresh
+    /// already runs. Idempotent.
     func startSubAgentOverviewRefreshIfNeeded(
         presenter: (any ChatSessionPresenter)? = nil
     ) {
         subAgentOverviewRefresher.startIfNeeded(
             for: self,
-            presenter: presenter ?? self.presenter
+            presenter: presenter ?? effectivePresenter(for: nil)
         )
     }
 
     /// Stops the refresh, waits for a tick in flight, and then publishes the
-    /// overview once on `presenter` (the controller's own when `nil`), also
+    /// overview once on `presenter` (the controller's
+    /// ``effectivePresenter(for:)`` when `nil`), also
     /// when no refresh was running, so the latest state reaches the channel
     /// after every tick. Idempotent.
     func stopSubAgentOverviewRefresh(
         presenter: (any ChatSessionPresenter)? = nil
     ) async {
         await subAgentOverviewRefresher.stop()
-        await publishSubAgentOverview(presenter: presenter ?? self.presenter)
+        await publishSubAgentOverview(presenter: presenter ?? effectivePresenter(for: nil))
     }
 
     /// Reserves a publication, reads the sub-agent snapshots, and presents

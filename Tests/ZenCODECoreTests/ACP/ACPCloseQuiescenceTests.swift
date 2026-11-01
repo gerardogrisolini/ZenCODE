@@ -591,3 +591,125 @@ extension ZenCODEACPBridge {
         await sessionRunner.snapshotSession(id: sessionID) != nil
     }
 }
+
+// MARK: - Telegram companion
+
+/// The Telegram companion of an ACP session ends with the incarnation that
+/// created it: `session/close` and a discarded incarnation detach it, and the
+/// bridge's `shutdown()` shuts every one down. Telegram goes through a
+/// scripted Bot API.
+extension ACPCloseQuiescenceTests {
+    /// `session/close` detaches the companion before it answers; the session
+    /// created again with the same id is a new incarnation, without a link,
+    /// that needs `/telegram on` again.
+    @Test
+    func closeDetachesTheTelegramCompanionBeforeItsReply() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let sessionID = "acp-close-telegram-\(UUID().uuidString)"
+            let fixture = try await ACPTelegramBridgeFixture.make(
+                root: root,
+                sessionIDs: [sessionID],
+                transport: ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+            )
+            #expect(await fixture.turnTelegramOn(sessionID: sessionID, id: 1)
+                == "Telegram remote control is active.\nLinked chat: Test")
+            let companion = try #require(await fixture.companion(sessionID: sessionID))
+            #expect(await companion.isActive)
+            #expect(await ACPTelegramTestSupport.waitUntil { await fixture.transport.runningPollCount == 1 })
+
+            await fixture.bridge.handleMessage([
+                "jsonrpc": "2.0", "id": 2, "method": "session/close",
+                "params": ["sessionId": sessionID],
+            ])
+
+            #expect(fixture.wire.response(id: 2)?["result"] == .object([:]))
+            #expect(await !companion.isActive)
+            #expect(await !companion.readsIngress)
+            #expect(await ACPTelegramTestSupport.waitUntil { await fixture.transport.runningPollCount == 0 })
+
+            let sessionConfiguration = AgentCoreSessionConfiguration(
+                sessionID: sessionID,
+                modelID: "test-model",
+                workingDirectory: fixture.workingDirectory,
+                systemPrompt: "ACP Telegram test",
+                cacheKey: nil,
+                history: [],
+                allowedToolNames: nil
+            )
+            try await fixture.bridge.sessionRunner.createSession(configuration: sessionConfiguration)
+            await fixture.bridge.installTestSession(sessionConfiguration)
+            #expect(await fixture.companion(sessionID: sessionID) == nil)
+            let start = fixture.wire.count
+            await fixture.prompt("/telegram", id: 3, sessionID: sessionID)
+            #expect(fixture.lastAgentText(from: start) == "Telegram: Configured")
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// Discarding an incarnation detaches its companion only: a discard that
+    /// names an older epoch of the same id leaves the newer incarnation and
+    /// its link untouched.
+    @Test
+    func discardingAnIncarnationDetachesOnlyItsOwnCompanion() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let sessionID = "acp-discard-telegram-\(UUID().uuidString)"
+            let fixture = try await ACPTelegramBridgeFixture.make(
+                root: root,
+                sessionIDs: [sessionID],
+                transport: ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+            )
+            let staleEpoch = try #require(await fixture.bridge.telegramTestEpoch(sessionID: sessionID))
+            let sessionConfiguration = try #require(await fixture.bridge.telegramTestConfiguration(sessionID: sessionID))
+            // A newer incarnation with the same id replaces the first one.
+            await fixture.bridge.installTestSession(sessionConfiguration)
+            let epoch = try #require(await fixture.bridge.telegramTestEpoch(sessionID: sessionID))
+            #expect(epoch != staleEpoch)
+            await fixture.turnTelegramOn(sessionID: sessionID, id: 1)
+            let companion = try #require(await fixture.companion(sessionID: sessionID))
+            #expect(await companion.isActive)
+
+            await fixture.bridge.discardSessionIfCurrent(id: sessionID, epoch: staleEpoch)
+            #expect(await fixture.companion(sessionID: sessionID) === companion)
+            #expect(await companion.isActive)
+
+            await fixture.bridge.discardSessionIfCurrent(id: sessionID, epoch: epoch)
+            #expect(await fixture.bridge.telegramTestEpoch(sessionID: sessionID) == nil)
+            #expect(await !companion.isActive)
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// `shutdown()` shuts down the companion of every session: each link
+    /// stops and each presenter leaves its controller, and nothing more is
+    /// written on the closed ACP transport.
+    @Test
+    func shutdownShutsDownEveryTelegramCompanion() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let sessionIDs = (1...2).map { "acp-shutdown-telegram-\($0)-\(UUID().uuidString)" }
+            let fixture = try await ACPTelegramBridgeFixture.make(
+                root: root,
+                sessionIDs: sessionIDs,
+                transport: ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+            )
+            var companions: [TelegramSessionCompanion] = []
+            for (index, sessionID) in sessionIDs.enumerated() {
+                await fixture.turnTelegramOn(sessionID: sessionID, id: index + 1)
+                let companion = try #require(await fixture.companion(sessionID: sessionID))
+                #expect(await companion.isActive)
+                #expect(await companion.controller.companionPresenters.count == 1)
+                companions.append(companion)
+            }
+            let wireCount = fixture.wire.count
+
+            await fixture.bridge.shutdown()
+
+            for companion in companions {
+                #expect(await !companion.isActive)
+                #expect(await !companion.readsIngress)
+                #expect(await companion.controller.companionPresenters.isEmpty)
+            }
+            #expect(await ACPTelegramTestSupport.waitUntil { await fixture.transport.runningPollCount == 0 })
+            #expect(fixture.wire.count == wireCount)
+        }
+    }
+}

@@ -23,9 +23,9 @@ final class TerminalChatSessionPresenter: ChatSessionPresenter {
     }
 
     func presentAssistantContent(_ content: String) async {
-        guard let chat else { return }
-        await chat.activeAssistantOutput?.append(content)
-        await chat.appendTelegramRootResponseDelta(content)
+        // The Telegram companion's presenter, which the controller calls
+        // first, buffers the same content for the linked chat.
+        await chat?.activeAssistantOutput?.append(content)
     }
 
     func presentModelLoaded(_ modelID: String) async {
@@ -53,9 +53,9 @@ final class TerminalChatSessionPresenter: ChatSessionPresenter {
         await chat.writeAssistantContent(commentary)
         chat.offerVoiceCommentary(commentary)
         await chat.writeToolCallStarted(toolCall)
-        // The tool call closes the root response that preceded it: publish
-        // that response, never the call itself.
-        await chat.publishTelegramRootResponseAtToolBoundary()
+        // The Telegram companion's presenter, which the controller calls
+        // first, already published the root response this call closes (see
+        // `TerminalChat.overviewMirrorBarrier()`).
         await chat.publishSubAgentOverviewIfChanged(relatedToolName: toolCall.name)
         if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
             chat.startSubAgentOverviewRefreshIfNeeded()

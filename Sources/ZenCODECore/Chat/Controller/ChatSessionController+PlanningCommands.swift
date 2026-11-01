@@ -99,7 +99,7 @@ extension ChatSessionController {
 
         switch action {
         case .save:
-            await presenter.presentSubmittedCommand(line)
+            await effectivePresenter(for: nil).presentSubmittedCommand(line)
             guard planBrainstorming == nil, pendingPlanApprovalPlanID == nil else {
                 return ChatCommandOutcome(notices: [.planDiscussionBlocksMutation])
             }
@@ -107,7 +107,7 @@ extension ChatSessionController {
                 notices: await saveReusablePlan(fence: fence, source: policy.planSave)
             )
         case .load:
-            await presenter.presentSubmittedCommand(line)
+            await effectivePresenter(for: nil).presentSubmittedCommand(line)
             guard planBrainstorming == nil, pendingPlanApprovalPlanID == nil else {
                 return ChatCommandOutcome(notices: [.planDiscussionBlocksMutation])
             }
@@ -115,18 +115,18 @@ extension ChatSessionController {
                 notices: await loadReusablePlan(fence: fence, source: policy.planLoad)
             )
         case .list:
-            await presenter.presentSubmittedCommand(line)
+            await effectivePresenter(for: nil).presentSubmittedCommand(line)
             return ChatCommandOutcome(notices: await listSavedPlans())
         case let .delete(target):
-            await presenter.presentSubmittedCommand(line)
+            await effectivePresenter(for: nil).presentSubmittedCommand(line)
             return ChatCommandOutcome(
                 notices: await deleteSavedPlans(target: target, style: policy.planDelete)
             )
         case .status:
-            await presenter.presentSubmittedCommand(line)
+            await effectivePresenter(for: nil).presentSubmittedCommand(line)
             return ChatCommandOutcome(notices: await planStatus(style: policy.planStatus))
         case .approve:
-            await presenter.presentSubmittedCommand(line)
+            await effectivePresenter(for: nil).presentSubmittedCommand(line)
             guard planBrainstorming == nil, pendingPlanApprovalPlanID == nil else {
                 return ChatCommandOutcome(notices: [.planDiscussionBlocksMutation])
             }
@@ -139,7 +139,7 @@ extension ChatSessionController {
             }
             return ChatCommandOutcome(notices: [.planApprovalGoalPrompt])
         case .clear:
-            await presenter.presentSubmittedCommand(line)
+            await effectivePresenter(for: nil).presentSubmittedCommand(line)
             return ChatCommandOutcome(
                 notices: await clearActivePlan(fence: fence, style: policy.planClear)
             )
@@ -155,7 +155,7 @@ extension ChatSessionController {
             guard !plannerProfiles.isEmpty else {
                 return ChatCommandOutcome(notices: [.agentRoleUnavailable(.planner)])
             }
-            await presenter.presentSubmittedCommand(line)
+            await effectivePresenter(for: nil).presentSubmittedCommand(line)
             // A new goal abandons the previous collection and closes its author,
             // but the completed active plan remains until a fresh final plan is valid.
             await abandonPlanBrainstorming(closeAllPlanAuthors: true)
@@ -785,7 +785,7 @@ extension ChatSessionController {
             return ChatCommandOutcome(notices: [.operationFailed(description: error.localizedDescription)])
         }
 
-        await presenter.presentSubmittedCommand(line)
+        await effectivePresenter(for: nil).presentSubmittedCommand(line)
         guard commitCommandState(fence, {
             $0.activeWorkflow = WorkflowCommandRuntimeState(goal: argument, graphID: graphID)
         }) else {
@@ -932,7 +932,7 @@ extension ChatSessionController {
                 return ChatCommandOutcome(notices: [.agentRoleUnavailable(.reviewer)])
             }
 
-            await presenter.presentSubmittedCommand(line)
+            await effectivePresenter(for: nil).presentSubmittedCommand(line)
 
             return Self.commandTurn(
                 PlanningCommandKernel.reviewDelegationPrompt(
@@ -962,7 +962,7 @@ extension ChatSessionController {
             } else {
                 scope = argument
             }
-            await presenter.presentSubmittedCommand(line)
+            await effectivePresenter(for: nil).presentSubmittedCommand(line)
             return Self.commandTurn(
                 prompt(
                     ChatReviewPromptRequest(

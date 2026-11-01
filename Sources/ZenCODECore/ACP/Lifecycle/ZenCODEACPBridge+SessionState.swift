@@ -134,9 +134,10 @@ extension ZenCODEACPBridge {
     }
 
     // All same-incarnation reconstruction paths (mention, refresh and
-    // reconfiguration) inherit ACP presentation state and the chat controller
-    // (with its command state) from the live entry. A fresh epoch, including
-    // load/resume, deliberately starts unannounced with a new controller.
+    // reconfiguration) inherit ACP presentation state, the chat controller
+    // (with its command state) and the Telegram companion from the live entry.
+    // A fresh epoch, including load/resume, deliberately starts unannounced
+    // with a new controller and without a companion.
     func sessionStateWithCommandState(
         configuration: AgentCoreSessionConfiguration,
         selectedAgent: AgentProfile? = nil,
@@ -162,7 +163,9 @@ extension ZenCODEACPBridge {
             activePromptID: activePromptID,
             activePromptTask: activePromptTask,
             operationState: operationState,
-            controller: liveIncarnation?.controller ?? makeChatSessionController(configuration: configuration)
+            controller: liveIncarnation?.controller ?? makeChatSessionController(configuration: configuration),
+            telegramCompanion: liveIncarnation?.telegramCompanion,
+            telegramCompanionChannel: liveIncarnation?.telegramCompanionChannel
         )
     }
 

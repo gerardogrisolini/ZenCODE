@@ -69,8 +69,8 @@ extension TerminalChat {
         voiceEventQueue = eventQueue
         // This loop owns the only Telegram ingress consumer, so replies to a
         // forwarded card can actually be delivered while it runs.
-        readsTelegramIngress = true
-        defer { readsTelegramIngress = false }
+        telegramCompanion.readsIngress = true
+        defer { telegramCompanion.readsIngress = false }
         // SIGWINCH is handled by the status-bar actor, but reader ownership
         // belongs to this one FIFO consumer. The handler only enqueues the
         // collapse notification, so it cannot form an actor callback cycle.
@@ -81,15 +81,12 @@ extension TerminalChat {
         }
         var queuedPrompts = TerminalQueuedPromptBuffer()
         var generationTask: Task<Void, Never>?
-        let remoteTranscriptions = telegramVoiceTranscriptions
+        // Telegram voice transcripts and route invalidations reach this FIFO
+        // through the companion's channel until the loop ends.
+        telegramRuntimeEventQueue = eventQueue
         let telegramForwardingTask = startTelegramForwardingTask(eventQueue: eventQueue)
-        // Persistent polling failures are told to the operator through this
-        // FIFO. The handler runs on the service actor and must not block, so
-        // it only offers the event; `lastError` keeps the detail if the queue
-        // is momentarily full.
-        await telegramControlService.setPollHealthHandler { notice in
-            _ = eventQueue.offer(.telegramPollHealthChanged(notice))
-        }
+        // Persistent polling failures are told to the operator by the
+        // companion, which installs its poll-health handler when it attaches.
         // The room follows the live session id: `/new` and `/resume` swap it and
         // delegated agents then register in the new room, so the observation is
         // rebound instead of silently watching a retired one.
@@ -133,8 +130,9 @@ extension TerminalChat {
             // `defer` cannot suspend. This synchronous fallback closes admission
             // and cancels any transcription if a future early-exit path is added;
             // the current exits await cleanup explicitly below.
-            remoteTranscriptions.cancelAll()
+            telegramCompanion.voiceTranscriptions.cancelAll()
             eventQueue.finish()
+            telegramRuntimeEventQueue = nil
             // This loop owns exactly one subscriber. Session teardown performs
             // room-wide stop; detaching here must never end another TUI/ACP
             // observer that is still handling live messages.
@@ -214,7 +212,7 @@ extension TerminalChat {
             )
             // A new room invalidates the Telegram receipt map: a reply to a card
             // from the retired room must not be routed into this one.
-            await rebindTelegramSharedChatRelay(roomID: sharedChatRoomID)
+            await telegramCompanion.rebindSharedChatRelay(roomID: sharedChatRoomID)
             await synchronizeSharedChatConsumerBusyState()
         }
 
@@ -320,7 +318,7 @@ extension TerminalChat {
         await installSharedChatMentionSuggestionsProvider()
 
         guard await startPanelInput() else {
-            await remoteTranscriptions.cancelAllAndWait(shuttingDown: true)
+            await telegramCompanion.cancelVoiceTranscriptions()
             await statusBar.stop()
             throw TerminalChatError.interactivePromptUnavailable
         }
@@ -782,23 +780,17 @@ extension TerminalChat {
                 await synchronizeSharedChatConsumerBusyState()
                 scheduleQueuedPromptIfNeeded()
             case let .telegramPollHealthChanged(notice):
-                await writeTelegramPollHealthNotice(notice)
+                await telegramCompanion.presentPollHealthNotice(notice)
             case let .telegramRouteInvalidated(lease):
-                guard activeTelegramTurnOrigin?.telegramLease == lease else { continue }
+                guard telegramCompanion.activeTurnOrigin?.lease == lease else { continue }
                 generationTask?.cancel()
                 generationTask = nil
                 isGenerating = false
                 await statusBar.setProcessing(false)
                 await interactiveReader.setPanelProcessing(false)
-                await endTelegramTurnProgressReporting()
-                await telegramRouteRuntimeState.teardown(lease: lease)
-                telegramCommandReplyBindings = telegramCommandReplyBindings.filter {
-                    $0.value.lease != lease
-                }
-                if telegramActiveRouteLease == lease {
-                    telegramActiveRouteLease = nil
-                    await telegramSharedChatRelay.deactivate()
-                }
+                // The rest of the cleanup: the turn's reporting, the route's
+                // runtime state and command receipts, and the link's route.
+                await telegramCompanion.routeWasInvalidated(lease)
                 scheduleQueuedPromptIfNeeded()
             case .startNextQueuedPrompt:
                 isQueuedPromptStartScheduled = false
@@ -826,7 +818,7 @@ extension TerminalChat {
                 // Relay first: Telegram delivery is tracked by the relay's own
                 // ledger, not by the terminal reader buffer, which is rebuilt on
                 // a forced reattach and would resend the replayed transcript.
-                await forwardSharedChatMessagesToTelegram(
+                await telegramCompanion.forwardSharedChatMessages(
                     messages,
                     roomID: sharedChatRoomID
                 )
@@ -895,7 +887,8 @@ extension TerminalChat {
                 await startGeneration(
                     attempt: promptAttempt(
                         prompt: trigger.prompt,
-                        origin: takeTelegramSharedChatOrigin(for: trigger.messages) ?? .local,
+                        origin: telegramCompanion.takeSharedChatOrigin(for: trigger.messages)
+                            .map(TerminalPromptOrigin.init) ?? .local,
                         isUserVisible: false
                     )
                 )
@@ -906,25 +899,28 @@ extension TerminalChat {
                 )
                 await refreshSharedChatPanelSuggestions()
             case let .telegramMessage(message):
-                if let draftID = message.stoppedMessageGenerationDraftID {
+                if message.stoppedMessageGenerationDraftID != nil {
                     // Correlate the stop to the current reporter's native draft.
                     // A delayed update for a retired/rebound turn is inert.
-                    if let origin = activeTelegramTurnOrigin,
-                       await validateTelegramOrigin(origin),
-                       origin.telegramLease?.effectiveMessageThreadID == message.topicID,
-                       let reporter = activeTelegramProgressReporter,
-                       await reporter.ownsStoppedDraft(chatID: message.chatID, draftID: draftID) {
+                    if await telegramCompanion.stoppedDraftBelongsToActiveTurn(message) {
                         generationTask?.cancel()
                     }
                     continue
                 }
-                let didQueuePrompt = await handleTelegramRuntimeMessage(
+                // The companion answers what it can in the linked chat and hands
+                // a prompt to this queue, which runs it when the session is free.
+                let didQueuePrompt = await telegramCompanion.handleIncomingMessage(
                     message,
-                    eventQueue: eventQueue,
-                    queuedPrompts: &queuedPrompts,
-                    transcriptions: remoteTranscriptions,
                     isSessionGenerating: isGenerating
-                )
+                ) { prompt in
+                    queuedPrompts.enqueue(
+                        TerminalQueuedPrompt(
+                            text: prompt.text,
+                            origin: .telegramLease(prompt.origin),
+                            mode: prompt.mode
+                        )
+                    ) ? .queued : .queueFull
+                }
                 if didQueuePrompt {
                     await refreshQueuedPromptCount()
                     scheduleQueuedPromptIfNeeded()
@@ -994,8 +990,8 @@ extension TerminalChat {
         // in-flight debounce) without restarting it, so no observer-driven
         // render can run during or after the turn retirement below.
         await stopTaskGraphObserver()
-        await finalizeTelegramTurnProgressReporting()
-        await remoteTranscriptions.cancelAllAndWait(shuttingDown: true)
+        await finishTelegramTurn(outcome: nil, fileChangeSummary: nil)
+        await telegramCompanion.cancelVoiceTranscriptions()
         await stopVoiceMode()
 
         await stopPanelInput()

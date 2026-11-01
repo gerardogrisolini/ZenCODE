@@ -323,3 +323,182 @@ struct ACPChatRoundTripTests {
         return (bridge, backend, wire, sessionID)
     }
 }
+
+// MARK: - Telegram companion
+
+/// An ACP session linked to Telegram with `/telegram on`, through a scripted
+/// Bot API: the editor drives the session, the linked chat follows it and
+/// can consult and approve it, never drive it.
+extension ACPChatRoundTripTests {
+    /// The editor's turn is mirrored to the linked chat once it ends: its
+    /// outcome, then the files it changed.
+    @Test(.timeLimit(.minutes(1)))
+    func editorPromptIsMirroredToTelegramWithItsOutcomeAndSummary() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedTelegramFixture(root: root)
+            await fixture.backend.enqueue([
+                .writeFile(path: "notes.txt", contents: "hello\n"),
+                .reply("All done."),
+            ])
+            let before = await fixture.transport.sentMessages.count
+
+            await fixture.prompt("Create notes.txt", id: 2, sessionID: sessionID)
+
+            #expect(fixture.wire.stopReason(id: 2) == "end_turn")
+            // The turn's Telegram side ended before the editor's reply.
+            let mirrored = await fixture.transport.sentTexts.dropFirst(before)
+            let outcome = try #require(mirrored.firstIndex { $0.contains("ZenCODE completed") })
+            #expect(mirrored[outcome].contains("All done."))
+            let summary = try #require(mirrored.firstIndex { $0.contains("Summary: 1 file") })
+            #expect(mirrored[summary].contains("added notes.txt"))
+            #expect(outcome < summary)
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// From the linked chat, a prompt and `/undo` are refused with the
+    /// mirror-only text naming the editor, and `/status` is answered; none of
+    /// them reaches the model or the ACP wire.
+    @Test(.timeLimit(.minutes(1)))
+    func telegramPromptsAndUndoAreRefusedWhileStatusIsAnswered() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedTelegramFixture(root: root)
+            let companion = try #require(await fixture.companion(sessionID: sessionID))
+            let refusal = "ZenCODE: this session is driven by the editor; send prompts there. From Telegram you can use /help, /status, /changes, /diff and /chat, and answer permission requests with /allow, /always or /deny."
+            #expect(await companion.mirrorOnlyRefusalText == refusal)
+            let status = await companion.remoteStatusText()
+            let wireCount = fixture.wire.count
+
+            for (line, answer) in [("Run the tests", refusal), ("/status", status), ("/undo", refusal)] {
+                let before = await fixture.transport.sentMessages.count
+                try await fixture.transport.deliver(line)
+                #expect(await ACPTelegramTestSupport.waitUntil {
+                    await fixture.transport.sentMessages.count > before
+                }, "no answer to \(line)")
+                #expect(await fixture.transport.sentTexts.dropFirst(before) == [answer])
+            }
+            #expect(status.hasPrefix("Session active."))
+            #expect(await fixture.backend.prompts.isEmpty)
+            #expect(fixture.wire.count == wireCount)
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// A gated tool is asked both in the editor and in the linked chat;
+    /// `/allow ID` in the chat decides it. The editor's
+    /// `session/request_permission` is withdrawn on ZenCODE's side only: ACP
+    /// cannot close the editor's dialog, and its late answer is ignored
+    /// without anything reaching the wire.
+    @Test(.timeLimit(.minutes(1)))
+    func telegramAllowAnswersAPendingEditorPermissionRequest() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedTelegramFixture(root: root)
+            await fixture.backend.enqueue([.askPermission(command: "echo hi"), .reply("ran")])
+
+            let turn = Task { await fixture.prompt("Run echo hi", id: 2, sessionID: sessionID) }
+            guard let requestID = await Self.pendingPermission(in: fixture),
+                  let editorRequestID = fixture.wire.permissionRequestIDs.first else {
+                await fixture.bridge.shutdown()
+                await turn.value
+                return
+            }
+            try await fixture.transport.deliver("/allow \(requestID)")
+            await fixture.finish(turn, id: 2)
+
+            #expect(fixture.wire.stopReason(id: 2) == "end_turn")
+            #expect(await fixture.backend.permissionDecisions == [true])
+            #expect(await fixture.transport.sentTexts.contains(
+                "✅ Permission \(requestID) allowed once. Continuing."
+            ))
+
+            let wireCount = fixture.wire.count
+            await fixture.bridge.handleLine(try Self.permissionAnswer(id: editorRequestID, optionID: "reject_once"))
+            #expect(fixture.wire.count == wireCount)
+            #expect(fixture.wire.errorResponses.isEmpty)
+            #expect(await fixture.backend.permissionDecisions == [true])
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// The editor's answer to `session/request_permission` decides a gated
+    /// tool asked in both places too; the linked chat is told, in the
+    /// editor's words, and a late `/allow` there finds nothing pending.
+    @Test(.timeLimit(.minutes(1)))
+    func editorAnswerDecidesAPermissionAlsoAskedInTelegram() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedTelegramFixture(root: root)
+            await fixture.backend.enqueue([.askPermission(command: "echo hi"), .reply("ran")])
+
+            let turn = Task { await fixture.prompt("Run echo hi", id: 2, sessionID: sessionID) }
+            guard let requestID = await Self.pendingPermission(in: fixture),
+                  let editorRequestID = fixture.wire.permissionRequestIDs.first else {
+                await fixture.bridge.shutdown()
+                await turn.value
+                return
+            }
+            await fixture.bridge.handleLine(try Self.permissionAnswer(id: editorRequestID, optionID: "allow_once"))
+            await fixture.finish(turn, id: 2)
+
+            #expect(fixture.wire.stopReason(id: 2) == "end_turn")
+            #expect(await fixture.backend.permissionDecisions == [true])
+            #expect(await fixture.transport.sentTexts.contains(
+                "✅ Permission granted in the editor for local.exec. Continuing."
+            ))
+
+            let before = await fixture.transport.sentMessages.count
+            try await fixture.transport.deliver("/allow \(requestID)")
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.transport.sentMessages.count > before
+            })
+            #expect(await fixture.transport.sentTexts.dropFirst(before) == ["No permission request is pending."])
+            #expect(await fixture.backend.permissionDecisions == [true])
+            #expect(fixture.wire.errorResponses.isEmpty)
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    // MARK: Telegram support
+
+    /// A bridge with one session, linked to the scripted Bot API by a
+    /// `/telegram on` prompt (request 1).
+    private static func linkedTelegramFixture(
+        root: URL
+    ) async throws -> (fixture: ACPTelegramBridgeFixture, sessionID: String) {
+        let sessionID = "acp-telegram-round-trip-\(UUID().uuidString)"
+        let fixture = try await ACPTelegramBridgeFixture.make(
+            root: root,
+            sessionIDs: [sessionID],
+            transport: ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+        )
+        let reply = await fixture.turnTelegramOn(sessionID: sessionID, id: 1)
+        #expect(reply == "Telegram remote control is active.\nLinked chat: Test")
+        #expect(await ACPTelegramTestSupport.waitUntil { await fixture.transport.pollCount > 0 })
+        return (fixture, sessionID)
+    }
+
+    /// Waits until a permission is asked both in the editor and in the linked
+    /// chat, and returns the request ID the chat was given; `nil`, with the
+    /// expectation failed, when either is not asked.
+    private static func pendingPermission(in fixture: ACPTelegramBridgeFixture) async -> String? {
+        #expect(await ACPTelegramTestSupport.waitUntil { fixture.wire.permissionRequestIDs.count == 1 })
+        let card = await fixture.transport.waitForSentMessage { $0.text.contains("Request ID: ") }
+        guard let card, let range = card.text.range(of: "Request ID: ") else {
+            Issue.record("Telegram was not asked the permission")
+            return nil
+        }
+        let requestID = card.text[range.upperBound...].prefix { !$0.isWhitespace }
+        return requestID.isEmpty ? nil : String(requestID)
+    }
+
+    /// The editor's JSON-RPC answer selecting `optionID` for request `id`.
+    private static func permissionAnswer(id: JSONValue, optionID: String) throws -> String {
+        let answer = JSONValue.object([
+            "jsonrpc": .string("2.0"),
+            "id": id,
+            "result": .object([
+                "outcome": .object(["outcome": .string("selected"), "optionId": .string(optionID)]),
+            ]),
+        ])
+        return String(decoding: try JSONEncoder().encode(answer), as: UTF8.self)
+    }
+}

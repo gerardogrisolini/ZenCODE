@@ -52,7 +52,7 @@ extension ChatSessionController {
             sessionID: observedSessionID,
             history: history,
             coordinator: coordinator,
-            presenter: presenter ?? self.presenter
+            presenter: presenter ?? effectivePresenter(for: nil)
         )
         activeFileArtifactTurn = context
         return context
@@ -174,7 +174,9 @@ extension ChatSessionController {
         }
         guard sessionID == observedSessionID, fileArtifactHistory === history else { return nil }
         if let summary { lastFileChangeSummary = summary }
-        if let unseen { await (turnPresenter ?? presenter).presentSealedFileArtifacts(unseen) }
+        if let unseen {
+            await (turnPresenter ?? effectivePresenter(for: nil)).presentSealedFileArtifacts(unseen)
+        }
         if !retainsFileArtifactHistory {
             await history.discardFinishedTurns()
         }

@@ -88,6 +88,115 @@ struct TelegramTUITests {
         }
     }
 
+    /// Characterization of the current routing-v2 manifest: routes may carry a
+    /// `topicID`. They decode, are re-encoded sorted by topic (the topicless
+    /// route first, then ascending topic), keep lifecycle and generation, and
+    /// leave the configuration enabled.
+    @Test
+    func telegramSettingsTopicRoutesDecodeReencodeSortedAndStayEnabled() throws {
+        let json = #"{"enabled":true,"botToken":"123456:ABCDEF","linkedChatID":42,"ownerUserID":7,"routingVersion":2,"routes":[{"topicID":77,"roomID":"session-b","lifecycle":"active","generation":3},{"roomID":"default","lifecycle":"active","generation":1},{"topicID":12,"roomID":"session-a","lifecycle":"closed","generation":2}]}"#
+
+        let settings = try JSONDecoder().decode(
+            AgentTelegramSettingsManifest.self, from: Data(json.utf8)
+        )
+        #expect(settings.isEnabled)
+        #expect(settings.routes == [
+            AgentTelegramRouteManifest(roomID: "default", lifecycle: .active, generation: 1),
+            AgentTelegramRouteManifest(topicID: 12, roomID: "session-a", lifecycle: .closed, generation: 2),
+            AgentTelegramRouteManifest(topicID: 77, roomID: "session-b", lifecycle: .active, generation: 3),
+        ])
+
+        let encoded = try JSONEncoder().encode(settings)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let routes = try #require(object["routes"] as? [[String: Any]])
+        #expect(routes.map { $0["topicID"] as? Int } == [nil, 12, 77])
+        #expect(routes.map { $0["roomID"] as? String } == ["default", "session-a", "session-b"])
+        #expect(object["routingVersion"] as? Int == 2)
+
+        let reloaded = try JSONDecoder().decode(AgentTelegramSettingsManifest.self, from: encoded)
+        #expect(reloaded == settings)
+        #expect(reloaded.isEnabled)
+    }
+
+    /// Round trip through the real settings store, isolated in a temporary
+    /// support directory: the `default` route plus more than 32 closed topic
+    /// routes is pruned to the 32 newest inactive topics, a session topic is
+    /// rebound, the JSON keeps the same route keys and schema, the
+    /// configuration stays enabled and a router rebuilt from disk honours the
+    /// new lease while rejecting the previous one.
+    @Test
+    nonisolated func telegramRoutesPrunedAndReboundRoundTripThroughTheSettingsStore() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "zencode-telegram-prune-\(UUID().uuidString)", isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let topicless = AgentTelegramRouteManifest(roomID: "default")
+        let closed = (1...40).map { (topic: Int) in
+            AgentTelegramRouteManifest(topicID: topic, roomID: "closed-\(topic)", lifecycle: .closed, generation: 2)
+        }
+        let routes = [topicless] + closed + [AgentTelegramRouteManifest(topicID: 41, roomID: "session-a")]
+
+        try await AppStorageDirectory.withSupportDirectoryURL(directory) {
+            try AgentSettingsManifestStore.save(AgentSettingsManifest(
+                models: [],
+                telegram: AgentTelegramSettingsManifest(
+                    enabled: true, botToken: "123456:ABCDEF",
+                    linkedChatID: 42, ownerUserID: 7, routes: routes
+                )
+            ))
+            let router = TerminalTelegramSessionRouter(
+                linkedChatID: 42, ownerUserID: 7, routes: routes,
+                persist: { ownerUserID, committed in
+                    try AgentSettingsManifestStore.saveTelegramRoutes(committed, ownerUserID: ownerUserID)
+                }
+            )
+
+            try await router.prune(keepingInactive: 32)
+            let pruned = try #require(try AgentSettingsManifestStore.loadRequired().telegram)
+            #expect(pruned.isEnabled)
+            #expect(pruned.routes.count == 34)
+            let previous = try await router.resolve(chatID: 42, userID: 7, topicID: 41)
+            let rebound = try await router.rebind(previous, toRoomID: "session-b")
+
+            let settings = try #require(try AgentSettingsManifestStore.loadRequired().telegram)
+            let expected: [AgentTelegramRouteManifest] = [topicless] + closed.suffix(32) + [
+                AgentTelegramRouteManifest(topicID: 41, roomID: "session-b", generation: 2),
+            ]
+            #expect(settings.isEnabled)
+            #expect(settings.routes == expected)
+            #expect(await router.snapshot() == expected)
+
+            let data = try Data(contentsOf: AgentSettingsManifestStore.settingsURL())
+            let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let telegram = try #require(object["telegram"] as? [String: Any])
+            let storedRoutes = try #require(telegram["routes"] as? [[String: Any]])
+            #expect(telegram["routingVersion"] as? Int == 2)
+            #expect(storedRoutes.count == 34)
+            #expect(storedRoutes.allSatisfy {
+                Set($0.keys).isSubset(of: ["topicID", "roomID", "lifecycle", "generation"])
+            })
+            let expectedTopics: [Int?] = [nil] + (9...41).map { $0 }
+            #expect(storedRoutes.map { $0["topicID"] as? Int } == expectedTopics)
+
+            let reloaded = TerminalTelegramSessionRouter(
+                linkedChatID: settings.linkedChatID, ownerUserID: settings.ownerUserID,
+                routes: settings.routes
+            )
+            try await reloaded.validate(rebound)
+            await #expect(throws: TerminalTelegramRouteDenial.staleGeneration) {
+                try await reloaded.validate(previous)
+            }
+            #expect(await reloaded.activeRoute(forRoomID: "session-b")?.topicID == 41)
+            await #expect(throws: TerminalTelegramRouteDenial.routeClosed) {
+                try await reloaded.resolve(chatID: 42, userID: 7, topicID: 9)
+            }
+            // A pruned topic is unknown again and falls back to `default`.
+            let fallback = try await reloaded.resolve(chatID: 42, userID: 7, topicID: 8)
+            #expect(fallback.key.roomID == "default")
+            #expect(fallback.effectiveMessageThreadID == 8)
+        }
+    }
+
     @Test
     func settingsManifestRoundTripsEnabledTelegramConfiguration() throws {
         let manifest = AgentSettingsManifest(

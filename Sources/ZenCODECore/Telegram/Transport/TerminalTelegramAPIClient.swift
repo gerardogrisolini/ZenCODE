@@ -54,6 +54,9 @@ struct TerminalTelegramAPIClient: Sendable {
     /// units. The budget is kept slightly below that ceiling so a truncation
     /// marker still fits inside the wire limit.
     static let maximumMessageUTF16Length = 4_000
+    /// Telegram accepts topic names of 1-128 characters. The bound is measured
+    /// in UTF-16 code units, the unit Telegram counts text in.
+    static let maximumTopicNameUTF16Length = 128
     /// Timeout for multipart uploads (bounded corpus, slow mobile links).
     static let uploadTimeout: Duration = .seconds(120)
     let token: String
@@ -217,9 +220,13 @@ struct TerminalTelegramAPIClient: Sendable {
     /// Streams an ephemeral, plain-text preview. Persistence is deliberately
     /// left to `sendMessage`; callers can therefore disable drafts after any
     /// failure without risking duplicate final messages.
+    ///
+    /// `messageThreadID` targets a private-chat topic (Bot API 9.3); `nil`
+    /// omits the key and streams to the chat itself.
     func sendMessageDraft(
         _ text: String,
         to chatID: Int64,
+        messageThreadID: Int? = nil,
         draftID: Int,
         canStop: Bool = true,
         keepOnStop: Bool = true,
@@ -231,7 +238,8 @@ struct TerminalTelegramAPIClient: Sendable {
             draftID: draftID,
             text: Self.boundedMessageText(text),
             canStop: canStop,
-            keepOnStop: keepOnStop
+            keepOnStop: keepOnStop,
+            messageThreadID: messageThreadID
         )
         try await governed(chatID: chatID, governor: governor) {
             let _: Bool = try await request(method: "sendMessageDraft", body: body)
@@ -239,10 +247,12 @@ struct TerminalTelegramAPIClient: Sendable {
     }
 
     /// Streams an ephemeral Bot API 10.3 rich draft. Like plain drafts, callers
-    /// must persist the completed response separately.
+    /// must persist the completed response separately. `messageThreadID`
+    /// behaves as in ``sendMessageDraft(_:to:messageThreadID:draftID:canStop:keepOnStop:governor:)``.
     func sendRichMessageDraft(
         _ document: PresentationDocument,
         to chatID: Int64,
+        messageThreadID: Int? = nil,
         draftID: Int,
         canStop: Bool = true,
         keepOnStop: Bool = true,
@@ -255,10 +265,46 @@ struct TerminalTelegramAPIClient: Sendable {
             draftID: draftID,
             richMessage: richMessage,
             canStop: canStop,
-            keepOnStop: keepOnStop
+            keepOnStop: keepOnStop,
+            messageThreadID: messageThreadID
         )
         try await governed(chatID: chatID, governor: governor) {
             let _: Bool = try await request(method: "sendRichMessageDraft", body: body)
+        }
+    }
+
+    /// Creates a topic in the private chat with the user (Bot API 9.4) and
+    /// returns it; its `messageThreadID` addresses every later send. The name
+    /// is trimmed and bounded by ``boundedTopicName(_:)``.
+    func createForumTopic(
+        chatID: Int64,
+        name: String,
+        governor: TerminalTelegramRateGovernor? = nil
+    ) async throws -> TerminalTelegramForumTopic {
+        let body = TerminalTelegramCreateForumTopicRequest(
+            chatID: chatID,
+            name: Self.boundedTopicName(name)
+        )
+        return try await governed(chatID: chatID, governor: governor) {
+            try await request(method: "createForumTopic", body: body)
+        }
+    }
+
+    /// Renames an existing topic. Only the name is sent, so the icon is kept.
+    /// The name is trimmed and bounded by ``boundedTopicName(_:)``.
+    func editForumTopic(
+        chatID: Int64,
+        messageThreadID: Int,
+        name: String,
+        governor: TerminalTelegramRateGovernor? = nil
+    ) async throws {
+        let body = TerminalTelegramEditForumTopicRequest(
+            chatID: chatID,
+            messageThreadID: messageThreadID,
+            name: Self.boundedTopicName(name)
+        )
+        try await governed(chatID: chatID, governor: governor) {
+            let _: Bool = try await request(method: "editForumTopic", body: body)
         }
     }
 
@@ -372,15 +418,28 @@ struct TerminalTelegramAPIClient: Sendable {
     /// grapheme-cluster boundaries so a cut can never split a combining sequence
     /// or an emoji into unpaired surrogates.
     static func boundedMessageText(_ text: String) -> String {
+        boundedText(text, maximumUTF16Length: maximumMessageUTF16Length)
+    }
+
+    /// Trims and bounds a topic name to the `createForumTopic` /
+    /// `editForumTopic` limit of 128 characters. Like ``boundedMessageText(_:)``
+    /// the cut happens on grapheme-cluster boundaries and the result stays
+    /// within 128 UTF-16 code units. A blank name stays empty: callers reject
+    /// it before the wire.
+    static func boundedTopicName(_ name: String) -> String {
+        boundedText(name, maximumUTF16Length: maximumTopicNameUTF16Length)
+    }
+
+    private static func boundedText(_ text: String, maximumUTF16Length: Int) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.utf16.count > maximumMessageUTF16Length else {
+        guard trimmed.utf16.count > maximumUTF16Length else {
             return trimmed
         }
         var bounded = ""
         var length = 0
         for character in trimmed {
             let width = character.utf16.count
-            guard length + width <= maximumMessageUTF16Length else { break }
+            guard length + width <= maximumUTF16Length else { break }
             bounded.append(character)
             length += width
         }

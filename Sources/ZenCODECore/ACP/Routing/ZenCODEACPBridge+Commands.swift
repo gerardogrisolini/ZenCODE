@@ -95,6 +95,17 @@ extension ZenCODEACPBridge {
         defer { controller.endCommandFence(fence) }
         let policy = acpPlanningPolicy(for: session)
 
+        // `/telegram` is not a coordinator command: it is answered here, at
+        // once, and never reaches the model (see `routeACPTelegramCommand`).
+        if ChatCommandRegistry.commandToken(from: routedPromptText) == Self.telegramCommandToken {
+            return try await routeACPTelegramCommand(
+                routedPromptText,
+                sessionID: sessionID,
+                epoch: epoch,
+                promptID: promptID
+            )
+        }
+
         guard let command else {
             guard !hasAgentMention,
                   !CoordinatorCommandParser.isSlashCommand(routedPromptText) else {
@@ -597,6 +608,13 @@ extension ZenCODEACPBridge {
                 ]))
             }
         }
+        if Self.isTelegramCommandVisible() {
+            commands.append(.object([
+                "name": .string("telegram"),
+                "description": .string("Telegram status, or turn it on/off for this session"),
+                "input": .object(["hint": .string("on or off")])
+            ]))
+        }
         return .object(["sessionUpdate": .string("available_commands_update"), "availableCommands": .array(commands)])
     }
 
@@ -606,5 +624,93 @@ extension ZenCODEACPBridge {
         guard session.presentedCommands != update else { return }
         sessions[sessionID]?.presentedCommands = update
         await writer.sendSessionUpdate(sessionID: sessionID, update: update)
+    }
+}
+
+// MARK: - /telegram
+
+/// `/telegram`, `/telegram on`, and `/telegram off`: the terminal's command,
+/// per ACP session, answered at once with the terminal's texts (without
+/// their trailing newline, like every immediate ACP reply).
+///
+/// The command is visible while the settings enable Telegram, read again at
+/// every use; otherwise every `/telegram` line is answered as an unknown
+/// command, as the terminal does, instead of reaching the model. The link is
+/// the session incarnation's own and is never persisted: a session loaded
+/// again needs `/telegram on` again.
+extension ZenCODEACPBridge {
+    static let telegramCommandToken = "/telegram"
+
+    /// Whether the settings enable Telegram, so `/telegram` is announced and
+    /// answered.
+    static func isTelegramCommandVisible() -> Bool {
+        AgentSettingsManifestStore.load()?.telegram?.isEnabled == true
+    }
+
+    /// The answer to the `/telegram` line `line` of the prompt that holds the
+    /// reservation `promptID`.
+    ///
+    /// `on` creates the session's companion when it has none, attaches it,
+    /// and starts reading what the linked chat sends; `off` detaches it;
+    /// without an argument the link's status is answered. Ends `cancelled`
+    /// when the reservation is gone before the answer.
+    func routeACPTelegramCommand(
+        _ line: String,
+        sessionID: String,
+        epoch: UInt64,
+        promptID: UUID
+    ) async throws -> ACPCommandTurnRoute {
+        guard Self.isTelegramCommandVisible() else {
+            return .immediate(Self.acpImmediateText(ChatCommandRegistry.unknownCommandMessage(for: line)))
+        }
+        guard let session = reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
+            throw CancellationError()
+        }
+        let argument = ChatCommandRegistry.arguments(
+            from: line.trimmingCharacters(in: .whitespacesAndNewlines),
+            commandPrefix: Self.telegramCommandToken
+        )
+        switch TerminalTelegramCommandAction(argument: argument) {
+        case .status:
+            guard let companion = session.telegramCompanion else {
+                return .immediate("Telegram: " + TerminalTelegramControlState.inactive().statusText)
+            }
+            return .immediate(await companion.statusText())
+        case .turnOn:
+            let companion = try await reservedPromptTelegramCompanion(
+                sessionID: sessionID,
+                epoch: epoch,
+                promptID: promptID
+            )
+            do {
+                try await companion.attach()
+            } catch {
+                return .immediate(Self.acpImmediateText(error.failureText))
+            }
+            // A close or a shutdown that landed meanwhile ends the companion
+            // itself, and the prompt ends `cancelled`.
+            guard liveSession(id: sessionID, epoch: epoch) != nil else {
+                throw CancellationError()
+            }
+            // The link is up, so the linked chat is read, even when a
+            // `session/cancel` dropped the reservation meanwhile: the prompt
+            // then ends `cancelled`, and the link stays as it was attached.
+            await companion.startConsuming()
+            guard reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
+                throw CancellationError()
+            }
+            return .immediate(await ACPTelegramCompanionChannel.activationText(of: companion))
+        case .turnOff:
+            await session.telegramCompanion?.detach()
+            return .immediate("Telegram remote control stopped.")
+        case .usage:
+            return .immediate("Usage: /telegram [on|off]")
+        }
+    }
+
+    /// `text` as an immediate ACP reply: without the one trailing newline the
+    /// terminal writes after it.
+    static func acpImmediateText(_ text: String) -> String {
+        text.hasSuffix("\n") ? String(text.dropLast()) : text
     }
 }

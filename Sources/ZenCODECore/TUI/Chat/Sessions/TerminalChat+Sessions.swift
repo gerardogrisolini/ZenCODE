@@ -113,7 +113,8 @@ extension TerminalChat {
 
     /// After the runtime session and its task graph are restored: the
     /// observer is bound to the loaded session, the status bar shows its
-    /// saved context window, and its transcript is replayed.
+    /// saved context window, its transcript is replayed, and the session's
+    /// Telegram topic follows it.
     func savedSessionDidRestore(
         transcript: [AgentRuntimeMessage],
         contextWindow: DirectAgentContextWindowStatus?
@@ -124,6 +125,8 @@ extension TerminalChat {
         }
         await printActiveToolsIfNeeded()
         await renderSavedSessionHistory(transcript)
+        // Before the panel loop rebinds the shared-chat relay to the new room.
+        await rebindTelegramTopicToCurrentSession()
     }
 
     public func renderSavedSessionHistory(_ history: [AgentRuntimeMessage]) async {

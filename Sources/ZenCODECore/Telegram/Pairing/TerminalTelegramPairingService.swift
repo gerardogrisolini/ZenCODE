@@ -83,6 +83,14 @@ public struct TerminalTelegramVoiceAttachment: Equatable, Sendable {
 
 public struct TerminalTelegramBotIdentity: Equatable, Sendable {
     public let username: String?
+    /// Bot API 9.3 `has_topics_enabled` from `getMe`: Threaded mode is on in
+    /// @BotFather. `nil` when Telegram does not report the field.
+    public let hasTopicsEnabled: Bool?
+
+    init(username: String?, hasTopicsEnabled: Bool? = nil) {
+        self.username = username
+        self.hasTopicsEnabled = hasTopicsEnabled
+    }
 }
 
 public struct TerminalTelegramLinkedChat: Equatable, Sendable {
@@ -129,7 +137,10 @@ public actor TerminalTelegramPairingService {
     public func prepare() async throws -> TerminalTelegramBotIdentity {
         _ = try? await client.deleteWebhook(dropPendingUpdates: true)
         let bot = try await client.getMe()
-        return TerminalTelegramBotIdentity(username: bot.username)
+        return TerminalTelegramBotIdentity(
+            username: bot.username,
+            hasTopicsEnabled: bot.hasTopicsEnabled
+        )
     }
 
     /// Issues one single-use pairing grant and returns the payload to embed in

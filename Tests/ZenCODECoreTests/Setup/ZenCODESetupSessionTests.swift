@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Synchronization
 @testable import ZenCODECore
 import Testing
 
@@ -425,5 +426,273 @@ struct ZenCODESetupSessionTests {
 
         #expect(try Data(contentsOf: settingsURL) == settingsData)
         #expect(try Data(contentsOf: profilesURL) == profilesData)
+    }
+
+    // MARK: - Telegram Threaded mode status
+    //
+    // `/setup` only reports the flag Telegram returns from `getMe`: the tests
+    // stub the Bot API transport, capture the lines through the `write` seam and
+    // never touch the real support directory or the network.
+
+    private static let threadedEnabledLine =
+        "Threaded mode: enabled — each ZenCODE session gets its own Telegram topic."
+    private static let threadedDisabledLine =
+        "Threaded mode: disabled — all sessions share the chat. "
+        + "To get one topic per session, open @BotFather › your bot › Bot Settings "
+        + "and enable Threaded mode."
+    private static let threadedCases: [(flag: Bool?, line: String)] = [
+        (true, threadedEnabledLine),
+        (false, threadedDisabledLine),
+        (nil, threadedDisabledLine)
+    ]
+
+    private static let enableLabel = "Enable Telegram remote control?"
+    private static let replaceLabel = "Replace stored Telegram bot token and pairing?"
+
+    private static let keptTelegram = pairedTelegram(token: "stored-token")
+
+    /// What a completed pairing writes, as the stub chat "Ada" (id 42) links it.
+    private static func pairedTelegram(token: String) -> AgentTelegramSettingsManifest {
+        AgentTelegramSettingsManifest(
+            enabled: true,
+            botToken: token,
+            linkedChatID: 42,
+            linkedChatTitle: "Ada",
+            ownerUserID: 42,
+            routes: [AgentTelegramRouteManifest(roomID: "default")]
+        )
+    }
+
+    @Test
+    func threadedModeStatusTextIsExactAndAnUnreportedFlagCountsAsDisabled() {
+        for (flag, line) in Self.threadedCases {
+            #expect(ZenCODESetupRunner.telegramThreadedModeStatus(hasTopicsEnabled: flag) == line)
+        }
+    }
+
+    @Test
+    func pairingPrintsTheThreadedModeStatusFromGetMeBeforeTheLink() async throws {
+        var writtenManifests = Set<Data>()
+        for (flag, line) in Self.threadedCases {
+            let output = SetupOutputBuffer()
+            let transport = ThreadedModeWireTransport(getMe: .reports(flag), output: output)
+
+            let telegram = try await ZenCODESetupRunner.pairTelegram(
+                botToken: "token",
+                transport: transport,
+                write: { output.append($0) }
+            )
+
+            let text = output.text
+            let threaded = try #require(text.range(of: line + "\n"))
+            let pairing = try #require(text.range(of: "Telegram pairing:"))
+            #expect(threaded.upperBound <= pairing.lowerBound)
+            #expect(text.components(separatedBy: "Threaded mode:").count == 2)
+            #expect(transport.requestPaths.filter { $0.hasSuffix("/getMe") }.count == 1)
+
+            // The flag never reaches what setup writes to settings.json.
+            #expect(telegram == Self.pairedTelegram(token: "token"))
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            writtenManifests.insert(
+                try encoder.encode(AgentSettingsManifest(models: [], telegram: telegram))
+            )
+        }
+        #expect(writtenManifests.count == 1)
+    }
+
+    @Test
+    func keptPairingPrintsTheStatusFromAPlainGetMeAndChangesNothing() async throws {
+        for (flag, line) in Self.threadedCases {
+            let output = SetupOutputBuffer()
+            let transport = ThreadedModeWireTransport(getMe: .reports(flag), output: output)
+            var asked: [String] = []
+
+            let result = try await ZenCODESetupRunner.promptTelegramSettings(
+                existingSettings: Self.keptTelegram,
+                transport: transport,
+                confirm: { label, _ in
+                    asked.append(label)
+                    return label == Self.enableLabel
+                },
+                write: { output.append($0) }
+            )
+
+            #expect(result == Self.keptTelegram)
+            #expect(asked == [Self.enableLabel, Self.replaceLabel])
+            #expect(output.text == line + "\n")
+            // Only `getMe` with the stored token: no `deleteWebhook`, no update
+            // polling, no pairing grant.
+            #expect(transport.requestPaths == ["/botstored-token/getMe"])
+        }
+    }
+
+    @Test
+    func keptPairingIgnoresEveryGetMeFailureInSilence() async throws {
+        let failures: [ThreadedModeWireTransport.GetMe] = [
+            .httpError(401), .undecodable, .unreachable
+        ]
+        for failure in failures {
+            let output = SetupOutputBuffer()
+            let transport = ThreadedModeWireTransport(getMe: failure, output: output)
+
+            let result = try await ZenCODESetupRunner.promptTelegramSettings(
+                existingSettings: Self.keptTelegram,
+                transport: transport,
+                confirm: { label, _ in label == Self.enableLabel },
+                write: { output.append($0) }
+            )
+
+            #expect(result == Self.keptTelegram)
+            #expect(output.text.isEmpty)
+            #expect(transport.requestPaths == ["/botstored-token/getMe"])
+        }
+
+        // Without a usable stored token there is nothing to ask Telegram.
+        for token in [nil, "", "   "] as [String?] {
+            let output = SetupOutputBuffer()
+            let transport = ThreadedModeWireTransport(getMe: .reports(true), output: output)
+            await ZenCODESetupRunner.printStoredTelegramThreadedModeStatus(
+                botToken: token,
+                transport: transport,
+                write: { output.append($0) }
+            )
+            #expect(output.text.isEmpty)
+            #expect(transport.requestPaths.isEmpty)
+        }
+    }
+
+    @Test
+    func decliningTelegramPrintsNoStatusAndAsksTelegramNothing() async throws {
+        let output = SetupOutputBuffer()
+        let transport = ThreadedModeWireTransport(getMe: .reports(true), output: output)
+
+        let result = try await ZenCODESetupRunner.promptTelegramSettings(
+            existingSettings: Self.keptTelegram,
+            transport: transport,
+            confirm: { _, _ in false },
+            write: { output.append($0) }
+        )
+
+        #expect(result == nil)
+        #expect(output.text.isEmpty)
+        #expect(transport.requestPaths.isEmpty)
+    }
+
+    @Test
+    func replacingThePairingPrintsTheStatusOnceFromThePairingFlow() async throws {
+        let output = SetupOutputBuffer()
+        let transport = ThreadedModeWireTransport(getMe: .reports(true), output: output)
+
+        // Replace the pairing, then reuse the stored token.
+        let result = try await ZenCODESetupRunner.promptTelegramSettings(
+            existingSettings: Self.keptTelegram,
+            transport: transport,
+            confirm: { _, _ in true },
+            write: { output.append($0) }
+        )
+
+        #expect(result == Self.pairedTelegram(token: "stored-token"))
+        let text = output.text
+        #expect(text.components(separatedBy: "Threaded mode:").count == 2)
+        #expect(text.contains(Self.threadedEnabledLine + "\n"))
+        #expect(transport.requestPaths.filter { $0.hasSuffix("/getMe") }.count == 1)
+        #expect(transport.requestPaths.contains { $0.hasSuffix("/deleteWebhook") })
+    }
+}
+
+/// Lines `/setup` writes, captured through the `write` seam.
+private final class SetupOutputBuffer: Sendable {
+    private let storage = Mutex("")
+
+    func append(_ text: String) {
+        storage.withLock { $0 += text }
+    }
+
+    var text: String { storage.withLock { $0 } }
+}
+
+private struct ThreadedModeFixtureError: Error {}
+
+/// Bot API fake for `/setup`: `getMe` answers as configured, `deleteWebhook`
+/// and `sendMessage` succeed, and `getUpdates` delivers the `/start` deep link
+/// payload that setup printed into `output`, so a pairing completes at once.
+/// Any other method fails the test run. Every request path is recorded.
+private final class ThreadedModeWireTransport: TelegramHTTPTransport, Sendable {
+    enum GetMe: Sendable {
+        case reports(Bool?)
+        case httpError(Int)
+        case undecodable
+        case unreachable
+    }
+
+    private let getMe: GetMe
+    private let output: SetupOutputBuffer
+    private let paths = Mutex<[String]>([])
+
+    init(getMe: GetMe, output: SetupOutputBuffer) {
+        self.getMe = getMe
+        self.output = output
+    }
+
+    var requestPaths: [String] { paths.withLock { $0 } }
+
+    func send(
+        url: URL,
+        method: String,
+        headers: [RemoteHTTPHeader],
+        body: Data?,
+        timeout: Duration?
+    ) async throws -> (status: Int, body: Data) {
+        paths.withLock { $0.append(url.path) }
+        switch url.lastPathComponent {
+        case "getMe":
+            return try getMeResponse()
+        case "deleteWebhook":
+            return (200, Data(#"{"ok":true,"result":true}"#.utf8))
+        case "getUpdates":
+            guard let payload = Self.pairingPayload(in: output.text) else {
+                throw ThreadedModeFixtureError()
+            }
+            return (200, Data(
+                #"""
+                {"ok":true,"result":[{"update_id":1,"message":{"message_id":5,
+                "from":{"id":42,"is_bot":false,"first_name":"Ada"},
+                "chat":{"id":42,"type":"private","first_name":"Ada"},
+                "text":"/start \#(payload)"}}]}
+                """#.utf8
+            ))
+        case "sendMessage":
+            return (200, Data(
+                #"{"ok":true,"result":{"message_id":6,"chat":{"id":42,"type":"private"}}}"#.utf8
+            ))
+        default:
+            throw ThreadedModeFixtureError()
+        }
+    }
+
+    private func getMeResponse() throws -> (status: Int, body: Data) {
+        switch getMe {
+        case .reports(let flag):
+            let field = flag.map { #","has_topics_enabled":\#($0)"# } ?? ""
+            return (200, Data(
+                #"{"ok":true,"result":{"id":9001,"is_bot":true,"first_name":"bot","username":"test_bot"\#(field)}}"#.utf8
+            ))
+        case .httpError(let status):
+            return (status, Data(
+                "{\"ok\":false,\"error_code\":\(status),\"description\":\"Unauthorized\"}".utf8
+            ))
+        case .undecodable:
+            return (200, Data("not json".utf8))
+        case .unreachable:
+            throw URLError(.notConnectedToInternet)
+        }
+    }
+
+    /// The payload of the `https://t.me/<bot>?start=<payload>` link in `text`.
+    private static func pairingPayload(in text: String) -> String? {
+        guard let marker = text.range(of: "?start=") else { return nil }
+        let payload = text[marker.upperBound...].prefix { $0.isHexDigit }
+        return payload.isEmpty ? nil : String(payload)
     }
 }
