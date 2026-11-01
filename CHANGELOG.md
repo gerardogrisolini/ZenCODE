@@ -13,27 +13,31 @@ Release tags follow the strict `vX.Y.Z` contract described in
 ### Added
 
 - The terminal UI, ACP clients such as Xcode, and headless runs (`zen -p`,
-  including `--jsonl`) now share one chat-session controller: the same plan,
-  goal, file-change, and tool-consent handling runs in every channel, as the
-  base for further interfaces. Headless output and the JSONL records are
-  unchanged.
-- The shared chat-session controller now also runs the session operations
-  (new, save, list, load, delete, compact, and restore from a checkpoint,
-  DS4 engine checkpoints included) and the selections of model, thinking level,
-  agent and project agents, tools, and skills (with install and uninstall)
-  that the terminal UI used to run itself, ready for the other interfaces. The
-  terminal UI and ACP now share one model list. `/sessions`, `/models`,
-  `/think`, `/agents`, `/tools`, and `/skills` keep their output, apart from
-  the `/agents` message listed under Fixed, and headless runs now compose
-  their session from the controller instead of the terminal chat.
-- The shared chat-session controller now also runs `/help`, `/plan`, `/goal`,
-  `/review`, `/tasks`, `/changes`, `/undo`, `/artifacts`, `/open`, and
-  `/attach`, and one command registry decides which commands the terminal UI
-  shows, in its command menu and in `/help`, and which run while a prompt is
-  running. ACP clients run `/plan`, `/goal`, and `/review` on the same
-  operations, and their ACP replies and the ACP wire stay the same. The output
-  stays the same, apart from the `/open` and `/tasks` entries under Changed and
+  including `--jsonl`) now share one chat-session controller, as the base for
+  further interfaces. It runs the same plan, goal, file-change, and
+  tool-consent handling in every channel, the session operations (new, save,
+  list, load, delete, compact, and restore from a checkpoint, DS4 engine
+  checkpoints included), the selections of model, thinking level, agent and
+  project agents, tools, and skills (with install and uninstall), and `/help`,
+  `/plan`, `/goal`, `/review`, `/tasks`, `/changes`, `/undo`, `/artifacts`,
+  `/open`, and `/attach`. The terminal UI and ACP share one model list, and
+  one command registry decides which commands the terminal UI shows, in its
+  command menu and in `/help`, and which run while a prompt is running. ACP
+  clients run `/plan`, `/goal`, and `/review` on the same operations, and
+  their ACP replies and the ACP wire stay the same. Headless runs compose
+  their session from the controller instead of the terminal chat, and their
+  output and JSONL records are unchanged. Command output stays the same,
+  apart from the `/agents`, `/open`, and `/tasks` entries under Changed and
   Fixed.
+- Public Chat API for host apps, such as a macOS app that imports
+  `ZenCODECore`: `ChatSessionController`, `ChatSessionPresenter`,
+  `ChatInteractionHost`, `ChatSessionEnvironment`, `ChatModelCatalog`,
+  `ChatCommandRegistry`, `TelegramSessionCompanion`, and the contracts,
+  notices, and outcomes they use. The API follows semantic versioning: see
+  [Docs/embedding.md](Docs/embedding.md).
+- `ChatSessionRuntimeFactory` and `TelegramCompanionRuntimeFactory`, the
+  public construction points of a session runner and of the router and
+  control service of a Telegram companion, described in the same guide.
 - Telegram now works next to the terminal UI and next to ACP clients such as
   Xcode: one Telegram companion follows the session of either and mirrors it
   to the linked chat. In the terminal UI, Telegram works as before, apart from
@@ -111,6 +115,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   that it recovered now also appear when the chat runs without its status bar
   (standard error is not a terminal, or the window is too small when the chat
   starts). There they were visible only through `/telegram status`.
+- `TerminalChatActor` is deprecated; use `ChatSessionActor`. It is removed in
+  the next major release.
 
 ### Fixed
 
@@ -145,6 +151,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Telegram: `/review` written in another case, such as `/REVIEW focus on
   parsing`, now keeps its argument as the review focus instead of reviewing
   without it.
+- Telegram next to an ACP client: the file-change summary mirrored to the
+  linked chat no longer suggests `/undo` and `/changes diff`, since that chat
+  refuses `/undo`.
+- ACP: the reply to `/telegram on` now includes, after the activation text,
+  the notices presented while the session was being linked, for example that
+  the Bot API did not create the session's topic. They used to be dropped.
+- Terminal: a prompt sent while another one was generating was queued and
+  then dropped without running. It now runs when the turn in progress ends.
 
 ## [3.2.0] - 2026-10-30
 

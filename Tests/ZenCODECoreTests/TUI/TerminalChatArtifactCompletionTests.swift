@@ -5,7 +5,7 @@ import ToolCore
 @testable import ZenCODECore
 
 @Suite
-@TerminalChatActor
+@ChatSessionActor
 struct TerminalChatArtifactCompletionTests {
     @Test(arguments: ["local.write", "local.writeFile"], [DirectAgentToolResult.Status.completed, .failed])
     nonisolated func rootWriteCompletesBeforeItsLiveArtifact(
@@ -63,7 +63,7 @@ struct TerminalChatArtifactCompletionTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         try await AppStorageDirectory.withSupportDirectoryURL(directory.appendingPathComponent("support")) {
-            try await Task(name: "ZenCODE.Tests.artifact-completion") { @TerminalChatActor in
+            try await Task(name: "ZenCODE.Tests.artifact-completion") { @ChatSessionActor in
                 let clock = ArtifactCompletionClock()
                 let capture = PrimaryScreenCapture(rows: 40, columns: 100)
                 let screen = capture.screen()
@@ -102,7 +102,7 @@ struct TerminalChatArtifactCompletionTests {
                             #expect(await renderer.snapshot().activeToolCallID != nil)
                         }
                     },
-                    completed: { @TerminalChatActor call, result in
+                    completed: { @ChatSessionActor call, result in
                         // Observe the real physical transcript while generation
                         // is still running, rather than concatenating writes
                         // (which would include rows already erased in the TTY).

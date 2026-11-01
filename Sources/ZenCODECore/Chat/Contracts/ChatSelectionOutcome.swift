@@ -8,7 +8,7 @@
 import Foundation
 
 /// How the running session took a new selection.
-enum ChatSelectionChange: Sendable, Equatable {
+public enum ChatSelectionChange: Sendable, Equatable {
     /// The session took the new options in place: its options were updated,
     /// or its prompt-skill selection was replaced.
     case sessionUpdated
@@ -25,25 +25,25 @@ enum ChatSelectionChange: Sendable, Equatable {
 /// ``ChatSessionPresenter/presentSessionNotice(_:)`` as they happen; the
 /// outcome carries only the closing ones, which the channel presents after
 /// its own steps for ``change``.
-struct ChatSelectionOutcome: Sendable, Equatable {
+public struct ChatSelectionOutcome: Sendable, Equatable {
     /// How the session took the selection; `nil` when no selection was
     /// applied (a cancelled menu, a refusal, a channel without menus).
-    let change: ChatSelectionChange?
+    public let change: ChatSelectionChange?
     /// The closing notices, in the order a text channel writes them.
-    let notices: [ChatSessionNotice]
+    public let notices: [ChatSessionNotice]
 
-    init(change: ChatSelectionChange? = nil, notices: [ChatSessionNotice] = []) {
+    public init(change: ChatSelectionChange? = nil, notices: [ChatSessionNotice] = []) {
         self.change = change
         self.notices = notices
     }
 }
 
 /// Errors of the selection operations that have no terminal counterpart.
-enum ChatSelectionError: LocalizedError, Equatable {
+public enum ChatSelectionError: LocalizedError, Equatable {
     /// No available model has this ID.
     case unknownModel(String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case let .unknownModel(modelID):
             return "Unknown model '\(modelID)'."

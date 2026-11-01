@@ -21,9 +21,9 @@ import Foundation
 /// ``ChatSessionNotice/fileChangeSummary(_:includesDiff:)`` (no patches) and
 /// ``ChatSessionNotice/fileArtifacts(_:)`` (no diffs). The terminal draws
 /// them with its renderers and never writes the fallback.
-enum ChatSessionNoticeText {
+public enum ChatSessionNoticeText {
     /// The text of `notice`, to be written on ``ChatSessionNotice/channel``.
-    static func text(for notice: ChatSessionNotice) -> String {
+    public static func text(for notice: ChatSessionNotice) -> String {
         switch notice {
         case let .operationFailed(description):
             return failureText(description)

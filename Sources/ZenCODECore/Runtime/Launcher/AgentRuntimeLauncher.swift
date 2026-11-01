@@ -12,7 +12,7 @@ public enum AgentRuntimeLauncher {
     /// Runs one non-interactive turn. Legacy headless mode writes only the final
     /// assistant text; JSONL mode writes the approved lifecycle records. The
     /// sinks receive that output instead of standard output (nil prints it).
-    @TerminalChatActor
+    @ChatSessionActor
     public static func runHeadless(
         configuration: AgentConfiguration,
         prompt: String,
@@ -34,7 +34,7 @@ public enum AgentRuntimeLauncher {
     /// Runs one terminal-chat lifecycle. The caller owns the supplied runner so
     /// it can preserve the task orchestrator while rebuilding the chat after
     /// `/setup`.
-    @TerminalChatActor
+    @ChatSessionActor
     public static func runTerminalChat(
         configuration: AgentConfiguration,
         stdinIsTerminal: Bool,

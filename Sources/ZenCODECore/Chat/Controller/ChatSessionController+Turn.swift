@@ -49,7 +49,7 @@ extension ChatSessionController {
     /// continuations), the purpose-specific bookkeeping, the transcript, and
     /// the file-change summary. Throws ``ChatTurnFailure`` on failure or
     /// cancellation, carrying the file changes the turn still produced.
-    func runTurn(_ request: ChatTurnRequest) async throws -> ChatTurnResult {
+    public func runTurn(_ request: ChatTurnRequest) async throws -> ChatTurnResult {
         let purpose = request.purpose
         let presenter = effectivePresenter(for: request)
         let turnSessionID = sessionID

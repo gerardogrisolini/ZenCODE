@@ -193,7 +193,7 @@ extension ChatSessionController {
     }
 
     /// `/models`: asks the host for a model and applies it.
-    func chooseModel() async throws -> ChatSelectionOutcome {
+    public func chooseModel() async throws -> ChatSelectionOutcome {
         let models = modelCatalog.sortedModels()
         guard !models.isEmpty else {
             throw TerminalChatError.noConfiguredModels
@@ -223,7 +223,7 @@ extension ChatSessionController {
     /// model, or stays the current one when the model does not change. The
     /// same model updates the session in place; another model stops the
     /// backend, creates the session anew, and loads the model.
-    func selectModel(id modelID: String) async throws -> ChatSelectionOutcome {
+    public func selectModel(id modelID: String) async throws -> ChatSelectionOutcome {
         let models = modelCatalog.sortedModels()
         guard !models.isEmpty else {
             throw TerminalChatError.noConfiguredModels
@@ -263,7 +263,7 @@ extension ChatSessionController {
     /// configured model, or one the host asks for together with its thinking
     /// level. Returns the notice to present, or `nil` when the session
     /// already has a model. Nothing is persisted.
-    func resolveInitialModel() async throws -> ChatSessionNotice? {
+    public func resolveInitialModel() async throws -> ChatSessionNotice? {
         guard currentEffectiveModelID() == nil else {
             return nil
         }
@@ -304,7 +304,7 @@ extension ChatSessionController {
 
     /// The thinking level for a model chosen at startup; a cancelled menu
     /// keeps the default level.
-    func chooseInitialThinking(
+    public func chooseInitialThinking(
         for model: AgentSettingsModelManifest
     ) async -> AgentThinkingSelection? {
         let options = ChatModelCatalog.thinkingOptions(for: model)
@@ -400,7 +400,7 @@ extension ChatSessionController {
 
     /// `/think`: asks the host for a thinking level of the current model and
     /// applies it.
-    func chooseThinking() async throws -> ChatSelectionOutcome {
+    public func chooseThinking() async throws -> ChatSelectionOutcome {
         let model: AgentSettingsModelManifest
         let options: [AgentThinkingSelection]
         let selected: AgentThinkingSelection?
@@ -433,7 +433,7 @@ extension ChatSessionController {
 
     /// Makes `thinkingSelection` the session's thinking level and the user's
     /// default, updating the session in place.
-    func selectThinking(
+    public func selectThinking(
         _ thinkingSelection: AgentThinkingSelection
     ) async throws -> ChatSelectionOutcome {
         try modelCatalog.saveThinkingSelection(thinkingSelection)
@@ -531,7 +531,7 @@ extension ChatSessionController {
     /// - A project without a saved selection starts with only the system
     ///   profiles ticked, and confirming an unchanged selection writes no
     ///   file.
-    func chooseProjectAgents() async throws -> ChatSelectionOutcome {
+    public func chooseProjectAgents() async throws -> ChatSelectionOutcome {
         guard host.capabilities.contains(.focusedMultipleChoice) else {
             let agents: [AgentProfile]
             do {
@@ -615,7 +615,7 @@ extension ChatSessionController {
     }
 
     /// Activates the agent `rawSelection` names (its number, ID, or name).
-    func selectAgent(rawSelection: String) async throws -> ChatSelectionOutcome {
+    public func selectAgent(rawSelection: String) async throws -> ChatSelectionOutcome {
         let agent = try Self.parseAgentSelection(
             rawSelection,
             availableAgents: try availableAgents()
@@ -629,7 +629,7 @@ extension ChatSessionController {
     /// A model chosen through `/models` is session state, not a property of
     /// the agent, so it is kept with its thinking level; only a session
     /// without one falls back to the agent's default binding.
-    func selectAgent(_ agent: AgentProfile) async throws -> ChatSelectionOutcome {
+    public func selectAgent(_ agent: AgentProfile) async throws -> ChatSelectionOutcome {
         let previousModelIDOverride = selection.modelIDOverride
         let previousThinkingOverride = selection.thinkingOverride
         selection.agent = agent
@@ -706,7 +706,7 @@ extension ChatSessionController {
     /// Asks the host to let the selected tools reach the workspace folder.
     /// When it refuses, the tools that need the folder are deselected and
     /// ``ChatSessionNotice/workspaceAccessDenied(_:)`` is presented.
-    func ensureWorkspaceAccess() async {
+    public func ensureWorkspaceAccess() async {
         if await requestWorkspaceAccessIfNeeded() {
             await presentSessionStateChanged()
         }
@@ -761,7 +761,7 @@ extension ChatSessionController {
     }
 
     /// `/tools`: asks the host for the tool groups and applies them.
-    func chooseTools() async -> ChatSelectionOutcome {
+    public func chooseTools() async -> ChatSelectionOutcome {
         guard host.capabilities.contains(.multipleChoice) else {
             return ChatSelectionOutcome(notices: [
                 .requiresInteractiveHost(.toolSelection(await activeToolsSummary())),
@@ -781,7 +781,7 @@ extension ChatSessionController {
 
     /// Selects the tool groups `rawSelection` names (`all`, `none`, names,
     /// packages, numbers).
-    func selectTools(rawSelection: String) async throws -> ChatSelectionOutcome {
+    public func selectTools(rawSelection: String) async throws -> ChatSelectionOutcome {
         let items = await toolSelectionItems()
         let selectedKeys = try TerminalToolSelectionCatalog.parseSelection(
             rawSelection,
@@ -793,7 +793,7 @@ extension ChatSessionController {
     /// Selects the tool groups `keys` and keeps the session in step: a
     /// changed allowlist rebuilds it (keeping the conversation and telling
     /// the model what changed), otherwise its options are updated.
-    func selectTools(keys: Set<String>) async -> ChatSelectionOutcome {
+    public func selectTools(keys: Set<String>) async -> ChatSelectionOutcome {
         let previousKeys = selection.toolKeys
         let items = await toolSelectionItems()
         selection.toolKeys = TerminalToolSelectionCatalog.normalizedSelectionKeys(
@@ -1014,7 +1014,7 @@ extension ChatSessionController {
     }
 
     /// `/skills`: asks the host for the prompt skills and applies them.
-    func chooseSkills() async -> ChatSelectionOutcome {
+    public func chooseSkills() async -> ChatSelectionOutcome {
         guard host.capabilities.contains(.multipleChoice) else {
             return ChatSelectionOutcome(notices: [
                 .requiresInteractiveHost(.skillSelection(selected: selectedPromptSkills())),
@@ -1040,7 +1040,7 @@ extension ChatSessionController {
 
     /// Selects the prompt skills `rawSelection` names (`all`, `none`, names,
     /// numbers).
-    func selectSkills(rawSelection: String) async throws -> ChatSelectionOutcome {
+    public func selectSkills(rawSelection: String) async throws -> ChatSelectionOutcome {
         let selectedSkillIDs = try Self.parseSkillSelection(
             rawSelection,
             availableSkills: availableSkills()
@@ -1049,7 +1049,7 @@ extension ChatSessionController {
     }
 
     /// Selects the prompt skills `ids`.
-    func selectSkills(ids: Set<String>) async -> ChatSelectionOutcome {
+    public func selectSkills(ids: Set<String>) async -> ChatSelectionOutcome {
         selection.skillIDs = ids
         await presentSessionStateChanged()
         await updateRuntimePromptSkills()
@@ -1080,7 +1080,7 @@ extension ChatSessionController {
 
     /// Installs the skill at `source` (a GitHub URL, or a local path that a
     /// relative form resolves against ``workingDirectory``) and selects it.
-    func installSkill(source: String) async -> ChatSelectionOutcome {
+    public func installSkill(source: String) async -> ChatSelectionOutcome {
         guard let installSource = Self.skillInstallSource(
             source,
             workingDirectory: workingDirectory
@@ -1125,7 +1125,7 @@ extension ChatSessionController {
 
     /// `/skills uninstall`: asks the host which installed skills to remove
     /// and uninstalls them. A cancelled menu presents nothing.
-    func chooseSkillsToUninstall() async -> ChatSelectionOutcome {
+    public func chooseSkillsToUninstall() async -> ChatSelectionOutcome {
         guard host.capabilities.contains(.multipleChoice) else {
             return ChatSelectionOutcome(notices: [
                 .requiresInteractiveHost(.skillUninstall),
@@ -1147,7 +1147,7 @@ extension ChatSessionController {
     }
 
     /// Uninstalls the installed skills `ids` and deselects them.
-    func uninstallSkills(ids: Set<String>) async -> ChatSelectionOutcome {
+    public func uninstallSkills(ids: Set<String>) async -> ChatSelectionOutcome {
         let selectedSkills = availableSkills().filter { ids.contains($0.id) }
         guard !selectedSkills.isEmpty else {
             return ChatSelectionOutcome(notices: [.noSkillsSelectedForUninstall])

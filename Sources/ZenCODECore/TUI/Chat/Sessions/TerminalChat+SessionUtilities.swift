@@ -12,7 +12,7 @@ extension TerminalChat {
     /// See ``ChatSessionController/savedSessionCommandAction(rawArguments:)``.
     nonisolated static func savedSessionCommandAction(
         rawArguments: String
-    ) -> TerminalSavedSessionCommandAction {
+    ) -> ChatSavedSessionCommandAction {
         ChatSessionController.savedSessionCommandAction(rawArguments: rawArguments)
     }
 

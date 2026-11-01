@@ -109,7 +109,7 @@ extension AgentCoreSessionRunner {
     }
 
     @discardableResult
-    func replaceSessionHistory(
+    public func replaceSessionHistory(
         id sessionID: String,
         history: [AgentRuntimeMessage],
         expectedSessionGeneration: SessionGeneration
@@ -727,7 +727,7 @@ extension AgentCoreSessionRunner {
         return snapshotStore.begin(configuration)
     }
 
-    func currentSessionGeneration(for sessionID: String) -> SessionGeneration? {
+    public func currentSessionGeneration(for sessionID: String) -> SessionGeneration? {
         snapshotStore.currentGeneration(for: sessionID)
     }
 

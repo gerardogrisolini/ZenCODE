@@ -129,7 +129,7 @@ extension ChatSessionNoticeText {
     /// The text of a `/goal` workflow notice, character for character what
     /// the terminal writes on its system channel when the controller presents
     /// it (``ChatSessionPresenter/presentWorkflowNotice(_:)``).
-    static func text(for notice: ChatWorkflowNotice) -> String {
+    public static func text(for notice: ChatWorkflowNotice) -> String {
         switch notice {
         case let .awaitingReply(graphID, pendingTaskCount):
             workflowStillOpenMessage(graphID: graphID, pendingTaskCount: pendingTaskCount)

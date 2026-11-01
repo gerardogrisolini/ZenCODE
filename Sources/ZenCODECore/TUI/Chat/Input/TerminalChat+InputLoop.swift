@@ -32,7 +32,7 @@ extension TerminalChat {
     /// input device), then resumed. Reading runs off the cooperative executor
     /// so the authorizer actor is not blocked while the operator decides.
     func configureConsentReader(eventQueue: TerminalChatEventQueue) async {
-        await permissionAuthorizer.setConsentReader({ @TerminalChatActor [interactiveReader, renderCoordinator, statusBar, weak self] prompt in
+        await permissionAuthorizer.setConsentReader({ @ChatSessionActor [interactiveReader, renderCoordinator, statusBar, weak self] prompt in
             await interactiveReader.stopPanelInput(clearPanel: false)
             let outputCapacity = await statusBar.scrollableOutputRowCapacity()
             await renderCoordinator.beginExternalTerminalPrompt(
@@ -79,7 +79,7 @@ extension TerminalChat {
                 .sharedChatReaderCollapsed(observationID: observationID)
             )
         }
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
         var generationTask: Task<Void, Never>?
         // Telegram voice transcripts and route invalidations reach this FIFO
         // through the companion's channel until the loop ends.
@@ -405,7 +405,7 @@ extension TerminalChat {
             }
             if !isGenerating, !queuedPrompts.isEmpty {
                 guard queuedPrompts.enqueue(
-                    TerminalQueuedPrompt(text: line, origin: .local)
+                    ChatQueuedPrompt<TerminalPromptOrigin>(text: line, origin: .local)
                 ) else {
                     await writeFailureMessage(
                         "ZenCODE: prompt queue is full; wait for a queued prompt to start.\n"
@@ -421,7 +421,7 @@ extension TerminalChat {
                 switch Self.submittedLineRole(for: line) {
                 case .empty, .prompt:
                     guard queuedPrompts.enqueue(
-                        TerminalQueuedPrompt(text: line, origin: .local)
+                        ChatQueuedPrompt<TerminalPromptOrigin>(text: line, origin: .local)
                     ) else {
                         await writeFailureMessage(
                             "ZenCODE: prompt queue is full; wait for the current prompt to finish.\n"
@@ -449,7 +449,7 @@ extension TerminalChat {
             case let .success(prompt):
                 if isGenerating || !queuedPrompts.isEmpty {
                     guard queuedPrompts.enqueue(
-                        TerminalQueuedPrompt(
+                        ChatQueuedPrompt<TerminalPromptOrigin>(
                             text: prompt,
                             origin: result.origin,
                             mode: .directPrompt
@@ -799,9 +799,14 @@ extension TerminalChat {
                 }
                 let nextPrompt = queuedPrompts.dequeue()!
                 await refreshQueuedPromptCount()
-                guard await validateTelegramOrigin(nextPrompt.origin) else {
-                    scheduleQueuedPromptIfNeeded()
-                    continue
+                // Only a prompt that came through a Telegram route holds a
+                // lease the router must still validate. A local prompt (the
+                // panel, or a dictated voice prompt) has none and always runs.
+                if nextPrompt.origin.telegramLease != nil {
+                    guard await validateTelegramOrigin(nextPrompt.origin) else {
+                        scheduleQueuedPromptIfNeeded()
+                        continue
+                    }
                 }
                 if nextPrompt.mode == .directPrompt {
                     await startDirectPrompt(nextPrompt.text, origin: nextPrompt.origin)
@@ -914,7 +919,7 @@ extension TerminalChat {
                     isSessionGenerating: isGenerating
                 ) { prompt in
                     queuedPrompts.enqueue(
-                        TerminalQueuedPrompt(
+                        ChatQueuedPrompt<TerminalPromptOrigin>(
                             text: prompt.text,
                             origin: .telegramLease(prompt.origin),
                             mode: prompt.mode

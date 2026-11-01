@@ -651,7 +651,7 @@ struct DS4CommandTests {
 
     // MARK: - Through TerminalChat
 
-    @TerminalChatActor
+    @ChatSessionActor
     @Suite("through TerminalChat", .serialized)
     struct Chat {
         private struct Environment {
@@ -694,7 +694,7 @@ struct DS4CommandTests {
                 )
             }
 
-            @TerminalChatActor
+            @ChatSessionActor
             func chat(ds4Runtime: AgentDS4RuntimeManifest?, runner: AgentCoreSessionRunner) throws -> TerminalChat {
                 TerminalChat(
                     configuration: try configuration(ds4Runtime: ds4Runtime),
@@ -705,12 +705,12 @@ struct DS4CommandTests {
         }
 
         private nonisolated func withEnvironment(
-            _ body: @escaping @Sendable @TerminalChatActor (Environment) async throws -> Void
+            _ body: @escaping @Sendable @ChatSessionActor (Environment) async throws -> Void
         ) async throws {
             let environment = try Environment()
             defer { environment.remove() }
             try await AppStorageDirectory.withSupportDirectoryURL(environment.support) {
-                try await Task(name: "ZenCODE.Tests.ds4-command") { @TerminalChatActor in
+                try await Task(name: "ZenCODE.Tests.ds4-command") { @ChatSessionActor in
                     try await body(environment)
                 }.value
             }

@@ -847,6 +847,52 @@ struct ChatSessionControllerTests {
         }
     }
 
+    // MARK: - Turn configuration
+
+    @Test
+    func turnConfigurationAddsThePurposeToolsAndKeepsThePlanProgressOnlyOutsidePlanAndReview() async throws {
+        try await withHarness { harness in
+            seedApprovedPlan(harness)
+            let controller = harness.controller
+            let progressHeading = "Active approved plan progress:"
+
+            let plan = await controller.turnSessionConfiguration(
+                for: .plan(originalGoal: "Finish the step"),
+                responseLanguageSection: nil
+            )
+            let normal = await controller.turnSessionConfiguration(
+                for: .normal,
+                responseLanguageSection: nil
+            )
+            let review = await controller.turnSessionConfiguration(
+                for: .review,
+                responseLanguageSection: nil
+            )
+
+            #expect(plan.dynamicContext?.contains(progressHeading) != true)
+            #expect(plan.allowedToolNames?.contains("todo.write") == true)
+            #expect(normal.dynamicContext?.contains(progressHeading) == true)
+            #expect(normal.dynamicContext?.contains("plan-fence-1 [pending]: Do the thing") == true)
+            #expect(normal.allowedToolNames?.isSuperset(of: ["tasks.list", "tasks.update"]) == true)
+            #expect(review.dynamicContext?.contains(progressHeading) != true)
+            #expect(review.allowedToolNames?.contains("tasks.create") == true)
+        }
+    }
+
+    @Test
+    func turnConfigurationWithoutPurposeToolsOrPlanIsTheCurrentConfiguration() async throws {
+        try await withHarness { harness in
+            let controller = harness.controller
+
+            let turn = await controller.turnSessionConfiguration(for: .normal, responseLanguageSection: nil)
+            let current = await controller.currentSessionConfiguration(responseLanguageSection: nil)
+
+            #expect(turn.allowedToolNames == current.allowedToolNames)
+            #expect(turn.dynamicContext == current.dynamicContext)
+            #expect(turn.systemPrompt == current.systemPrompt)
+        }
+    }
+
     // MARK: - Fence helpers
 
     /// Runs a `.normal` turn parked mid-flight, applies `invalidate`, then lets

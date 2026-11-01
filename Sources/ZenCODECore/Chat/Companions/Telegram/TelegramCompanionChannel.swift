@@ -7,7 +7,7 @@
 
 /// What the primary channel did with a prompt that arrived from Telegram
 /// (see ``TelegramCompanionChannel/enqueueTelegramPrompt(_:lease:mode:)``).
-enum TelegramPromptAdmission: Sendable, Equatable {
+public enum TelegramPromptAdmission: Sendable, Equatable {
     /// The prompt is in the channel's queue and runs as a turn of origin
     /// ``TelegramTurnOrigin/telegram(_:)`` when the session is free.
     case queued
@@ -30,7 +30,7 @@ enum TelegramPromptAdmission: Sendable, Equatable {
 /// Isolated to ``ChatSessionActor``, like the controller and the companion,
 /// so the companion calls it without hopping.
 @ChatSessionActor
-protocol TelegramCompanionChannel: AnyObject {
+public protocol TelegramCompanionChannel: AnyObject {
     /// The name of the primary channel in the texts sent to Telegram ("TUI"
     /// for the terminal), the same one the channel passes in the companion's
     /// ``TelegramSessionCompanion/Configuration``.
@@ -98,9 +98,9 @@ protocol TelegramCompanionChannel: AnyObject {
 }
 
 extension TelegramCompanionChannel {
-    func overviewMirrorBarrier() async {}
+    public func overviewMirrorBarrier() async {}
 
-    func sharedChatPanelDidChange() async {}
+    public func sharedChatPanelDidChange() async {}
 
-    func isSessionGenerating() -> Bool { false }
+    public func isSessionGenerating() -> Bool { false }
 }

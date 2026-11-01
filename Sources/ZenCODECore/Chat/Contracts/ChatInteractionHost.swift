@@ -48,12 +48,12 @@ public struct ChatChoiceItem: Sendable, Equatable {
 
 /// A menu the controller asks a host to present: its title, the items in
 /// display order, and the items that start selected.
-struct ChatChoiceList: Sendable, Equatable {
-    let title: String
-    let items: [ChatChoiceItem]
-    let selectedIDs: Set<String>
+public struct ChatChoiceList: Sendable, Equatable {
+    public let title: String
+    public let items: [ChatChoiceItem]
+    public let selectedIDs: Set<String>
 
-    init(
+    public init(
         title: String,
         items: [ChatChoiceItem],
         selectedIDs: Set<String> = []

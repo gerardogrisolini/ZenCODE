@@ -77,7 +77,7 @@ struct TerminalSharedChatTimestampTests {
     }
 
     @Test(arguments: [80, 40, 32, 20])
-    @TerminalChatActor
+    @ChatSessionActor
     func statusBarFitsTimestampedAuthorWithinNarrowReaderRows(columns: Int) async throws {
         let message = try historicalMessage()
         let expectedAuthor = "Author: Worker [\(localTime(message.sentAt))] → Coordinator"

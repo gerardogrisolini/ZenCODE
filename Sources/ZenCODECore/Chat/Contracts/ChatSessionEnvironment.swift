@@ -12,45 +12,45 @@ import Foundation
 /// Every channel hands the controller the same immutable launch facts, read
 /// once from its ``AgentConfiguration``, so the Chat layer never reaches for
 /// environment variables, the current directory, or the terminal to learn them.
-struct ChatSessionEnvironment: Sendable {
+public struct ChatSessionEnvironment: Sendable {
     /// Models supplied by the host process (an app). `nil` when the models are
     /// the user's configured catalog.
-    let hostedModels: [AgentSettingsModelManifest]?
+    public let hostedModels: [AgentSettingsModelManifest]?
     /// Agent profiles supplied by the host process. `nil` when the profiles are
     /// the user's configured agents.
-    let hostedAgentProfiles: [AgentProfile]?
+    public let hostedAgentProfiles: [AgentProfile]?
     /// The model the launch explicitly asked for (`--model`, the hosted model).
-    let explicitModelID: String?
+    public let explicitModelID: String?
     /// The model the launch configuration resolved: the explicit model, the
     /// launch agent's model, or the selected default (for a host, its model).
     /// The last fallback when the session's own selection resolves none.
-    let launchModelID: String?
+    public let launchModelID: String?
     /// The agent the launch selected, if any.
-    let launchAgent: AgentProfile?
-    let maxToolRounds: Int
-    let maxOutputTokens: Int?
+    public let launchAgent: AgentProfile?
+    public let maxToolRounds: Int
+    public let maxOutputTokens: Int?
     /// Whether the process runs inside a host app rather than a terminal.
-    let appMode: Bool
+    public let appMode: Bool
     /// Raw `--skills` value that seeds the first skill selection.
-    let initialSkillSelection: String?
+    public let initialSkillSelection: String?
     /// The session-scoped feature runtime the tool catalog is read from.
-    let featureRuntime: SwiftFeatureRuntime?
+    public let featureRuntime: SwiftFeatureRuntime?
     /// The user's home folder: where the attachment picker starts and what a
     /// leading `~` of a workspace path (`/attach`, `/open`) stands for. The
     /// channel that owns a terminal or an account reads it and passes it in;
     /// Chat never reads it from the process. `nil` when the channel has no
     /// home to offer: `~` is then not expanded (the path resolves like any
     /// relative path) and `/attach` offers no picker.
-    let userHomeDirectoryURL: URL?
+    public let userHomeDirectoryURL: URL?
 
     /// Whether model and thinking choices become the persisted defaults.
     /// A host that supplies its own models owns that choice, so nothing is
     /// written to the user's settings.
-    var persistsSelections: Bool {
+    public var persistsSelections: Bool {
         hostedModels == nil
     }
 
-    init(
+    public init(
         configuration: AgentConfiguration,
         featureRuntime: SwiftFeatureRuntime?,
         userHomeDirectoryURL: URL? = nil

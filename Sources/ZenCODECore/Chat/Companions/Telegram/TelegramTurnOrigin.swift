@@ -27,7 +27,7 @@
 /// already treats them as unlinked and fails closed (nothing is sent, no
 /// permission is asked, `/telegram on` does not adopt them), which is what
 /// the companion does without an origin. No production path builds them.
-enum TelegramTurnOrigin: Sendable, Equatable {
+public enum TelegramTurnOrigin: Sendable, Equatable {
     /// The session's primary channel (the terminal, the app, or an ACP
     /// client). `attach()` moves a turn of this origin that is already
     /// running onto the route it validated, so that turn can be mirrored too.
@@ -36,7 +36,7 @@ enum TelegramTurnOrigin: Sendable, Equatable {
     case telegram(TerminalTelegramRouteLease)
 
     /// The route lease of a Telegram origin; `nil` for ``primary``.
-    var lease: TerminalTelegramRouteLease? {
+    public var lease: TerminalTelegramRouteLease? {
         guard case let .telegram(lease) = self else { return nil }
         return lease
     }

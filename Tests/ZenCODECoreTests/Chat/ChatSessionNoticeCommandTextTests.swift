@@ -527,8 +527,8 @@ struct ChatSessionCommandTextTests {
         // The terminal's list forwards to the same text.
         #expect(
             TerminalChat.renderOpenCandidateList([
-                TerminalOpenCandidate(target: "/project/a.txt", display: "a.txt", kind: .file),
-                TerminalOpenCandidate(target: "https://example.com", display: "https://example.com", kind: .url),
+                ChatOpenCandidate(target: "/project/a.txt", display: "a.txt", kind: .file),
+                ChatOpenCandidate(target: "https://example.com", display: "https://example.com", kind: .url),
             ]) == list
         )
     }

@@ -9,7 +9,7 @@
 ///
 /// Not generic over the origin: the mode describes what the text is, never who
 /// sent it, so a channel's origin type has no bearing on it.
-enum ChatQueuedPromptMode: Sendable, Equatable {
+public enum ChatQueuedPromptMode: Sendable, Equatable {
     /// The text is a line as the operator submitted it, so it is classified
     /// again (a slash command, a plain prompt) when it leaves the queue.
     case submittedLine
@@ -25,12 +25,12 @@ enum ChatQueuedPromptMode: Sendable, Equatable {
 /// that is a channel concern. The Chat layer therefore takes the origin as a
 /// parameter and never names a channel type; each channel supplies its own
 /// (the terminal supplies its local/Telegram origin).
-struct ChatQueuedPrompt<Origin: Sendable>: Sendable {
-    let text: String
-    let origin: Origin
-    let mode: ChatQueuedPromptMode
+public struct ChatQueuedPrompt<Origin: Sendable>: Sendable {
+    public let text: String
+    public let origin: Origin
+    public let mode: ChatQueuedPromptMode
 
-    init(
+    public init(
         text: String,
         origin: Origin,
         mode: ChatQueuedPromptMode = .submittedLine

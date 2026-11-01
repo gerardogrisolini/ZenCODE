@@ -143,7 +143,7 @@ extension TelegramSessionCompanion {
     /// The `/telegram` status of the link, after reading the control
     /// service's current state. The primary channel writes it followed by a
     /// newline. In topic mode it names the session's topic.
-    func statusText() async -> String {
+    public func statusText() async -> String {
         controlState = await controlService.currentState()
         return Self.statusText(
             controlState: controlState, linkedChatTitle: linkedChatTitle,
@@ -240,7 +240,7 @@ extension TelegramSessionCompanion {
     /// questions, `/undo`), and to a prompt the primary channel refuses. The
     /// one text for every refusal: the voice note handler and the remote
     /// commands use it.
-    var mirrorOnlyRefusalText: String {
+    public var mirrorOnlyRefusalText: String {
         "ZenCODE: this session is driven by the \(configuration.primaryChannelDescription); send prompts there. From Telegram you can use /help, /status, /changes, /diff and /chat, and answer permission requests with /allow, /always or /deny."
     }
 

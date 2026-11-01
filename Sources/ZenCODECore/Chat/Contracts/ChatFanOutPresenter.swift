@@ -30,7 +30,7 @@
 /// and ``ChatSessionPresenter/presentSubAgentOverview(_:origin:publication:)``
 /// to it, with the primary's reservation, which is harmless only while a
 /// companion keeps their no-op defaults.
-protocol ChatCompanionPresenter: AnyObject, ChatSessionPresenter {}
+public protocol ChatCompanionPresenter: AnyObject, ChatSessionPresenter {}
 
 /// Presents every call on the companions, in the order they were attached,
 /// and then on the primary presenter, awaiting each one, so every presenter

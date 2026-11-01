@@ -682,8 +682,11 @@ extension ZenCODEACPBridge {
                 epoch: epoch,
                 promptID: promptID
             )
+            // What the companion presents while it attaches (a topic it could
+            // not create, for one) follows the activation text in the reply.
+            let attachNotices: [String]
             do {
-                try await companion.attach()
+                attachNotices = try await ACPTelegramCompanionChannel.attachCollectingNotices(companion)
             } catch {
                 return .immediate(Self.acpImmediateText(error.failureText))
             }
@@ -699,7 +702,11 @@ extension ZenCODEACPBridge {
             guard reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
                 throw CancellationError()
             }
-            return .immediate(await ACPTelegramCompanionChannel.activationText(of: companion))
+            // The activation notice itself is among them: the reply starts
+            // with it once.
+            let activationText = await ACPTelegramCompanionChannel.activationText(of: companion)
+            let notices = attachNotices.filter { $0 != activationText }
+            return .immediate(([activationText] + notices).joined(separator: "\n"))
         case .turnOff:
             await session.telegramCompanion?.detach()
             return .immediate("Telegram remote control stopped.")

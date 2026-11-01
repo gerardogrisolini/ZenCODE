@@ -481,7 +481,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    @TerminalChatActor
+    @ChatSessionActor
     func selectedProfileBindingUsesManualModelOverride() {
         let allowed = AgentSettingsModelManifest(
             id: "allowed",
@@ -520,7 +520,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    @TerminalChatActor
+    @ChatSessionActor
     func manualModelOverridePrefersExactProviderBindingOverSharedModelID() {
         let modelID = "deepseek-v4-flash"
         let remoteProviderID = "deepseek"
@@ -564,7 +564,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    @TerminalChatActor
+    @ChatSessionActor
     func modelPickerListsAllConfiguredModelsForBoundProfile() throws {
         let allowed = AgentSettingsModelManifest(
             id: "allowed",
@@ -602,7 +602,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    @TerminalChatActor
+    @ChatSessionActor
     func selectedProfileBindingRemainsTheDefaultWithoutManualOverride() {
         let allowed = AgentSettingsModelManifest(
             id: "allowed",

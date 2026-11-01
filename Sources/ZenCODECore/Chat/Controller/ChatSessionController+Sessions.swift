@@ -30,7 +30,7 @@ extension ChatSessionController {
     /// ID `newSessionID`, which the channel chooses. The selection is kept;
     /// the conversation, the artifacts, the saved-session link, and the plan
     /// are cleared.
-    func startNewSession(newSessionID: String) async throws -> ChatSessionOperationOutcome {
+    public func startNewSession(newSessionID: String) async throws -> ChatSessionOperationOutcome {
         await abandonPlanBrainstorming()
         await managementRuntime?.resetSession(id: sessionID)
         sessionID = newSessionID
@@ -69,14 +69,14 @@ extension ChatSessionController {
         }
     }
 
-    private func savedSessionSummaries(
+    public func savedSessionSummaries(
         _ sessions: [TerminalSavedSession]
     ) -> [ChatSavedSessionSummary] {
         sessions.map(ChatSavedSessionSummary.init)
     }
 
     /// `/sessions`: asks the host for a saved session and loads it.
-    func chooseSavedSession() async throws -> ChatSessionOperationOutcome {
+    public func chooseSavedSession() async throws -> ChatSessionOperationOutcome {
         let sessions = try savedSessions()
         guard !sessions.isEmpty else {
             return ChatSessionOperationOutcome(notices: [.noSavedSessions, .sessionSelectionUsage])
@@ -113,7 +113,7 @@ extension ChatSessionController {
     /// `/sessions save`: saves the session under its saved-session name, or
     /// under a name derived from the first prompt when it was never saved.
     /// `contextWindow` is the context window the channel displays now.
-    func saveActiveSession(
+    public func saveActiveSession(
         contextWindow: DirectAgentContextWindowStatus?
     ) async -> ChatSessionOperationOutcome {
         if let name = savedSessionState.savedSessionName?.nilIfBlank {
@@ -135,7 +135,7 @@ extension ChatSessionController {
     ///
     /// The saved notice is presented as soon as the session is on disk; the
     /// checkpoint outcome is returned.
-    func saveSession(
+    public func saveSession(
         named rawName: String,
         contextWindow: DirectAgentContextWindowStatus?
     ) async -> ChatSessionOperationOutcome {
@@ -270,7 +270,7 @@ extension ChatSessionController {
 
     /// `/sessions delete`: asks the host which saved sessions to delete and
     /// deletes them. A cancelled or empty menu presents nothing.
-    func chooseSavedSessionsToDelete() async throws -> ChatSessionOperationOutcome {
+    public func chooseSavedSessionsToDelete() async throws -> ChatSessionOperationOutcome {
         let sessions = try savedSessions()
         guard !sessions.isEmpty else {
             return ChatSessionOperationOutcome(notices: [.noSavedSessions])
@@ -300,7 +300,7 @@ extension ChatSessionController {
     /// Deletes the saved sessions named `names`, in list order, with their
     /// DS4 checkpoints and their entries in the saved-session index. Names
     /// that match no saved session of the project are ignored.
-    func deleteSavedSessions(names: Set<String>) async throws -> ChatSessionOperationOutcome {
+    public func deleteSavedSessions(names: Set<String>) async throws -> ChatSessionOperationOutcome {
         let sessions = try savedSessions()
         return await deleteSavedSessions(sessions.filter { names.contains($0.name) })
     }
@@ -361,7 +361,7 @@ extension ChatSessionController {
     /// `/sessions compact`: compacts the session context now.
     /// `maxTokensOverride` is the context-window limit the channel displays;
     /// the outcome carries the estimated context window for that display.
-    func compactSession(maxTokensOverride: Int?) async throws -> ChatSessionCompactionOutcome {
+    public func compactSession(maxTokensOverride: Int?) async throws -> ChatSessionCompactionOutcome {
         guard let result = try await managementRuntime?.compactSession(
             id: sessionID,
             force: true,
@@ -412,7 +412,7 @@ extension ChatSessionController {
     /// The loaded notice and the checkpoint progress are presented as they
     /// happen; the outcome carries the restored session (the same transcript,
     /// for channels without hooks) and the checkpoint outcome.
-    func loadSavedSession(
+    public func loadSavedSession(
         _ savedSession: TerminalSavedSession,
         checkpointEntryID: String? = nil
     ) async throws -> ChatSessionOperationOutcome {
@@ -639,7 +639,7 @@ extension ChatSessionController {
     /// `/sessions restore`: asks the host for an entry of the active saved
     /// session's checkpoint tree and restores from it. A cancelled menu, or a
     /// host without menus, presents nothing.
-    func chooseCheckpointEntry() async throws -> ChatSessionOperationOutcome {
+    public func chooseCheckpointEntry() async throws -> ChatSessionOperationOutcome {
         let session: TerminalSavedSession
         switch try activeSavedSessionLookup() {
         case let .unavailable(notice):
@@ -664,7 +664,7 @@ extension ChatSessionController {
 
     /// `/sessions restore <entry-id>`: restores the active saved session from
     /// the entry `entryID` of its checkpoint tree.
-    func restoreFromCheckpoint(entryID: String) async throws -> ChatSessionOperationOutcome {
+    public func restoreFromCheckpoint(entryID: String) async throws -> ChatSessionOperationOutcome {
         let session: TerminalSavedSession
         switch try activeSavedSessionLookup() {
         case let .unavailable(notice):
@@ -680,7 +680,7 @@ extension ChatSessionController {
 
     /// Restores `savedSession` from the checkpoint entry `entryID`, branching
     /// from that point: subsequent messages form a new branch in the tree.
-    func restoreFromCheckpoint(
+    public func restoreFromCheckpoint(
         _ savedSession: TerminalSavedSession,
         entryID: String
     ) async throws -> ChatSessionOperationOutcome {

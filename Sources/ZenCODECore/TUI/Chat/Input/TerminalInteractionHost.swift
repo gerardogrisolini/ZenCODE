@@ -16,7 +16,7 @@ import Foundation
 /// does not offer them, so the selection commands print their
 /// non-interactive output instead. The same holds for the attachment picker
 /// and for opening files and URLs with the platform's launcher.
-@TerminalChatActor
+@ChatSessionActor
 final class TerminalInteractionHost: ChatInteractionHost {
     weak var chat: TerminalChat?
     /// Whether stdin is an interactive terminal.

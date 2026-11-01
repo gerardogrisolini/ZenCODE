@@ -24,7 +24,7 @@ import Foundation
 /// while it is still current: the session it started on is still the active
 /// one and no channel invalidated it (see ``cancelActiveTurn(armingWorkflowRecovery:)``).
 @ChatSessionActor
-final class ChatSessionController {
+public final class ChatSessionController {
     /// The runtime the turn pipeline drives.
     let runtime: any ChatSessionRuntime
     /// The runtime behind the session operations and the tool catalog, the
@@ -32,10 +32,10 @@ final class ChatSessionController {
     /// turns, whose tool catalog then lists no MCP tool.
     let managementRuntime: (any ChatSessionManagementRuntime)?
     /// What the channel launched the process with.
-    let environment: ChatSessionEnvironment
+    public let environment: ChatSessionEnvironment
     /// The models the session can choose from.
-    let modelCatalog: ChatModelCatalog
-    let workingDirectory: URL
+    public let modelCatalog: ChatModelCatalog
+    public let workingDirectory: URL
     /// The channel's presenter. The controller presents through
     /// ``effectivePresenter(for:)``, which adds the attached companions.
     let presenter: any ChatSessionPresenter
@@ -43,12 +43,12 @@ final class ChatSessionController {
     /// order they were attached, held until they are detached (see
     /// ``attachCompanionPresenter(_:)``).
     private(set) var companionPresenters: [any ChatCompanionPresenter] = []
-    let host: any ChatInteractionHost
+    public let host: any ChatInteractionHost
     /// The channel's own steps between the steps of a selection operation
     /// (see ``ChatSessionChannelHooks``). Held weakly; `nil` for a channel
     /// without such steps.
-    weak var channelHooks: (any ChatSessionChannelHooks)?
-    let authorizer: ChatToolConsentAuthorizer
+    public weak var channelHooks: (any ChatSessionChannelHooks)?
+    public let authorizer: ChatToolConsentAuthorizer
     /// `false` for channels that never read the session transcript, so a
     /// long-lived session does not retain a copy nobody presents or saves.
     let retainsTranscript: Bool
@@ -58,12 +58,12 @@ final class ChatSessionController {
 
     /// The active session. Channels set it when they switch, restore, or
     /// reset the session; a running turn stops writing back once it changes.
-    var sessionID: String
+    public internal(set) var sessionID: String
     var cacheKey: String?
     var history: [AgentRuntimeMessage] = []
     /// Detailed presentation/save transcript, bounded independently of the
     /// runtime context (see ``maximumTranscriptBytes``).
-    var transcript: [AgentRuntimeMessage] = [] {
+    public internal(set) var transcript: [AgentRuntimeMessage] = [] {
         didSet { transcriptCountedMessageCount = -1 }
     }
     var transcriptRetainedByteCount = 0
@@ -90,14 +90,14 @@ final class ChatSessionController {
     /// shared ones, with the channel's own commands among them. The channel
     /// sets it when it has commands of its own; until then only the shared
     /// commands are known.
-    var commandRegistry = ChatCommandRegistry(shared: ChatCommandRegistry.sharedDescriptors)
+    public var commandRegistry = ChatCommandRegistry(shared: ChatCommandRegistry.sharedDescriptors)
 
     /// The agent, model, thinking, tool, and skill choices of the session. A
     /// new controller starts from the launch agent and the launch's explicit
     /// model.
-    var selection: ChatSessionSelection
+    public internal(set) var selection: ChatSessionSelection
     /// The link to the saved session and the prompt it was restored with.
-    var savedSessionState = ChatSavedSessionState()
+    public internal(set) var savedSessionState = ChatSavedSessionState()
     /// The launch-folder listing read for the selected agent when its role
     /// delegates by role, together with the selection it was read for. The
     /// prompt is recomposed on every send, so the listing must be a snapshot
@@ -123,7 +123,7 @@ final class ChatSessionController {
     ///
     /// Nonisolated so channels living in another isolation domain can create
     /// a session's controller synchronously.
-    nonisolated convenience init(
+    public nonisolated convenience init(
         sessionID: String,
         runtime: any ChatSessionRuntime,
         environment: ChatSessionEnvironment,
@@ -153,7 +153,7 @@ final class ChatSessionController {
     ///
     /// Nonisolated so channels living in another isolation domain (the ACP
     /// bridge actor) can create a session's controller synchronously.
-    nonisolated convenience init(
+    public nonisolated convenience init(
         sessionID: String,
         managementRuntime: any ChatSessionManagementRuntime,
         environment: ChatSessionEnvironment,
@@ -214,7 +214,7 @@ final class ChatSessionController {
     /// ``ChatFanOutPresenter``). The controller holds it until it is
     /// detached. Attaching a companion that is already attached changes
     /// nothing.
-    func attachCompanionPresenter(_ companion: any ChatCompanionPresenter) {
+    public func attachCompanionPresenter(_ companion: any ChatCompanionPresenter) {
         let identifier = ObjectIdentifier(companion)
         guard !companionPresenters.contains(where: { ObjectIdentifier($0) == identifier }) else {
             return
@@ -225,7 +225,7 @@ final class ChatSessionController {
     /// Detaches `companion`, identified by its object identity, and releases
     /// it. A turn already running keeps presenting on it until it finishes.
     /// Detaching a companion that is not attached changes nothing.
-    func detachCompanionPresenter(_ companion: any ChatCompanionPresenter) {
+    public func detachCompanionPresenter(_ companion: any ChatCompanionPresenter) {
         let identifier = ObjectIdentifier(companion)
         companionPresenters.removeAll { ObjectIdentifier($0) == identifier }
     }
@@ -251,7 +251,9 @@ final class ChatSessionController {
         set { stateStore.commandState = newValue }
     }
 
-    var activePlan: TerminalSessionPlan? {
+    /// The approved plan the session follows, if any. Unlike the rest of the
+    /// command state, a channel may persist it with the session.
+    public internal(set) var activePlan: TerminalSessionPlan? {
         get { commandState.activePlan }
         set { commandState.activePlan = newValue }
     }
@@ -275,7 +277,7 @@ final class ChatSessionController {
     /// table in ``ChatTurnPurpose/additionalToolNames(activePlan:)``. Channels
     /// apply them while building the turn configuration, because the grant
     /// also shapes the system prompt and the profile tool policy.
-    nonisolated func additionalToolNames(for purpose: ChatTurnPurpose) -> Set<String> {
+    public nonisolated func additionalToolNames(for purpose: ChatTurnPurpose) -> Set<String> {
         purpose.additionalToolNames(activePlan: commandState.activePlan)
     }
 
@@ -323,7 +325,7 @@ final class ChatSessionController {
     /// Invalidates the running turn: from now on it cannot write session
     /// state back. A cancelled `/goal` turn is armed for recovery in the same
     /// locked step, so the next message can resume its workflow.
-    nonisolated func cancelActiveTurn(armingWorkflowRecovery: Bool = false) {
+    public nonisolated func cancelActiveTurn(armingWorkflowRecovery: Bool = false) {
         stateStore.withLock { state in
             state.activeTurnToken = nil
             guard armingWorkflowRecovery, var workflow = state.commandState.activeWorkflow else {

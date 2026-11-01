@@ -18,26 +18,26 @@
 /// The queue only orders and bounds prompts: it never reorders, drops or
 /// replaces one, and a rejected prompt leaves the queue untouched. When to
 /// start the next prompt belongs to the session loop that owns the queue.
-struct ChatPromptQueue<Origin: Sendable>: Sendable {
+public struct ChatPromptQueue<Origin: Sendable>: Sendable {
     /// A generous interactive backlog that still puts a firm upper bound on
     /// retained prompt text. The panel shows the current count to the operator.
-    static var defaultCapacity: Int { 32 }
+    public static var defaultCapacity: Int { 32 }
 
     private var storage: [ChatQueuedPrompt<Origin>]
-    let capacity: Int
+    public let capacity: Int
 
-    init(capacity: Int = ChatPromptQueue.defaultCapacity) {
+    public init(capacity: Int = ChatPromptQueue.defaultCapacity) {
         self.capacity = max(1, capacity)
         storage = []
         storage.reserveCapacity(min(max(1, capacity), ChatPromptQueue.defaultCapacity))
     }
 
-    var count: Int { storage.count }
-    var isEmpty: Bool { storage.isEmpty }
+    public var count: Int { storage.count }
+    public var isEmpty: Bool { storage.isEmpty }
 
     /// Returns `false` without mutating when the prompt backlog is full.
     @discardableResult
-    mutating func enqueue(_ prompt: ChatQueuedPrompt<Origin>) -> Bool {
+    public mutating func enqueue(_ prompt: ChatQueuedPrompt<Origin>) -> Bool {
         guard storage.count < capacity else {
             return false
         }
@@ -46,7 +46,7 @@ struct ChatPromptQueue<Origin: Sendable>: Sendable {
     }
 
     /// Removes and returns the oldest prompt, or `nil` when the queue is empty.
-    mutating func dequeue() -> ChatQueuedPrompt<Origin>? {
+    public mutating func dequeue() -> ChatQueuedPrompt<Origin>? {
         guard !storage.isEmpty else {
             return nil
         }

@@ -137,11 +137,11 @@ public enum ZenCODECommandLineRunner {
             case .chat:
                 AgentOutput.silenceInheritedProcessOutput()
                 let permissionAuthorizer = LocalExecPermissionAuthorizer()
-                let sessionRunner = AgentCoreSessionRunner(
-                    defaultToolAuthorizationHandler: { request in
+                let sessionRunner = ChatSessionRuntimeFactory.makeSessionRunner(
+                    toolAuthorizationHandler: { request in
                         await permissionAuthorizer.authorize(request)
                     },
-                    backendFactory: backendFactory
+                    backendFactory: backendFactory ?? ChatSessionRuntimeFactory.productionBackendFactory
                 )
                 var resumeSnapshot: TerminalChatResumeSnapshot?
                 do {

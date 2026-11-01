@@ -16,18 +16,18 @@ import Foundation
 /// after a selection, and the observer, the status bar, the staged
 /// attachments, and the overview around `/sessions new`.
 extension TerminalChat: ChatSessionChannelHooks {
-    func responseLanguageSection() -> String? {
+    public func responseLanguageSection() -> String? {
         responseLanguageSystemPromptSection()
     }
 
-    func agentDidChange(_ agent: AgentProfile) async {
+    public func agentDidChange(_ agent: AgentProfile) async {
         await interactiveReader.setPanelCommandSuggestions(
             await panelSuggestionsForCurrentAgent()
         )
         resetResponseLanguageLock()
     }
 
-    func sessionWillCreate(reason: ChatSessionRecreationReason) async {
+    public func sessionWillCreate(reason: ChatSessionRecreationReason) async {
         printedModelID = nil
         if reason == .agentSwitched {
             didPrintActiveTools = false
@@ -35,7 +35,7 @@ extension TerminalChat: ChatSessionChannelHooks {
         await statusBar.reset()
     }
 
-    func sessionDidCreate(reason: ChatSessionRecreationReason) async {
+    public func sessionDidCreate(reason: ChatSessionRecreationReason) async {
         await startTaskGraphObserver()
         await refreshInitialStatusBarContextWindow()
         // The first step of `preloadCurrentModel`, which the controller's
@@ -43,11 +43,11 @@ extension TerminalChat: ChatSessionChannelHooks {
         await refreshStatusBarThinkingSelection()
     }
 
-    func modelPreloadDidEmit(_ event: DirectAgentEvent) async {
+    public func modelPreloadDidEmit(_ event: DirectAgentEvent) async {
         await handleModelPreloadEvent(event)
     }
 
-    func modelDidPreload(_ modelID: String, reason: ChatSessionRecreationReason) async {
+    public func modelDidPreload(_ modelID: String, reason: ChatSessionRecreationReason) async {
         // An agent switch preloads as `preloadCurrentModel()` does; a model
         // change as `preloadCurrentModel(emitStatus: hostedModels != nil)`.
         await finishModelPreload(
@@ -56,13 +56,13 @@ extension TerminalChat: ChatSessionChannelHooks {
         )
     }
 
-    func responseLanguageShouldLock() {
+    public func responseLanguageShouldLock() {
         lockResponseLanguageIfNeeded()
     }
 
     // MARK: Command steps
 
-    func selectionDidApply(_ change: ChatSelectionChange, command: ChatSelectionCommand) async {
+    public func selectionDidApply(_ change: ChatSelectionChange, command: ChatSelectionCommand) async {
         switch command {
         case .models:
             // A new model's session already went through the session hooks.
@@ -84,20 +84,20 @@ extension TerminalChat: ChatSessionChannelHooks {
         }
     }
 
-    func commandContextWindow() async -> DirectAgentContextWindowStatus? {
+    public func commandContextWindow() async -> DirectAgentContextWindowStatus? {
         await statusBar.currentContextWindowStatus()
     }
 
-    func newSessionID() -> String? {
+    public func newSessionID() -> String? {
         Self.newTerminalSessionID()
     }
 
-    func sessionWillStartNew() async {
+    public func sessionWillStartNew() async {
         await stopTaskGraphObserver()
         resetResponseLanguageLock()
     }
 
-    func sessionDidStartNew() async {
+    public func sessionDidStartNew() async {
         await startTaskGraphObserver()
         await statusBar.reset()
         await refreshInitialStatusBarContextWindow()
@@ -107,7 +107,7 @@ extension TerminalChat: ChatSessionChannelHooks {
         await rebindTelegramTopicToCurrentSession()
     }
 
-    func sessionDidCompact(contextWindow: DirectAgentContextWindowStatus) async {
+    public func sessionDidCompact(contextWindow: DirectAgentContextWindowStatus) async {
         _ = await statusBar.update(contextWindow: contextWindow)
     }
 }

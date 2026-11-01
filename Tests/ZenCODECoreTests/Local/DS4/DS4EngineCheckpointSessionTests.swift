@@ -13,7 +13,7 @@ import Testing
 import ToolCore
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite("DS4 engine checkpoint session commands", .serialized)
 struct DS4EngineCheckpointSessionTests {
     private struct Environment {
@@ -51,7 +51,7 @@ struct DS4EngineCheckpointSessionTests {
             )
         }
 
-        @TerminalChatActor
+        @ChatSessionActor
         func chat(runner: AgentCoreSessionRunner) throws -> TerminalChat {
             TerminalChat(configuration: try configuration(), stdinIsTerminal: false, sessionRunner: runner)
         }
@@ -64,12 +64,12 @@ struct DS4EngineCheckpointSessionTests {
     /// Runs `body` on the chat actor with a private support directory (never
     /// the real `~/.zencode`) and a UUID-named temporary workspace.
     private nonisolated func withEnvironment(
-        _ body: @escaping @Sendable @TerminalChatActor (Environment) async throws -> Void
+        _ body: @escaping @Sendable @ChatSessionActor (Environment) async throws -> Void
     ) async throws {
         let environment = try Environment()
         defer { environment.remove() }
         try await AppStorageDirectory.withSupportDirectoryURL(environment.support) {
-            try await Task(name: "ZenCODE.Tests.ds4-engine-checkpoint") { @TerminalChatActor in
+            try await Task(name: "ZenCODE.Tests.ds4-engine-checkpoint") { @ChatSessionActor in
                 try await body(environment)
             }.value
         }

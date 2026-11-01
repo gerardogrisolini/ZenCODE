@@ -8,7 +8,7 @@
 import Foundation
 
 /// Who runs a slash command.
-enum ChatCommandScope: Sendable, Equatable {
+public enum ChatCommandScope: Sendable, Equatable {
     /// The shared session layer runs it, whatever the channel.
     case shared
     /// Only the channel that declares it can run it; the shared commands
@@ -21,45 +21,67 @@ enum ChatCommandScope: Sendable, Equatable {
 /// Chat defines its own facts in the low bits. A channel that hides some of
 /// its commands behind facts of its own adds them in an extension, from bit 16
 /// up, so the two sets never collide.
-struct ChatCommandContext: OptionSet, Sendable, Hashable {
-    let rawValue: Int
+public struct ChatCommandContext: OptionSet, Sendable, Hashable {
+    public let rawValue: Int
 
-    init(rawValue: Int) {
+    public init(rawValue: Int) {
         self.rawValue = rawValue
     }
 
     /// The selected agent is the Builder.
-    static let builderAgent = ChatCommandContext(rawValue: 1 << 0)
+    public static let builderAgent = ChatCommandContext(rawValue: 1 << 0)
 }
 
 /// One slash command: its name, the line it shows in the command menu and in
 /// `/help`, who runs it, when the operator sees it, and whether it runs while
 /// a prompt is generating.
-struct ChatCommandDescriptor: Sendable, Equatable {
+public struct ChatCommandDescriptor: Sendable, Equatable {
     /// The command with its slash (`/help`).
-    var command: String
+    public var command: String
     /// The short description of the command menu.
-    var summary: String
+    public var summary: String
     /// The command's line in `/help`.
-    var help: String
+    public var help: String
     /// The command menu completes it with a trailing space, because it needs
     /// an argument.
-    var requiresArgument: Bool = false
+    public var requiresArgument: Bool = false
     /// Who runs it.
-    var scope: ChatCommandScope = .shared
+    public var scope: ChatCommandScope = .shared
     /// The facts the session needs for the operator to see the command; empty
     /// means always.
-    var availability: ChatCommandContext = []
+    public var availability: ChatCommandContext = []
     /// The command can run while a prompt is generating.
-    var availableDuringGeneration: Bool = false
+    public var availableDuringGeneration: Bool = false
     /// When the command runs while a prompt is generating only for some
     /// actions: the command alone, or its first argument in lowercase when it
     /// is one of these. `nil` accepts any argument.
-    var generationActions: Set<String>? = nil
+    public var generationActions: Set<String>? = nil
     /// What the command answers while it is hidden: `nil` treats it as an
     /// unknown command; otherwise this text, and while a prompt is generating
     /// the message of a command that cannot run then.
-    var hiddenMessage: String? = nil
+    public var hiddenMessage: String? = nil
+
+    public init(
+        command: String,
+        summary: String,
+        help: String,
+        requiresArgument: Bool = false,
+        scope: ChatCommandScope = .shared,
+        availability: ChatCommandContext = [],
+        availableDuringGeneration: Bool = false,
+        generationActions: Set<String>? = nil,
+        hiddenMessage: String? = nil
+    ) {
+        self.command = command
+        self.summary = summary
+        self.help = help
+        self.requiresArgument = requiresArgument
+        self.scope = scope
+        self.availability = availability
+        self.availableDuringGeneration = availableDuringGeneration
+        self.generationActions = generationActions
+        self.hiddenMessage = hiddenMessage
+    }
 
     /// Whether the operator sees the command in `context`.
     func isVisible(in context: ChatCommandContext) -> Bool {
@@ -73,14 +95,14 @@ struct ChatCommandDescriptor: Sendable, Equatable {
 /// The registry finds the command a line names (the `/session` alias
 /// included), lists the commands the operator sees, tells which commands run
 /// while a prompt is generating, and gives the lines of `/help`.
-struct ChatCommandRegistry: Sendable {
+public struct ChatCommandRegistry: Sendable {
     /// Every command, in display order, hidden ones included.
     let descriptors: [ChatCommandDescriptor]
 
     /// Composes the shared commands, in their order, with the channel's
     /// groups: each group follows the shared command named by `after`, and
     /// groups with the same anchor keep their order.
-    init(
+    public init(
         shared: [ChatCommandDescriptor],
         channel groups: [(after: String, descriptors: [ChatCommandDescriptor])] = []
     ) {
@@ -115,7 +137,7 @@ struct ChatCommandRegistry: Sendable {
 
     /// What follows `commandPrefix` in `command`, trimmed; empty when
     /// `command` does not start with it.
-    static func arguments(from command: String, commandPrefix: String) -> String {
+    public static func arguments(from command: String, commandPrefix: String) -> String {
         guard command.hasPrefix(commandPrefix) else {
             return ""
         }
@@ -127,7 +149,7 @@ struct ChatCommandRegistry: Sendable {
     private static let aliases = ["/session": "/sessions"]
 
     /// The command a line names, hidden or not.
-    func descriptor(forLine line: String) -> ChatCommandDescriptor? {
+    public func descriptor(forLine line: String) -> ChatCommandDescriptor? {
         guard let token = Self.commandToken(from: line) else {
             return nil
         }
@@ -152,7 +174,7 @@ struct ChatCommandRegistry: Sendable {
 
     /// Whether the command a line names can run while a prompt is generating,
     /// read on the line without its leading spaces.
-    func isAvailableDuringGeneration(_ line: String) -> Bool {
+    public func isAvailableDuringGeneration(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let token = Self.commandToken(from: trimmed),
               let descriptor = descriptor(forLine: trimmed),
@@ -174,7 +196,7 @@ struct ChatCommandRegistry: Sendable {
     // MARK: - Messages
 
     /// The answer to a line that names no command.
-    static func unknownCommandMessage(for line: String) -> String {
+    public static func unknownCommandMessage(for line: String) -> String {
         let command = commandToken(from: line) ?? line.trimmingCharacters(in: .whitespacesAndNewlines)
         return "ZenCODE: unknown command '\(command)'.\n"
     }
@@ -187,7 +209,7 @@ struct ChatCommandRegistry: Sendable {
 
     /// The answer to a line whose command is hidden in `context`; `nil` when
     /// the line names no command or one the operator sees.
-    func message(
+    public func message(
         forHiddenLine line: String,
         context: ChatCommandContext,
         isGenerating: Bool
@@ -207,7 +229,7 @@ struct ChatCommandRegistry: Sendable {
     // MARK: - Shared commands
 
     /// The commands every channel shares, in display order.
-    static let sharedDescriptors: [ChatCommandDescriptor] = [
+    public static let sharedDescriptors: [ChatCommandDescriptor] = [
         ChatCommandDescriptor(
             command: "/help",
             summary: "show command help",

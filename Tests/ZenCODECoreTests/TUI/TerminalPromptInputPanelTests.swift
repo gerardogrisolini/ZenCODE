@@ -1256,7 +1256,7 @@ private actor TerminalTimedPanelKeyFeed {
     }
 }
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite
 struct TerminalPromptAttachmentSyncTests {
     @Test

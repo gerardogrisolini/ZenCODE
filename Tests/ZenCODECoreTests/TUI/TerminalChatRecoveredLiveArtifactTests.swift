@@ -4,7 +4,7 @@ import ToolCore
 @testable import ZenCODECore
 
 @Suite
-@TerminalChatActor
+@ChatSessionActor
 struct TerminalChatRecoveredLiveArtifactTests {
     @Test(arguments: [false, true], [false, true])
     nonisolated func checkpointReplacesSameCompletionFallbackWithoutChangingHistoryOrUndo(
@@ -303,7 +303,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
 
     private nonisolated func withTerminal(
         isTerminal: Bool = false,
-        _ body: @escaping @TerminalChatActor @Sendable (
+        _ body: @escaping @ChatSessionActor @Sendable (
             URL, TerminalChat, TerminalChatRenderCoordinator, TurnFileChangeCoordinator
         ) async throws -> Void
     ) async throws {
@@ -312,7 +312,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         try await AppStorageDirectory.withSupportDirectoryURL(directory.appendingPathComponent("support")) {
-            try await Task(name: "ZenCODE.Tests.recovered-live-artifacts") { @TerminalChatActor in
+            try await Task(name: "ZenCODE.Tests.recovered-live-artifacts") { @ChatSessionActor in
                 let renderer = TerminalChatRenderCoordinator(
                     stdinIsTerminal: false, standardOutput: nil, standardError: nil,
                     standardOutputIsTerminal: isTerminal, standardErrorIsTerminal: isTerminal,

@@ -6,7 +6,7 @@
 //
 
 /// What the channel does once a command has run.
-enum ChatCommandAction: Sendable, Equatable {
+public enum ChatCommandAction: Sendable, Equatable {
     /// The command is complete: everything it had to say is in the outcome's
     /// notices (or was presented while it ran) and no turn follows.
     case none
@@ -33,13 +33,13 @@ enum ChatCommandAction: Sendable, Equatable {
 /// through ``ChatSessionPresenter`` as it happens; the outcome carries only the
 /// closing notices, in the order a text channel writes them, and the
 /// ``action`` the channel takes after presenting them.
-struct ChatCommandOutcome: Sendable, Equatable {
+public struct ChatCommandOutcome: Sendable, Equatable {
     /// The closing notices.
-    let notices: [ChatSessionNotice]
+    public let notices: [ChatSessionNotice]
     /// What follows the notices.
-    let action: ChatCommandAction
+    public let action: ChatCommandAction
 
-    init(notices: [ChatSessionNotice] = [], action: ChatCommandAction = .none) {
+    public init(notices: [ChatSessionNotice] = [], action: ChatCommandAction = .none) {
         self.notices = notices
         self.action = action
     }

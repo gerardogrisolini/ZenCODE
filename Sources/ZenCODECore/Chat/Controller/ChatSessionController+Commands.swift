@@ -47,7 +47,7 @@ extension ChatSessionController {
 
     /// Runs the slash command `line` names, for an operator who sees the
     /// commands `context` allows.
-    func handleCommandLine(
+    public func handleCommandLine(
         _ line: String,
         context: ChatCommandContext
     ) async -> ChatCommandOutcome {

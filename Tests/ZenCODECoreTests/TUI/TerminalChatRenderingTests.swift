@@ -35,7 +35,7 @@ private actor TickGate {
     }
 }
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite
 struct TerminalChatRenderingTests {
     @Test

@@ -71,7 +71,7 @@ extension TerminalChat {
     /// Reads one interactive line off the cooperative executor.
     ///
     /// `readLine(prompt:)` puts the terminal in raw mode and blocks the thread
-    /// until a line is submitted, so it must never run on `TerminalChatActor`
+    /// until a line is submitted, so it must never run on `ChatSessionActor`
     /// (it would stall rendering, the status bar and background refreshes). The
     /// read is cancellation-aware, so a cancelled turn never leaves the terminal
     /// owned by a read nobody awaits.

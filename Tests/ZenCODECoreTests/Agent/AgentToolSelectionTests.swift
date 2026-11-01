@@ -147,7 +147,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    @TerminalChatActor
+    @ChatSessionActor
     func skillSelectionUpdatesAnExistingSessionWithoutRecreatingIt() async throws {
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/ZenCODE-skill-selection",
@@ -221,7 +221,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    @TerminalChatActor
+    @ChatSessionActor
     func deselectingSkillUpdatesOnlyTheSessionProvider() async throws {
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/ZenCODE-skill-revocation",
@@ -296,7 +296,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    @TerminalChatActor
+    @ChatSessionActor
     func toolSelectionChangeResetsSessionAndInformsModel() async throws {
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/ZenCODE-tool-selection",
@@ -361,7 +361,7 @@ extension AgentConfigurationTests {
     /// the rebuild drops the session's prompt-skill provider: the selected
     /// skills must be handed to the rebuilt session again.
     @Test
-    @TerminalChatActor
+    @ChatSessionActor
     func toolSelectionRebuildKeepsTheSelectedSkills() async throws {
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/ZenCODE-tool-rebuild-skills-\(UUID().uuidString)",
@@ -414,7 +414,7 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    @TerminalChatActor
+    @ChatSessionActor
     func toolsSelectionCannotReenableMutableCoreToolsForReadOnlyProfile() async throws {
         let profile = AgentProfile(
             id: "read-only",

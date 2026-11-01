@@ -18,7 +18,7 @@ import ToolCore
 extension ChatSessionController {
     // MARK: - Session configuration and prompt
 
-    func currentSessionConfiguration(
+    public func currentSessionConfiguration(
         discoverExternalTools: Bool = false,
         responseLanguageSection: String?
     ) async -> AgentCoreSessionConfiguration {
@@ -79,6 +79,44 @@ extension ChatSessionController {
             preserveThinking: false
         )
         .makeConfiguration()
+    }
+
+    /// The configuration of one turn with `purpose`: the session grant plus
+    /// the purpose's coordinator tools (see ``additionalToolNames(for:)``),
+    /// recomposed so the system prompt and the profile tool policy see the
+    /// final grant. `/plan` and `/review` turns leave the active plan's
+    /// progress out of the dynamic context; normal and `/goal` turns keep it.
+    ///
+    /// It is the configuration the terminal sends each turn with, so a
+    /// channel that passes it to ``runTurn(_:)`` runs the turn as the
+    /// terminal does. `responseLanguageSection` is the channel's
+    /// response-language section of the system prompt, `nil` while none is
+    /// locked.
+    public func turnSessionConfiguration(
+        for purpose: ChatTurnPurpose,
+        responseLanguageSection: String?
+    ) async -> AgentCoreSessionConfiguration {
+        let sessionConfiguration = await currentSessionConfiguration(
+            responseLanguageSection: responseLanguageSection
+        )
+        let additionalToolNames = additionalToolNames(for: purpose)
+        let includesActivePlanProgress: Bool
+        switch purpose {
+        case .plan, .review:
+            includesActivePlanProgress = false
+        case .normal, .workflow:
+            includesActivePlanProgress = true
+        }
+        guard !additionalToolNames.isEmpty || !includesActivePlanProgress else {
+            return sessionConfiguration
+        }
+        var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
+        allowedToolNames.formUnion(additionalToolNames)
+        return currentSessionConfiguration(
+            allowedToolNames: allowedToolNames,
+            includesActivePlanProgress: includesActivePlanProgress,
+            responseLanguageSection: responseLanguageSection
+        )
     }
 
     func allowedToolNamesIncludingSelectedPromptSkills(
@@ -385,7 +423,7 @@ extension ChatSessionController {
 
     // MARK: - Skills
 
-    func availableSkills() -> [PromptSkill] {
+    public func availableSkills() -> [PromptSkill] {
         if let availableSkillsCache {
             return availableSkillsCache
         }
@@ -424,7 +462,7 @@ extension ChatSessionController {
         return availableSkills.filter { skillIDs.contains($0.id) }
     }
 
-    func applyInitialSkillSelectionIfNeeded() throws {
+    public func applyInitialSkillSelectionIfNeeded() throws {
         guard let initialSkillSelection = environment.initialSkillSelection else {
             return
         }
@@ -470,7 +508,7 @@ extension ChatSessionController {
 
     // MARK: - Agents
 
-    func availableAgents() throws -> [AgentProfile] {
+    public func availableAgents() throws -> [AgentProfile] {
         if let hostedAgentProfiles = environment.hostedAgentProfiles {
             return hostedAgentProfiles
         }
@@ -491,7 +529,7 @@ extension ChatSessionController {
     }
 
     /// Applies the profile of the agent the session starts with, if any.
-    func applyInitialAgentSelectionIfNeeded() async {
+    public func applyInitialAgentSelectionIfNeeded() async {
         guard let agent = selection.agent else {
             return
         }

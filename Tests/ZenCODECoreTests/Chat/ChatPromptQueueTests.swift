@@ -9,9 +9,9 @@
 import Testing
 @testable import ZenCODECore
 
-/// The expectations are literal copies of what `TerminalQueuedPromptBuffer`
-/// did before it moved (capacity 32, a full queue refuses and keeps its
-/// content, first in first out), not calls to the code that now produces it.
+/// The expectations are literal copies of what the terminal prompt buffer did
+/// before it moved (capacity 32, a full queue refuses and keeps its content,
+/// first in first out), not calls to the code that now produces it.
 ///
 /// `#expect` cannot call a mutating member directly, so the outcome of every
 /// `enqueue` is bound to a constant first.
@@ -257,20 +257,13 @@ struct ChatPromptQueueTests {
         #expect(queue.isEmpty)
     }
 
-    // MARK: - Terminal names
-
-    @Test("The terminal names are the Chat types with the terminal origin")
-    func terminalNamesAreTheChatTypes() {
-        #expect(TerminalQueuedPromptBuffer.self == ChatPromptQueue<TerminalPromptOrigin>.self)
-        #expect(TerminalQueuedPrompt.self == ChatQueuedPrompt<TerminalPromptOrigin>.self)
-        #expect(TerminalQueuedPromptMode.self == ChatQueuedPromptMode.self)
-    }
+    // MARK: - Terminal origin
 
     @Test("The terminal queue keeps the terminal origins and its capacity of 32")
     func terminalQueueKeepsTerminalOrigins() {
-        var queue = TerminalQueuedPromptBuffer()
-        let local = TerminalQueuedPrompt(text: "from the panel", origin: .local)
-        let remote = TerminalQueuedPrompt(
+        var queue = ChatPromptQueue<TerminalPromptOrigin>()
+        let local = ChatQueuedPrompt<TerminalPromptOrigin>(text: "from the panel", origin: .local)
+        let remote = ChatQueuedPrompt<TerminalPromptOrigin>(
             text: "from telegram",
             origin: .telegram(chatID: 7),
             mode: .directPrompt
@@ -278,10 +271,10 @@ struct ChatPromptQueueTests {
 
         var accepted = [queue.enqueue(local), queue.enqueue(remote)]
         for index in 3...32 {
-            accepted.append(queue.enqueue(TerminalQueuedPrompt(text: "prompt \(index)", origin: .local)))
+            accepted.append(queue.enqueue(ChatQueuedPrompt<TerminalPromptOrigin>(text: "prompt \(index)", origin: .local)))
         }
         let refused = queue.enqueue(
-            TerminalQueuedPrompt(text: "refused", origin: .telegram(chatID: 7))
+            ChatQueuedPrompt<TerminalPromptOrigin>(text: "refused", origin: .telegram(chatID: 7))
         )
         let countAtCapacity = queue.count
         let first = queue.dequeue()

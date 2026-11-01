@@ -1385,6 +1385,43 @@ struct TelegramSessionCompanionTests {
         }
     }
 
+    /// The file summary that ends a mirrored turn offers `/undo` only where
+    /// Telegram runs it: `.full` keeps the terminal's hint, `.mirrorOnly`,
+    /// which refuses `/undo`, leaves the hint out.
+    @Test(.timeLimit(.minutes(1)))
+    func mirrorOnlyFileSummaryDoesNotOfferUndo() async throws {
+        let undoableSummary = TurnFileChangeSummary(entries: [
+            .init(
+                path: "Added.swift", additions: 2, deletions: 0, status: .added,
+                isBinary: false, existedBefore: false, beforeDataBase64: nil, patch: nil
+            ),
+        ])
+        try await Self.withSupport(telegram: Self.pairedSettings) {
+            var summaries: [String] = []
+            for policy in [TelegramSessionCompanion.Policy.full, .mirrorOnly] {
+                let host = try Self.makeTerminal(transport: CompanionTelegramTransport(botID: 9349))
+                let channel = TurnCompanionChannel()
+                let (companion, _) = try await Self.linkedCompanion(
+                    on: host, botID: 9349, channel: channel,
+                    configuration: .init(primaryChannelDescription: "TUI", policy: policy)
+                )
+                await companion.beginTurn(origin: .primary)
+                let log = TurnMessageLog()
+                await Self.installLog(log, on: companion)
+                await companion.finishTurn(outcome: .completed("Done."), fileChangeSummary: undoableSummary)
+                summaries.append(try #require(await log.messages.last))
+                await companion.shutdown()
+            }
+
+            #expect(summaries[0] == Self.summaryText(undoableSummary))
+            #expect(summaries[0].contains("Use /undo"))
+            #expect(!summaries[1].contains("Use /undo"))
+            #expect(!summaries[1].contains("/changes"))
+            #expect(summaries[1].hasPrefix("🪬 Summary: 1 file  +2 -0"))
+            #expect(summaries[1].contains("Added.swift"))
+        }
+    }
+
     // MARK: - Consent
 
     /// The handler exists while the turn reaches the linked chat: a turn of
@@ -2520,7 +2557,7 @@ struct TelegramSessionCompanionTests {
                 Self.ownerMessage("from a group", chatKind: .unsupported),
                 Self.ownerMessage("from another user", userID: 8),
             ]
-            var queued = TerminalQueuedPromptBuffer()
+            var queued = ChatPromptQueue<TerminalPromptOrigin>()
             var admitted: [ChatQueuedPrompt<TerminalTelegramRouteLease>] = []
             var queuedFlags: [Bool] = []
             for message in messages {
@@ -2539,7 +2576,7 @@ struct TelegramSessionCompanionTests {
                 queuedFlags.append(didQueue)
             }
 
-            var terminalQueued: [TerminalQueuedPrompt] = []
+            var terminalQueued: [ChatQueuedPrompt<TerminalPromptOrigin>] = []
             while let prompt = queued.dequeue() {
                 terminalQueued.append(prompt)
             }
@@ -2589,8 +2626,8 @@ struct TelegramSessionCompanionTests {
             let pair = try await Self.handLinked(
                 room: "companion-queue-\(UUID().uuidString)", channel: IngressCompanionChannel()
             )
-            var queued = TerminalQueuedPromptBuffer(capacity: 1)
-            queued.enqueue(TerminalQueuedPrompt(text: "already waiting", origin: .local))
+            var queued = ChatPromptQueue<TerminalPromptOrigin>(capacity: 1)
+            queued.enqueue(ChatQueuedPrompt<TerminalPromptOrigin>(text: "already waiting", origin: .local))
             let messages = [
                 Self.ownerMessage("overflow prompt"),
                 Self.ownerMessage("/plan"),
@@ -2660,7 +2697,7 @@ struct TelegramSessionCompanionTests {
                 Self.ownerMessage(nil, callbackData: "zencode:mention:coordinator"),
                 Self.ownerMessage(nil, callbackData: "unrelated"),
             ]
-            var queued = TerminalQueuedPromptBuffer()
+            var queued = ChatPromptQueue<TerminalPromptOrigin>()
             for message in messages {
                 await pair.terminal.handleTelegramMessage(
                     message, queuedPrompts: &queued, eventQueue: TerminalChatEventQueue(),

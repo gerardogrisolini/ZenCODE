@@ -52,9 +52,9 @@ import ToolCore
 /// controller holds the ``presenter``, which holds the companion weakly, so
 /// no strong cycle runs through the controller.
 @ChatSessionActor
-final class TelegramSessionCompanion {
+public final class TelegramSessionCompanion {
     /// What the operator can do from Telegram.
-    enum Policy: Sendable, Equatable {
+    public enum Policy: Sendable, Equatable {
         /// Everything: prompts, voice notes, `/plan`, `/goal` and `/review`,
         /// replies to pending questions, and every remote command. The
         /// terminal uses it.
@@ -86,19 +86,19 @@ final class TelegramSessionCompanion {
     }
 
     /// How the primary channel configures its companion.
-    struct Configuration: Sendable, Equatable {
+    public struct Configuration: Sendable, Equatable {
         /// The primary channel's name in the texts sent to Telegram: "TUI"
         /// for the terminal.
-        let primaryChannelDescription: String
-        let policy: Policy
+        public let primaryChannelDescription: String
+        public let policy: Policy
         /// Where the primary channel asks for a tool permission, as the
         /// consent texts name it ("the terminal", "the editor"): the linked
         /// chat is told that the permission was granted or denied there, and
         /// the primary channel that it can approve or deny there. The default
         /// is the terminal's, so the terminal's texts stay as they were.
-        let consentLocationDescription: String
+        public let consentLocationDescription: String
 
-        init(
+        public init(
             primaryChannelDescription: String,
             policy: Policy,
             consentLocationDescription: String = "the terminal"
@@ -150,8 +150,8 @@ final class TelegramSessionCompanion {
     /// The control service's state as last read; ``isActive`` is its
     /// `isActive`.
     var controlState = TerminalTelegramControlState.inactive()
-    var linkedChatID: Int64?
-    var linkedChatTitle: String?
+    public internal(set) var linkedChatID: Int64?
+    public internal(set) var linkedChatTitle: String?
     /// Telegram user id of the last linked-chat sender, used to bind outbound
     /// artifact consent offers to the operator who will confirm them.
     var linkedUserID: Int64?
@@ -162,14 +162,14 @@ final class TelegramSessionCompanion {
     var activeRouteLease: TerminalTelegramRouteLease?
     /// The session's own topic while the link is in topic mode; `nil` in
     /// legacy mode and while detached.
-    var sessionTopic: SessionTopic?
+    public internal(set) var sessionTopic: SessionTopic?
 
     // MARK: - Turn in progress
 
     /// Origin of the turn currently generating. Unlike the reporter itself,
     /// this remains populated while Telegram is detached, so ``attach()`` can
     /// adopt the turn in flight without waiting for the next prompt.
-    var activeTurnOrigin: TelegramTurnOrigin?
+    public internal(set) var activeTurnOrigin: TelegramTurnOrigin?
     /// Ordered Telegram channel of the turn currently generating, when that
     /// turn's progress is mirrored to the linked chat. Permission dialogue is
     /// enqueued here so it cannot overtake the tool activity that raised it.
@@ -275,6 +275,28 @@ final class TelegramSessionCompanion {
     private var runningAttachCount = 0
     private var attachCompletionWaiters: [CheckedContinuation<Void, Never>] = []
 
+    /// The companion of the session `controller` runs, next to its primary
+    /// `channel`. It registers its ``presenter`` in `controller` at once, and
+    /// stays detached until ``attach()``.
+    public convenience init(
+        controller: ChatSessionController,
+        sessionRunner: AgentCoreSessionRunner,
+        router: TerminalTelegramSessionRouter,
+        controlService: TerminalTelegramControlService,
+        channel: any TelegramCompanionChannel,
+        configuration: Configuration
+    ) {
+        self.init(
+            controller: controller,
+            sessionRunner: sessionRunner,
+            router: router,
+            controlService: controlService,
+            channel: channel,
+            configuration: configuration,
+            attachments: .shared
+        )
+    }
+
     init(
         controller: ChatSessionController,
         sessionRunner: AgentCoreSessionRunner,
@@ -282,7 +304,7 @@ final class TelegramSessionCompanion {
         controlService: TerminalTelegramControlService,
         channel: any TelegramCompanionChannel,
         configuration: Configuration,
-        attachments: TelegramCompanionAttachments = .shared
+        attachments: TelegramCompanionAttachments
     ) {
         self.controller = controller
         self.sessionRunner = sessionRunner
@@ -299,7 +321,7 @@ final class TelegramSessionCompanion {
 
     /// Whether the link is active: the control service started and was not
     /// stopped since.
-    var isActive: Bool {
+    public var isActive: Bool {
         controlState.isActive
     }
 
@@ -330,7 +352,7 @@ final class TelegramSessionCompanion {
     /// in the channel is the channel's decision, taken before it attaches.
     /// An attach that a later attach, a detach, or a shutdown overtook while
     /// it waited returns without effect: the later operation owns the state.
-    func attach() async throws(TelegramCompanionAttachError) {
+    public func attach() async throws(TelegramCompanionAttachError) {
         lifecycleGeneration &+= 1
         let generation = lifecycleGeneration
         runningAttachCount += 1
@@ -421,7 +443,7 @@ final class TelegramSessionCompanion {
     /// again. In topic mode the session's topic route is closed and the
     /// inactive routes pruned once the service stopped
     /// (``closeSessionTopic()``); in legacy mode nothing is written.
-    func detach() async {
+    public func detach() async {
         lifecycleGeneration &+= 1
         // Disconnect the current turn before hopping to the service actor, so
         // events emitted while `stop()` is in flight cannot enqueue more output.
@@ -472,7 +494,7 @@ final class TelegramSessionCompanion {
     /// topic mode the session's topic route is closed and the inactive
     /// routes pruned, as ``detach()`` does: the terminal always ends through
     /// here, and a route left active at every launch would never be pruned.
-    func shutdown() async {
+    public func shutdown() async {
         lifecycleGeneration &+= 1
         controlState.isActive = false
         synchronizeAttachmentRegistration()

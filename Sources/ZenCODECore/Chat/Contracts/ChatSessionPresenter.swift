@@ -10,7 +10,7 @@
 /// The controller calls these methods in event order and awaits each one, so a
 /// presenter may rely on the order of the calls it receives. Every method has
 /// a no-op default: a channel implements only what it renders.
-protocol ChatSessionPresenter: Sendable {
+public protocol ChatSessionPresenter: Sendable {
     func turnWillStart(_ request: ChatTurnRequest) async
     func presentStatus(_ status: String) async
     func presentDiagnostic(_ diagnostic: String) async
@@ -105,41 +105,41 @@ protocol ChatSessionPresenter: Sendable {
 }
 
 extension ChatSessionPresenter {
-    func turnWillStart(_ request: ChatTurnRequest) async {}
-    func presentStatus(_ status: String) async {}
-    func presentDiagnostic(_ diagnostic: String) async {}
-    func presentThought(_ thought: String) async {}
-    func presentAssistantContent(_ content: String) async {}
-    func presentModelLoaded(_ modelID: String) async {}
-    func presentMetrics(_ metrics: DirectAgentGenerationMetrics) async {}
-    func presentContextWindow(_ status: DirectAgentContextWindowStatus) async {}
-    func presentSubscriptionUsage(_ status: DirectAgentSubscriptionUsageStatus) async {}
-    func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {}
-    func presentToolCallCompleted(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {}
-    func presentToolCallSettled(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {}
-    func presentLiveFileArtifacts(_ turns: [SessionFileArtifactHistory.Turn], agentID: String?) async {}
-    func presentSealedFileArtifacts(_ turn: SessionFileArtifactHistory.Turn) async {}
-    func presentFileChangeSummary(_ summary: TurnFileChangeSummary) async {}
-    func modelTurnDidReturn() async {}
-    func turnWillContinueAutomatically() async {}
-    func turnWillFinish() async {}
-    func presentWorkflowNotice(_ notice: ChatWorkflowNotice) async {}
-    func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async {}
-    func presentSessionNotice(_ notice: ChatSessionNotice) async {}
-    func presentSessionStateChanged(_ state: ChatSessionState) async {}
-    func presentSubmittedCommand(_ line: String) async {}
-    func reserveTaskGraphOverviewPublication() async -> ChatOverviewPublication? {
+    public func turnWillStart(_ request: ChatTurnRequest) async {}
+    public func presentStatus(_ status: String) async {}
+    public func presentDiagnostic(_ diagnostic: String) async {}
+    public func presentThought(_ thought: String) async {}
+    public func presentAssistantContent(_ content: String) async {}
+    public func presentModelLoaded(_ modelID: String) async {}
+    public func presentMetrics(_ metrics: DirectAgentGenerationMetrics) async {}
+    public func presentContextWindow(_ status: DirectAgentContextWindowStatus) async {}
+    public func presentSubscriptionUsage(_ status: DirectAgentSubscriptionUsageStatus) async {}
+    public func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {}
+    public func presentToolCallCompleted(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {}
+    public func presentToolCallSettled(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {}
+    public func presentLiveFileArtifacts(_ turns: [SessionFileArtifactHistory.Turn], agentID: String?) async {}
+    public func presentSealedFileArtifacts(_ turn: SessionFileArtifactHistory.Turn) async {}
+    public func presentFileChangeSummary(_ summary: TurnFileChangeSummary) async {}
+    public func modelTurnDidReturn() async {}
+    public func turnWillContinueAutomatically() async {}
+    public func turnWillFinish() async {}
+    public func presentWorkflowNotice(_ notice: ChatWorkflowNotice) async {}
+    public func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async {}
+    public func presentSessionNotice(_ notice: ChatSessionNotice) async {}
+    public func presentSessionStateChanged(_ state: ChatSessionState) async {}
+    public func presentSubmittedCommand(_ line: String) async {}
+    public func reserveTaskGraphOverviewPublication() async -> ChatOverviewPublication? {
         nil
     }
-    func presentTaskGraphOverview(
+    public func presentTaskGraphOverview(
         _ overview: ChatTaskGraphOverview?,
         origin: ChatOverviewOrigin,
         publication: ChatOverviewPublication?
     ) async {}
-    func reserveSubAgentOverviewPublication() async -> ChatOverviewPublication? {
+    public func reserveSubAgentOverviewPublication() async -> ChatOverviewPublication? {
         nil
     }
-    func presentSubAgentOverview(
+    public func presentSubAgentOverview(
         _ overview: ChatSubAgentOverview,
         origin: ChatOverviewOrigin,
         publication: ChatOverviewPublication?

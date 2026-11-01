@@ -8,13 +8,13 @@
 import Foundation
 
 /// Why a `/plan` turn could not record the Planner's output.
-enum ChatPlanGenerationError: LocalizedError {
+public enum ChatPlanGenerationError: LocalizedError {
     case plannerOutputUnavailable
     case sessionHistoryUnavailable
     case structuredTasksUnavailable
     case unexpectedStructuredTasksForQuestions
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .plannerOutputUnavailable:
             return "The Planner agent did not produce fresh output for this planning turn. The current agent "
@@ -31,6 +31,3 @@ enum ChatPlanGenerationError: LocalizedError {
         }
     }
 }
-
-/// Compatibility name used by the terminal chat.
-typealias TerminalPlanGenerationError = ChatPlanGenerationError

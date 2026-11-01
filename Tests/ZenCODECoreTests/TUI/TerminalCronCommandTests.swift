@@ -180,7 +180,7 @@ private final class FakeZenCRONLocator: Sendable {
     }
 }
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite(.serialized)
 struct TerminalCronCommandTests {
     private static let defaultPathLine = "PATH=\(ZenCrontabDocument.defaultPath)"

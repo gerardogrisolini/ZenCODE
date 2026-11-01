@@ -8,27 +8,27 @@
 import Foundation
 
 /// The tool groups currently active, with the number of tools each exposes.
-struct ChatActiveToolsSummary: Sendable, Equatable {
-    struct Group: Sendable, Equatable {
-        let title: String
-        let toolCount: Int
+public struct ChatActiveToolsSummary: Sendable, Equatable {
+    public struct Group: Sendable, Equatable {
+        public let title: String
+        public let toolCount: Int
 
-        init(title: String, toolCount: Int) {
+        public init(title: String, toolCount: Int) {
             self.title = title
             self.toolCount = toolCount
         }
     }
 
     /// The groups in display order; empty when no tool is active.
-    let groups: [Group]
+    public let groups: [Group]
 
-    init(groups: [Group]) {
+    public init(groups: [Group]) {
         self.groups = groups
     }
 
     /// Groups the active tool names under the selected tool items, followed by
     /// the prompt-skill tools. Feature-management tools are never listed.
-    init(
+    public init(
         toolNames: [String],
         items: [TerminalToolSelectionItem],
         selectedKeys: Set<String>
@@ -64,16 +64,16 @@ struct ChatActiveToolsSummary: Sendable, Equatable {
 }
 
 /// What the saved-session list shows about one saved session.
-struct ChatSavedSessionSummary: Sendable, Equatable {
-    let name: String
-    let modelID: String?
+public struct ChatSavedSessionSummary: Sendable, Equatable {
+    public let name: String
+    public let modelID: String?
     /// Messages of the display history, system messages excluded.
-    let messageCount: Int
+    public let messageCount: Int
     /// Context-window tokens in use when the session was saved.
-    let contextUsedTokens: Int?
-    let savedAt: Date
+    public let contextUsedTokens: Int?
+    public let savedAt: Date
 
-    init(
+    public init(
         name: String,
         modelID: String?,
         messageCount: Int,
@@ -87,7 +87,7 @@ struct ChatSavedSessionSummary: Sendable, Equatable {
         self.savedAt = savedAt
     }
 
-    init(_ session: TerminalSavedSession) {
+    public init(_ session: TerminalSavedSession) {
         self.init(
             name: session.name,
             modelID: session.modelID,
@@ -100,21 +100,21 @@ struct ChatSavedSessionSummary: Sendable, Equatable {
 
 /// A file or URL the conversation mentions that `/open` can hand to the
 /// platform, with the label the selection list shows for it.
-struct ChatOpenCandidate: Sendable, Equatable {
+public struct ChatOpenCandidate: Sendable, Equatable {
     /// The value the platform opens: an absolute file path or a URL string.
-    let target: String
+    public let target: String
     /// The human-readable label of the selection list.
-    let display: String
-    let kind: ChatOpenTarget.Kind
+    public let display: String
+    public let kind: ChatOpenTarget.Kind
 
-    init(target: String, display: String, kind: ChatOpenTarget.Kind) {
+    public init(target: String, display: String, kind: ChatOpenTarget.Kind) {
         self.target = target
         self.display = display
         self.kind = kind
     }
 
     /// What an interaction host is asked to open for this candidate.
-    var openTarget: ChatOpenTarget {
+    public var openTarget: ChatOpenTarget {
         ChatOpenTarget(target: target, kind: kind)
     }
 }

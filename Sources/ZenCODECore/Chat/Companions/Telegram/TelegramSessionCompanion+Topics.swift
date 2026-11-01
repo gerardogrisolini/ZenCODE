@@ -70,12 +70,12 @@ import ToolCore
 /// its route, as before topics.
 extension TelegramSessionCompanion {
     /// The session's own topic while the link is in topic mode.
-    struct SessionTopic: Sendable, Equatable {
+    public struct SessionTopic: Sendable, Equatable {
         /// The current lease of the topic's route.
-        var lease: TerminalTelegramRouteLease
+        public var lease: TerminalTelegramRouteLease
         /// The topic's name, as the companion last gave it, bounded like the
         /// name Telegram stores.
-        var name: String
+        public var name: String
     }
 
     /// The route ``attach()`` resolves before the control service starts
@@ -270,7 +270,7 @@ extension TelegramSessionCompanion {
     /// ForceReply receipts of the previous lease are no longer answered. The
     /// channel calls this method before it rebinds the shared-chat relay to
     /// the new room (``rebindSharedChatRelay(roomID:)``).
-    func rebind(sessionID: String, displayName: String) async {
+    public func rebind(sessionID: String, displayName: String) async {
         guard let topic = sessionTopic else { return }
         let rebound: TerminalTelegramRouteLease
         do {

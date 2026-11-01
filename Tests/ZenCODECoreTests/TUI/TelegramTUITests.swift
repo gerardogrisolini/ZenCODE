@@ -11,7 +11,7 @@ import Testing
 import ToolCore
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite
 struct TelegramTUITests {
     private static var testTelegramOrigin: TerminalPromptOrigin {
@@ -892,7 +892,7 @@ struct TelegramTUITests {
                     routes: [.init(roomID: "foreign-session", generation: 1)]
                 )
             ))
-            let result = try await Task { @TerminalChatActor in
+            let result = try await Task { @ChatSessionActor in
                 let terminal = TerminalChat(
                     configuration: try AgentConfiguration(
                         hostedModelID: "remote-community/test",
@@ -1132,7 +1132,7 @@ struct TelegramTUITests {
             busyNotices.withLock { $0.append(text) }
             return true
         }
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
 
         _ = await terminal.handleTelegramRuntimeMessage(
             TerminalTelegramIncomingMessage(
@@ -1170,7 +1170,7 @@ struct TelegramTUITests {
             notices.withLock { $0.append(text) }
             return true
         }
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
         for (index, text) in ["/help", "/changes@zencode_bot", "help"].enumerated() {
             let didQueue = await terminal.handleTelegramRuntimeMessage(
                 TerminalTelegramIncomingMessage(
@@ -1243,7 +1243,7 @@ struct TelegramTUITests {
             prompts.withLock { $0.append(text) }
             return 1
         }
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
         for (index, text) in ["/plan", "/plan@"].enumerated() {
             let didQueue = await terminal.handleTelegramRuntimeMessage(
                 TerminalTelegramIncomingMessage(

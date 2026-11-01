@@ -12,12 +12,11 @@
 /// controller state through this actor, so turn bookkeeping, transcripts,
 /// command state, and file-change artifacts are serialized by construction.
 ///
-/// The terminal chat keeps its historical name through the
-/// ``TerminalChatActor`` alias: all of `TerminalChat` is isolated here, which
-/// replaces the previous `@unchecked Sendable` contract with compiler-checked
-/// isolation. The periodic sub-agent overview refresh task, the generation
-/// callbacks, the task-graph observer, and the Telegram bridge all reach
-/// instance state through this actor.
+/// The terminal chat is one of those channels: all of `TerminalChat` is
+/// isolated here, which replaces the previous `@unchecked Sendable` contract
+/// with compiler-checked isolation. The periodic sub-agent overview refresh
+/// task, the generation callbacks, the task-graph observer, and the Telegram
+/// bridge all reach instance state through this actor.
 ///
 /// Contract: blocking POSIX reads must never run on this actor. Terminal input
 /// (`readLine`, `drainBufferedLines`, raw-key consent reads) blocks the calling
@@ -35,5 +34,10 @@ public actor ChatSessionActor {
     private init() {}
 }
 
-/// Compatibility name of ``ChatSessionActor`` used by the terminal chat.
+/// Former name of ``ChatSessionActor``, kept only for source compatibility.
+///
+/// It names the same global actor, so `@TerminalChatActor` and
+/// `@ChatSessionActor` are the same isolation. It is removed in the next major
+/// release; write `@ChatSessionActor` instead.
+@available(*, deprecated, renamed: "ChatSessionActor")
 public typealias TerminalChatActor = ChatSessionActor

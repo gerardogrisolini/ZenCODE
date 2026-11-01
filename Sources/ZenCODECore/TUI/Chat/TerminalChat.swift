@@ -17,12 +17,12 @@ import ToolCore
 
 /// TerminalChat coordinates session state; all stateful terminal rendering is isolated by `renderCoordinator`.
 ///
-/// Isolation: every instance member lives on ``TerminalChatActor``, which
+/// Isolation: every instance member lives on ``ChatSessionActor``, which
 /// replaces the previous `@unchecked Sendable` contract with compiler-checked
 /// isolation. Blocking POSIX reads must never run on this actor; they are
 /// dispatched off-actor through the `…OffActor` helpers in
 /// `TerminalChat+InputLoop+Blocking.swift`.
-@TerminalChatActor
+@ChatSessionActor
 public final class TerminalChat {
     public let configuration: AgentConfiguration
     public let stdinIsTerminal: Bool
@@ -90,7 +90,7 @@ public final class TerminalChat {
     /// Tracks whether the status-bar git summary has already been refreshed
     /// during the current prompt. Read and written by both the periodic
     /// sub-agent overview refresh task and the generation callback; their
-    /// accesses are serialized by ``TerminalChatActor`` isolation.
+    /// accesses are serialized by ``ChatSessionActor`` isolation.
     var didRefreshGitStatusDuringCurrentPrompt = false
     public var selectedAgent: AgentProfile? {
         get { chatSession.selection.agent }
@@ -146,7 +146,7 @@ public final class TerminalChat {
     }
     /// Ephemeral `/plan` clarification state. Never copy this into snapshots or
     /// persisted session models.
-    var planBrainstorming: TerminalPlanBrainstormingState? {
+    var planBrainstorming: PlanningCommandRuntimeState? {
         get { chatSession.planBrainstorming }
         set { chatSession.planBrainstorming = newValue }
     }
@@ -211,13 +211,13 @@ public final class TerminalChat {
     /// summary (agent ID + status + output revision). A sub-agent re-run via
     /// `agent.message` produces a new revision and triggers a fresh refresh.
     /// Mutated by the periodic overview refresh task and the generation
-    /// callback, which are serialized by ``TerminalChatActor`` isolation.
+    /// callback, which are serialized by ``ChatSessionActor`` isolation.
     var reflectedSubAgentCompletionKeys = Set<String>()
 
     /// Records a sub-agent completion key and returns whether it was new (so
     /// the caller refreshes the git summary at most once per completion).
     /// The check-then-act pair is atomic because the whole type is isolated to
-    /// ``TerminalChatActor``.
+    /// ``ChatSessionActor``.
     func recordSubAgentCompletionKey(_ key: String) -> Bool {
         reflectedSubAgentCompletionKeys.insert(key).inserted
     }
@@ -337,25 +337,17 @@ public final class TerminalChat {
         } else {
             let featureRuntime = SwiftFeatureRuntime()
             self.featureRuntime = featureRuntime
-            self.sessionRunner = AgentCoreSessionRunner(
-                defaultToolAuthorizationHandler: { request in
+            self.sessionRunner = ChatSessionRuntimeFactory.makeSessionRunner(
+                toolAuthorizationHandler: { request in
                     await permissionAuthorizer.authorize(request)
                 },
-                swiftFeatureRuntime: featureRuntime
+                featureRuntime: featureRuntime
             )
         }
         let telegramControlService = TerminalTelegramControlService(
             transportFactory: telegramTransportFactory ?? { NIOTelegramHTTPTransport() }
         )
-        let telegramSettings = AgentSettingsManifestStore.load()?.telegram
-        let telegramRouter = TerminalTelegramSessionRouter(
-            linkedChatID: telegramSettings?.linkedChatID,
-            ownerUserID: telegramSettings?.ownerUserID,
-            routes: telegramSettings?.routes ?? [],
-            persist: { ownerUserID, routes in
-                try AgentSettingsManifestStore.saveTelegramRoutes(routes, ownerUserID: ownerUserID)
-            }
-        )
+        let telegramRouter = TelegramCompanionRuntimeFactory.makeRouter()
         let chatSessionPresenter = TerminalChatSessionPresenter()
         // Menus and line input need an interactive terminal.
         let interactionHost = TerminalInteractionHost(

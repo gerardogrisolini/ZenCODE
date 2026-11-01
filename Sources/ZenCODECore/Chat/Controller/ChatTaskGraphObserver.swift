@@ -134,12 +134,12 @@ extension ChatSessionController {
     /// Binds the task-graph observer to the current session: it stops the
     /// running one and subscribes to the session's graph events before
     /// returning, so a change that lands after this call is published.
-    func startTaskGraphObserver() async {
+    public func startTaskGraphObserver() async {
         await taskGraphObserver.start(for: self)
     }
 
     /// Stops the task-graph observer and drains its debounced publication.
-    func stopTaskGraphObserver() async {
+    public func stopTaskGraphObserver() async {
         await taskGraphObserver.stop()
     }
 

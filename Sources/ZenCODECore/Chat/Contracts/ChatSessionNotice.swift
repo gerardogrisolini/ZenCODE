@@ -10,7 +10,7 @@
 /// `writeMarkdownMessage`); a channel without that distinction treats the
 /// first two alike, and one that does not render Markdown writes the text of
 /// a ``markdown`` notice as it is.
-enum ChatSessionNoticeChannel: Sendable, Equatable {
+public enum ChatSessionNoticeChannel: Sendable, Equatable {
     /// An outcome, status, list, or usage line.
     case system
     /// A refusal or an error.
@@ -43,7 +43,7 @@ enum ChatSessionNoticeChannel: Sendable, Equatable {
 /// ``ChatSessionPresenter/presentSubAgentOverview(_:origin:publication:)``.
 ///
 /// The case docs name the former terminal function that wrote the message.
-enum ChatSessionNotice: Sendable, Equatable {
+public enum ChatSessionNotice: Sendable, Equatable {
     // MARK: - Failures
 
     /// An operation threw: `ZenCODE: <description>`. Written by the `catch`
@@ -422,7 +422,7 @@ enum ChatSessionNotice: Sendable, Equatable {
     case noAttachableFiles(directoryPath: String)
 
     /// The tone a text channel writes this notice in.
-    var channel: ChatSessionNoticeChannel {
+    public var channel: ChatSessionNoticeChannel {
         switch self {
         case .operationFailed,
              .unknownCommand,
@@ -550,7 +550,7 @@ enum ChatSessionNotice: Sendable, Equatable {
 /// usage line included, except for ``skillUninstall``, whose refusal is a
 /// failure message that the `/skills` usage line (``ChatSessionNotice/skillSelectionUsage``)
 /// follows as a separate notice.
-enum ChatInteractiveOperation: Sendable, Equatable {
+public enum ChatInteractiveOperation: Sendable, Equatable {
     /// `/models`: the model list, then `Model selection requires an interactive
     /// terminal.` (`selectModelInteractively`).
     case modelSelection(models: [AgentSettingsModelManifest], selectedModelID: String?)
@@ -587,7 +587,7 @@ enum ChatInteractiveOperation: Sendable, Equatable {
     /// (`handleAttachCommand`).
     case attachmentSelection
 
-    var channel: ChatSessionNoticeChannel {
+    public var channel: ChatSessionNoticeChannel {
         switch self {
         case .skillUninstall:
             return .failure
@@ -606,7 +606,7 @@ enum ChatInteractiveOperation: Sendable, Equatable {
 }
 
 /// The DS4 KV checkpoint outcomes of saving and loading a session.
-enum ChatEngineCheckpointNotice: Sendable, Equatable {
+public enum ChatEngineCheckpointNotice: Sendable, Equatable {
     /// The checkpoint was written next to the saved session.
     case saved
     /// Nothing was written: the session holds images.
@@ -626,7 +626,7 @@ enum ChatEngineCheckpointNotice: Sendable, Equatable {
     /// Loading the checkpoint failed; the session still loads. Failure channel.
     case restoreFailed(reason: String)
 
-    var channel: ChatSessionNoticeChannel {
+    public var channel: ChatSessionNoticeChannel {
         switch self {
         case .saveFailed, .restoreFailed:
             return .failure

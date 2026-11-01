@@ -14,7 +14,7 @@ import ToolCore
 /// channel may withhold it (the terminal does not append it beneath a model
 /// response that already ended). An overview the operator asked for with a
 /// command (`/tasks`) is ``explicit`` and is always shown.
-enum ChatOverviewOrigin: Sendable, Equatable {
+public enum ChatOverviewOrigin: Sendable, Equatable {
     case automatic
     case explicit
 }
@@ -43,10 +43,14 @@ enum ChatOverviewOrigin: Sendable, Equatable {
 /// passes it back. A channel that does not order its publications reserves
 /// nothing, and the controller presents with a `nil` reservation, which means
 /// "present this as it comes".
-struct ChatOverviewPublication: Sendable, Equatable {
+public struct ChatOverviewPublication: Sendable, Equatable {
     /// The channel's ordering of the reservation; a later reservation has a
     /// greater revision.
-    let revision: Int
+    public let revision: Int
+
+    public init(revision: Int) {
+        self.revision = revision
+    }
 }
 
 /// The session's current task graph with the task views a channel shows,
@@ -56,15 +60,15 @@ struct ChatOverviewPublication: Sendable, Equatable {
 /// of the section belong to the channel that presents it. The signature and the
 /// significance threshold are the ones the terminal always used, so a channel
 /// that skips an unchanged or trivial graph does it the same way.
-struct ChatTaskGraphOverview: Sendable, Equatable {
+public struct ChatTaskGraphOverview: Sendable, Equatable {
     /// The current graph of the session.
-    let graph: TaskGraphSnapshot
+    public let graph: TaskGraphSnapshot
     /// The task views of ``graph``, in the runtime's order.
-    let tasks: [TaskRecordView]
+    public let tasks: [TaskRecordView]
     /// Identity of what a channel renders, see ``signature(for:)``.
-    let signature: String
+    public let signature: String
 
-    init(graph: TaskGraphSnapshot, tasks: [TaskRecordView]) {
+    public init(graph: TaskGraphSnapshot, tasks: [TaskRecordView]) {
         self.graph = graph
         self.tasks = tasks
         self.signature = Self.signature(for: graph)
@@ -74,14 +78,14 @@ struct ChatTaskGraphOverview: Sendable, Equatable {
     /// or a task that has run, or one that needs the operator's attention
     /// (blocked, failed, awaiting validation). A graph below the threshold, a
     /// single task that has not run, stays hidden.
-    var isSignificant: Bool {
+    public var isSignificant: Bool {
         Self.isSignificant(graph)
     }
 
     /// The session's current graph with its task views, or `nil` when the
     /// session has no task graph: the read behind `/tasks` and the ACP plan.
     /// Throws when either read fails.
-    static func current(
+    public static func current(
         in runtime: any ChatSessionRuntime,
         sessionID: String
     ) async throws -> ChatTaskGraphOverview? {
@@ -128,19 +132,19 @@ struct ChatTaskGraphOverview: Sendable, Equatable {
 /// the section, the wrapping, the tool rows its render coordinator tracks) is
 /// the channel's own, and a channel that keeps such presentation state adds
 /// it to the signature itself.
-struct ChatSubAgentOverview: Sendable {
+public struct ChatSubAgentOverview: Sendable {
     /// Every sub-agent snapshot, in the runtime's order. Empty when the
     /// session has no sub-agent to show.
-    let snapshots: [DirectSubAgentRuntime.AgentSnapshot]
+    public let snapshots: [DirectSubAgentRuntime.AgentSnapshot]
     /// The identity (a UUID string) of the overview wave that is current now,
     /// or `nil` when no snapshot belongs to it. The overview can also hold
     /// older standby agents and agents active through shared chat, so the
     /// wave comes from the runtime's own mark, never from the array order.
-    let currentBatchID: String?
+    public let currentBatchID: String?
     /// Identity of what a channel renders, see ``signature(for:)``.
-    let signature: String
+    public let signature: String
 
-    init(snapshots: [DirectSubAgentRuntime.AgentSnapshot]) {
+    public init(snapshots: [DirectSubAgentRuntime.AgentSnapshot]) {
         self.snapshots = snapshots
         self.currentBatchID = Self.currentBatchID(in: snapshots)
         self.signature = Self.signature(for: snapshots)

@@ -102,7 +102,7 @@ public enum ZenCODEHeadlessRunner {
     /// The sinks receive what would otherwise be printed on standard output
     /// (nil prints it), so a caller can capture the run's output, as Mail.app
     /// delivery of a scheduled run does.
-    @TerminalChatActor
+    @ChatSessionActor
     public static func run(
         configuration: AgentConfiguration,
         prompt: String,
@@ -111,13 +111,13 @@ public enum ZenCODEHeadlessRunner {
         jsonlSink: ZenCODEHeadlessJSONLWriter.Sink? = nil,
         textSink: TextSink? = nil
     ) async throws {
-        let sessionRunner = AgentCoreSessionRunner(
+        let sessionRunner = ChatSessionRuntimeFactory.makeSessionRunner(
             // This path never opens or reads a terminal consent dialog. It still
             // honors persisted approvals and tools which do not require consent.
-            defaultToolAuthorizationHandler: { request in
+            toolAuthorizationHandler: { request in
                 await permissionAuthorizer.authorizeNonInteractively(request)
             },
-            backendFactory: backendFactory
+            backendFactory: backendFactory ?? ChatSessionRuntimeFactory.productionBackendFactory
         )
         let session = await makeSession(
             configuration: configuration,
@@ -151,7 +151,7 @@ public enum ZenCODEHeadlessRunner {
     ///
     /// The prompt carries no response-language section, as for an interactive
     /// session before its first prompt locks a language.
-    @TerminalChatActor
+    @ChatSessionActor
     static func makeSession(
         configuration: AgentConfiguration,
         sessionRunner: AgentCoreSessionRunner
@@ -186,7 +186,7 @@ public enum ZenCODEHeadlessRunner {
     /// Lifecycle seam for focused tests. Output mode still comes only from the
     /// same configuration used by production; sinks merely observe framed JSONL
     /// records or the legacy final text. A nil sink writes to standard output.
-    @TerminalChatActor
+    @ChatSessionActor
     static func runTurn(
         configuration: AgentConfiguration,
         prompt: String,

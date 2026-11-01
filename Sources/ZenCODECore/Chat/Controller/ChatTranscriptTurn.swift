@@ -127,6 +127,3 @@ actor ChatTranscriptTurn {
         )
     }
 }
-
-/// Compatibility name used by the terminal chat.
-typealias TerminalSessionTranscriptTurn = ChatTranscriptTurn

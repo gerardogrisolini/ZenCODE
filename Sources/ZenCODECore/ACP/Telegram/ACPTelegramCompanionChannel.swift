@@ -45,10 +45,12 @@ final class ACPSessionPromptActivity: Sendable {
 /// An editor drives the session: the companion only mirrors it
 /// (``TelegramSessionCompanion/Policy/mirrorOnly``) and answers what can be
 /// consulted or approved from the linked chat. So the channel runs no prompt
-/// that arrives from Telegram, presents none of the companion's notices (ACP
-/// has no place for a message outside a prompt's reply; the bridge answers
-/// `/telegram` itself), and, when a route is invalidated, unlinks Telegram
-/// without stopping the editor's turn.
+/// that arrives from Telegram, and, when a route is invalidated, unlinks
+/// Telegram without stopping the editor's turn. ACP has no place for a
+/// message outside a prompt's reply, so the companion's notices are
+/// presented only while the bridge answers `/telegram on`: they follow the
+/// activation text in that reply (see ``takePendingNotices()``); every other
+/// notice is dropped.
 ///
 /// One channel serves one incarnation of one session (`sessionID`, `epoch`).
 /// The bridge keeps it in the session state next to the companion, which
@@ -68,6 +70,12 @@ final class ACPTelegramCompanionChannel: TelegramCompanionChannel {
     let epoch: UInt64
     private let promptActivity: ACPSessionPromptActivity
     weak var companion: TelegramSessionCompanion?
+    /// The notices the companion presented since
+    /// ``beginCollectingNotices()``, without their trailing newlines.
+    private var pendingNotices: [String] = []
+    /// Whether a `/telegram on` reply is being composed, so the companion's
+    /// notices are kept for it instead of being dropped.
+    private var collectsNotices = false
 
     init(sessionID: String, epoch: UInt64, promptActivity: ACPSessionPromptActivity) {
         self.sessionID = sessionID
@@ -81,9 +89,53 @@ final class ACPTelegramCompanionChannel: TelegramCompanionChannel {
         []
     }
 
-    /// Dropped: ACP writes only inside a prompt's reply, and the bridge
-    /// builds the replies to `/telegram` itself.
-    func presentCompanionNotice(_ text: String, channel: ChatSessionNoticeChannel) async {}
+    /// Kept for the `/telegram on` reply while one is being composed (see
+    /// ``beginCollectingNotices()``); dropped otherwise, because ACP writes
+    /// only inside a prompt's reply.
+    func presentCompanionNotice(_ text: String, channel: ChatSessionNoticeChannel) async {
+        guard collectsNotices else { return }
+        var notice = Substring(text)
+        while notice.last?.isNewline == true {
+            notice.removeLast()
+        }
+        pendingNotices.append(String(notice))
+    }
+
+    /// Starts keeping the companion's notices for the reply to a
+    /// `/telegram on`, from an empty list.
+    func beginCollectingNotices() {
+        pendingNotices.removeAll()
+        collectsNotices = true
+    }
+
+    /// The notices kept since ``beginCollectingNotices()``, in the order the
+    /// companion presented them, without their trailing newlines. From here
+    /// on the notices are dropped again.
+    func takePendingNotices() -> [String] {
+        let notices = pendingNotices
+        pendingNotices.removeAll()
+        collectsNotices = false
+        return notices
+    }
+
+    /// Attaches `companion` (`/telegram on`) and returns the notices it
+    /// presented on this channel meanwhile, in order and without their
+    /// trailing newlines: the activation notice first, then, for one, a
+    /// topic that could not be created. When the attach throws, the notices
+    /// are dropped and the error is rethrown.
+    static func attachCollectingNotices(
+        _ companion: TelegramSessionCompanion
+    ) async throws(TelegramCompanionAttachError) -> [String] {
+        let channel = companion.channel as? ACPTelegramCompanionChannel
+        channel?.beginCollectingNotices()
+        do {
+            try await companion.attach()
+        } catch {
+            _ = channel?.takePendingNotices()
+            throw error
+        }
+        return channel?.takePendingNotices() ?? []
+    }
 
     /// Refused: the session runs only the editor's prompts. The mirror-only
     /// companion refuses them before asking, so this is never reached in
@@ -114,8 +166,8 @@ final class ACPTelegramCompanionChannel: TelegramCompanionChannel {
     }
 
     /// The reply to a `/telegram on` that attached `companion`: the notice
-    /// the companion presents on attaching (which this channel drops),
-    /// without its trailing newline.
+    /// the companion presents on attaching, without its trailing newline.
+    /// The notices presented after it while attaching follow it in the reply.
     static func activationText(of companion: TelegramSessionCompanion) -> String {
         let chatTitle = companion.linkedChatTitle?.nilIfBlank
             ?? companion.linkedChatID.map { "chat \($0)" }
@@ -170,15 +222,7 @@ extension ZenCODEACPBridge {
         if let router = telegramRouterStorage {
             return router
         }
-        let settings = AgentSettingsManifestStore.load()?.telegram
-        let router = TerminalTelegramSessionRouter(
-            linkedChatID: settings?.linkedChatID,
-            ownerUserID: settings?.ownerUserID,
-            routes: settings?.routes ?? [],
-            persist: { ownerUserID, routes in
-                try AgentSettingsManifestStore.saveTelegramRoutes(routes, ownerUserID: ownerUserID)
-            }
-        )
+        let router = TelegramCompanionRuntimeFactory.makeRouter()
         telegramRouterStorage = router
         return router
     }

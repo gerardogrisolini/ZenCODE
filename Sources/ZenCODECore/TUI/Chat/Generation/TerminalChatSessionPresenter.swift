@@ -12,7 +12,7 @@ import ToolCore
 ///
 /// The presenter holds the chat weakly: the chat owns the session controller,
 /// which owns this presenter, so a strong reference would form a cycle.
-@TerminalChatActor
+@ChatSessionActor
 final class TerminalChatSessionPresenter: ChatSessionPresenter {
     weak var chat: TerminalChat?
 

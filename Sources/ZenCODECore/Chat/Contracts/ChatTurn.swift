@@ -9,7 +9,7 @@ import Foundation
 
 /// Why a chat turn runs. The purpose selects the extra coordinator tools, the
 /// planning and workflow bookkeeping, and whether coordinator content is shown.
-enum ChatTurnPurpose: Sendable, Equatable {
+public enum ChatTurnPurpose: Sendable, Equatable {
     case normal
     case plan(originalGoal: String)
     /// A `/goal` turn. The graph ID travels with the purpose so the turn can
@@ -33,7 +33,7 @@ enum ChatTurnPurpose: Sendable, Equatable {
     ]
 
     /// The single table of coordinator tools a turn adds to the session grant.
-    func additionalToolNames(activePlan: TerminalSessionPlan?) -> Set<String> {
+    public func additionalToolNames(activePlan: TerminalSessionPlan?) -> Set<String> {
         switch self {
         case .plan:
             return ["todo.write"]
@@ -58,26 +58,26 @@ enum ChatTurnPurpose: Sendable, Equatable {
 }
 
 /// Everything a channel supplies to run one chat turn.
-struct ChatTurnRequest: Sendable {
-    var prompt: String
-    var attachments: [AgentRuntimeAttachment]
-    var purpose: ChatTurnPurpose
+public struct ChatTurnRequest: Sendable {
+    public var prompt: String
+    public var attachments: [AgentRuntimeAttachment]
+    public var purpose: ChatTurnPurpose
     /// The channel's session configuration, final for this turn. Channels add
     /// the purpose's coordinator tools from the single table in
     /// ``ChatTurnPurpose/additionalToolNames(activePlan:)`` while building it,
     /// because the grant also shapes their system prompt and profile policy.
-    var sessionConfiguration: AgentCoreSessionConfiguration
+    public var sessionConfiguration: AgentCoreSessionConfiguration
     /// Per-turn authorization override (for example a remote channel that
     /// owns consent for this turn); `nil` uses the runner default.
-    var authorizeTool: AgentToolAuthorizationHandler?
+    public var authorizeTool: AgentToolAuthorizationHandler?
     /// Evaluated before every model request of the turn, including automatic
     /// workflow continuations.
-    var turnInstructionProvider: (@Sendable () async -> String?)?
+    public var turnInstructionProvider: (@Sendable () async -> String?)?
     /// Presents this turn instead of the controller's default presenter, for
     /// channels whose presentation is bound to one request (ACP prompts).
-    var presenter: (any ChatSessionPresenter)?
+    public var presenter: (any ChatSessionPresenter)?
 
-    init(
+    public init(
         prompt: String,
         attachments: [AgentRuntimeAttachment] = [],
         purpose: ChatTurnPurpose = .normal,
@@ -97,30 +97,30 @@ struct ChatTurnRequest: Sendable {
 }
 
 /// The outcome of a completed chat turn.
-struct ChatTurnResult: Sendable {
+public struct ChatTurnResult: Sendable {
     /// The runtime response. For a planning turn this is the Planner response
     /// that replaced the coordinator output.
-    let response: DirectAgentResponse
+    public let response: DirectAgentResponse
     /// Final coordinator content block delimited by tool calls, rather than
     /// the runtime's aggregate response text.
-    let finalAssistantBlock: String?
-    let fileChangeSummary: TurnFileChangeSummary?
+    public let finalAssistantBlock: String?
+    public let fileChangeSummary: TurnFileChangeSummary?
     /// The approved plan that this turn completed, if any.
-    let automaticallyCompletedPlan: TerminalSessionPlan?
+    public let automaticallyCompletedPlan: TerminalSessionPlan?
 }
 
 /// A failed or cancelled chat turn, with the file changes it still produced.
-struct ChatTurnFailure: Error, Sendable {
-    let underlying: Error
-    let fileChangeSummary: TurnFileChangeSummary?
+public struct ChatTurnFailure: Error, Sendable {
+    public let underlying: Error
+    public let fileChangeSummary: TurnFileChangeSummary?
 
-    var isCancellation: Bool {
+    public var isCancellation: Bool {
         underlying is CancellationError
     }
 }
 
 /// A `/goal` workflow state change the channel may announce to the operator.
-enum ChatWorkflowNotice: Sendable, Equatable {
+public enum ChatWorkflowNotice: Sendable, Equatable {
     /// The coordinator asked a question; the next message answers it.
     case awaitingReply(graphID: String, pendingTaskCount: Int)
     /// The workflow is blocked; the next message resumes it.

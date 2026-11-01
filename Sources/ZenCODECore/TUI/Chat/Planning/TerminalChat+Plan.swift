@@ -244,5 +244,3 @@ extension TerminalChat {
         )?.response
     }
 }
-
-typealias TerminalPlanPointCollector = PlanningPointCollector

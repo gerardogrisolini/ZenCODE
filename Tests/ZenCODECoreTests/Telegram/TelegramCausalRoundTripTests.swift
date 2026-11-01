@@ -243,9 +243,9 @@ struct TelegramCausalRoundTripTests {
         }
     }
 
-    /// The isolated body of the causal chain. Runs on ``TerminalChatActor``
+    /// The isolated body of the causal chain. Runs on ``ChatSessionActor``
     /// exactly like the production runtime loop that normally owns this state.
-    @TerminalChatActor
+    @ChatSessionActor
     private static func runCausalFlow(transport: FakeTelegramTransport) async throws {
         let workingDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("telegram-causal-wd-\(UUID().uuidString)", isDirectory: true)
@@ -296,7 +296,7 @@ struct TelegramCausalRoundTripTests {
         // loop's dispatch: pull the event, route through the shared production
         // entry point, then run the turn like `startNextQueuedPrompt` does.
         let generationTask = Task {
-            var queuedPrompts = TerminalQueuedPromptBuffer()
+            var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
             var didQueuePrompt = false
             for await event in eventQueue.events {
                 guard case let .telegramMessage(message) = event else {
@@ -338,7 +338,7 @@ struct TelegramCausalRoundTripTests {
         // HTTP send even though ingress ACL resolution still succeeds.
         let sendCountBeforeStaleBusy = transport.requests(forMethod: "sendMessage").count
         terminal.telegramControlState.wireLifecycleEpoch = UUID()
-        var staleBusyQueue = TerminalQueuedPromptBuffer()
+        var staleBusyQueue = ChatPromptQueue<TerminalPromptOrigin>()
         _ = await terminal.handleTelegramRuntimeMessage(
             TerminalTelegramIncomingMessage(
                 chatID: Self.linkedChatID, userID: 7, text: "busy stale egress",

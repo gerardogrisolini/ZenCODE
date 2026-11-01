@@ -625,7 +625,7 @@ extension TelegramSessionCompanion {
     /// channel's ``TelegramCompanionChannel/isSessionGenerating()``. Such a
     /// channel has no prompt queue, so a prompt that would be admitted is
     /// refused. ``readsIngress`` is `true` while it reads.
-    func startConsuming() {
+    public func startConsuming() {
         guard ingressConsumerTask == nil else { return }
         readsIngress = true
         let messages = controlService.incomingMessages

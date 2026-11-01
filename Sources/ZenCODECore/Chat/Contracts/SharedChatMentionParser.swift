@@ -24,17 +24,17 @@ import ToolCore
 /// `sharedChatTerminalSafeText(_:)` and the others) as forwarders to this
 /// type, so the terminal and the Telegram companion parse and sanitize
 /// exactly the same way.
-enum SharedChatMentionParser {
+public enum SharedChatMentionParser {
     /// A complete mention: where the message goes and its sanitized text.
-    struct Route: Sendable, Equatable {
-        let destination: AgentSharedChat.Destination
-        let text: String
+    public struct Route: Sendable, Equatable {
+        public let destination: AgentSharedChat.Destination
+        public let text: String
     }
 
     /// The parser must distinguish ordinary prompts from a valid live mention
     /// that omitted its message body. The latter is input validation, not a
     /// prompt to queue behind a running generation.
-    enum Parse: Sendable, Equatable {
+    public enum Parse: Sendable, Equatable {
         case none
         case missingText(destination: AgentSharedChat.Destination)
         case route(Route)
@@ -43,9 +43,9 @@ enum SharedChatMentionParser {
     /// One entry of the mention catalogue, without presentation: a channel
     /// renders it as it needs (the terminal fits the agent's name to its
     /// columns, Telegram turns it into a picker button).
-    struct Suggestion: Sendable, Equatable {
+    public struct Suggestion: Sendable, Equatable {
         /// Whom the mention addresses.
-        enum Target: Sendable, Equatable {
+        public enum Target: Sendable, Equatable {
             /// The live coordinator (`@coordinator`).
             case coordinator
             /// The coordinator and every active agent instance (`@all`).
@@ -55,11 +55,16 @@ enum SharedChatMentionParser {
         }
 
         /// The readable handle, without the leading `@`.
-        let handle: String
-        let target: Target
+        public let handle: String
+        public let target: Target
+
+        public init(handle: String, target: Target) {
+            self.handle = handle
+            self.target = target
+        }
 
         /// The mention as the operator types it: `@handle` and one space.
-        var command: String {
+        public var command: String {
             "@\(handle) "
         }
     }
@@ -79,7 +84,7 @@ enum SharedChatMentionParser {
     /// id; every other direct mention resolves a readable handle from the
     /// catalogue back to the stable participant id, with a hidden fallback to
     /// the legacy `@agent-Base64` spelling for backward compatibility.
-    static func parse(
+    public static func parse(
         from rawInput: String,
         readableHandles: [String: String] = [:]
     ) -> Parse {
@@ -136,7 +141,7 @@ enum SharedChatMentionParser {
     /// tie-breaker, never by handle or by the internal id. Each handle is a
     /// readable alias assigned by the catalogue from the participant's display
     /// name; the stable id is never leaked into the list.
-    static func suggestions(
+    public static func suggestions(
         for participants: [AgentSharedChat.Participant],
         handleMap: [String: String]
     ) -> [Suggestion] {
@@ -188,7 +193,7 @@ enum SharedChatMentionParser {
     /// multiline separator. C0, C1, DEL, bidi/format controls and Unicode line
     /// separators are never emitted verbatim, so a payload cannot create an
     /// ANSI/OSC sequence, reorder a route label, or create a visual prompt row.
-    static func terminalSafeText(_ text: String) -> String {
+    public static func terminalSafeText(_ text: String) -> String {
         var result = ""
         var scalarCount = 0
         var utf8Count = 0
@@ -242,7 +247,7 @@ enum SharedChatMentionParser {
 
     /// ``terminalSafeText(_:)`` on one line: every whitespace run becomes one
     /// space, and a text left blank becomes "unnamed agent".
-    static func inlineTerminalSafeText(_ text: String) -> String {
+    public static func inlineTerminalSafeText(_ text: String) -> String {
         let flattened = terminalSafeText(text)
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")

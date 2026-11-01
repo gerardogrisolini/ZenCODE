@@ -9,7 +9,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite
 struct ReviewCommandTests {
     @Test

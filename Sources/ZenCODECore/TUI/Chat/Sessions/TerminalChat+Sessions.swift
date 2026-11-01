@@ -8,9 +8,6 @@
 import Foundation
 import ToolCore
 
-/// What `/sessions` does: the shared action.
-typealias TerminalSavedSessionCommandAction = ChatSavedSessionCommandAction
-
 extension TerminalChat {
     /// `/sessions`: adapter of ``ChatSessionController/runSessionsCommand(line:)``.
     public func handleSessionsCommand(_ command: String) async {
@@ -89,7 +86,7 @@ extension TerminalChat {
 
     /// Before the active session is discarded: the task-graph observer stops
     /// and the response language is decided again for the loaded session.
-    func savedSessionWillLoad() async {
+    public func savedSessionWillLoad() async {
         await stopTaskGraphObserver()
         resetResponseLanguageLock()
     }
@@ -98,7 +95,7 @@ extension TerminalChat {
     /// overview are cleared, the active tools and the loaded-model line are
     /// printed again, and the status bar starts over from the loaded
     /// selection.
-    func savedSessionWillRestore() async {
+    public func savedSessionWillRestore() async {
         pendingAttachments.removeAll()
         await renderCoordinator.resetOverview(.subAgents)
         await publishSubAgentOverviewIfChanged()
@@ -115,7 +112,7 @@ extension TerminalChat {
     /// observer is bound to the loaded session, the status bar shows its
     /// saved context window, its transcript is replayed, and the session's
     /// Telegram topic follows it.
-    func savedSessionDidRestore(
+    public func savedSessionDidRestore(
         transcript: [AgentRuntimeMessage],
         contextWindow: DirectAgentContextWindowStatus?
     ) async {

@@ -14,7 +14,7 @@ import Foundation
 /// the model, and rebuilds the tool and skill selection drives this extension
 /// of it. `AgentCoreSessionRunner` implements it with the signatures it already
 /// has, so the requirements spell out the parameters its defaults fill in.
-protocol ChatSessionManagementRuntime: ChatSessionRuntime {
+public protocol ChatSessionManagementRuntime: ChatSessionRuntime {
     // MARK: Sessions
 
     func createSession(

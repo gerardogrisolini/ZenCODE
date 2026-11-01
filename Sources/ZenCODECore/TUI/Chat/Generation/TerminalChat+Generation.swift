@@ -45,7 +45,7 @@ extension TerminalChat {
             // Evaluated for every request, so `/voice pause` or `/voice off`
             // while a workflow continues turn by turn takes effect on the
             // next prompt.
-            turnInstructionProvider: { @TerminalChatActor [weak self] in
+            turnInstructionProvider: { @ChatSessionActor [weak self] in
                 await self?.voiceTurnInstruction()
             }
         )
@@ -77,27 +77,14 @@ extension TerminalChat {
 
     /// The configuration of one turn: the session grant plus the purpose's
     /// coordinator tools, recomposed so the system prompt and the profile
-    /// tool policy see the final grant.
+    /// tool policy see the final grant (see
+    /// ``ChatSessionController/turnSessionConfiguration(for:responseLanguageSection:)``).
     func turnSessionConfiguration(
-        for purpose: TerminalPromptPurpose
+        for purpose: ChatTurnPurpose
     ) async -> AgentCoreSessionConfiguration {
-        let sessionConfiguration = await currentSessionConfiguration()
-        let additionalToolNames = chatSession.additionalToolNames(for: purpose)
-        let includesActivePlanProgress: Bool
-        switch purpose {
-        case .plan, .review:
-            includesActivePlanProgress = false
-        case .normal, .workflow:
-            includesActivePlanProgress = true
-        }
-        guard !additionalToolNames.isEmpty || !includesActivePlanProgress else {
-            return sessionConfiguration
-        }
-        var allowedToolNames = sessionConfiguration.allowedToolNames ?? []
-        allowedToolNames.formUnion(additionalToolNames)
-        return currentSessionConfiguration(
-            allowedToolNames: allowedToolNames,
-            includesActivePlanProgress: includesActivePlanProgress
+        await chatSession.turnSessionConfiguration(
+            for: purpose,
+            responseLanguageSection: responseLanguageSystemPromptSection()
         )
     }
 
@@ -108,10 +95,10 @@ extension TerminalChat {
     @discardableResult
     func recordStructuredPlanIfNeeded(
         responseText: String,
-        purpose: TerminalPromptPurpose,
+        purpose: ChatTurnPurpose,
         createdAt: Date = Date(),
         points: [TerminalSessionPlanPoint]
-    ) async throws(TerminalPlanGenerationError) -> Bool {
+    ) async throws(ChatPlanGenerationError) -> Bool {
         guard case let .plan(originalGoal) = purpose else {
             return false
         }
@@ -130,7 +117,7 @@ extension TerminalChat {
     @discardableResult
     func recordPlanIfNeeded(
         responseText: String,
-        purpose: TerminalPromptPurpose,
+        purpose: ChatTurnPurpose,
         createdAt: Date = Date(),
         points: [TerminalSessionPlanPoint] = []
     ) -> Bool {

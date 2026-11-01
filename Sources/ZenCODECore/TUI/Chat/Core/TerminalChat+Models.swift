@@ -12,7 +12,7 @@ enum TerminalSubmittedLineAction {
     case exitChat
     case requestSetup
     case runPrompt(String)
-    case runHiddenPrompt(String, purpose: TerminalPromptPurpose)
+    case runHiddenPrompt(String, purpose: ChatTurnPurpose)
     case prefillPrompt(String)
 }
 
@@ -58,19 +58,12 @@ public enum TerminalChatRunOutcome: Sendable {
     case setupRequested(TerminalChatResumeSnapshot)
 }
 
-/// Compatibility name used by the terminal frontend for ``ChatTurnPurpose``.
-typealias TerminalPromptPurpose = ChatTurnPurpose
-
-/// Compatibility name used by the terminal frontend. The implementation lives
-/// in the shared coordinator kernel and remains deliberately non-Codable.
-typealias TerminalPlanBrainstormingState = PlanningCommandRuntimeState
-
 struct TerminalPromptAttempt: Sendable {
     let prompt: String
     let attachments: [AgentRuntimeAttachment]
     let origin: TerminalPromptOrigin
     let locksResponseLanguage: Bool
-    let purpose: TerminalPromptPurpose
+    let purpose: ChatTurnPurpose
 }
 
 struct TerminalChatGenerationFailure: Sendable {
@@ -152,12 +145,6 @@ enum TerminalPromptOrigin: Sendable, Equatable {
         return lease
     }
 }
-
-/// Compatibility names used by the terminal frontend for the queue types of the
-/// Chat layer. The origin stays a terminal type (``TerminalPromptOrigin``) and
-/// is supplied here, so the Chat layer never depends on it.
-typealias TerminalQueuedPrompt = ChatQueuedPrompt<TerminalPromptOrigin>
-typealias TerminalQueuedPromptMode = ChatQueuedPromptMode
 
 struct TerminalVoicePromptResult: Sendable {
     let origin: TerminalPromptOrigin

@@ -7,12 +7,16 @@
 
 import Foundation
 
-/// Terminal-facing facade over the channel-neutral ``ChatToolConsentAuthorizer``.
+/// Channel adapter of the terminal over the channel-neutral
+/// ``ChatToolConsentAuthorizer``.
 ///
 /// The consent policy (gated tools, cache, persistence, dialog queue) lives in
-/// the shared authorizer; this type keeps the established terminal API and the
-/// `local.exec` identity/persistence helpers, and wires a terminal host that
-/// renders the consent card and reads the operator's key.
+/// the shared authorizer. This adapter connects it to the terminal: it wires a
+/// terminal consent host that renders the consent card and reads the
+/// operator's key through the injected key reader, and it keeps the terminal
+/// API and the `local.exec` identity/persistence helpers. It is not a
+/// deprecated name: a host app that is not a terminal builds its own
+/// ``ChatToolConsentAuthorizer`` with its own ``ChatInteractionHost`` instead.
 public actor LocalExecPermissionAuthorizer {
     enum PermissionDecision: Sendable {
         case allowOnce

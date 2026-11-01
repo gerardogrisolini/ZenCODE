@@ -9,7 +9,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite
 struct PlanCommandTests {
     @Test
@@ -2773,7 +2773,7 @@ struct PlanCommandTests {
     }
 }
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite(.serialized)
 struct PlanApprovalResponseLanguageTests {
     @Test
@@ -2787,7 +2787,7 @@ struct PlanApprovalResponseLanguageTests {
             withIntermediateDirectories: true
         )
         defer { try? FileManager.default.removeItem(at: root) }
-        try await AppStorageDirectory.withSupportDirectoryURL(supportDirectory) { @Sendable @TerminalChatActor in
+        try await AppStorageDirectory.withSupportDirectoryURL(supportDirectory) { @Sendable @ChatSessionActor in
             try AgentSettingsManifestStore.save(
                 AgentSettingsManifest(models: [], responseLanguage: "it")
             )

@@ -75,7 +75,7 @@ private actor TelegramGate {
     }
 }
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite
 struct TerminalTelegramOverviewMirroringTests {
     private func makeTemp() throws -> (

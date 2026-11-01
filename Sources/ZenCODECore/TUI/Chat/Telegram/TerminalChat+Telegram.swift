@@ -132,15 +132,15 @@ extension TerminalChat {
 
 /// The terminal is the primary channel of its Telegram companion.
 extension TerminalChat: TelegramCompanionChannel {
-    var primaryChannelDescription: String {
+    public var primaryChannelDescription: String {
         "TUI"
     }
 
-    func commandContext() -> ChatCommandContext {
+    public func commandContext() -> ChatCommandContext {
         currentCommandContext()
     }
 
-    func presentCompanionNotice(_ text: String, channel: ChatSessionNoticeChannel) async {
+    public func presentCompanionNotice(_ text: String, channel: ChatSessionNoticeChannel) async {
         switch channel {
         case .system:
             await writeSystemMessage(text)
@@ -159,7 +159,7 @@ extension TerminalChat: TelegramCompanionChannel {
     /// full queue, so the answer is always ``TelegramPromptAdmission/queued``.
     /// Without a loop to hand it to, the transcript is dropped silently, as a
     /// completion delivered after the loop ended always was.
-    func enqueueTelegramPrompt(
+    public func enqueueTelegramPrompt(
         _ text: String,
         lease: TerminalTelegramRouteLease,
         mode: ChatQueuedPromptMode
@@ -176,7 +176,7 @@ extension TerminalChat: TelegramCompanionChannel {
     /// came from `lease` when it is still the one in progress and then calls
     /// ``TelegramSessionCompanion/routeWasInvalidated(_:)``. Without a loop
     /// nothing happens.
-    func telegramRouteWasInvalidated(_ lease: TerminalTelegramRouteLease) async {
+    public func telegramRouteWasInvalidated(_ lease: TerminalTelegramRouteLease) async {
         _ = await telegramRuntimeEventQueue?.sendWithBackpressure(.telegramRouteInvalidated(lease))
     }
 
@@ -202,7 +202,7 @@ extension TerminalChat: TelegramCompanionChannel {
     /// overview refresh, the task-graph observer) while the boundary is
     /// presented land before or after the response depending on timing, as
     /// they always did.
-    func overviewMirrorBarrier() async {
+    public func overviewMirrorBarrier() async {
         if !isRetiringTelegramTurn,
            let output = activeAssistantOutput,
            await output.hasPendingContent {
@@ -211,7 +211,7 @@ extension TerminalChat: TelegramCompanionChannel {
         await renderCoordinator.waitForOverviewMirrorsToDrain()
     }
 
-    func sharedChatPanelDidChange() async {
+    public func sharedChatPanelDidChange() async {
         await refreshSharedChatPanelSuggestions()
     }
 }
@@ -528,7 +528,7 @@ extension TerminalChat {
     func handleTelegramRuntimeMessage(
         _ message: TerminalTelegramIncomingMessage,
         eventQueue: TerminalChatEventQueue,
-        queuedPrompts: inout TerminalQueuedPromptBuffer,
+        queuedPrompts: inout ChatPromptQueue<TerminalPromptOrigin>,
         transcriptions: TerminalVoiceTranscriptionRegistry,
         isSessionGenerating: Bool = false
     ) async -> Bool {
@@ -537,7 +537,7 @@ extension TerminalChat {
             isSessionGenerating: isSessionGenerating
         ) { prompt in
             queuedPrompts.enqueue(
-                TerminalQueuedPrompt(
+                ChatQueuedPrompt<TerminalPromptOrigin>(
                     text: prompt.text,
                     origin: .telegramLease(prompt.origin),
                     mode: prompt.mode
@@ -555,7 +555,7 @@ extension TerminalChat {
     /// without its answer.
     func handleTelegramMessage(
         _ message: TerminalTelegramIncomingMessage,
-        queuedPrompts: inout TerminalQueuedPromptBuffer,
+        queuedPrompts: inout ChatPromptQueue<TerminalPromptOrigin>,
         eventQueue: TerminalChatEventQueue,
         transcriptions: TerminalVoiceTranscriptionRegistry,
         isSessionGenerating: Bool = false

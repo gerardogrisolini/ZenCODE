@@ -7,9 +7,6 @@
 
 import Foundation
 
-/// A slash command of the terminal chat: the shared descriptor.
-typealias TerminalChatCommandDescriptor = ChatCommandDescriptor
-
 /// The facts of the terminal chat that hide some of its own commands. They
 /// occupy bits 16 and 17 of ``ChatCommandContext``, above the facts Chat
 /// defines.
@@ -137,7 +134,7 @@ extension TerminalChat {
         return context
     }
 
-    func visibleCommandDescriptorsForCurrentAgent() -> [TerminalChatCommandDescriptor] {
+    func visibleCommandDescriptorsForCurrentAgent() -> [ChatCommandDescriptor] {
         Self.commandRegistry.visibleDescriptors(in: currentCommandContext())
     }
 
@@ -145,7 +142,7 @@ extension TerminalChat {
         builderAgentEnabled: Bool,
         telegramEnabled: Bool,
         ds4ModelEnabled: Bool = false
-    ) -> [TerminalChatCommandDescriptor] {
+    ) -> [ChatCommandDescriptor] {
         commandRegistry.visibleDescriptors(
             in: commandContext(
                 builderAgentEnabled: builderAgentEnabled,
@@ -185,7 +182,7 @@ extension TerminalChat {
         shared: ChatCommandRegistry.sharedDescriptors,
         channel: [
             (after: "/help", descriptors: [
-                TerminalChatCommandDescriptor(
+                ChatCommandDescriptor(
                     command: "/setup",
                     summary: "configure ZenCODE",
                     help: "/setup saves the current session, opens setup, then restores the session with the new configuration.",
@@ -193,7 +190,7 @@ extension TerminalChat {
                 ),
             ]),
             (after: "/think", descriptors: [
-                TerminalChatCommandDescriptor(
+                ChatCommandDescriptor(
                     command: "/ds4",
                     summary: "DS4 engine status and runtime controls",
                     help: """
@@ -208,7 +205,7 @@ extension TerminalChat {
                 ),
             ]),
             (after: "/tools", descriptors: [
-                TerminalChatCommandDescriptor(
+                ChatCommandDescriptor(
                     command: "/feature",
                     summary: "list/manage features",
                     help: "/feature creates and manages Swift feature packages (Builder agent only). /feature list opens the enable/disable menu, /feature status prints known feature packages, and /feature promote <id> (--linux|--no-linux) [--repository path] prepares a generated package for a Git checkout without committing or pushing.",
@@ -218,7 +215,7 @@ extension TerminalChat {
                 ),
             ]),
             (after: "/review", descriptors: [
-                TerminalChatCommandDescriptor(
+                ChatCommandDescriptor(
                     command: "/cron",
                     summary: "schedule prompts with crontab: list, add, remove, run, mailto",
                     help: """
@@ -230,7 +227,7 @@ extension TerminalChat {
                     """,
                     scope: .channel
                 ),
-                TerminalChatCommandDescriptor(
+                ChatCommandDescriptor(
                     command: "/telegram",
                     summary: "turn Telegram on/off",
                     help: "/telegram shows Telegram status. Use /telegram on or /telegram off for this TUI session.",
@@ -238,14 +235,14 @@ extension TerminalChat {
                     availability: .telegramEnabled,
                     availableDuringGeneration: true
                 ),
-                TerminalChatCommandDescriptor(
+                ChatCommandDescriptor(
                     command: "/voice",
                     summary: "voice mode on/off/pause/resume",
                     help: "/voice on starts voice mode with any agent in the interactive terminal: utterances become prompts through local speech recognition and answers are read aloud (macOS uses the system speech frameworks; Linux uses the sherpa-onnx files downloaded from /setup > Voice mode and turns the microphone off while reading). Esc stops the reading. /voice off stops voice mode; /voice pause stops listening and reading aloud, /voice resume restarts both, and /voice alone toggles pause/resume. Voice mode lasts only for this TUI session.",
                     scope: .channel,
                     availableDuringGeneration: true
                 ),
-                TerminalChatCommandDescriptor(
+                ChatCommandDescriptor(
                     command: "/exit",
                     summary: "close session",
                     help: "/exit closes the session.",

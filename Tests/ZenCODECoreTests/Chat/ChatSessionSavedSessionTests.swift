@@ -12,7 +12,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite("Saved-session operations", .serialized)
 struct ChatSessionSavedSessionTests {
     private struct Environment {
@@ -44,7 +44,7 @@ struct ChatSessionSavedSessionTests {
             )
         }
 
-        @TerminalChatActor
+        @ChatSessionActor
         func chat(runner: AgentCoreSessionRunner) throws -> TerminalChat {
             TerminalChat(
                 configuration: try AgentConfiguration(
@@ -64,12 +64,12 @@ struct ChatSessionSavedSessionTests {
     /// Runs `body` on the chat actor with a private support directory (never
     /// the real `~/.zencode`) and a UUID-named temporary workspace.
     private nonisolated func withEnvironment(
-        _ body: @escaping @Sendable @TerminalChatActor (Environment) async throws -> Void
+        _ body: @escaping @Sendable @ChatSessionActor (Environment) async throws -> Void
     ) async throws {
         let environment = try Environment()
         defer { environment.remove() }
         try await AppStorageDirectory.withSupportDirectoryURL(environment.support) {
-            try await Task(name: "ZenCODE.Tests.saved-session-operations") { @TerminalChatActor in
+            try await Task(name: "ZenCODE.Tests.saved-session-operations") { @ChatSessionActor in
                 try await body(environment)
             }.value
         }

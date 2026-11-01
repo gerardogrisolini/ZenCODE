@@ -159,7 +159,7 @@ extension TerminalChat {
         await refreshStatusBarThinkingSelection()
         let loadedModelID = try await sessionRunner.preloadModel(
             configuration: await currentSessionConfiguration()
-        ) { @TerminalChatActor event in
+        ) { @ChatSessionActor event in
             await self.handleModelPreloadEvent(event)
         }
         await finishModelPreload(loadedModelID, emitStatus: emitStatus)

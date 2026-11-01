@@ -1,0 +1,221 @@
+//
+//  ChatPublicAPITests.swift
+//  ZenCODECoreTests
+//
+//  The public Chat API as a host app sees it: everything here is reached
+//  through `import ZenCODECore` without `@testable`, so a symbol of the
+//  composition path that is not public fails the build of this target.
+//
+
+import Foundation
+import Testing
+import ZenCODECore
+
+@Suite(.serialized)
+struct ChatPublicAPITests {
+    @Test("A host app composes a session, runs a command and a turn, and builds a Telegram companion")
+    func aHostAppComposesASessionThroughThePublicAPI() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chat-public-api-\(UUID().uuidString)", isDirectory: true)
+        let support = root.appendingPathComponent("support", isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try await AppStorageDirectory.withSupportDirectoryURL(support) {
+            // Composition: a hosted configuration, the environment without a
+            // feature runtime (a sandboxed app starts no feature process), the
+            // runner from the public factory, then the controller.
+            let configuration = try AgentConfiguration(
+                hostedModelID: "public-api-model",
+                availableAgents: AgentProfileStore.defaultProfiles(),
+                availableModels: [
+                    AgentSettingsModelManifest(
+                        id: "public-api-model",
+                        kind: .remoteAPI,
+                        modelID: "local/public-api-model"
+                    ),
+                ],
+                workingDirectory: workspace,
+                appMode: true
+            )
+            let environment = ChatSessionEnvironment(
+                configuration: configuration,
+                featureRuntime: nil,
+                userHomeDirectoryURL: nil
+            )
+            let presenter = AppPresenter()
+            let host = AppInteractionHost()
+            let authorizer = ChatToolConsentAuthorizer(host: host)
+            let backend = ScriptedACPCommandBackend()
+            let runner = ChatSessionRuntimeFactory.makeSessionRunner(
+                toolAuthorizationHandler: { request in await authorizer.authorize(request) },
+                backendFactory: { _, _ in backend }
+            )
+            let controller = ChatSessionController(
+                sessionID: "public-api-\(UUID().uuidString.lowercased())",
+                managementRuntime: runner,
+                environment: environment,
+                workingDirectory: workspace,
+                presenter: presenter,
+                host: host,
+                authorizer: authorizer
+            )
+            let hooks = AppChannelHooks()
+            await Self.install(hooks, on: controller)
+
+            // A shared command answers with notices the app renders itself.
+            let help = await controller.handleCommandLine("/help", context: [])
+            let helpNotice = try #require(help.notices.first { notice in
+                if case .help = notice { return true }
+                return false
+            })
+            #expect(!ChatSessionNoticeText.text(for: helpNotice).isEmpty)
+            #expect(Self.kind(of: helpNotice) == "help")
+
+            // A plain line nobody is waiting for is an ordinary prompt.
+            #expect(await controller.pendingReplyAction(for: "Hello") == nil)
+
+            // A turn, presented on the app's main-actor presenter.
+            await controller.applyInitialAgentSelectionIfNeeded()
+            let sessionConfiguration = await controller.turnSessionConfiguration(
+                for: .normal,
+                responseLanguageSection: nil
+            )
+            let result = try await controller.runTurn(ChatTurnRequest(
+                prompt: "Hello",
+                sessionConfiguration: sessionConfiguration
+            ))
+            #expect(result.response.text == "COORDINATOR INTERNAL QUESTION")
+            #expect(await presenter.assistantContent.joined() == "COORDINATOR INTERNAL QUESTION")
+            #expect(await controller.transcript.first?.content == "Hello")
+
+            // The Telegram companion of the session, built from the public
+            // factories; it stays detached until `attach()`.
+            let channel = AppTelegramChannel()
+            let companionIsActive = await Self.makeAndShutDownCompanion(
+                controller: controller,
+                runner: runner,
+                channel: channel
+            )
+            #expect(!companionIsActive)
+
+            // The mention parser of the shared chat.
+            guard case let .route(route) = SharedChatMentionParser.parse(from: "@coordinator ciao") else {
+                Issue.record("@coordinator was not parsed as a mention")
+                return
+            }
+            #expect(route.destination == .coordinator)
+            #expect(route.text == "ciao")
+
+            await runner.shutdown()
+        }
+    }
+
+    // MARK: - Helpers
+
+    /// A switch over a public Chat enum from a client: new cases may arrive in
+    /// a minor release, so a client always has a `default`.
+    private static func kind(of notice: ChatSessionNotice) -> String {
+        switch notice {
+        case .help:
+            return "help"
+        default:
+            return "other"
+        }
+    }
+
+    @ChatSessionActor
+    private static func install(_ hooks: AppChannelHooks, on controller: ChatSessionController) {
+        controller.channelHooks = hooks
+    }
+
+    @ChatSessionActor
+    private static func makeAndShutDownCompanion(
+        controller: ChatSessionController,
+        runner: AgentCoreSessionRunner,
+        channel: AppTelegramChannel
+    ) async -> Bool {
+        let companion = TelegramSessionCompanion(
+            controller: controller,
+            sessionRunner: runner,
+            router: TelegramCompanionRuntimeFactory.makeRouter(settings: nil),
+            controlService: TelegramCompanionRuntimeFactory.makeControlService(),
+            channel: channel,
+            configuration: TelegramSessionCompanion.Configuration(
+                primaryChannelDescription: "app",
+                policy: .mirrorOnly,
+                consentLocationDescription: "the app"
+            )
+        )
+        let isActive = companion.isActive
+        await companion.shutdown()
+        return isActive
+    }
+}
+
+// MARK: - A host app's channel types
+
+/// The app's presenter lives on the main actor; the controller reaches it
+/// with `await`. Every presentation it does not implement has a default.
+@MainActor
+private final class AppPresenter: ChatSessionPresenter {
+    private(set) var assistantContent: [String] = []
+    private(set) var sessionNotices: [ChatSessionNotice] = []
+
+    func presentAssistantContent(_ content: String) async {
+        assistantContent.append(content)
+    }
+
+    func presentSessionNotice(_ notice: ChatSessionNotice) async {
+        sessionNotices.append(notice)
+    }
+}
+
+/// An app host without menus or tool consent: what it cannot ask is answered
+/// by the defaults, and gated tools are refused without asking.
+@MainActor
+private final class AppInteractionHost: ChatInteractionHost {
+    nonisolated let capabilities: ChatChannelCapabilities = []
+
+    func requestToolConsent(_ request: AgentToolAuthorizationRequest) async -> ChatConsentDecision? {
+        nil
+    }
+}
+
+/// The app's steps between the steps of a selection operation, on the
+/// controller's isolation domain.
+@ChatSessionActor
+private final class AppChannelHooks: ChatSessionChannelHooks {
+    private(set) var startedSessions = 0
+
+    func sessionDidStartNew() async {
+        startedSessions += 1
+    }
+}
+
+/// The app as the primary channel of a mirror-only Telegram companion.
+@ChatSessionActor
+private final class AppTelegramChannel: TelegramCompanionChannel {
+    let primaryChannelDescription = "app"
+    private(set) var notices: [String] = []
+
+    func commandContext() -> ChatCommandContext {
+        []
+    }
+
+    func presentCompanionNotice(_ text: String, channel: ChatSessionNoticeChannel) async {
+        notices.append(text)
+    }
+
+    func enqueueTelegramPrompt(
+        _ text: String,
+        lease: TerminalTelegramRouteLease,
+        mode: ChatQueuedPromptMode
+    ) async -> TelegramPromptAdmission {
+        .refused
+    }
+
+    func telegramRouteWasInvalidated(_ lease: TerminalTelegramRouteLease) async {}
+}

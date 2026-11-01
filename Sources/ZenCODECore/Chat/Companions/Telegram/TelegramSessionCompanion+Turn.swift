@@ -33,7 +33,7 @@ import ToolCore
 /// its own.
 extension TelegramSessionCompanion {
     /// How the turn ended, as the primary channel presented it.
-    enum Outcome: Sendable, Equatable {
+    public enum Outcome: Sendable, Equatable {
         /// The turn completed with this final response text. An empty text
         /// is mirrored as `Done.`, as the terminal presents it.
         case completed(String)
@@ -78,7 +78,7 @@ extension TelegramSessionCompanion {
     /// mirror epoch still start over, but the turn reaches no chat, so it
     /// gets no reporter, no typing presence, and no route validation, and an
     /// ``attach()`` in the middle of it does not adopt it.
-    func beginTurn(origin: TelegramTurnOrigin?, mirrorEpoch: Int? = nil) async {
+    public func beginTurn(origin: TelegramTurnOrigin?, mirrorEpoch: Int? = nil) async {
         let origin = origin.map(routedOrigin(for:))
         let previousValidationTask = routeValidationTask
         routeValidationTask = nil
@@ -144,7 +144,7 @@ extension TelegramSessionCompanion {
     /// boundary once an intermediate response was published), `Stopped.`,
     /// `ZenCODE failed: <message>`, and the summary of
     /// ``TurnFileChangeSummaryPresentation/text(_:includesCommandHint:)``.
-    func finishTurn(
+    public func finishTurn(
         outcome: Outcome? = nil,
         fileChangeSummary: TurnFileChangeSummary? = nil
     ) async {
@@ -181,8 +181,10 @@ extension TelegramSessionCompanion {
         await channel?.overviewMirrorBarrier()
         let summaryPayload: TerminalTelegramTurnPayload?
         if let fileChangeSummary, !fileChangeSummary.entries.isEmpty {
+            // The `/undo` and `/changes` hint only where Telegram runs them:
+            // a mirror-only companion refuses `/undo`.
             let summary = TurnFileChangeSummaryPresentation
-                .text(fileChangeSummary, includesCommandHint: true)
+                .text(fileChangeSummary, includesCommandHint: configuration.policy == .full)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             summaryPayload = summary.isEmpty ? nil : .summary(summary)
         } else {
@@ -245,7 +247,7 @@ extension TelegramSessionCompanion {
     /// turn's reporting, tears down the route's runtime state and its pending
     /// command replies, and, when `lease` is the link's active route, forgets
     /// it and unbinds the shared-chat relay. Calling it again changes nothing.
-    func routeWasInvalidated(_ lease: TerminalTelegramRouteLease) async {
+    public func routeWasInvalidated(_ lease: TerminalTelegramRouteLease) async {
         await endTurnReporting()
         await routeRuntimeState.teardown(lease: lease)
         commandReplyBindings = commandReplyBindings.filter {

@@ -1162,6 +1162,47 @@ struct ACPCommandRoutingTests {
         }
     }
 
+    /// The notices the companion presents while `/telegram on` attaches it
+    /// follow the activation text in the reply: a topic the Bot API refuses
+    /// to create is reported there, as the terminal reports it after the
+    /// activation text, instead of being dropped.
+    @Test(.timeLimit(.minutes(1)))
+    func telegramOnAppendsTheTopicFailureAfterTheActivationText() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let transport = ACPTelegramScriptedTransport(
+                botID: ACPTelegramTestSupport.uniqueBotID(),
+                hasTopicsEnabled: true,
+                createdTopicIDs: []
+            )
+            let sessionID = "acp-telegram-topic-failure-\(UUID().uuidString)"
+            let fixture = try await ACPTelegramBridgeFixture.make(
+                root: root, sessionIDs: [sessionID], transport: transport
+            )
+            let bridge = fixture.bridge
+
+            let reply = try #require(
+                try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram on")
+            )
+
+            let companion = try #require(await fixture.companion(sessionID: sessionID))
+            #expect(await companion.isActive)
+            #expect(await companion.sessionTopic == nil)
+            let lastError = try #require(await companion.controlState.lastError)
+            #expect(reply == "Telegram remote control is active.\nLinked chat: Test\nZenCODE: \(lastError)")
+            #expect(await fixture.backend.prompts.isEmpty)
+
+            // A later `/telegram on` reports only what its own attach presents.
+            #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram off")
+                == "Telegram remote control stopped.")
+            let again = try #require(
+                try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram on")
+            )
+            #expect(again.components(separatedBy: "\n").filter { $0.hasPrefix("ZenCODE: ") }.count == 1)
+            #expect(!again.contains("Telegram remote control stopped."))
+            await bridge.shutdown()
+        }
+    }
+
     @Test
     func goalWithoutSubAgentsStartsResumesAndIsDiscoverable() async throws {
         let fixture = try await makeFixture(

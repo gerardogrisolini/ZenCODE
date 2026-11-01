@@ -7,7 +7,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite("Terminal voice mode")
 struct TerminalVoiceModeTests {
     @Test

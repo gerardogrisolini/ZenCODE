@@ -50,7 +50,7 @@ struct TerminalChatProjectAgentsTests {
     }
 
     @Test
-    @TerminalChatActor
+    @ChatSessionActor
     func savedSessionWithAFormerSystemProfileIDRestoresLikeADeletedProfile() throws {
         let terminal = TerminalChat(
             configuration: try AgentConfiguration(
@@ -123,7 +123,7 @@ struct TerminalChatProjectAgentsTests {
 
     /// `/agents <name>` resets the plan and the task graph but recreates the
     /// session with the same conversation, and its message says exactly that.
-    @TerminalChatActor
+    @ChatSessionActor
     private static func agentSwitchScenario(in workspace: URL) async throws {
         let developer = ProjectAgentSelectionTestSupport.developer
         let reviewer = ProjectAgentSelectionTestSupport.reviewer

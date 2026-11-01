@@ -119,7 +119,7 @@ extension ChatSessionController {
     /// call concerns only `agent.*` calls. Without a tool name it always
     /// publishes. The channel skips an overview whose signature it already
     /// rendered.
-    func publishSubAgentOverviewIfChanged(
+    public func publishSubAgentOverviewIfChanged(
         relatedToolName: String? = nil,
         presenter: (any ChatSessionPresenter)? = nil
     ) async {
@@ -134,7 +134,7 @@ extension ChatSessionController {
     /// controller's ``effectivePresenter(for:)`` when `nil`, read once here)
     /// every ``ChatSubAgentOverviewRefresher/interval``, unless the refresh
     /// already runs. Idempotent.
-    func startSubAgentOverviewRefreshIfNeeded(
+    public func startSubAgentOverviewRefreshIfNeeded(
         presenter: (any ChatSessionPresenter)? = nil
     ) {
         subAgentOverviewRefresher.startIfNeeded(
@@ -148,7 +148,7 @@ extension ChatSessionController {
     /// ``effectivePresenter(for:)`` when `nil`), also
     /// when no refresh was running, so the latest state reaches the channel
     /// after every tick. Idempotent.
-    func stopSubAgentOverviewRefresh(
+    public func stopSubAgentOverviewRefresh(
         presenter: (any ChatSessionPresenter)? = nil
     ) async {
         await subAgentOverviewRefresher.stop()

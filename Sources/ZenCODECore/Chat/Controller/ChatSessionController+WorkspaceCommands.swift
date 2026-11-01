@@ -260,7 +260,7 @@ extension ChatSessionController {
 
     /// Hands the staged attachments to the prompt the operator sends and
     /// clears them.
-    func consumePendingAttachments() -> [AgentRuntimeAttachment] {
+    public func consumePendingAttachments() -> [AgentRuntimeAttachment] {
         let attachments = pendingAttachments
         pendingAttachments.removeAll()
         return attachments

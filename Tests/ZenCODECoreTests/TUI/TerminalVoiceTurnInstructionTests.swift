@@ -11,7 +11,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite("Terminal voice turn instruction")
 struct TerminalVoiceTurnInstructionTests {
     @Test

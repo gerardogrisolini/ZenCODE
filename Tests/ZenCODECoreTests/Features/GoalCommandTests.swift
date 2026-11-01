@@ -7,7 +7,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite
 struct GoalCommandTests {
     @Test(arguments: [false, true])
@@ -414,7 +414,7 @@ struct GoalCommandTests {
             argumentsObject: [:],
             argumentsJSON: "{}"
         )
-        let questionThenSummary = TerminalSessionTranscriptTurn(prompt: "goal", attachments: [])
+        let questionThenSummary = ChatTranscriptTurn(prompt: "goal", attachments: [])
         await questionThenSummary.appendAssistantContent("Workflow question\nWhich database?")
         await questionThenSummary.appendToolCallStarted(tool)
         await questionThenSummary.appendAssistantContent("Summary: task list refreshed.")
@@ -423,7 +423,7 @@ struct GoalCommandTests {
         #expect(!state.recordCoordinatorOutput(await questionThenSummary.lastAssistantContent()))
         #expect(!state.isAwaitingReply)
 
-        let progressThenQuestion = TerminalSessionTranscriptTurn(prompt: "goal", attachments: [])
+        let progressThenQuestion = ChatTranscriptTurn(prompt: "goal", attachments: [])
         await progressThenQuestion.appendAssistantContent("Progress: task list refreshed.")
         await progressThenQuestion.appendToolCallStarted(tool)
         await progressThenQuestion.appendAssistantContent("Workflow question\nWhich database?")

@@ -7,11 +7,6 @@
 
 import Foundation
 
-/// A file path or URL referenced somewhere in the conversation that the
-/// `/open` command can hand off to the system `open` utility. Compatibility
-/// name of the shared ``ChatOpenCandidate``.
-typealias TerminalOpenCandidate = ChatOpenCandidate
-
 extension TerminalChat {
     /// `/open`, run by the shared controller (see
     /// ``ChatSessionController/runOpenCommand(line:)``).
@@ -22,7 +17,7 @@ extension TerminalChat {
     /// See ``ChatSessionController/attachmentCandidate(from:)``.
     nonisolated static func attachmentCandidate(
         from attachment: AgentRuntimeAttachment
-    ) -> TerminalOpenCandidate? {
+    ) -> ChatOpenCandidate? {
         ChatSessionController.attachmentCandidate(from: attachment)
     }
 
@@ -31,7 +26,7 @@ extension TerminalChat {
     nonisolated static func extractOpenCandidates(
         from text: String,
         workingDirectory: URL
-    ) -> [TerminalOpenCandidate] {
+    ) -> [ChatOpenCandidate] {
         ChatSessionController.extractOpenCandidates(
             from: text,
             workingDirectory: workingDirectory,
@@ -40,7 +35,7 @@ extension TerminalChat {
     }
 
     /// See ``ChatSessionNoticeText/openCandidateListText(_:)``.
-    nonisolated static func renderOpenCandidateList(_ candidates: [TerminalOpenCandidate]) -> String {
+    nonisolated static func renderOpenCandidateList(_ candidates: [ChatOpenCandidate]) -> String {
         ChatSessionNoticeText.openCandidateListText(candidates)
     }
 }

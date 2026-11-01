@@ -368,10 +368,10 @@ struct TerminalChatEventQueueTests {
 
     @Test
     func queuedPromptsRejectOverflowWithoutChangingFIFO() {
-        var prompts = TerminalQueuedPromptBuffer(capacity: 2)
-        let first = TerminalQueuedPrompt(text: "first", origin: .local)
-        let second = TerminalQueuedPrompt(text: "second", origin: .local)
-        let overflow = TerminalQueuedPrompt(text: "overflow", origin: .local)
+        var prompts = ChatPromptQueue<TerminalPromptOrigin>(capacity: 2)
+        let first = ChatQueuedPrompt<TerminalPromptOrigin>(text: "first", origin: .local)
+        let second = ChatQueuedPrompt<TerminalPromptOrigin>(text: "second", origin: .local)
+        let overflow = ChatQueuedPrompt<TerminalPromptOrigin>(text: "overflow", origin: .local)
 
         let acceptedFirst = prompts.enqueue(first)
         let acceptedSecond = prompts.enqueue(second)

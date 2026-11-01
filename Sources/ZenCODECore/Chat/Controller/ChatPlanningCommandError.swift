@@ -16,11 +16,11 @@ import Foundation
 /// headless session all create their controller with a management runtime,
 /// and the controller that only runs turns (the headless one-shot prompt)
 /// runs no command.
-enum ChatPlanningCommandError: LocalizedError, Equatable {
+public enum ChatPlanningCommandError: LocalizedError, Equatable {
     /// The controller was created without a ``ChatSessionManagementRuntime``.
     case sessionOperationsUnavailable
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .sessionOperationsUnavailable:
             return "this session cannot change task graphs or the saved-plan library: "

@@ -148,7 +148,7 @@ extension TerminalChat {
         prompt: String,
         origin: TerminalPromptOrigin = .local,
         isUserVisible: Bool = true,
-        purpose: TerminalPromptPurpose = .normal
+        purpose: ChatTurnPurpose = .normal
     ) -> TerminalPromptAttempt {
         // `/telegram on` mirrors terminal-originated turns through the currently
         // validated route lease. Keep attachment ownership based on the original

@@ -874,6 +874,17 @@ extension ChatSessionController {
     // MARK: - Pending replies
 
     /// Routes a plain line to the conversation that is explicitly waiting for
+    /// the operator, as the terminal does: the Goal for `/plan approve`, then
+    /// an open Planner question, then a `/goal` workflow awaiting the user.
+    /// `nil` when nothing is waiting, so the line is an ordinary prompt.
+    ///
+    /// The channel routes slash commands and live mentions before calling it:
+    /// neither is ever absorbed as a reply.
+    public func pendingReplyAction(for reply: String) async -> ChatCommandOutcome? {
+        await pendingReplyAction(for: reply, fence: nil, policy: .terminal)
+    }
+
+    /// Routes a plain line to the conversation that is explicitly waiting for
     /// the operator, in this order: the Goal for `/plan approve`, then an open
     /// Planner question, then a `/goal` workflow awaiting the user. `nil` when
     /// nothing is waiting, so the line is an ordinary prompt.

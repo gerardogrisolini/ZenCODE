@@ -6,7 +6,7 @@
 //
 
 /// Why an operation creates the session anew.
-enum ChatSessionRecreationReason: Sendable, Equatable {
+public enum ChatSessionRecreationReason: Sendable, Equatable {
     /// A model other than the current one was selected.
     case modelChanged
     /// An agent profile was activated.
@@ -17,7 +17,7 @@ enum ChatSessionRecreationReason: Sendable, Equatable {
 
 /// A selection command of the shared dispatcher, as
 /// ``ChatSessionChannelHooks/selectionDidApply(_:command:)`` names it.
-enum ChatSelectionCommand: Sendable, Equatable {
+public enum ChatSelectionCommand: Sendable, Equatable {
     /// `/models`.
     case models
     /// `/think`.
@@ -63,7 +63,7 @@ enum ChatSelectionCommand: Sendable, Equatable {
 /// The controller holds the hooks weakly. A channel without such steps sets
 /// none, and every method has a no-op default.
 @ChatSessionActor
-protocol ChatSessionChannelHooks: AnyObject, Sendable {
+public protocol ChatSessionChannelHooks: AnyObject, Sendable {
     /// The response-language section of the system prompt, read at every
     /// composition a selection operation performs, right where it composes.
     /// `nil` adds none.
@@ -162,44 +162,44 @@ protocol ChatSessionChannelHooks: AnyObject, Sendable {
 }
 
 extension ChatSessionChannelHooks {
-    func responseLanguageSection() -> String? {
+    public func responseLanguageSection() -> String? {
         nil
     }
 
-    func agentDidChange(_ agent: AgentProfile) async {}
+    public func agentDidChange(_ agent: AgentProfile) async {}
 
-    func sessionWillCreate(reason: ChatSessionRecreationReason) async {}
+    public func sessionWillCreate(reason: ChatSessionRecreationReason) async {}
 
-    func sessionDidCreate(reason: ChatSessionRecreationReason) async {}
+    public func sessionDidCreate(reason: ChatSessionRecreationReason) async {}
 
-    func modelPreloadDidEmit(_ event: DirectAgentEvent) async {}
+    public func modelPreloadDidEmit(_ event: DirectAgentEvent) async {}
 
-    func modelDidPreload(_ modelID: String, reason: ChatSessionRecreationReason) async {}
+    public func modelDidPreload(_ modelID: String, reason: ChatSessionRecreationReason) async {}
 
-    func savedSessionWillLoad() async {}
+    public func savedSessionWillLoad() async {}
 
-    func savedSessionWillRestore() async {}
+    public func savedSessionWillRestore() async {}
 
-    func savedSessionDidRestore(
+    public func savedSessionDidRestore(
         transcript: [AgentRuntimeMessage],
         contextWindow: DirectAgentContextWindowStatus?
     ) async {}
 
-    func responseLanguageShouldLock() {}
+    public func responseLanguageShouldLock() {}
 
-    func selectionDidApply(_ change: ChatSelectionChange, command: ChatSelectionCommand) async {}
+    public func selectionDidApply(_ change: ChatSelectionChange, command: ChatSelectionCommand) async {}
 
-    func commandContextWindow() async -> DirectAgentContextWindowStatus? {
+    public func commandContextWindow() async -> DirectAgentContextWindowStatus? {
         nil
     }
 
-    func newSessionID() -> String? {
+    public func newSessionID() -> String? {
         nil
     }
 
-    func sessionWillStartNew() async {}
+    public func sessionWillStartNew() async {}
 
-    func sessionDidStartNew() async {}
+    public func sessionDidStartNew() async {}
 
-    func sessionDidCompact(contextWindow: DirectAgentContextWindowStatus) async {}
+    public func sessionDidCompact(contextWindow: DirectAgentContextWindowStatus) async {}
 }

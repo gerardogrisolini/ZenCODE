@@ -15,7 +15,7 @@ import ToolCore
 /// settings on every call, so a change saved meanwhile is picked up. The
 /// catalog lists, searches, and resolves models and thinking levels, and saves
 /// a choice as the user's default only while ``persistsSelections`` is `true`.
-struct ChatModelCatalog: Sendable {
+public struct ChatModelCatalog: Sendable {
     /// Models supplied by the host process; `nil` for the configured catalog.
     let hostedModels: [AgentSettingsModelManifest]?
 
@@ -29,30 +29,30 @@ struct ChatModelCatalog: Sendable {
         self.hostedModels = hostedModels
     }
 
-    init(environment: ChatSessionEnvironment) {
+    public init(environment: ChatSessionEnvironment) {
         self.init(hostedModels: environment.hostedModels)
     }
 
     // MARK: - Listing
 
     /// Every available model, in configuration order.
-    func availableModels() -> [AgentSettingsModelManifest] {
+    public func availableModels() -> [AgentSettingsModelManifest] {
         hostedModels ?? AgentSettingsStore.availableModels()
     }
 
     /// Every available model, in presentation order
     /// (see ``AgentModelCatalogPresentation/sorted(_:)``).
-    func sortedModels() -> [AgentSettingsModelManifest] {
+    public func sortedModels() -> [AgentSettingsModelManifest] {
         AgentModelCatalogPresentation.sorted(availableModels())
     }
 
     /// The available models grouped by provider, in presentation order.
-    func providerGroups() -> [AgentModelProviderGroup] {
+    public func providerGroups() -> [AgentModelProviderGroup] {
         Self.providerGroups(availableModels())
     }
 
     /// `models` grouped by provider, groups and models in presentation order.
-    static func providerGroups(
+    public static func providerGroups(
         _ models: [AgentSettingsModelManifest]
     ) -> [AgentModelProviderGroup] {
         AgentModelCatalogPresentation.groupedByProvider(models)
@@ -62,7 +62,7 @@ struct ChatModelCatalog: Sendable {
 
     /// The first available model that `modelID` names (its ID, LLM ID, or
     /// model ID). `nil` for a missing or blank reference.
-    func model(matching modelID: String?) -> AgentSettingsModelManifest? {
+    public func model(matching modelID: String?) -> AgentSettingsModelManifest? {
         guard let modelID = modelID?.nilIfBlank else {
             return nil
         }
@@ -71,7 +71,7 @@ struct ChatModelCatalog: Sendable {
 
     /// The first of `models` that `modelID` names. `nil` for a missing or
     /// blank reference.
-    static func model(
+    public static func model(
         matching modelID: String?,
         in models: [AgentSettingsModelManifest]
     ) -> AgentSettingsModelManifest? {
@@ -83,7 +83,7 @@ struct ChatModelCatalog: Sendable {
 
     /// The first hosted model that `modelID` names; `nil` without hosted
     /// models.
-    func hostedModel(matching modelID: String?) -> AgentSettingsModelManifest? {
+    public func hostedModel(matching modelID: String?) -> AgentSettingsModelManifest? {
         guard let hostedModels else {
             return nil
         }
@@ -92,7 +92,7 @@ struct ChatModelCatalog: Sendable {
 
     /// Whether `modelID` is exactly the ID of an available model, the value a
     /// model option carries.
-    func containsModel(withID modelID: String) -> Bool {
+    public func containsModel(withID modelID: String) -> Bool {
         availableModels().contains { $0.id == modelID }
     }
 
@@ -171,7 +171,7 @@ struct ChatModelCatalog: Sendable {
     /// the user's settings are read now, so a choice saved meanwhile becomes
     /// the default: the explicit model, the agent's model when it is
     /// configured, then the selected or only configured model.
-    func defaultModelID(
+    public func defaultModelID(
         explicitModelID: String?,
         agentModelID: String?,
         launchModelID: String?
@@ -190,7 +190,7 @@ struct ChatModelCatalog: Sendable {
 
     /// The thinking levels `model` offers, in menu order; empty when its
     /// thinking is not configurable.
-    static func thinkingOptions(
+    public static func thinkingOptions(
         for model: AgentSettingsModelManifest
     ) -> [AgentThinkingSelection] {
         model.availableThinkingSelections
@@ -198,7 +198,7 @@ struct ChatModelCatalog: Sendable {
 
     /// The thinking level `rawValue` names, when the model `modelID` names
     /// offers exactly that level; `nil` otherwise.
-    func validatedThinkingSelection(
+    public func validatedThinkingSelection(
         _ rawValue: String,
         forModelID modelID: String?
     ) -> AgentThinkingSelection? {
@@ -225,7 +225,7 @@ struct ChatModelCatalog: Sendable {
     /// the model offers it, else the agent's and the configured defaults
     /// (see ``AgentSettingsStore/thinkingSelection(requestedSelection:explicitModelID:agentModelID:agentThinkingSelection:manifest:)``),
     /// resolved against ``resolutionManifest(selectedModelID:)``.
-    func resolvedThinkingSelection(
+    public func resolvedThinkingSelection(
         requested requestedSelection: AgentThinkingSelection?,
         explicitModelID: String?,
         agentModelID: String?,
@@ -245,7 +245,7 @@ struct ChatModelCatalog: Sendable {
 
     /// Saves `modelID` and `thinking` as the user's default model, when
     /// ``persistsSelections`` is `true`.
-    func saveModelSelection(
+    public func saveModelSelection(
         modelID: String,
         thinking: AgentThinkingSelection?
     ) throws {
@@ -260,7 +260,7 @@ struct ChatModelCatalog: Sendable {
 
     /// Saves `selection` as the user's default thinking level, when
     /// ``persistsSelections`` is `true`.
-    func saveThinkingSelection(_ selection: AgentThinkingSelection?) throws {
+    public func saveThinkingSelection(_ selection: AgentThinkingSelection?) throws {
         guard persistsSelections else {
             return
         }

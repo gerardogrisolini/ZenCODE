@@ -8,11 +8,14 @@
 import Foundation
 import ToolCore
 
-/// ACP-facing facade over the channel-neutral ``ChatToolConsentAuthorizer``.
+/// Channel adapter of ACP over the channel-neutral ``ChatToolConsentAuthorizer``.
 ///
 /// The consent policy (cache, persistence, teardown invalidation) lives in the
-/// shared authorizer; this type keeps the established ACP API and wires an
-/// ``ACPConsentHost`` that asks the client with `session/request_permission`.
+/// shared authorizer. This adapter connects it to ACP: it wires an
+/// ``ACPConsentHost`` that asks the client with `session/request_permission`,
+/// and it keeps the ACP API used by the bridge. It is not a deprecated name: a
+/// host app that is not an ACP client builds its own
+/// ``ChatToolConsentAuthorizer`` with its own ``ChatInteractionHost`` instead.
 public actor ACPPermissionBroker {
     private let writer: ACPWriter
     /// The shared consent policy this ACP facade delegates to.

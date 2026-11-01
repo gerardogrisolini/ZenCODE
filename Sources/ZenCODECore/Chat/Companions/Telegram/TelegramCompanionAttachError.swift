@@ -12,7 +12,7 @@
 /// is the text the terminal wrote for the same failure, byte for byte, with
 /// its `ZenCODE: ` prefix and its trailing newline, so a terminal that
 /// presents it is unchanged.
-enum TelegramCompanionAttachError: Error, Sendable, Equatable {
+public enum TelegramCompanionAttachError: Error, Sendable, Equatable {
     /// The settings hold no linked chat: Telegram was never paired.
     case notPaired
     /// The settings do not resolve to exactly one owner route this session
@@ -27,7 +27,7 @@ enum TelegramCompanionAttachError: Error, Sendable, Equatable {
     case controlFailed(description: String)
 
     /// The text the primary channel writes on its failure channel.
-    var failureText: String {
+    public var failureText: String {
         switch self {
         case .notPaired:
             "ZenCODE: Telegram is not paired. Run the /setup command in zen.\n"

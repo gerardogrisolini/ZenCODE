@@ -12,7 +12,7 @@ import Foundation
 /// `AgentCoreSessionRunner` is the production runtime; tests can supply a
 /// scripted actor. The protocol is deliberately narrow: session creation,
 /// shutdown, and every channel-specific operation stay with the channel.
-protocol ChatSessionRuntime: Actor {
+public protocol ChatSessionRuntime: Actor {
     /// The orchestrator that owns the task graphs of every session.
     nonisolated var taskOrchestrator: SessionTaskOrchestrator { get }
 
@@ -87,7 +87,7 @@ extension AgentCoreSessionConfiguration {
 }
 
 extension AgentCoreSessionRunner: ChatSessionRuntime {
-    func sendPrompt(
+    public func sendPrompt(
         configuration: AgentCoreSessionConfiguration,
         prompt: String,
         attachments: [AgentRuntimeAttachment],

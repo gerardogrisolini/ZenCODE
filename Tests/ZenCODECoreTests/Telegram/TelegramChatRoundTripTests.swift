@@ -16,7 +16,7 @@ import Synchronization
 import Testing
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite
 struct TelegramChatRoundTripTests {
     private static func makeTerminal(linkedChatID: Int64?) throws -> TerminalChat {
@@ -93,7 +93,7 @@ struct TelegramChatRoundTripTests {
             captured.withLock { $0.append(markup) }
             return 90
         }
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
         await terminal.handleTelegramMessage(
             Self.message("/chat"), queuedPrompts: &queuedPrompts,
             eventQueue: TerminalChatEventQueue(), transcriptions: TerminalVoiceTranscriptionRegistry(),
@@ -116,7 +116,7 @@ struct TelegramChatRoundTripTests {
             captured.withLock { $0.append(markup) }
             return 90
         }
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
 
         await terminal.handleTelegramMessage(
             Self.message("@"), queuedPrompts: &queuedPrompts,
@@ -137,7 +137,7 @@ struct TelegramChatRoundTripTests {
             captured.withLock { $0.append(markup) }
             return 91
         }
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
         await terminal.handleTelegramMessage(
             TerminalTelegramIncomingMessage(
                 chatID: 42, userID: 7, text: nil, voice: nil, messageID: 90,
@@ -168,7 +168,7 @@ struct TelegramChatRoundTripTests {
                 return 89 + $0.count
             }
         }
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
 
         await terminal.handleTelegramMessage(
             Self.message("/plan"), queuedPrompts: &queuedPrompts,
@@ -222,7 +222,7 @@ struct TelegramChatRoundTripTests {
             command: "/goal", chatID: 42,
             lease: .init(key: lease.key, generation: lease.generation + 1)
         )
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
 
         await terminal.handleTelegramMessage(
             TerminalTelegramIncomingMessage(
@@ -255,7 +255,7 @@ struct TelegramChatRoundTripTests {
                 return 89 + count
             }
         }
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
 
         await terminal.handleTelegramMessage(
             Self.message("/plan"), queuedPrompts: &queuedPrompts,
@@ -307,7 +307,7 @@ struct TelegramChatRoundTripTests {
     func messageIsIgnoredWhileTelegramIsNotActive() async throws {
         let terminal = try Self.makeTerminal(linkedChatID: 42)
         terminal.telegramControlState.isActive = false
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
 
         await terminal.handleTelegramMessage(
             Self.message("questo non deve partire"),
@@ -323,7 +323,7 @@ struct TelegramChatRoundTripTests {
     @Test
     func blankMessageIsNotQueued() async throws {
         let terminal = try Self.makeTerminal(linkedChatID: 42)
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
 
         await terminal.handleTelegramMessage(
             Self.message("   \n  "),
@@ -380,7 +380,7 @@ struct TelegramChatRoundTripTests {
                 callbackQueryID: "callback-1", callbackData: "zencode:mention:coordinator"
             ),
         ]
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
         for message in work {
             let didQueue = await terminal.handleTelegramRuntimeMessage(
                 message, eventQueue: TerminalChatEventQueue(),
@@ -499,7 +499,7 @@ struct TelegramChatRoundTripTests {
             notices.withLock { $0.append(text) }
             return true
         }
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
 
         _ = await terminal.handleTelegramRuntimeMessage(
             Self.message("foreign", chatID: 99), eventQueue: TerminalChatEventQueue(),
@@ -533,7 +533,7 @@ struct TelegramChatRoundTripTests {
             notices.withLock { $0.append(text) }
             return true
         }
-        var queuedPrompts = TerminalQueuedPromptBuffer()
+        var queuedPrompts = ChatPromptQueue<TerminalPromptOrigin>()
 
         let didQueue = await terminal.handleTelegramRuntimeMessage(
             TerminalTelegramIncomingMessage(
@@ -598,7 +598,7 @@ struct TelegramChatRoundTripTests {
     }
 
     /// Regression for the production ordering: publishing the operator message
-    /// wakes the shared-chat coordinator while `TerminalChatActor` is suspended.
+    /// wakes the shared-chat coordinator while `ChatSessionActor` is suspended.
     /// The Telegram lease must already be correlated with the bus UUID when that
     /// trigger arrives, and the resulting synthetic response must use the same
     /// fenced outbound channel.
@@ -644,7 +644,7 @@ struct TelegramChatRoundTripTests {
         var events = subscription.events.makeAsyncIterator()
 
         let submitFinished = Mutex(false)
-        let submission = Task { @TerminalChatActor in
+        let submission = Task { @ChatSessionActor in
             let action = await terminal.submittedTelegramLineAction(
                 "@coordinator answer on Telegram",
                 origin: .telegramLease(lease)
@@ -814,7 +814,7 @@ struct TelegramChatRoundTripTests {
             routedErrors.withLock { $0.append(message) }
             return true
         }
-        let submission = Task { @TerminalChatActor in
+        let submission = Task { @ChatSessionActor in
             await terminal.submittedTelegramLineAction(
                 "@coordinator this route will be retired",
                 origin: .telegramLease(staleLease)
