@@ -18,10 +18,13 @@ extension TerminalChat {
     /// Detects incomplete task graphs persisted by previous sessions and, in an
     /// interactive terminal, offers to resume one. When the user confirms a
     /// choice, the orchestrator restores the checkpoint and makes that exact
-    /// graph current before `sessionID` is switched. The later session creation
-    /// therefore cannot silently fall back to another graph from the same
-    /// checkpoint. Returns the resumed graph (if any) so the caller can print a
-    /// notice after the startup screen has been rendered.
+    /// graph current before the session takes the graph's id, in place through
+    /// the host (``ChatSessionHost/adoptSessionID(_:in:)``): the selection the
+    /// startup steps applied so far stays, as the runtime session does not
+    /// exist yet. The later session creation therefore cannot silently fall
+    /// back to another graph from the same checkpoint. Returns the resumed
+    /// graph (if any) so the caller can print a notice after the startup
+    /// screen has been rendered.
     ///
     /// Non-interactive (piped) input and ACP mode are skipped: resuming requires
     /// a choice the operator can make without contaminating ACP JSON-RPC I/O.
@@ -55,7 +58,7 @@ extension TerminalChat {
                         chosen,
                         workingDirectory: workingDirectory
                     )
-                    sessionID = chosen.sessionID
+                    try sessionHost.adoptSessionID(chosen.sessionID, in: terminalSlotID)
                     return chosen
                 } catch {
                     await writeSystemMessage(

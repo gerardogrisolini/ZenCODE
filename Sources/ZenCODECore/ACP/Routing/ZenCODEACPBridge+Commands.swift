@@ -87,7 +87,7 @@ extension ZenCODEACPBridge {
         epoch: UInt64,
         promptID: UUID
     ) async throws -> ACPCommandTurnRoute {
-        guard let session = reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
+        guard let session = await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
             throw CancellationError()
         }
         let controller = session.controller
@@ -517,38 +517,36 @@ extension ZenCODEACPBridge {
         return !requiresMessaging || allowedToolNames.contains("agent.message")
     }
 
+    /// The bridge's entry of the incarnation `epoch` of `sessionID` while the
+    /// prompt `promptID` holds it: the bridge's own liveness, then the host's
+    /// reservation, then the entry again after the hop. `nil` as soon as the
+    /// prompt was cancelled, released, or its incarnation ended.
     func reservedPromptSession(
         sessionID: String,
         epoch: UInt64,
         promptID: UUID
-    ) -> SessionState? {
+    ) async -> SessionState? {
         guard let session = liveSession(id: sessionID, epoch: epoch),
-              session.activePromptID == promptID,
-              case let .prompting(activePromptID) = session.operationState,
-              activePromptID == promptID else {
+              await host.holdsPrompt(session.promptReservation(promptID)) else {
             return nil
         }
-        return session
+        return liveSession(id: sessionID, epoch: epoch)
     }
 
+    /// Writes the bridge's entry back only while the prompt `promptID` holds
+    /// its incarnation, as ``reservedPromptSession(sessionID:epoch:promptID:)``
+    /// checks it; the write itself is one synchronous step on the entry.
     @discardableResult
     func updateReservedPromptSession(
         sessionID: String,
         epoch: UInt64,
         promptID: UUID,
         _ update: (inout SessionState) -> Void
-    ) -> Bool {
-        var didUpdate = false
-        let isLive = updateLiveSession(id: sessionID, epoch: epoch) { session in
-            guard session.activePromptID == promptID,
-                  case let .prompting(activePromptID) = session.operationState,
-                  activePromptID == promptID else {
-                return
-            }
-            update(&session)
-            didUpdate = true
+    ) async -> Bool {
+        guard await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
+            return false
         }
-        return isLive && didUpdate
+        return updateLiveSession(id: sessionID, epoch: epoch, update)
     }
 
     func clearACPPlanBrainstorming(
@@ -558,11 +556,12 @@ extension ZenCODEACPBridge {
         expectedCollectionID: UUID? = nil
     ) async {
         guard let session = liveSession(id: sessionID, epoch: epoch) else { return }
-        let collectionID = session.planBrainstorming?.collectionID
+        let controller = session.controller
+        let brainstorming = controller.commandState.planBrainstorming
+        let collectionID = brainstorming?.collectionID
         if let expectedCollectionID, collectionID != expectedCollectionID {
             return
         }
-        let brainstorming = session.planBrainstorming
         var agentIDs = Set<String>()
         if let plannerAgentID = brainstorming?.plannerAgentID {
             agentIDs.insert(plannerAgentID)
@@ -570,7 +569,7 @@ extension ZenCODEACPBridge {
         if closeAllPlanAuthors || (brainstorming != nil && agentIDs.isEmpty) {
             let snapshots = await sessionRunner.subAgentSnapshots()
             guard let current = liveSession(id: sessionID, epoch: epoch),
-                  current.planBrainstorming?.collectionID == collectionID else {
+                  current.controller.commandState.planBrainstorming?.collectionID == collectionID else {
                 return
             }
             agentIDs.formUnion(
@@ -580,9 +579,14 @@ extension ZenCODEACPBridge {
                 ).map(\.id)
             )
         }
-        guard updateLiveSession(id: sessionID, epoch: epoch, { state in
-            guard state.planBrainstorming?.collectionID == collectionID else { return }
-            state.planBrainstorming = nil
+        // The discussion is cleared under the controller's lock, inside the
+        // step that checks the incarnation, only while it is still the one
+        // read above.
+        guard updateLiveSession(id: sessionID, epoch: epoch, { live in
+            live.controller.stateStore.withLock { state in
+                guard state.commandState.planBrainstorming?.collectionID == collectionID else { return }
+                state.commandState.planBrainstorming = nil
+            }
         }) else {
             return
         }
@@ -663,7 +667,7 @@ extension ZenCODEACPBridge {
         guard Self.isTelegramCommandVisible() else {
             return .immediate(Self.acpImmediateText(ChatCommandRegistry.unknownCommandMessage(for: line)))
         }
-        guard let session = reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
+        guard let session = await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
             throw CancellationError()
         }
         let argument = ChatCommandRegistry.arguments(
@@ -699,7 +703,7 @@ extension ZenCODEACPBridge {
             // `session/cancel` dropped the reservation meanwhile: the prompt
             // then ends `cancelled`, and the link stays as it was attached.
             await companion.startConsuming()
-            guard reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
+            guard await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
                 throw CancellationError()
             }
             // The activation notice itself is among them: the reply starts

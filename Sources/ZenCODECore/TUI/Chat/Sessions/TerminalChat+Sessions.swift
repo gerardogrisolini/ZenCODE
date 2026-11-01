@@ -16,9 +16,14 @@ extension TerminalChat {
 
     /// Resets the runtime conversation and starts a fresh, unsaved session.
     /// Replaces the former `/clear` command. Adapter of
-    /// ``ChatSessionController/newSessionCommand()``; the terminal's steps
-    /// around the new session run in ``sessionWillStartNew()`` and
-    /// ``sessionDidStartNew()``.
+    /// ``ChatSessionController/newSessionCommand()``, which in the terminal's
+    /// slot starts a new incarnation through the host
+    /// (``ChatSessionHost/newSession(in:sessionID:)``, with
+    /// ``newTerminalSessionID()``): a new controller from the launch profile,
+    /// so the model, thinking level, agent, tools, and skills chosen before
+    /// are not kept. The terminal's steps around the new session run in
+    /// ``sessionWillStartNew()``, on the controller being replaced, and
+    /// ``sessionDidStartNew()``, on the new one.
     public func startNewSession() async {
         await writeSessionNotices(await chatSession.newSessionCommand().notices)
     }
@@ -69,8 +74,13 @@ extension TerminalChat {
     /// entry in the tree.  When `checkpointEntryID` is provided the message
     /// history is rebuilt from the root-to-entry path and a new branch is
     /// started from that entry. Adapter of
-    /// ``ChatSessionController/loadSavedSession(_:checkpointEntryID:)``; the
-    /// terminal's own steps run in the `savedSession…` hooks.
+    /// ``ChatSessionController/loadSavedSession(_:checkpointEntryID:)``, which
+    /// in the terminal's slot loads the session into a new incarnation
+    /// through the host (``ChatSessionHost/loadSavedSession(in:name:checkpointEntryID:)``):
+    /// a new controller from the launch profile with the selection saved in
+    /// the session. The terminal's own steps run in the `savedSession…`
+    /// hooks: the first on the controller being replaced, the others on the
+    /// new one, in the order they always ran.
     public func loadSavedSession(
         _ savedSession: TerminalSavedSession,
         checkpointEntryID: String?

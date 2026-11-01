@@ -94,6 +94,14 @@ public final class ChatSessionController {
     /// sets it when it has commands of its own; until then only the shared
     /// commands are known.
     public var commandRegistry = ChatCommandRegistry(shared: ChatCommandRegistry.sharedDescriptors)
+    /// The host whose slot runs this controller as one incarnation, with the
+    /// slot, set by the host as it creates the controller; `nil` for a
+    /// controller a channel runs on its own. The operations that replace the
+    /// session (``startNewSession(newSessionID:)``,
+    /// ``loadSavedSession(_:checkpointEntryID:)``) go through it: a new
+    /// incarnation of the slot, with a new controller, instead of a switch
+    /// in place; this controller is fenced and runs nothing afterwards.
+    var hostBinding: ChatSessionHostBinding?
 
     /// The agent, model, thinking, tool, and skill choices of the session. A
     /// new controller starts from the launch agent and the launch's explicit
@@ -198,10 +206,7 @@ public final class ChatSessionController {
         self.managementRuntime = managementRuntime
         self.environment = environment
         self.modelCatalog = ChatModelCatalog(environment: environment)
-        self.selection = ChatSessionSelection(
-            agent: environment.launchAgent,
-            modelIDOverride: environment.explicitModelID
-        )
+        self.selection = Self.initialSelection(for: environment)
         self.workingDirectory = workingDirectory
         self.presenter = presenter
         self.host = host
@@ -211,6 +216,16 @@ public final class ChatSessionController {
     }
 
     // MARK: - Presentation
+
+    /// The selection a new controller starts from: the launch agent and the
+    /// launch's explicit model. A reducer created before its controller is
+    /// seeded with it.
+    nonisolated static func initialSelection(for environment: ChatSessionEnvironment) -> ChatSessionSelection {
+        ChatSessionSelection(
+            agent: environment.launchAgent,
+            modelIDOverride: environment.explicitModelID
+        )
+    }
 
     /// Attaches `companion`, which from the next turn or operation receives
     /// every call of the presenter before the primary does (see

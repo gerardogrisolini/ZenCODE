@@ -556,8 +556,8 @@ extension ZenCODEACPBridge {
         sessions[sessionID]?.telegramCompanion
     }
 
-    func telegramRouterForTesting() -> TerminalTelegramSessionRouter? {
-        telegramRouterStorage
+    func telegramRouterForTesting() async -> TerminalTelegramSessionRouter? {
+        await host.telegramRouterStorage
     }
 
     /// The epoch of the live incarnation of `sessionID`, if any.

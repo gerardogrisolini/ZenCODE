@@ -75,8 +75,14 @@ extension ZenCODEACPBridge {
         invalidateLifecycleOperations(sessionID: sessionID, epoch: epoch)
     }
 
-    func installTestSession(_ configuration: AgentCoreSessionConfiguration) {
-        sessions[configuration.sessionID] = sessionState(configuration: configuration)
+    /// Installs a new incarnation of `configuration.sessionID` in the host
+    /// and publishes its ACP state, without a runner session.
+    func installTestSession(_ configuration: AgentCoreSessionConfiguration) async {
+        do {
+            _ = try await installSession(configuration: configuration)
+        } catch {
+            Issue.record("installTestSession failed: \(error)")
+        }
     }
 
     func testThinkingOptionValues(
@@ -138,13 +144,14 @@ extension ZenCODEACPBridge {
     func planStateForTesting(
         sessionID: String
     ) -> (activePlan: TerminalSessionPlan?, brainstorming: PlanningCommandRuntimeState?) {
-        (sessions[sessionID]?.activePlan, sessions[sessionID]?.planBrainstorming)
+        let commandState = sessions[sessionID]?.controller.commandState
+        return (commandState?.activePlan, commandState?.planBrainstorming)
     }
 
     func workflowStateForTesting(
         sessionID: String
     ) -> WorkflowCommandRuntimeState? {
-        sessions[sessionID]?.workflowContinuation
+        sessions[sessionID]?.controller.commandState.activeWorkflow
     }
 
     func sessionEpochForTesting(sessionID: String) -> UInt64 {

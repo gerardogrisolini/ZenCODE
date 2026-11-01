@@ -113,97 +113,110 @@ extension ZenCODEACPBridge {
         ]
     }
 
-    /// Builds a session state with a fresh epoch. Pass `epoch` to preserve the
-    /// existing incarnation when only refreshing an already-live session.
-    public func sessionState(
+    /// The ACP state of a new incarnation the host runs: unannounced, with
+    /// fresh presentation state, no companion, and no prompt.
+    func sessionState(
         configuration: AgentCoreSessionConfiguration,
         selectedAgent: AgentProfile? = nil,
-        epoch: UInt64? = nil,
-        activePromptID: UUID? = nil,
-        activePromptTask: Task<PromptCompletion, Error>? = nil,
-        operationState: SessionOperationState = .idle
+        incarnation: ChatSessionIncarnation
     ) -> SessionState {
-        sessionStateWithCommandState(
-            configuration: configuration,
-            selectedAgent: selectedAgent,
-            epoch: epoch,
-            activePromptID: activePromptID,
-            activePromptTask: activePromptTask,
-            operationState: operationState
-        )
-    }
-
-    // All same-incarnation reconstruction paths (mention, refresh and
-    // reconfiguration) inherit ACP presentation state, the chat controller
-    // (with its command state) and the Telegram companion from the live entry.
-    // A fresh epoch, including load/resume, deliberately starts unannounced
-    // with a new controller and without a companion.
-    func sessionStateWithCommandState(
-        configuration: AgentCoreSessionConfiguration,
-        selectedAgent: AgentProfile? = nil,
-        epoch: UInt64? = nil,
-        activePromptID: UUID? = nil,
-        activePromptTask: Task<PromptCompletion, Error>? = nil,
-        operationState: SessionOperationState = .idle
-    ) -> SessionState {
-        let liveIncarnation = epoch.flatMap { expectedEpoch in
-            sessions[configuration.sessionID].flatMap { $0.epoch == expectedEpoch ? $0 : nil }
-        }
-        return SessionState(
+        SessionState(
             id: configuration.sessionID,
             cwd: configuration.workingDirectory.path,
             allowedToolNames: configuration.allowedToolNames,
             configuration: configuration,
-            epoch: epoch ?? makeSessionEpoch(),
+            epoch: incarnation.epoch,
+            slotID: incarnation.slotID,
             selectedAgent: selectedAgent,
-            hasPresentedInitialConfiguration: liveIncarnation?.hasPresentedInitialConfiguration ?? false,
-            presentedCommands: liveIncarnation?.presentedCommands,
-            tasklessPresentation: liveIncarnation?.tasklessPresentation ?? ACPTasklessPresentation(),
-            taskPresentation: liveIncarnation?.taskPresentation ?? ACPTaskPresentation(),
-            activePromptID: activePromptID,
-            activePromptTask: activePromptTask,
-            operationState: operationState,
-            controller: liveIncarnation?.controller ?? makeChatSessionController(configuration: configuration),
-            telegramCompanion: liveIncarnation?.telegramCompanion,
-            telegramCompanionChannel: liveIncarnation?.telegramCompanionChannel
+            controller: incarnation.controller
         )
     }
 
-    /// The chat controller of a new session incarnation. ACP presents each
-    /// prompt through a presenter bound to that prompt, so the controller's
-    /// default presenter stays silent, and ACP never reads the transcript.
-    func makeChatSessionController(
-        configuration: AgentCoreSessionConfiguration
-    ) -> ChatSessionController {
-        ChatSessionController(
-            sessionID: configuration.sessionID,
-            managementRuntime: sessionRunner,
-            environment: ChatSessionEnvironment(
-                configuration: self.configuration,
-                featureRuntime: sessionRunner.swiftFeatureRuntime,
-                userHomeDirectoryURL: UserHomeDirectory.current()
-            ),
-            workingDirectory: configuration.workingDirectory,
-            presenter: ACPSilentPresenter(),
-            host: ACPConsentHost(writer: writer),
-            authorizer: permissionBroker.consentAuthorizer,
-            retainsTranscript: false,
-            retainsFileArtifactHistory: false
+    /// The ACP state of the live incarnation `live` with another
+    /// configuration. All same-incarnation reconstruction paths (mention,
+    /// refresh and reconfiguration) inherit the ACP presentation state, the
+    /// incarnation binding (its slot, epoch, and controller with its command
+    /// state), the registered prompt task, and the Telegram companion from
+    /// the live entry. A new epoch, including load/resume, deliberately
+    /// starts unannounced with a new controller and without a companion
+    /// (``sessionState(configuration:selectedAgent:incarnation:)``).
+    func sessionState(
+        configuration: AgentCoreSessionConfiguration,
+        selectedAgent: AgentProfile? = nil,
+        inheriting live: SessionState
+    ) -> SessionState {
+        SessionState(
+            id: configuration.sessionID,
+            cwd: configuration.workingDirectory.path,
+            allowedToolNames: configuration.allowedToolNames,
+            configuration: configuration,
+            epoch: live.epoch,
+            slotID: live.slotID,
+            selectedAgent: selectedAgent,
+            hasPresentedInitialConfiguration: live.hasPresentedInitialConfiguration,
+            presentedCommands: live.presentedCommands,
+            promptUpdatePipeline: live.promptUpdatePipeline,
+            delegatedToolNotifications: live.delegatedToolNotifications,
+            tasklessObserver: live.tasklessObserver,
+            tasklessPresentation: live.tasklessPresentation,
+            taskPresentation: live.taskPresentation,
+            activeWorkflowPromptID: live.activeWorkflowPromptID,
+            activePromptTask: live.activePromptTask,
+            activePromptTaskID: live.activePromptTaskID,
+            controller: live.controller,
+            telegramCompanion: live.telegramCompanion,
+            telegramCompanionChannel: live.telegramCompanionChannel
         )
+    }
+
+    /// Runs a new incarnation of `configuration.sessionID` in the host and
+    /// publishes its ACP state: what `session/new` and `session/load` do
+    /// between their fences, in one step, for the tests that install a
+    /// session directly. The runner session is not created. An entry of an
+    /// earlier incarnation with the same id is replaced and its slot closed,
+    /// as a close followed by a load of the same id would leave it.
+    func installSession(
+        configuration: AgentCoreSessionConfiguration,
+        selectedAgent: AgentProfile? = nil
+    ) async throws -> SessionState {
+        if let replaced = sessions.removeValue(forKey: configuration.sessionID) {
+            await host.closeSlot(replaced.slotID, runtimeSession: .keep)
+        }
+        let incarnation = try await openACPSession(
+            sessionID: configuration.sessionID,
+            cwd: configuration.workingDirectory.path
+        )
+        let state = sessionState(
+            configuration: configuration,
+            selectedAgent: selectedAgent,
+            incarnation: incarnation
+        )
+        sessions[configuration.sessionID] = state
+        return state
     }
 
     /// Describes the selected runtime configuration without resolving a new
     /// thinking value or injecting presentation metadata into the model turn.
     func initialConfigurationSummary(for session: SessionState) -> String {
-        let agent = session.selectedAgent?.name.nilIfBlank
-            ?? session.configuration.agentName?.nilIfBlank
-            ?? session.configuration.agentID?.nilIfBlank
+        initialConfigurationSummary(
+            configuration: session.configuration,
+            selectedAgent: session.selectedAgent
+        )
+    }
+
+    func initialConfigurationSummary(
+        configuration: AgentCoreSessionConfiguration,
+        selectedAgent: AgentProfile?
+    ) -> String {
+        let agent = selectedAgent?.name.nilIfBlank
+            ?? configuration.agentName?.nilIfBlank
+            ?? configuration.agentID?.nilIfBlank
             ?? "Default"
-        let model = session.configuration.modelID?.nilIfBlank ?? "Default"
+        let model = configuration.modelID?.nilIfBlank ?? "Default"
         let thinking: String
-        if let selection = session.configuration.thinkingSelection {
+        if let selection = configuration.thinkingSelection {
             thinking = selection.displayTitle
-        } else if modelManifest(for: session.configuration.modelID)?.supportsThinking == false {
+        } else if modelManifest(for: configuration.modelID)?.supportsThinking == false {
             thinking = "Not supported"
         } else {
             // Missing/unknown capability is not evidence that thinking is off.
@@ -266,48 +279,53 @@ extension ZenCODEACPBridge {
         if let expectedEpoch, existingSession.epoch != expectedEpoch {
             return
         }
-        if let expectedPromptID,
-           existingSession.activePromptID != expectedPromptID {
-            return
-        }
         let epoch = existingSession.epoch
+        // The prompt reservation is the host's: a refresh bound to a prompt
+        // runs only while that prompt still holds its incarnation.
+        if let expectedPromptID {
+            guard await host.holdsPrompt(existingSession.promptReservation(expectedPromptID)) else {
+                return
+            }
+        }
         guard let snapshot = await sessionRunner.snapshotSession(id: sessionID) else {
             return
         }
         guard let session = liveSession(id: sessionID, epoch: epoch) else {
             return
         }
-        if let expectedPromptID, session.activePromptID != expectedPromptID {
-            return
+        if let expectedPromptID {
+            guard await host.holdsPrompt(session.promptReservation(expectedPromptID)) else {
+                return
+            }
         }
-        sessions[sessionID] = sessionStateWithCommandState(
-            configuration: AgentCoreSessionConfiguration(
-                sessionID: snapshot.sessionID,
-                modelID: snapshot.modelID ?? configuration.effectiveModelID,
-                agentID: session.configuration.agentID,
-                agentName: session.configuration.agentName,
-                agentRole: session.configuration.agentRole,
-                workingDirectory: snapshot.workingDirectoryPath,
-                systemPrompt: snapshot.systemPrompt,
-                dynamicContext: snapshot.dynamicContext,
-                cacheKey: snapshot.cacheKey,
-                sessionRevision: session.configuration.sessionRevision,
-                history: snapshot.history,
-                allowedToolNames: allowedToolNames ?? snapshot.allowedToolNames,
-                configuredContextWindowLimit: session.configuration.configuredContextWindowLimit,
-                generationParameterOverrides: session.configuration.generationParameterOverrides,
-                maxToolRounds: configuration.maxToolRounds,
-                maxOutputTokens: configuration.maxOutputTokens,
-                appMode: configuration.appMode,
-                thinkingSelection: snapshot.thinkingSelection,
-                preserveThinking: snapshot.preserveThinking
-            ),
-            selectedAgent: session.selectedAgent,
-            epoch: session.epoch,
-            activePromptID: session.activePromptID,
-            activePromptTask: session.activePromptTask,
-            operationState: session.operationState
-        )
+        // Rebuild from the entry as it is after the last hop.
+        updateLiveSession(id: sessionID, epoch: epoch) { live in
+            live = sessionState(
+                configuration: AgentCoreSessionConfiguration(
+                    sessionID: snapshot.sessionID,
+                    modelID: snapshot.modelID ?? configuration.effectiveModelID,
+                    agentID: session.configuration.agentID,
+                    agentName: session.configuration.agentName,
+                    agentRole: session.configuration.agentRole,
+                    workingDirectory: snapshot.workingDirectoryPath,
+                    systemPrompt: snapshot.systemPrompt,
+                    dynamicContext: snapshot.dynamicContext,
+                    cacheKey: snapshot.cacheKey,
+                    sessionRevision: session.configuration.sessionRevision,
+                    history: snapshot.history,
+                    allowedToolNames: allowedToolNames ?? snapshot.allowedToolNames,
+                    configuredContextWindowLimit: session.configuration.configuredContextWindowLimit,
+                    generationParameterOverrides: session.configuration.generationParameterOverrides,
+                    maxToolRounds: configuration.maxToolRounds,
+                    maxOutputTokens: configuration.maxOutputTokens,
+                    appMode: configuration.appMode,
+                    thinkingSelection: snapshot.thinkingSelection,
+                    preserveThinking: snapshot.preserveThinking
+                ),
+                selectedAgent: session.selectedAgent,
+                inheriting: live
+            )
+        }
     }
 
     public func replaySessionHistory(_ snapshot: AgentRuntimeSessionSnapshot) async {

@@ -18,23 +18,29 @@ extension ZenCODEACPBridge {
         // additionally answers `auth_required` while ZenCODE is not set up.
         try ensureConfigured()
         guard let sessionID = Self.sessionID(from: params),
-              var session = sessions[sessionID] else {
+              let knownSession = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        guard case .idle = session.operationState,
-              session.activePromptID == nil,
-              session.activePromptTask == nil else {
-            throw ACPError.invalidParams("A prompt is already running for this session.")
-        }
 
-        // Reserve the session synchronously, before the first `await`. Actor
-        // reentrancy would otherwise let a second `session/prompt` pass the
-        // guard above while this one is suspended parsing or resolving tools.
-        let promptID = UUID()
-        let epoch = session.epoch
-        session.activePromptID = promptID
-        session.operationState = .prompting(promptID)
-        sessions[sessionID] = session
+        // Reserve the session in the host, which checks and reserves in one
+        // step: a second `session/prompt` dispatched concurrently finds the
+        // reservation taken, whichever of the two the host serves first.
+        let reservation: ChatPromptReservation
+        do {
+            reservation = try await host.reservePrompt(in: knownSession.slotID)
+        } catch {
+            throw acpError(for: error, busyMessage: "A prompt is already running for this session.")
+        }
+        let promptID = reservation.promptID
+        let epoch = reservation.epoch
+        // The hop to the host is the first suspension: a close or a shutdown
+        // that landed meanwhile removed the entry, and the reservation it left
+        // in the host is released again.
+        guard let session = liveSession(id: sessionID, epoch: epoch) else {
+            await host.releasePrompt(reservation)
+            try ensureNotShutDown()
+            throw ACPError.invalidParams("Unknown or missing sessionId.")
+        }
         var didReleaseReservation = false
         // Track the ACP wrapper handler itself, not only the backend turn:
         // `close`/`shutdown` must be able to wait for this handler's unwind
@@ -43,23 +49,24 @@ extension ZenCODEACPBridge {
         defer { leavePromptHandler(sessionID: sessionID, token: promptHandlerToken) }
 
         /// Releases the reservation only when it is still ours and the session
-        /// is still the same incarnation.
-        func releaseReservation() {
+        /// is still the same incarnation: the bridge's own prompt state first,
+        /// so no reconfiguration finds the host idle while the prompt task is
+        /// still registered, then the host's reservation.
+        func releaseReservation() async {
             guard !didReleaseReservation else {
                 return
             }
             didReleaseReservation = true
             updateLiveSession(id: sessionID, epoch: epoch) { session in
-                guard session.activePromptID == promptID,
-                      case let .prompting(activePromptID) = session.operationState,
-                      activePromptID == promptID else {
-                    return
+                if session.activePromptTaskID == promptID {
+                    session.activePromptTask = nil
+                    session.activePromptTaskID = nil
                 }
-                session.activePromptID = nil
-                session.activeWorkflowPromptID = nil
-                session.activePromptTask = nil
-                session.operationState = .idle
+                if session.activeWorkflowPromptID == promptID {
+                    session.activeWorkflowPromptID = nil
+                }
             }
+            await host.releasePrompt(reservation)
         }
 
         do {
@@ -73,10 +80,10 @@ extension ZenCODEACPBridge {
                 releaseReservation: releaseReservation
             )
         } catch {
-            releaseReservation()
+            await releaseReservation()
             throw error
         }
-        releaseReservation()
+        await releaseReservation()
     }
 
     private func sendStopReason(id: JSONValue?, _ reason: String) async {
@@ -90,7 +97,7 @@ extension ZenCODEACPBridge {
         session initialSession: SessionState,
         promptID: UUID,
         epoch: UInt64,
-        releaseReservation: () -> Void
+        releaseReservation: () async -> Void
     ) async throws {
         var session = initialSession
         let promptBlocks = promptBlocks(from: params)
@@ -116,18 +123,17 @@ extension ZenCODEACPBridge {
             )
             // Keep the same incarnation and reservation: routing to another
             // agent updates the configuration, it does not restart the session.
-            session = sessionStateWithCommandState(
-                configuration: promptConfiguration,
-                selectedAgent: agentMentionResolution.agent,
-                epoch: epoch,
-                activePromptID: promptID,
-                operationState: .prompting(promptID)
-            )
-            guard updateLiveSession(id: sessionID, epoch: epoch, { liveSession in
-                liveSession = session
-            }) else {
+            let isLive = updateLiveSession(id: sessionID, epoch: epoch) { live in
+                live = sessionState(
+                    configuration: promptConfiguration,
+                    selectedAgent: agentMentionResolution.agent,
+                    inheriting: live
+                )
+            }
+            guard isLive, let mentionedSession = liveSession(id: sessionID, epoch: epoch) else {
                 throw CancellationError()
             }
+            session = mentionedSession
         } else {
             promptConfiguration = session.configuration
         }
@@ -136,7 +142,7 @@ extension ZenCODEACPBridge {
         let isPlanningReply = coordinatorCommand == nil
             && agentMentionResolution == nil
             && !CoordinatorCommandParser.isSlashCommand(routedPromptText)
-            && session.planBrainstorming?.isAwaitingReply == true
+            && session.controller.commandState.planBrainstorming?.isAwaitingReply == true
         // Commands remain visible exactly as the client sent them (including an
         // optional leading agent mention); only their hidden operational prompt
         // is substituted before generation.
@@ -161,12 +167,12 @@ extension ZenCODEACPBridge {
             )
         } catch is CancellationError {
             await sendStopReason(id: id, "cancelled")
-            releaseReservation()
+            await releaseReservation()
             return
         }
-        guard reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
+        guard await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
             await sendStopReason(id: id, "cancelled")
-            releaseReservation()
+            await releaseReservation()
             return
         }
         let modelPromptText: String
@@ -178,12 +184,12 @@ extension ZenCODEACPBridge {
                 update: Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: message)
             )
             await sendStopReason(id: id, "end_turn")
-            releaseReservation()
+            await releaseReservation()
             return
         case let .generate(prompt, purpose, prelude):
             modelPromptText = prompt
             commandPurpose = purpose
-            _ = updateReservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) { live in
+            _ = await updateReservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) { live in
                 if case .workflow = purpose {
                     live.activeWorkflowPromptID = promptID
                 } else {
@@ -198,8 +204,7 @@ extension ZenCODEACPBridge {
             }
         }
 
-        guard let liveCommandSession = liveSession(id: sessionID, epoch: epoch),
-              liveCommandSession.activePromptID == promptID else {
+        guard let liveCommandSession = await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
             throw CancellationError()
         }
         session = liveCommandSession
@@ -259,12 +264,14 @@ extension ZenCODEACPBridge {
 
         // The session may have been closed, replaced, or shut down while the
         // prompt was being prepared; never start generation for a dead session.
-        guard reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
+        guard await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
             throw CancellationError()
         }
 
-        sessions[sessionID]?.promptUpdatePipeline = updatePipeline
-        sessions[sessionID]?.delegatedToolNotifications.removeAll()
+        updateLiveSession(id: sessionID, epoch: epoch) { live in
+            live.promptUpdatePipeline = updatePipeline
+            live.delegatedToolNotifications.removeAll()
+        }
         // Persistent taskless agents may run during a text-only follow-up.
         await ensureTasklessObserver(sessionID: sessionID, epoch: epoch, promptID: promptID)
         await sessionRunner.updateSubAgentToolEventHandler { [weak self] event in
@@ -317,7 +324,7 @@ extension ZenCODEACPBridge {
                     sessionID: promptConfiguration.sessionID
                 )
                 try Task.checkCancellation()
-                guard let currentSession = reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
+                guard let currentSession = await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
                     throw CancellationError()
                 }
                 let commands = availableCommandsUpdate(for: currentSession)
@@ -339,7 +346,7 @@ extension ZenCODEACPBridge {
                     await flushPromptUpdates()
                 }
                 try Task.checkCancellation()
-                guard reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
+                guard await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
                     throw CancellationError()
                 }
                 // While Telegram is linked the turn is mirrored to the chat, and
@@ -372,21 +379,27 @@ extension ZenCODEACPBridge {
             }
         }
 
-        // Register the task under the reservation. A `session/cancel` that
-        // landed between the reservation and this point already dropped
-        // `activePromptID`, so the mutation is skipped and the task must be
-        // cancelled here: otherwise the cancel would be silently lost because
-        // it had no task to cancel yet.
+        // Register the task under the reservation: the bridge's own entry
+        // first, so a `session/cancel` that lands from now on finds the task
+        // and cancels it, then the host's reservation is checked. A cancel that
+        // landed between the reservation and this point already dropped the
+        // reservation, so the check fails and the task is cancelled here:
+        // otherwise the cancel would be silently lost because it had no task
+        // to cancel yet.
         var didRegisterPromptTask = false
-        let sessionIsLive = updateLiveSession(id: sessionID, epoch: epoch) { session in
-            guard session.activePromptID == promptID else {
-                return
-            }
+        updateLiveSession(id: sessionID, epoch: epoch) { session in
             session.activePromptTask = activePromptTask
+            session.activePromptTaskID = promptID
             didRegisterPromptTask = true
         }
-        guard sessionIsLive, didRegisterPromptTask else {
+        guard didRegisterPromptTask, await host.holdsPrompt(session.promptReservation(promptID)) else {
             activePromptTask.cancel()
+            updateLiveSession(id: sessionID, epoch: epoch) { session in
+                if session.activePromptTaskID == promptID {
+                    session.activePromptTask = nil
+                    session.activePromptTaskID = nil
+                }
+            }
             await finishTaskPresentation()
             throw CancellationError()
         }
@@ -430,7 +443,7 @@ extension ZenCODEACPBridge {
                 fileChangeSummary: completion.fileChangeSummary
             )
             await sendStopReason(id: id, completion.stopReason)
-            releaseReservation()
+            await releaseReservation()
         } catch {
             // The controller already cleaned up a turn it ran. A turn that
             // stopped before reaching it can only have been cancelled; keep
@@ -444,14 +457,14 @@ extension ZenCODEACPBridge {
             if underlying is CancellationError {
                 await settleTurn(telegramOutcome: .cancelled, fileChangeSummary: fileChangeSummary)
                 await sendStopReason(id: id, "cancelled")
-                releaseReservation()
+                await releaseReservation()
             } else {
                 let promptError = Self.acpPromptError(for: underlying)
                 await settleTurn(
                     telegramOutcome: .failed(promptError.localizedDescription),
                     fileChangeSummary: fileChangeSummary
                 )
-                releaseReservation()
+                await releaseReservation()
                 throw promptError
             }
         }
@@ -466,7 +479,7 @@ extension ZenCODEACPBridge {
         case .normal, .implementation:
             return .normal
         case let .workflow(graphID):
-            let workflow = session.workflowContinuation
+            let workflow = session.controller.commandState.activeWorkflow
             return .workflow(
                 originalGoal: workflow?.graphID == graphID ? workflow?.goal ?? "" : "",
                 graphID: graphID
@@ -474,7 +487,7 @@ extension ZenCODEACPBridge {
         case .review:
             return .review
         case .planning:
-            return .plan(originalGoal: session.planBrainstorming?.goal ?? "")
+            return .plan(originalGoal: session.controller.commandState.planBrainstorming?.goal ?? "")
         }
     }
 
@@ -520,23 +533,35 @@ extension ZenCODEACPBridge {
         // on a transport that is closing.
         try ensureNotShutDown()
         guard let sessionID = Self.sessionID(from: params),
-              var session = sessions[sessionID] else {
+              let session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        // Fence the controller and arm synchronously while this incarnation
-        // still owns the reservation: the cancelled turn can no longer write
-        // command state back while it unwinds. The reply route projects any
-        // newer persisted pause before consuming the armed recovery.
-        session.controller.cancelActiveTurn(
-            armingWorkflowRecovery: session.activePromptID != nil
-                && session.activeWorkflowPromptID == session.activePromptID
-        )
-        session.activePromptTask?.cancel()
-        session.activePromptTask = nil
-        session.activePromptID = nil
-        session.activeWorkflowPromptID = nil
-        session.operationState = .idle
-        sessions[sessionID] = session
+        // The task of the prompt being cancelled is read before the hop to the
+        // host: it is the only task a cancel may touch, so a prompt reserved
+        // right after the host dropped this reservation keeps its own. The
+        // host fences the controller and drops the reservation in one step,
+        // arming workflow recovery only when the cancelled prompt is the
+        // workflow prompt; the cancelled turn can no longer write command
+        // state back while it unwinds. The reply route projects any newer
+        // persisted pause before consuming the armed recovery. A
+        // reconfiguration in progress is not a prompt and is left to its
+        // owner.
+        let cancelledTask = session.activePromptTask
+        let cancelledTaskPromptID = session.activePromptTaskID
+        let workflowPromptID = session.activeWorkflowPromptID
+        let cancelledPromptID = await host.cancelPrompt(in: session.slotID) { promptID in
+            promptID == workflowPromptID
+        }
+        cancelledTask?.cancel()
+        updateLiveSession(id: sessionID, epoch: session.epoch) { live in
+            if let cancelledTaskPromptID, live.activePromptTaskID == cancelledTaskPromptID {
+                live.activePromptTask = nil
+                live.activePromptTaskID = nil
+            }
+            if let cancelledPromptID, live.activeWorkflowPromptID == cancelledPromptID {
+                live.activeWorkflowPromptID = nil
+            }
+        }
         await clearACPPlanBrainstorming(sessionID: sessionID, epoch: session.epoch)
         await writer.sendResultIfRequest(id: id, result: .object([:]))
     }
@@ -570,7 +595,6 @@ extension ZenCODEACPBridge {
             // ownership (borrowed/non-ACP installs) survive untouched.
             await sessionRunner.releaseSessionMCPOwnership(sessionID: sessionID, epoch: closedEpoch)
         }
-        updateSessionSleepAssertion()
         // Quiesce the ACP prompt wrapper before anything else can answer: with
         // the backend turn already cancelled above, its unwind — the buffered
         // update flush, the snapshot refresh and the `cancelled` reply — is
@@ -583,12 +607,17 @@ extension ZenCODEACPBridge {
         // this incarnation's companion is touched: a session recreated with
         // the same id meanwhile has its own, or none.
         await closedSession?.telegramCompanion?.detach()
-        // `AgentCoreSessionRunner` currently keys its state by session id, not
-        // ACP incarnation. If a `session/load` recreated this id while the old
+        // The host ends the incarnation and closes the runner session.
+        // `AgentCoreSessionRunner` keys its state by session id, not ACP
+        // incarnation: if a `session/load` recreated this id while the old
         // prompt wrapper was draining, closing the runner now would cancel the
-        // new prompt as well. The replacement owns the runner entry from this
-        // point, so only tear it down while this close still owns the id.
-        if sessions[sessionID] == nil || sessions[sessionID]?.epoch == closedSession?.epoch {
+        // new prompt as well. The host closes the runner session only while no
+        // other slot runs the id, so the replacement owns the runner entry
+        // from the moment it exists. An id the bridge never ran is closed in
+        // the runner directly, as before.
+        if let closedSession {
+            await host.closeSlot(closedSession.slotID, runtimeSession: .close)
+        } else if sessions[sessionID] == nil {
             await sessionRunner.closeSession(id: sessionID)
         }
         // Re-drop in case a racing handler re-created the entry while the
@@ -596,7 +625,6 @@ extension ZenCODEACPBridge {
         if let resurrected = sessions[sessionID],
            resurrected.epoch == closedSession?.epoch {
             sessions.removeValue(forKey: sessionID)
-            updateSessionSleepAssertion()
         }
         // `closeSession` suspends: a shutdown landing there already failed all
         // pending requests, so do not write a late reply.

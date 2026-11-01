@@ -51,6 +51,11 @@ public final class ChatSessionStateReducer: ChatCompanionPresenter {
     /// The bound of the log, on the estimate of
     /// ``ChatTurnEntry/retainedByteCount``.
     nonisolated let maximumLogBytes: Int
+    /// `true` for a reducer whose epoch is assigned from outside, by the
+    /// ``ChatSessionHost`` that created it with its incarnation: a session
+    /// change then replaces the log but keeps the epoch, which identifies the
+    /// incarnation, not the log.
+    nonisolated let keepsEpochOnSessionChange: Bool
     private var nextSequence: Int
     private var nextTurnID = 1
     /// The estimated bytes of each log entry, in log order.
@@ -117,10 +122,12 @@ public final class ChatSessionStateReducer: ChatCompanionPresenter {
         defaultOrigin: ChatTurnOrigin,
         state: ChatSessionState,
         epoch: UInt64,
-        maximumLogBytes: Int
+        maximumLogBytes: Int,
+        keepsEpochOnSessionChange: Bool = false
     ) {
         self.defaultOrigin = defaultOrigin
         self.maximumLogBytes = max(1, maximumLogBytes)
+        self.keepsEpochOnSessionChange = keepsEpochOnSessionChange
         self.nextSequence = 1
         self.snapshot = ChatSessionSnapshot(
             sessionID: sessionID,
@@ -320,8 +327,18 @@ public final class ChatSessionStateReducer: ChatCompanionPresenter {
     }
 
     public func sessionDidChange(sessionID: String) async {
+        resetForSession(sessionID)
+    }
+
+    /// The body of ``sessionDidChange(sessionID:)``, for the host that gives a
+    /// session another id in place (``ChatSessionHost/adoptSessionID(_:in:)``)
+    /// and must not suspend: the log starts over under `sessionID`, with the
+    /// epoch kept or advanced as `keepsEpochOnSessionChange` says.
+    func resetForSession(_ sessionID: String) {
         snapshot.sessionID = sessionID
-        snapshot.epoch &+= 1
+        if !keepsEpochOnSessionChange {
+            snapshot.epoch &+= 1
+        }
         snapshot.log = []
         snapshot.firstRetainedSequence = nextSequence
         snapshot.transcript = []

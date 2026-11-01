@@ -14,7 +14,10 @@ import Foundation
 /// language before its implementation turn. The steps of the shared slash
 /// commands are the ones the terminal's command handlers ran: the status bar
 /// after a selection, and the observer, the status bar, the staged
-/// attachments, and the overview around `/sessions new`.
+/// attachments, and the overview around `/sessions new`. The hooks are the
+/// terminal's slot's: `sessionWillStartNew()` and `savedSessionWillLoad()`
+/// run while `chatSession` is still the controller being replaced, whose
+/// observer they stop, and the later hooks once it is the new one.
 extension TerminalChat: ChatSessionChannelHooks {
     public func responseLanguageSection() -> String? {
         responseLanguageSystemPromptSection()

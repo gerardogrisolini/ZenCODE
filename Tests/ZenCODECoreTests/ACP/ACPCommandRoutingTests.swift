@@ -1028,7 +1028,7 @@ struct ACPCommandRoutingTests {
             state: .active, tasks: [], originalGoal: "Do not capture ordinary chat"
         )
         await fixture.bridge.installDisarmedWorkflowForTesting(sessionID: fixture.sessionID, graphID: graph.id)
-        await fixture.bridge.reserveWorkflowPromptForTesting(sessionID: fixture.sessionID, promptID: UUID())
+        try await fixture.bridge.reserveOrdinaryPromptForTesting(sessionID: fixture.sessionID)
         try await fixture.bridge.cancel(id: .number(1), params: ["sessionId": fixture.sessionID])
         #expect(await fixture.bridge.workflowStateForTesting(sessionID: fixture.sessionID)?.isAwaitingReply == false)
         #expect(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID) == graph)
@@ -1359,31 +1359,39 @@ extension ZenCODEACPBridge {
     }
 
     fileprivate func installDisarmedWorkflowForTesting(sessionID: String, graphID: String) {
-        sessions[sessionID]?.workflowContinuation = WorkflowCommandRuntimeState(goal: "Do not capture ordinary chat", graphID: graphID)
+        sessions[sessionID]?.controller.commitCommandState(ifToken: nil) {
+            $0.activeWorkflow = WorkflowCommandRuntimeState(goal: "Do not capture ordinary chat", graphID: graphID)
+        }
     }
 
-    fileprivate func reserveWorkflowPromptForTesting(sessionID: String, promptID: UUID) {
-        sessions[sessionID]?.activePromptID = promptID
-        sessions[sessionID]?.operationState = .prompting(promptID)
+    /// Reserves, in the host, a prompt that is not a workflow prompt on the
+    /// live incarnation of `sessionID`, as `session/prompt` does before it
+    /// routes the line.
+    fileprivate func reserveOrdinaryPromptForTesting(sessionID: String) async throws {
+        guard let session = sessions[sessionID] else { throw CancellationError() }
+        _ = try await host.reservePrompt(in: session.slotID)
     }
 
     /// Routes `prompt` the way `session/prompt` does once it holds the
     /// reservation, and returns the route instead of running the turn.
     fileprivate func commandRouteForTesting(sessionID: String, prompt: String) async throws -> ACPCommandTurnRoute {
-        guard let epoch = sessions[sessionID]?.epoch else { throw CancellationError() }
-        let promptID = UUID()
-        reserveWorkflowPromptForTesting(sessionID: sessionID, promptID: promptID)
-        defer {
-            sessions[sessionID]?.activePromptID = nil
-            sessions[sessionID]?.operationState = .idle
+        guard let session = sessions[sessionID] else { throw CancellationError() }
+        let reservation = try await host.reservePrompt(in: session.slotID)
+        let route: ACPCommandTurnRoute
+        do {
+            route = try await routeACPCommandTurn(
+                command: CoordinatorCommandParser.parse(prompt),
+                routedPromptText: prompt,
+                hasAgentMention: false,
+                sessionID: sessionID,
+                epoch: reservation.epoch,
+                promptID: reservation.promptID
+            )
+        } catch {
+            await host.releasePrompt(reservation)
+            throw error
         }
-        return try await routeACPCommandTurn(
-            command: CoordinatorCommandParser.parse(prompt),
-            routedPromptText: prompt,
-            hasAgentMention: false,
-            sessionID: sessionID,
-            epoch: epoch,
-            promptID: promptID
-        )
+        await host.releasePrompt(reservation)
+        return route
     }
 }

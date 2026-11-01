@@ -114,10 +114,11 @@ extension TerminalChat {
         await telegramCompanion.finishTurn(outcome: outcome, fileChangeSummary: fileChangeSummary)
     }
 
-    /// Moves the session's Telegram topic to the session the controller
+    /// Moves the session's Telegram topic to the session the terminal's slot
     /// switched to (`/sessions new`, `/sessions load`), named after the saved
     /// session or, for a session never saved, as the companion names a new
-    /// topic. Nothing happens outside topic mode.
+    /// topic. The companion already follows the new controller. Nothing
+    /// happens outside topic mode.
     func rebindTelegramTopicToCurrentSession() async {
         let displayName = activeSavedSessionName?.nilIfBlank
             ?? TelegramSessionCompanion.defaultTopicName(

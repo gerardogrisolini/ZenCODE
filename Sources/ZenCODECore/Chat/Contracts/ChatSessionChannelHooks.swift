@@ -62,6 +62,12 @@ public enum ChatSelectionCommand: Sendable, Equatable {
 ///
 /// The controller holds the hooks weakly. A channel without such steps sets
 /// none, and every method has a no-op default.
+///
+/// On a controller a ``ChatSessionHost`` runs, `/sessions new` and the load of
+/// a saved session replace the controller with a new incarnation of the
+/// slot, whose hooks are the slot's: ``sessionWillStartNew()`` and
+/// ``savedSessionWillLoad()`` run on the controller being replaced, before
+/// the switch, and the later hooks of the operation on the new one.
 @ChatSessionActor
 public protocol ChatSessionChannelHooks: AnyObject, Sendable {
     /// The response-language section of the system prompt, read at every

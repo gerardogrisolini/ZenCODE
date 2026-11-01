@@ -118,8 +118,10 @@ public final class TelegramSessionCompanion {
 
     // MARK: - Collaborators
 
-    /// The session the companion follows.
-    let controller: ChatSessionController
+    /// The session the companion follows: the controller of the primary
+    /// channel's session, replaced by ``follow(_:)`` when the channel's slot
+    /// runs a new incarnation.
+    private(set) var controller: ChatSessionController
     /// The runtime behind the shared chat the companion relays.
     let sessionRunner: AgentCoreSessionRunner
     /// The route authority: every lease is resolved and validated here.
@@ -323,6 +325,24 @@ public final class TelegramSessionCompanion {
     /// stopped since.
     public var isActive: Bool {
         controlState.isActive
+    }
+
+    // MARK: - Follow
+
+    /// Moves the companion to `controller`, the next incarnation of the
+    /// session its channel runs (`/sessions new`, `/sessions load` in a
+    /// ``ChatSessionHost`` slot): the ``presenter`` leaves the previous
+    /// controller and is registered in the new one, so the next turn is
+    /// fanned out to it, while everything of the link stays as it is: the
+    /// control service, the linked chat, the route lease, the topic, the
+    /// relay's ledger, and the turn's origin. The topic follows the session
+    /// when the channel then calls ``rebind(sessionID:displayName:)``, as it
+    /// always did. The same controller changes nothing.
+    func follow(_ controller: ChatSessionController) {
+        guard controller !== self.controller else { return }
+        self.controller.detachCompanionPresenter(presenter)
+        self.controller = controller
+        controller.attachCompanionPresenter(presenter)
     }
 
     // MARK: - Attach

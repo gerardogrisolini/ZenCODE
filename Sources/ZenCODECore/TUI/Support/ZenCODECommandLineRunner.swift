@@ -144,21 +144,35 @@ public enum ZenCODECommandLineRunner {
                     backendFactory: backendFactory ?? ChatSessionRuntimeFactory.productionBackendFactory
                 )
                 var resumeSnapshot: TerminalChatResumeSnapshot?
+                // The container of the chat's sessions, one per chat
+                // lifecycle over the one runner: `/setup` rereads the
+                // configuration, which the container's environment is read
+                // from once. `nil` once it is shut down.
+                var sessionHost: ChatSessionHost?
                 do {
                     while true {
+                        let host = TerminalChat.makeSessionHost(
+                            configuration: configuration,
+                            sessionRunner: sessionRunner
+                        )
+                        sessionHost = host
                         let outcome = try await AgentRuntimeLauncher.runTerminalChat(
                             configuration: configuration,
                             stdinIsTerminal: interactiveInputAvailable,
-                            sessionRunner: sessionRunner,
+                            sessionHost: host,
                             permissionAuthorizer: permissionAuthorizer,
                             runtimeSetupResumeSnapshot: resumeSnapshot
                         )
                         switch outcome {
                         case .exited:
-                            await sessionRunner.shutdown()
+                            await host.shutdown()
+                            sessionHost = nil
                             return
                         case let .setupRequested(snapshot):
-                            await sessionRunner.shutdownBackendKeepingExternalTools()
+                            // The container ends with this chat; the runner
+                            // keeps its external tools for the next one.
+                            await host.shutdown(keepingExternalTools: true)
+                            sessionHost = nil
                             guard let setupHandler else {
                                 throw ZenCODECommandLineRunnerError.setupUnavailable
                             }
@@ -175,7 +189,13 @@ public enum ZenCODECommandLineRunner {
                         }
                     }
                 } catch {
-                    await sessionRunner.shutdown()
+                    // A container still open closes its fence with the runner;
+                    // one already ended leaves the runner to shut down.
+                    if let sessionHost {
+                        await sessionHost.shutdown()
+                    } else {
+                        await sessionRunner.shutdown()
+                    }
                     throw error
                 }
             case .acp:

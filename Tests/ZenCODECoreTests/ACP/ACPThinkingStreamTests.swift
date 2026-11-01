@@ -866,6 +866,6 @@ private extension ZenCODEACPBridge {
     }
 
     func initialSummaryForTesting(configuration: AgentCoreSessionConfiguration) -> String {
-        initialConfigurationSummary(for: sessionState(configuration: configuration))
+        initialConfigurationSummary(configuration: configuration, selectedAgent: nil)
     }
 }

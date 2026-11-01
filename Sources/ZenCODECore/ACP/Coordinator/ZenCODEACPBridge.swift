@@ -17,12 +17,17 @@ import ToolCore
 struct ACPShutdownFenceError: Error {}
 
 public actor ZenCODEACPBridge {
-    public enum SessionOperationState: Sendable, Equatable {
-        case idle
-        case prompting(UUID)
-        case reconfiguring(UUID)
-    }
+    /// The operation state of a session incarnation, owned by the
+    /// ``ChatSessionHost`` the bridge runs its sessions in.
+    public typealias SessionOperationState = ChatSessionOperationState
 
+    /// The ACP side of one session incarnation: the writer-facing state the
+    /// bridge keeps next to the incarnation the ``ChatSessionHost`` runs for
+    /// it (its controller, its prompt reservation, and its epoch). The
+    /// incarnation binding (`slotID`, `epoch`, `controller`) never changes:
+    /// a same-epoch reconstruction (refresh, mention, reconfiguration)
+    /// inherits it with the presentation state, and a new epoch is a new
+    /// entry.
     public struct SessionState {
         public let id: String
         public let cwd: String
@@ -32,6 +37,9 @@ public actor ZenCODEACPBridge {
         /// `shutdown` drop it, so work started under an older epoch can never
         /// write state back into a newer session with the same id.
         public let epoch: UInt64
+        /// The slot of the host that runs this incarnation: one per ACP
+        /// session, closed with it.
+        let slotID: ChatSlotID
         public var selectedAgent: AgentProfile?
         /// ACP presentation only: never persisted or added to model history.
         /// A loaded/resumed session is a new incarnation and announces again.
@@ -42,20 +50,18 @@ public actor ZenCODEACPBridge {
         var tasklessObserver: Task<Void, Never>?
         var tasklessPresentation = ACPTasklessPresentation()
         var taskPresentation = ACPTaskPresentation()
-        /// Reserved synchronously by `session/prompt` before its first `await`,
-        /// making one prompt per session atomically exclusive even when several
-        /// requests are dispatched concurrently.
-        public var activePromptID: UUID?
         /// Transient fence: only cancellation of this workflow prompt may arm recovery.
         var activeWorkflowPromptID: UUID? = nil
+        /// The task of the prompt that holds the reservation, registered
+        /// under it (`activePromptTaskID` is the prompt's id), so a cancel
+        /// and a release touch only the task of their own prompt.
         public var activePromptTask: Task<PromptCompletion, Error>?
-        /// Reserved synchronously before an operation's first suspension. This
-        /// prevents a prompt and a configuration change (or two configuration
-        /// changes) from both observing the session as idle.
-        public var operationState: SessionOperationState
+        var activePromptTaskID: UUID? = nil
         /// The session's shared chat controller: it runs the prompt turns and
         /// owns the `/plan` and `/goal` command state of this incarnation. A
-        /// same-epoch reconstruction keeps it; a new epoch gets a fresh one.
+        /// same-epoch reconstruction keeps it; a new epoch gets a fresh one
+        /// from the host. Its command state is read and written through it,
+        /// under its lock, inside the fenced `updateLiveSession` closures.
         let controller: ChatSessionController
         /// The Telegram companion of this incarnation, created by its first
         /// `/telegram on` and kept, attached or not, until the incarnation
@@ -68,33 +74,11 @@ public actor ZenCODEACPBridge {
         /// The primary channel of ``telegramCompanion``. The companion holds
         /// its channel weakly, so the session state keeps it alive.
         var telegramCompanionChannel: ACPTelegramCompanionChannel? = nil
-        /// Completed plan state is runtime session state; the unfinished
-        /// clarification below is even more deliberately ephemeral and is never
-        /// represented by ACP resume history or a task checkpoint.
-        ///
-        /// These forward to the controller's lock-protected command state, so a
-        /// fenced `updateLiveSession`/`updateReservedPromptSession` closure still
-        /// checks and writes in one synchronous step.
-        var activePlan: TerminalSessionPlan? {
-            get { controller.commandState.activePlan }
-            nonmutating set { controller.stateStore.withLock { $0.commandState.activePlan = newValue } }
-        }
-        var planBrainstorming: PlanningCommandRuntimeState? {
-            get { controller.commandState.planBrainstorming }
-            nonmutating set { controller.stateStore.withLock { $0.commandState.planBrainstorming = newValue } }
-        }
-        /// Transient approval handshake; it is never represented by ACP resume
-        /// history or a task checkpoint.
-        var pendingPlanApprovalPlanID: String? {
-            get { controller.commandState.pendingPlanApprovalPlanID }
-            nonmutating set { controller.stateStore.withLock { $0.commandState.pendingPlanApprovalPlanID = newValue } }
-        }
-        /// Ephemeral `/goal` continuation state, armed only by the explicit
-        /// `Workflow question` block or by an interrupted turn that preserved a
-        /// non-empty graph. It is never persisted or replayed.
-        var workflowContinuation: WorkflowCommandRuntimeState? {
-            get { controller.commandState.activeWorkflow }
-            nonmutating set { controller.stateStore.withLock { $0.commandState.activeWorkflow = newValue } }
+
+        /// The prompt reservation of this incarnation for `promptID`, as the
+        /// host identifies it.
+        func promptReservation(_ promptID: UUID) -> ChatPromptReservation {
+            ChatPromptReservation(slotID: slotID, sessionID: id, epoch: epoch, promptID: promptID)
         }
     }
 
@@ -129,37 +113,31 @@ public actor ZenCODEACPBridge {
     /// reconnects to a fresh process.
     let setupRequired: Bool
     var clientFileSystem: ACPClientFileSystem?
+    /// The container every ACP session runs in: one slot per session, whose
+    /// incarnation owns the controller, the epoch, and the prompt
+    /// reservation (see ``ChatSessionHost``). The host also owns the runner,
+    /// the Telegram router and dispatcher the companions share, and the
+    /// sleep assertion.
+    let host: ChatSessionHost
+    /// The host's runner.
     public let sessionRunner: AgentCoreSessionRunner
-    public var sessions: [String: SessionState] = [:] {
-        // Every write of `activePromptID` goes through `sessions`, so this is
-        // the one place that keeps the Telegram channels' view of it current.
-        didSet { publishTelegramPromptActivity() }
-    }
-    /// Which incarnations are generating a prompt, for the Telegram channels
-    /// of the sessions (see ``ACPSessionPromptActivity``).
-    nonisolated let telegramPromptActivity = ACPSessionPromptActivity()
-    /// The Telegram route authority shared by the companions of every session
-    /// of this bridge, created by the first `/telegram on` from the persisted
-    /// settings, which it writes back through
-    /// `AgentSettingsManifestStore.saveTelegramRoutes`. One router per
-    /// process keeps the routes of several sessions in one consistent set, so
-    /// no session overwrites the topic another one created.
-    var telegramRouterStorage: TerminalTelegramSessionRouter?
-    /// The Bot API poller shared by the companions of every session of this
-    /// bridge, created with the router. Each companion has a control service
-    /// of its own, but a service that brought its own dispatcher would start
-    /// its own long poll: two `getUpdates` on one bot make Telegram answer
-    /// HTTP 409 to one of them. Through one dispatcher a bot has exactly one
-    /// long poll, whose updates are broadcast to every service, which applies
-    /// its own route checks.
-    var telegramDispatcherStorage: TerminalTelegramBotDispatcher?
+    /// The ACP state of every live session, by session id. An entry is the
+    /// bridge's own view of the incarnation its `epoch` names: it is published
+    /// after the host runs the incarnation and removed, before any
+    /// suspension, when the session closes, so the bridge checks its own
+    /// liveness synchronously (`liveSession`, `updateLiveSession`) and asks
+    /// the host only what the host owns, the prompt reservation.
+    public var sessions: [String: SessionState] = [:]
     /// Test seam: the transport of every companion's control service. `nil`
     /// in production, where each service uses a `NIOTelegramHTTPTransport`.
     var telegramTransportFactoryForTesting: (@Sendable () -> any TelegramHTTPTransport)?
-    private var sessionSleepAssertion: ZenSleepAssertion?
-    private var nextSessionEpochValue: UInt64 = 1
     /// Latches on `shutdown()` so late prompt completions and new requests
     /// cannot repopulate session state after the transport closed.
+    ///
+    /// The bridge's own copy of the fence, latched before its first
+    /// suspension: every handler checks it synchronously before it looks a
+    /// session up. The host latches its own in `host.shutdown()`, which the
+    /// bridge's `shutdown()` calls last.
     private var didShutDown = false
     /// Authentication method IDs advertised by the most recent `initialize`.
     /// `authenticate` must only acknowledge one of these methods; keeping the
@@ -208,12 +186,22 @@ public actor ZenCODEACPBridge {
         self.setupRequired = setupRequired
         let permissionBroker = ACPPermissionBroker(writer: writer)
         self.permissionBroker = permissionBroker
-        self.sessionRunner = AgentCoreSessionRunner(
+        let sessionRunner = AgentCoreSessionRunner(
             defaultToolAuthorizationHandler: { request in
                 await permissionBroker.authorize(request)
             },
             mcpRuntime: mcpRuntime,
             backendFactory: backendFactory
+        )
+        self.sessionRunner = sessionRunner
+        self.host = ChatSessionHost(
+            runner: sessionRunner,
+            environment: ChatSessionEnvironment(
+                configuration: configuration,
+                featureRuntime: sessionRunner.swiftFeatureRuntime,
+                userHomeDirectoryURL: UserHomeDirectory.current()
+            ),
+            sleepAssertionReason: "ZenCODE ACP session active"
         )
     }
 
@@ -247,7 +235,7 @@ public actor ZenCODEACPBridge {
             sessions[sessionID]?.controller.cancelActiveTurn()
             sessions[sessionID]?.activePromptTask?.cancel()
             sessions[sessionID]?.activePromptTask = nil
-            sessions[sessionID]?.activePromptID = nil
+            sessions[sessionID]?.activePromptTaskID = nil
         }
         for waiter in drainWaiters.flatMap(\.value) {
             waiter.continuation.resume()
@@ -257,7 +245,6 @@ public actor ZenCODEACPBridge {
         // immediately below, so awaiting the runner would only widen the
         // window in which late requests still observe live session entries.
         sessions.removeAll()
-        updateSessionSleepAssertion()
         // Close the transport before the first suspension. Everything the
         // bridge can still emit (a prompt that is unwinding, its buffered
         // updates, its final result, a late error response) goes through this
@@ -269,7 +256,11 @@ public actor ZenCODEACPBridge {
         // its link, closes its session's topic, and leaves the controller.
         for companion in telegramCompanions { await companion.shutdown() }
         await permissionBroker.removeAllCachedDecisions()
-        await sessionRunner.shutdown()
+        // The host ends every incarnation (its reservations are dead already:
+        // no bridge entry names them) and shuts the runner down. Every
+        // bridge-side check is fenced by its own latch and by the empty
+        // `sessions`, so nothing awaited above could have reached the host.
+        await host.shutdown()
     }
 
     /// `true` once `shutdown()` ran; used to fence late session mutations.
@@ -382,10 +373,59 @@ public actor ZenCODEACPBridge {
         }
     }
 
-    func makeSessionEpoch() -> UInt64 {
-        let epoch = nextSessionEpochValue
-        nextSessionEpochValue &+= 1
-        return epoch
+    /// Opens, in the host, the slot and the incarnation of a new ACP session
+    /// `sessionID` in `cwd`, before anything else of the session exists: its
+    /// epoch stamps the MCP registrations and the lifecycle binding of the
+    /// handler that publishes it. ACP presents each prompt through a presenter
+    /// bound to that prompt, so the controller's default presenter stays
+    /// silent, ACP never reads the transcript, and the slot publishes no
+    /// state. A host that shut down meanwhile fences the handler.
+    func openACPSession(sessionID: String, cwd: String) async throws -> ChatSessionIncarnation {
+        let descriptor = ChatSlotDescriptor(
+            identity: .acpSession(sessionID),
+            workingDirectory: URL(fileURLWithPath: cwd),
+            presenter: ACPSilentPresenter(),
+            interaction: .host(ACPConsentHost(writer: writer)),
+            authorizer: permissionBroker.consentAuthorizer,
+            retainsTranscript: false,
+            retainsFileArtifactHistory: false,
+            defaultOrigin: .acp,
+            publishesState: false
+        )
+        do {
+            let slotID = try await host.openSlot(descriptor)
+            do {
+                return try await host.newSession(in: slotID, sessionID: sessionID)
+            } catch {
+                await host.closeSlot(slotID, runtimeSession: .keep)
+                throw error
+            }
+        } catch ChatSessionHostError.shutDown {
+            throw ACPShutdownFenceError()
+        }
+    }
+
+    /// Closes the host slot of an incarnation that never became live, or is
+    /// no longer: its runner session is the caller's (the creation path
+    /// releases what it created, the close path closes it).
+    func closeACPSlot(of incarnation: ChatSessionIncarnation) async {
+        await host.closeSlot(incarnation.slotID, runtimeSession: .keep)
+    }
+
+    /// Maps a host refusal to the ACP answer the bridge always gave: a session
+    /// that is busy, unknown, or gone, or a transport that is closing.
+    func acpError(
+        for error: ChatSessionHostError,
+        busyMessage: String
+    ) -> Error {
+        switch error {
+        case .sessionBusy:
+            return ACPError.invalidParams(busyMessage)
+        case .shutDown:
+            return ACPShutdownFenceError()
+        case .unknownSlot, .noSession, .savedSessionNotFound, .statePublishingRequired:
+            return ACPError.invalidParams("Unknown or missing sessionId.")
+        }
     }
 
     /// Registers a running `session/prompt` handler for one session id and
@@ -462,10 +502,18 @@ public actor ZenCODEACPBridge {
 
     /// Delivery ownership outlives admission during close/cancel so accepted
     /// buffered content drains, but never crosses into a replacement prompt.
-    func canDeliverPresentation(sessionID: String, epoch: UInt64, promptID: UUID) -> Bool {
+    func canDeliverPresentation(sessionID: String, epoch: UInt64, promptID: UUID) async -> Bool {
         guard !didShutDown else { return false }
         guard let session = sessions[sessionID] else { return true }
-        return session.epoch == epoch && (session.activePromptID == nil || session.activePromptID == promptID)
+        guard session.epoch == epoch else { return false }
+        // The reservation is the host's: ask it in one step with its own
+        // liveness check, then apply the bridge's own rules again after the hop.
+        let reservationAllows = await host.withLiveIncarnation(session.slotID, epoch: epoch) { incarnation in
+            incarnation.activePromptID == nil || incarnation.activePromptID == promptID
+        } ?? false
+        guard !didShutDown else { return false }
+        guard let current = sessions[sessionID] else { return true }
+        return current.epoch == epoch && reservationAllows
     }
 
     /// Returns the session only when it is still the same incarnation, so a
@@ -497,33 +545,18 @@ public actor ZenCODEACPBridge {
     /// Removes the session only when it is still the incarnation the caller
     /// created, so a rollback never deletes a newer session with the same id.
     /// The removal happens before any suspension; a Telegram companion the
-    /// incarnation had is then detached.
+    /// incarnation had is then detached, and its host slot closed, leaving
+    /// the runner session to the caller.
     func discardSessionIfCurrent(id sessionID: String, epoch: UInt64) async {
         guard sessions[sessionID]?.epoch == epoch else {
             return
         }
         sessions[sessionID]?.tasklessObserver?.cancel()
-        let telegramCompanion = sessions.removeValue(forKey: sessionID)?.telegramCompanion
-        updateSessionSleepAssertion()
-        await telegramCompanion?.detach()
-    }
-
-    public func holdSessionSleepAssertionIfNeeded() {
-        guard sessionSleepAssertion == nil else {
+        guard let discarded = sessions.removeValue(forKey: sessionID) else {
             return
         }
-        sessionSleepAssertion = ZenSleepAssertion(
-            reason: "ZenCODE ACP session active"
-        )
-    }
-
-    public func updateSessionSleepAssertion() {
-        if sessions.isEmpty {
-            sessionSleepAssertion?.invalidate()
-            sessionSleepAssertion = nil
-        } else {
-            holdSessionSleepAssertionIfNeeded()
-        }
+        await discarded.telegramCompanion?.detach()
+        await host.closeSlot(discarded.slotID, runtimeSession: .keep)
     }
 
     public func handleLine(_ line: String) async {

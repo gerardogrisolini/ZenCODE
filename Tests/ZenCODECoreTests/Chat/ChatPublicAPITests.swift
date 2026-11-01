@@ -4,7 +4,9 @@
 //
 //  The public Chat API as a host app sees it: everything here is reached
 //  through `import ZenCODECore` without `@testable`, so a symbol of the
-//  composition path that is not public fails the build of this target.
+//  composition path that is not public fails the build of this target. The
+//  composition is the one of Docs/embedding.md: a `ChatSessionHost` over the
+//  runner, a slot per window, and the incarnation the slot runs.
 //
 
 import Foundation
@@ -26,7 +28,8 @@ struct ChatPublicAPITests {
         try await AppStorageDirectory.withSupportDirectoryURL(support) {
             // Composition: a hosted configuration, the environment without a
             // feature runtime (a sandboxed app starts no feature process), the
-            // runner from the public factory, then the controller.
+            // runner from the public factory, the host over it, then a slot
+            // with its first session.
             let configuration = try AgentConfiguration(
                 hostedModelID: "public-api-model",
                 availableAgents: AgentProfileStore.defaultProfiles(),
@@ -53,17 +56,27 @@ struct ChatPublicAPITests {
                 toolAuthorizationHandler: { request in await authorizer.authorize(request) },
                 backendFactory: { _, _ in backend }
             )
-            let controller = ChatSessionController(
-                sessionID: "public-api-\(UUID().uuidString.lowercased())",
-                managementRuntime: runner,
+            let sessionHost = ChatSessionHost(
+                runner: runner,
                 environment: environment,
-                workingDirectory: workspace,
-                presenter: presenter,
-                host: host,
-                authorizer: authorizer
+                sleepAssertionReason: "Chat public API test"
             )
             let hooks = AppChannelHooks()
-            await Self.install(hooks, on: controller)
+            let slotID = try await sessionHost.openSlot(ChatSlotDescriptor(
+                identity: .window("main"),
+                workingDirectory: workspace,
+                presenter: presenter,
+                interaction: .host(host),
+                authorizer: authorizer,
+                channelHooks: hooks,
+                publishesState: false
+            ))
+            let incarnation = try await sessionHost.newSession(
+                in: slotID,
+                sessionID: "public-api-\(UUID().uuidString.lowercased())"
+            )
+            let controller = incarnation.controller
+            #expect(await sessionHost.incarnation(in: slotID)?.epoch == incarnation.epoch)
 
             // A shared command answers with notices the app renders itself.
             let help = await controller.handleCommandLine("/help", context: [])
@@ -77,26 +90,46 @@ struct ChatPublicAPITests {
             // A plain line nobody is waiting for is an ordinary prompt.
             #expect(await controller.pendingReplyAction(for: "Hello") == nil)
 
-            // A turn, presented on the app's main-actor presenter.
+            // A turn, under the host's reservation, presented on the app's
+            // main-actor presenter.
             await controller.applyInitialAgentSelectionIfNeeded()
+            let reservation = try await sessionHost.reservePrompt(in: slotID)
+            #expect(await sessionHost.holdsPrompt(reservation))
             let sessionConfiguration = await controller.turnSessionConfiguration(
                 for: .normal,
                 responseLanguageSection: nil
             )
             let result = try await controller.runTurn(ChatTurnRequest(
                 prompt: "Hello",
-                sessionConfiguration: sessionConfiguration
+                sessionConfiguration: sessionConfiguration,
+                origin: .app
             ))
+            #expect(await sessionHost.releasePrompt(reservation))
             #expect(result.response.text == "COORDINATOR INTERNAL QUESTION")
             #expect(await presenter.assistantContent.joined() == "COORDINATOR INTERNAL QUESTION")
             #expect(await controller.transcript.first?.content == "Hello")
+
+            // A cancel drops a reservation in one step with the fence.
+            let cancelled = try await sessionHost.reservePrompt(in: slotID)
+            #expect(await sessionHost.cancelPrompt(in: slotID) == cancelled.promptID)
+            #expect(await sessionHost.holdsPrompt(cancelled) == false)
+
+            // `/sessions new` on the slot's controller is a new incarnation,
+            // with the slot's hooks around it.
+            let started = await controller.handleCommandLine("/sessions new", context: [])
+            #expect(started.notices.count == 1)
+            let next = try #require(await sessionHost.incarnation(in: slotID))
+            #expect(next.epoch > incarnation.epoch)
+            #expect(next.controller !== controller)
+            #expect(await next.controller.transcript.isEmpty)
+            #expect(await hooks.startedSessions == 1)
 
             // The Telegram companion of the session, built from the public
             // factories; it stays detached until `attach()`.
             let channel = AppTelegramChannel()
             let companionIsActive = await Self.makeAndShutDownCompanion(
-                controller: controller,
-                runner: runner,
+                controller: next.controller,
+                runner: sessionHost.runner,
                 channel: channel
             )
             #expect(!companionIsActive)
@@ -109,7 +142,8 @@ struct ChatPublicAPITests {
             #expect(route.destination == .coordinator)
             #expect(route.text == "ciao")
 
-            await runner.shutdown()
+            await sessionHost.shutdown()
+            #expect(await sessionHost.isShutDown)
         }
     }
 
@@ -143,16 +177,23 @@ struct ChatPublicAPITests {
                 userHomeDirectoryURL: nil
             )
             let backend = ScriptedACPCommandBackend()
-            // The composition of Docs/embedding.md, with a scripted backend.
-            let session = await makeObservedSession(
+            // The composition of Docs/embedding.md, with a scripted backend: a
+            // slot that publishes state and asks with pending requests.
+            let session = try await makeObservedSession(
                 environment: environment,
                 workspaceURL: workspace,
                 backendFactory: { _, _ in backend }
             )
             let viewModel = await SessionViewModel(host: session.host)
             let observation = Task { await viewModel.observe(session.reducer) }
+            // The slot's incarnations: the current one at once.
+            var incarnations = await session.sessionHost.incarnations(in: session.slotID).makeAsyncIterator()
+            let current = try #require(await incarnations.next())
+            #expect(current?.controller === session.controller)
+            #expect(await session.reducer.snapshot.epoch == current?.epoch)
 
             await session.controller.applyInitialAgentSelectionIfNeeded()
+            let reservation = try await session.sessionHost.reservePrompt(in: session.slotID)
             let sessionConfiguration = await session.controller.turnSessionConfiguration(
                 for: .normal,
                 responseLanguageSection: nil
@@ -162,6 +203,7 @@ struct ChatPublicAPITests {
                 sessionConfiguration: sessionConfiguration,
                 origin: .app
             ))
+            #expect(await session.sessionHost.releasePrompt(reservation))
 
             let snapshot = await session.reducer.snapshot
             #expect(snapshot.transcript.map(\.kind) == [
@@ -187,8 +229,20 @@ struct ChatPublicAPITests {
             #expect(await line.value == "zen")
             #expect(await session.reducer.snapshot.pendingRequests.isEmpty)
 
+            // A request still open when the slot runs a new incarnation is
+            // refused, and the new incarnation has a reducer of its own.
+            let refused = Task { await session.host.readLine(prompt: "Again?") }
+            for await update in await session.reducer.snapshots() where !update.pendingRequests.isEmpty {
+                break
+            }
+            let next = try await session.sessionHost.newSession(in: session.slotID, sessionID: "next")
+            #expect(await refused.value == nil)
+            #expect(next.reducer !== session.reducer)
+            #expect(await next.reducer?.snapshot.epoch == next.epoch)
+            #expect(try #require(await incarnations.next())?.epoch == next.epoch)
+
             observation.cancel()
-            await session.runner.shutdown()
+            await session.sessionHost.shutdown()
         }
     }
 
@@ -216,11 +270,6 @@ struct ChatPublicAPITests {
         default:
             return "other"
         }
-    }
-
-    @ChatSessionActor
-    private static func install(_ hooks: AppChannelHooks, on controller: ChatSessionController) {
-        controller.channelHooks = hooks
     }
 
     @ChatSessionActor
@@ -316,47 +365,55 @@ private final class AppTelegramChannel: TelegramCompanionChannel {
 
 /// The observed session of `Docs/embedding.md`.
 private struct ObservedSession: Sendable {
+    let sessionHost: ChatSessionHost
+    let slotID: ChatSlotID
     let controller: ChatSessionController
-    let runner: AgentCoreSessionRunner
     let reducer: ChatSessionStateReducer
     let host: ChatPendingRequestHost
 }
 
-/// The composition of `Docs/embedding.md`: the reducer is the presenter and
-/// the pending-request host is the host. `backendFactory` replaces the
-/// production backend for the test.
-@MainActor
+/// The composition of `Docs/embedding.md`: a slot that publishes state and
+/// asks with pending requests, so each incarnation has a reducer and a
+/// pending-request host. `backendFactory` replaces the production backend for
+/// the test.
+@ChatSessionActor
 private func makeObservedSession(
     environment: ChatSessionEnvironment,
     workspaceURL: URL,
     backendFactory: @escaping AgentRuntimeBackendFactory
-) -> ObservedSession {
-    let sessionID = UUID().uuidString.lowercased()
-    let reducer = ChatSessionStateReducer(
-        sessionID: sessionID,
-        workingDirectory: workspaceURL,
-        defaultOrigin: .app
-    )
-    let host = ChatPendingRequestHost(
-        reducer: reducer,
-        capabilities: [.toolConsent, .singleChoice, .multipleChoice, .textInput],
-        gatesWorkspaceAccess: true
-    )
-    let authorizer = ChatToolConsentAuthorizer(host: host)
+) async throws -> ObservedSession {
     let runner = ChatSessionRuntimeFactory.makeSessionRunner(
-        toolAuthorizationHandler: { await authorizer.authorize($0) },
+        toolAuthorizationHandler: nil,
         backendFactory: backendFactory
     )
-    let controller = ChatSessionController(
-        sessionID: sessionID,
-        managementRuntime: runner,
-        environment: environment,
+    let sessionHost = ChatSessionHost(runner: runner, environment: environment)
+    let slotID = try sessionHost.openSlot(ChatSlotDescriptor(
+        identity: .window("main"),
         workingDirectory: workspaceURL,
-        presenter: reducer,
-        host: host,
-        authorizer: authorizer
+        presenter: AppPresenter(),
+        interaction: .pendingRequests(
+            capabilities: [.toolConsent, .singleChoice, .multipleChoice, .textInput],
+            gatesWorkspaceAccess: true
+        ),
+        authorizer: ChatToolConsentAuthorizer(host: AppInteractionHost()),
+        defaultOrigin: .app,
+        publishesState: true
+    ))
+    let incarnation = try await sessionHost.newSession(
+        in: slotID,
+        sessionID: UUID().uuidString.lowercased()
     )
-    return ObservedSession(controller: controller, runner: runner, reducer: reducer, host: host)
+    // Both exist for a slot that publishes state and asks with pending requests.
+    guard let reducer = incarnation.reducer, let host = incarnation.pendingRequestHost else {
+        throw CancellationError()
+    }
+    return ObservedSession(
+        sessionHost: sessionHost,
+        slotID: slotID,
+        controller: incarnation.controller,
+        reducer: reducer,
+        host: host
+    )
 }
 
 /// The view model of `Docs/embedding.md`, on the main actor.

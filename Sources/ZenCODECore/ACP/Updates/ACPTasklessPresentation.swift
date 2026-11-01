@@ -68,17 +68,33 @@ extension ZenCODEACPBridge {
     /// agent.create tool can run. Runtime snapshots are invalidations, not polling.
     func ensureTasklessObserver(sessionID: String, epoch: UInt64, promptID: UUID) async {
         guard let session = liveSession(id: sessionID, epoch: epoch),
-              session.activePromptID == promptID, session.tasklessObserver == nil,
+              session.tasklessObserver == nil,
               let pipeline = session.promptUpdatePipeline else { return }
-        // Reserve before the suspension so concurrent callbacks cannot subscribe twice.
-        sessions[sessionID]?.tasklessObserver = Task {}
+        // Reserve before the first suspension so concurrent callbacks cannot
+        // subscribe twice. The reservation itself is the host's, so it is
+        // asked once the placeholder is in, and the placeholder (only it)
+        // leaves again when the prompt no longer holds the session.
+        let placeholder = Task {}
+        sessions[sessionID]?.tasklessObserver = placeholder
+        func releasePlaceholder() {
+            updateLiveSession(id: sessionID, epoch: epoch) { live in
+                if live.tasklessObserver == placeholder {
+                    live.tasklessObserver = nil
+                }
+            }
+        }
+        guard await isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
+            releasePlaceholder()
+            return
+        }
         guard let stream = await sessionRunner.existingSubAgentSnapshotEvents(rootSessionID: sessionID) else {
-            if isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) {
-                sessions[sessionID]?.tasklessObserver = nil
+            if await isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) {
+                releasePlaceholder()
             }
             return
         }
-        guard isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
+        guard await isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID),
+              liveSession(id: sessionID, epoch: epoch)?.tasklessObserver == placeholder else {
             let cleanup = Task { for await _ in stream {} }
             cleanup.cancel()
             await cleanup.value
@@ -88,11 +104,11 @@ extension ZenCODEACPBridge {
         sessions[sessionID]?.tasklessObserver = Task {
             for await snapshots in stream {
                 guard !Task.isCancelled,
-                      isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
+                      await isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
                 let updates = await projection.updates(snapshots.filter { $0.rootSessionID == sessionID })
                 for update in updates {
                     guard !Task.isCancelled,
-                          isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
+                          await isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
                     await pipeline.enqueue(.init(kind: .consume(update)), onAccepted: {
                         await projection.acknowledge(update)
                     }).value

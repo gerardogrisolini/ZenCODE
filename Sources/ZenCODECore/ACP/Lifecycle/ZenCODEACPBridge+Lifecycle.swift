@@ -150,11 +150,12 @@ extension ZenCODEACPBridge {
             workingDirectory: workingDirectoryURL
         )
         let sessionID = "swift-agent-\(UUID().uuidString.lowercased())"
-        // Reserve the incarnation epoch before the MCP servers are installed:
-        // the ownership stamped on those registrations must identify exactly
-        // the session incarnation this handler is about to publish, so a
-        // failed or fenced creation can release them again.
-        let sessionEpoch = makeSessionEpoch()
+        // Open the incarnation in the host before the MCP servers are
+        // installed: the ownership stamped on those registrations must
+        // identify exactly the session incarnation this handler is about to
+        // publish, so a failed or fenced creation can release them again.
+        let incarnation = try await openACPSession(sessionID: sessionID, cwd: cwd)
+        let sessionEpoch = incarnation.epoch
         let cacheKey = (params["sessionKey"] as? String)
             ?? (params["cacheKey"] as? String)
         // MCP servers installed below carry this incarnation's ownership. Every
@@ -162,6 +163,7 @@ extension ZenCODEACPBridge {
         // stay) live, so the catch releases its registrations before
         // propagating; a successful exit keeps them bound to the live session.
         do {
+            try ensureLifecycleOperationLive(operation)
             let acpMCPDescriptors = await registerACPProvidedMCPServers(
                 from: params,
                 ownership: DirectMCPToolRuntime.MCPSessionOwnership(
@@ -233,13 +235,12 @@ extension ZenCODEACPBridge {
             let sessionEntry = sessionState(
                 configuration: runnerConfiguration,
                 selectedAgent: selectedAgent,
-                epoch: sessionEpoch
+                incarnation: incarnation
             )
             sessions[sessionID] = sessionEntry
             // From here the session exists, so a `session/close` for it must be
             // able to invalidate this handler before it answers.
             bindLifecycleOperation(operation, sessionID: sessionID, epoch: sessionEpoch)
-            updateSessionSleepAssertion()
             do {
                 try await sessionRunner.createSession(configuration: runnerConfiguration)
             } catch {
@@ -257,8 +258,10 @@ extension ZenCODEACPBridge {
             }
         } catch {
             // This incarnation never became live, or was discarded again: its
-            // MCP registrations are orphaned, so release them before
-            // propagating the failure.
+            // host slot (closed already when it was discarded) and its MCP
+            // registrations are orphaned, so release them before propagating
+            // the failure.
+            await closeACPSlot(of: incarnation)
             await sessionRunner.releaseSessionMCPOwnership(
                 sessionID: sessionID,
                 epoch: sessionEpoch
@@ -367,27 +370,29 @@ extension ZenCODEACPBridge {
               let session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        guard case .idle = session.operationState,
-              session.activePromptTask == nil,
-              session.activePromptID == nil else {
-            throw ACPError.invalidParams("Cannot change session options while a prompt is running.")
-        }
+        let reservation = try await reserveReconfiguration(
+            of: session,
+            busyMessage: "Cannot change session options while a prompt is running."
+        )
 
         guard let configID = Self.configOptionID(from: params) else {
-            throw ACPError.invalidParams("Missing configId.")
+            try await failReconfiguration(reservation, ACPError.invalidParams("Missing configId."))
         }
         guard let value = Self.configOptionValue(from: params) else {
-            throw ACPError.invalidParams("Missing config option value.")
+            try await failReconfiguration(reservation, ACPError.invalidParams("Missing config option value."))
         }
         guard configID == "model" || configID == "thinking" else {
-            throw ACPError.invalidParams("Unsupported config option: \(configID)")
+            try await failReconfiguration(
+                reservation,
+                ACPError.invalidParams("Unsupported config option: \(configID)")
+            )
         }
 
         let updatedConfiguration: AgentCoreSessionConfiguration
         switch configID {
         case "model":
             guard modelCatalog.containsModel(withID: value) else {
-                throw ACPError.invalidParams("Unsupported model: \(value)")
+                try await failReconfiguration(reservation, ACPError.invalidParams("Unsupported model: \(value)"))
             }
             updatedConfiguration = session.configuration
                 .withModelID(value)
@@ -400,17 +405,19 @@ extension ZenCODEACPBridge {
                 value,
                 forModelID: session.configuration.modelID
             ) else {
-                throw ACPError.invalidParams("Unsupported thinking option: \(value)")
+                try await failReconfiguration(
+                    reservation,
+                    ACPError.invalidParams("Unsupported thinking option: \(value)")
+                )
             }
             updatedConfiguration = session.configuration.withThinkingSelection(thinkingSelection)
         default:
-            throw ACPError.invalidParams("Unsupported config option: \(configID)")
+            try await failReconfiguration(
+                reservation,
+                ACPError.invalidParams("Unsupported config option: \(configID)")
+            )
         }
         let sessionEpoch = session.epoch
-        let reconfigurationID = UUID()
-        var reconfiguringSession = session
-        reconfiguringSession.operationState = .reconfiguring(reconfigurationID)
-        sessions[sessionID] = reconfiguringSession
         // Bind before the runner call: a `session/close` for this incarnation
         // must invalidate this operation, otherwise the suspended
         // `createSession` below would re-create the session in the backend and
@@ -422,27 +429,19 @@ extension ZenCODEACPBridge {
                 operation,
                 sessionID: sessionID
             )
-            try commitReconfiguration(
-                sessionID: sessionID,
-                epoch: sessionEpoch,
-                reconfigurationID: reconfigurationID,
+            try await commitReconfiguration(
+                reservation,
                 configuration: updatedConfiguration,
                 selectedAgent: session.selectedAgent
             )
-            // Committed and still live: no suspension since the fence and
-            // commit checks above. Save before the first `await`.
+            // Committed and still live: save before anything else suspends.
             if configID == "model" {
                 persistModelSelection(of: updatedConfiguration)
             } else {
                 persistThinkingSelection(updatedConfiguration.thinkingSelection)
             }
         } catch {
-            await rollbackReconfiguration(
-                sessionID: sessionID,
-                epoch: sessionEpoch,
-                reconfigurationID: reconfigurationID,
-                originalSession: session
-            )
+            await rollbackReconfiguration(reservation, originalSession: session)
             throw error
         }
         await writer.sendResultIfRequest(
@@ -465,16 +464,15 @@ extension ZenCODEACPBridge {
               let session = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        guard case .idle = session.operationState,
-              session.activePromptTask == nil,
-              session.activePromptID == nil else {
-            throw ACPError.invalidParams("Cannot change session model while a prompt is running.")
-        }
+        let reservation = try await reserveReconfiguration(
+            of: session,
+            busyMessage: "Cannot change session model while a prompt is running."
+        )
         guard let modelID = Self.modelID(from: params) else {
-            throw ACPError.invalidParams("Missing modelId.")
+            try await failReconfiguration(reservation, ACPError.invalidParams("Missing modelId."))
         }
         guard modelCatalog.containsModel(withID: modelID) else {
-            throw ACPError.invalidParams("Unsupported model: \(modelID)")
+            try await failReconfiguration(reservation, ACPError.invalidParams("Unsupported model: \(modelID)"))
         }
 
         let updatedConfiguration = session.configuration
@@ -484,10 +482,6 @@ extension ZenCODEACPBridge {
                 carriedTo: modelID
             ))
         let sessionEpoch = session.epoch
-        let reconfigurationID = UUID()
-        var reconfiguringSession = session
-        reconfiguringSession.operationState = .reconfiguring(reconfigurationID)
-        sessions[sessionID] = reconfiguringSession
         // Same close-invalidation contract as `setConfigOption`.
         bindLifecycleOperation(operation, sessionID: sessionID, epoch: sessionEpoch)
         do {
@@ -496,22 +490,15 @@ extension ZenCODEACPBridge {
                 operation,
                 sessionID: sessionID
             )
-            try commitReconfiguration(
-                sessionID: sessionID,
-                epoch: sessionEpoch,
-                reconfigurationID: reconfigurationID,
+            try await commitReconfiguration(
+                reservation,
                 configuration: updatedConfiguration,
                 selectedAgent: session.selectedAgent
             )
             // Same save point as `setConfigOption`.
             persistModelSelection(of: updatedConfiguration)
         } catch {
-            await rollbackReconfiguration(
-                sessionID: sessionID,
-                epoch: sessionEpoch,
-                reconfigurationID: reconfigurationID,
-                originalSession: session
-            )
+            await rollbackReconfiguration(reservation, originalSession: session)
             throw error
         }
         await writer.sendResultIfRequest(id: id, result: .object([:]))
@@ -536,6 +523,40 @@ extension ZenCODEACPBridge {
         )
     }
 
+    /// Reserves, in the host, the reconfiguration of the incarnation `session`
+    /// names: from here no prompt can be reserved on it until the
+    /// reconfiguration commits, rolls back, or fails. Answers as the bridge
+    /// always did: `busyMessage` while a prompt (or another reconfiguration)
+    /// holds the session, the unknown-session error when the entry is not this
+    /// incarnation anymore after the hop, and silence after a shutdown.
+    private func reserveReconfiguration(
+        of session: SessionState,
+        busyMessage: String
+    ) async throws -> ChatReconfigurationReservation {
+        let reservation: ChatReconfigurationReservation
+        do {
+            reservation = try await host.reserveReconfiguration(in: session.slotID)
+        } catch {
+            throw acpError(for: error, busyMessage: busyMessage)
+        }
+        guard liveSession(id: session.id, epoch: session.epoch) != nil else {
+            await host.releaseReconfiguration(reservation)
+            try ensureNotShutDown()
+            throw ACPError.invalidParams("Unknown or missing sessionId.")
+        }
+        return reservation
+    }
+
+    /// Releases a reservation whose operation stops at a parameter check, and
+    /// throws `error`.
+    private func failReconfiguration(
+        _ reservation: ChatReconfigurationReservation,
+        _ error: Error
+    ) async throws -> Never {
+        await host.releaseReconfiguration(reservation)
+        throw error
+    }
+
     /// Re-check for the handlers that reconfigure an existing session through
     /// the runner.
     ///
@@ -558,26 +579,30 @@ extension ZenCODEACPBridge {
         throw ACPShutdownFenceError()
     }
 
-    /// Commits only the reconfiguration reserved by this operation. A matching
-    /// state check makes a later operation unable to publish over an earlier
-    /// one that was cancelled, closed, or rolled back.
+    /// Commits only the reconfiguration reserved by this operation. The ACP
+    /// state is written first, while the reservation still keeps every prompt
+    /// out, then the reservation is released in the host: no prompt can
+    /// observe the previous configuration under a released reservation. A
+    /// reservation that is gone (the incarnation ended) commits nothing: the
+    /// entry is gone with it, or the write is undone.
     private func commitReconfiguration(
-        sessionID: String,
-        epoch: UInt64,
-        reconfigurationID: UUID,
+        _ reservation: ChatReconfigurationReservation,
         configuration: AgentCoreSessionConfiguration,
         selectedAgent: AgentProfile?
-    ) throws {
-        guard let currentState = liveSession(id: sessionID, epoch: epoch),
-              case let .reconfiguring(activeID) = currentState.operationState,
-              activeID == reconfigurationID else {
+    ) async throws {
+        let previous = liveSession(id: reservation.sessionID, epoch: reservation.epoch)
+        let written = updateLiveSession(id: reservation.sessionID, epoch: reservation.epoch) { live in
+            live = sessionState(configuration: configuration, selectedAgent: selectedAgent, inheriting: live)
+        }
+        guard written else {
             throw ACPShutdownFenceError()
         }
-        sessions[sessionID] = sessionStateWithCommandState(
-            configuration: configuration,
-            selectedAgent: selectedAgent,
-            epoch: epoch
-        )
+        guard await host.releaseReconfiguration(reservation) else {
+            if let previous {
+                updateLiveSession(id: reservation.sessionID, epoch: reservation.epoch) { $0 = previous }
+            }
+            throw ACPShutdownFenceError()
+        }
     }
 
     /// Saves a committed model choice, with the thinking level it resulted
@@ -623,25 +648,30 @@ extension ZenCODEACPBridge {
     /// If close/shutdown invalidated the incarnation, nothing is restored: the
     /// close path owns the backend cleanup in that case.
     private func rollbackReconfiguration(
-        sessionID: String,
-        epoch: UInt64,
-        reconfigurationID: UUID,
+        _ reservation: ChatReconfigurationReservation,
         originalSession: SessionState
     ) async {
-        guard let priorState = liveSession(id: sessionID, epoch: epoch),
-              case let .reconfiguring(activeID) = priorState.operationState,
-              activeID == reconfigurationID else {
+        guard liveSession(id: reservation.sessionID, epoch: reservation.epoch) != nil,
+              await host.holdsReconfiguration(reservation) else {
             return
         }
         _ = try? await sessionRunner.createSession(
             configuration: originalSession.configuration
         )
-        guard let currentState = liveSession(id: sessionID, epoch: epoch),
-              case let .reconfiguring(activeID) = currentState.operationState,
-              activeID == reconfigurationID else {
+        guard liveSession(id: reservation.sessionID, epoch: reservation.epoch) != nil,
+              await host.holdsReconfiguration(reservation) else {
             return
         }
-        sessions[sessionID] = originalSession
+        // The ACP state goes back first, then the reservation is released:
+        // the next prompt reads the restored configuration.
+        updateLiveSession(id: reservation.sessionID, epoch: reservation.epoch) { live in
+            live = sessionState(
+                configuration: originalSession.configuration,
+                selectedAgent: originalSession.selectedAgent,
+                inheriting: live
+            )
+        }
+        await host.releaseReconfiguration(reservation)
     }
 
         public func restoreSession(
@@ -667,8 +697,10 @@ extension ZenCODEACPBridge {
             // an already-live id. Never infer an unfinished Planner exchange
             // from replayed chat history.
             await clearACPPlanBrainstorming(sessionID: sessionID, epoch: session.epoch)
-            _ = updateLiveSession(id: sessionID, epoch: session.epoch) {
-                $0.pendingPlanApprovalPlanID = nil
+            // The approval handshake is the controller's transient state: it
+            // is cleared under the controller's lock, inside the fenced step.
+            _ = updateLiveSession(id: sessionID, epoch: session.epoch) { live in
+                live.controller.commitCommandState(ifToken: nil) { $0.pendingPlanApprovalPlanID = nil }
             }
             try ensureLifecycleOperationLive(operation)
             // The remaining replay belongs to the same fenced incarnation.
@@ -697,14 +729,16 @@ extension ZenCODEACPBridge {
             applyLaunchDirectoryFallback: false
         )
         try ensureLifecycleOperationLive(operation)
-        // Same early epoch reservation as `newSession`: the MCP registrations
+        // Same early incarnation as `newSession`: the MCP registrations
         // installed below carry the ownership of the incarnation this handler
         // is about to publish, so a fenced or failed restore can release them.
-        let restoredSessionEpoch = makeSessionEpoch()
+        let incarnation = try await openACPSession(sessionID: sessionID, cwd: workingDirectory.path)
+        let restoredSessionEpoch = incarnation.epoch
         // Every `throw` after the installs began means this incarnation never
         // became (or did not stay) live, so the catch releases its MCP
         // registrations before propagating.
         do {
+            try ensureLifecycleOperationLive(operation)
             let acpMCPDescriptors = await registerACPProvidedMCPServers(
                 from: params,
                 ownership: DirectMCPToolRuntime.MCPSessionOwnership(
@@ -732,11 +766,10 @@ extension ZenCODEACPBridge {
             let sessionEntry = sessionState(
                 configuration: configuration,
                 selectedAgent: selectedAgent,
-                epoch: restoredSessionEpoch
+                incarnation: incarnation
             )
             sessions[sessionID] = sessionEntry
             bindLifecycleOperation(operation, sessionID: sessionID, epoch: restoredSessionEpoch)
-            updateSessionSleepAssertion()
             try await sessionRunner.restoreSession(configuration: configuration)
             try await ensureLifecycleOperationLiveAfterSessionWrite(
                 operation,
@@ -761,9 +794,11 @@ extension ZenCODEACPBridge {
             }
         } catch {
             // The incarnation never became live, or was discarded again: drop
-            // the entry we may have published and release its orphaned MCP
-            // registrations before propagating the failure.
+            // the entry we may have published, close its host slot, and
+            // release its orphaned MCP registrations before propagating the
+            // failure.
             await discardSessionIfCurrent(id: sessionID, epoch: restoredSessionEpoch)
+            await closeACPSlot(of: incarnation)
             await sessionRunner.releaseSessionMCPOwnership(
                 sessionID: sessionID,
                 epoch: restoredSessionEpoch

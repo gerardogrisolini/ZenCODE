@@ -26,7 +26,8 @@ extension TerminalChat {
         guard let snapshot = runtimeSetupResumeSnapshot else {
             return
         }
-        sessionID = snapshot.sessionID
+        // The session id is the snapshot's from `init`: the terminal's slot
+        // opened its first incarnation with it (see `TerminalChat.init`).
         interactiveReader.restoreCommandHistory(snapshot.commandHistory)
         resetFileArtifactState()
         activeSessionCacheKey = snapshot.cacheKey

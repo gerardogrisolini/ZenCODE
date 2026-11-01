@@ -27,11 +27,24 @@ extension ChatSessionController {
     // MARK: - New session
 
     /// Discards the active session and starts a fresh, unsaved one with the
-    /// ID `newSessionID`, which the channel chooses. The selection is kept;
-    /// the conversation, the artifacts, the saved-session link, the plan, and
-    /// the `/goal` workflow are cleared.
+    /// ID `newSessionID`, which the channel chooses. In place, the selection
+    /// is kept; the conversation, the artifacts, the saved-session link, the
+    /// plan, and the `/goal` workflow are cleared. In a host's slot
+    /// (``hostBinding``) the new session is a new incarnation: a new
+    /// controller from the launch profile with the slot's bindings, whose
+    /// runtime session is created here with that selection, while this
+    /// controller is fenced; the planning discussion ends first either way.
     public func startNewSession(newSessionID: String) async throws -> ChatSessionOperationOutcome {
         await abandonPlanBrainstorming()
+        if let binding = hostBinding, let host = binding.host {
+            let next = try await host.replaceIncarnation(
+                of: self,
+                in: binding.slotID,
+                sessionID: newSessionID
+            )
+            try await next.controller.createSessionWithSelectedSkills()
+            return ChatSessionOperationOutcome(notices: [.sessionStarted])
+        }
         await managementRuntime?.resetSession(id: sessionID)
         sessionID = newSessionID
         resetFileArtifactState()
@@ -411,12 +424,49 @@ extension ChatSessionController {
     /// ``ChatSessionChannelHooks/savedSessionDidRestore(transcript:contextWindow:)``
     /// to present.
     ///
+    /// In a host's slot (``hostBinding``) the saved session is loaded into a
+    /// new incarnation: the first step and the end of the planning
+    /// discussion run here, the rest on the new controller, in the same
+    /// order (``ChatSessionHost/loadSavedSession(in:name:checkpointEntryID:)``);
+    /// this controller is fenced from the switch on.
+    ///
     /// The loaded notice and the checkpoint progress are presented as they
     /// happen; the outcome carries the restored session (the same transcript,
     /// for channels without hooks) and the checkpoint outcome.
     public func loadSavedSession(
         _ savedSession: TerminalSavedSession,
         checkpointEntryID: String? = nil
+    ) async throws -> ChatSessionOperationOutcome {
+        if let binding = hostBinding, let host = binding.host {
+            return try await host.loadSavedSession(
+                in: binding.slotID,
+                savedSession,
+                checkpointEntryID: checkpointEntryID,
+                requestedBy: self
+            )
+        }
+        await prepareForSavedSessionLoad()
+        await managementRuntime?.resetSession(id: sessionID)
+        sessionID = savedSession.sessionID
+        return try await installSavedSession(savedSession, checkpointEntryID: checkpointEntryID)
+    }
+
+    /// The first steps of a saved-session load, on the controller whose
+    /// session is being replaced: the channel's first step and the end of
+    /// the planning discussion and of the workflow.
+    func prepareForSavedSessionLoad() async {
+        await channelHooks?.savedSessionWillLoad()
+        await abandonPlanBrainstorming()
+        activeWorkflow = nil
+    }
+
+    /// The rest of a saved-session load, once the session to replace is
+    /// discarded and this controller has the saved session's id: in place,
+    /// after ``prepareForSavedSessionLoad()``; in a host's slot, on the new
+    /// incarnation.
+    func installSavedSession(
+        _ savedSession: TerminalSavedSession,
+        checkpointEntryID: String?
     ) async throws -> ChatSessionOperationOutcome {
         let tree = savedSession.checkpointTree
         let restoredMessages: [AgentRuntimeMessage]
@@ -435,11 +485,6 @@ extension ChatSessionController {
             restoredTranscript = Self.savedSessionDisplayHistory(savedSession)
         }
 
-        await channelHooks?.savedSessionWillLoad()
-        await abandonPlanBrainstorming()
-        activeWorkflow = nil
-        await managementRuntime?.resetSession(id: sessionID)
-        sessionID = savedSession.sessionID
         resetFileArtifactState()
         cacheKey = savedSession.cacheKey
         history = restoredMessages
@@ -698,6 +743,8 @@ extension ChatSessionController {
 
     /// Restores `savedSession` from the checkpoint entry `entryID`, branching
     /// from that point: subsequent messages form a new branch in the tree.
+    /// The message count of the notice is read from the restored session,
+    /// which in a host's slot lives in the new incarnation.
     public func restoreFromCheckpoint(
         _ savedSession: TerminalSavedSession,
         entryID: String
@@ -708,7 +755,8 @@ extension ChatSessionController {
             ])
         }
         let outcome = try await loadSavedSession(savedSession, checkpointEntryID: entryID)
-        let messageCount = transcript.filter { $0.role != .system }.count
+        let restoredTranscript = outcome.restoredSession?.transcript ?? transcript
+        let messageCount = restoredTranscript.filter { $0.role != .system }.count
         return ChatSessionOperationOutcome(
             restoredSession: outcome.restoredSession,
             notices: outcome.notices + [.checkpointRestored(entryID: entryID, messageCount: messageCount)]

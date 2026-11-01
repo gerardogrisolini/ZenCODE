@@ -6,39 +6,7 @@
 //
 
 import Foundation
-import Synchronization
 import ToolCore
-
-/// Which ACP session incarnations are generating a prompt right now, as the
-/// bridge last published them: the epoch of every session whose
-/// `activePromptID` is set, by session id.
-///
-/// ``TelegramCompanionChannel/isSessionGenerating()`` is synchronous on
-/// ``ChatSessionActor``, while `activePromptID` is isolated to the bridge
-/// actor, so the channel cannot ask the bridge directly. The protocol stays
-/// synchronous on purpose: it is the contract of every primary channel, and
-/// making it asynchronous for ACP would change the companion and the
-/// terminal for nothing. The bridge publishes instead, from its own
-/// isolation, a copy of what the question needs after every change of its
-/// sessions (`sessions`' `didSet`), and the channel reads that copy under
-/// the lock for its own incarnation. The answer is the one the bridge gave
-/// at its last change, which is the most any reader on another actor could
-/// observe.
-final class ACPSessionPromptActivity: Sendable {
-    private let generatingEpochs = Mutex<[String: UInt64]>([:])
-
-    /// Replaces the published state with `epochsBySessionID`: the epoch of
-    /// each session generating a prompt.
-    func publish(_ epochsBySessionID: [String: UInt64]) {
-        generatingEpochs.withLock { $0 = epochsBySessionID }
-    }
-
-    /// Whether the incarnation `epoch` of `sessionID` is generating a prompt.
-    /// A newer incarnation with the same id does not count.
-    func isGenerating(sessionID: String, epoch: UInt64) -> Bool {
-        generatingEpochs.withLock { $0[sessionID] == epoch }
-    }
-}
 
 /// The ACP session as the primary channel of its Telegram companion.
 ///
@@ -55,6 +23,12 @@ final class ACPSessionPromptActivity: Sendable {
 /// One channel serves one incarnation of one session (`sessionID`, `epoch`).
 /// The bridge keeps it in the session state next to the companion, which
 /// holds it weakly; the channel holds the companion weakly too.
+///
+/// ``TelegramCompanionChannel/isSessionGenerating()`` is synchronous on
+/// ``ChatSessionActor``, the isolation of the ``ChatSessionHost`` that owns
+/// the prompt reservation of the incarnation, so the channel asks the host
+/// directly for its own incarnation; a newer incarnation with the same id
+/// does not count.
 @ChatSessionActor
 final class ACPTelegramCompanionChannel: TelegramCompanionChannel {
     /// The companion configuration of every ACP session: the session is
@@ -68,7 +42,8 @@ final class ACPTelegramCompanionChannel: TelegramCompanionChannel {
     let primaryChannelDescription = ACPTelegramCompanionChannel.configuration.primaryChannelDescription
     let sessionID: String
     let epoch: UInt64
-    private let promptActivity: ACPSessionPromptActivity
+    private let host: ChatSessionHost
+    private let slotID: ChatSlotID
     weak var companion: TelegramSessionCompanion?
     /// The notices the companion presented since
     /// ``beginCollectingNotices()``, without their trailing newlines.
@@ -77,10 +52,11 @@ final class ACPTelegramCompanionChannel: TelegramCompanionChannel {
     /// notices are kept for it instead of being dropped.
     private var collectsNotices = false
 
-    init(sessionID: String, epoch: UInt64, promptActivity: ACPSessionPromptActivity) {
+    init(sessionID: String, epoch: UInt64, host: ChatSessionHost, slotID: ChatSlotID) {
         self.sessionID = sessionID
         self.epoch = epoch
-        self.promptActivity = promptActivity
+        self.host = host
+        self.slotID = slotID
     }
 
     /// No facts: the context only decides `/plan`, `/goal` and `/review`
@@ -159,10 +135,9 @@ final class ACPTelegramCompanionChannel: TelegramCompanionChannel {
         await companion.detach()
     }
 
-    /// Whether the session's `activePromptID` is set, as the bridge published
-    /// it (see ``ACPSessionPromptActivity``).
+    /// Whether a prompt is reserved on the incarnation, as the host holds it.
     func isSessionGenerating() -> Bool {
-        promptActivity.isGenerating(sessionID: sessionID, epoch: epoch)
+        host.activePromptID(in: slotID, epoch: epoch) != nil
     }
 
     /// The reply to a `/telegram on` that attached `companion`: the notice
@@ -175,9 +150,9 @@ final class ACPTelegramCompanionChannel: TelegramCompanionChannel {
         return "Telegram remote control is active.\nLinked chat: \(chatTitle)"
     }
 
-    /// The Telegram companion of the incarnation `epoch` of `sessionID`, with
-    /// its channel. The companion registers its presenter in `controller` as
-    /// it is created.
+    /// The Telegram companion of the incarnation `epoch` of `sessionID`, run
+    /// by `host` in `slotID`, with its channel. The companion registers its
+    /// presenter in `controller` as it is created.
     static func makeCompanion(
         controller: ChatSessionController,
         sessionRunner: AgentCoreSessionRunner,
@@ -185,12 +160,14 @@ final class ACPTelegramCompanionChannel: TelegramCompanionChannel {
         controlService: TerminalTelegramControlService,
         sessionID: String,
         epoch: UInt64,
-        promptActivity: ACPSessionPromptActivity
+        host: ChatSessionHost,
+        slotID: ChatSlotID
     ) -> (companion: TelegramSessionCompanion, channel: ACPTelegramCompanionChannel) {
         let channel = ACPTelegramCompanionChannel(
             sessionID: sessionID,
             epoch: epoch,
-            promptActivity: promptActivity
+            host: host,
+            slotID: slotID
         )
         let companion = TelegramSessionCompanion(
             controller: controller,
@@ -208,40 +185,11 @@ final class ACPTelegramCompanionChannel: TelegramCompanionChannel {
 // MARK: - Bridge
 
 extension ZenCODEACPBridge {
-    /// Publishes which incarnations are generating a prompt to the Telegram
-    /// channels (see ``ACPSessionPromptActivity``).
-    func publishTelegramPromptActivity() {
-        telegramPromptActivity.publish(
-            sessions.compactMapValues { $0.activePromptID == nil ? nil : $0.epoch }
-        )
-    }
-
-    /// The router every companion of this bridge resolves its routes with,
-    /// created on first use from the settings as they are then.
-    func sharedTelegramRouter() -> TerminalTelegramSessionRouter {
-        if let router = telegramRouterStorage {
-            return router
-        }
-        let router = TelegramCompanionRuntimeFactory.makeRouter()
-        telegramRouterStorage = router
-        return router
-    }
-
-    /// The poller every companion's control service subscribes through,
-    /// created with the router (see `telegramDispatcherStorage`).
-    func sharedTelegramDispatcher() -> TerminalTelegramBotDispatcher {
-        if let dispatcher = telegramDispatcherStorage {
-            return dispatcher
-        }
-        let dispatcher = TerminalTelegramBotDispatcher()
-        telegramDispatcherStorage = dispatcher
-        return dispatcher
-    }
-
     /// The Telegram companion of the incarnation that holds the prompt
     /// reservation `promptID`, created and stored in its session state on
-    /// first use, with a control service of its own on the shared router and
-    /// dispatcher.
+    /// first use, with a control service of its own on the router and
+    /// dispatcher the host shares among every session (see
+    /// `ChatSessionHost+Telegram.swift`).
     ///
     /// The companion is stored before anything attaches it, so a
     /// `session/close` or a `shutdown()` that lands while it attaches finds
@@ -253,27 +201,30 @@ extension ZenCODEACPBridge {
         epoch: UInt64,
         promptID: UUID
     ) async throws -> TelegramSessionCompanion {
-        guard let session = reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
+        guard let session = await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
             throw CancellationError()
         }
         if let companion = session.telegramCompanion {
             return companion
         }
         let transportFactory = telegramTransportFactoryForTesting ?? { NIOTelegramHTTPTransport() }
+        let dispatcher = await host.telegramDispatcher()
+        let router = await host.telegramRouter()
         let controlService = TerminalTelegramControlService(
             transportFactory: transportFactory,
-            dispatcher: sharedTelegramDispatcher()
+            dispatcher: dispatcher
         )
         let made = await ACPTelegramCompanionChannel.makeCompanion(
             controller: session.controller,
             sessionRunner: sessionRunner,
-            router: sharedTelegramRouter(),
+            router: router,
             controlService: controlService,
             sessionID: sessionID,
             epoch: epoch,
-            promptActivity: telegramPromptActivity
+            host: host,
+            slotID: session.slotID
         )
-        guard updateReservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID, { live in
+        guard await updateReservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID, { live in
             live.telegramCompanion = made.companion
             live.telegramCompanionChannel = made.channel
         }) else {

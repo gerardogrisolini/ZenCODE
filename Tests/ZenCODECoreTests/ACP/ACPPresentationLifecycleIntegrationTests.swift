@@ -192,11 +192,10 @@ struct ACPPresentationLifecycleIntegrationTests {
 }
 
 private extension ZenCODEACPBridge {
-    func installPresentationTestPrompt(sessionID: String) -> (UInt64, UUID) {
-        let promptID = UUID()
-        sessions[sessionID]?.activePromptID = promptID
-        sessions[sessionID]?.operationState = .prompting(promptID)
-        return (sessions[sessionID]!.epoch, promptID)
+    func installPresentationTestPrompt(sessionID: String) async -> (UInt64, UUID) {
+        let session = sessions[sessionID]!
+        let reservation = try! await host.reservePrompt(in: session.slotID)
+        return (reservation.epoch, reservation.promptID)
     }
 
     func installTasklessPreparationGate(sessionID: String, gate: PresentationSuspensionGate) {
@@ -220,9 +219,9 @@ private extension ZenCODEACPBridge {
 
     func presentationEpoch(sessionID: String) -> UInt64? { sessions[sessionID]?.epoch }
 
-    func replacePresentationTestSession(sessionID: String) {
+    func replacePresentationTestSession(sessionID: String) async {
         let old = sessions[sessionID]!
-        sessions[sessionID] = sessionState(configuration: old.configuration)
+        _ = try! await installSession(configuration: old.configuration)
     }
 }
 

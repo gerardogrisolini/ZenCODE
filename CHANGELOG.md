@@ -46,6 +46,24 @@ Release tags follow the strict `vX.Y.Z` contract described in
   consents, menus, and text requests in it until the app answers them. The
   log and the snapshot are never saved: see
   [Docs/embedding.md](Docs/embedding.md#observing-a-session).
+- `ChatSessionHost`, the container of the chat sessions of one process, for
+  host apps and the channels alike. A channel opens a slot for each place it
+  runs sessions in (`ChatSlotDescriptor`: identity, working directory,
+  presenter, interaction, consent authorizer, channel hooks, commands, and
+  whether a `ChatSessionStateReducer` is attached), and the slot runs one
+  session at a time (`ChatSessionIncarnation`: id, controller, reducer, and an
+  epoch that is never reused). `newSession(in:sessionID:)` and
+  `loadSavedSession(in:name:checkpointEntryID:)` replace the session with a
+  new controller from the launch profile; `adoptSessionID(_:in:)` changes the
+  id in place before the runtime session exists; `reservePrompt(in:)`,
+  `releasePrompt(_:)`, `holdsPrompt(_:)`, `cancelPrompt(in:)`,
+  `withReservedIncarnation(_:_:)`, and `withLiveIncarnation(_:epoch:_:)` run
+  one prompt per session and keep late work from writing into a replaced
+  session; `incarnations(in:)` and `reducer(in:)` observe a slot;
+  `closeSession(in:)`, `closeSlot(_:)`, and `shutdown(keepingExternalTools:)`
+  end them. The host owns the runner, the Telegram router and poller every
+  companion shares, and the sleep assertion. The terminal UI and ACP sessions
+  now run in it; see [Docs/embedding.md](Docs/embedding.md#composition).
 - Telegram now works next to the terminal UI and next to ACP clients such as
   Xcode: one Telegram companion follows the session of either and mirrors it
   to the linked chat. In the terminal UI, Telegram works as before, apart from
@@ -125,9 +143,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
   starts). There they were visible only through `/telegram status`.
 - `TerminalChatActor` is deprecated; use `ChatSessionActor`. It is removed in
   the next major release.
+- Terminal: `/sessions new` starts a new session with the launch profile's
+  selection; the model, thinking level, agent, tools, and skills chosen before
+  are not kept. `/sessions load` restores the selection saved with the
+  session, and `/sessions restore` the active saved session from a checkpoint,
+  as before. The output of the commands is unchanged.
 
 ### Fixed
 
+- ACP: `session/cancel` sent while a `_zencode/session/set_model` or
+  `session/set_config_option` of the same session is still running no longer
+  cancels that reconfiguration, which used to end without a reply. The cancel
+  still answers at once, the reconfiguration commits and answers as usual, and
+  a running prompt is cancelled as before.
 - In ACP clients such as Xcode, only `local.exec` is shown as a "Terminal
   Command". Every other tool that used to report the ACP tool kind `execute`
   now reports the generic `other`, because it does not run a shell command:
