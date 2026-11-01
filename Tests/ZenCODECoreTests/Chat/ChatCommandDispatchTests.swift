@@ -399,7 +399,6 @@ struct ChatCommandDispatchTests {
         try await withChatHarness { harness in
             let controller = harness.controller
             let hooks = RecordingChannelHooks(runtime: harness.runtime)
-            hooks.mintedSessionID = "channel-new-session"
             controller.channelHooks = hooks
             try await harness.startSession()
             let previousSessionID = controller.sessionID
@@ -407,14 +406,16 @@ struct ChatCommandDispatchTests {
             let outcome = await controller.handleCommandLine("/sessions new", context: [])
 
             #expect(outcome == ChatCommandOutcome(notices: [.sessionStarted]))
-            #expect(controller.sessionID == "channel-new-session")
+            // Outside a host's slot the controller mints `chat-<uuid>`.
+            #expect(controller.sessionID != previousSessionID)
+            #expect(controller.sessionID.hasPrefix("chat-"))
+            #expect(UUID(uuidString: String(controller.sessionID.dropFirst("chat-".count))) != nil)
             let calls = await harness.callNames()
             #expect(calls.first == "resetSession")
             #expect(await harness.runtime.calls.first == .resetSession(previousSessionID))
             #expect(hooks.steps == [
-                "sessionWillStartNew after []",
-                "newSessionID",
-                "sessionDidStartNew after \(calls)",
+                "newSessionWillStart after []",
+                "newSessionDidStart after \(calls)",
             ])
         }
     }

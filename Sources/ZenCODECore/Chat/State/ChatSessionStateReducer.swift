@@ -73,6 +73,10 @@ public final class ChatSessionStateReducer: ChatSessionObserver {
     private var hasFirstPrompt = false
     private var firstPromptTitle: String?
     private var subscribers: [UUID: AsyncStream<ChatSessionSnapshot>.Continuation] = [:]
+    /// Called after a commit that changed ``ChatSessionSnapshot/summary``:
+    /// the ``ChatSessionHost`` that created the reducer sets it, to show the
+    /// summary in its ``ChatShellSnapshot``.
+    var summaryDidChange: (@ChatSessionActor () -> Void)?
 
     private struct OpenTurn {
         let id: Int
@@ -507,6 +511,7 @@ public final class ChatSessionStateReducer: ChatSessionObserver {
 
     /// Brings the summary up to date and publishes the snapshot.
     private func commit() {
+        let previousSummary = snapshot.summary
         snapshot.summary.isGenerating = snapshot.turn.isGenerating
         snapshot.summary.pendingRequestCount = snapshot.pendingRequests.count
         snapshot.summary.activeChannel = snapshot.turn.isGenerating
@@ -515,6 +520,9 @@ public final class ChatSessionStateReducer: ChatSessionObserver {
         snapshot.summary.title = snapshot.savedSession.savedSessionName?.nilIfBlank ?? firstPromptTitle
         for continuation in subscribers.values {
             continuation.yield(snapshot)
+        }
+        if snapshot.summary != previousSummary {
+            summaryDidChange?()
         }
     }
 }

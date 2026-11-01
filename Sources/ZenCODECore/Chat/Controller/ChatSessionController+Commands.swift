@@ -394,22 +394,40 @@ extension ChatSessionController {
 
     /// `/sessions new`: resets the runtime conversation and starts a fresh,
     /// unsaved session (``startNewSession(newSessionID:)``) with the ID the
-    /// channel mints, between the channel's steps around a new session.
+    /// slot mints (``mintNewSessionID()``), between the channel's steps
+    /// around a new session (``ChatIncarnationChange/newSessionWillStart``
+    /// and ``ChatIncarnationChange/newSessionDidStart``).
     func newSessionCommand() async -> ChatCommandOutcome {
         do {
-            await channelHooks?.sessionWillStartNew()
-            let newSessionID = channelHooks?.newSessionID() ?? Self.mintedSessionID()
-            let outcome = try await startNewSession(newSessionID: newSessionID)
-            await channelHooks?.sessionDidStartNew()
+            await channelHooks?.incarnationDidChange(reason: .newSessionWillStart)
+            let outcome = try await startNewSession(newSessionID: mintNewSessionID())
+            await channelHooks?.incarnationDidChange(reason: .newSessionDidStart)
             return ChatCommandOutcome(notices: outcome.notices)
         } catch {
             return Self.failedCommand(error)
         }
     }
 
-    /// The ID of a new session when the channel mints none.
+    /// The ID of the session `/sessions new` starts: in a host's slot, the
+    /// slot's prefix and a new UUID (``ChatSlotDescriptor/sessionIDPrefix``);
+    /// otherwise ``mintedSessionID()``.
+    func mintNewSessionID() -> String {
+        if let binding = hostBinding, let host = binding.host,
+           let sessionID = host.mintSessionID(in: binding.slotID) {
+            return sessionID
+        }
+        return Self.mintedSessionID()
+    }
+
+    /// The ID of a new session outside a host's slot.
     nonisolated static func mintedSessionID() -> String {
-        "chat-\(UUID().uuidString.lowercased())"
+        mintedSessionID(prefix: ChatSlotDescriptor.defaultSessionIDPrefix)
+    }
+
+    /// `prefix`, a dash, and a new lowercased UUID: the format of every
+    /// session ID the controller and the host mint.
+    nonisolated static func mintedSessionID(prefix: String) -> String {
+        "\(prefix)-\(UUID().uuidString.lowercased())"
     }
 
     /// `/sessions save` (``saveActiveSession(contextWindow:)``), with the
@@ -440,7 +458,9 @@ extension ChatSessionController {
                 .flatMap { $0 > 0 ? $0 : nil }
             let outcome = try await compactSession(maxTokensOverride: runtimeMaxTokens)
             if let compactedWindow = outcome.contextWindow {
-                await channelHooks?.sessionDidCompact(contextWindow: compactedWindow)
+                await channelHooks?.incarnationDidChange(
+                    reason: .sessionDidCompact(contextWindow: compactedWindow)
+                )
             }
             return ChatCommandOutcome(notices: [outcome.notice])
         } catch {

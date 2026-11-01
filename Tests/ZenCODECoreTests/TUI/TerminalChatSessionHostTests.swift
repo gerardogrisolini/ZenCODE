@@ -6,7 +6,7 @@
 //  incarnation it follows, `/sessions new` from the launch profile and
 //  `/sessions load` with the saved selection, the slot's Telegram channel
 //  that follows the slot with its topic renamed, the session id adopted in
-//  place,
+//  place, the shell of the host with the slot Telegram drives,
 //  and the shutdown that goes through the host. Every test runs in
 //  directories named by UUIDs; nothing touches the real application state.
 //
@@ -415,6 +415,62 @@ struct TerminalChatSessionHostTests {
 
             await terminal.stopTaskGraphObserver()
             await terminal.sessionHost.shutdown()
+        }
+    }
+
+    // MARK: - Shell
+
+    /// The shell of the terminal's host: the configured Telegram link, read
+    /// from the settings, the slot Telegram drives from `/telegram on` to
+    /// `/telegram off`, with the summary of the reducer the handover created,
+    /// and the poller that runs meanwhile.
+    @Test
+    nonisolated func theShellShowsTheTerminalSlotTelegramDrivesAndThePoller() async throws {
+        try await withEnvironment(telegram: Self.pairedTelegram) { environment in
+            let transport = TerminalHostTopicTransport(botID: 9802, topicID: 702)
+            let terminal = try environment.makeTerminal(stdinIsTerminal: true, transport: transport)
+            try await terminal.createCurrentSession(discoverExternalTools: false)
+            let host = terminal.sessionHost
+            let slot = terminal.terminalSlotID
+
+            await host.refreshShellSnapshot()
+            #expect(host.shellSnapshot.telegram.isConfigured)
+            #expect(host.shellSnapshot.telegram.isPolling == false)
+            #expect(host.shellSnapshot.telegram.drivenSlots.isEmpty)
+            // The terminal publishes no state: its summary comes from the
+            // incarnation, and no reducer is created for the shell.
+            #expect(host.reducer(in: slot) == nil)
+            #expect(host.shellSnapshot.sessions[slot]?.workspace == environment.workspace)
+            #expect(host.shellSnapshot.sessions[slot]?.activeChannel == .local)
+            #expect(host.shellSnapshot.savedSessions[environment.workspace] == [])
+
+            await terminal.startTelegramControl()
+            #expect(host.shellSnapshot.telegram.drivenSlots == [slot])
+            let reducer = try #require(host.reducer(in: slot))
+            #expect(host.shellSnapshot.sessions[slot] == reducer.snapshot.summary)
+            for _ in 0 ..< 400 where !host.shellSnapshot.telegram.isPolling {
+                await host.refreshShellSnapshot()
+                if !host.shellSnapshot.telegram.isPolling {
+                    try? await Task.sleep(for: .milliseconds(5))
+                }
+            }
+            #expect(host.shellSnapshot.telegram.isPolling)
+
+            await terminal.stopTelegramControl()
+            #expect(host.shellSnapshot.telegram.drivenSlots.isEmpty)
+            #expect(host.reducer(in: slot) == nil)
+            // The poll ends with the link's last subscriber.
+            for _ in 0 ..< 400 where host.shellSnapshot.telegram.isPolling {
+                await host.refreshShellSnapshot()
+                if host.shellSnapshot.telegram.isPolling {
+                    try? await Task.sleep(for: .milliseconds(5))
+                }
+            }
+            #expect(host.shellSnapshot.telegram.isPolling == false)
+
+            await terminal.stopTaskGraphObserver()
+            await terminal.sessionHost.shutdown()
+            #expect(host.shellSnapshot.sessions.isEmpty)
         }
     }
 }

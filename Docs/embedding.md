@@ -207,24 +207,53 @@ final class AppInteractionHost: ChatInteractionHost {
 ### Channel hooks
 
 `ChatSessionChannelHooks` are the app's own steps between the steps of an
-operation, for example after `/sessions new` started a session. Every
-requirement has a default. The slot and the controllers hold the hooks
-weakly, so the app keeps them.
+operation. Every requirement has a default. The slot and the controllers hold
+the hooks weakly, so the app keeps them.
+
+The steps of a session that changes are one hook,
+`incarnationDidChange(reason:)`, whose `ChatIncarnationChange` names the step
+and carries what it hands the channel: `.newSessionWillStart` and
+`.newSessionDidStart` around `/sessions new`; `.savedSessionWillLoad`,
+`.savedSessionWillRestore`, and
+`.savedSessionDidRestore(transcript:contextWindow:)` of the load of a saved
+session, the last one where a channel replays the restored conversation; and
+`.sessionDidCompact(contextWindow:)` after `/sessions compact`. The first step
+of `/sessions new` and of a load runs on the controller being replaced, the
+later ones on the new controller. The other hooks are the steps of a selection
+that creates the session again (`agentDidChange(_:)`,
+`sessionWillCreate(reason:)`, `sessionDidCreate(reason:)`,
+`modelPreloadDidEmit(_:)`, and `modelDidPreload(_:reason:)`, with a
+`ChatSessionRecreationReason`) and of a selection command
+(`selectionDidApply(_:command:)`, with a `ChatSelectionCommand`), the values
+the channel knows (`responseLanguageSection()` and `commandContextWindow()`),
+the lock of the response language before the turn of an approved plan
+(`responseLanguageShouldLock()`), and the composition and environment of a turn
+the slot's Telegram channel runs (`turnSessionConfiguration(for:controller:)`
+and `runTurnFromAnotherChannel(controller:_:)`, see
+[Telegram Channel](#telegram-channel)).
 
 ```swift
 @ChatSessionActor
 final class AppChannelHooks: ChatSessionChannelHooks {
     weak var session: AppSession?
 
-    func sessionDidStartNew() async {
-        await session?.sessionDidChange()
+    func incarnationDidChange(reason: ChatIncarnationChange) async {
+        switch reason {
+        case .newSessionDidStart, .savedSessionDidRestore:
+            await session?.sessionDidChange()
+        default:
+            break
+        }
     }
 }
 ```
 
 `responseLanguageSection()` is the response-language section of the system
 prompt that a selection operation composes; the app returns the same value it
-passes as `responseLanguageSection` to a turn.
+passes as `responseLanguageSection` to a turn. The id of the session
+`/sessions new` starts is the slot's: its `ChatSlotDescriptor.sessionIDPrefix`
+(`ChatSlotDescriptor.defaultSessionIDPrefix`, `chat`, unless the app names
+another), a dash, and a new lowercased UUID.
 
 ### Session
 
@@ -299,10 +328,10 @@ final class AppSession {
 
 `applyInitialAgentSelectionIfNeeded()` applies the launch agent's profile, so
 call it once per incarnation: a second call resets the tool and skill
-selection to the profile. `sessionDidStartNew()` runs on the new controller,
-after the host replaced the incarnation, so `controller` is already the new
-one there. When the last window closes, `sessionHost.shutdown()` ends every
-slot and the runner.
+selection to the profile. `.newSessionDidStart` and `.savedSessionDidRestore`
+reach the hooks on the new controller, after the host replaced the
+incarnation, so `controller` is already the new one there. When the last
+window closes, `sessionHost.shutdown()` ends every slot and the runner.
 
 ## Running a Line
 
@@ -606,6 +635,53 @@ Notes:
 - Switch over `ChatTurnEntry.Kind` and `ChatPendingRequest.Kind` with a
   `default` case, as over every public Chat enum.
 
+## Observing the Host
+
+A shell of the app (its sidebar, its window list) renders the
+`ChatShellSnapshot` of the host instead of keeping a list of its own:
+`sessions`, the `ChatSessionSummary` of the session each open slot runs, by
+`ChatSlotID`; `savedSessions`, the `ChatSavedSessionSummary` values of each
+workspace an open slot runs sessions in, most recently saved first; and
+`telegram`, a `ChatShellTelegramState` with `isConfigured` (setup configured
+Telegram, by the rule the terminal offers `/telegram` with), `isPolling` (the
+host's poller runs a long poll), and `drivenSlots` (the slots the linked chat
+drives). `shellSnapshot` is the current value; each call of
+`shellSnapshots()` returns a stream that starts with it, keeps only the
+newest snapshot not yet delivered, and ends at `shutdown()`:
+
+```swift
+@MainActor
+final class ShellViewModel {
+    private(set) var shell: ChatShellSnapshot?
+
+    /// Runs until the host shuts down or the task that calls it is cancelled.
+    func observe(_ sessionHost: ChatSessionHost) async {
+        for await shell in await sessionHost.shellSnapshots() {
+            self.shell = shell
+        }
+    }
+}
+```
+
+Notes:
+
+- The shell only aggregates what the sessions summarize and creates no
+  reducer. A slot that publishes state, or that Telegram drives, shows its
+  reducer's `summary`; any other slot shows a summary built from its
+  incarnation with the same rules: its workspace, the saved session's name or
+  one derived from the first prompt, `isGenerating` while a prompt is
+  reserved, the origin of the turn generating, and a `pendingRequestCount` of
+  0, since only a reducer publishes pending requests.
+- The saved sessions and the Telegram settings are on disk, so they are read
+  only once a shell observes the host, from the first `shellSnapshots()` or
+  `refreshShellSnapshot()` on, and off the chat actor: the saved sessions of a
+  workspace again when a slot of it starts another session and when a session
+  of the host is saved or deleted, the poller when a slot hands itself to
+  Telegram, takes itself back, or closes. Nothing is read on a timer;
+  `refreshShellSnapshot()` reads everything again, for example for a session
+  another process saved.
+- The shell snapshot is transient, like the session snapshot.
+
 ## Telegram Channel
 
 Telegram is a channel of the slot, not a mirror of it: `/telegram on` hands
@@ -718,13 +794,47 @@ switch.
 ## Compatibility
 
 The public API of `Sources/ZenCODECore/Chat` follows semantic versioning (see
-[Compatibility Contract](architecture.md#compatibility-contract)):
+[Compatibility Contract](architecture.md#compatibility-contract)). From 3.3.0
+it comprises:
+
+- the session host: `ChatSessionHost` (with `RuntimeSessionDisposition`),
+  `ChatSlotDescriptor`, `ChatSlotIdentity`, `ChatSlotInteraction`,
+  `ChatSlotID`, `ChatSessionIncarnation`, `ChatSessionOperationState`,
+  `ChatPromptReservation`, and `ChatSessionHostError`, with the shell
+  (`ChatShellSnapshot` and `ChatShellTelegramState`);
+- the controller, `ChatSessionController`, and its contracts:
+  `ChatSessionEnvironment`, `ChatSessionPresenter`, `ChatSessionObserver`,
+  `ChatInteractionHost` with `ChatChannelCapabilities`,
+  `ChatSessionChannelHooks` with `ChatIncarnationChange`,
+  `ChatSessionRecreationReason`, and `ChatSelectionCommand`,
+  `ChatToolConsentAuthorizer`, `ChatSessionRuntime`, and
+  `ChatSessionManagementRuntime`; the turn (`ChatTurnRequest`,
+  `ChatTurnResult`, `ChatTurnFailure`, and `ChatTurnPurpose`); the notices
+  (`ChatSessionNotice` with its payloads, and `ChatSessionNoticeText`); the
+  outcomes (`ChatCommandOutcome`, `ChatSelectionOutcome`,
+  `ChatSessionOperationOutcome`, and the others); the overviews
+  (`ChatTaskGraphOverview` and `ChatSubAgentOverview`); `ChatModelCatalog`;
+  `ChatCommandRegistry`, `ChatCommandDescriptor`, and `ChatCommandContext`;
+  `ChatPromptQueue` and `ChatQueuedPrompt`; `SharedChatMentionParser`; and
+  `ChatSessionRuntimeFactory`;
+- the observable state: `ChatSessionStateReducer`, `ChatSessionSnapshot` with
+  `ChatTurnState`, `ChatFileChangesState`, and `ChatSessionSummary`,
+  `ChatTurnEntry` with `ChatTurnOrigin` and `ChatTurnPhase`,
+  `ChatPendingRequestHost`, and `ChatPendingRequest`;
+- the Telegram channel: `TelegramChannel` (with `SessionTopic`),
+  `TelegramChannelAttachError`, `ChatSlotChannel`, `ChatSlotAdmission`, and
+  `ChatTelegramCatchUp`, with the host's
+  `activateTelegram(in:primaryChannelDescription:)`, `deactivateTelegram(in:)`,
+  `telegramStatusText(in:)`, `activeChannel(in:)`, `telegramChannel(in:)`, and
+  `admitLine(_:in:)`.
+
+The rules:
 
 - additions arrive in minor releases, and breaking changes only in major
   releases;
 - public enums are not `@frozen`: a minor release may add cases, so switch
   over them with a `default` case (`ChatCommandAction`, `ChatSessionNotice`,
-  and the others);
+  `ChatIncarnationChange`, `ChatSessionHostError`, and the others);
 - the `@ChatSessionActor` isolation is part of the contract;
 - `TerminalChatActor` is deprecated: use `ChatSessionActor`. It is removed in
   the next major release;
@@ -732,9 +842,4 @@ The public API of `Sources/ZenCODECore/Chat` follows semantic versioning (see
   deprecated: they are the terminal's and ACP's adapters over
   `ChatToolConsentAuthorizer`, which an app uses directly;
 - `ChatCommandFence`, `ChatPlanningCommandPolicy`, `ChatSessionStateStore`,
-  and `ChatCommandState` are internal;
-- `ChatSessionHost` and its types (`ChatSlotDescriptor`, `ChatSlotIdentity`,
-  `ChatSlotInteraction`, `ChatSlotID`, `ChatSessionIncarnation`,
-  `ChatSessionOperationState`, `ChatPromptReservation`,
-  `ChatSessionHostError`) are public from the release that introduces the
-  host; `ChatSessionHostError` is a public enum like the others.
+  and `ChatCommandState` are internal.

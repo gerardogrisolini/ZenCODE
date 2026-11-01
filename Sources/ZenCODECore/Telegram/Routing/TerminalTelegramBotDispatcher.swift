@@ -138,6 +138,12 @@ actor TerminalTelegramBotDispatcher {
         bots.removeValue(forKey: botID)
     }
 
+    /// Whether a long poll runs now, for any bot: the poller's state a shell
+    /// shows (``ChatShellTelegramState/isPolling``).
+    func isPolling() -> Bool {
+        bots.values.contains { $0.task != nil }
+    }
+
     private func poll(
         botID: Int64,
         generation: UUID,

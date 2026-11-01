@@ -140,8 +140,27 @@ struct ChatPublicAPITests {
             #expect(route.destination == .coordinator)
             #expect(route.text == "ciao")
 
+            // The shell: every session of the host, the saved sessions of
+            // their workspaces, and the Telegram state, as the sidebar of
+            // `Docs/embedding.md` observes them until the host shuts down.
+            let shellView = ShellViewModel()
+            let shellObservation = Task { await shellView.observe(sessionHost) }
+            await sessionHost.refreshShellSnapshot()
+            let shell = await sessionHost.shellSnapshot
+            #expect(shell.sessions.count == 1)
+            #expect(shell.sessions[slotID]?.workspace == workspace)
+            #expect(shell.sessions[slotID]?.isGenerating == false)
+            #expect(shell.sessions[slotID]?.activeChannel == .local)
+            #expect(shell.savedSessions[workspace] == [])
+            #expect(shell.telegram.isConfigured == false)
+            #expect(shell.telegram.isPolling == false)
+            #expect(shell.telegram.drivenSlots.isEmpty)
+
             await sessionHost.shutdown()
             #expect(await sessionHost.isShutDown)
+            // The stream ends with the host, on a shell without sessions.
+            await shellObservation.value
+            #expect(await shellView.shell?.sessions.isEmpty == true)
         }
     }
 
@@ -301,14 +320,34 @@ private final class AppInteractionHost: ChatInteractionHost {
     }
 }
 
-/// The app's steps between the steps of a selection operation, on the
-/// controller's isolation domain.
+/// The app's steps between the steps of an operation, on the controller's
+/// isolation domain, as `Docs/embedding.md` writes them: a public enum,
+/// switched over with a `default` case. It counts the sessions it followed.
 @ChatSessionActor
 private final class AppChannelHooks: ChatSessionChannelHooks {
     private(set) var startedSessions = 0
 
-    func sessionDidStartNew() async {
-        startedSessions += 1
+    func incarnationDidChange(reason: ChatIncarnationChange) async {
+        switch reason {
+        case .newSessionDidStart, .savedSessionDidRestore:
+            startedSessions += 1
+        default:
+            break
+        }
+    }
+}
+
+/// The sidebar of `Docs/embedding.md`: it renders the shell snapshot of the
+/// host.
+@MainActor
+private final class ShellViewModel {
+    private(set) var shell: ChatShellSnapshot?
+
+    /// Runs until the host shuts down or the task that calls it is cancelled.
+    func observe(_ sessionHost: ChatSessionHost) async {
+        for await shell in await sessionHost.shellSnapshots() {
+            self.shell = shell
+        }
     }
 }
 

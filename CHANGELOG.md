@@ -33,7 +33,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `ZenCODECore`: `ChatSessionController`, `ChatSessionPresenter`,
   `ChatSessionObserver` (added to a controller with `addObserver(_:)`, it
   sees every event before the channel's presenter), `ChatInteractionHost`,
-  `ChatSessionEnvironment`, `ChatModelCatalog`, `ChatCommandRegistry`,
+  `ChatSessionChannelHooks` (the app's own steps between those of an
+  operation; the steps of a new, loaded, or compacted session are one
+  `incarnationDidChange(reason:)`, whose `ChatIncarnationChange` names the
+  step), `ChatSessionEnvironment`, `ChatModelCatalog`, `ChatCommandRegistry`,
   `TelegramChannel`, and the contracts, notices, and outcomes they use. The
   API follows semantic versioning: see [Docs/embedding.md](Docs/embedding.md).
 - `ChatSessionRuntimeFactory`, the public construction point of a session
@@ -49,10 +52,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - `ChatSessionHost`, the container of the chat sessions of one process, for
   host apps and the channels alike. A channel opens a slot for each place it
   runs sessions in (`ChatSlotDescriptor`: identity, working directory,
-  presenter, interaction, consent authorizer, channel hooks, commands, and
-  whether a `ChatSessionStateReducer` is attached), and the slot runs one
-  session at a time (`ChatSessionIncarnation`: id, controller, reducer, and an
-  epoch that is never reused). `newSession(in:sessionID:)` and
+  presenter, interaction, consent authorizer, channel hooks, commands,
+  whether a `ChatSessionStateReducer` is attached, and the prefix of the ids
+  of its new sessions), and the slot runs one session at a time
+  (`ChatSessionIncarnation`: id, controller, reducer, and an epoch that is
+  never reused). `newSession(in:sessionID:)` and
   `loadSavedSession(in:name:checkpointEntryID:)` replace the session with a
   new controller from the launch profile; `adoptSessionID(_:in:)` changes the
   id in place before the runtime session exists; `reservePrompt(in:)`,
@@ -64,6 +68,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
   end them. The host owns the runner, the Telegram router and poller every
   Telegram channel shares, and the sleep assertion. The terminal UI and ACP
   sessions now run in it; see [Docs/embedding.md](Docs/embedding.md#composition).
+- `ChatShellSnapshot`, what a host app's sidebar shows about every session of
+  a `ChatSessionHost`: the summary of the session each slot runs, the saved
+  sessions of the slots' workspaces, and the Telegram state of the process
+  (configured, polling, and the slots the linked chat drives).
+  `shellSnapshots()` streams it and `shellSnapshot` is the current one; the
+  saved sessions and the settings are read only while an app observes the
+  host, when a session changes or is saved or deleted, and on
+  `refreshShellSnapshot()`, never on a timer. See
+  [Docs/embedding.md](Docs/embedding.md#observing-the-host).
 - Telegram is a channel of the slot (`TelegramChannel`), in the terminal UI,
   in ACP clients such as Xcode, and in host apps: `/telegram on` hands the
   session to the linked chat, which drives it from then on, and `/telegram off`

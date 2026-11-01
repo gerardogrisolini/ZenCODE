@@ -15,7 +15,7 @@ import ToolCore
 /// Every operation returns its closing notices; notices raised while it runs
 /// go to the presenter as they happen. A channel's own steps in the middle of
 /// a saved-session load run through ``ChatSessionController/channelHooks``
-/// (see ``ChatSessionChannelHooks/savedSessionWillLoad()``). The `choose…`
+/// (see ``ChatIncarnationChange/savedSessionWillLoad``). The `choose…`
 /// operations ask the ``ChatInteractionHost`` with a menu when the host has
 /// the capability, and otherwise return the non-interactive notice.
 ///
@@ -209,6 +209,8 @@ extension ChatSessionController {
             ])
         }
         recordSavedSessionIndex(savedSession)
+        // The host's shell lists the project's saved sessions.
+        hostBinding?.host?.savedSessionsDidChange(in: workingDirectory)
         savedSessionState.savedSessionName = savedSession.name
         savedSessionState.checkpointTree = savedSession.checkpointTree
         await presentSessionStateChanged()
@@ -327,6 +329,7 @@ extension ChatSessionController {
         _ sessions: [TerminalSavedSession]
     ) async -> ChatSessionOperationOutcome {
         var notices: [ChatSessionNotice] = []
+        var deletedAny = false
         let previousSavedSessionState = savedSessionState
         for savedSession in sessions {
             let didDelete: Bool
@@ -343,11 +346,16 @@ extension ChatSessionController {
                 savedSessionState.savedSessionName = nil
             }
             if didDelete {
+                deletedAny = true
                 removeSavedSessionIndex(savedSession)
                 notices.append(.sessionDeleted(name: savedSession.name))
             } else {
                 notices.append(.savedSessionNotFound(name: savedSession.name))
             }
+        }
+        if deletedAny {
+            // The host's shell lists the project's saved sessions.
+            hostBinding?.host?.savedSessionsDidChange(in: workingDirectory)
         }
         if savedSessionState != previousSavedSessionState {
             await presentSessionStateChanged()
@@ -419,9 +427,11 @@ extension ChatSessionController {
     /// conversation, prompt, plan, checkpoint tree, model, thinking level,
     /// agent, tools, and skills, loads the model, restores the runtime
     /// session with its prompt skills and task graph, and finally restores
-    /// the DS4 KV checkpoint. The channel's own steps run through the
-    /// `savedSession…` hooks, and the restored transcript is handed to
-    /// ``ChatSessionChannelHooks/savedSessionDidRestore(transcript:contextWindow:)``
+    /// the DS4 KV checkpoint. The channel's own steps run through
+    /// ``ChatSessionChannelHooks/incarnationDidChange(reason:)`` with the
+    /// `savedSession…` steps of ``ChatIncarnationChange``, and the restored
+    /// transcript is handed to
+    /// ``ChatIncarnationChange/savedSessionDidRestore(transcript:contextWindow:)``
     /// to present.
     ///
     /// In a host's slot (``hostBinding``) the saved session is loaded into a
@@ -455,7 +465,7 @@ extension ChatSessionController {
     /// session is being replaced: the channel's first step and the end of
     /// the planning discussion and of the workflow.
     func prepareForSavedSessionLoad() async {
-        await channelHooks?.savedSessionWillLoad()
+        await channelHooks?.incarnationDidChange(reason: .savedSessionWillLoad)
         await abandonPlanBrainstorming()
         activeWorkflow = nil
     }
@@ -527,7 +537,7 @@ extension ChatSessionController {
 
         await ensureWorkspaceAccess()
         lastFileChangeSummary = nil
-        await channelHooks?.savedSessionWillRestore()
+        await channelHooks?.incarnationDidChange(reason: .savedSessionWillRestore)
 
         try await preloadSessionModel(reason: .savedSessionLoaded)
         try await managementRuntime?.restoreSession(
@@ -556,10 +566,10 @@ extension ChatSessionController {
         await effectivePresenter(for: nil).presentRestoredLog(
             ChatTurnEntry.kinds(fromTranscript: restoredSession.transcript)
         )
-        await channelHooks?.savedSessionDidRestore(
+        await channelHooks?.incarnationDidChange(reason: .savedSessionDidRestore(
             transcript: restoredSession.transcript,
             contextWindow: savedSession.contextWindow?.runtimeStatus
-        )
+        ))
         await effectivePresenter(for: nil).presentSessionNotice(
             .sessionLoaded(name: savedSession.name, messageCount: savedSession.messageCount)
         )

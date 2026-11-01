@@ -20,7 +20,7 @@ import ToolCore
 /// The terminal is one slot of a ``ChatSessionHost`` (``terminalSlotID``): it
 /// runs the session of the slot's current incarnation, whose controller is
 /// ``chatSession``, and follows the slot from one incarnation to the next
-/// (``incarnationDidChange(_:)``) when `/sessions new` or `/sessions load`
+/// (``followIncarnation(_:)``) when `/sessions new` or `/sessions load`
 /// replace the session. The host is given by the composition root
 /// (`ZenCODECommandLineRunner`, which shuts it down with the runner) or built
 /// by `init` over the runner it receives or creates.
@@ -425,7 +425,9 @@ public final class TerminalChat {
             commandRegistry: Self.commandRegistry,
             // Nobody consumes a reducer of the terminal: the host creates one
             // on demand while Telegram drives the slot.
-            publishesState: false
+            publishesState: false,
+            // `/sessions new` mints `terminal-<uuid>`, as `newTerminalSessionID()`.
+            sessionIDPrefix: Self.sessionIDPrefix
         )
         descriptor.presentTurnEnding = { [weak self] ending in
             await self?.presentAdoptedTurnEnding(ending)
@@ -439,7 +441,7 @@ public final class TerminalChat {
             preconditionFailure("The terminal cannot open its slot: \(error)")
         }
         host.addIncarnationObserver(to: terminalSlotID) { [weak self] incarnation in
-            self?.incarnationDidChange(incarnation)
+            self?.followIncarnation(incarnation)
         }
     }
 
@@ -473,7 +475,7 @@ public final class TerminalChat {
     /// operation, in the order they always ran. A slot without session
     /// (closed, shut down) changes nothing: late work keeps finding the last
     /// controller.
-    private func incarnationDidChange(_ incarnation: ChatSessionIncarnation?) {
+    private func followIncarnation(_ incarnation: ChatSessionIncarnation?) {
         guard let incarnation else { return }
         let previous: ChatSessionIncarnation = currentIncarnation
         currentIncarnation = incarnation
@@ -485,8 +487,12 @@ public final class TerminalChat {
         AgentOutput.standardErrorIsTerminal
     }
 
+    /// The prefix of every session id of the terminal
+    /// (``ChatSlotDescriptor/sessionIDPrefix``).
+    nonisolated static let sessionIDPrefix = "terminal"
+
     public static func newTerminalSessionID() -> String {
-        "terminal-\(UUID().uuidString.lowercased())"
+        ChatSessionController.mintedSessionID(prefix: sessionIDPrefix)
     }
 
     public func currentEffectiveModelID() -> String? {
@@ -607,3 +613,8 @@ public final class TerminalChat {
         await statusBar.stop()
     }
 }
+
+/// The terminal's channel hooks, declared with the class so that the
+/// protocol's `Sendable` requirement is met in the class's own file; the
+/// steps are in `TerminalChat+ChannelHooks.swift`.
+extension TerminalChat: ChatSessionChannelHooks {}

@@ -15,10 +15,13 @@ import Foundation
 /// commands are the ones the terminal's command handlers ran: the status bar
 /// after a selection, and the observer, the status bar, the staged
 /// attachments, and the overview around `/sessions new`. The hooks are the
-/// terminal's slot's: `sessionWillStartNew()` and `savedSessionWillLoad()`
-/// run while `chatSession` is still the controller being replaced, whose
-/// observer they stop, and the later hooks once it is the new one.
-extension TerminalChat: ChatSessionChannelHooks {
+/// terminal's slot's: the first step of `/sessions new` and of a saved-session
+/// load (``ChatIncarnationChange/newSessionWillStart``,
+/// ``ChatIncarnationChange/savedSessionWillLoad``) runs while `chatSession` is
+/// still the controller being replaced, whose observer it stops, and the
+/// later steps once it is the new one. The conformance is declared with the
+/// class, in `TerminalChat.swift`.
+extension TerminalChat {
     public func responseLanguageSection() -> String? {
         responseLanguageSystemPromptSection()
     }
@@ -59,6 +62,32 @@ extension TerminalChat: ChatSessionChannelHooks {
         )
     }
 
+    /// The terminal's step of `/sessions new`, of a saved-session load (see
+    /// `TerminalChat+Sessions.swift`), or of `/sessions compact`.
+    public func incarnationDidChange(reason: ChatIncarnationChange) async {
+        switch reason {
+        case .newSessionWillStart:
+            await stopTaskGraphObserver()
+            resetResponseLanguageLock()
+        case .newSessionDidStart:
+            await startTaskGraphObserver()
+            await statusBar.reset()
+            await refreshInitialStatusBarContextWindow()
+            pendingAttachments.removeAll()
+            await renderCoordinator.resetOverview(.subAgents)
+            // Before the panel loop rebinds the shared-chat relay to the new room.
+            await rebindTelegramTopicToCurrentSession()
+        case .savedSessionWillLoad:
+            await savedSessionLoadWillStart()
+        case .savedSessionWillRestore:
+            await savedSessionLoadWillRestore()
+        case let .savedSessionDidRestore(transcript, contextWindow):
+            await savedSessionLoadDidRestore(transcript: transcript, contextWindow: contextWindow)
+        case let .sessionDidCompact(contextWindow):
+            _ = await statusBar.update(contextWindow: contextWindow)
+        }
+    }
+
     public func responseLanguageShouldLock() {
         lockResponseLanguageIfNeeded()
     }
@@ -89,28 +118,5 @@ extension TerminalChat: ChatSessionChannelHooks {
 
     public func commandContextWindow() async -> DirectAgentContextWindowStatus? {
         await statusBar.currentContextWindowStatus()
-    }
-
-    public func newSessionID() -> String? {
-        Self.newTerminalSessionID()
-    }
-
-    public func sessionWillStartNew() async {
-        await stopTaskGraphObserver()
-        resetResponseLanguageLock()
-    }
-
-    public func sessionDidStartNew() async {
-        await startTaskGraphObserver()
-        await statusBar.reset()
-        await refreshInitialStatusBarContextWindow()
-        pendingAttachments.removeAll()
-        await renderCoordinator.resetOverview(.subAgents)
-        // Before the panel loop rebinds the shared-chat relay to the new room.
-        await rebindTelegramTopicToCurrentSession()
-    }
-
-    public func sessionDidCompact(contextWindow: DirectAgentContextWindowStatus) async {
-        _ = await statusBar.update(contextWindow: contextWindow)
     }
 }

@@ -79,12 +79,20 @@ public struct ChatSlotDescriptor: Sendable {
     /// that present the session themselves and would retain the log for
     /// nobody.
     public var publishesState: Bool
+    /// The prefix of the id of every session `/sessions new` starts in the
+    /// slot, followed by a dash and a new lowercased UUID: `terminal` for the
+    /// terminal (`terminal-<uuid>`), ``defaultSessionIDPrefix`` otherwise.
+    public var sessionIDPrefix: String
     /// Presents the ending of a turn another channel of the slot ran, when
     /// the channel drives the slot as the turn ends, for a channel whose
     /// presenter does not conform to the slot's channel presenter (see
     /// ``ChatSessionHost/presentTurnEnding(_:in:)``). Internal: the terminal
     /// sets it; a presenter that conforms needs none.
     var presentTurnEnding: (@ChatSessionActor (ChatTurnEnding) async -> Void)?
+
+    /// The ``sessionIDPrefix`` of a slot that names none: `chat`
+    /// (`chat-<uuid>`).
+    public static let defaultSessionIDPrefix = "chat"
 
     public init(
         identity: ChatSlotIdentity,
@@ -97,7 +105,8 @@ public struct ChatSlotDescriptor: Sendable {
         retainsTranscript: Bool = true,
         retainsFileArtifactHistory: Bool = true,
         defaultOrigin: ChatTurnOrigin = .local,
-        publishesState: Bool = true
+        publishesState: Bool = true,
+        sessionIDPrefix: String = ChatSlotDescriptor.defaultSessionIDPrefix
     ) {
         self.identity = identity
         self.workingDirectory = workingDirectory
@@ -110,6 +119,7 @@ public struct ChatSlotDescriptor: Sendable {
         self.retainsFileArtifactHistory = retainsFileArtifactHistory
         self.defaultOrigin = defaultOrigin
         self.publishesState = publishesState
+        self.sessionIDPrefix = sessionIDPrefix
     }
 }
 
@@ -143,10 +153,16 @@ final class ChatSlot {
     let retainsFileArtifactHistory: Bool
     let defaultOrigin: ChatTurnOrigin
     let publishesState: Bool
+    /// See ``ChatSlotDescriptor/sessionIDPrefix``.
+    let sessionIDPrefix: String
     /// See ``ChatSlotDescriptor/presentTurnEnding``.
     let presentTurnEndingHandler: (@ChatSessionActor (ChatTurnEnding) async -> Void)?
-    /// The session the slot runs now; `nil` between sessions.
-    var incarnation: ChatSessionIncarnation?
+    /// The session the slot runs now; `nil` between sessions. Every change
+    /// (another incarnation, a reservation, a reducer attached or detached)
+    /// is a change of the facts the shell shows.
+    var incarnation: ChatSessionIncarnation? {
+        didSet { shellFactsDidChange?() }
+    }
     /// Called with the new incarnation (or `nil`) after every change of
     /// ``incarnation``, in registration order. A channel that follows the
     /// slot from one controller to the next registers here (see
@@ -155,6 +171,14 @@ final class ChatSlot {
     /// The streams of ``ChatSessionHost/incarnations(in:)`` still open, by
     /// the token of the observer that feeds them.
     var incarnationStreams: [UUID: AsyncStream<ChatSessionIncarnation?>.Continuation] = [:]
+    /// Called after every change of what the shell shows of the slot (its
+    /// incarnation, the channel that drives it, the state its controller
+    /// presents), set by the host when it opens the slot (see
+    /// `ChatSessionHost+Shell.swift`).
+    var shellFactsDidChange: (@ChatSessionActor () -> Void)?
+    /// The epoch of the incarnation the shell last read the saved sessions
+    /// for, so that a new incarnation reads them again.
+    var shellSavedSessionsEpoch: UInt64?
 
     // MARK: Channels
 
@@ -181,7 +205,9 @@ final class ChatSlot {
     /// The prompt the slot's Telegram channel reserved for the turn it runs
     /// now (``ChatSessionHost/runTelegramTurn(in:prompt:attachments:purpose:isUserVisible:)``);
     /// `nil` while no turn of the channel holds the slot's reservation.
-    var telegramTurnPromptID: UUID?
+    var telegramTurnPromptID: UUID? {
+        didSet { shellFactsDidChange?() }
+    }
 
     init(id: ChatSlotID, descriptor: ChatSlotDescriptor) {
         self.id = id
@@ -196,6 +222,7 @@ final class ChatSlot {
         retainsFileArtifactHistory = descriptor.retainsFileArtifactHistory
         defaultOrigin = descriptor.defaultOrigin
         publishesState = descriptor.publishesState
+        sessionIDPrefix = descriptor.sessionIDPrefix
         presentTurnEndingHandler = descriptor.presentTurnEnding
         let primaryHost: any ChatInteractionHost
         switch descriptor.interaction {
@@ -244,11 +271,13 @@ final class ChatSlot {
         case .telegram:
             slotInteractionHost.setActiveHost(telegramChannel ?? primaryInteractionHost)
         }
+        shellFactsDidChange?()
     }
 
     /// Forgets the observers and ends the streams: the slot is closing.
     func endObservation() {
         incarnationObservers.removeAll()
+        shellFactsDidChange = nil
         let streams = incarnationStreams
         incarnationStreams.removeAll()
         for continuation in streams.values {

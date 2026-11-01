@@ -67,6 +67,23 @@ public final class ChatSessionHost {
     /// host runs, read by the consent authorizers of the slots (see
     /// ``ChatToolConsentAuthorizer/setConsentHostResolver(_:)``).
     nonisolated let consentHostRoutes = ChatConsentHostRoutes()
+    /// What a shell shows about every session of the host, as of now; see
+    /// ``shellSnapshots()`` and `ChatSessionHost+Shell.swift`.
+    public internal(set) var shellSnapshot = ChatShellSnapshot()
+    /// The streams of ``shellSnapshots()`` still open, by token.
+    var shellStreams: [UUID: AsyncStream<ChatShellSnapshot>.Continuation] = [:]
+    /// `true` once a shell observes the host (``shellSnapshots()``,
+    /// ``refreshShellSnapshot()``): from then on the shell reads the saved
+    /// sessions and the Telegram state, which nobody reads before.
+    var isShellObserved = false
+    /// The latest read of each workspace's saved sessions, so that an older
+    /// read finishing later is dropped.
+    var shellSavedSessionsReads: [URL: UInt64] = [:]
+    /// The latest read of the Telegram settings and of the poller.
+    var shellTelegramConfigurationRead: UInt64 = 0
+    var shellTelegramPollingRead: UInt64 = 0
+    /// The counter of the reads above.
+    var nextShellReadValue: UInt64 = 1
 
     /// A host over `runner`, which it shuts down with itself.
     ///
@@ -126,8 +143,10 @@ public final class ChatSessionHost {
             throw .statePublishingRequired
         }
         let id = ChatSlotID()
-        slots[id] = ChatSlot(id: id, descriptor: descriptor)
+        let slot = ChatSlot(id: id, descriptor: descriptor)
+        slots[id] = slot
         installConsentHostResolver(on: descriptor.authorizer)
+        shellSlotDidOpen(slot)
         return id
     }
 
@@ -161,10 +180,12 @@ public final class ChatSessionHost {
         let previous = endIncarnation(of: slot)
         slot.endObservation()
         updateSleepAssertion()
+        shellSlotDidClose(slot)
         if let previous {
             await disposeRuntimeSession(of: previous, runtimeSession)
         }
         await slot.telegramChannel?.shutdown()
+        scheduleShellTelegramPollingRead()
     }
 
     /// The open slots, in no particular order.
@@ -268,7 +289,7 @@ public final class ChatSessionHost {
     /// The sequence is the one of
     /// ``ChatSessionController/loadSavedSession(_:checkpointEntryID:)``, split
     /// across the two controllers: the channel's first step
-    /// (``ChatSessionChannelHooks/savedSessionWillLoad()``) and the end of the
+    /// (``ChatIncarnationChange/savedSessionWillLoad``) and the end of the
     /// planning discussion run on the controller being replaced, before the
     /// switch, where the in-place load runs them before it discards the
     /// session; the saved session is then installed into the new controller,
@@ -345,6 +366,15 @@ public final class ChatSessionHost {
         return try await newSession(in: slotID, sessionID: sessionID)
     }
 
+    /// The id of a new session of `slotID`, which a hosted controller's
+    /// `/sessions new` starts: the slot's prefix, a dash, and a new lowercased
+    /// UUID (``ChatSlotDescriptor/sessionIDPrefix``); `nil` for an unknown
+    /// slot.
+    func mintSessionID(in slotID: ChatSlotID) -> String? {
+        guard let slot = slots[slotID] else { return nil }
+        return ChatSessionController.mintedSessionID(prefix: slot.sessionIDPrefix)
+    }
+
     /// Gives the session `slotID` runs now the id `sessionID`, in place: the
     /// controller, its epoch, selection, plan, and transcript stay, the
     /// controller and the incarnation take the id, the observers are told
@@ -412,6 +442,7 @@ public final class ChatSessionHost {
             slot.endObservation()
         }
         updateSleepAssertion()
+        endShellObservation()
         for slot in closingSlots {
             await slot.telegramChannel?.shutdown()
         }
@@ -488,6 +519,7 @@ public final class ChatSessionHost {
         }
         if let reducer {
             controller.addObserver(reducer)
+            reducer.summaryDidChange = shellSummaryObserver(for: slot)
         }
         controller.hostBinding = ChatSessionHostBinding(host: self, slotID: slot.id)
         return ChatSessionIncarnation(
@@ -527,6 +559,7 @@ public final class ChatSessionHost {
         incarnation.pendingRequestHost?.cancelPendingRequests()
         if let reducer = incarnation.reducer {
             incarnation.controller.removeObserver(reducer)
+            reducer.summaryDidChange = nil
         }
         incarnation.activePromptID = nil
         incarnation.operationState = .idle

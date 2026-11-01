@@ -327,43 +327,54 @@ extension ZenCODEACPBridge {
         }
     }
 
+    /// Replays `snapshot`'s history to the client (`session/load`,
+    /// `session/resume`): the log entries rebuilt from it
+    /// (``ChatTurnEntry/kinds(fromTranscript:)``, the one rebuild every
+    /// channel shares), rendered as the editor's chunks. A prompt is a
+    /// `user_message_chunk` (a blank prompt with attachments says so), a
+    /// block its `agent_thought_chunk` and `agent_message_chunk`; tool calls,
+    /// their results, and system messages are not replayed.
     public func replaySessionHistory(_ snapshot: AgentRuntimeSessionSnapshot) async {
-        for message in snapshot.history {
-            switch message.role {
-            case .user:
-                let text = replayText(for: message)
-                guard let text else {
+        for kind in ChatTurnEntry.kinds(fromTranscript: snapshot.history) {
+            switch kind {
+            case let .userPrompt(text, attachments, _):
+                guard let text = Self.replayText(prompt: text, attachments: attachments) else {
                     continue
                 }
                 await sendUserMessageChunk(sessionID: snapshot.sessionID, text: text)
-            case .assistant:
+            case let .thought(thought):
                 // Snapshots have no per-message provider provenance. The current
                 // snapshot.modelID may follow a provider switch, so replay must
                 // not apply the live ChatGPT formatter to possibly foreign text.
-                if let thought = message.reasoningContent?.nilIfBlank {
-                    await writer.sendSessionUpdate(
-                        sessionID: snapshot.sessionID,
-                        update: Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: thought)
-                    )
+                guard let thought = thought.nilIfBlank else {
+                    continue
                 }
-                guard let text = message.content.nilIfBlank else {
+                await writer.sendSessionUpdate(
+                    sessionID: snapshot.sessionID,
+                    update: Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: thought)
+                )
+            case let .assistantText(content):
+                guard let text = content.nilIfBlank else {
                     continue
                 }
                 await writer.sendSessionUpdate(
                     sessionID: snapshot.sessionID,
                     update: Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: text)
                 )
-            case .system, .tool:
+            default:
                 continue
             }
         }
     }
 
-    private func replayText(for message: AgentRuntimeMessage) -> String? {
-        if let content = message.content.nilIfBlank {
+    /// The text a replayed prompt shows: the prompt, or, for a blank prompt
+    /// with attachments, a request to analyze them; `nil` for a blank prompt
+    /// without attachments.
+    private static func replayText(prompt: String, attachments: [AgentRuntimeAttachment]) -> String? {
+        if let content = prompt.nilIfBlank {
             return content
         }
-        guard !message.attachments.isEmpty else {
+        guard !attachments.isEmpty else {
             return nil
         }
         return "Analyze the attached media."

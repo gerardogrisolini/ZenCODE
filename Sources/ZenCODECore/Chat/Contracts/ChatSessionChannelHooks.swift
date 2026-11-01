@@ -30,6 +30,51 @@ public enum ChatSelectionCommand: Sendable, Equatable {
     case skills
 }
 
+/// One step of an operation that changes the session a channel runs, as
+/// ``ChatSessionChannelHooks/incarnationDidChange(reason:)`` names it: the
+/// operation, the step, and what the step hands the channel.
+///
+/// `/sessions new` and the load of a saved session (`/sessions`, `/sessions
+/// restore`, ``ChatSessionController/loadSavedSession(_:checkpointEntryID:)``)
+/// replace the session; on a controller a ``ChatSessionHost`` runs they
+/// replace the incarnation of its slot, so their first step
+/// (``newSessionWillStart``, ``savedSessionWillLoad``) runs on the controller
+/// being replaced, before the switch, and the later ones on the new
+/// controller. `/sessions compact` changes the session in place.
+public enum ChatIncarnationChange: Sendable, Equatable {
+    /// `/sessions new` is about to discard the active session: the terminal
+    /// stops its task-graph observer and unlocks the response language here.
+    case newSessionWillStart
+    /// `/sessions new` started the new session, before its closing notice is
+    /// presented: the terminal binds its task-graph observer to it, starts its
+    /// status bar over, drops the staged attachments, clears its sub-agent
+    /// overview, and moves the session's Telegram topic here. Not sent when
+    /// the session could not be created.
+    case newSessionDidStart
+    /// A saved session is about to replace the active one. Sent first, before
+    /// the planning discussion is abandoned and the active runtime session is
+    /// discarded.
+    case savedSessionWillLoad
+    /// The saved session's conversation, saved-session link, and selection
+    /// are installed (workspace access included). Sent right before its model
+    /// is loaded and its runtime session restored.
+    case savedSessionWillRestore
+    /// The saved session's runtime session, prompt skills, and task graph are
+    /// restored. `transcript` is the conversation to present, oldest first;
+    /// `contextWindow` the context window the session was saved with. Sent
+    /// before the loaded notice is presented and the engine checkpoint is
+    /// restored: the point where a channel that replays a restored
+    /// conversation presents it.
+    case savedSessionDidRestore(
+        transcript: [AgentRuntimeMessage],
+        contextWindow: DirectAgentContextWindowStatus?
+    )
+    /// `/sessions compact` compacted the conversation to `contextWindow`,
+    /// before its closing notice is presented: the terminal shows the window
+    /// on its status bar here. Not sent when there was nothing to compact.
+    case sessionDidCompact(contextWindow: DirectAgentContextWindowStatus)
+}
+
 /// The channel's own steps between one step and another of a session or
 /// selection operation, or of a shared command.
 ///
@@ -40,34 +85,31 @@ public enum ChatSelectionCommand: Sendable, Equatable {
 /// session and task graph. A channel may keep its own state in step with each
 /// of them (a display of the active model, an observer bound to the session,
 /// a per-agent setting); the controller calls these hooks at those exact
-/// points, in the order documented on each method. The hooks carry no output
-/// of their own: notices still reach the channel through the
-/// ``ChatSessionPresenter`` or the operation's result. The one exception is
-/// ``savedSessionDidRestore(transcript:contextWindow:)``, the point where a
-/// channel that replays a restored conversation presents it, so that the
-/// replay precedes the loaded notice and the engine checkpoint exactly where
-/// it always did; the operation's result carries the same transcript for
-/// channels that set no hooks. The approval of a plan (`/plan approve`) calls
-/// ``responseLanguageShouldLock()`` before its implementation turn starts.
+/// points, in the order documented on each method. The steps of a session
+/// replacement and of a compaction are one hook,
+/// ``incarnationDidChange(reason:)``, whose ``ChatIncarnationChange`` names
+/// the step. The hooks carry no output of their own: notices still reach the
+/// channel through the ``ChatSessionPresenter`` or the operation's result.
+/// The one exception is ``ChatIncarnationChange/savedSessionDidRestore(transcript:contextWindow:)``,
+/// the point where a channel that replays a restored conversation presents
+/// it, so that the replay precedes the loaded notice and the engine
+/// checkpoint exactly where it always did; the operation's result carries the
+/// same transcript for channels that set no hooks. The approval of a plan
+/// (`/plan approve`) calls ``responseLanguageShouldLock()`` before its
+/// implementation turn starts.
 ///
 /// The shared dispatcher of slash commands
 /// (``ChatSessionController/handleCommandLine(_:context:)``) calls the
 /// command hooks at the points the terminal's own command handlers ran the
 /// same steps: ``selectionDidApply(_:command:)`` once a selection command
 /// applied a selection, before its closing notices are presented; and, for
-/// `/sessions`, ``commandContextWindow()`` and ``newSessionID()`` for the
-/// values the channel knows, ``sessionWillStartNew()`` and
-/// ``sessionDidStartNew()`` around a new session, and
-/// ``sessionDidCompact(contextWindow:)`` after a compaction.
+/// `/sessions`, ``commandContextWindow()`` for the context window the channel
+/// shows, and ``incarnationDidChange(reason:)`` around a new session and after
+/// a compaction. The id of the session `/sessions new` starts is the slot's
+/// (``ChatSlotDescriptor/sessionIDPrefix``), not the channel's.
 ///
 /// The controller holds the hooks weakly. A channel without such steps sets
 /// none, and every method has a no-op default.
-///
-/// On a controller a ``ChatSessionHost`` runs, `/sessions new` and the load of
-/// a saved session replace the controller with a new incarnation of the
-/// slot, whose hooks are the slot's: ``sessionWillStartNew()`` and
-/// ``savedSessionWillLoad()`` run on the controller being replaced, before
-/// the switch, and the later hooks of the operation on the new one.
 @ChatSessionActor
 public protocol ChatSessionChannelHooks: AnyObject, Sendable {
     /// The response-language section of the system prompt, read at every
@@ -96,25 +138,10 @@ public protocol ChatSessionChannelHooks: AnyObject, Sendable {
     /// return (a saved-session load goes on restoring the session).
     func modelDidPreload(_ modelID: String, reason: ChatSessionRecreationReason) async
 
-    /// A saved session is about to replace the active one. Called first,
-    /// before the planning discussion is abandoned and the active runtime
-    /// session is discarded.
-    func savedSessionWillLoad() async
-
-    /// The saved session's conversation, saved-session link, and selection
-    /// are installed (workspace access included). Called right before its
-    /// model is loaded and its runtime session restored.
-    func savedSessionWillRestore() async
-
-    /// The saved session's runtime session, prompt skills, and task graph are
-    /// restored. `transcript` is the conversation to present, oldest first;
-    /// `contextWindow` the context window the session was saved with. Called
-    /// before the loaded notice is presented and the engine checkpoint is
-    /// restored.
-    func savedSessionDidRestore(
-        transcript: [AgentRuntimeMessage],
-        contextWindow: DirectAgentContextWindowStatus?
-    ) async
+    /// A step of `/sessions new`, of the load of a saved session, or of
+    /// `/sessions compact`, which `reason` names with what the step hands the
+    /// channel, at the point its ``ChatIncarnationChange`` case documents.
+    func incarnationDidChange(reason: ChatIncarnationChange) async
 
     /// A plan was approved and its implementation turn, a prompt written in
     /// English that the operator never typed, is about to start. A loaded
@@ -142,29 +169,6 @@ public protocol ChatSessionChannelHooks: AnyObject, Sendable {
     /// compaction), right before the operation runs, as the terminal read
     /// its status bar. `nil` when the channel shows none.
     func commandContextWindow() async -> DirectAgentContextWindowStatus?
-
-    /// The ID of the session `/sessions new` starts, read right before the
-    /// session is replaced, as the terminal minted it. `nil` lets the
-    /// controller mint one.
-    func newSessionID() -> String?
-
-    /// `/sessions new` is about to discard the active session: the terminal
-    /// stopped its task-graph observer and unlocked the response language
-    /// here.
-    func sessionWillStartNew() async
-
-    /// `/sessions new` started the new session, before its closing notice is
-    /// presented: the terminal bound its task-graph observer to it, started
-    /// its status bar over, dropped the staged attachments, and cleared its
-    /// sub-agent overview here. Not called when the session could not be
-    /// created.
-    func sessionDidStartNew() async
-
-    /// `/sessions compact` compacted the conversation to `contextWindow`,
-    /// before its closing notice is presented: the terminal showed the
-    /// window on its status bar here. Not called when there was nothing to
-    /// compact.
-    func sessionDidCompact(contextWindow: DirectAgentContextWindowStatus) async
 
     // MARK: Turns of other channels
 
@@ -212,14 +216,7 @@ extension ChatSessionChannelHooks {
 
     public func modelDidPreload(_ modelID: String, reason: ChatSessionRecreationReason) async {}
 
-    public func savedSessionWillLoad() async {}
-
-    public func savedSessionWillRestore() async {}
-
-    public func savedSessionDidRestore(
-        transcript: [AgentRuntimeMessage],
-        contextWindow: DirectAgentContextWindowStatus?
-    ) async {}
+    public func incarnationDidChange(reason: ChatIncarnationChange) async {}
 
     public func responseLanguageShouldLock() {}
 
@@ -228,16 +225,6 @@ extension ChatSessionChannelHooks {
     public func commandContextWindow() async -> DirectAgentContextWindowStatus? {
         nil
     }
-
-    public func newSessionID() -> String? {
-        nil
-    }
-
-    public func sessionWillStartNew() async {}
-
-    public func sessionDidStartNew() async {}
-
-    public func sessionDidCompact(contextWindow: DirectAgentContextWindowStatus) async {}
 
     public func turnSessionConfiguration(
         for purpose: ChatTurnPurpose,

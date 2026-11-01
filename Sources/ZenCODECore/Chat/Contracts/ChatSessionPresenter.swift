@@ -70,9 +70,9 @@ public protocol ChatSessionPresenter: Sendable {
     /// A saved session was restored: `entries` is its transcript rebuilt as
     /// log entries, oldest first, the one rebuild the controller makes. A
     /// turn starts at each ``ChatTurnEntry/Kind/userPrompt(text:attachments:origin:)``.
-    /// Called after ``sessionDidChange(sessionID:)``, where the controller
-    /// hands the transcript to
-    /// ``ChatSessionChannelHooks/savedSessionDidRestore(transcript:contextWindow:)``.
+    /// Called after ``sessionDidChange(sessionID:)``, right before the
+    /// controller hands the transcript to the channel hooks
+    /// (``ChatIncarnationChange/savedSessionDidRestore(transcript:contextWindow:)``).
     func presentRestoredLog(_ entries: [ChatTurnEntry.Kind]) async
     /// The operator submitted a slash command line that the shared commands
     /// run (`/plan`, `/goal`, `/review`, `/tasks`, and the other commands that

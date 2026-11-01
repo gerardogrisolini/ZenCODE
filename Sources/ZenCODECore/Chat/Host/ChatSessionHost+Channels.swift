@@ -85,6 +85,8 @@ extension ChatSessionHost {
     ) async throws {
         guard !isShutDown else { throw ChatSessionHostError.shutDown }
         guard let slot = slots[slotID] else { throw ChatSessionHostError.unknownSlot }
+        // The poller starts or restarts with the link, whether it holds or not.
+        defer { scheduleShellTelegramPollingRead() }
         let channel = slot.telegramChannel ?? makeTelegramChannel(
             for: slot, primaryChannelDescription: primaryChannelDescription
         )
@@ -125,6 +127,8 @@ extension ChatSessionHost {
     /// reducer created for the handover is detached.
     public func deactivateTelegram(in slotID: ChatSlotID) async -> ChatTelegramCatchUp? {
         guard let slot = slots[slotID], let channel = slot.telegramChannel else { return nil }
+        // The link stops either way, and the poller with its last subscriber.
+        defer { scheduleShellTelegramPollingRead() }
         guard slot.activeChannel == .telegram else {
             await channel.detach()
             return nil
@@ -332,6 +336,7 @@ extension ChatSessionHost {
         if slot.incarnation?.epoch == incarnation.epoch {
             slot.incarnation?.reducer = reducer
         }
+        reducer.summaryDidChange = shellSummaryObserver(for: slot)
         slot.reducerIsOnDemand = true
         return reducer
     }
@@ -345,6 +350,7 @@ extension ChatSessionHost {
         }
         if let reducer = incarnation.reducer {
             incarnation.controller.removeObserver(reducer)
+            reducer.summaryDidChange = nil
         }
         incarnation.reducer = nil
         slot.incarnation = incarnation

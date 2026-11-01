@@ -1258,8 +1258,6 @@ final class RecordingChannelHooks: ChatSessionChannelHooks {
     private(set) var steps: [String] = []
     /// What ``commandContextWindow()`` answers.
     var contextWindow: DirectAgentContextWindowStatus?
-    /// What ``newSessionID()`` answers.
-    var mintedSessionID: String?
 
     init(runtime: ScriptedChatRuntime) {
         self.runtime = runtime
@@ -1279,23 +1277,20 @@ final class RecordingChannelHooks: ChatSessionChannelHooks {
         return contextWindow
     }
 
-    func newSessionID() -> String? {
-        steps.append("newSessionID")
-        return mintedSessionID
-    }
-
-    func sessionWillStartNew() async {
-        await record("sessionWillStartNew")
-    }
-
-    func sessionDidStartNew() async {
-        await record("sessionDidStartNew")
-    }
-
-    func sessionDidCompact(contextWindow: DirectAgentContextWindowStatus) async {
-        let tokens = contextWindow.usedTokens.map(String.init) ?? "-"
-        let maximum = contextWindow.maxTokens.map(String.init) ?? "-"
-        await record("sessionDidCompact(\(tokens)/\(maximum))")
+    func incarnationDidChange(reason: ChatIncarnationChange) async {
+        switch reason {
+        case .newSessionWillStart:
+            await record("newSessionWillStart")
+        case .newSessionDidStart:
+            await record("newSessionDidStart")
+        case .savedSessionWillLoad, .savedSessionWillRestore, .savedSessionDidRestore:
+            // Not command steps: the saved-session load is recorded elsewhere.
+            break
+        case let .sessionDidCompact(contextWindow):
+            let tokens = contextWindow.usedTokens.map(String.init) ?? "-"
+            let maximum = contextWindow.maxTokens.map(String.init) ?? "-"
+            await record("sessionDidCompact(\(tokens)/\(maximum))")
+        }
     }
 
     func sessionWillCreate(reason: ChatSessionRecreationReason) async {

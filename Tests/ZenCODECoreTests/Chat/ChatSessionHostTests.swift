@@ -724,7 +724,6 @@ struct ChatSessionHostTests {
             let presenter = RecordingChatPresenter()
             let interactionHost = ScriptedChatInteractionHost(capabilities: [], decisions: [])
             let hooks = HostTestHooks(host: host)
-            hooks.mintedSessionID = "minted-by-channel"
             let first = try host.openSlot(
                 ChatSlotDescriptor(
                     identity: .terminal,
@@ -733,7 +732,8 @@ struct ChatSessionHostTests {
                     interaction: .host(interactionHost),
                     authorizer: ChatToolConsentAuthorizer(host: interactionHost),
                     channelHooks: hooks,
-                    publishesState: false
+                    publishesState: false,
+                    sessionIDPrefix: "minted-by-slot"
                 ),
                 sessionID: "first"
             )
@@ -745,23 +745,24 @@ struct ChatSessionHostTests {
 
             // `/sessions new` on the hosted controller: the channel's steps
             // run around the switch, the next controller starts from the
-            // launch selection with its runtime session created, the
-            // previous one is fenced and its runtime session discarded.
+            // launch selection with its runtime session created under an id
+            // of the slot's prefix, the previous one is fenced and its
+            // runtime session discarded.
             let outcome = await first.controller.handleCommandLine("/sessions new", context: [])
             #expect(outcome == ChatCommandOutcome(notices: [.sessionStarted]))
             let second = try #require(host.incarnation(in: slot))
             #expect(second.controller !== first.controller)
-            #expect(second.sessionID == "minted-by-channel")
-            #expect(second.controller.sessionID == "minted-by-channel")
+            #expect(second.sessionID.hasPrefix("minted-by-slot-"))
+            #expect(UUID(uuidString: String(second.sessionID.dropFirst("minted-by-slot-".count))) != nil)
+            #expect(second.controller.sessionID == second.sessionID)
             #expect(second.controller.selection == ChatSessionController.initialSelection(for: host.environment))
             #expect(second.controller.history.isEmpty)
             #expect(hooks.steps == [
-                "sessionWillStartNew@\(first.epoch)",
-                "newSessionID@\(first.epoch)",
-                "sessionDidStartNew@\(second.epoch)",
+                "newSessionWillStart@\(first.epoch)",
+                "newSessionDidStart@\(second.epoch)",
             ])
             #expect(first.controller.isCurrentTurn(firstTurnToken, sessionID: "first") == false)
-            #expect(await host.runner.snapshotSession(id: "minted-by-channel") != nil)
+            #expect(await host.runner.snapshotSession(id: second.sessionID) != nil)
             #expect(await host.runner.snapshotSession(id: "first") == nil)
 
             // A replaced controller replaces nothing more.
@@ -890,7 +891,6 @@ struct ChatSessionHostTests {
 private final class HostTestHooks: ChatSessionChannelHooks {
     private weak var host: ChatSessionHost?
     var steps: [String] = []
-    var mintedSessionID: String?
 
     init(host: ChatSessionHost) {
         self.host = host
@@ -902,31 +902,20 @@ private final class HostTestHooks: ChatSessionChannelHooks {
         steps.append("\(step)@\(epoch.map(String.init) ?? "-")")
     }
 
-    func newSessionID() -> String? {
-        record("newSessionID")
-        return mintedSessionID
-    }
-
-    func sessionWillStartNew() async {
-        record("sessionWillStartNew")
-    }
-
-    func sessionDidStartNew() async {
-        record("sessionDidStartNew")
-    }
-
-    func savedSessionWillLoad() async {
-        record("savedSessionWillLoad")
-    }
-
-    func savedSessionWillRestore() async {
-        record("savedSessionWillRestore")
-    }
-
-    func savedSessionDidRestore(
-        transcript: [AgentRuntimeMessage],
-        contextWindow: DirectAgentContextWindowStatus?
-    ) async {
-        record("savedSessionDidRestore")
+    func incarnationDidChange(reason: ChatIncarnationChange) async {
+        switch reason {
+        case .newSessionWillStart:
+            record("newSessionWillStart")
+        case .newSessionDidStart:
+            record("newSessionDidStart")
+        case .savedSessionWillLoad:
+            record("savedSessionWillLoad")
+        case .savedSessionWillRestore:
+            record("savedSessionWillRestore")
+        case .savedSessionDidRestore:
+            record("savedSessionDidRestore")
+        case .sessionDidCompact:
+            record("sessionDidCompact")
+        }
     }
 }

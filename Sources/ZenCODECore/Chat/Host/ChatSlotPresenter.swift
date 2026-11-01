@@ -192,6 +192,8 @@ final class ChatSlotPresenter: ChatSessionPresenter {
     }
 
     func presentSessionStateChanged(_ state: ChatSessionState) async {
+        // The saved-session name is the title the shell shows.
+        slot?.shellFactsDidChange?()
         await activePresenter.presentSessionStateChanged(state)
     }
 

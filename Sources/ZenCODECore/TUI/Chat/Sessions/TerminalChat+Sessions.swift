@@ -18,12 +18,13 @@ extension TerminalChat {
     /// Replaces the former `/clear` command. Adapter of
     /// ``ChatSessionController/newSessionCommand()``, which in the terminal's
     /// slot starts a new incarnation through the host
-    /// (``ChatSessionHost/newSession(in:sessionID:)``, with
-    /// ``newTerminalSessionID()``): a new controller from the launch profile,
-    /// so the model, thinking level, agent, tools, and skills chosen before
-    /// are not kept. The terminal's steps around the new session run in
-    /// ``sessionWillStartNew()``, on the controller being replaced, and
-    /// ``sessionDidStartNew()``, on the new one.
+    /// (``ChatSessionHost/newSession(in:sessionID:)``, with an id of the
+    /// slot's `terminal` prefix, the format of ``newTerminalSessionID()``): a
+    /// new controller from the launch profile, so the model, thinking level,
+    /// agent, tools, and skills chosen before are not kept. The terminal's
+    /// steps around the new session run in ``incarnationDidChange(reason:)``:
+    /// ``ChatIncarnationChange/newSessionWillStart`` on the controller being
+    /// replaced, ``ChatIncarnationChange/newSessionDidStart`` on the new one.
     public func startNewSession() async {
         await writeSessionNotices(await chatSession.newSessionCommand().notices)
     }
@@ -56,7 +57,7 @@ extension TerminalChat {
     /// `/sessions compact`: adapter of
     /// ``ChatSessionController/compactSessionCommand()``; the status bar
     /// bounds the compaction and shows its result
-    /// (``sessionDidCompact(contextWindow:)``).
+    /// (``ChatIncarnationChange/sessionDidCompact(contextWindow:)``).
     public func compactCurrentSession() async {
         await writeSessionNotices(await chatSession.compactSessionCommand().notices)
     }
@@ -78,9 +79,9 @@ extension TerminalChat {
     /// in the terminal's slot loads the session into a new incarnation
     /// through the host (``ChatSessionHost/loadSavedSession(in:name:checkpointEntryID:)``):
     /// a new controller from the launch profile with the selection saved in
-    /// the session. The terminal's own steps run in the `savedSession…`
-    /// hooks: the first on the controller being replaced, the others on the
-    /// new one, in the order they always ran.
+    /// the session. The terminal's own steps run in the `savedSession…` steps
+    /// of ``incarnationDidChange(reason:)``: the first on the controller being
+    /// replaced, the others on the new one, in the order they always ran.
     public func loadSavedSession(
         _ savedSession: TerminalSavedSession,
         checkpointEntryID: String?
@@ -94,18 +95,19 @@ extension TerminalChat {
 
     // MARK: - Saved-session load steps
 
-    /// Before the active session is discarded: the task-graph observer stops
-    /// and the response language is decided again for the loaded session.
-    public func savedSessionWillLoad() async {
+    /// ``ChatIncarnationChange/savedSessionWillLoad``, before the active
+    /// session is discarded: the task-graph observer stops and the response
+    /// language is decided again for the loaded session.
+    func savedSessionLoadWillStart() async {
         await stopTaskGraphObserver()
         resetResponseLanguageLock()
     }
 
-    /// Before the loaded session's model is loaded: pending input and the
-    /// overview are cleared, the active tools and the loaded-model line are
-    /// printed again, and the status bar starts over from the loaded
-    /// selection.
-    public func savedSessionWillRestore() async {
+    /// ``ChatIncarnationChange/savedSessionWillRestore``, before the loaded
+    /// session's model is loaded: pending input and the overview are cleared,
+    /// the active tools and the loaded-model line are printed again, and the
+    /// status bar starts over from the loaded selection.
+    func savedSessionLoadWillRestore() async {
         pendingAttachments.removeAll()
         await renderCoordinator.resetOverview(.subAgents)
         await publishSubAgentOverviewIfChanged()
@@ -118,11 +120,15 @@ extension TerminalChat {
         await refreshStatusBarThinkingSelection()
     }
 
-    /// After the runtime session and its task graph are restored: the
+    /// ``ChatIncarnationChange/savedSessionDidRestore(transcript:contextWindow:)``,
+    /// after the runtime session and its task graph are restored: the
     /// observer is bound to the loaded session, the status bar shows its
     /// saved context window, its transcript is replayed, and the session's
-    /// Telegram topic follows it.
-    public func savedSessionDidRestore(
+    /// Telegram topic follows it. The replay renders the transcript itself,
+    /// not the log rebuilt from it, which does not keep what the terminal
+    /// renders of a tool call without an id, of a tool call id repeated in a
+    /// turn, or of a result whose call is in an earlier turn.
+    func savedSessionLoadDidRestore(
         transcript: [AgentRuntimeMessage],
         contextWindow: DirectAgentContextWindowStatus?
     ) async {
