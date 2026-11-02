@@ -107,7 +107,10 @@ enum TerminalStyle {
         // Command menus share the prompt's dimmed frame; only the frame is
         // dimmed, the menu content keeps its full intensity.
         static let border = promptBorder
-        static let startupLogo = TerminalStyle.sequence(22, 2, 38, 5, 208)
+        // A darker orange (xterm-256 130) without SGR 2, so the logo's
+        // brightness does not depend on how each terminal renders faint text;
+        // SGR 22 still clears inherited bold.
+        static let startupLogo = TerminalStyle.sequence(22, 38, 5, 130)
         static let suggestion = Text.muted
     }
 

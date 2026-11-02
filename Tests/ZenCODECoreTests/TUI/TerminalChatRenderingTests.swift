@@ -39,14 +39,16 @@ private actor TickGate {
 @Suite
 struct TerminalChatRenderingTests {
     @Test
-    func startupLogoUsesDimOrangeWithoutDimmingSummary() {
+    func startupLogoUsesDarkerOrangeWithoutDim() {
         let rendered = TerminalChat.renderStartupBox(lines: ["Version: test", "", "Commands: /help"])
         let reset = TerminalStyle.reset
         let orange = TerminalStyle.Accent.primary
         let gray = TerminalStyle.Text.secondary
-        let logo = "\u{1B}[22;2;38;5;208m\(TerminalChat.zenCODEHeader)\(reset)"
+        let logo = "\u{1B}[22;38;5;130m\(TerminalChat.zenCODEHeader)\(reset)"
 
-        #expect(TerminalStyle.Chrome.startupLogo == "\u{1B}[22;2;38;5;208m")
+        // SGR 22 clears inherited bold; no SGR 2: the darker orange (130)
+        // replaces the terminal-dependent faint attribute.
+        #expect(TerminalStyle.Chrome.startupLogo == "\u{1B}[22;38;5;130m")
         #expect(rendered == [
             logo,
             "\(orange)Version:\(gray) test\(reset)",

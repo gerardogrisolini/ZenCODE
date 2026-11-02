@@ -138,6 +138,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The `ZenCODE` logo in the startup banner now uses a fixed darker orange
+  instead of the dimmed one, so it looks the same in every terminal rather
+  than depending on how the terminal renders dimmed text; the prompt and menu
+  frames keep their dimmed orange.
 - `/telegram on` moves the chat to Telegram: the terminal and the editor no
   longer show the turns until `/telegram off` brings them back and catches
   them up; in ACP, prompts from Telegram are now accepted. The terminal shows
