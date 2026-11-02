@@ -53,6 +53,8 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
     private var cursorRow = 1
     private var stream = TerminalStreamingText()
     private var seenResize: UInt64
+    /// Physical generation of the latest committed footer/geometry.
+    private var committedGeneration: UInt64
     private var queryGeneration: UInt64?
     private var queuedOutput: [String] = []
     private var disabled = false
@@ -80,7 +82,9 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         self.output = output
         self.reports = reports
         self.resizeGeneration = resizeGeneration
-        self.seenResize = resizeGeneration()
+        let generation = resizeGeneration()
+        self.seenResize = generation
+        self.committedGeneration = generation
     }
 
     func prepareSession() {
@@ -141,9 +145,8 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
             guard !disabled else { return }
             reports.recordDiagnostic("screen.resize seen=\(seenResize) physical=\(resizeGeneration()) query=\(queryGeneration.map(String.init) ?? "none")")
             if seenResize != resizeGeneration() { reports.suspendInput() }
-            if queryGeneration != nil, queryGeneration != resizeGeneration() {
-                enterAppendOnly(reason: "terminal resized during cursor report")
-            }
+            // A query in flight is superseded, not failed: completeAnchor
+            // discards its reply and then queries the committed geometry once.
             revision &+= 1
         }
     }
@@ -151,10 +154,8 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
     func commitFooter(geometry: Geometry, reservedRows: Int, sequence: String, rebuild: Bool = false) {
         TerminalOutputSynchronization.withTransaction {
             guard !disabled else { return }
-            if let queryGeneration, queryGeneration != resizeGeneration() {
-                enterAppendOnly(reason: "terminal resized during cursor report")
-                return
-            }
+            // Always record the latest geometry, even while a query is in
+            // flight. That query writes nothing until its reply is consumed.
             let oldTop = chromeTop
             let changedGeometry = self.geometry != geometry
             self.geometry = geometry
@@ -162,6 +163,7 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
             footer = sequence.replacingOccurrences(of: "\u{1B}7", with: "")
                 .replacingOccurrences(of: "\u{1B}8", with: "")
             self.reservedRows = footerRows + modalRowCount()
+            committedGeneration = resizeGeneration()
             if !installed {
                 installed = true
                 // Allocate blank rows by native scrolling before touching them.
@@ -203,8 +205,24 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         TerminalOutputSynchronization.withTransaction {
             reports.recordDiagnostic("screen.completion.locked generation=\(generation) physical=\(resizeGeneration()) query=\(queryGeneration.map(String.init) ?? "none") disabled=\(disabled) rows=\(geometry.rows) columns=\(geometry.columns) reserved=\(reservedRows)")
             guard !disabled, queryGeneration == generation else { return }
-            guard generation == resizeGeneration(),
-                  case let .success(position) = result,
+            if generation != resizeGeneration() {
+                // Superseded by a physical resize. The reply describes an
+                // intermediate geometry: discard it and keep input and output
+                // held. Query again only now that this reply is consumed, and
+                // only for a committed current geometry; otherwise the next
+                // commitFooter queries. Any failure still fails closed.
+                guard case .success = result else {
+                    enterAppendOnly(reason: "cursor report failed or stale")
+                    return
+                }
+                queryGeneration = nil
+                reports.suspendInput()
+                let requery = committedGeneration == resizeGeneration()
+                reports.recordDiagnostic("screen.query.superseded generation=\(generation) physical=\(resizeGeneration()) committed=\(committedGeneration) requery=\(requery)")
+                if requery { requestAnchor() }
+                return
+            }
+            guard case let .success(position) = result,
                   position.column == 1, position.row > 1, position.row <= geometry.rows,
                   geometry.rows > reservedRows + 1, geometry.columns > 1 else {
                 enterAppendOnly(reason: "cursor report failed or stale")

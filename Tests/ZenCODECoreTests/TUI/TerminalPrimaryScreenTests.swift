@@ -4,13 +4,26 @@ import Synchronization
 import Testing
 @testable import ZenCODECore
 
+/// Counts finished CPR callbacks through the test-only diagnostic sink. A
+/// superseded reply keeps input held, so it cannot be awaited by released input.
+final class CursorReportDeliveries: Sendable {
+    private let count = Mutex(0)
+    var completed: Int { count.withLock { $0 } }
+    func makeReports() -> TerminalCursorReport {
+        TerminalCursorReport(diagnostic: { [self] event in
+            if event.hasPrefix("report.delivery.end") { count.withLock { $0 += 1 } }
+        })
+    }
+}
+
 final class PrimaryScreenCapture: Sendable {
     let terminal: Mutex<PrimaryScreenTerminalModel>
     let writes = Mutex<[String]>([])
-    let reports = TerminalCursorReport()
+    let reports: TerminalCursorReport
     let generation = Mutex<UInt64>(0)
-    init(rows: Int = 24, columns: Int = 100) {
+    init(rows: Int = 24, columns: Int = 100, reports: TerminalCursorReport = TerminalCursorReport()) {
         terminal = Mutex(PrimaryScreenTerminalModel(rows: rows, columns: columns))
+        self.reports = reports
     }
     func write(_ text: String) {
         writes.withLock { $0.append(text) }
@@ -31,6 +44,19 @@ final class PrimaryScreenCapture: Sendable {
         for byte in response.utf8 { _ = reports.consume(byte) }
         try await terminalWaitForCursorReport(reports)
     }
+    /// Answers a query superseded by a physical resize. Its callback discards
+    /// the reply and keeps input held, so wait for the callback itself.
+    func answerSupersededReport(_ deliveries: CursorReportDeliveries) async throws {
+        let before = deliveries.completed
+        let response = terminal.withLock { $0.cursorReport }
+        for byte in response.utf8 { _ = reports.consume(byte) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while deliveries.completed == before, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        try #require(deliveries.completed > before, "Superseded cursor report was not delivered")
+    }
+    var queries: Int { bytes.components(separatedBy: "\u{1B}[6n").count - 1 }
 }
 
 @Suite(TerminalBlockingTestScope()) struct TerminalPrimaryScreenTests {
@@ -210,18 +236,137 @@ final class PrimaryScreenCapture: Sendable {
         #expect(!screen.removeOwnedTail(rows: 1, expectedAnchor: nil))
     }
 
-    @Test func secondResizeDuringCPRFencesWithoutAnotherQuery() async throws {
+    @Test func secondResizeDuringCPRRequeriesAfterTheStaleReply() async throws {
+        let deliveries = CursorReportDeliveries()
+        let capture = PrimaryScreenCapture(reports: deliveries.makeReports()), screen = capture.screen()
+        install(screen)
+        capture.resize(rows: 24, columns: 45)
+        install(screen, columns: 45, rebuild: true)
+        #expect(capture.queries == 1)
+        capture.resize(rows: 24, columns: 100)
+        install(screen, rebuild: true)
+        #expect(!screen.isAppendOnly)
+        #expect(capture.queries == 1) // never a second query while one is in flight
+        try await capture.answerSupersededReport(deliveries)
+        #expect(!screen.isAppendOnly)
+        #expect(capture.queries == 2) // the committed geometry is queried at once
+        #expect(screen.validReceipt == nil)
+        try await capture.answerReport()
+        #expect(!screen.isAppendOnly)
+        #expect(screen.validReceipt != nil)
+        install(screen)
+        #expect(capture.queries == 2)
+        #expect(capture.visible.components(separatedBy: "STATUS|").count == 2)
+        #expect(!capture.bytes.contains("\u{1B}[2J"))
+        #expect(!capture.bytes.contains("Terminal layout disabled"))
+    }
+
+    @Test func staleReplyBeforeTheNewCommitWaitsForThatCommitToRequery() async throws {
+        let deliveries = CursorReportDeliveries()
+        let capture = PrimaryScreenCapture(reports: deliveries.makeReports()), screen = capture.screen()
+        install(screen)
+        capture.resize(rows: 24, columns: 45)
+        install(screen, columns: 45, rebuild: true)
+        capture.resize(rows: 24, columns: 100)
+        try await capture.answerSupersededReport(deliveries)
+        #expect(!screen.isAppendOnly)
+        #expect(capture.queries == 1) // the new geometry is not committed yet
+        #expect(capture.reports.isHoldingInput)
+        install(screen, rebuild: true)
+        #expect(capture.queries == 2)
+        install(screen, rebuild: true)
+        #expect(capture.queries == 2)
+        try await capture.answerReport()
+        #expect(!screen.isAppendOnly)
+        #expect(capture.queries == 2)
+        #expect(capture.visible.components(separatedBy: "STATUS|").count == 2)
+        #expect(!capture.bytes.contains("\u{1B}[2J"))
+    }
+
+    @Test(arguments: [false, true])
+    func severalResizesDuringCPRRequeryExactlyOnce(replyBeforeCommit: Bool) async throws {
+        let deliveries = CursorReportDeliveries()
+        let capture = PrimaryScreenCapture(reports: deliveries.makeReports()), screen = capture.screen()
+        install(screen)
+        capture.resize(rows: 24, columns: 45)
+        install(screen, columns: 45, rebuild: true)
+        capture.resize(rows: 24, columns: 80)
+        if replyBeforeCommit { try await capture.answerSupersededReport(deliveries) }
+        capture.resize(rows: 24, columns: 60)
+        capture.resize(rows: 24, columns: 100)
+        install(screen, rebuild: true)
+        if !replyBeforeCommit { try await capture.answerSupersededReport(deliveries) }
+        #expect(!screen.isAppendOnly)
+        #expect(capture.queries == 2)
+        install(screen, rebuild: true)
+        try await capture.answerReport()
+        #expect(!screen.isAppendOnly)
+        #expect(capture.queries == 2)
+        #expect(capture.visible.components(separatedBy: "STATUS|").count == 2)
+        #expect(!capture.bytes.contains("\u{1B}[2J"))
+    }
+
+    @Test func supersededQueryFailureStillFencesWithoutAnotherQuery() async throws {
         let capture = PrimaryScreenCapture(), screen = capture.screen()
         install(screen)
         capture.resize(rows: 24, columns: 45)
         install(screen, columns: 45, rebuild: true)
         capture.resize(rows: 24, columns: 100)
         install(screen, rebuild: true)
+        // Same failure path as a timeout: no reply was read, so never retry.
+        capture.reports.cancel()
         #expect(screen.isAppendOnly)
-        #expect(capture.bytes.components(separatedBy: "\u{1B}[6n").count == 2)
-        try await capture.answerReport()
+        #expect(capture.bytes.contains("Terminal layout disabled (cursor report failed or stale)"))
+        #expect(capture.reports.isFenced)
+        try await capture.answerReport() // the late reply is drained, not delivered
         install(screen, rebuild: true)
-        #expect(capture.bytes.components(separatedBy: "\u{1B}[6n").count == 2)
+        #expect(capture.queries == 1)
+        #expect(!capture.bytes.contains("\u{1B}[2J"))
+    }
+
+    @Test(arguments: [false, true])
+    func outputAndKeysAcrossSupersededCPRAreReleasedOnceInOrder(replyBeforeCommit: Bool) async throws {
+        let deliveries = CursorReportDeliveries()
+        let capture = PrimaryScreenCapture(reports: deliveries.makeReports()), screen = capture.screen()
+        install(screen)
+        let markers = ["held-A|", "held-B|", "held-C|", "held-D|"]
+        let keys = Array("abcd".utf8)
+        func hold(_ index: Int) {
+            #expect(screen.append(markers[index] + "\n") == nil)
+            #expect(capture.reports.consume(keys[index]).isEmpty)
+        }
+        capture.resize(rows: 24, columns: 45)
+        hold(0) // before the first query
+        install(screen, columns: 45, rebuild: true)
+        hold(1) // during the superseded query
+        capture.resize(rows: 24, columns: 100)
+        if replyBeforeCommit {
+            try await capture.answerSupersededReport(deliveries)
+            hold(2) // between the two queries
+            install(screen, rebuild: true)
+        } else {
+            install(screen, rebuild: true)
+            try await capture.answerSupersededReport(deliveries)
+            hold(2)
+        }
+        hold(3) // during the second query
+        #expect(capture.queries == 2)
+        #expect(capture.reports.takeDeferredKeys().isEmpty)
+        for marker in markers { #expect(!capture.bytes.contains(marker)) }
+        try await capture.answerReport()
+        #expect(!screen.isAppendOnly)
+        #expect(capture.reports.takeDeferredKeys() == keys)
+        #expect(capture.reports.takeDeferredKeys().isEmpty)
+        for marker in markers { #expect(capture.bytes.components(separatedBy: marker).count == 2) }
+        let all = capture.history + "\n" + capture.visible
+        let positions = markers.compactMap { all.range(of: $0)?.lowerBound }
+        #expect(positions.count == markers.count)
+        #expect(positions == positions.sorted())
+        #expect(capture.visible.components(separatedBy: "STATUS|").count == 2)
+    }
+
+    @Test func cursorReportWaitsTwoAndAHalfSecondsByDefault() {
+        #expect(TerminalCursorReport.defaultTimeout == 2.5)
     }
 
     @Test func fragmentedPasteBeforeResizeCannotAuthorizeErasure() {

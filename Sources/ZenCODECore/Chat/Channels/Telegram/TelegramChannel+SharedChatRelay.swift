@@ -499,6 +499,40 @@ extension TelegramChannel {
 
     // MARK: - Live mentions
 
+    /// Routes a live shared-chat line that the busy gate would refuse, as the
+    /// terminal routes a live mention before its busy branches: the agents
+    /// and the coordinator are reachable exactly while they work. The
+    /// precedence is the one of a free session: a slash command is never a
+    /// live line (the gate answers it), a resolving `@mention` is published
+    /// and a recognised one without text is diagnosed, and otherwise a reply
+    /// to an answerable card (a forwarded live message, or the `/chat`
+    /// picker's ForceReply card) goes to its sender. Returns `true` when the
+    /// line was consumed; anything else meets the busy gate.
+    func handleLiveSharedChatLineWhileBusy(
+        _ text: String,
+        message: TerminalTelegramIncomingMessage,
+        lease: TerminalTelegramRouteLease
+    ) async -> Bool {
+        guard !CoordinatorCommandParser.isSlashCommand(text) else { return false }
+        switch SharedChatMentionParser.parse(
+            from: text,
+            readableHandles: await sessionRunner.sharedChatMentionHandles(
+                rootSessionID: sessionID
+            )
+        ) {
+        case let .route(route):
+            await sendSharedChatMention(route, lease: lease)
+            return true
+        case .missingText:
+            await sendSystemMessageIfLinked(
+                "ZenCODE message: add a message after the live mention.", lease: lease
+            )
+            return true
+        case .none:
+            return await handleSharedChatReplyIfNeeded(text, message: message, lease: lease)
+        }
+    }
+
     /// Publishes a live `@mention` sent from Telegram on `lease`, as the
     /// terminal's `sendSharedChatMention(_:)` publishes the operator's.
     /// Returns `true` when the room accepted the message (or the

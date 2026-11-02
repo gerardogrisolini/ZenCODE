@@ -1749,18 +1749,25 @@ After physical reflow, only a successful CPR can authorize `J0` from that anchor
 `TerminalRawInput` remains the sole input reader; `TerminalCursorReport` separates
 protocol replies from keys/paste and defers ordinary input during the handshake.
 A query is refused if an input prefix is already buffered, without discarding or
-splitting a possible paste delimiter. Timeout/cancellation quarantines only the
-already-started report prefix for a bounded 750 ms grace period; new Escape keys
-retain ordinary polling semantics. Callbacks never execute under the mux lock.
-No output transaction waits for an input read, and input callbacks acquire output
-only after leaving the raw-byte lock. Snapshot/output queues are transient and
-never persisted. A failed/ambiguous handshake cancels modal results, preserves the
-editor draft and latches append-only presentation without a fixed footer. The
-fallback resets origin mode/margins and uses an emulator-clamped bottom CUP plus
-CRLF, not cached geometry, so a taller physical terminal cannot expose transcript
-to stale-coordinate writes. Stop and session preparation drain queued output
-once, in order, without erasure when resize invalidates ownership, including the
-debounce interval before a query exists.
+splitting a possible paste delimiter. A reply is awaited for 2.5 s. A query
+superseded by another physical resize does not trigger the fallback: geometry
+commits are still recorded but write nothing, its reply is read and discarded,
+and then exactly one new query is issued for the committed geometry, at once if
+that geometry is already committed, otherwise at the next commit. At most one
+query is outstanding, and a new one never precedes the read of the previous
+reply. Timeout/cancellation quarantines only the already-started report prefix
+for a bounded 750 ms grace period; new Escape keys retain ordinary polling
+semantics. Callbacks never execute under the mux lock. No output transaction
+waits for an input read, and input callbacks acquire output only after leaving
+the raw-byte lock. Snapshot/output queues are transient and never persisted. A
+failed/ambiguous handshake (timeout, rejection, cancellation, an invalid
+position or a refused query), superseded or not, cancels modal results,
+preserves the editor draft and latches append-only presentation without a fixed
+footer. The fallback resets origin mode/margins and uses an emulator-clamped
+bottom CUP plus CRLF, not cached geometry, so a taller physical terminal cannot
+expose transcript to stale-coordinate writes. Stop and session preparation
+drain queued output once, in order, without erasure when resize invalidates
+ownership, including the debounce interval before a query exists.
 
 Standalone menus retain their pre-existing alternate-screen lifecycle. The
 isolated Swift test harness and independent validation requirements are described

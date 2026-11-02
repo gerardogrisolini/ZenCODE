@@ -169,7 +169,16 @@ any ESC/CSI prefix is already buffered, including an opening paste delimiter.
 Only a report prefix already present at timeout/cancellation gets a 750 ms grace
 period; an unfinished prefix is then released without dropping bytes. Newly
 pressed Escape/partial CSI follows ordinary raw-reader polling, even while one
-late complete report is expected. Test both cases; do not add blind query retries.
+late complete report is expected. Test both cases.
+
+The query waits 2.5 s for a reply. There is never a new query after a timeout
+without a reply, nor after a rejection or cancellation: the fence holds for the
+rest of the session. The only new query allowed follows a reply already read
+for a query that a later physical resize superseded. That reply is discarded,
+because it describes an intermediate geometry, and exactly one query is then
+issued for the committed geometry. Several resizes before the commit still
+produce only one new query. If that query cannot be armed, the layout falls back
+to append-only, as for any refused query.
 
 The writer retains only the unfinished paragraph to compute continuation and
 repair its last grapheme, not to replay transcript. Escape buffering is bounded.

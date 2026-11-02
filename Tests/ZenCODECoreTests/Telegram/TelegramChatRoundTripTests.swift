@@ -391,14 +391,21 @@ struct TelegramChatRoundTripTests {
 
     /// Busy admission is decided by the serialized TUI runtime, not by a global
     /// bot flag. Work-producing Telegram shapes are rejected on their own
-    /// authorized route before they can enqueue, download, transcribe or publish.
-    /// Read-only `/status` and recipient-selection callbacks remain allowed.
+    /// authorized route before they can enqueue, download or transcribe.
+    /// Read-only `/status`, recipient-selection callbacks, and live
+    /// `@mention` lines remain allowed: the mention is published, as the
+    /// terminal publishes one typed while it generates.
     @Test
     func busySessionRejectsTelegramWorkBeforeDispatch() async throws {
         let terminal = try Self.makeTerminal(linkedChatID: 42)
         _ = await Self.installRoute(on: terminal)
         let notices = Mutex<[String]>([])
         let pickerCards = Mutex<Int>(0)
+        let effects = Mutex<[TelegramChannel.TelegramWorkEffectForTesting]>([])
+        terminal.telegramChannel.onTelegramWorkEffectForTesting = { effect in
+            effects.withLock { $0.append(effect) }
+            return true
+        }
         terminal.telegramChannel.onTelegramSystemMessage = { text, chatID in
             #expect(chatID == 42)
             notices.withLock { $0.append(text) }
@@ -446,12 +453,13 @@ struct TelegramChatRoundTripTests {
 
         #expect(await Self.admittedPrompts(admitted, on: terminal).isEmpty)
         #expect(pickerCards.withLock { $0 } == 1)
+        #expect(effects.withLock { $0 } == [.sharedChatPublication])
         let delivered = notices.withLock { $0 }
-        #expect(delivered.count == work.count - 1)
+        #expect(delivered.count == work.count - 2)
         #expect(delivered.filter {
             $0.contains("busy generating a response in this session")
                 && $0.contains("was not queued")
-        }.count == work.count - 2)
+        }.count == work.count - 3)
         #expect(delivered.contains {
             $0.contains("Session active.") && !$0.contains("was not queued")
         })

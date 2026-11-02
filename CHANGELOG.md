@@ -353,6 +353,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
   summary now reach the chat first; a message sent from the chat meanwhile is
   queued and runs right after them, and a turn from the chat waits for the
   previous turn to finish closing.
+- Telegram: while a response was being generated, the chat refused every
+  message to the shared chat with "ZenCODE is busy generating a response",
+  so the operator could not reach the agents or the coordinator while they
+  were working: the reply to the `Writing to @…` card of `/chat`, a reply
+  to a forwarded live message, and a line starting with a live `@mention`.
+  These now reach their recipient while the session generates, as in the
+  terminal; a prompt, a voice note, and an attachment are still refused.
+- Terminal: resizing the terminal window, even when the terminal answers the
+  cursor position query slowly or several resizes follow one another, no longer
+  loses the prompt box to the plain-text fallback ("Terminal layout disabled").
 
 ## [3.2.0] - 2026-10-30
 

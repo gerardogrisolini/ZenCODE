@@ -24,6 +24,9 @@ final class TerminalCursorReport: Sendable {
     // A shared demultiplexer survives raw-mode handoffs (panel -> consent/menu).
     // Isolated instances are used by the pipe/PTY tests.
     static let shared = TerminalCursorReport()
+    /// Wait for a reply. Slow emulators may answer after a reflow. This is NOT
+    /// the 750 ms grace for a report prefix already in flight at timeout.
+    static let defaultTimeout: TimeInterval = 2.5
     private let state = Mutex(State())
     private let now: @Sendable () -> ContinuousClock.Instant
     // Test-only injection: production instances have no sink and never log input.
@@ -41,7 +44,7 @@ final class TerminalCursorReport: Sendable {
     }
 
     @discardableResult
-    func request(timeout: TimeInterval = 0.75, completion: @escaping Completion) -> Bool {
+    func request(timeout: TimeInterval = defaultTimeout, completion: @escaping Completion) -> Bool {
         let id = UUID()
         let accepted = state.withLock { state in
             // A prefix may be an opening paste delimiter. Do not split it or

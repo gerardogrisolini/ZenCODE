@@ -955,18 +955,26 @@ struct TelegramChannelTurnActivityTests {
             #expect(older.revision < newer.revision && newer.revision < 0)
             #expect(foreign.revision > 0)
 
+            // Each presentation is flushed before the next: the reporter
+            // coalesces an edit with the previous one still queued, so
+            // without the flushes the drain's scheduling decides how many
+            // wire effects the presentations produce.
             await presenter.presentSubAgentOverview(
                 ChatSubAgentOverview(snapshots: Self.runningAgents(1)), origin: .automatic, publication: newer
             )
+            await reporter.flush()
             await presenter.presentSubAgentOverview(
                 ChatSubAgentOverview(snapshots: Self.runningAgents(2)), origin: .automatic, publication: foreign
             )
+            await reporter.flush()
             await presenter.presentSubAgentOverview(
                 ChatSubAgentOverview(snapshots: Self.runningAgents(3)), origin: .automatic, publication: nil
             )
+            await reporter.flush()
             await presenter.presentSubAgentOverview(
                 ChatSubAgentOverview(snapshots: Self.runningAgents(4)), origin: .automatic, publication: older
             )
+            await reporter.flush()
             let latest = await presenter.reserveSubAgentOverviewPublication()
             await presenter.presentSubAgentOverview(
                 ChatSubAgentOverview(snapshots: Self.runningAgents(5)), origin: .automatic, publication: latest

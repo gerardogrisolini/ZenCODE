@@ -157,9 +157,12 @@ extension TelegramChannel {
     /// text message (``readLine(prompt:)``) or a document or image
     /// (``pickAttachment(startingAt:)``) before anything else. While the
     /// session generates, only permission replies, `/status`, `/chat`, the
-    /// slash forms of `/help` and `/changes`, the mention picker taps, and
-    /// the artifact consent taps are answered; everything else is told the
-    /// session is busy. Permission replies go through
+    /// slash forms of `/help` and `/changes`, the mention picker taps, the
+    /// artifact consent taps, and the live shared-chat text lines (a live
+    /// `@mention`, a reply to an answerable card such as the picker's; see
+    /// ``handleLiveSharedChatLineWhileBusy(_:message:lease:)``) are
+    /// answered; everything else is told the session is busy. Permission
+    /// replies go through
     /// ``handlePermissionReplyIfNeeded(_:lease:)``, which refuses one
     /// without a request ID on a route several sessions share. A prompt,
     /// and a menu command completed through its ForceReply, are admitted to
@@ -217,9 +220,10 @@ extension TelegramChannel {
 
         // Owner resolution, lease capture and the wire fence stay above the
         // gate; the gate rejects before attachment downloads, voice
-        // transcription, command parsing or shared-chat publication.
-        // Permission replies remain live because an active turn may be
-        // blocked waiting for exactly this operator decision.
+        // transcription, or command parsing. Permission replies remain live
+        // because an active turn may be blocked waiting for exactly this
+        // operator decision, and so do the live shared-chat text lines,
+        // because the agents they address exist while the turn runs.
         if isSessionGenerating,
            let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
            !text.isEmpty,
@@ -260,6 +264,14 @@ extension TelegramChannel {
             default:
                 break
             }
+        }
+        // Text only: a voice note quoting a card would need the transcription
+        // the gate refuses, and an attachment never addresses a participant.
+        if refusesAsBusy, message.attachment == nil, message.voice == nil,
+           let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty,
+           await handleLiveSharedChatLineWhileBusy(text, message: message, lease: routeLease) {
+            return false
         }
         guard !refusesAsBusy else {
             await sendBusyMessage(lease: routeLease)

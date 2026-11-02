@@ -138,9 +138,9 @@ struct TelegramChannelIngressTests {
     }
 
     /// While the session generates, only permission replies, `/status`,
-    /// `/chat`, the slash forms of `/help` and `/changes`, and the picker
-    /// taps are answered; everything else is told the session is busy,
-    /// before any work starts.
+    /// `/chat`, the slash forms of `/help` and `/changes`, the picker
+    /// taps, and the live `@mention` lines are answered; everything else is
+    /// told the session is busy, before any work starts.
     @Test
     func busyGateAnswersOnlyWhatMayRunWhileTheSessionGenerates() async throws {
         try await Support.withSupport {
@@ -184,11 +184,64 @@ struct TelegramChannelIngressTests {
 
             #expect(channel.promptQueue.isEmpty)
             #expect(pair.cards.values.count == 2)
-            #expect(effects.values.isEmpty)
-            #expect(pair.texts.values.filter { $0 == TelegramChannel.busyMessageText }.count == 13)
+            // The live mention is published, as the terminal publishes one
+            // typed while it generates.
+            #expect(effects.values == [.sharedChatPublication])
+            #expect(pair.texts.values.filter { $0 == TelegramChannel.busyMessageText }.count == 12)
             #expect(pair.texts.values.filter { $0 == channel.remoteStatusText() }.count == 2)
             #expect(pair.texts.values.contains(channel.remoteHelpText()))
             #expect(pair.texts.values.contains(channel.remoteChangesText()))
+            pair.terminal.sessionHost.releasePrompt(reservation)
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
+    /// While the session generates, the live shared chat stays reachable
+    /// from Telegram, as from the terminal: a reply to the `/chat` picker's
+    /// card reaches the chosen agent or the coordinator, a live `@mention`
+    /// is published, and a mention without text is diagnosed, instead of
+    /// the busy text. A prompt, and a reply quoting a card the relay never
+    /// sent, are still told the session is busy.
+    @Test
+    func busyGateLetsTheLiveSharedChatThrough() async throws {
+        try await Support.withSupport {
+            let room = "channel-busy-live-\(UUID().uuidString)"
+            let runner = try await Self.plannerRunner(room: room)
+            let pair = try await Self.handLinked(room: room, runner: runner)
+            let channel = pair.channel
+            channel.onRunTurnForTesting = { prompt, _, _ in
+                Issue.record("A busy session ran \(prompt)")
+            }
+            let reservation = try pair.terminal.sessionHost.reservePrompt(in: pair.terminal.terminalSlotID)
+            #expect(channel.refusesMessagesAsBusy)
+
+            let messages: [TerminalTelegramIncomingMessage] = [
+                Self.ownerMessage(nil, callbackData: "zencode:mention:planner"),
+                Self.ownerMessage("ship it", replyTo: Self.pickerReceipt),
+                Self.ownerMessage(nil, callbackData: "zencode:mention:coordinator"),
+                Self.ownerMessage("is the doc needed?", replyTo: Self.pickerReceipt),
+                Self.ownerMessage("@planner check the log"),
+                Self.ownerMessage("@coordinator"),
+                Self.ownerMessage("ordinary prompt"),
+                Self.ownerMessage("ordinary follow-up", replyTo: 5),
+            ]
+            for message in messages {
+                #expect(!(await channel.handleIncomingMessage(message)), "\(message.text ?? "callback")")
+            }
+
+            #expect(pair.cards.values.map(\.text) == [
+                "Writing to @planner. Reply to this message with the content to send; it will not be treated as a normal prompt.",
+                "Writing to @coordinator. Reply to this message with the content to send; it will not be treated as a normal prompt.",
+            ])
+            let delivered = await runner.sharedChatTranscriptMessages(rootSessionID: room)
+                .filter { $0.sender.kind == .operator }
+            #expect(delivered.map(\.text) == ["ship it", "is the doc needed?", "check the log"])
+            #expect(delivered.map(\.recipientIDs) == [
+                ["agent-1"], [AgentSharedChat.coordinatorID(for: room)], ["agent-1"],
+            ])
+            #expect(channel.promptQueue.isEmpty)
+            #expect(pair.texts.values.contains("ZenCODE message: add a message after the live mention."))
+            #expect(pair.texts.values.filter { $0 == TelegramChannel.busyMessageText }.count == 2)
             pair.terminal.sessionHost.releasePrompt(reservation)
             await pair.terminal.sessionHost.shutdown()
         }
